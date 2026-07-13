@@ -5636,7 +5636,16 @@ and declared with a <code>MessageCodecSpec</code> — a <code>name</code>, a pay
 tier (<code>none</code> / <code>end_to_end</code>). Realtime push rides on the stream; see
 <a href="../../../data-events/realtime/">Realtime</a>.</p>
 <h2 id="streams">Streams<a class="headerlink" href="#streams" title="Permanent link">&para;</a></h2>
-<p><code>StreamSpec[M]</code> — an ordered, replayable log. The producer and plain reader are shared;
+<p><code>StreamSpec[M]</code> — an ordered, replayable log. It adds one field over the codec spec:
+<code>requires_transactions</code> (default <code>False</code>). It is a <strong>capability gate, not a delivery-semantics
+switch</strong>: setting it changes nothing about how messages are delivered, it only refuses at
+resolve to wire a <code>CommitStreamGroupQueryPort</code> onto a backend that doesn't report
+<code>supports_transactions</code> — so a consumer written against native transport-level exactly-once
+can never be silently attached to a backend that only offers at-least-once. No shipped
+backend reports <code>supports_transactions</code> today, so enabling it currently fails closed
+everywhere; it is a forward guard for a transactional backend, not a way to obtain one.
+Leave it <code>False</code> and pair the consumer with an <a href="../messaging/">inbox</a> for the portable
+exactly-once-<em>effect</em> path. Ignored by the ack sub-model. The producer and plain reader are shared;
 consumption comes in two disciplines, named for how they acknowledge — per-message <strong>ack</strong>
 (Redis-class) or per-partition offset <strong>commit</strong> (Kafka-class):</p>
 <table>
@@ -5671,7 +5680,7 @@ consumption comes in two disciplines, named for how they acknowledge — per-mes
 <tr>
 <td><code>CommitStreamGroupQueryDepKey</code></td>
 <td>commit consumer group</td>
-<td><code>read</code>, <code>tail</code>, <code>commit</code></td>
+<td><code>read</code>, <code>tail</code>, <code>commit</code>, <code>seek_to_committed</code></td>
 </tr>
 <tr>
 <td><code>CommitStreamGroupAdminDepKey</code></td>
@@ -5684,8 +5693,11 @@ consumption comes in two disciplines, named for how they acknowledge — per-mes
 of stranded entries. The <strong>commit</strong> group is a partitioned, offset-committed log: a single
 committed <code>StreamPosition</code> acknowledges every message up to it on that partition, recovery is
 broker-coordinated (no per-message claim), and <code>reset_offsets</code> replays. Both are
-at-least-once; pair either with the <a href="../messaging/">inbox</a> for exactly-once <em>effect</em>. A plain
-reader replays from any offset. For picking a model, see
+at-least-once — including with <code>requires_transactions</code> set, which gates <em>which backend may be
+wired</em>, not what the wired backend delivers — so pair either with the <a href="../messaging/">inbox</a>
+for exactly-once <em>effect</em>. A plain reader replays from any offset. The commit sub-model has context shortcuts —
+<code>ctx.stream.commit_query(spec)</code> / <code>ctx.stream.commit_admin(spec)</code>; the other ports resolve
+by dep key. For picking a model, see
 <a href="../../../data-events/messaging-delivery-models/">Messaging delivery models</a>.</p>
 <h2 id="pubsub">Pub/sub<a class="headerlink" href="#pubsub" title="Permanent link">&para;</a></h2>
 <p><code>PubSubSpec[M]</code> — fire-and-forget fan-out. Two ports:</p>

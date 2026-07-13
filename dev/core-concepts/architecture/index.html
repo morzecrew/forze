@@ -5722,7 +5722,7 @@ web framework never touches domain code.</p>
 <p>Concrete implementations of application contracts — one optional package
 per backend:</p>
 <ul>
-<li><code>forze_postgres</code>, <code>forze_mongo</code>, <code>forze_firestore</code> — documents, search, transactions</li>
+<li><code>forze_postgres</code>, <code>forze_mongo</code>, <code>forze_firestore</code> — documents and transactions (Postgres and Mongo add search)</li>
 <li><code>forze_redis</code> — cache, counters, idempotency, pub/sub, streams</li>
 <li><code>forze_s3</code>, <code>forze_gcs</code> — object storage</li>
 <li><code>forze_temporal</code>, <code>forze_inngest</code> — durable workflows and functions</li>

@@ -5679,9 +5679,11 @@ Skim it, or search for a single word.</p>
 <p><strong>QueueSpec</strong>
 :   Declares a message queue for async task dispatch.</p>
 <p><strong>StreamSpec</strong>
-:   Declares a pub/sub stream for event distribution.</p>
-<p><strong>GraphSpec</strong>
-:   Declares a graph data model for relationship queries.</p>
+:   Declares an ordered, replayable stream (an append log read by offset or consumer group).</p>
+<p><strong>PubSubSpec</strong>
+:   Declares a fire-and-forget pub/sub topic for fan-out to live subscribers.</p>
+<p><strong>GraphModuleSpec</strong>
+:   Declares a graph data model — typed node and edge kinds — for relationship queries.</p>
 <hr />
 <h2 id="model-types">Model types<a class="headerlink" href="#model-types" title="Permanent link">&para;</a></h2>
 <p><strong>Domain model</strong>
@@ -5715,7 +5717,7 @@ Skim it, or search for a single word.</p>
 <p><strong>AuthnIdentity</strong>
 :   The verified identity of a request — who is making the call.</p>
 <p><strong>AuthzScope</strong>
-:   The permissions associated with an identity — what they're allowed to do.</p>
+:   The tenant partition an authorization decision or grant lookup runs within. (The permissions themselves resolve as <code>EffectiveGrants</code> — roles plus permissions.)</p>
 <p><strong>TenantIdentity</strong>
 :   The tenant context bound to a request. Determines data isolation strategy.</p>
 <p><strong>Tenant tier</strong>

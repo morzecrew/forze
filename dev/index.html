@@ -5465,14 +5465,14 @@
     orders: <span class="tk-cls">OrderCommandPort</span>
     items: <span class="tk-cls">OrderItemCommandPort</span>
 
-    <span class="tk-kw">async def</span> <span class="tk-fn">main</span>(<span class="tk-dim">self</span>, args: <span class="tk-cls">OrderCreateArgs</span>):
+    <span class="tk-kw">async def</span> <span class="tk-fn">__call__</span>(<span class="tk-dim">self</span>, args: <span class="tk-cls">OrderCreateArgs</span>):
         order = <span class="tk-kw">await</span> self.orders.<span class="tk-fn">create</span>(args.metadata)
         items = <span class="tk-kw">await</span> self.items.<span class="tk-fn">create_many</span>(args.items)
 
         <span class="tk-kw">return</span> order.id
 
 <span class="tk-com"># Swap infrastructure — domain code never changes</span>
-runtime = <span class="tk-cls">ExecutionRuntime</span>(deps=<span class="fz-swap">PostgresDepsModule</span>(...))
+runtime = <span class="tk-fn">build_runtime</span>(<span class="fz-swap">PostgresDepsModule</span>(...))
 </code></pre>
       </div>
     </div>

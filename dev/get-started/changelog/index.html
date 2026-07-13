@@ -691,15 +691,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#unreleased" class="md-nav__link">
+  <a href="#050-2026-07-13" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        [Unreleased]
+        0.5.0 - 2026-07-13
       </span>
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="[Unreleased]">
+    <nav class="md-nav" aria-label="0.5.0 - 2026-07-13">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -6391,15 +6391,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#unreleased" class="md-nav__link">
+  <a href="#050-2026-07-13" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        [Unreleased]
+        0.5.0 - 2026-07-13
       </span>
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="[Unreleased]">
+    <nav class="md-nav" aria-label="0.5.0 - 2026-07-13">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -7416,7 +7416,7 @@
 <p>All notable changes to this project will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>,
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
-<h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h2 id="050-2026-07-13"><a href="https://github.com/morzecrew/forze/compare/v0.4.1...v0.5.0">0.5.0</a> - 2026-07-13<a class="headerlink" href="#050-2026-07-13" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <p><strong>Reliability &amp; durability</strong></p>
 <ul>
@@ -7511,7 +7511,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>KEK replacement with a migration overlap</strong> — a key directory may name a previous key: reads accept current and previous while writes use current, re-encryption sweeps move the data, and dropping the previous key restores the strict guard. Key-version rotation still needs no action.</p>
 </li>
 <li>
-<p><strong>Blob re-encryption sweep (<code>reencrypt_objects</code>)</strong> — streams every object of a route down and back under a fresh data key in bounded memory, in place; metadata survives, an object deleted mid-sweep is counted and skipped, and the sweep returns a <code>ReencryptReport</code> (rewritten and skipped counts).</p>
+<p><strong>Blob re-encryption sweep (<code>reencrypt_objects</code>)</strong> — streams every object of a route down and back under a fresh data key in bounded memory, in place; metadata survives, an object deleted mid-sweep is counted and skipped, and the sweep returns a <code>ReencryptReport</code> (rewritten and skipped counts). The rewrite is conditional (<code>overwrite_stream(if_match=…)</code> — S3 If-Match, GCS generation match, mock parity), so a concurrent delete stays deleted instead of being resurrected and a concurrent change is retried once from fresh bytes.</p>
 </li>
 <li>
 <p><strong>Cloud <abbr title="Key Management Service">KMS</abbr> backends (<code>forze_kms</code>)</strong> — AWS, GCP and Yandex Cloud envelope-key backends behind the shared <code>KeyManagementPort</code> (extras kms-aws / kms-gcp / kms-yc), with transparent key-version rotation and per-tenant KEK provisioning through the same provisioner port as schemas and buckets.</p>
@@ -7847,6 +7847,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>$neq</code> / <code>$nin</code> / <code>$disjoint</code> include NULL rows on Postgres</strong> — the renderer uses IS DISTINCT FROM semantics, matching mock and Mongo.</p>
 </li>
 <li>
+<p><strong>Tenant-aware Mongo text search works</strong> — the prefilter (tenant tag, caller filters) was emitted as its own leading match stage, pushing the required first-stage <code>$text</code> to stage two, which the server rejects — every prefiltered text search failed. The first match now carries the text query and the prefilter together, across the offset, cursor, count and thin paths.</p>
+</li>
+<li>
 <p><strong>Decimal cursor keys order numerically</strong> — keyset comparison coerces numeric types to Decimal (was string-comparing) and a Decimal sort key round-trips exactly.</p>
 </li>
 <li>
@@ -7869,6 +7872,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>Kafka commit-stream consumer is loss-free under poison and rebalance</strong> — malformed payloads pause instead of raising, every pause or abort re-seeks to committed, a rebalance listener drops stale routing, and the supervised lifecycle restarts crash-loss-free.</p>
+</li>
+<li>
+<p><strong>Mongo datetimes decode timezone-aware (UTC)</strong> — the client now reads BSON dates as aware UTC like Postgres and the mock (was: naive UTC, caller-visible). The naive reads also made history <abbr title="Optimistic Concurrency Control">OCC</abbr>'s three-way check flag a stale-rev update that echoed an unchanged datetime as a false <code>historical_consistency_violation</code>; Mongo document history is now covered by integration tests end-to-end.</p>
+</li>
+<li>
+<p><strong>GCS conditional multipart completion covers the metadata stamp</strong> — user metadata binds inside the same precondition boundary as the final write: the single-part rewrite carries it in the conditional write itself, and the compose paths pin the follow-up patch to the composed object's generation — a concurrent overwrite answers conflict instead of inheriting the completing caller's metadata.</p>
 </li>
 <li>
 <p><strong>Firestore write path is <abbr title="Optimistic Concurrency Control">OCC</abbr>- and tenant-safe</strong> — patch does real rev-CAS in a transaction, deletes are tenant-verified, unsupported operators fail closed, creates fail closed on an existing id, and Firestore joins the cross-backend DSL parity harness.</p>
@@ -7905,6 +7914,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>Vault Transit signer picks up key rotation</strong> — the cached public key re-fetches after a TTL, so a rotated key verifies without a restart.</p>
+</li>
+<li>
+<p><strong>A sealed field cannot reach the external search index in clear</strong> — index sync feeds the search spec the aggregate's <em>decrypted</em> read model and re-seals it under the search spec's own policy, so a <code>SearchSpec</code> that omitted a field the <code>DocumentSpec</code> sealed published that field's plaintext to Meilisearch (and, for in-place search, broke decryption instead). The "same policy on both specs" rule was documented but unenforced; it is now checked wherever the two specs meet — <code>AggregateKit</code> construction, <code>bind_search_sync</code>, and <code>bind_search_sync_outbox</code> — failing closed with <code>search_encryption_parity_mismatch</code>.</p>
 </li>
 </ul>
 <p><strong>Identity &amp; authorization</strong></p>
@@ -7946,13 +7958,19 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Generated FastAPI routes render one 422 shape</strong> — request-validation errors use the shared error envelope; raw ctx/input dropped.</p>
 </li>
 <li>
+<p><strong>A <code>Range</code> over a client-side-encrypted object serves the right bytes</strong> — the streaming download route resolved the range against the object's <em>stored</em> size, which on an encrypting route is the ciphertext's, so a <code>bytes=-N</code> suffix (what media and zip readers ask for first) returned a window shifted by the envelope overhead, under a plausible-looking <code>Content-Range</code>; a range past the plaintext end surfaced as a 400 rather than a clean 416. Ranges now resolve against the plaintext total, which only the adapter knows. Adds <code>RANGE_NOT_SATISFIABLE_CODE</code>.</p>
+</li>
+<li>
 <p><strong><code>forze dst replay</code> survives a bad corpus target</strong> — one unloadable target counts as a failure while the rest of the corpus replays.</p>
 </li>
 </ul>
 <p><strong>PostgreSQL</strong></p>
 <ul>
 <li>
-<p><strong>Query parameters no longer leak across reads in a caller transaction</strong> — each param-bound read resets its session settings after the fetch.</p>
+<p><strong>Query parameters no longer leak across reads in a caller transaction</strong> — each param-bound read resets its session settings after the fetch; the analytics <strong>and procedure</strong> timeout/search-path settings get the same capture-and-restore inside a caller transaction. (Both issue <code>SET LOCAL</code> inside what is a <em>savepoint</em> when a caller transaction is already open, and Postgres merges a savepoint's <code>SET LOCAL</code> values into the enclosing transaction on release — so a procedure's per-tenant <code>search_path</code> and <code>statement_timeout</code> would otherwise apply to every statement the caller ran afterwards.) A failed reset never masks the original query error (logged as context; debug-level when the transaction was already aborted, where rollback discards the settings anyway).</p>
+</li>
+<li>
+<p><strong>An <abbr title="Optimistic Concurrency Control">OCC</abbr> retry inside a caller transaction can no longer die on the aborted transaction</strong> — on Mongo a write conflict aborts the whole server transaction, so the in-place retry failed with NoSuchTransaction; on Postgres a serialization failure or deadlock did the same, surfacing as masked infrastructure. Both now surface the original clean concurrency error for a whole-scope re-run; Postgres still heals a healthy zero-rows rev conflict in place.</p>
 </li>
 <li>
 <p><strong><code>find_many</code> warns when its implicit 10,000-row cap truncates</strong> — pass an explicit limit or paginate to read past it.</p>
@@ -7979,10 +7997,22 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A missing S3/GCS object classifies as not_found, not retryable infrastructure</strong> — a caller miss is no longer retried or counted against the breaker, and download routes 404 on real backends as on the mock. Bucket-level 404s stay infrastructure, and the re-encryption sweep confirms the container still lists before counting a skip.</p>
 </li>
 <li>
+<p><strong>Object-storage reads no longer create the bucket</strong> <em>(behavior change)</em> — <code>list</code> was the only read path calling <code>ensure_bucket</code>, so listing a deleted bucket re-created it and answered "empty", making an absent container indistinguishable from an empty one. That also defeated the re-encryption sweep's bucket-vanished guard above: the sweep's re-probe recreated the bucket it went looking for, counted every object as skipped, and returned a "complete" rotation report. Reads (<code>list</code>, like <code>download</code> / <code>head</code>) now raise on a missing bucket; only the write paths (<code>upload</code>, <code>upload_stream</code>, <code>presign_upload</code>, <code>begin_upload</code>) create on demand.</p>
+</li>
+<li>
 <p><strong>Meilisearch write path</strong> — a failed task raises instead of reporting success, task waits are bounded, tenant-tagged writes and deletes are scoped, and windows crossing maxTotalHits fail closed with the index provisioned to match.</p>
 </li>
 <li>
-<p><strong>Neo4j keyed-edge identity &amp; quantifier coercion</strong> — a keyed-edge ensure matches on the edge key so distinct keyed edges stay separate; every hop quantifier (including expand) is int-coerced before inlining; a filter key must be a plain identifier — a crafted key could reach query text through the parameter name (<code>graph_filter_key_invalid</code>); walk/path params validate their numeric bounds at construction.</p>
+<p><strong>Neo4j keyed-edge identity &amp; quantifier coercion</strong> — a keyed-edge ensure matches on the edge key so distinct keyed edges stay separate; every hop quantifier (including expand) is int-coerced before inlining; a filter key must be a plain identifier — a crafted key could reach query text through the parameter name (<code>graph_filter_key_invalid</code>); walk/path params validate their numeric bounds at construction. The mock graph adapter enforces the identical filter-key rule from a shared contracts helper, pinned by a differential conformance case.</p>
+</li>
+<li>
+<p><strong>Neo4j transactions honour the per-tenant database</strong> — an enlisted transaction bound to the client's static default and ignored each statement's <code>database=</code>, so under the <code>namespace</code> tier (a per-tenant database) a tenant's transactional graph writes landed in the shared database and reads cross-contaminated. The transaction's session is now opened by its first statement, binding it to that statement's tenant-resolved database — the transaction manager enlists the scope before any tenant name exists, so nothing earlier can know it. A second, different database inside one transaction is refused (<code>neo4j_tx_database_conflict</code>) rather than silently redirected.</p>
+</li>
+<li>
+<p><strong>Credentials in a logged JSON or dict-repr body are masked</strong> — the log scrubber's value rule matched only <code>key=value</code> / <code>key: value</code>, but in a serialized body the key's closing quote sits between the name and the separator (<code>{"api_key":"sk_live_…"}</code>), so every secret term except <code>private_key</code> — which had a hand-written rule of its own — went out verbatim wherever a request, response or webhook body was logged. The quoted-key form is now derived from the same term vocabulary as the plain form (plus <code>authorization</code>, whose quoted value is bounded), and the mask stops at the value so neighbouring fields survive.</p>
+</li>
+<li>
+<p><strong>Logger-name constants are importable as documented</strong> — <code>FORZE_POSTGRES_LOGGER_NAMES</code> / <code>FORZE_REDIS_LOGGER_NAMES</code> (and their logger enums) are now re-exported from the package roots for <code>bootstrap_logging</code> wiring, matching <code>forze_http</code>.</p>
 </li>
 <li>
 <p><strong><code>forze_redis</code> imports on redis-py 7 again</strong> — version-specific typing aliases are self-owned; client-side caching fails closed below redis-py 8.</p>

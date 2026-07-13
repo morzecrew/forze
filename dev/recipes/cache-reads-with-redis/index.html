@@ -5777,10 +5777,11 @@ only the dependency wiring adds caching:</p>
   value — so a cached read is never stale.</li>
 </ul>
 <h2 id="going-further">Going further<a class="headerlink" href="#going-further" title="Permanent link">&para;</a></h2>
-<p>Read-through is the floor. The cache contract layers stampede protection, an
-in-process L1 (with W-TinyLFU admission and Redis push invalidation), and adaptive
-TTLs on top — each a one-line addition to the <code>CacheSpec</code>, covered in
-<a href="../../data-events/caching/">Caching reads</a>.</p>
+<p>Read-through is the floor. The cache contract layers stampede protection with
+background early refresh (serve the still-valid entry, refresh off the request
+path), an in-process L1 (with W-TinyLFU admission and Redis push invalidation),
+and adaptive TTLs on top — each a one-line addition to the <code>CacheSpec</code>, covered
+in <a href="../../data-events/caching/">Caching reads</a>.</p>
 <h2 id="run-it">Run it<a class="headerlink" href="#run-it" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>examples/recipes/cache_reads
 just<span class="w"> </span>run

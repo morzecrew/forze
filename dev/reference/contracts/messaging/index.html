@@ -5765,11 +5765,11 @@ where <code>end_to_end</code> seals the payload through the broker).</p>
 <tbody>
 <tr>
 <td><code>enqueue</code></td>
-<td><code>enqueue(queue, payload, *, type=None, key=None, enqueued_at=None, delay=None, not_before=None)</code> → message id</td>
+<td><code>enqueue(queue, payload, *, type=None, key=None, enqueued_at=None, delay=None, not_before=None, headers=None)</code> → message id</td>
 </tr>
 <tr>
 <td><code>enqueue_many</code></td>
-<td><code>enqueue_many(queue, payloads, *, type=None, key=None, enqueued_at=None, delay=None, not_before=None)</code></td>
+<td><code>enqueue_many(queue, payloads, *, type=None, key=None, enqueued_at=None, delay=None, not_before=None, headers=None, message_headers=None)</code></td>
 </tr>
 </tbody>
 </table>
@@ -5841,9 +5841,15 @@ relay. See <a href="../../../recipes/transactional-outbox/">Transactional outbox
 </tr>
 <tr>
 <td><code>encryption</code></td>
-<td><code>OutboxEncryptionTier</code></td>
+<td><code>EncryptionReach</code></td>
 <td><code>"none"</code></td>
-<td>whole-payload tier: <code>none</code> · <code>at_rest</code> (relay decrypts before publish) · <code>end_to_end</code> (consumer decrypts) — see <a href="../../../identity-tenancy-enc/encryption/">encryption</a></td>
+<td>whole-payload tier: <code>none</code> · <code>at_rest</code> (relay decrypts before publish) · <code>end_to_end</code> (consumer decrypts) — see <a href="../../../identity-tenancy-enc/encryption/">encryption</a> (<code>OutboxEncryptionTier</code> is a deprecated alias)</td>
+</tr>
+<tr>
+<td><code>require_transaction</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>refuse to <code>flush</code> outside a transaction (the atomic stage-with-state guarantee, and the seam the <abbr title="Hybrid Logical Clock">HLC</abbr> checkpoint advances through)</td>
 </tr>
 </tbody>
 </table>

@@ -5769,6 +5769,20 @@ validates the plan and makes it safe to share across every request.</p>
 </code></pre></div>
 <p>From here, <code>async with runtime.scope():</code> opens the pools and serves requests, as
 covered in <a href="../../core-concepts/runtime/#the-scope-lifecycle">Runtime</a>.</p>
+<p>Freezing validates the plan's <em>shape</em> — not that every operation can actually
+resolve its ports from these deps. A rarely-hit operation asking for a port
+nobody registered would otherwise fail on its first call. To close that gap,
+dry-run the frozen operation registry with <code>check_wiring</code> (exported from
+<code>forze.application.execution</code>): it eagerly resolves every operation — handler,
+hooks, transactional stages, saga dispatch targets — through the same code path
+a real call takes, and collects every failure instead of stopping at the first:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExecutionContext</span><span class="p">,</span> <span class="n">check_wiring</span>
+
+<span class="n">report</span> <span class="o">=</span> <span class="n">check_wiring</span><span class="p">(</span><span class="n">operations</span><span class="p">,</span> <span class="k">lambda</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">(</span><span class="n">deps</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">deps</span><span class="o">.</span><span class="n">resolve</span><span class="p">()))</span>
+<span class="n">report</span><span class="o">.</span><span class="n">raise_if_failed</span><span class="p">()</span>
+</code></pre></div>
+<p>Run it as a startup gate in dev and staging, or as a test against your mock
+wiring, and a missing dependency surfaces before traffic does.</p>
 <h2 id="routed-clients">Routed clients<a class="headerlink" href="#routed-clients" title="Permanent link">&para;</a></h2>
 <p>When the current tenant decides <em>which</em> database or cache to talk to, swap the
 plain client for a routed one — <code>RoutedPostgresClient</code>, <code>RoutedRedisClient</code> — and

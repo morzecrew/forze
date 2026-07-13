@@ -5650,7 +5650,7 @@ one call:</p>
 
 <span class="n">local</span> <span class="o">=</span> <span class="n">local_identity_deps</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">authn_route</span><span class="o">=</span><span class="s2">&quot;main&quot;</span><span class="p">,</span> <span class="n">tenancy_route</span><span class="o">=</span><span class="s2">&quot;main&quot;</span><span class="p">)</span>
 
-<span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span><span class="n">local</span><span class="p">)</span>
+<span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_deps</span><span class="p">(</span><span class="n">local</span><span class="p">)</span>
 </code></pre></div>
 <details class="note">
 <summary>Wiring it by hand</summary>

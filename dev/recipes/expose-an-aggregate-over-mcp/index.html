@@ -5711,9 +5711,10 @@ npx<span class="w"> </span>-y<span class="w"> </span>@modelcontextprotocol/inspe
 <li><strong>Discovery is built in.</strong> The example also registers the querying-DSL guidance
   prompts and a field-schema resource, so an agent can learn which fields are
   filterable/sortable before building a <code>notes.list</code> query.</li>
-<li><strong>Bring your own <code>FastMCP</code> in production</strong> for auth and transport;
-  <code>build_mcp_server</code> is the convenience wrapper. The wiring surface is in the
-  <a href="../../integrations/mcp/"><abbr title="Model Context Protocol">MCP</abbr> integration page</a>.</li>
+<li><strong>Auth is a parameter.</strong> Pass <code>auth=ForzeApiKeyVerifier(…)</code> plus an <code>identity</code>
+  resolver to <code>build_mcp_server</code> and the server validates an API-key bearer
+  through the same authn stack as your HTTP routes — wiring, including agent
+  impersonation, is in the <a href="../../integrations/mcp/"><abbr title="Model Context Protocol">MCP</abbr> integration page</a>.</li>
 </ul>
 
 

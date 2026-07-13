@@ -5764,8 +5764,8 @@ forze stays the Resource Server and never runs an authorization server.</p>
   as actor).</li>
 <li>Reads are read-only by default; <code>include_writes=True</code> opts in and tags command
   tools as destructive.</li>
-<li>For production, bring your own <code>FastMCP</code> (auth, transport); <code>build_mcp_server</code>
-  is a convenience. See the
+<li>API-key auth is built in (<code>auth=</code> above); for custom transports or server
+  policies, bring your own <code>FastMCP</code> — <code>build_mcp_server</code> is a convenience. See the
   <a href="../../recipes/expose-an-aggregate-over-mcp/">expose-an-aggregate-over-<abbr title="Model Context Protocol">MCP</abbr> recipe</a>
   for a runnable walkthrough.</li>
 </ul>

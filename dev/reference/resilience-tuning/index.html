@@ -5511,6 +5511,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#control-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Control plane
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5698,6 +5709,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#control-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Control plane
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5797,7 +5819,9 @@
 exhaustive surface — each strategy's constructor parameters and defaults, and the
 algorithm behind the adaptive controllers. A <code>ResiliencePolicy</code> composes these
 outer→inner: rate limit → bulkhead → circuit breaker → retry → timeout, plus
-optional fallback and hedge.</p>
+optional fallback and hedge. The policy itself carries one more knob —
+<code>fail_open_on_store_error</code> (default <code>True</code>): when a shared breaker / rate-limit
+store errors, admit the call instead of failing it.</p>
 <h2 id="rate-limit">Rate limit<a class="headerlink" href="#rate-limit" title="Permanent link">&para;</a></h2>
 <p><code>RateLimitStrategy</code> — token bucket, sustained <code>permits/per</code>, capacity <code>burst or
 permits</code>. The bucket starts full and refills continuously; an empty bucket rejects
@@ -6175,6 +6199,35 @@ idempotent reads; <code>budget</code> caps the extra load. Applied outside the s
 <p>The effective adaptive delay is the <code>forze.resilience.hedge.delay</code> gauge once
 <a href="../../running-in-prod/observability/#resilience-metrics"><code>instrument_resilience</code></a> is
 attached.</p>
+<h2 id="control-plane">Control plane<a class="headerlink" href="#control-plane" title="Permanent link">&para;</a></h2>
+<p><code>ResilienceAdminPort</code> (<code>ctx.resilience.admin()</code>, <code>ResilienceAdminDepKey</code>) inspects and
+retunes live policy state without a redeploy:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>inspect(*, policy=None)</code></td>
+<td><code>ResilienceStateSnapshot</code>s — per <code>(policy, route)</code>: <code>forced_open</code>, the adaptive <code>concurrency_limit</code>, <code>in_use</code>, <code>waiting</code>, and the effective <code>hedge_delay</code></td>
+</tr>
+<tr>
+<td><code>force_open(policy, route=None)</code></td>
+<td>manual kill-switch — trip the breaker open (<code>route=None</code> = every route)</td>
+</tr>
+<tr>
+<td><code>clear_forced_open(policy, route=None)</code></td>
+<td>lift a manual trip</td>
+</tr>
+<tr>
+<td><code>retune(policy)</code></td>
+<td>hot-swap a <code>ResiliencePolicy</code> by name; drops that policy's cached adaptive state</td>
+</tr>
+</tbody>
+</table>
 
 
 

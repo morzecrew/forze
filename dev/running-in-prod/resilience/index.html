@@ -5897,7 +5897,7 @@ fast-failing downstream must not crater concurrency when failures are cheap — 
 shrinking only gates admission, never evicting in-flight work. The three kinds are
 mutually exclusive within a policy.</p>
 <p>A queued bulkhead can additionally bound waiting by <em>time</em> (CoDel) and shed by
-criticality rather than length. Every parameter — the AIMD and Gradient2
+<a href="../load-shedding/">criticality</a> rather than length. Every parameter — the AIMD and Gradient2
 mechanics, the distributional <code>latency_quantile</code> signal, and the CoDel /
 adaptive-LIFO / prioritized queue controls — is in
 <a href="../../reference/resilience-tuning/#bulkheads">resilience tuning</a>.</p>

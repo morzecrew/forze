@@ -5804,7 +5804,7 @@ are <strong>before-hooks</strong> (<code>.before</code>); the authz scope filter
 </code></pre></div>
 <ul>
 <li><strong><code>AuthnRequired</code></strong> demands a principal; <strong><code>TenantRequired</code></strong> demands a bound
-  tenant — both raise <code>401</code>/<code>403</code> when missing.</li>
+  tenant — both raise <code>401</code> when missing.</li>
 <li><strong><code>AuthzBeforeAuthorize</code></strong> asks the decision port whether the subject may
   perform <code>action</code>; a deny raises <code>403</code>.</li>
 <li><strong><code>AuthzDocumentScopeWrap</code></strong> asks the scope port for a row filter and <strong>merges

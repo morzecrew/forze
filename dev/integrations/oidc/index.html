@@ -5692,6 +5692,9 @@ resolver. Construct the verifier from a <abbr title="JSON Web Key Set">JWKS</abb
   eligibility instead.</li>
 <li><code>JwksKeyProvider</code>'s <code>cache_ttl</code> and <code>timeout</code> are <code>timedelta</code>s. Issuer and
   audience are required by default.</li>
+<li><code>require_nonce=True</code> (on the verifier or <code>OidcIdpPreset</code>) rejects tokens
+  missing a <code>nonce</code> claim — presence-only; bind the nonce <em>value</em> in your
+  callback handler with <code>verify_id_token_nonce</code>.</li>
 <li>Vendor presets (Google, VK, Telegram) live in <code>forze_identity.builtin.idp</code>.</li>
 </ul>
 

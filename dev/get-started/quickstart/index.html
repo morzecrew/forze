@@ -5777,7 +5777,7 @@ essentials come from the <code>forze</code> and <code>forze_kits</code> top-leve
 <span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">computed_field</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">CreateDocumentCmd</span><span class="p">,</span>
+    <span class="n">BaseDTO</span><span class="p">,</span>
     <span class="n">Document</span><span class="p">,</span>
     <span class="n">DocumentSpec</span><span class="p">,</span>
     <span class="n">DocumentWriteTypes</span><span class="p">,</span>
@@ -5798,7 +5798,7 @@ model</strong>. <code>Document</code> gives you <code>id</code>, <code>rev</code
     <span class="n">email</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 
 
-<span class="k">class</span><span class="w"> </span><span class="nc">CreateUserCmd</span><span class="p">(</span><span class="n">CreateDocumentCmd</span><span class="p">):</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">CreateUserCmd</span><span class="p">(</span><span class="n">BaseDTO</span><span class="p">):</span>
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">email</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 

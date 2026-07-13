@@ -5835,7 +5835,7 @@ once no matter how many times the event is delivered:</p>
   transaction, a published <code>order.confirmed</code> always corresponds to a committed
   order — never a phantom event, never a silent loss.</li>
 <li><strong>Swap the mock for real backends</strong> without touching this logic: a Postgres
-  store + outbox, a real broker via <code>relay_outbox_to_queue</code>, and the same inbox
+  store + outbox, a real broker via <code>OutboxRelay.to_queue</code>, and the same inbox
   dedup. The orchestration is backend-agnostic.</li>
 </ul>
 

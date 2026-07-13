@@ -5665,14 +5665,18 @@ delay delivery.)</p>
 </table>
 <h2 id="recurring-schedules-cron">Recurring schedules (cron)<a class="headerlink" href="#recurring-schedules-cron" title="Permanent link">&para;</a></h2>
 <p>A queue delay is one-shot. For <em>recurring</em> work, register a <strong>durable function</strong>
-with a cron trigger — the durable backend (<a href="../../integrations/temporal/">Temporal</a>
-/ <a href="../../integrations/inngest/">Inngest</a>) owns the schedule:</p>
+with a cron trigger and let the durable side own the schedule — pass the spec to
+the self-hosted scheduler step, or let <a href="../../integrations/inngest/">Inngest</a>
+register the cron with the provider (see
+<a href="../../data-events/durable-execution/#recurring-schedules">Recurring schedules</a>):</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.durable.function</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">DurableFunctionCronTrigger</span><span class="p">,</span>
+    <span class="n">DurableFunctionInvokeSpec</span><span class="p">,</span>
     <span class="n">DurableFunctionSpec</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="n">nightly</span> <span class="o">=</span> <span class="n">DurableFunctionSpec</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;nightly-report&quot;</span><span class="p">,</span>
     <span class="n">run</span><span class="o">=</span><span class="n">DurableFunctionInvokeSpec</span><span class="p">(</span><span class="o">...</span><span class="p">),</span>
     <span class="n">triggers</span><span class="o">=</span><span class="p">(</span><span class="n">DurableFunctionCronTrigger</span><span class="p">(</span><span class="n">expression</span><span class="o">=</span><span class="s2">&quot;0 2 * * *&quot;</span><span class="p">),),</span>  <span class="c1"># 02:00 daily</span>
     <span class="n">operation</span><span class="o">=</span><span class="s2">&quot;reports.nightly&quot;</span><span class="p">,</span>  <span class="c1"># run the same frozen-registry operation as HTTP</span>
@@ -5682,8 +5686,9 @@ with a cron trigger — the durable backend (<a href="../../integrations/tempora
 routes do — one implementation, two triggers.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
-<li>The <strong>scheduler lives outside Forze</strong> — the queue/durable backend fires the
-  trigger; Forze runs the work. There's no Celery Beat to operate.</li>
+<li><strong>No Celery Beat to operate</strong> — the queue backend holds delayed messages, and
+  the cron trigger is fired by the durable side (the scheduler lifecycle step or
+  the provider); Forze runs the work.</li>
 <li>To schedule a job <em>reliably</em> as part of a transaction, stage it through the
   <a href="../transactional-outbox/">outbox</a> rather than enqueuing inline.</li>
 <li>For a single deferred run with no recurrence, the queue <code>delay</code> is simpler than

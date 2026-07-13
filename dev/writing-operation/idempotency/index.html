@@ -5656,7 +5656,7 @@ twice. <strong>Idempotency</strong> makes the duplicate a no-op that returns the
 attempt's result — the handler and its writes run exactly once.</p>
 <h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
 <p>When a request carries an <strong>idempotency key</strong>, the engine wraps the operation as
-its outermost layer. On each call it:</p>
+the outermost wrap of its pipeline. On each call it:</p>
 <ol>
 <li>fingerprints the arguments (a stable payload hash);</li>
 <li><strong>claims</strong> <code>(operation, key, payload hash)</code>;</li>
@@ -5665,8 +5665,10 @@ its outermost layer. On each call it:</p>
    transaction</em> entirely;</li>
 <li>otherwise runs the handler and stores the encoded result.</li>
 </ol>
-<p>Because the wrap sits <em>outside</em> the <code>before</code> hooks, authentication and
-authorization still run first — a replayed result is never an unauthorized one.</p>
+<p>The <code>before</code> hooks run ahead of the wrap chain, so authentication and
+authorization still run first — a replayed result is never an unauthorized one.
+What a duplicate skips is everything <em>inside</em> the wrap: the inner wraps, the
+transaction, and the handler.</p>
 <h2 id="keys-and-payloads">Keys and payloads<a class="headerlink" href="#keys-and-payloads" title="Permanent link">&para;</a></h2>
 <ul>
 <li>The <strong>key</strong> comes from the caller. Over HTTP it's the <code>Idempotency-Key</code>

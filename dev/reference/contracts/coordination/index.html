@@ -5635,7 +5635,7 @@ the outermost wrap on a keyed operation — you rarely call the port directly; s
 <tr>
 <td><code>ttl</code></td>
 <td><code>timedelta</code></td>
-<td><code>30s</code></td>
+<td><code>24h</code></td>
 <td>how long a completed result is remembered</td>
 </tr>
 <tr>
@@ -5694,6 +5694,12 @@ the outermost wrap on a keyed operation — you rarely call the port directly; s
 <td><code>30s</code></td>
 <td>lease lifetime — a held lock auto-expires after this</td>
 </tr>
+<tr>
+<td><code>requires_fencing_token</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>fail closed at wiring unless the backend issues fencing tokens (<code>AcquiredLock.token</code>)</td>
+</tr>
 </tbody>
 </table>
 <table>
@@ -5708,7 +5714,7 @@ the outermost wrap on a keyed operation — you rarely call the port directly; s
 <tr>
 <td>command</td>
 <td><code>acquire(key, owner)</code></td>
-<td>returns an <code>AcquiredLock</code>, or <code>None</code> if already held</td>
+<td>returns an <code>AcquiredLock</code> (with an optional fencing <code>token</code>), or <code>None</code> if already held</td>
 </tr>
 <tr>
 <td>command</td>
@@ -5716,9 +5722,24 @@ the outermost wrap on a keyed operation — you rarely call the port directly; s
 <td>release if owned; returns whether it was</td>
 </tr>
 <tr>
+<td>command</td>
+<td><code>reset(key, owner)</code></td>
+<td>renew the lease — reset the TTL of a held lock (the fencing token doesn't change); returns whether it was held</td>
+</tr>
+<tr>
 <td>query</td>
 <td><code>is_locked(key)</code></td>
 <td>presence check</td>
+</tr>
+<tr>
+<td>query</td>
+<td><code>get_owner(key)</code></td>
+<td>the current owner, or <code>None</code></td>
+</tr>
+<tr>
+<td>query</td>
+<td><code>get_ttl(key)</code></td>
+<td>remaining lease time, or <code>None</code></td>
 </tr>
 </tbody>
 </table>

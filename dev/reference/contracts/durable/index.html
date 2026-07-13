@@ -5629,11 +5629,12 @@
 
   <h1 id="__skip">Durable execution</h1>
 
-<p>Durable execution runs <strong>crash-resumable</strong> work on an external engine: a long-running
-workflow that survives process restarts, a schedule that fires it on a cron, or an
-event-driven function. These contracts are <strong>resolved by dep key</strong> — there is no short
-<code>ctx.*</code> accessor — and the engine integration (<a href="../../../integrations/temporal/">Temporal</a> /
-<a href="../../../integrations/inngest/">Inngest</a>) provides the adapter. The concept is
+<p>Durable execution runs <strong>crash-resumable</strong> work: a long-running workflow that survives
+process restarts, a schedule that fires it on a cron, or an event-driven function. These
+contracts are <strong>resolved by dep key</strong> — there is no short <code>ctx.*</code> accessor — and an engine
+integration (<a href="../../../integrations/temporal/">Temporal</a> /
+<a href="../../../integrations/inngest/">Inngest</a>) or the self-hosted Postgres tier provides the
+adapter. The concept is
 <a href="../../../data-events/durable-execution/">Durable execution</a>; worked flows are the
 <a href="../../../recipes/background-workflow/">background workflow</a> and
 <a href="../../../recipes/scheduled-queue-jobs/">scheduled queue jobs</a> recipes.</p>
@@ -5682,11 +5683,11 @@ nested <code>DurableWorkflowInvokeSpec</code>):</p>
 <tbody>
 <tr>
 <td><code>DurableWorkflowCommandDepKey</code></td>
-<td>start, signal, update, cancel, terminate</td>
+<td><code>start</code>, <code>signal</code>, <code>update</code>, <code>cancel</code>, <code>terminate</code></td>
 </tr>
 <tr>
 <td><code>DurableWorkflowQueryDepKey</code></td>
-<td>run status (<code>DurableWorkflowRunStatus</code>), result, query</td>
+<td><code>query</code>, <code>result</code>, <code>describe</code> (a <code>DurableWorkflowRunDescription</code> with the <code>DurableWorkflowRunStatus</code>)</td>
 </tr>
 </tbody>
 </table>
@@ -5739,9 +5740,22 @@ queue's delayed jobs.</p>
 <td><code>DurableFunctionStepDepKey</code></td>
 <td>run memoized, individually-retried steps inside a function</td>
 </tr>
+<tr>
+<td><code>DurableRunStoreDepKey</code></td>
+<td>the run store behind the self-hosted tier — enqueue / begin / renew / complete / fail, <code>claim_abandoned</code> recovery</td>
+</tr>
+<tr>
+<td><code>DurableRunAdminDepKey</code></td>
+<td>run listing — <code>list_runs(status=None, name=None, limit=50, cursor=None)</code> returns a cursor-paged <code>DurableRunPage</code> of <code>DurableRunRecord</code>s</td>
+</tr>
+<tr>
+<td><code>DurableScheduleStoreDepKey</code></td>
+<td>the cron schedule store — put / claim_due / advance / load / delete</td>
+</tr>
 </tbody>
 </table>
-<p>A <code>DurableFunctionEventSpec</code> binds an event channel to its payload codec.</p>
+<p>A <code>DurableFunctionEventSpec</code> binds an event channel to its payload codec. A run's status is
+a <code>DurableRunStatus</code> — <code>pending</code> / <code>running</code> / <code>completed</code> / <code>failed</code> / <code>forward_incomplete</code>.</p>
 <h2 id="implemented-by">Implemented by<a class="headerlink" href="#implemented-by" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5761,6 +5775,11 @@ queue's delayed jobs.</p>
 <td>Event-driven functions</td>
 <td>Inngest</td>
 <td><a href="../../../integrations/inngest/">Inngest</a></td>
+</tr>
+<tr>
+<td>Functions + steps + cron (self-hosted: run/step/schedule stores + <code>forze_kits</code> runner)</td>
+<td>Postgres</td>
+<td><a href="../../../integrations/postgres/">Postgres</a> — see <a href="../../../data-events/durable-execution/#self-hosted-on-postgres">Durable execution → Self-hosted</a></td>
 </tr>
 </tbody>
 </table>

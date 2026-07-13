@@ -5661,9 +5661,9 @@
   <h1 id="__skip">PostgreSQL</h1>
 
 <p><code>forze[postgres]</code> implements document storage (read + write), full-text / vector
-/ hub / federated search, and transaction coordination on PostgreSQL. Persistence
-stays behind Forze contracts; PostgreSQL tables, indexes, and pools live at the
-edge.</p>
+/ hub / federated search, transaction coordination, the transactional outbox /
+inbox, idempotency, and durable execution on PostgreSQL. Persistence stays behind
+Forze contracts; PostgreSQL tables, indexes, and pools live at the edge.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">&#39;forze[postgres]&#39;</span>
 </code></pre></div>
@@ -5717,8 +5717,8 @@ module, and open the pool from the lifecycle plan:</p>
 </tr>
 <tr>
 <td>Search</td>
-<td><code>SearchSpec.name</code> (<code>searches</code>)</td>
-<td><code>engine="pgroonga"</code> / <code>"fts"</code> / <code>"vector"</code>, plus hub &amp; federated</td>
+<td><code>SearchSpec.name</code> (<code>searches</code>, <code>hub_searches</code>, <code>federated_searches</code>)</td>
+<td><code>engine="pgroonga"</code>, <code>FtsEngine(...)</code>, or <code>VectorEngine(...)</code></td>
 </tr>
 <tr>
 <td>Transactions</td>
@@ -5729,6 +5729,26 @@ module, and open the pool from the lifecycle plan:</p>
 <td>Analytics</td>
 <td><code>AnalyticsSpec.name</code> (<code>analytics</code>)</td>
 <td>named, parameterized warehouse SQL — optional</td>
+</tr>
+<tr>
+<td>Outbox / inbox</td>
+<td><code>OutboxSpec.name</code> (<code>outboxes</code>), <code>InboxSpec.name</code> (<code>inboxes</code>)</td>
+<td>transactional outbox + consumer-side dedup inbox</td>
+</tr>
+<tr>
+<td>Idempotency</td>
+<td><code>IdempotencySpec.name</code> (<code>idempotencies</code>)</td>
+<td>co-located store — the record commits inside the business transaction</td>
+</tr>
+<tr>
+<td>Procedures</td>
+<td><code>ProcedureSpec.name</code> (<code>procedures</code>)</td>
+<td>named, governed SQL command / compute</td>
+</tr>
+<tr>
+<td>Durable execution</td>
+<td><code>durable_step</code> / <code>durable_run</code> / <code>durable_schedule</code></td>
+<td>step memo, run store, and cron schedules — optional</td>
 </tr>
 </tbody>
 </table>

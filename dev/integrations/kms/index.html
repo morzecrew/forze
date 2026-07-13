@@ -5878,7 +5878,10 @@ onboarding is safe.</p>
   being told which version sealed it, so rotating the KEK never orphans data: new
   writes wrap under the new version while old ciphertext still decrypts. Nothing to
   migrate, no re-encrypt sweep — see <a href="../../identity-tenancy-enc/encryption/#searchable-fields-and-rotation">Searchable fields and rotation</a>
-  for the one case that <em>does</em> need a re-index.</li>
+  for the one case that <em>does</em> need a re-index. Pointing a tenant at a
+  <em>different</em> <code>key_id</code> is a migration, not a rotation — it needs a previous-key
+  read overlap and a re-encrypt sweep; see
+  <a href="../../identity-tenancy-enc/encryption/#replacing-a-key">Replacing a key</a>.</li>
 <li><strong>Data-key length</strong> is <code>dek_bytes</code> on the adapter — 32 bytes (AES-256) by
   default, matching the keyring's AEAD; 16 selects AES-128.</li>
 <li><strong>Teardown is opt-in and never immediate.</strong> <code>deprovision</code> does nothing unless you

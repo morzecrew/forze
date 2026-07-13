@@ -5791,7 +5791,7 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 <tr>
 <td><a href="../contracts/streaming/#streams">Stream</a></td>
 <td>stream route</td>
-<td><code>StreamCommandDepKey</code> / <code>StreamQueryDepKey</code></td>
+<td><code>StreamCommandDepKey</code> / <code>StreamQueryDepKey</code> (+ the ack / commit group dep keys; <code>ctx.stream.commit_query</code> / <code>.commit_admin</code> shortcuts)</td>
 </tr>
 <tr>
 <td><a href="../contracts/messaging/#outbox">Outbox</a></td>
@@ -5872,6 +5872,11 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 <td><code>DurableFunctionSpec</code></td>
 <td><code>DurableFunctionEventCommandDepKey</code> / <code>DurableFunctionStepDepKey</code></td>
 </tr>
+<tr>
+<td><a href="../contracts/durable/#event-driven-functions">Run &amp; schedule stores, run listing</a></td>
+<td>—</td>
+<td><code>DurableRunStoreDepKey</code> / <code>DurableRunAdminDepKey</code> / <code>DurableScheduleStoreDepKey</code></td>
+</tr>
 </tbody>
 </table>
 <h2 id="identity-access">Identity &amp; access<a class="headerlink" href="#identity-access" title="Permanent link">&para;</a></h2>
@@ -5923,9 +5928,11 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 </tr>
 </tbody>
 </table>
-<p>Capabilities resolved by a <code>*DepKey</code> (queue, pub/sub, stream, durable) have no
-short <code>ctx.&lt;x&gt;</code> accessor — resolve them through the context's dependency
-resolution by their dep key and route.</p>
+<p>Capabilities resolved by a <code>*DepKey</code> (queue, pub/sub, durable) have no short
+<code>ctx.&lt;x&gt;</code> accessor — resolve them through the context's dependency resolution by
+their dep key and route. Streams have shortcuts for the commit sub-model only
+(<code>ctx.stream.commit_query</code> / <code>.commit_admin</code>); the rest of the stream family
+resolves by dep key too.</p>
 
 
 

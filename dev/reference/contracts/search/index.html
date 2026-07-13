@@ -5783,6 +5783,18 @@ result-set snapshots.</p>
 <td>searchable fields a query may highlight; <code>None</code> = all searchable <code>fields</code>, <code>∅</code> = none</td>
 </tr>
 <tr>
+<td><code>highlight_scan_limit</code></td>
+<td><code>int \| None</code></td>
+<td><code>None</code></td>
+<td>cap on the characters of a field scanned for in-process highlighting (relational search) — a match beyond the cap isn't highlighted; the hit is unaffected</td>
+</tr>
+<tr>
+<td><code>max_results</code></td>
+<td><code>int \| None</code></td>
+<td><code>None</code></td>
+<td>server-side cap on an offset search with <strong>no</strong> caller <code>limit</code> (an explicit <code>limit</code> is honoured as-is) — guards fetching the whole matched set</td>
+</tr>
+<tr>
 <td><code>read_conformity</code></td>
 <td><code>"strict" \| "lenient"</code></td>
 <td><code>"strict"</code></td>
@@ -5866,11 +5878,14 @@ argument; everything else mirrors the document side:</p>
 </table>
 <p><code>query</code> is a string (or a sequence of strings); <code>filters</code> and <code>sorts</code> use the
 <a href="../../query-syntax/">query DSL</a>. <code>options: SearchOptions</code> is the backend- and
-topology-agnostic per-request surface — relevance weights, fuzzy matching, the count
+topology-agnostic per-request surface — relevance <code>weights</code>, <code>fuzzy</code> matching, a per-request
+<code>fields</code> narrowing, multi-term combination (<code>phrase_combine</code>: <code>"any"</code> / <code>"all"</code>), the count
 policy (<code>search_count</code>), an advisory candidate cap (<code>max_candidates</code>), and the facet /
-highlight requests below. Hub and federated searches resolve to a <code>MultiSourceSearchOptions</code>
-port that also carries member selection (<code>member_weights</code> / <code>members</code>) and a post-merge cap
-(<code>merge_candidates</code>); passing those keys to a single-index <code>query(...)</code> port is a type error.</p>
+highlight requests below (<code>facets</code>, <code>facet_size</code>, <code>highlight</code>). Hub and federated searches
+resolve to a <code>MultiSourceSearchOptions</code> port that also carries member selection
+(<code>member_weights</code> / <code>members</code>), a post-merge cap (<code>merge_candidates</code>), and the <code>fusion</code>
+strategy (<code>"rrf"</code> / <code>"weighted"</code>); passing those keys to a single-index <code>query(...)</code> port is
+a type error.</p>
 <h3 id="streaming-exports">Streaming exports<a class="headerlink" href="#streaming-exports" title="Permanent link">&para;</a></h3>
 <p><code>search_stream</code> (and the <code>project_</code> / <code>select_</code> variants) iterate the <strong>whole</strong> matching set
 in bounded-memory keyset chunks — peak memory is one chunk, there is no total count. Use it to
@@ -5895,7 +5910,8 @@ match snippets with <code>options={"highlight": True}</code> (or a <code>Highlig
 fields / customize the <code>&lt;em&gt;</code> markers), over the spec's <code>facetable_fields</code> /
 <code>highlightable_fields</code>. Results ride the page as optional <code>page.facets</code> (one set per query,
 over the full matching set) and <code>page.highlights</code> (per hit, index-aligned with <code>hits</code>),
-<code>None</code> when not requested. A field or backend that cannot serve a request fails closed with
+<code>None</code> when not requested. (Pages also carry optional per-hit relevance <code>page.scores</code>,
+index-aligned the same way.) A field or backend that cannot serve a request fails closed with
 <code>query_feature_unsupported</code>.</p>
 <p>Support is per backend (single-index) and per topology (hub / federated). <strong>fail-closed</strong>
 raises <code>query_feature_unsupported</code>; <strong>—</strong> means not applicable.</p>

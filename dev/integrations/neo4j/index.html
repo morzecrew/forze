@@ -5696,17 +5696,25 @@ Bolt driver) — nodes, edges, and traversals behind the graph ports.</p>
 </thead>
 <tbody>
 <tr>
-<td>Graph query / command / raw Cypher</td>
-<td><code>GraphModuleSpec.name</code> (bundling <code>GraphNodeSpec</code> + <code>GraphEdgeSpec</code>)</td>
+<td>Graph query / command / raw Cypher / management</td>
+<td><code>GraphModuleSpec.name</code> (<code>graphs</code>, bundling <code>GraphNodeSpec</code> + <code>GraphEdgeSpec</code>)</td>
+</tr>
+<tr>
+<td>Transactions</td>
+<td>route in the module <code>tx</code> set</td>
 </tr>
 </tbody>
 </table>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Vertical slice.</strong> The common operations are implemented — <code>get_vertex</code>,
-  <code>create_vertex</code>, <code>neighbors</code>, <code>expand</code>, <code>shortest_path</code>, <code>create_edge</code>,
-  <code>ensure_edge</code>, raw <code>run</code> — while several others (bulk ops, some edge queries)
-  still raise <code>NotImplementedError</code>.</li>
+<li><strong>Full graph surface.</strong> All graph ports are implemented — vertex/edge CRUD
+  (single and batch), <code>neighbors</code>, <code>expand</code>, <code>find_vertices</code> / <code>find_edges</code>,
+  counts and degrees, <code>shortest_path</code> and <code>k_shortest_paths</code> (weighted variants
+  need the Graph Data Science plugin), raw <code>run</code>, plus <code>ensure_schema</code> /
+  <code>drop_schema</code> on the management port.</li>
+<li><strong>Transactions.</strong> Bind an operation's <code>tx_route</code> to a name in <code>tx</code> so a
+  handler's graph writes commit or roll back as a unit; Neo4j is not
+  co-transactional with other backends.</li>
 <li><strong>Tenancy spans three tiers.</strong> <code>tagged</code> — with <code>tenant_aware</code>, a <code>tenant_property</code>
   (default <code>tenant_id</code>) is stamped on writes and matched on reads (raw <code>run</code> fails closed
   without a bound tenant). <code>namespace</code> — set <code>Neo4jGraphConfig.database</code> to a

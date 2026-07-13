@@ -5608,9 +5608,11 @@
   <h1 id="__skip">Tenancy matrix</h1>
 
 <p>The narrative is in <a href="../../identity-tenancy-enc/multi-tenancy/">Multi-tenancy</a>; this is
-the exhaustive surface — every integration, the tiers it reaches, and how. Tiers are
-<code>tagged</code> &lt; <code>namespace</code> &lt; <code>dedicated</code>, classified by the <em>isolation you get</em>:</p>
+the exhaustive surface — every integration, the tiers it reaches, and how. Tiers
+(<code>TenantIsolationMode</code>) are <code>none</code> &lt; <code>tagged</code> &lt; <code>namespace</code> &lt; <code>dedicated</code>, classified by
+the <em>isolation you get</em>:</p>
 <ul>
+<li><strong><code>none</code></strong> — a deliberately shared resource with no tenant boundary at all.</li>
 <li><strong><code>tagged</code></strong> — one shared container, a tenant marker you filter on (leakable by a
   forgotten predicate).</li>
 <li><strong><code>namespace</code></strong> — a separate key / path / schema / collection / dataset / index per

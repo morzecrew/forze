@@ -5934,17 +5934,17 @@ HTTP call now opens a <code>CLIENT</code> span named <code>surface.op</code> (<c
 <code>route</code> attribute, never in the name. The span sits <strong>inside</strong> the resilience
 policy, so a retried call is one span per attempt and a call shed by an open breaker
 or a full bulkhead emits none — the trace shows the work that actually reached the
-backend.</p>
-<p>For a <strong>log line</strong> per outbound call instead of (or alongside) a span, add
-<code>deps.with_port_logging()</code>. It logs every port call uniformly — <code>surface</code>, <code>route</code>,
-<code>op</code>, and <code>duration_ms</code> under <code>forze.integrations.&lt;domain&gt;</code> — at <code>trace</code> on success
-(so it costs nothing in production unless you turn trace on), <code>debug</code> on an expected
-domain failure, and <code>warning</code> with a traceback on an unexpected one. Failure status follows the exception <em>kind</em>: an infrastructure, internal,
+backend. Failure status follows the exception <em>kind</em>: an infrastructure, internal,
 or configuration fault reds the span, while a domain failure the caller can handle —
 not-found, conflict, precondition — leaves it clean, exactly as a 404 does not red an
 HTTP client span. Streaming methods (a cursor, a consume loop, a subscription) pass
 through un-spanned — a lone span around a long-lived stream is the wrong shape;
 per-message spans belong in the consumer.</p>
+<p>For a <strong>log line</strong> per outbound call instead of (or alongside) a span, add
+<code>deps.with_port_logging()</code>. It logs every port call uniformly — <code>surface</code>, <code>route</code>,
+<code>op</code>, and <code>duration_ms</code> under <code>forze.integrations.&lt;domain&gt;</code> — at <code>trace</code> on success
+(so it costs nothing in production unless you turn trace on), <code>debug</code> on an expected
+domain failure, and <code>warning</code> with a traceback on an unexpected one.</p>
 <h2 id="follow-the-trace-across-boundaries">Follow the trace across boundaries<a class="headerlink" href="#follow-the-trace-across-boundaries" title="Permanent link">&para;</a></h2>
 <p>Spans and port spans cover one operation inside one process. When the work crosses a
 boundary the trace would normally break — so Forze carries the W3C <code>traceparent</code>

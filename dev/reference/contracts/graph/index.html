@@ -4842,6 +4842,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#management-port-ctxgraphmanagementspec" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Management port  (<code>ctx.graph.management(spec)</code>)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#implemented-by" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5546,6 +5557,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#management-port-ctxgraphmanagementspec" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Management port  (<code>ctx.graph.management(spec)</code>)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#implemented-by" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5687,9 +5709,11 @@ refs (<code>VertexRef</code> / <code>EdgeRef</code>) address individual nodes an
 </tr>
 </tbody>
 </table>
-<p>Each <code>GraphNodeSpec</code> / <code>GraphEdgeSpec</code> carries a <code>name</code> (the <em>kind</em>) and a model. Field
-<a href="../../../identity-tenancy-enc/encryption/">encryption</a> covers nodes and key-addressed edges;
-endpoint-identity edges reject <code>binds_record_id</code>.</p>
+<p>Each <code>GraphNodeSpec</code> / <code>GraphEdgeSpec</code> carries a <code>name</code> (the <em>kind</em>), a <code>read</code> model, and
+optional <code>create</code> / <code>update</code> models. An edge also declares its <code>identity</code> (<code>"key"</code> or
+<code>"endpoints"</code>), its allowed <code>endpoints</code>, and its <code>directionality</code> (<code>directed</code> /
+<code>symmetric</code>). Field <a href="../../../identity-tenancy-enc/encryption/">encryption</a> covers nodes and
+key-addressed edges; endpoint-identity edges reject <code>binds_record_id</code>.</p>
 <h2 id="query-port-ctxgraphqueryspec">Query port  (<code>ctx.graph.query(spec)</code>)<a class="headerlink" href="#query-port-ctxgraphqueryspec" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5708,16 +5732,53 @@ endpoint-identity edges reject <code>binds_record_id</code>.</p>
 <td>fetch edges by ref</td>
 </tr>
 <tr>
-<td><code>neighbors(ref, …)</code></td>
-<td>adjacent nodes / edges, filtered by kind and direction</td>
+<td><code>vertex_exists(ref)</code> / <code>edge_exists(ref)</code></td>
+<td>presence checks</td>
 </tr>
 <tr>
-<td><code>shortest_path(from_ref, to_ref, …)</code></td>
-<td>a path between two nodes</td>
+<td><code>find_vertices(node_kind, *, property_filter=None, limit=100, offset=0)</code></td>
+<td>list nodes of a kind, optionally filtered by properties</td>
+</tr>
+<tr>
+<td><code>find_edges(edge_kind, *, property_filter=None, limit=100, offset=0)</code></td>
+<td>list edges of a kind</td>
+</tr>
+<tr>
+<td><code>count_vertices(node_kind, *, property_filter=None)</code> / <code>count_edges(edge_kind, …)</code></td>
+<td>counts by kind</td>
+</tr>
+<tr>
+<td><code>neighbors(origin, direction, edge_kinds, *, limit, to_vertex_kinds=None)</code></td>
+<td>adjacent nodes with the connecting edge, filtered by kind and direction</td>
+</tr>
+<tr>
+<td><code>incident_edges(origin, direction, edge_kinds, *, limit)</code></td>
+<td>the edges touching a node</td>
+</tr>
+<tr>
+<td><code>vertex_degree(ref, …)</code> / <code>count_neighbors(ref, …)</code></td>
+<td>degree / distinct-neighbor counts by direction and edge kind</td>
+</tr>
+<tr>
+<td><code>expand(start, params)</code></td>
+<td>breadth-limited walk (<code>GraphWalkParams</code>: <code>max_depth</code>, <code>max_results</code>, direction, edge kinds) returning <code>GraphWalkStep</code>s</td>
+</tr>
+<tr>
+<td><code>scoped_walk(anchor, params)</code></td>
+<td>multi-step typed traversal (<code>ScopedWalkParams</code>: a tuple of <code>GraphPathStep</code>s with per-step hop bounds, a <code>target_kind</code>, a <code>limit</code>)</td>
+</tr>
+<tr>
+<td><code>shortest_path(from_ref, to_ref, params)</code></td>
+<td>one path (<code>ShortestPathParams</code>: <code>max_hops</code>, <code>edge_kinds</code>, optional <code>weight_property</code> for weighted/native paths — needs a GDS-capable backend, else <code>graph_algorithm_unavailable</code>)</td>
+</tr>
+<tr>
+<td><code>k_shortest_paths(from_ref, to_ref, params, *, k)</code></td>
+<td>the <code>k</code> best paths, same params</td>
 </tr>
 </tbody>
 </table>
 <h2 id="command-port-ctxgraphcommandspec">Command port  (<code>ctx.graph.command(spec)</code>)<a class="headerlink" href="#command-port-ctxgraphcommandspec" title="Permanent link">&para;</a></h2>
+<p>Every create/ensure takes <code>return_new: bool = True</code>.</p>
 <table>
 <thead>
 <tr>
@@ -5727,26 +5788,38 @@ endpoint-identity edges reject <code>binds_record_id</code>.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>create_vertex</code> / <code>create_vertices</code></td>
+<td><code>create_vertex(node_kind, cmd)</code> / <code>create_vertices(items)</code></td>
 <td>add nodes</td>
 </tr>
 <tr>
-<td><code>create_edge</code> / <code>create_edges</code></td>
+<td><code>create_edge(edge_kind, cmd)</code> / <code>create_edges(items)</code></td>
 <td>add edges</td>
 </tr>
 <tr>
-<td><code>delete_vertex</code> / <code>delete_vertices</code></td>
+<td><code>ensure_vertex(node_kind, cmd)</code> / <code>ensure_edge(edge_kind, cmd)</code></td>
+<td>insert-when-missing (idempotent by identity)</td>
+</tr>
+<tr>
+<td><code>update_vertex(ref, cmd)</code> / <code>update_edge(ref, cmd)</code></td>
+<td>patch by ref</td>
+</tr>
+<tr>
+<td><code>delete_vertex(ref)</code> / <code>delete_vertices(refs)</code></td>
 <td>remove nodes</td>
 </tr>
 <tr>
-<td><code>delete_edge</code> / <code>delete_edges</code></td>
+<td><code>delete_edge(ref)</code> / <code>delete_edges(refs)</code></td>
 <td>remove edges</td>
 </tr>
 </tbody>
 </table>
 <h2 id="raw-port-ctxgraphrawspec">Raw port  (<code>ctx.graph.raw(spec)</code>)<a class="headerlink" href="#raw-port-ctxgraphrawspec" title="Permanent link">&para;</a></h2>
-<p><code>run(...)</code> executes a native query (Cypher) — the escape hatch for traversals the typed
-ports don't express.</p>
+<p><code>run(query, params=None)</code> executes a native query (Cypher) — the escape hatch for
+traversals the typed ports don't express.</p>
+<h2 id="management-port-ctxgraphmanagementspec">Management port  (<code>ctx.graph.management(spec)</code>)<a class="headerlink" href="#management-port-ctxgraphmanagementspec" title="Permanent link">&para;</a></h2>
+<p>Control-plane schema provisioning, separate from the data-plane command port:
+<code>ensure_schema()</code> creates constraints/indexes for the declared kinds; <code>drop_schema()</code>
+removes them.</p>
 <h2 id="implemented-by">Implemented by<a class="headerlink" href="#implemented-by" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

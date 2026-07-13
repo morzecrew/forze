@@ -5759,8 +5759,8 @@ a raise — a <code>finally_</code> hook, say — it receives an <code>Outcome</
 <p>Beyond its meaning, each kind has an <strong>egress policy</strong> with two booleans:</p>
 <ul>
 <li><strong><code>expose_details</code></strong> — are the details safe to show a caller? (<code>internal</code>,
-  <code>authentication</code>, <code>authorization</code>, <code>infrastructure</code>, <code>throttled</code>, and
-  <code>timeout</code> say no.)</li>
+  <code>authentication</code>, <code>authorization</code>, <code>configuration</code>, <code>infrastructure</code>,
+  <code>throttled</code>, and <code>timeout</code> say no.)</li>
 <li><strong><code>retryable</code></strong> — is this transient? Only <strong><code>concurrency</code></strong>,
   <strong><code>infrastructure</code></strong>, and <strong><code>throttled</code></strong> are. This flag is what the
   <a href="../../running-in-prod/resilience/">resilience</a> retry policies key on — you can only retry a kind

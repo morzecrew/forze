@@ -5597,7 +5597,9 @@ extras in <code>pyproject.toml</code>; each <code>forze[&lt;name&gt;]</code> map
 </tbody>
 </table>
 <p>Each row maps to a <code>forze[&lt;extra&gt;]</code> package; their precise contract coverage is
-on each integration's page.</p>
+on each integration's page. The remaining extras — <code>dst</code> and <code>cli</code> — are
+tooling, not backend integrations: <a href="../dst/overview/">deterministic simulation
+testing</a> and the <code>forze</code> command-line tool.</p>
 <p>Install one or several at once — <code>uv add 'forze[fastapi,postgres,redis]'</code>.</p>
 
 

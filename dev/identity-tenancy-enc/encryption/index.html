@@ -6020,6 +6020,10 @@ snapshot store never re-exposes what the document sealed — automatic, no extra
 envelope, decrypted transparently on read:</p>
 <div class="highlight"><pre><span></span><code><span class="n">S3StorageConfig</span><span class="p">(</span><span class="n">bucket</span><span class="o">=</span><span class="s2">&quot;uploads&quot;</span><span class="p">,</span> <span class="n">encrypt</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </code></pre></div>
+<p>The flag covers streaming too: <code>upload_stream</code> seals the object chunk by chunk
+in bounded memory, and <code>download_range</code> on such an object decrypts only the
+chunks the range covers. An object uploaded whole is a single sealed blob, so it
+cannot be sliced — read it back whole, via <code>download</code> or <code>download_stream</code>.</p>
 <h3 id="outbox-and-inbox">Outbox and inbox<a class="headerlink" href="#outbox-and-inbox" title="Permanent link">&para;</a></h3>
 <p>The transactional outbox chooses <strong>how far</strong> ciphertext travels, via
 <code>OutboxEncryptionTier</code> on the spec — <code>none</code> &lt; <code>at_rest</code> &lt; <code>end_to_end</code>:</p>

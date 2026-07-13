@@ -5805,7 +5805,7 @@ returning wrong rows:</p>
 <p>The in-memory mock supports the channel too: register a per-resource source that
 receives the bound parameters and produces the rows the view would, and the
 document DSL composes over its output exactly as against Postgres. The recipe runs
-the leaderboard this way, so the as-of behaviour is test-backed without Docker:</p>
+the leaderboard this way — no database required:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># The raw results a parametrized view would rank over (region, player, score, recorded_on).</span>
 <span class="n">_RESULTS</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="n">date</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[</span>
     <span class="p">(</span><span class="s2">&quot;eu&quot;</span><span class="p">,</span> <span class="s2">&quot;ana&quot;</span><span class="p">,</span> <span class="mi">30</span><span class="p">,</span> <span class="n">date</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">10</span><span class="p">)),</span>

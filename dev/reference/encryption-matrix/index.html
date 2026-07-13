@@ -5714,7 +5714,7 @@ can't drift.</p>
 <tbody>
 <tr>
 <td>Object storage</td>
-<td>whole object (<code>encrypt=True</code>)</td>
+<td>whole object or chunked stream (<code>encrypt=True</code>)</td>
 <td>client-side — backend stores only the envelope</td>
 <td>S3, GCS, mock</td>
 </tr>
@@ -5741,7 +5741,9 @@ can't drift.</p>
 <ul>
 <li><strong>Object storage caveat:</strong> multipart / presigned uploads are <strong>blocked</strong> when a route
   encrypts — the client would write bytes the app never sees, landing as plaintext. Use
-  a single-shot <code>upload()</code>.</li>
+  a single-shot <code>upload()</code> or <code>upload_stream()</code> (seals chunk-by-chunk in bounded
+  memory). Ranged reads decrypt stream-uploaded objects; whole-payload envelopes
+  can't be sliced and must be read back whole.</li>
 <li><strong>Outbox ↔ direct messaging:</strong> both bind the payload <abbr title="Additional Authenticated Data">AAD</abbr> to <code>(tenant, event/message
   id)</code> reconstructable from envelope headers, and share a payload domain — so an
   <code>end_to_end</code> message decrypts identically whether it was relayed from the outbox or
@@ -5783,7 +5785,9 @@ can't drift.</p>
 <li><strong>Replacing a KEK:</strong> rotating a key <em>version</em> needs no action (the key id is unchanged, so
   old envelopes still decrypt). Replacing the <em>key</em> needs a read overlap —
   <code>TenantTemplateKeyDirectory(previous_template=…)</code> / <code>StaticKeyDirectory(previous_key_ref=…)</code>,
-  or a custom <code>KeyDirectoryWithPrevious</code> — then a sweep, then drop the previous key. Without
+  or a custom <code>KeyDirectoryWithPrevious</code> — then a re-encryption sweep (<code>reencrypt_documents</code>
+  for field-encrypted rows, <code>reencrypt_objects</code> for stored blobs), then drop the previous
+  key. Without
   the overlap the confused-deputy guard refuses the old envelopes and the data is stranded.</li>
 <li>
 <p><strong><abbr title="Key Management Service">KMS</abbr> backends:</strong> every one holds the KEK outside the app, and its wrapped data key is

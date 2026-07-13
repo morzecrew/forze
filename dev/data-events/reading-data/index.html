@@ -5723,6 +5723,11 @@ own <code>WHERE</code> that a result filter can't reach — declare a typed
 <td><code>CursorPage</code></td>
 <td>large or infinite lists, stable under writes</td>
 </tr>
+<tr>
+<td><code>_stream</code></td>
+<td>an async generator of batches</td>
+<td>full exports — walk the whole set in bounded memory</td>
+</tr>
 </tbody>
 </table>
 <p>Offset pages (<code>_page</code>, <code>_many</code>) are simple but get slower the deeper you go, and
@@ -5738,8 +5743,12 @@ offset-paged, with a count; <code>find_cursor(...)</code> is the read model, key
 port</strong> — the same shape × pagination naming, but results come back <strong>ranked</strong>:</p>
 <div class="highlight"><pre><span></span><code><span class="n">hits</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">search</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">order_search</span><span class="p">)</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="s2">&quot;blue widget&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p><code>search</code> / <code>search_page</code> / <code>search_cursor</code> (with <code>project_</code> and <code>select_</code>
-variants) mirror the document methods. Engines cover full-text, vector
+<p><code>search</code> / <code>search_page</code> / <code>search_cursor</code> / <code>search_stream</code> (with <code>project_</code>
+and <code>select_</code> variants) mirror the document methods. A query can also ask for
+<strong>facet</strong> counts and <strong>highlighted</strong> fragments alongside its hits — per query,
+through <code>SearchOptions</code>, over fields the spec declares facetable or
+highlightable (the full option surface is the
+<a href="../../reference/contracts/search/">search contract</a>). Engines cover full-text, vector
 similarity, and <strong>hub / federated</strong> search that spans several relations. Vector
 search ranks by <strong>embeddings</strong> — vectors produced by an embeddings provider
 (<code>ctx.embeddings.provider(spec)</code>) — so semantically similar text scores together. Keeping

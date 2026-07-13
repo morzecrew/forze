@@ -5668,8 +5668,9 @@ mirrors them keeps the dependency rules easy to follow.</p>
 <p>Dependencies point <strong>inward</strong>: <code>domain</code> imports nothing from your other layers,
 <code>application</code> imports only <code>domain</code>, and infrastructure and interface sit on the
 outside. This is what lets you swap Postgres for Mongo, or FastAPI for a CLI,
-without touching business logic — and it's enforced by import-linter contracts,
-not just convention. See <a href="../../core-concepts/architecture/">Architecture</a>.</p>
+without touching business logic — and you can enforce it with import-linter
+contracts instead of relying on convention; Forze polices its own layers the
+same way. See <a href="../../core-concepts/architecture/">Architecture</a>.</p>
 <h2 id="the-name-is-the-seam">The name is the seam<a class="headerlink" href="#the-name-is-the-seam" title="Permanent link">&para;</a></h2>
 <p>One logical name — <code>"orders"</code> — appears in the <strong>spec</strong> (application), the
 <strong>deps module route</strong> (infrastructure), and is resolved in <strong>routes</strong>

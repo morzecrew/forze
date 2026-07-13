@@ -5720,8 +5720,9 @@ model</strong>, maintained explicitly (not auto-synced from your document store)
   <code>DocumentCommandPort</code> — call <code>ctx.search.command(spec).upsert(...)</code> (e.g. via
   the outbox) when documents change. Provisioning lives on the separate
   management surface: <code>ctx.search.management(spec).ensure_index()</code> applies the
-  searchable/filterable/sortable attributes, and <code>delete_all()</code> wipes the index —
-  neither is reachable from the command port.</li>
+  searchable/filterable/sortable attributes and the <code>max_total_hits</code> ceiling, and
+  <code>delete_all()</code> wipes the route's documents (scoped to the current tenant when
+  <code>tenant_aware</code>) — neither is reachable from the command port.</li>
 <li>Cursor pagination and hub search aren't supported here; the filter language is
   a subset of the <a href="../../reference/query-syntax/">Query DSL</a>.</li>
 <li>Federated routes merge ≥2 member indexes (<code>federation</code> or in-process <abbr title="Reciprocal Rank Fusion">RRF</abbr>).</li>

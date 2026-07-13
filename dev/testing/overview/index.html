@@ -5791,14 +5791,20 @@
 <p>For tests that need real infrastructure — or to exercise database-level logic the mock can't model — use testcontainers to spin up ephemeral databases:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">testcontainers.postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">PostgresContainer</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_runtime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">PostgresClient</span><span class="p">,</span> <span class="n">PostgresDepsModule</span><span class="p">,</span> <span class="n">PostgresLifecycleModule</span>
 
 <span class="nd">@pytest</span><span class="o">.</span><span class="n">fixture</span><span class="p">(</span><span class="n">scope</span><span class="o">=</span><span class="s2">&quot;session&quot;</span><span class="p">)</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">postgres_url</span><span class="p">():</span>
-    <span class="k">with</span> <span class="n">PostgresContainer</span><span class="p">(</span><span class="s2">&quot;postgres:16&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">pg</span><span class="p">:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">postgres_dsn</span><span class="p">():</span>
+    <span class="k">with</span> <span class="n">PostgresContainer</span><span class="p">(</span><span class="s2">&quot;postgres:18&quot;</span><span class="p">,</span> <span class="n">driver</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="k">as</span> <span class="n">pg</span><span class="p">:</span>
         <span class="k">yield</span> <span class="n">pg</span><span class="o">.</span><span class="n">get_connection_url</span><span class="p">()</span>
 
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_postgres_integration</span><span class="p">(</span><span class="n">postgres_url</span><span class="p">):</span>
-    <span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="n">PostgresDepsModule</span><span class="p">(</span><span class="n">dsn</span><span class="o">=</span><span class="n">postgres_url</span><span class="p">))</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_postgres_integration</span><span class="p">(</span><span class="n">postgres_dsn</span><span class="p">):</span>
+    <span class="n">client</span> <span class="o">=</span> <span class="n">PostgresClient</span><span class="p">()</span>
+    <span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span>
+        <span class="n">PostgresDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">client</span><span class="p">,</span> <span class="n">rw_documents</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;users&quot;</span><span class="p">:</span> <span class="n">users_pg</span><span class="p">}),</span>
+        <span class="n">lifecycle_modules</span><span class="o">=</span><span class="p">[</span><span class="n">PostgresLifecycleModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">client</span><span class="p">,</span> <span class="n">dsn</span><span class="o">=</span><span class="n">postgres_dsn</span><span class="p">)],</span>
+    <span class="p">)</span>
 
     <span class="k">async</span> <span class="k">with</span> <span class="n">runtime</span><span class="o">.</span><span class="n">scope</span><span class="p">():</span>          <span class="c1"># starts the pool, runs lifecycle</span>
         <span class="n">ctx</span> <span class="o">=</span> <span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">()</span>

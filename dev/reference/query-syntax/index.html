@@ -6019,6 +6019,11 @@ map:</p>
 <td><code>$any</code> <code>$all</code> <code>$none</code></td>
 <td>an element predicate (see <a href="#array-fields">Array fields</a>)</td>
 </tr>
+<tr>
+<td>Hierarchy</td>
+<td><code>$descendant_of</code> <code>$ancestor_of</code></td>
+<td>a path (or a list of paths → OR) on a <code>TreePath</code>-typed field — inclusive, materialized-path semantics; backend-specific and capability-gated</td>
+</tr>
 </tbody>
 </table>
 <p><code>$empty</code> tests <strong>array</strong> length (not string emptiness). <code>$like</code>/<code>$ilike</code> use
@@ -6033,7 +6038,9 @@ combined with anything else on that field (their <code>false</code> forms can). 
 field.</p>
 <h2 id="nested-fields">Nested fields<a class="headerlink" href="#nested-fields" title="Permanent link">&para;</a></h2>
 <p>A field key is a <strong>dot-separated path</strong> into a nested/embedded object — usable in
-<code>$values</code>, <code>$fields</code>, sorts, <code>$groups</code>, and aggregate fields. Depth is unbounded;
+<code>$values</code>, <code>$fields</code>, sorts, <code>$groups</code>, aggregate fields, and the <code>fields</code> list of
+<code>project*</code> calls (a dotted projection returns a nested shape, and a path crossing a
+list maps over each element). Depth is unbounded;
 each segment walks one level deeper:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span><span class="s2">&quot;$values&quot;</span><span class="p">:</span> <span class="p">{</span>
     <span class="s2">&quot;address.city&quot;</span><span class="p">:</span> <span class="s2">&quot;Berlin&quot;</span><span class="p">,</span>
@@ -6131,12 +6138,17 @@ map order is sort priority:</p>
 the smallest value (<code>asc</code> → first, <code>desc</code> → last); some backends (Mongo, Firestore)
 support only that default and reject an explicit override. For
 <a href="../../data-events/reading-data/">cursor pagination</a> directions may be mixed — each
-key seeks in its own direction — and an <code>id</code> tie-breaker is appended automatically.</p>
+key seeks in its own direction — and an <code>id</code> tie-breaker is appended automatically.
+Cursor tokens can be HMAC-signed (<code>&lt;payload&gt;.&lt;hmac&gt;</code>) or AEAD-encrypted (a leading
+<code>~</code>) — see <a href="../../identity-tenancy-enc/cursor-tokens/">Cursor tokens</a>.</p>
 <h2 id="aggregates">Aggregates<a class="headerlink" href="#aggregates" title="Permanent link">&para;</a></h2>
 <p>An aggregate expression groups and computes over matched rows. Group keys go in
 <code>$groups</code> (alias → source path, or a list of paths); outputs go in <code>$computed</code>
-(alias → function). Functions: <code>$count</code> (use <code>None</code> for row counts), <code>$sum</code>,
-<code>$avg</code>, <code>$min</code>, <code>$max</code>, <code>$median</code>.</p>
+(alias → function). Functions: <code>$count</code> (use <code>None</code> for row counts),
+<code>$count_distinct</code>, <code>$sum</code>, <code>$avg</code>, <code>$min</code>, <code>$max</code>, <code>$median</code>, <code>$percentile</code>
+(requires the application form with a <code>p</code> quantile), <code>$stddev_pop</code>, <code>$stddev_samp</code>,
+<code>$var_pop</code>, <code>$var_samp</code>. <code>$median</code> / <code>$percentile</code> are exact on Postgres and the
+mock but approximate on Mongo.</p>
 <div class="highlight"><pre><span></span><code><span class="n">aggregates</span> <span class="o">=</span> <span class="p">{</span>
     <span class="s2">&quot;$groups&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;category&quot;</span><span class="p">},</span>
     <span class="s2">&quot;$computed&quot;</span><span class="p">:</span> <span class="p">{</span>
@@ -6149,8 +6161,10 @@ key seeks in its own direction — and an <code>id</code> tie-breaker is appende
 <span class="p">}</span>
 </code></pre></div>
 <p>A computed metric's <code>filter</code> is a <strong>per-metric row pre-filter</strong> (it narrows the
-rows that feed <em>that</em> aggregate) — there is <strong>no post-aggregate <code>HAVING</code></strong> stage.
-<code>$count</code> takes no field; every other function requires one.</p>
+rows that feed <em>that</em> aggregate). For a post-aggregate stage, add <code>$having</code> — a
+filter (same grammar) over the <strong>aggregated</strong> rows, referencing only the output
+aliases (group keys and computed metrics). <code>$count</code> takes no field; every other
+function requires one.</p>
 <p>Calendar bucketing uses <code>$trunc</code> as a group value — <code>unit</code> is one of <code>hour</code> /
 <code>day</code> / <code>week</code> (Monday-start) / <code>month</code>; <code>timezone</code> is an IANA name or fixed
 offset (default UTC):</p>

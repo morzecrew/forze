@@ -5721,9 +5721,9 @@ synchronous call from monopolizing the loop, not to parse faster.</p>
   about the event loop, not the connection.</li>
 </ul>
 <h2 id="sizing-the-pool">Sizing the pool<a class="headerlink" href="#sizing-the-pool" title="Permanent link">&para;</a></h2>
-<p>By default <code>run_cpu</code> uses a process-wide bounded pool — zero configuration. To size and
-scope-manage it, pass a <code>ThreadPoolCpuExecutor</code> to the runtime; it is bound for the scope
-and drained on shutdown:</p>
+<p>By default the runtime binds a bounded worker pool for its scope and closes it on exit —
+zero configuration (<code>cpu_workers=</code> sizes it). To manage the pool yourself, pass a
+<code>ThreadPoolCpuExecutor</code>; the runtime binds it for the scope but you own its lifetime:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.primitives</span><span class="w"> </span><span class="kn">import</span> <span class="n">ThreadPoolCpuExecutor</span>
 
 <span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="n">MyModule</span><span class="p">(),</span> <span class="n">cpu_executor</span><span class="o">=</span><span class="n">ThreadPoolCpuExecutor</span><span class="p">(</span><span class="n">max_workers</span><span class="o">=</span><span class="mi">8</span><span class="p">))</span>

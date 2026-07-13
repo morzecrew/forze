@@ -5251,6 +5251,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#trace-propagation-optional-column" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Trace propagation (optional column)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#causal-ordering-hybrid-logical-clock" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5515,6 +5526,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#trace-propagation-optional-column" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Trace propagation (optional column)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#causal-ordering-hybrid-logical-clock" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5692,6 +5714,13 @@ Existing tables migrate with:</p>
 <span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">attempts</span><span class="w"> </span><span class="nb">INT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
 <span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">available_at</span><span class="w"> </span><span class="n">TIMESTAMPTZ</span><span class="p">,</span>
 <span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">ordering_key</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">;</span>
+</code></pre></div>
+<h3 id="trace-propagation-optional-column">Trace propagation (optional column)<a class="headerlink" href="#trace-propagation-optional-column" title="Permanent link">&para;</a></h3>
+<p><code>PostgresOutboxConfig(propagate_trace=True)</code> persists each event's W3C <code>traceparent</code> so
+the relay forwards it as the <code>traceparent</code> header and the consume side links its span to
+the publish span. Opt in <strong>after</strong> adding the nullable column (legacy / <code>NULL</code> rows simply
+carry no parent); independent of <code>hlc_ordering</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">traceparent</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">;</span>
 </code></pre></div>
 <h3 id="causal-ordering-hybrid-logical-clock">Causal ordering (Hybrid Logical Clock)<a class="headerlink" href="#causal-ordering-hybrid-logical-clock" title="Permanent link">&para;</a></h3>
 <p>By default claims are ordered by <code>created_at</code> — assigned per flush batch, so

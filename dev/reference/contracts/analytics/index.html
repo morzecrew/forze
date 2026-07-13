@@ -5724,6 +5724,8 @@ model:</p>
 </tr>
 </tbody>
 </table>
+<p><code>options: AnalyticsRunOptions</code> carries the per-run knobs — <code>dry_run</code>, <code>max_rows</code>, and
+<code>timeout</code>.</p>
 <h2 id="ingest-port-ctxanalyticsingestspec">Ingest port  (<code>ctx.analytics.ingest(spec)</code>)<a class="headerlink" href="#ingest-port-ctxanalyticsingestspec" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5737,7 +5739,7 @@ model:</p>
 <tr>
 <td><code>append</code></td>
 <td><code>append(rows)</code></td>
-<td>append-only bulk insert; returns an <code>AnalyticsAppendResult</code></td>
+<td>append-only bulk insert; returns an <code>AnalyticsAppendResult</code> (<code>accepted</code> / <code>rejected</code> / <code>errors</code>), or <code>None</code> when the backend reports nothing</td>
 </tr>
 </tbody>
 </table>

@@ -5700,7 +5700,7 @@ different shape in three of the four:</p>
 <span class="k">class</span><span class="w"> </span><span class="nc">OrderCreate</span><span class="p">(</span><span class="n">BaseDTO</span><span class="p">):</span>      <span class="c1"># inbound: status is server-set, so it is absent</span>
     <span class="n">customer</span><span class="p">:</span> <span class="nb">str</span>
 
-<span class="k">class</span><span class="w"> </span><span class="nc">OrderUpdate</span><span class="p">(</span><span class="n">BaseDTO</span><span class="p">):</span>      <span class="c1"># merge-patch: optional, None means &quot;don&#39;t touch&quot;</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">OrderUpdate</span><span class="p">(</span><span class="n">BaseDTO</span><span class="p">):</span>      <span class="c1"># merge-patch: omit a field to leave it alone</span>
     <span class="n">customer</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="n">status</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 

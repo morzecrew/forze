@@ -5693,6 +5693,11 @@ contract):</p>
 <td>mint / rotate / revoke API keys</td>
 </tr>
 <tr>
+<td><code>password_account_provisioning</code></td>
+<td><code>PasswordAccountProvisioningPort</code></td>
+<td>register / provision password accounts, issue + accept invites</td>
+</tr>
+<tr>
 <td><code>principal_deactivation</code></td>
 <td><code>PrincipalDeactivationPort</code></td>
 <td>deactivate a principal (cascades logout)</td>
@@ -5733,6 +5738,12 @@ contract):</p>
 <td><code>bool</code></td>
 <td><code>True</code></td>
 <td>refuse a decision for a deactivated principal</td>
+</tr>
+<tr>
+<td><code>enforce_delegation_grant</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>a delegated identity (<code>actor</code> set) also needs a recorded delegation grant</td>
 </tr>
 </tbody>
 </table>
