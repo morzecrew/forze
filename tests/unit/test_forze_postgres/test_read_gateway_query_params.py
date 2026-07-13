@@ -209,7 +209,7 @@ async def test_reset_failure_in_an_aborted_transaction_logs_debug(
     from psycopg.errors import InFailedSqlTransaction
 
     recorder = _LogRecorder()
-    monkeypatch.setattr("forze_postgres.kernel.client.local_settings.logger", recorder)
+    monkeypatch.setattr("forze_postgres.kernel.client.session_settings.logger", recorder)
 
     client = _client()
     client.fetch_all = AsyncMock(side_effect=ValueError("query exploded"))
@@ -230,7 +230,7 @@ async def test_unexpected_reset_failure_during_error_logs_warning(
     connection died) is surfaced as a warning while the original error propagates."""
 
     recorder = _LogRecorder()
-    monkeypatch.setattr("forze_postgres.kernel.client.local_settings.logger", recorder)
+    monkeypatch.setattr("forze_postgres.kernel.client.session_settings.logger", recorder)
 
     client = _client()
     client.fetch_all = AsyncMock(side_effect=ValueError("query exploded"))
