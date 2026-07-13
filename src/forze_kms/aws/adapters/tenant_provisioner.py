@@ -65,11 +65,7 @@ class AwsKmsTenantProvisioner(TenantProvisionerPort):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if not (
-            _MIN_PENDING_WINDOW_DAYS
-            <= self.pending_window_days
-            <= _MAX_PENDING_WINDOW_DAYS
-        ):
+        if not (_MIN_PENDING_WINDOW_DAYS <= self.pending_window_days <= _MAX_PENDING_WINDOW_DAYS):
             raise exc.configuration(
                 f"AWS KMS pending deletion window must be between "
                 f"{_MIN_PENDING_WINDOW_DAYS} and {_MAX_PENDING_WINDOW_DAYS} days",

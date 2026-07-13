@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import fnmatch
-from typing import Callable, Iterable, Iterator, TypeAlias, final
+from collections.abc import Callable, Iterable, Iterator
+from typing import TypeAlias, final
 
 import attrs
 
@@ -172,9 +173,7 @@ class StrKeySelector:
     imply a canonical key separator.
     """
 
-    Spec: TypeAlias = (
-        _AllKeys | _ExactKeys | _Prefix | _Suffix | _Glob | _When | _Namespaced
-    )
+    Spec: TypeAlias = _AllKeys | _ExactKeys | _Prefix | _Suffix | _Glob | _When | _Namespaced
     """Tagged union of selector strategies returned by factory methods."""
 
     # ....................... #

@@ -124,10 +124,7 @@ def elem_inner_is_scalar(inner: QueryExpr) -> bool:
             return name == ELEM_SCALAR_FIELD
 
         case QueryAnd(items):
-            return all(
-                isinstance(i, QueryField) and i.name == ELEM_SCALAR_FIELD
-                for i in items
-            )
+            return all(isinstance(i, QueryField) and i.name == ELEM_SCALAR_FIELD for i in items)
 
         case QueryOr(items):
             return all(elem_inner_is_scalar(i) for i in items)

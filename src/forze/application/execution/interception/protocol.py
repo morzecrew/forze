@@ -26,9 +26,9 @@ acquisition-only behavior (see
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Iterator
 
 # The interception seam itself (PortCall value object + PortInterceptor protocol) is a
 # contract; this module adds the run-scoped ambient binding (execution machinery) and

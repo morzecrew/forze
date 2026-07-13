@@ -98,17 +98,13 @@ class MockState:
     cache_kv: dict[str, dict[str, Any]] = attrs.field(factory=dict)
     cache_pointers: dict[str, dict[str, str]] = attrs.field(factory=dict)
     cache_bodies: dict[str, dict[tuple[str, str], Any]] = attrs.field(factory=dict)
-    idempotency: dict[tuple[str, str, str], tuple[str, str, Any | None]] = attrs.field(
-        factory=dict
-    )
+    idempotency: dict[tuple[str, str, str], tuple[str, str, Any | None]] = attrs.field(factory=dict)
     inbox: set[tuple[str, str, str]] = attrs.field(factory=set)
     tx_read_only_calls: list[bool] = attrs.field(factory=list)
     """Records the ``read_only`` flag of each mock transaction (test observability)."""
     storage: dict[str, dict[str, Any]] = attrs.field(factory=dict)
     storage_bytes: dict[str, dict[str, bytes]] = attrs.field(factory=dict)
-    storage_multipart: dict[str, dict[str, dict[int, bytes]]] = attrs.field(
-        factory=dict
-    )
+    storage_multipart: dict[str, dict[str, dict[int, bytes]]] = attrs.field(factory=dict)
     """In-progress multipart upload sessions: bucket → upload_id → {part_number: bytes}.
 
     Models resumable multipart uploads (the mock equivalent of S3 native
@@ -209,9 +205,7 @@ class MockState:
     mvcc_version: int = attrs.field(default=0)
     """Monotonic commit counter for MVCC (snapshot/serializable) transactions."""
 
-    mvcc_commit_log: list[tuple[int, dict[str, frozenset[Any]]]] = attrs.field(
-        factory=list
-    )
+    mvcc_commit_log: list[tuple[int, dict[str, frozenset[Any]]]] = attrs.field(factory=list)
     """Committed write-sets ``(version, {namespace: frozenset[key]})`` for MVCC conflict
     detection. Pruned below the oldest in-flight transaction's begin-version (an entry only
     matters to a transaction that began before it), so it stays bounded across a run."""
@@ -219,14 +213,10 @@ class MockState:
     mvcc_active: list[int] = attrs.field(factory=list)
     """Begin-versions of in-flight MVCC transactions (one entry each), for log pruning."""
 
-    __lock: threading.RLock = attrs.field(
-        factory=threading.RLock, init=False, repr=False
-    )
+    __lock: threading.RLock = attrs.field(factory=threading.RLock, init=False, repr=False)
     __seq: int = attrs.field(default=0, init=False, repr=False)
 
-    __tx_serializer: asyncio.Lock | None = attrs.field(
-        default=None, init=False, repr=False
-    )
+    __tx_serializer: asyncio.Lock | None = attrs.field(default=None, init=False, repr=False)
     """Lazily created lock serializing strict root transactions on this state.
 
     Created on first use so a :class:`MockState` can be built outside an event
@@ -270,8 +260,7 @@ class MockState:
 
         with self.__lock:
             return {
-                key: copy.deepcopy(self.identity.get(key, {}))
-                for key in self.TX_IDENTITY_SUBSTORES
+                key: copy.deepcopy(self.identity.get(key, {})) for key in self.TX_IDENTITY_SUBSTORES
             }
 
     # ....................... #

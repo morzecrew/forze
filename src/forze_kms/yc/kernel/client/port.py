@@ -1,6 +1,7 @@
 """Port for the low-level Yandex Cloud KMS client."""
 
-from typing import Awaitable, Protocol
+from collections.abc import Awaitable
+from typing import Protocol
 
 from .value_objects import YcGeneratedDataKey
 

@@ -1,6 +1,7 @@
 """Shared tenancy wiring validation for integration deps modules."""
 
-from typing import Any, Callable, Literal, Protocol, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any, Literal, Protocol
 
 import attrs
 
@@ -357,7 +358,9 @@ def validate_routed_client_tenancy_wiring(
                 route_mode: TenantIsolationMode = (
                     "namespace"
                     if route.has_namespace_routing
-                    else "tagged" if route.tenant_aware else "none"
+                    else "tagged"
+                    if route.tenant_aware
+                    else "none"
                 )
 
                 validate_required_isolation(

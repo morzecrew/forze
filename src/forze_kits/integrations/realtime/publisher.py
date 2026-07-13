@@ -145,9 +145,7 @@ def build_realtime_publisher(
     """
 
     if ctx.inv_ctx.is_read_only():
-        raise exc.precondition(
-            "Cannot build a RealtimePublisher in a read-only (QUERY) operation"
-        )
+        raise exc.precondition("Cannot build a RealtimePublisher in a read-only (QUERY) operation")
 
     stream = ctx.deps.resolve_configurable(
         ctx, StreamCommandDepKey, stream_spec, route=stream_spec.name

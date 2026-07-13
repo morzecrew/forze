@@ -1,7 +1,6 @@
 """Dependency keys for mock integration."""
 
 from forze.application.contracts.deps import DepKey
-
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockRoutedStateRegistry
 

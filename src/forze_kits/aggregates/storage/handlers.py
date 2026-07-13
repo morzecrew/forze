@@ -241,9 +241,7 @@ class DownloadObjectRange(Handler[DownloadRangeArgs, RangedDownload]):
     async def __call__(self, args: DownloadRangeArgs) -> RangedDownload:
         """Fetch the requested byte range of an object."""
 
-        return await self.storage.download_range(
-            args.key, start=args.start, end=args.end
-        )
+        return await self.storage.download_range(args.key, start=args.start, end=args.end)
 
 
 # ....................... #

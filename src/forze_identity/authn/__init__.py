@@ -40,12 +40,12 @@ from .execution import (
 )
 from .observability import instrument_signing
 from .orchestrator import AuthnOrchestrator
-from .services import SigningStats
 from .resolvers import (
     DeterministicUuidResolver,
     JwtNativeUuidResolver,
     MappingTableResolver,
 )
+from .services import SigningStats
 from .verifiers import (
     Argon2PasswordVerifier,
     ForzeJwtTokenVerifier,

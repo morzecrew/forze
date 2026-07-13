@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any, final
 import attrs
 
 from forze.application.contracts.base import BaseSpec
-from forze_kits.integrations._logger import logger
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.envelope import (
     HEADER_CAUSATION_ID,
@@ -27,6 +26,7 @@ from forze.application.contracts.pubsub import PubSubCommandDepKey, PubSubSpec
 from forze.application.contracts.queue import QueueCommandDepKey, QueueSpec
 from forze.application.contracts.stream import StreamCommandDepKey, StreamSpec
 from forze.base.exceptions import exc
+from forze_kits.integrations._logger import logger
 
 from ._relay_core import relay_outbox_claims, validate_retry_options
 
@@ -76,9 +76,7 @@ def _require_destination(
     expected_kind: OutboxDestinationKind,
 ) -> "OutboxDestination":
     if destination is None:
-        raise exc.precondition(
-            f"outbox_spec.destination is required for {expected_kind} relay"
-        )
+        raise exc.precondition(f"outbox_spec.destination is required for {expected_kind} relay")
 
     if destination.kind != expected_kind:
         raise exc.precondition(
@@ -221,10 +219,7 @@ class OutboxRelay:
             retry_max_backoff=self.retry_max_backoff,
         )
 
-        if (
-            self.reclaim_stale_after is not None
-            and self.reclaim_stale_after.total_seconds() <= 0
-        ):
+        if self.reclaim_stale_after is not None and self.reclaim_stale_after.total_seconds() <= 0:
             raise exc.configuration("Reclaim stale after must be positive")
 
     # ....................... #
@@ -336,9 +331,7 @@ class OutboxRelay:
         match destination.kind:
             case "queue":
                 if queue_spec is None:
-                    raise exc.precondition(
-                        "queue_spec is required when destination.kind is queue"
-                    )
+                    raise exc.precondition("queue_spec is required when destination.kind is queue")
                 return await self.to_queue(ctx, queue_spec, limit=limit)
 
             case "stream":
@@ -356,9 +349,7 @@ class OutboxRelay:
                 return await self.to_pubsub(ctx, pubsub_spec, limit=limit)
 
             case _:  # pyright: ignore[reportUnnecessaryComparison]
-                raise exc.precondition(
-                    f"unsupported outbox destination kind: {destination.kind!r}"
-                )
+                raise exc.precondition(f"unsupported outbox destination kind: {destination.kind!r}")
 
     # ....................... #
 

@@ -1,6 +1,7 @@
+from collections.abc import Mapping
 from datetime import datetime
 from types import MappingProxyType
-from typing import Final, Mapping, final
+from typing import Final, final
 
 import attrs
 

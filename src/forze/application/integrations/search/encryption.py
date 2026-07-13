@@ -11,9 +11,9 @@ decrypts the document's own ciphertext. The spec's ``encryption`` policy must th
 the same as the underlying ``DocumentSpec.encryption``.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from enum import StrEnum
-from typing import Any, Mapping, Protocol, cast
+from typing import Any, Protocol, cast
 
 import attrs
 
@@ -76,9 +76,7 @@ def reject_encrypted_sort_fields(
         )
 
 
-def resolve_snapshot_cipher(
-    *, encrypted: bool, keyring: KeyringPort | None
-) -> KeyringPort | None:
+def resolve_snapshot_cipher(*, encrypted: bool, keyring: KeyringPort | None) -> KeyringPort | None:
     """Cipher for sealing snapshot records, fail-closed when one is required but unwired.
 
     A route that field-encrypts must not silently snapshot plaintext, so an encrypted route

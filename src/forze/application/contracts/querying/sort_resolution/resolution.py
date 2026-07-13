@@ -1,6 +1,7 @@
 """Resolve a sort map into ordered ``(field, direction, nulls)`` keys for pagination."""
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -124,9 +125,7 @@ def _with_tiebreaker(
     with the canonical null placement for that direction.
     """
 
-    parsed = {
-        k: parse_sort_value(v, field=k, spec_name=spec_name) for k, v in s.items()
-    }
+    parsed = {k: parse_sort_value(v, field=k, spec_name=spec_name) for k, v in s.items()}
     order_keys = [k for k in s if k != tiebreaker]
 
     if tiebreaker in s or append_tiebreaker:

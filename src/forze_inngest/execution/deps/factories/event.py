@@ -38,9 +38,7 @@ class ConfigurableInngestEventCommand(DurableFunctionEventCommandDepPort):
         client = ctx.deps.provide(InngestClientDepKey)
 
         include = self.config.include_execution_context
-        cipher = (
-            ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
-        )
+        cipher = ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
 
         return InngestEventCommandAdapter(
             client=client,

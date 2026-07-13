@@ -1,6 +1,7 @@
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from typing import Any, Final, Iterator, final
+from typing import Any, Final, final
 from uuid import UUID
 
 import attrs

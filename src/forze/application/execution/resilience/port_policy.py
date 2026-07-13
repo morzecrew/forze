@@ -123,10 +123,6 @@ def wrap_port_policy[T](
             ctx=ctx,
             policy=port_policy.policy,
             route=route,
-            methods=(
-                frozenset(port_policy.methods)
-                if port_policy.methods is not None
-                else None
-            ),
+            methods=(frozenset(port_policy.methods) if port_policy.methods is not None else None),
         ),
     )

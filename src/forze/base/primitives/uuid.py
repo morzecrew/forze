@@ -60,9 +60,7 @@ def uuid7(
     """
 
     if timestamp_ms is not None and timestamp_ns is not None:
-        raise exc.internal(
-            "Specify only one of timestamp_ms or timestamp_ns, not both."
-        )
+        raise exc.internal("Specify only one of timestamp_ms or timestamp_ns, not both.")
 
     if timestamp_ms is None and timestamp_ns is None:
         # No explicit timestamp: read the context-active time source (system clock by
@@ -71,9 +69,7 @@ def uuid7(
         # not run an import statement — which the workflow sandbox would reject.
         return current_time_source().uuid()
 
-    if (timestamp_ms == 0 and timestamp_ns is None) or (
-        timestamp_ns == 0 and timestamp_ms is None
-    ):
+    if (timestamp_ms == 0 and timestamp_ns is None) or (timestamp_ns == 0 and timestamp_ms is None):
         return UUID("00000000-0000-0000-0000-000000000000")
 
     if timestamp_ns is not None:
@@ -147,9 +143,7 @@ def uuid7_to_datetime(
         # Convert to microseconds (1 microsecond = 1000 nanoseconds)
         microseconds = sub_ms_ns // 1000
         # Create timestamp with microsecond precision
-        return datetime.fromtimestamp(
-            ms_since_epoch / 1000 + (microseconds / 1_000_000), tz=tz
-        )
+        return datetime.fromtimestamp(ms_since_epoch / 1000 + (microseconds / 1_000_000), tz=tz)
     else:
         # Original behavior - millisecond precision only
         return datetime.fromtimestamp(ms_since_epoch / 1000, tz=tz)
@@ -216,8 +210,4 @@ def uuid4(val: Any | None = None) -> UUID:
 
     # ``is not None`` (not truthiness): a falsy-but-provided value (``0``, ``""``, ``False``)
     # is a valid input to derive a deterministic id from — only an omitted ``val`` is random.
-    return (
-        _uuid4_from_any(val)
-        if val is not None
-        else current_entropy_source().uuid4()
-    )
+    return _uuid4_from_any(val) if val is not None else current_entropy_source().uuid4()

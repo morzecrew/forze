@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import cmp_to_key
-from typing import TYPE_CHECKING, Any, Literal, Sequence
+from typing import TYPE_CHECKING, Any, Literal
 
 from forze_postgres._compat import require_psycopg
 
@@ -184,9 +185,7 @@ def sort_hub_rows(
 # ....................... #
 
 
-def _hub_row_key(
-    row: dict[str, Any], key_fields: tuple[str, ...] | None
-) -> tuple[Any, ...]:
+def _hub_row_key(row: dict[str, Any], key_fields: tuple[str, ...] | None) -> tuple[Any, ...]:
     """Merge key for *row*.
 
     *key_fields* is ``None`` when the id column is the key (the fast path) and the

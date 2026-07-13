@@ -1,6 +1,7 @@
 """Ports for key management and value-level encryption."""
 
-from typing import AsyncIterator, Awaitable, Iterable, Protocol, runtime_checkable
+from collections.abc import AsyncIterator, Awaitable, Iterable
+from typing import Protocol, runtime_checkable
 
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.crypto import DEFAULT_CHUNK_SIZE, ChunkFrame, EncryptedEnvelope
@@ -293,9 +294,7 @@ class StreamingBytesCipherPort(Protocol):
 # ....................... #
 
 
-class KeyringPort(
-    BytesCipherPort, FieldCipherPort, StreamingBytesCipherPort, Protocol
-):
+class KeyringPort(BytesCipherPort, FieldCipherPort, StreamingBytesCipherPort, Protocol):
     """The keyring's full surface: the async value cipher, the sync field path, and streaming.
 
     A single registration (``KeyringDepKey``) serves every consumer — object storage

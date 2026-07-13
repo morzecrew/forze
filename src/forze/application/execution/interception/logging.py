@@ -13,9 +13,10 @@ logging on hot paths costs nothing by default. An expected domain failure logs a
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing
 from time import perf_counter
-from typing import Any, AsyncGenerator, AsyncIterator, cast
+from typing import Any, cast
 
 import attrs
 
@@ -95,9 +96,7 @@ class LoggingInterceptor:
 
     # ....................... #
 
-    async def around_stream(
-        self, call: PortCall, nxt: StreamPortNext
-    ) -> AsyncIterator[Any]:
+    async def around_stream(self, call: PortCall, nxt: StreamPortNext) -> AsyncIterator[Any]:
         """Log a streamed port call once for the *whole* stream — its item count and total
         duration, and a mid-stream failure at the item it broke on — rather than timing only
         the (near-instant) iterator acquisition and reporting success for a stream that later
@@ -112,7 +111,7 @@ class LoggingInterceptor:
         # ``aclose``, early break, a thrown-in exception) — a backend cursor is released
         # at scope exit, not whenever GC finalizes an abandoned generator. Abandonment is
         # not an error: ``GeneratorExit`` bypasses the handlers below, so nothing is logged.
-        async with aclosing(cast("AsyncGenerator[Any, None]", nxt(call))) as stream:
+        async with aclosing(cast("AsyncGenerator[Any]", nxt(call))) as stream:
             try:
                 async for item in stream:
                     items += 1

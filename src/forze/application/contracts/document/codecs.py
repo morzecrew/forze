@@ -7,9 +7,9 @@ from typing import Any, Generic, TypeVar, cast, final
 import attrs
 from pydantic import BaseModel
 
+from forze.base.serialization import ModelCodec, default_model_codec, model_codec_for
 from forze.domain.models import BaseDTO, Document, DocumentHistory
 
-from forze.base.serialization import ModelCodec, default_model_codec, model_codec_for
 from .write_types import DocumentWriteTypes
 
 # ----------------------- #

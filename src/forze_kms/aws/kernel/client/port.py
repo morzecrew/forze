@@ -1,6 +1,7 @@
 """Port for the low-level AWS KMS client."""
 
-from typing import Awaitable, Protocol
+from collections.abc import Awaitable
+from typing import Protocol
 
 # ----------------------- #
 

@@ -6,8 +6,9 @@ require_mongo()
 
 # ....................... #
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, final
+from typing import final
 
 import attrs
 from pymongo.read_concern import ReadConcern
@@ -29,9 +30,7 @@ from ._logger import logger
 MongoTxScopeKey = TransactionScopeKey("mongo")
 """Key used to scope the Mongo transaction."""
 
-_MONGO_ISOLATION = frozenset(
-    {CoreIsolationLevel.READ_COMMITTED, CoreIsolationLevel.SNAPSHOT}
-)
+_MONGO_ISOLATION = frozenset({CoreIsolationLevel.READ_COMMITTED, CoreIsolationLevel.SNAPSHOT})
 """Mongo multi-document transactions provide snapshot isolation (and the weaker
 read-committed); they have no serializable mode, so requiring SERIALIZABLE fails closed."""
 

@@ -54,8 +54,7 @@ class YcKmsKeyManagement:
     def __attrs_post_init__(self) -> None:
         if self.dek_bytes not in _ALGORITHMS:
             raise exc.configuration(
-                f"YC KMS data-key length must be one of "
-                f"{sorted(_ALGORITHMS)} bytes",
+                f"YC KMS data-key length must be one of {sorted(_ALGORITHMS)} bytes",
                 code="core.crypto.dek_length_unsupported",
             )
 

@@ -121,9 +121,7 @@ def validate_analytics_spec(spec: AnalyticsSpec[Any, Any]) -> None:
     """
 
     if not spec.queries:
-        raise exc.configuration(
-            "AnalyticsSpec.queries must contain at least one named query."
-        )
+        raise exc.configuration("AnalyticsSpec.queries must contain at least one named query.")
 
     if spec.encryption is not None:
         if spec.encryption.binds_record_id:
@@ -137,14 +135,10 @@ def validate_analytics_spec(spec: AnalyticsSpec[Any, Any]) -> None:
         )
 
     if not issubclass(spec.read, BaseModel):
-        raise exc.configuration(
-            "AnalyticsSpec.read must be a Pydantic BaseModel subclass."
-        )
+        raise exc.configuration("AnalyticsSpec.read must be a Pydantic BaseModel subclass.")
 
     if spec.ingest is not None and not issubclass(spec.ingest, BaseModel):
-        raise exc.configuration(
-            "AnalyticsSpec.ingest must be a Pydantic BaseModel subclass."
-        )
+        raise exc.configuration("AnalyticsSpec.ingest must be a Pydantic BaseModel subclass.")
 
     seen: set[str] = set()
 
@@ -159,9 +153,7 @@ def validate_analytics_spec(spec: AnalyticsSpec[Any, Any]) -> None:
 
         seen.add(key)
 
-        if not issubclass(
-            definition.params, BaseModel
-        ):  # pyright: ignore[reportUnnecessaryIsInstance]
+        if not issubclass(definition.params, BaseModel):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise exc.configuration(
                 f"Analytics query {key!r}: params must be a Pydantic BaseModel subclass."
             )

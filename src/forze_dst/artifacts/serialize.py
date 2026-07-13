@@ -200,8 +200,7 @@ def config_to_dict(config: SimulationConfig) -> dict[str, Any]:
             "partitions": (
                 {
                     "windows": [
-                        _partition_to_dict(window)
-                        for window in config.cluster.partitions.windows
+                        _partition_to_dict(window) for window in config.cluster.partitions.windows
                     ],
                     "surfaces": sorted(config.cluster.partitions.surfaces),
                 }
@@ -255,9 +254,7 @@ def config_from_dict(data: dict[str, Any]) -> SimulationConfig:
     missing optional keys, so a hand-trimmed or older bundle still loads)."""
 
     faults = (
-        FaultPolicy(
-            rules=tuple(_fault_rule_from_dict(rule) for rule in data["faults"]["rules"])
-        )
+        FaultPolicy(rules=tuple(_fault_rule_from_dict(rule) for rule in data["faults"]["rules"]))
         if data.get("faults") is not None
         else None
     )
@@ -282,8 +279,7 @@ def config_from_dict(data: dict[str, Any]) -> SimulationConfig:
         partitions = (
             PartitionSchedule(
                 windows=tuple(
-                    _partition_from_dict(window)
-                    for window in partitions_data["windows"]
+                    _partition_from_dict(window) for window in partitions_data["windows"]
                 ),
                 surfaces=frozenset(partitions_data["surfaces"]),
             )

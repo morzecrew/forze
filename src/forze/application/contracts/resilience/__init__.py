@@ -22,13 +22,13 @@ from .stores import (
     Transition,
 )
 from .value_objects import (
-    BackoffStrategy,
     AdaptiveBulkheadStrategy,
     AdaptiveThrottleStrategy,
+    BackoffStrategy,
     BulkheadStrategy,
     CircuitBreakerStrategy,
-    GradientBulkheadStrategy,
     FallbackStrategy,
+    GradientBulkheadStrategy,
     HedgeSafety,
     HedgeStrategy,
     JitterMode,

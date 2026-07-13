@@ -11,7 +11,8 @@ The port is async so a directory can fetch a customer-registered key reference
 from a store; the shipped implementations resolve synchronously.
 """
 
-from typing import Awaitable, Protocol, final, runtime_checkable
+from collections.abc import Awaitable
+from typing import Protocol, final, runtime_checkable
 
 import attrs
 

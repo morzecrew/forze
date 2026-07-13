@@ -6,8 +6,9 @@ require_psycopg()
 
 # ....................... #
 
+from collections.abc import Mapping
 from datetime import date, datetime, timedelta
-from typing import Any, Mapping
+from typing import Any
 from uuid import UUID
 
 import attrs
@@ -21,8 +22,8 @@ from forze.application.contracts.querying import (
     AggregateComputedField,
     AggregatesExpression,
     AggregatesExpressionParser,
-    GroupKey,
     GroupField,
+    GroupKey,
     GroupTrunc,
     ParsedAggregates,
     QueryAnd,
@@ -208,9 +209,7 @@ class PsycopgQueryRenderer:
     # ....................... #
 
     def render(self, expr: QueryExpr) -> tuple[sql.Composable, list[Any]]:
-        validate_query_capabilities(
-            expr, POSTGRES_QUERY_CAPABILITIES, backend="postgres"
-        )
+        validate_query_capabilities(expr, POSTGRES_QUERY_CAPABILITIES, backend="postgres")
         query = self._render_expr(expr)
         params = self.binder.values()
 
@@ -224,9 +223,7 @@ class PsycopgQueryRenderer:
     ) -> tuple[ParsedAggregates, sql.Composable, sql.Composable | None, list[Any]]:
         """Render aggregate SELECT and GROUP BY clauses."""
 
-        validate_aggregate_capabilities(
-            aggregates, POSTGRES_QUERY_CAPABILITIES, backend="postgres"
-        )
+        validate_aggregate_capabilities(aggregates, POSTGRES_QUERY_CAPABILITIES, backend="postgres")
 
         parsed = AggregatesExpressionParser.parse(aggregates)
         select_parts: list[sql.Composable] = []
@@ -801,9 +798,9 @@ class PsycopgQueryRenderer:
                     "(jsonb_typeof({j}) = 'array' AND jsonb_array_length({j}) = 0)"
                 ).format(j=j)
 
-            return sql.SQL(
-                "(jsonb_typeof({j}) = 'array' AND jsonb_array_length({j}) > 0)"
-            ).format(j=j)
+            return sql.SQL("(jsonb_typeof({j}) = 'array' AND jsonb_array_length({j}) > 0)").format(
+                j=j
+            )
 
         return (
             sql.SQL("cardinality({}) = 0").format(col)
@@ -1100,9 +1097,7 @@ class PsycopgQueryRenderer:
                 fields = [i for i in items if isinstance(i, QueryField)]
 
             case QueryOr(items):
-                parts = [
-                    self._render_elem_scalar_inner(i, t, depth=depth) for i in items
-                ]
+                parts = [self._render_elem_scalar_inner(i, t, depth=depth) for i in items]
 
                 if len(parts) == 1:
                     return parts[0]
@@ -1111,11 +1106,7 @@ class PsycopgQueryRenderer:
             case _:
                 raise exc.internal(f"Invalid scalar element inner: {inner!r}")
 
-        elem_t = (
-            PostgresType(base=t.base, is_array=False, not_null=True)
-            if t and t.is_array
-            else t
-        )
+        elem_t = PostgresType(base=t.base, is_array=False, not_null=True) if t and t.is_array else t
 
         elem = sql.Identifier(self._elem_alias(depth))
         parts = [
@@ -1144,13 +1135,10 @@ class PsycopgQueryRenderer:
                 fields = [i for i in items if isinstance(i, QueryField)]
                 nested = [i for i in items if isinstance(i, QueryElem)]
 
-                unsupported = [
-                    i for i in items if not isinstance(i, (QueryField, QueryElem))
-                ]
+                unsupported = [i for i in items if not isinstance(i, (QueryField, QueryElem))]
                 if unsupported:
                     raise exc.internal(
-                        "Unsupported node in object element predicate: "
-                        f"{unsupported[0]!r}",
+                        f"Unsupported node in object element predicate: {unsupported[0]!r}",
                     )
 
             case QueryField() as f:
@@ -1163,8 +1151,7 @@ class PsycopgQueryRenderer:
 
             case QueryOr(items):
                 or_parts = [
-                    self._render_elem_object_inner(i, model_path, depth=depth)
-                    for i in items
+                    self._render_elem_object_inner(i, model_path, depth=depth) for i in items
                 ]
 
                 if len(or_parts) == 1:

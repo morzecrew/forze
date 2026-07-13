@@ -6,8 +6,9 @@ require_inngest()
 
 # ....................... #
 
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any, Callable, Generic, Iterator, Self, Sequence, TypeVar, final
+from typing import Any, Generic, Self, TypeVar, final
 
 import attrs
 import inngest
@@ -122,9 +123,7 @@ def _map_trigger(
     if isinstance(trigger, DurableFunctionEventTrigger):
         return inngest.TriggerEvent(event=str(trigger.event))
 
-    if isinstance(
-        trigger, DurableFunctionCronTrigger
-    ):  # pyright: ignore[reportUnnecessaryIsInstance]
+    if isinstance(trigger, DurableFunctionCronTrigger):  # pyright: ignore[reportUnnecessaryIsInstance]
         return inngest.TriggerCron(cron=trigger.expression)
 
     raise TypeError(f"unsupported durable function trigger: {type(trigger)!r}")
@@ -233,11 +232,7 @@ def _register_one(
         | list[inngest.TriggerEvent | inngest.TriggerCron]
     )
 
-    if len(triggers) == 1:
-        trigger = triggers[0]
-
-    else:
-        trigger = triggers
+    trigger = triggers[0] if len(triggers) == 1 else triggers
 
     cfg = binding.config or InngestFunctionConfig()
 
@@ -272,9 +267,7 @@ def _register_one(
                 else None
             )
             try:
-                payload = await open_event_payload(
-                    cipher, payload, tenant=envelope.tenant
-                )
+                payload = await open_event_payload(cipher, payload, tenant=envelope.tenant)
             except CoreException as e:
                 # A forged tenant / tampered ciphertext fails the AEAD open deterministically —
                 # retrying never converges. Map a terminal decrypt failure to NonRetriableError
@@ -288,18 +281,14 @@ def _register_one(
         except ValidationError as e:
             # A malformed event is deterministic — retrying it forever never converges, so tell
             # Inngest to stop.
-            raise inngest.NonRetriableError(
-                f"Invalid event payload for {spec.name!r}: {e}"
-            ) from e
+            raise inngest.NonRetriableError(f"Invalid event payload for {spec.name!r}: {e}") from e
 
         step_token = bind_inngest_step(ctx.step)
 
         logger.debug("Inngest function invoked", function=str(spec.name))
 
         try:
-            with _bind_invocation(
-                execution_ctx, envelope, bind_identity=bind_identity_from_event
-            ):
+            with _bind_invocation(execution_ctx, envelope, bind_identity=bind_identity_from_event):
                 handler = handler_factory(execution_ctx)
                 return await handler(args)
 

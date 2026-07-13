@@ -14,17 +14,13 @@ require_mongo()
 # ....................... #
 
 import asyncio
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from typing import (
     Any,
-    AsyncGenerator,
-    Awaitable,
-    Callable,
     Concatenate,
-    Mapping,
     ParamSpec,
-    Sequence,
     TypeVar,
     final,
 )
@@ -63,9 +59,7 @@ def _deadline_bounded(
     when the push-down is disabled or no deadline is bound. Not ``functools.wraps``-ed: the
     outer ``exc_interceptor`` relabels the op, so the wrapper's identity is not observed."""
 
-    async def _wrapped(
-        self: "MongoClient", /, *args: _P.args, **kwargs: _P.kwargs
-    ) -> _R:
+    async def _wrapped(self: "MongoClient", /, *args: _P.args, **kwargs: _P.kwargs) -> _R:
         budget = (
             driver_deadline_budget()
             if self._push_deadline  # pyright: ignore[reportPrivateUsage]
@@ -182,9 +176,7 @@ class MongoClient(MongoClientPort):
                 uri,
                 appname=config.appname,
                 connectTimeoutMS=int(config.connect_timeout.total_seconds() * 1e3),
-                serverSelectionTimeoutMS=int(
-                    config.server_selection_timeout.total_seconds() * 1e3
-                ),
+                serverSelectionTimeoutMS=int(config.server_selection_timeout.total_seconds() * 1e3),
                 maxPoolSize=config.max_pool_size,
                 minPoolSize=config.min_pool_size,
                 document_class=JsonDict,
@@ -331,9 +323,7 @@ class MongoClient(MongoClientPort):
             if pending.session is not None:
                 return pending.session
 
-            session = await pending.stack.enter_async_context(
-                self.__acquire_session()
-            )
+            session = await pending.stack.enter_async_context(self.__acquire_session())
 
             await pending.stack.enter_async_context(
                 await session.start_transaction(

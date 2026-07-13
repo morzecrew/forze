@@ -1,6 +1,7 @@
 """Port for text embedding providers (e.g. vector search query encoding)."""
 
-from typing import Awaitable, Literal, Protocol, Sequence, runtime_checkable
+from collections.abc import Awaitable, Sequence
+from typing import Literal, Protocol, runtime_checkable
 
 # ----------------------- #
 

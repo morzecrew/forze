@@ -117,8 +117,7 @@ class ConvenientDeps:
 
         if ctx.inv_ctx.is_read_only():
             raise exc.precondition(
-                f"Cannot acquire command (write) port {key} in a read-only (QUERY) "
-                "operation."
+                f"Cannot acquire command (write) port {key} in a read-only (QUERY) operation."
             )
 
         return ctx.deps.resolve_configurable(ctx, key, spec, route=route)

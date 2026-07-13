@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing
 from functools import wraps
-from typing import Any, AsyncGenerator, AsyncIterator, cast
+from typing import Any, cast
 
 import attrs
 
@@ -67,7 +68,7 @@ async def _acquisition_only_stream(
     # Close the inner stream deterministically on any exit (early break, exception) so a
     # backend cursor/connection is released promptly rather than at GC time — seam streams
     # are async generators (they have ``aclose``); the annotated ``AsyncIterator`` is narrowed.
-    async with aclosing(cast("AsyncGenerator[Any, None]", stream)) as agen:
+    async with aclosing(cast("AsyncGenerator[Any]", stream)) as agen:
         async for item in agen:
             yield item
 
@@ -165,9 +166,7 @@ class InterceptingPortProxy(PortProxy):
             # Close the composed stream deterministically on any exit (consumer ``aclose``,
             # early break, a thrown-in exception) so the close chains down to the backend
             # generator at scope exit rather than at GC time.
-            async with aclosing(
-                cast("AsyncGenerator[Any, None]", stream(call))
-            ) as agen:
+            async with aclosing(cast("AsyncGenerator[Any]", stream(call))) as agen:
                 async for item in agen:
                     yield item
 

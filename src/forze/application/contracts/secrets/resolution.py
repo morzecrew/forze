@@ -1,6 +1,7 @@
 """Helpers built on :class:`SecretsPort`."""
 
-from typing import Callable, Mapping, TypeVar
+from collections.abc import Callable, Mapping
+from typing import TypeVar
 from uuid import UUID
 
 import attrs

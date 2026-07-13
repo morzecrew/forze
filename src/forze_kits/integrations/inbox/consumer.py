@@ -96,9 +96,7 @@ def _message_headers(message: object) -> Mapping[str, str]:
 
     headers = getattr(message, "headers", None)
 
-    return (
-        headers if isinstance(headers, Mapping) else {}
-    )  # pyright: ignore[reportUnknownVariableType]
+    return headers if isinstance(headers, Mapping) else {}  # pyright: ignore[reportUnknownVariableType]
 
 
 # ....................... #

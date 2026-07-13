@@ -10,10 +10,11 @@ uninstrumented app's import path.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from opentelemetry.metrics import CallbackOptions, Meter, Observation  # noqa: F401
+    from opentelemetry.metrics import CallbackOptions, Meter, Observation
 
     from .mailbox import DocumentMailboxCursors, DocumentRealtimeMailbox
 
@@ -28,11 +29,11 @@ MAILBOX_ACKED_COUNTER = "forze.realtime.mailbox.acked"
 
 
 def instrument_realtime_mailbox(
-    mailbox: "DocumentRealtimeMailbox",
-    cursors: "DocumentMailboxCursors",
+    mailbox: DocumentRealtimeMailbox,
+    cursors: DocumentMailboxCursors,
     *,
     channel: str = "realtime",
-    meter: "Meter | None" = None,
+    meter: Meter | None = None,
 ) -> None:
     """Export the mailbox + cursor counters as OTel observable counters.
 
@@ -52,18 +53,30 @@ def instrument_realtime_mailbox(
     attributes = {"forze.realtime.channel": channel}
 
     def _counter(name: str, pick: Callable[[], int], description: str) -> None:
-        def callback(_options: "CallbackOptions") -> Iterable["Observation"]:
+        def callback(_options: CallbackOptions) -> Iterable[Observation]:
             return [metrics.Observation(pick(), attributes)]
 
         meter.create_observable_counter(
             name, callbacks=[callback], unit="1", description=description
         )
 
-    _counter(MAILBOX_STORED_COUNTER, lambda: mailbox.stats().stored,
-             "Durable principal signals stored for offline replay.")
-    _counter(MAILBOX_REPLAYED_COUNTER, lambda: mailbox.stats().replayed,
-             "Mailbox entries fetched for connect-time replay.")
-    _counter(MAILBOX_TRIMMED_COUNTER, lambda: mailbox.stats().trimmed,
-             "Mailbox entries dropped by retention/ack trimming.")
-    _counter(MAILBOX_ACKED_COUNTER, lambda: cursors.stats().acked,
-             "Per-device cursor advances (acked deliveries).")
+    _counter(
+        MAILBOX_STORED_COUNTER,
+        lambda: mailbox.stats().stored,
+        "Durable principal signals stored for offline replay.",
+    )
+    _counter(
+        MAILBOX_REPLAYED_COUNTER,
+        lambda: mailbox.stats().replayed,
+        "Mailbox entries fetched for connect-time replay.",
+    )
+    _counter(
+        MAILBOX_TRIMMED_COUNTER,
+        lambda: mailbox.stats().trimmed,
+        "Mailbox entries dropped by retention/ack trimming.",
+    )
+    _counter(
+        MAILBOX_ACKED_COUNTER,
+        lambda: cursors.stats().acked,
+        "Per-device cursor advances (acked deliveries).",
+    )

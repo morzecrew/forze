@@ -5,6 +5,7 @@ from forze.application.execution.operations.facade import (
     facade_op,
     namespaced_facade,
 )
+
 from .handlers import (
     AuthnChangePassword,
     AuthnLogout,
@@ -14,7 +15,6 @@ from .handlers import (
     AuthnResetPassword,
     DeactivatePrincipalHandler,
 )
-
 from .operations import AuthnKernelOp
 
 # ----------------------- #

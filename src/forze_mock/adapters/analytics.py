@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator, Sequence
 from typing import (
     Any,
-    AsyncGenerator,
     Literal,
-    Sequence,
     cast,
     final,
     overload,
@@ -23,13 +22,6 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
 )
 from forze.application.contracts.analytics.specs import AnalyticsQueryDefinition
-from forze.application.integrations.analytics import (
-    decrypt_and_shape_rows,
-    encode_ingest_payloads,
-)
-from forze.application.integrations.analytics.adapter_common import (
-    validate_fetch_batch_size,
-)
 from forze.application.contracts.base import (
     CountlessPage,
     CursorPage,
@@ -39,6 +31,13 @@ from forze.application.contracts.base import (
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
+)
+from forze.application.integrations.analytics import (
+    decrypt_and_shape_rows,
+    encode_ingest_payloads,
+)
+from forze.application.integrations.analytics.adapter_common import (
+    validate_fetch_batch_size,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -83,9 +82,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         defn = self._definition(query_key)
         if isinstance(params, defn.params):
             return params
-        if isinstance(
-            params, BaseModel
-        ):  # pyright: ignore[reportUnnecessaryIsInstance]
+        if isinstance(params, BaseModel):  # pyright: ignore[reportUnnecessaryIsInstance]
             return default_model_codec(defn.params).decode_mapping(
                 params.model_dump(),
             )
@@ -482,9 +479,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     async def append(self, rows: Sequence[Ing]) -> AnalyticsAppendResult | None:
         if self.spec.ingest is None:
-            raise exc.internal(
-                f"Analytics ingest is not configured for route {self._route()!r}."
-            )
+            raise exc.internal(f"Analytics ingest is not configured for route {self._route()!r}.")
         if not rows:
             return AnalyticsAppendResult(accepted=0)
 

@@ -1,12 +1,10 @@
 """In-memory pub/sub adapter."""
 
 import asyncio
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import (
     Any,
-    AsyncGenerator,
-    Mapping,
-    Sequence,
     cast,
     final,
 )
@@ -95,9 +93,7 @@ class MockPubSubAdapter(MockTenancyMixin, PubSubCommandPort[M], PubSubQueryPort[
             raise exc.internal("Timeout must be positive")
 
         with self.state.lock:
-            cursors = {
-                topic: len(self._topic_store().get(topic, [])) for topic in topics
-            }
+            cursors = {topic: len(self._topic_store().get(topic, [])) for topic in topics}
 
         while True:
             emitted = False

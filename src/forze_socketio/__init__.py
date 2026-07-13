@@ -74,11 +74,8 @@ require_socketio()
 
 # ....................... #
 
-from .emitter import (
-    SocketIOEventEmitter,
-    SocketIONamespaceEmitter,
-    SocketIOServerEvent,
-)
+from forze.application.contracts.realtime import RealtimeShard
+
 from .connection import (
     CONNECTION_SESSION_KEY,
     InMemoryRealtimePresence,
@@ -92,8 +89,16 @@ from .connection_lifecycle import (
     realtime_identity_expiry_lifecycle_step,
     realtime_presence_heartbeat_lifecycle_step,
 )
-from forze.application.contracts.realtime import RealtimeShard
-
+from .emitter import (
+    SocketIOEventEmitter,
+    SocketIONamespaceEmitter,
+    SocketIOServerEvent,
+)
+from .exceptions import (
+    GENERIC_INTERNAL_DETAIL,
+    build_core_exception_ack,
+    build_unhandled_exception_ack,
+)
 from .gateway import (
     GatewayDedup,
     RealtimeGateway,
@@ -103,18 +108,13 @@ from .gateway import (
     TenantShardedSignalSource,
     room_for,
 )
+from .gateway_lifecycle import realtime_gateway_lifecycle_step
 from .mailbox import (
     InMemoryMailboxCursors,
     InMemoryRealtimeMailbox,
     MailboxCursors,
     MailboxEntry,
     RealtimeMailbox,
-)
-from .gateway_lifecycle import realtime_gateway_lifecycle_step
-from .exceptions import (
-    GENERIC_INTERNAL_DETAIL,
-    build_core_exception_ack,
-    build_unhandled_exception_ack,
 )
 from .routing import (
     IDENTITY_SESSION_KEY,

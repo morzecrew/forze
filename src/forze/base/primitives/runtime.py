@@ -45,9 +45,7 @@ class RuntimeVar[T: object]:
 
         with self.__lock:
             if self.__value is not None:
-                raise exc.internal(
-                    f"Value is already set for runtime variable '{self.name}'"
-                )
+                raise exc.internal(f"Value is already set for runtime variable '{self.name}'")
 
             self.__value = value
 

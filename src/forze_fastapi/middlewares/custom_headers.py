@@ -4,7 +4,7 @@ require_fastapi()
 
 # ....................... #
 
-from typing import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 
 import attrs
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -28,11 +28,9 @@ class CustomHeadersMiddleware:
     static_headers: Mapping[str, str] | None = attrs.field(kw_only=True, default=None)
     """Static headers to inject into the response."""
 
-    dynamic_headers: Mapping[str, Callable[[], str | Awaitable[str]]] | None = (
-        attrs.field(
-            kw_only=True,
-            default=None,
-        )
+    dynamic_headers: Mapping[str, Callable[[], str | Awaitable[str]]] | None = attrs.field(
+        kw_only=True,
+        default=None,
     )
     """Dynamic headers to inject into the response."""
 
@@ -64,12 +62,12 @@ class CustomHeadersMiddleware:
             return
 
         injected_headers = await self._compute_headers()
-        injected_header_keys = set([x[0] for x in injected_headers])
+        injected_header_keys = {x[0] for x in injected_headers}
 
         async def send_wrapper(message: Message) -> None:
             if message["type"] == "http.response.start":
                 headers: list[tuple[bytes, bytes]] = list(message.get("headers", []))
-                header_keys = set([h[0] for h in headers])
+                header_keys = {h[0] for h in headers}
 
                 if header_keys & injected_header_keys:
                     raise exc.internal("Duplicate headers found")

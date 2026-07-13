@@ -1,4 +1,5 @@
-from typing import Awaitable, Protocol
+from collections.abc import Awaitable
+from typing import Protocol
 
 from ..value_objects import (
     AccessTokenCredentials,
@@ -21,7 +22,7 @@ class PasswordVerifierPort(Protocol):
 
     def verify_password(
         self,
-        credentials: PasswordCredentials,  # noqa: F841
+        credentials: PasswordCredentials,
     ) -> Awaitable[VerifiedAssertion]:
         """Verify password credentials and return a :class:`VerifiedAssertion`."""
         ...
@@ -42,7 +43,7 @@ class TokenVerifierPort(Protocol):
 
     def verify_token(
         self,
-        credentials: AccessTokenCredentials,  # noqa: F841
+        credentials: AccessTokenCredentials,
     ) -> Awaitable[VerifiedAssertion]:
         """Verify access-token credentials and return a :class:`VerifiedAssertion`."""
         ...
@@ -56,7 +57,7 @@ class ApiKeyVerifierPort(Protocol):
 
     def verify_api_key(
         self,
-        credentials: ApiKeyCredentials,  # noqa: F841
+        credentials: ApiKeyCredentials,
     ) -> Awaitable[VerifiedAssertion]:
         """Verify API key credentials and return a :class:`VerifiedAssertion`."""
         ...

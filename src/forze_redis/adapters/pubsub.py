@@ -6,8 +6,9 @@ require_redis()
 
 # ....................... #
 
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Mapping, Sequence, final
+from typing import final
 
 import attrs
 from pydantic import BaseModel

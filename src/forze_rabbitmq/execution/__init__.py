@@ -1,7 +1,7 @@
 """RabbitMQ execution wiring for the application kernel."""
 
 from .deps import RabbitMQClientDepKey, RabbitMQDepsModule, RabbitMQQueueConfig
-from .lifecycle import routed_rabbitmq_lifecycle_step, rabbitmq_lifecycle_step
+from .lifecycle import rabbitmq_lifecycle_step, routed_rabbitmq_lifecycle_step
 
 # ----------------------- #
 

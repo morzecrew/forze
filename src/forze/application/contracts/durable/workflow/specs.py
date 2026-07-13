@@ -81,14 +81,10 @@ class DurableWorkflowSpec(Generic[In, Out], BaseSpec):
     signals: dict[StrKey, DurableWorkflowSignalSpec[Any]] = attrs.field(factory=dict)
     """Signal invocations within the workflow."""
 
-    queries: dict[StrKey, DurableWorkflowQuerySpec[Any, Any]] = attrs.field(
-        factory=dict
-    )
+    queries: dict[StrKey, DurableWorkflowQuerySpec[Any, Any]] = attrs.field(factory=dict)
     """Query invocations within the workflow."""
 
-    updates: dict[StrKey, DurableWorkflowUpdateSpec[Any, Any]] = attrs.field(
-        factory=dict
-    )
+    updates: dict[StrKey, DurableWorkflowUpdateSpec[Any, Any]] = attrs.field(factory=dict)
     """Update invocations within the workflow."""
 
 

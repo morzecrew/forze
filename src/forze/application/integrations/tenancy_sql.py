@@ -6,7 +6,7 @@ way, without importing from a sibling integration package.
 """
 
 import re
-from typing import Mapping
+from collections.abc import Mapping
 
 from pydantic import BaseModel
 
@@ -119,6 +119,4 @@ def unreferenced_param_keys(
 
     rx = re.compile(pattern)
 
-    return sorted(
-        key for key, sql in queries.items() if not rx.search(_strip_sql_comments(sql))
-    )
+    return sorted(key for key, sql in queries.items() if not rx.search(_strip_sql_comments(sql)))

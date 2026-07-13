@@ -5,7 +5,7 @@ require_inngest()
 
 # ....................... #
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import final
 
 import attrs
@@ -57,11 +57,7 @@ class InngestEventCommandAdapter[M: BaseModel](DurableFunctionEventCommandPort[M
         occurred_at: datetime | None = None,
     ) -> str:
         data: JsonDict = dict(self.spec.codec.encode_mapping(payload))
-        tenant = (
-            self.execution_ctx.inv_ctx.get_tenant()
-            if self.execution_ctx is not None
-            else None
-        )
+        tenant = self.execution_ctx.inv_ctx.get_tenant() if self.execution_ctx is not None else None
 
         if self.spec.encrypt:
             if self.cipher is None:
@@ -93,7 +89,7 @@ class InngestEventCommandAdapter[M: BaseModel](DurableFunctionEventCommandPort[M
         ts_ms = 0
 
         if occurred_at is not None:
-            instant = occurred_at.astimezone(timezone.utc)
+            instant = occurred_at.astimezone(UTC)
             ts_ms = int(instant.timestamp() * 1000)
 
         event = inngest.Event(

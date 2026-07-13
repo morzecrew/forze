@@ -12,7 +12,6 @@ from __future__ import annotations
 import typer
 
 from forze._version import __version__
-
 from forze_cli.dst import dst_app
 
 # ----------------------- #

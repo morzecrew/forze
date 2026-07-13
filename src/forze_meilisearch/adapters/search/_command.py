@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence, cast, final
+from collections.abc import Sequence
+from typing import Any, cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -49,9 +50,7 @@ class _MeilisearchSearchWriteBase[M: BaseModel](MeilisearchSearchGateway[M]):
         uid = int(getattr(task_info, "task_uid", getattr(task_info, "taskUid", 0)))
         # Bound the wait so a stuck task raises (via the client's timeout mapping)
         # instead of hanging the caller forever.
-        task = await self.client.wait_for_task(
-            uid, timeout=self.config.task_wait_timeout
-        )
+        task = await self.client.wait_for_task(uid, timeout=self.config.task_wait_timeout)
 
         # A completed Meilisearch task can still have *failed* — treat any terminal
         # status other than ``succeeded`` as an error rather than silent success.

@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from typing import (
     Any,
-    AsyncGenerator,
-    Awaitable,
-    Callable,
     Final,
     Literal,
-    Sequence,
     cast,
     final,
     overload,
@@ -19,12 +16,6 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.search import (
-    SearchCountlessPage,
-    SearchCursorPage,
-    SearchPage,
-    search_page_from_limit_offset,
-)
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
@@ -35,7 +26,10 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.search import (
     PhraseCombine,
     SearchCapabilities,
+    SearchCountlessPage,
+    SearchCursorPage,
     SearchOptions,
+    SearchPage,
     SearchQueryPort,
     SearchResultSnapshotOptions,
     SearchSpec,
@@ -45,6 +39,7 @@ from forze.application.contracts.search import (
     resolve_facet_fields,
     resolve_highlight,
     search_options_for_simple_adapter,
+    search_page_from_limit_offset,
     validate_stream_supported,
 )
 from forze.application.integrations.search import (
@@ -55,6 +50,10 @@ from forze.base.primitives import JsonDict
 from forze.base.serialization import (
     default_model_codec,
 )
+from forze_mock.adapters.search._facets_highlights import (
+    compute_facets,
+    compute_highlights,
+)
 from forze_mock.query._types import (
     M,
     T,
@@ -62,10 +61,6 @@ from forze_mock.query._types import (
 from forze_mock.query.cursors import (
     _mock_cursor_start_and_limit,  # pyright: ignore[reportPrivateUsage]
     _mock_cursor_tokens,  # pyright: ignore[reportPrivateUsage]
-)
-from forze_mock.adapters.search._facets_highlights import (
-    compute_facets,
-    compute_highlights,
 )
 from forze_mock.query.matching import (
     _path_text,  # pyright: ignore[reportPrivateUsage]
@@ -131,9 +126,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
             sub = [f for f in fields_opt if f in allowed]
             allowed = sub if sub else allowed
 
-        def_weights = (
-            dict(self.spec.default_weights) if self.spec.default_weights else None
-        )
+        def_weights = dict(self.spec.default_weights) if self.spec.default_weights else None
 
         return allowed, def_weights
 
@@ -163,9 +156,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
 
         if mode == "prefix":
             words = joined.split()
-            matched = sum(
-                1 for token in tokens if any(w.startswith(token) for w in words)
-            )
+            matched = sum(1 for token in tokens if any(w.startswith(token) for w in words))
             return matched / len(tokens)
 
         # fulltext and phrase use token containment for mock behavior.
@@ -239,9 +230,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
             if not matches(doc):
                 continue
 
-            score = self._document_score_multi_phrase(
-                terms, doc, fields, weights, combine=combine
-            )
+            score = self._document_score_multi_phrase(terms, doc, fields, weights, combine=combine)
             if score <= 0.0:
                 continue
             ranked.append((score, {**doc, _MOCK_RANK: score}))
@@ -268,11 +257,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         highlights (over the returned ``page_rows``); ``None`` when not requested."""
 
         facet_fields = resolve_facet_fields(self.spec, options)
-        facets = (
-            compute_facets(all_rows, facet_fields, options=options)
-            if facet_fields
-            else None
-        )
+        facets = compute_facets(all_rows, facet_fields, options=options) if facet_fields else None
 
         highlight = resolve_highlight(self.spec, options)
         fragment_size, max_fragments = highlight_fragment_bounds(options)
@@ -450,9 +435,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
             hits = default_model_codec(return_type).decode_mapping_many(ordered)
         else:
             allowed = set(self.spec.model_type.model_fields.keys())
-            typed_docs = [
-                {k: v for k, v in doc.items() if k in allowed} for doc in ordered
-            ]
+            typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in ordered]
             hits = cast(
                 list[Any],
                 self.spec.resolved_read_codec.decode_mapping_many(typed_docs),
@@ -681,9 +664,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
             hits = default_model_codec(return_type).decode_mapping_many(page_rows)
         else:
             allowed = set(self.spec.model_type.model_fields.keys())
-            typed_docs = [
-                {k: v for k, v in doc.items() if k in allowed} for doc in page_rows
-            ]
+            typed_docs = [{k: v for k, v in doc.items() if k in allowed} for doc in page_rows]
             hits = cast(
                 list[Any],
                 self.spec.resolved_read_codec.decode_mapping_many(typed_docs),
@@ -767,9 +748,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
 
     async def _stream_impl(
         self,
-        fetch_page: Callable[
-            [CursorPaginationExpression], Awaitable[SearchCursorPage[Any]]
-        ],
+        fetch_page: Callable[[CursorPaginationExpression], Awaitable[SearchCursorPage[Any]]],
         *,
         chunk_size: int,
     ) -> AsyncGenerator[Sequence[Any]]:
@@ -793,9 +772,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         chunk_size: int = 500,
     ) -> AsyncGenerator[Sequence[M]]:
         return self._stream_impl(
-            lambda cursor: self.search_cursor(
-                query, filters, cursor, sorts, options=options
-            ),
+            lambda cursor: self.search_cursor(query, filters, cursor, sorts, options=options),
             chunk_size=chunk_size,
         )
 

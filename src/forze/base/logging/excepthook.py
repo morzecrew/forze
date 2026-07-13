@@ -1,6 +1,6 @@
 import sys
+from collections.abc import Callable
 from types import TracebackType
-from typing import Callable
 
 from forze._logging import ForzeLogger
 

@@ -4,8 +4,9 @@ require_oidc()
 
 # ....................... #
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any, Mapping, final
+from typing import Any, final
 
 import attrs
 

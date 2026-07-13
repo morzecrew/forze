@@ -57,9 +57,7 @@ class AccessLogSampler:
     always kept, probes excluded by the caller-supplied *exclude* set.
     """
 
-    mode: AccessLogMode = attrs.field(
-        default=AccessLogMode.SAMPLED, converter=AccessLogMode
-    )
+    mode: AccessLogMode = attrs.field(default=AccessLogMode.SAMPLED, converter=AccessLogMode)
     """Access-log volume mode (a plain ``"full"`` / ``"sampled"`` / ``"off"`` string is coerced)."""
 
     sample_rate: int = 10

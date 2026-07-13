@@ -1,6 +1,7 @@
 """Port for dispatching domain events to in-process handlers."""
 
-from typing import Awaitable, Protocol, Sequence, runtime_checkable
+from collections.abc import Awaitable, Sequence
+from typing import Protocol, runtime_checkable
 
 from forze.domain.models import DomainEvent
 

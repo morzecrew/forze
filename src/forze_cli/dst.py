@@ -15,7 +15,12 @@ from forze.base.primitives import utcnow
 from forze_cli._compat import require_dst
 from forze_cli.loader import load_simulation
 from forze_dst import PCTScheduler, RandomScheduler, SimulationConfig, Strategy
-from forze_dst.artifacts import RegressionEntry, append_regression, entry_from_report, load_regressions
+from forze_dst.artifacts import (
+    RegressionEntry,
+    append_regression,
+    entry_from_report,
+    load_regressions,
+)
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.latency import Constant, LatencyProfile, LatencyRule
 
@@ -200,9 +205,7 @@ def _config_from_snapshot(explore: dict[str, Any], seed: int) -> SimulationConfi
 
 @dst_app.command()
 def run(
-    target: str = typer.Argument(
-        ..., help="Import string 'module:attr' of a Simulation."
-    ),
+    target: str = typer.Argument(..., help="Import string 'module:attr' of a Simulation."),
     strategy: Strategy = typer.Option(Strategy.SCENARIO, help="Exploration strategy."),
     seeds: str = typer.Option("0-20", help="Seeds: 'N' | 'A-B' | 'a,b,c'."),
     act_count: int = typer.Option(8, help="Act operations per run."),
@@ -266,9 +269,7 @@ def run(
     # The scenario strategy can sweep + report confidence in one pass (audit); other strategies
     # (dpor / hypothesis) take the plain run path.
     stats = (
-        sim.audit(cfg, scenario=scenario)
-        if confidence and strategy is Strategy.SCENARIO
-        else None
+        sim.audit(cfg, scenario=scenario) if confidence and strategy is Strategy.SCENARIO else None
     )
     report = stats.violation if stats is not None else sim.run(cfg, scenario=scenario)
 
@@ -315,9 +316,7 @@ def run(
 
 @dst_app.command()
 def coverage(
-    target: str = typer.Argument(
-        ..., help="Import string 'module:attr' of a Simulation."
-    ),
+    target: str = typer.Argument(..., help="Import string 'module:attr' of a Simulation."),
     seeds: str = typer.Option("0-200", help="Seed pool: 'N' | 'A-B' | 'a,b,c'."),
     act_count: int = typer.Option(8, help="Act operations per run."),
     concurrency: int = typer.Option(4, help="Max concurrent operations."),
@@ -397,9 +396,7 @@ def replay(
     for entry in entries:
         chosen = target or entry.target
         if not chosen:
-            typer.echo(
-                f"⚠ seed {entry.seed} has no saved target and none was given — skipping"
-            )
+            typer.echo(f"⚠ seed {entry.seed} has no saved target and none was given — skipping")
             continue
         grouped.setdefault(chosen, []).append(entry)
 
@@ -410,15 +407,13 @@ def replay(
     for app, group in grouped.items():
         try:
             sim = load_simulation(app)
-        except Exception as e:  # noqa: BLE001 — a bad target must not abort the rest of the corpus
+        except Exception as e:
             # One unloadable target (renamed/moved app, typo) previously raised a raw traceback and
             # aborted every remaining seed. Report it, count its seeds as ERRORS (unverified, not
             # confirmed violations — non-zero exit either way), and keep replaying the other targets.
             errors += len(group)
             checked += len(group)
-            typer.echo(
-                f"✗ target {app!r} could not be loaded ({e}); {len(group)} seed(s) skipped"
-            )
+            typer.echo(f"✗ target {app!r} could not be loaded ({e}); {len(group)} seed(s) skipped")
             continue
 
         fingerprint = sim.fingerprint()
@@ -427,10 +422,7 @@ def replay(
         for entry in group:
             checked += 1
 
-            if (
-                entry.registry_fingerprint
-                and entry.registry_fingerprint != fingerprint
-            ):
+            if entry.registry_fingerprint and entry.registry_fingerprint != fingerprint:
                 typer.echo(
                     f"⚠ seed {entry.seed}: registry changed since saved — replay may "
                     "not reproduce the original path"
@@ -457,7 +449,7 @@ def replay(
             )
             try:
                 report = sim.run(cfg, scenario=scenario)
-            except Exception as e:  # noqa: BLE001 — one seed's replay error must not abort the rest
+            except Exception as e:
                 errors += 1  # unverified (replay raised), not a confirmed violation
                 typer.echo(f"✗ seed {entry.seed}: replay raised ({e})")
                 continue
@@ -485,9 +477,7 @@ def replay(
 
 @dst_app.command()
 def topology(
-    target: str = typer.Argument(
-        ..., help="Import string 'module:attr' of a Simulation."
-    ),
+    target: str = typer.Argument(..., help="Import string 'module:attr' of a Simulation."),
 ) -> None:
     """Print the recovered reactive cascade topology (who triggers whom, via which events)."""
 

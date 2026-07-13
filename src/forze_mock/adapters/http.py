@@ -13,7 +13,8 @@ injection (raise / delay / malformed response) without touching call sites.
 from __future__ import annotations
 
 import inspect
-from typing import Any, Callable, final
+from collections.abc import Callable
+from typing import Any, final
 
 import attrs
 from pydantic import BaseModel
@@ -35,9 +36,7 @@ for an empty body, or an awaitable of any of those."""
 
 
 def _return_type_allows_empty(return_type: type[BaseModel]) -> bool:
-    return not any(
-        field_info.is_required() for field_info in return_type.model_fields.values()
-    )
+    return not any(field_info.is_required() for field_info in return_type.model_fields.values())
 
 
 # ....................... #
@@ -108,9 +107,7 @@ class MockHttpServiceAdapter(HttpServicePort):
         key = str(getattr(op, "value", op))
 
         if key not in self.spec.operations:
-            raise exc.validation(
-                f"Unknown HTTP operation {key!r} for {self.spec.name!r}"
-            )
+            raise exc.validation(f"Unknown HTTP operation {key!r} for {self.spec.name!r}")
 
         return self.spec.operations[key]
 
@@ -125,9 +122,7 @@ class MockHttpServiceAdapter(HttpServicePort):
             return
 
         if operation.args_type is None:
-            raise exc.validation(
-                f"HTTP operation {operation.name!r} takes no args"
-            )
+            raise exc.validation(f"HTTP operation {operation.name!r} takes no args")
 
         if not isinstance(args, operation.args_type):
             raise exc.validation(
@@ -148,9 +143,7 @@ class MockHttpServiceAdapter(HttpServicePort):
             if operation.allows_empty_body or _return_type_allows_empty(return_type):
                 return return_type.model_construct()
 
-            raise exc.validation(
-                f"HTTP operation {operation.name!r} handler returned no body"
-            )
+            raise exc.validation(f"HTTP operation {operation.name!r} handler returned no body")
 
         if isinstance(result, return_type):
             return result

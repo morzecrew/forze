@@ -1,5 +1,6 @@
+from collections.abc import Callable
 from datetime import timedelta
-from typing import Any, Callable, final
+from typing import Any, final
 
 import attrs
 

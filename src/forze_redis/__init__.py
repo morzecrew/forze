@@ -6,6 +6,18 @@ require_redis()
 
 # ....................... #
 
+from .adapters.circuit_breaker import (
+    RedisCircuitBreakerStore,
+    redis_circuit_breaker_store,
+)
+from .adapters.latency_digest import (
+    RedisLatencyDigestStore,
+    redis_latency_digest_store,
+)
+from .adapters.rate_limit import (
+    RedisRateLimitStore,
+    redis_rate_limit_store,
+)
 from .execution import (
     RedisBlockingClientDepKey,
     RedisCacheConfig,
@@ -20,18 +32,6 @@ from .execution import (
     RedisUniversalConfig,
     redis_lifecycle_step,
     routed_redis_lifecycle_step,
-)
-from .adapters.circuit_breaker import (
-    RedisCircuitBreakerStore,
-    redis_circuit_breaker_store,
-)
-from .adapters.latency_digest import (
-    RedisLatencyDigestStore,
-    redis_latency_digest_store,
-)
-from .adapters.rate_limit import (
-    RedisRateLimitStore,
-    redis_rate_limit_store,
 )
 from .kernel.client import RedisClient, RedisClientPort, RedisConfig, RoutedRedisClient
 from .kernel.relation import (

@@ -26,7 +26,6 @@ from ..security import AuthnRequirement, resolve_authn_ingress, resolve_tenant_i
 
 @attrs.define(slots=True, frozen=True)
 class SecurityContextMiddleware:
-
     app: ASGIApp
     """The next ASGI application."""
 

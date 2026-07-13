@@ -19,8 +19,8 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.base.exceptions import exc
-from forze_identity._secure_spec import forbid_cache_and_history
 from forze.base.primitives import utcnow
+from forze_identity._secure_spec import forbid_cache_and_history
 
 from ..domain.constants import ACCESS_TOKEN_SCHEME
 from ..domain.models.session import (
@@ -190,9 +190,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             raise exc.authentication("Invalid refresh token")
 
         if old_session.rotated_at is not None:
-            await self.revoke_chain_of_tokens(
-                old_session.principal_id, old_session.family_id
-            )
+            await self.revoke_chain_of_tokens(old_session.principal_id, old_session.family_id)
 
             # Reuse of a rotated token is the canonical token-theft signal:
             # emitted (best-effort) before the uniform error propagates.

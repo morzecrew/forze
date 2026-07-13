@@ -14,9 +14,10 @@ lockout counters, so a locked login correlates with its ``LOGIN_FAILED`` /
 """
 
 import hashlib
+from collections.abc import Awaitable, Mapping
 from datetime import datetime
 from enum import StrEnum
-from typing import Awaitable, Mapping, Protocol, final, runtime_checkable
+from typing import Protocol, final, runtime_checkable
 from uuid import UUID
 
 import attrs
@@ -151,9 +152,7 @@ async def emit_safe(sink: AuthnEventSink | None, event: AuthnEvent) -> None:
     try:
         await sink.record(event)
 
-    except (
-        Exception
-    ) as e:  # noqa: BLE001 — emission is best-effort; auth flows must not fail
+    except Exception as e:
         logger.warning(
             "Authn event sink failed to record '%s' on route '%s': %s",
             str(event.kind),

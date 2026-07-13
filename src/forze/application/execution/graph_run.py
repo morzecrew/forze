@@ -1,7 +1,7 @@
 """Run execution graph waves in forward or reverse order."""
 
 import asyncio
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from forze.application.contracts.execution import ExecutionGraph
 from forze.base.primitives import StrKey, StrKeyMapping
@@ -38,10 +38,7 @@ async def _run_wave[G](
         # drain slot instead of being re-admitted. Outside an operation (e.g. a
         # lifecycle wave) the wrapper is a passthrough.
         results = await asyncio.gather(
-            *(
-                continue_operation_on_task(run_step(steps[step_id]))
-                for step_id in step_ids
-            ),
+            *(continue_operation_on_task(run_step(steps[step_id])) for step_id in step_ids),
             return_exceptions=True,
         )
 

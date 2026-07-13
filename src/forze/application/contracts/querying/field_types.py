@@ -20,11 +20,12 @@ do resolve.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
 from types import UnionType
-from typing import Any, Final, Mapping, Union, get_args, get_origin
+from typing import Any, Final, Union, get_args, get_origin
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -301,8 +302,7 @@ def validate_query_field_types(
             return
 
         _fail(
-            f"Operator {op!r} is not valid for field {path!r}, which is "
-            f"{_CLASS_LABEL[cls]}.",
+            f"Operator {op!r} is not valid for field {path!r}, which is {_CLASS_LABEL[cls]}.",
         )
 
     def _walk_elem_inner(
@@ -360,9 +360,7 @@ def validate_query_field_types(
                     )
 
                 else:
-                    _walk_quantifier(
-                        nested, base_model=elem_model, prefix=f"{array_path}[]."
-                    )
+                    _walk_quantifier(nested, base_model=elem_model, prefix=f"{array_path}[].")
 
             case _:
                 pass

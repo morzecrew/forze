@@ -1,6 +1,7 @@
+from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager, AbstractContextManager
 from types import TracebackType
-from typing import Any, Callable, Mapping, Never, Type
+from typing import Any, Never
 
 import attrs
 
@@ -96,7 +97,7 @@ class ContextManagerExceptionInterceptor[R](AbstractContextManager[R]):
 
     def __exit__(
         self,
-        exc_type: Type[BaseException] | None,
+        exc_type: type[BaseException] | None,
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> bool | None:
@@ -153,7 +154,7 @@ class AsyncContextManagerExceptionInterceptor[R](AbstractAsyncContextManager[R])
 
     async def __aexit__(
         self,
-        exc_type: Type[BaseException] | None,
+        exc_type: type[BaseException] | None,
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> bool | None:

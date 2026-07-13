@@ -23,7 +23,7 @@ Out = TypeVar("Out", bound=BaseModel)
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class async_http_op(Generic[In, Out]):  # noqa: N801
+class async_http_op(Generic[In, Out]):
     """Descriptor declaring an HTTP operation on :class:`BaseHttpIntegration`."""
 
     method: HttpMethod

@@ -10,10 +10,10 @@ Thin wrappers over the shared analytics SQL builders in
 """
 
 from forze.application.integrations.analytics.sql import (
-    build_count_sql as build_count_sql,  # thin re-export of the shared builder
+    apply_limit_offset as _apply_limit_offset,
 )
 from forze.application.integrations.analytics.sql import (
-    apply_limit_offset as _apply_limit_offset,
+    build_count_sql as build_count_sql,  # thin re-export of the shared builder
 )
 
 # ----------------------- #

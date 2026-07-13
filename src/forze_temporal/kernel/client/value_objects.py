@@ -4,7 +4,8 @@ require_temporal()
 
 # ....................... #
 
-from typing import Mapping, final
+from collections.abc import Mapping
+from typing import final
 
 import attrs
 from pydantic import SecretStr

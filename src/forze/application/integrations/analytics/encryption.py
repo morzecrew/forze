@@ -78,9 +78,7 @@ def resolve_analytics_codecs_spec(
         )
 
     read_codec = _wrap(spec.resolved_read_codec)
-    ingest_codec = (
-        _wrap(ic) if (ic := spec.resolved_ingest_codec) is not None else None
-    )
+    ingest_codec = _wrap(ic) if (ic := spec.resolved_ingest_codec) is not None else None
 
     return attrs.evolve(spec, read_codec=read_codec, ingest_codec=ingest_codec)
 

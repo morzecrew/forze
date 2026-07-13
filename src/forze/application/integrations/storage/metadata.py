@@ -1,7 +1,7 @@
 """Decode :class:`~forze.application.contracts.storage.ObjectMetadata` from user metadata."""
 
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Mapping
 
 from forze.application.contracts.storage.value_objects import ObjectMetadata
 from forze.base.exceptions import exc

@@ -1,6 +1,6 @@
 """Lazy memoization cell for frozen owners."""
 
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 import attrs
 

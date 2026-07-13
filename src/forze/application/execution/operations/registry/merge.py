@@ -192,9 +192,7 @@ class RegistryMerge:
         if crossings:
             detail = "; ".join(
                 f"{selector!r} → {sorted(ops)}"
-                for selector, ops in sorted(
-                    crossings.items(), key=lambda item: repr(item[0])
-                )
+                for selector, ops in sorted(crossings.items(), key=lambda item: repr(item[0]))
             )
 
             if not cross_registry:
@@ -246,6 +244,4 @@ class RegistryMerge:
                 cross-registry patch reach without *cross_registry*.
         """
 
-        return type(self).merge(
-            self, *parts, override=override, cross_registry=cross_registry
-        )
+        return type(self).merge(self, *parts, override=override, cross_registry=cross_registry)

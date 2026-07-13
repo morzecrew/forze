@@ -6,7 +6,8 @@ fetching, decoding, and serializing the entire pool at once. Shared by every ran
 adapter (Meilisearch, Mongo, Postgres) and the PGroonga path.
 """
 
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import attrs
 
@@ -61,10 +62,7 @@ async def build_snapshot_pool_streaming(
     fp_computed: str,
     codec: ModelCodec[Any, Any],
     prepare_rows: (
-        Callable[
-            [list[JsonDict]], Awaitable[tuple[list[JsonDict], ModelCodec[Any, Any]]]
-        ]
-        | None
+        Callable[[list[JsonDict]], Awaitable[tuple[list[JsonDict], ModelCodec[Any, Any]]]] | None
     ),
     fetch_window: Callable[[int, int], Awaitable[SnapshotWindow]],
     page_offset: int,
@@ -119,9 +117,7 @@ async def build_snapshot_pool_streaming(
             page_codec = window_codec
 
         models = window_codec.decode_mapping_many(rows, trust_source=trust_source)
-        await sink.add(
-            [SearchResultSnapshot.result_record_key_string(model) for model in models]
-        )
+        await sink.add([SearchResultSnapshot.result_record_key_string(model) for model in models])
 
         for i, row in enumerate(rows):
             global_index = seen + i

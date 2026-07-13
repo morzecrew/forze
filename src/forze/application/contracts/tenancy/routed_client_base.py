@@ -1,9 +1,9 @@
 """Shared tenant-routed client pooling for integration packages."""
 
-from collections.abc import Awaitable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Any, AsyncGenerator, Callable, Generic, Mapping, Protocol, TypeVar
+from typing import Any, Generic, Protocol, TypeVar
 from uuid import UUID
 
 import attrs
@@ -17,8 +17,8 @@ from forze.application.contracts.secrets import (
 from forze.base.exceptions import exc
 
 from .fingerprint import ensure_dsn_fingerprint, ensure_structured_fingerprint
-from .tenant_hint import require_tenant_id
 from .registry import TenantClientRegistry, TenantPoolStats
+from .tenant_hint import require_tenant_id
 from .value_objects import TenantIdentity
 
 # ----------------------- #
@@ -90,10 +90,7 @@ class RoutedTenantClientBase(Generic[C]):
             guarded=self.guarded,
         )
 
-        if (
-            self.fingerprint_ttl is not None
-            and self.fingerprint_ttl.total_seconds() <= 0
-        ):
+        if self.fingerprint_ttl is not None and self.fingerprint_ttl.total_seconds() <= 0:
             raise exc.configuration("Fingerprint TTL must be positive")
 
     # ....................... #
@@ -171,7 +168,7 @@ class RoutedTenantClientBase(Generic[C]):
     # ....................... #
 
     @asynccontextmanager
-    async def _client_scope(self) -> AsyncGenerator[C, None]:
+    async def _client_scope(self) -> AsyncGenerator[C]:
         tenant_id = self._require_tenant_id()
         await self.ensure_access_fingerprint(tenant_id)
 

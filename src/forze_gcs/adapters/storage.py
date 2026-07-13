@@ -32,8 +32,8 @@ class GCSStorageAdapter(ObjectStorageAdapter):
     :class:`~forze.application.integrations.storage.ObjectStorageAdapter`.
     """
 
-    resolve_bucket: Callable[[NamedResourceSpec, UUID | None], Awaitable[str]] = (
-        attrs.field(default=resolve_gcs_bucket)
+    resolve_bucket: Callable[[NamedResourceSpec, UUID | None], Awaitable[str]] = attrs.field(
+        default=resolve_gcs_bucket
     )
 
     # ....................... #

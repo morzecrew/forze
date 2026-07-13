@@ -1,6 +1,7 @@
 """Postgres document execution configs."""
 
-from typing import Any, Literal, Mapping
+from collections.abc import Mapping
+from typing import Any, Literal
 
 import attrs
 

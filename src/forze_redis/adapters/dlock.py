@@ -141,11 +141,7 @@ class RedisDistributedLockAdapter(
             [owner],
         )
 
-        if res:
-            _res = bool(int(res))
-
-        else:
-            _res = False
+        _res = bool(int(res)) if res else False
 
         return _res
 
@@ -161,10 +157,6 @@ class RedisDistributedLockAdapter(
             [owner, self.__ttl_ms()],
         )
 
-        if res:
-            _res = bool(int(res))
-
-        else:
-            _res = False
+        _res = bool(int(res)) if res else False
 
         return _res

@@ -7,13 +7,13 @@ from forze.application.contracts.document import DocumentCommandPort, DocumentQu
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.mapping import Mapper
 from forze.application.contracts.querying import QueryFieldGuard
+from forze.domain.models import BaseDTO
 from forze_kits.dto.paginated import (
     CursorPaginated,
     Paginated,
     ProjectedCursorPaginated,
     ProjectedPaginated,
 )
-from forze.domain.models import BaseDTO
 
 from .dto import (
     AggregatedListRequestDTO,

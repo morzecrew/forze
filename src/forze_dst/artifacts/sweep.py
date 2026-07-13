@@ -19,9 +19,10 @@ from __future__ import annotations
 
 import importlib
 import time
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from types import MappingProxyType
-from typing import Callable, Iterable, Mapping, Sequence, final
+from typing import final
 
 import attrs
 
@@ -135,9 +136,7 @@ class SweepResult:
         """Simulated virtual seconds per wall second — how much system time the fleet simulated
         per real second. ``0.0`` when no runner supplied ``sim_seconds``."""
 
-        return (
-            self.simulated_seconds / self.wall_seconds if self.wall_seconds > 0 else 0.0
-        )
+        return self.simulated_seconds / self.wall_seconds if self.wall_seconds > 0 else 0.0
 
     # ....................... #
 
@@ -155,9 +154,7 @@ class SweepResult:
             lines.append(f"  reached:        {len(self.reached)} labels")
 
         if self.simulated_seconds > 0:
-            lines.append(
-                f"  time dilation:  {self.time_dilation:.0f}× (sim s / wall s)"
-            )
+            lines.append(f"  time dilation:  {self.time_dilation:.0f}× (sim s / wall s)")
 
         if self.violations:
             lines.append(
@@ -251,9 +248,7 @@ def _load_simulation(target: str) -> object:
     # A dotted module path and a single attribute name — reject anything else with a clear
     # error rather than letting a typo fall through to a confusing ``ImportError``.
     if not all(part.isidentifier() for part in module_name.split(".")) or not attr.isidentifier():
-        raise ValueError(
-            f"target must be a dotted module path and attribute name, got {target!r}"
-        )
+        raise ValueError(f"target must be a dotted module path and attribute name, got {target!r}")
 
     module = importlib.import_module(module_name)
     return getattr(module, attr)
@@ -297,7 +292,9 @@ class SimulationSeedRunner:
     # ....................... #
 
     def _config(self, seed: int) -> SimulationConfig:
-        scheduler = PCTScheduler() if self.pct else RandomScheduler() if self.perturb else FIFOScheduler()
+        scheduler = (
+            PCTScheduler() if self.pct else RandomScheduler() if self.perturb else FIFOScheduler()
+        )
         faults = (
             FaultPolicy(rules=(FaultRule(error=self.fault_error),))
             if self.fault_error > 0.0

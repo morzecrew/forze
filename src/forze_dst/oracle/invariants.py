@@ -9,7 +9,8 @@ and collects every violation.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Callable, Mapping, Sequence, final
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, final
 
 import attrs
 
@@ -405,9 +406,7 @@ def completes_within(op: str, seconds: float) -> Invariant:
     return _check
 
 
-def single_key_per_operation(
-    op: str, *, surface: str = "document_command"
-) -> Invariant:
+def single_key_per_operation(op: str, *, surface: str = "document_command") -> Invariant:
     """Each ``op`` execution must touch at most one entity **key** on *surface*.
 
     Reads the entity key the engine trace records for every keyed port call and attributes each
@@ -435,10 +434,7 @@ def single_key_per_operation(
         keys_by_span: dict[int, set[Any]] = defaultdict(set)
 
         for event in history.of_kind("trace"):
-            if (
-                event.fields.get("surface") != surface
-                or event.fields.get("key") is None
-            ):
+            if event.fields.get("surface") != surface or event.fields.get("key") is None:
                 continue
 
             seq = int(event.fields.get("trace_seq", -1))
@@ -570,9 +566,7 @@ def expect_value(
             value = event.fields.get(on)
             if value is not None and not predicate(value):
                 violations.append(
-                    Violation(
-                        invariant="expect_value", message=message, events=(event,)
-                    )
+                    Violation(invariant="expect_value", message=message, events=(event,))
                 )
 
         return violations

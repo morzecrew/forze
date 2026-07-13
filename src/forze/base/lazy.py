@@ -11,7 +11,8 @@ stays dependency-free so ``import forze`` pays only this module's trivial cost.
 """
 
 import importlib
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 # ----------------------- #
 

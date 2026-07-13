@@ -54,8 +54,7 @@ class GcpKmsKeyManagement:
     def __attrs_post_init__(self) -> None:
         if self.dek_bytes not in _ALLOWED_DEK_BYTES:
             raise exc.configuration(
-                f"GCP KMS data-key length must be one of "
-                f"{sorted(_ALLOWED_DEK_BYTES)} bytes",
+                f"GCP KMS data-key length must be one of {sorted(_ALLOWED_DEK_BYTES)} bytes",
                 code="core.crypto.dek_length_unsupported",
             )
 

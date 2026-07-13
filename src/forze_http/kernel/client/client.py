@@ -1,6 +1,7 @@
 """Async HTTP client wrapper using httpx."""
 
-from typing import Any, Mapping, final
+from collections.abc import Mapping
+from typing import Any, final
 from urllib.parse import urlsplit, urlunsplit
 
 from forze_http._compat import require_http
@@ -9,9 +10,8 @@ require_http()
 
 # ....................... #
 
-import httpx
-
 import attrs
+import httpx
 
 from forze.base.exceptions import exc
 from forze.base.primitives import GuardedLifecycle, JsonDict
@@ -25,7 +25,7 @@ from .value_objects import HttpConfig
 
 
 def _merge_url(base_url: str | None, url: str) -> str:
-    if url.startswith("http://") or url.startswith("https://"):
+    if url.startswith(("http://", "https://")):
         return url
 
     if base_url is None:
@@ -146,7 +146,7 @@ class HttpClient(HttpClientPort):
     ) -> httpx.Response:
         client = self._require_client()
 
-        if url.startswith("http://") or url.startswith("https://"):
+        if url.startswith(("http://", "https://")):
             request_url = url
         elif self.__base_url is not None:
             request_url = _merge_url(self.__base_url, url)

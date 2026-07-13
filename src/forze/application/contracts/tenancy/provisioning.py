@@ -12,7 +12,8 @@ provisioned is generally *not* the ambient bound tenant (an admin onboards tenan
 acting as X), so a provisioner must scope by the passed identity, never the context.
 """
 
-from typing import Awaitable, Callable, Protocol, Sequence, runtime_checkable
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Protocol, runtime_checkable
 
 import attrs
 

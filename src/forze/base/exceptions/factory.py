@@ -19,7 +19,5 @@ def build_exc_interceptor(backend: str, *arms: ExceptionMapper) -> ExceptionInte
     """
 
     return ExceptionInterceptor(
-        mapper=default_chain_exc_mapper.chain(
-            *arms, fallback=fallback_exception_mapper(backend)
-        )
+        mapper=default_chain_exc_mapper.chain(*arms, fallback=fallback_exception_mapper(backend))
     )

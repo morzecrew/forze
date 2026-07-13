@@ -7,9 +7,10 @@ require_rabbitmq()
 # ....................... #
 
 import asyncio
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
-from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncGenerator, Mapping, Sequence, final
+from datetime import UTC, datetime, timedelta
+from typing import Any, final
 
 import attrs
 from aio_pika import DeliveryMode, ExchangeType, Message, connect_robust
@@ -79,9 +80,7 @@ arrived within the window instead of blocking until a full batch shows up.
 @final
 @attrs.define(slots=True)
 class RabbitMQClient(RabbitMQClientPort):
-    __connection: AbstractRobustConnection | None = attrs.field(
-        default=None, init=False
-    )
+    __connection: AbstractRobustConnection | None = attrs.field(default=None, init=False)
     __config: RabbitMQConfig = attrs.field(factory=RabbitMQConfig, init=False)
 
     __channel_scope: ContextScopedResource[AbstractChannel] = attrs.field(
@@ -130,9 +129,7 @@ class RabbitMQClient(RabbitMQClientPort):
 
         await self.__lifecycle.initialize(
             setup,
-            ready=lambda: (
-                self.__connection is not None and not self.__connection.is_closed
-            ),
+            ready=lambda: self.__connection is not None and not self.__connection.is_closed,
         )
 
     # ....................... #
@@ -150,10 +147,7 @@ class RabbitMQClient(RabbitMQClientPort):
         await self.__nack_pending_on_close()
 
         try:
-            if (
-                self.__pending_channel is not None
-                and not self.__pending_channel.is_closed
-            ):
+            if self.__pending_channel is not None and not self.__pending_channel.is_closed:
                 await self.__pending_channel.close()
         except Exception as e:
             logger.warning("RabbitMQ close: pending channel close failed: %s", e)
@@ -313,9 +307,7 @@ class RabbitMQClient(RabbitMQClientPort):
             )
 
         await self.__ensure_dead_letter(channel)
-        arguments: dict[str, Any] = {
-            "x-dead-letter-exchange": self.__config.dead_letter_exchange
-        }
+        arguments: dict[str, Any] = {"x-dead-letter-exchange": self.__config.dead_letter_exchange}
 
         return await channel.declare_queue(
             queue,
@@ -483,9 +475,7 @@ class RabbitMQClient(RabbitMQClientPort):
             return None
 
         if milliseconds > _RABBITMQ_MAX_EXPIRATION_MS:
-            raise exc.precondition(
-                "RabbitMQ enqueue delay exceeds the maximum supported delay"
-            )
+            raise exc.precondition("RabbitMQ enqueue delay exceeds the maximum supported delay")
 
         return timedelta(milliseconds=milliseconds)
 
@@ -493,15 +483,10 @@ class RabbitMQClient(RabbitMQClientPort):
 
     async def __require_pending_channel(self) -> AbstractChannel:
         async with self.__pending_channel_lock:
-            if (
-                self.__pending_channel is not None
-                and not self.__pending_channel.is_closed
-            ):
+            if self.__pending_channel is not None and not self.__pending_channel.is_closed:
                 return self.__pending_channel
 
-            channel = await self.__require_connection().channel(
-                publisher_confirms=False
-            )
+            channel = await self.__require_connection().channel(publisher_confirms=False)
 
             if self.__config.prefetch_count > 0:
                 await channel.set_qos(prefetch_count=self.__config.prefetch_count)
@@ -543,9 +528,7 @@ class RabbitMQClient(RabbitMQClientPort):
         out: dict[str, str] = {}
 
         for raw_key, raw_value in headers.items():
-            if raw_key in _RESERVED_HEADERS or raw_key.startswith(
-                _INTERNAL_HEADER_PREFIX
-            ):
+            if raw_key in _RESERVED_HEADERS or raw_key.startswith(_INTERNAL_HEADER_PREFIX):
                 continue
 
             if isinstance(raw_value, bytes):
@@ -591,9 +574,7 @@ class RabbitMQClient(RabbitMQClientPort):
                 if not isinstance(entry, Mapping):
                     continue
 
-                reason = entry.get(
-                    "reason"
-                )  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                reason = entry.get("reason")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
                 if isinstance(reason, bytes):
                     reason = reason.decode("utf-8", errors="replace")
@@ -601,9 +582,7 @@ class RabbitMQClient(RabbitMQClientPort):
                 if reason != "rejected":
                     continue
 
-                count = entry.get(
-                    "count"
-                )  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                count = entry.get("count")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
                 if isinstance(count, int):
                     rejected += count
@@ -621,7 +600,7 @@ class RabbitMQClient(RabbitMQClientPort):
             return raw_timestamp
 
         if isinstance(raw_timestamp, (int, float)):
-            return datetime.fromtimestamp(raw_timestamp, tz=timezone.utc)
+            return datetime.fromtimestamp(raw_timestamp, tz=UTC)
 
         return None
 
@@ -668,9 +647,7 @@ class RabbitMQClient(RabbitMQClientPort):
 
             for raw in raws:
                 base = raw.message_id or (
-                    f"{queue}:{raw.delivery_tag}"
-                    if raw.delivery_tag is not None
-                    else uuid4().hex
+                    f"{queue}:{raw.delivery_tag}" if raw.delivery_tag is not None else uuid4().hex
                 )
                 candidate = base
                 suffix = 1
@@ -694,9 +671,7 @@ class RabbitMQClient(RabbitMQClientPort):
         message: AbstractIncomingMessage,
     ) -> str:
         base = message.message_id or (
-            f"{queue}:{message.delivery_tag}"
-            if message.delivery_tag is not None
-            else uuid4().hex
+            f"{queue}:{message.delivery_tag}" if message.delivery_tag is not None else uuid4().hex
         )
         candidate = base
         suffix = 1
@@ -838,14 +813,10 @@ class RabbitMQClient(RabbitMQClientPort):
             return []
 
         if message_ids is not None and len(message_ids) != len(bodies):
-            raise exc.precondition(
-                "RabbitMQ message_ids size must match batch body size"
-            )
+            raise exc.precondition("RabbitMQ message_ids size must match batch body size")
 
         if message_headers is not None and len(message_headers) != len(bodies):
-            raise exc.precondition(
-                "RabbitMQ message_headers size must match batch body size"
-            )
+            raise exc.precondition("RabbitMQ message_headers size must match batch body size")
 
         resolved_ids = (
             list(message_ids)
@@ -859,11 +830,7 @@ class RabbitMQClient(RabbitMQClientPort):
             # Strip reserved transport keys from caller input — only the transport sets them.
             # This must hold even when ``key`` is ``None`` (nothing is written): otherwise a
             # caller-supplied ``forze_key`` would silently set the partitioning lane.
-            filtered = (
-                {k: v for k, v in base.items() if k not in _RESERVED_HEADERS}
-                if base
-                else {}
-            )
+            filtered = {k: v for k, v in base.items() if k not in _RESERVED_HEADERS} if base else {}
             built: dict[str, str] | None = filtered or None
 
             if key is not None:
@@ -877,8 +844,7 @@ class RabbitMQClient(RabbitMQClientPort):
         # publish rides the shared batch-wide headers (unchanged path).
         if message_headers is not None:
             per_message_amqp_headers = [
-                __build_amqp_headers({**(headers or {}), **mh})
-                for mh in message_headers
+                __build_amqp_headers({**(headers or {}), **mh}) for mh in message_headers
             ]
         else:
             per_message_amqp_headers = [__build_amqp_headers(headers)] * len(bodies)
@@ -919,9 +885,7 @@ class RabbitMQClient(RabbitMQClientPort):
 
             if resolved_delay is not None:
                 delay_ms = int(resolved_delay.total_seconds() * 1000)
-                publish_queue = await self.__ensure_delay_queue(
-                    channel, queue, delay_ms
-                )
+                publish_queue = await self.__ensure_delay_queue(channel, queue, delay_ms)
             else:
                 await self.__declare_queue(channel, queue)
 
@@ -1001,9 +965,7 @@ class RabbitMQClient(RabbitMQClientPort):
         arrived for that duration. Each message resets the idle window.
         """
         idle_seconds = (
-            timeout.total_seconds()
-            if timeout is not None and timeout.total_seconds() > 0
-            else None
+            timeout.total_seconds() if timeout is not None and timeout.total_seconds() > 0 else None
         )
         channel = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
@@ -1095,9 +1057,7 @@ class RabbitMQClient(RabbitMQClientPort):
         if requeue and self.__config.redelivery_counting:
             await self.__requeue_counted(queue, [raw for _, raw in messages])
         else:
-            await asyncio.gather(
-                *(message.nack(requeue=requeue) for _, message in messages)
-            )
+            await asyncio.gather(*(message.nack(requeue=requeue) for _, message in messages))
 
         nacked_ids = [message_id for message_id, _ in messages]
 
@@ -1107,9 +1067,7 @@ class RabbitMQClient(RabbitMQClientPort):
 
     # ....................... #
 
-    async def __requeue_counted(
-        self, queue: str, raws: Sequence[AbstractIncomingMessage]
-    ) -> None:
+    async def __requeue_counted(self, queue: str, raws: Sequence[AbstractIncomingMessage]) -> None:
         """Requeue by republishing each message with an incremented ``x-forze-delivery`` header,
         then ack the original — so the delivery count survives the requeue (making
         ``max_deliveries`` parking reachable). Publish-then-ack preserves at-least-once: a crash in
@@ -1158,9 +1116,7 @@ class RabbitMQClient(RabbitMQClientPort):
 
         # Best-effort acks: a failed ack just redelivers the original (inbox dedup collapses it).
         if republished:
-            await asyncio.gather(
-                *(raw.ack() for raw in republished), return_exceptions=True
-            )
+            await asyncio.gather(*(raw.ack() for raw in republished), return_exceptions=True)
 
     @staticmethod
     def __with_incremented_delivery(

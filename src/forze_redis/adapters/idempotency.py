@@ -209,9 +209,7 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
         )
 
         if committed != "1":
-            raise exc.conflict(
-                "Idempotency commit failed (claim missing, expired, or not owned)"
-            )
+            raise exc.conflict("Idempotency commit failed (claim missing, expired, or not owned)")
 
     # ....................... #
 

@@ -22,7 +22,8 @@ scenario with :meth:`Simulation.explore_scenario`.
 from __future__ import annotations
 
 import random
-from typing import Any, Callable, final
+from collections.abc import Callable
+from typing import Any, final
 
 import attrs
 

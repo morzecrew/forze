@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import random
+from collections.abc import Callable, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 from forze.application.execution import ExecutionContext
 from forze.base.primitives import derive_seed
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
 
 
 def run_scenario(
-    sim: "Simulation",
+    sim: Simulation,
     scenario: Scenario,
     *,
     act_workload: Sequence[tuple[str, Any]] | None,
@@ -125,7 +126,7 @@ def run_scenario(
 
 
 async def drive_act(
-    sim: "Simulation",
+    sim: Simulation,
     ctx: ExecutionContext,
     generated: Sequence[tuple[str, Any]],
     *,
@@ -139,9 +140,7 @@ async def drive_act(
 
     semaphore = asyncio.Semaphore(concurrency)
     tasks = [
-        asyncio.ensure_future(
-            context.run_call(sim, ctx, semaphore, call_id=index, op=op, arg=arg)
-        )
+        asyncio.ensure_future(context.run_call(sim, ctx, semaphore, call_id=index, op=op, arg=arg))
         for index, (op, arg) in enumerate(generated)
     ]
 
@@ -161,7 +160,7 @@ async def drive_act(
 
 
 def attempt(
-    sim: "Simulation",
+    sim: Simulation,
     scenario: Scenario,
     *,
     act_count: int,
@@ -222,7 +221,7 @@ def attempt(
 
 
 def explore(
-    sim: "Simulation",
+    sim: Simulation,
     scenario: Scenario,
     *,
     act_count: int = 20,
@@ -263,7 +262,7 @@ def explore(
 
 
 def explore_hypothesis(
-    sim: "Simulation",
+    sim: Simulation,
     scenario: Scenario,
     *,
     max_act: int = 20,
@@ -289,9 +288,7 @@ def explore_hypothesis(
         from hypothesis.errors import NoSuchExample
 
     except ImportError as error:  # pragma: no cover - optional extra
-        raise RuntimeError(
-            "explore_hypothesis needs hypothesis; install forze[dst]"
-        ) from error
+        raise RuntimeError("explore_hypothesis needs hypothesis; install forze[dst]") from error
 
     if not scenario.act:
         return None
@@ -309,9 +306,7 @@ def explore_hypothesis(
 
     plans = strategies.tuples(
         strategies.integers(min_value=0, max_value=2**31 - 1),
-        strategies.lists(
-            strategies.sampled_from(range(len(scenario.act))), max_size=max_act
-        ),
+        strategies.lists(strategies.sampled_from(range(len(scenario.act))), max_size=max_act),
     )
 
     def run(example: tuple[int, list[int]]) -> History:
@@ -367,9 +362,7 @@ def explore_hypothesis(
 # ....................... #
 
 
-def _expand_frontier(
-    choices: tuple[int, ...], branching: Sequence[int]
-) -> list[tuple[int, ...]]:
+def _expand_frontier(choices: tuple[int, ...], branching: Sequence[int]) -> list[tuple[int, ...]]:
     """Child choice vectors that deviate at each branch point of an explored interleaving.
 
     *branching* is the per-tick branching factor :class:`SystematicReorderer` recorded while
@@ -389,9 +382,7 @@ def _expand_frontier(
 
     for tick, size in enumerate(branching):
         prefix = (
-            choices[:tick]
-            if tick < len(choices)
-            else (*choices, *(0,) * (tick - len(choices)))
+            choices[:tick] if tick < len(choices) else (*choices, *(0,) * (tick - len(choices)))
         )
         frontier.extend((*prefix, alternative) for alternative in range(1, size))
 
@@ -402,7 +393,7 @@ def _expand_frontier(
 
 
 def explore_dpor(
-    sim: "Simulation",
+    sim: Simulation,
     scenario: Scenario,
     *,
     act_count: int = 6,

@@ -94,9 +94,7 @@ class RealtimeEventCatalog:
 
         for event in events:
             if event.name in by_name:
-                raise exc.configuration(
-                    f"Realtime event `{event.name}` is declared more than once"
-                )
+                raise exc.configuration(f"Realtime event `{event.name}` is declared more than once")
 
             by_name[event.name] = event
 

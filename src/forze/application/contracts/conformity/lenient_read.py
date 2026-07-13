@@ -26,9 +26,7 @@ ReadConformity = Literal["strict", "lenient"]
 auto-derive :func:`derive_lenient_read_fields` (every defaulted, non-identity,
 non-operative read field may be absent from storage and hydrates from its default)."""
 
-IDENTITY_READ_FIELDS: Final = frozenset(
-    {ID_FIELD, REV_FIELD, "created_at", LAST_UPDATE_AT_FIELD}
-)
+IDENTITY_READ_FIELDS: Final = frozenset({ID_FIELD, REV_FIELD, "created_at", LAST_UPDATE_AT_FIELD})
 """Identity/audit fields that must always be read from storage (never lenient)."""
 
 # ....................... #

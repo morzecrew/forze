@@ -134,8 +134,7 @@ class RegistryFreezeValidator:
 
             if plan.tx_requires_route():
                 raise exc.internal(
-                    f"Operation {op!r} has transaction stages or dispatch "
-                    "but no transaction route"
+                    f"Operation {op!r} has transaction stages or dispatch but no transaction route"
                 )
 
             # Declaring an isolation level without a transaction route would run the operation
@@ -236,9 +235,7 @@ class RegistryFreezeValidator:
 
             for d in p.iter_dispatch():
                 if d not in nodes:
-                    raise exc.internal(
-                        f"Dispatch target {d} not found for operation {op}"
-                    )
+                    raise exc.internal(f"Dispatch target {d} not found for operation {op}")
 
                 edges.add((op, d))
 

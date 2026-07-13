@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Hashable, Iterable, Iterator
 from graphlib import CycleError, TopologicalSorter
-from typing import Any, Callable, Hashable, Iterable, Iterator, cast
+from typing import Any, cast
 
 import attrs
 
@@ -70,11 +71,7 @@ class DirectedAcyclicGraph[T: Hashable]:
     ) -> tuple[T, ...]:
         """Topological order with optional deterministic tie-break among ready nodes."""
 
-        return tuple(
-            n
-            for b in self.topological_batches(ready_sort_key=ready_sort_key)
-            for n in b
-        )
+        return tuple(n for b in self.topological_batches(ready_sort_key=ready_sort_key) for n in b)
 
     # ....................... #
 

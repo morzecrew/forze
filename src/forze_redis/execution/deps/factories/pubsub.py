@@ -53,9 +53,7 @@ class ConfigurableRedisPubSubQuery(PubSubQueryDepPort):
         validator=attrs.validators.instance_of(RedisPubSubConfig),
     )
 
-    def __call__(
-        self, ctx: ExecutionContext, spec: PubSubSpec[Any]
-    ) -> PubSubQueryPort[Any]:
+    def __call__(self, ctx: ExecutionContext, spec: PubSubSpec[Any]) -> PubSubQueryPort[Any]:
         enforce_required_reach(
             ctx.deps,
             route=str(spec.name),
@@ -78,9 +76,7 @@ class ConfigurableRedisPubSubCommand(PubSubCommandDepPort):
         validator=attrs.validators.instance_of(RedisPubSubConfig),
     )
 
-    def __call__(
-        self, ctx: ExecutionContext, spec: PubSubSpec[Any]
-    ) -> PubSubCommandPort[Any]:
+    def __call__(self, ctx: ExecutionContext, spec: PubSubSpec[Any]) -> PubSubCommandPort[Any]:
         enforce_required_reach(
             ctx.deps,
             route=str(spec.name),
@@ -89,11 +85,7 @@ class ConfigurableRedisPubSubCommand(PubSubCommandDepPort):
             supports_at_rest=False,
         )
         adapter = _pubsub_adapter(ctx, spec, self.config)
-        cipher = (
-            ctx.deps.provide(KeyringDepKey)
-            if ctx.deps.exists(KeyringDepKey)
-            else None
-        )
+        cipher = ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
         return encrypting_pubsub_command(
             adapter, spec, cipher=cipher, tenant_provider=ctx.inv_ctx.get_tenant
         )

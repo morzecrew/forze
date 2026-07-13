@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from datetime import timedelta
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Never, Self
+from typing import TYPE_CHECKING, Any, Never, Self
 
 import attrs
 
@@ -160,8 +161,7 @@ class OperationPlan:
         """
 
         return any(
-            isinstance(step.factory, ProvidesIdempotency)
-            and step.factory.provides_idempotency()
+            isinstance(step.factory, ProvidesIdempotency) and step.factory.provides_idempotency()
             for step in self.iter_wrap_steps()
         )
 
@@ -374,9 +374,9 @@ class FrozenOperationPlan:
 
     def resolve(
         self,
-        ctx: "ExecutionContext",
+        ctx: ExecutionContext,
         dispatch_resolver: Callable[
-            [DispatchStep, "ExecutionContext"],
+            [DispatchStep, ExecutionContext],
             OnSuccess[Any, Any],
         ],
     ) -> ResolvedOperationPlan:
@@ -390,9 +390,7 @@ class FrozenOperationPlan:
             two_phase=self.two_phase,
             # Seconds precomputed once at resolve so the per-call hot path
             # never touches timedelta arithmetic.
-            deadline_s=(
-                None if self.deadline is None else self.deadline.total_seconds()
-            ),
+            deadline_s=(None if self.deadline is None else self.deadline.total_seconds()),
         )
 
 

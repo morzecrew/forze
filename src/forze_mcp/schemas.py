@@ -10,7 +10,8 @@ this static grounding data.
 """
 
 import json
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from fastmcp import FastMCP
 from fastmcp.resources import Resource

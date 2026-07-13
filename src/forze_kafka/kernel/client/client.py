@@ -5,8 +5,9 @@ require_kafka()
 # ....................... #
 
 import asyncio
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
-from typing import Any, Mapping, Sequence, final
+from typing import Any, final
 
 import attrs
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, ConsumerRebalanceListener
@@ -48,9 +49,7 @@ class KafkaClient(KafkaClientPort):
     __config: KafkaConfig = attrs.field(factory=KafkaConfig, init=False)
     __producer: AIOKafkaProducer | None = attrs.field(default=None, init=False)
     __admin: AIOKafkaAdminClient | None = attrs.field(default=None, init=False)
-    __consumers: dict[_ConsumerKey, AIOKafkaConsumer] = attrs.field(
-        factory=dict, init=False
-    )
+    __consumers: dict[_ConsumerKey, AIOKafkaConsumer] = attrs.field(factory=dict, init=False)
     __consumer_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
     __lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
 
@@ -142,9 +141,7 @@ class KafkaClient(KafkaClientPort):
     def __security_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"security_protocol": self.__config.security_protocol}
 
-        if (
-            self.__config.sasl_mechanism is not None
-        ):  # pragma: no cover - needs a SASL broker
+        if self.__config.sasl_mechanism is not None:  # pragma: no cover - needs a SASL broker
             kwargs["sasl_mechanism"] = self.__config.sasl_mechanism
             kwargs["sasl_plain_username"] = self.__config.sasl_plain_username
             kwargs["sasl_plain_password"] = (
@@ -212,13 +209,9 @@ class KafkaClient(KafkaClientPort):
             enable_auto_commit=False,
             auto_offset_reset=auto_offset_reset or self.__config.auto_offset_reset,
             max_poll_records=(
-                max_poll_records
-                if max_poll_records is not None
-                else self.__config.max_poll_records
+                max_poll_records if max_poll_records is not None else self.__config.max_poll_records
             ),
-            request_timeout_ms=int(
-                self.__config.request_timeout.total_seconds() * 1000
-            ),
+            request_timeout_ms=int(self.__config.request_timeout.total_seconds() * 1000),
             **self.__security_kwargs(),
         )
         # Subscribe explicitly (not via the constructor's ``*topics``) so a
@@ -257,9 +250,7 @@ class KafkaClient(KafkaClientPort):
             bootstrap_servers=self.__bootstrap,
             group_id=group,
             enable_auto_commit=False,
-            request_timeout_ms=int(
-                self.__config.request_timeout.total_seconds() * 1000
-            ),
+            request_timeout_ms=int(self.__config.request_timeout.total_seconds() * 1000),
             **self.__security_kwargs(),
         )
         await consumer.start()

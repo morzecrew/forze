@@ -31,14 +31,10 @@ DurableWorkflowQueryDepPort = ConfigurableDepPort[WfSpec, WfQueryPort]
 
 # ....................... #
 
-DurableWorkflowCommandDepKey = DepKey[DurableWorkflowCommandDepPort](
-    "durable_workflow_command"
-)
+DurableWorkflowCommandDepKey = DepKey[DurableWorkflowCommandDepPort]("durable_workflow_command")
 """Key used to register the :class:`DurableWorkflowCommandDepPort` implementation."""
 
-DurableWorkflowQueryDepKey = DepKey[DurableWorkflowQueryDepPort](
-    "durable_workflow_query"
-)
+DurableWorkflowQueryDepKey = DepKey[DurableWorkflowQueryDepPort]("durable_workflow_query")
 """Key used to register the :class:`DurableWorkflowQueryDepPort` implementation."""
 
 # ....................... #
@@ -51,9 +47,7 @@ WfScheduleQueryPort = DurableWorkflowScheduleQueryPort[Any]
 
 # ....................... #
 
-DurableWorkflowScheduleCommandDepPort = ConfigurableDepPort[
-    WfSpec, WfScheduleCommandPort
-]
+DurableWorkflowScheduleCommandDepPort = ConfigurableDepPort[WfSpec, WfScheduleCommandPort]
 """Workflow schedule command dependency port."""
 
 DurableWorkflowScheduleQueryDepPort = ConfigurableDepPort[WfSpec, WfScheduleQueryPort]

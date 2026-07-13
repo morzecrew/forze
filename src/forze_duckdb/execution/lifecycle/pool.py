@@ -1,6 +1,7 @@
 """DuckDB client lifecycle hooks and step factory."""
 
-from typing import Any, Mapping, Sequence, cast, final
+from collections.abc import Mapping, Sequence
+from typing import Any, cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -140,9 +141,7 @@ class DuckDbStartupHook(LifecycleHook):
         secret_statements = list(self.secrets)
 
         if self.object_stores:
-            secret_statements.extend(
-                await _resolve_secret_statements(ctx, self.object_stores)
-            )
+            secret_statements.extend(await _resolve_secret_statements(ctx, self.object_stores))
 
             for store in self.object_stores:
                 derived_exts.extend(store.required_extensions())

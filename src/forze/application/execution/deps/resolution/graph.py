@@ -4,9 +4,8 @@ from typing import final
 
 import attrs
 
-from forze.base.primitives import DirectedAcyclicGraph
-
 from forze.application.contracts.deps import ResolutionFrame
+from forze.base.primitives import DirectedAcyclicGraph
 
 # ----------------------- #
 
@@ -56,9 +55,7 @@ class DepsResolutionTrace:
     def format_edges(self) -> str:
         """Return human-readable edge lines for logging."""
 
-        lines = sorted(
-            f"{parent.label()} -> {child.label()}" for parent, child in self.edges
-        )
+        lines = sorted(f"{parent.label()} -> {child.label()}" for parent, child in self.edges)
 
         return "\n".join(lines)
 
@@ -67,9 +64,7 @@ class DepsResolutionTrace:
     def canonical_edges(self) -> frozenset[tuple[str, str]]:
         """Return edges with routes collapsed to dependency key names only."""
 
-        return frozenset(
-            (parent.key_name, child.key_name) for parent, child in self.edges
-        )
+        return frozenset((parent.key_name, child.key_name) for parent, child in self.edges)
 
     # ....................... #
 
@@ -86,8 +81,6 @@ class DepsResolutionTrace:
     def format_canonical_edges(self) -> str:
         """Return human-readable canonical edge lines for logging."""
 
-        lines = sorted(
-            f"{parent} -> {child}" for parent, child in self.canonical_edges()
-        )
+        lines = sorted(f"{parent} -> {child}" for parent, child in self.canonical_edges())
 
         return "\n".join(lines)

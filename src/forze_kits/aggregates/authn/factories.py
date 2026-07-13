@@ -16,6 +16,8 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.authn import AuthnRequired
+from forze.base.primitives import StrKeyNamespace
+
 from .dto import (
     AuthnApiKeyListDTO,
     AuthnChangePasswordRequestDTO,
@@ -42,8 +44,6 @@ from .handlers import (
     DeactivatePrincipalHandler,
     DeactivatePrincipalRequestDTO,
 )
-from forze.base.primitives import StrKeyNamespace
-
 from .operations import AuthnKernelOp
 
 # ----------------------- #
@@ -71,9 +71,7 @@ def build_authn_registry(
 
     def _password_login(ctx: ExecutionContext) -> AuthnPasswordLogin:
         return AuthnPasswordLogin(
-            authn=ctx.deps.resolve_configurable(
-                ctx, AuthnDepKey, spec, route=spec.name
-            ),
+            authn=ctx.deps.resolve_configurable(ctx, AuthnDepKey, spec, route=spec.name),
             token_lifecycle=ctx.deps.resolve_configurable(
                 ctx,
                 TokenLifecycleDepKey,
@@ -122,11 +120,7 @@ def build_authn_registry(
                 spec,
                 route=spec.name,
             ),
-            outbox=(
-                ctx.outbox.command(reset_events)
-                if reset_events is not None
-                else None
-            ),
+            outbox=(ctx.outbox.command(reset_events) if reset_events is not None else None),
         )
 
     def _reset_password(ctx: ExecutionContext) -> AuthnResetPassword:
@@ -229,8 +223,7 @@ def build_authn_registry(
             AuthnKernelOp.DEACTIVATE_PRINCIPAL: OperationDescriptor(
                 input_type=DeactivatePrincipalRequestDTO,
                 description=(
-                    "Deactivate a principal for the application "
-                    "(policy, sessions, credentials)."
+                    "Deactivate a principal for the application (policy, sessions, credentials)."
                 ),
             ),
             AuthnKernelOp.ISSUE_API_KEY: OperationDescriptor(

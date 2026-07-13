@@ -42,9 +42,7 @@ def validate_sort_fields(
                 code="field_not_on_read_model",
             )
 
-        parse_sort_value(
-            value, field=field, spec_name=spec_name, client_facing=client_facing
-        )
+        parse_sort_value(value, field=field, spec_name=spec_name, client_facing=client_facing)
 
 
 # ....................... #
@@ -83,7 +81,6 @@ def validate_runtime_sort_fields(
 
         if not field_path_resolves(model, field, materialized=materialized):
             raise exc.precondition(
-                f"Sort field {field!r} is not on the {backend} read model "
-                f"({model.__name__}).",
+                f"Sort field {field!r} is not on the {backend} read model ({model.__name__}).",
                 code="field_not_on_read_model",
             )

@@ -36,9 +36,7 @@ class OutboxIntegrationConfig(TenantAwareIntegrationConfig):
     hop). Off by default — opt in **after** adding a nullable ``traceparent`` text column to the store
     (a relational backend; legacy/null rows simply carry no parent). Independent of ``hlc_ordering``."""
 
-    default_processing_lease: timedelta = attrs.field(
-        factory=lambda: timedelta(minutes=5)
-    )
+    default_processing_lease: timedelta = attrs.field(factory=lambda: timedelta(minutes=5))
     """Suggested lease for :meth:`~forze_kits.integrations.outbox.OutboxRelay.to_queue`
     ``reclaim_stale_after`` (documentation default)."""
 

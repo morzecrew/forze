@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Awaitable, Callable, cast, final
+from collections.abc import Awaitable, Callable
+from typing import cast, final
 from uuid import UUID
 
 import attrs
@@ -143,8 +144,7 @@ class PostgresDurableFunctionStepAdapter(TenancyMixin, DurableFunctionStepPort):
     ) -> object:
         row = await self.client.fetch_one(
             sql.SQL(
-                "SELECT result FROM {table} "
-                "WHERE run_id = {run_id} AND step_id = {step_id}"
+                "SELECT result FROM {table} WHERE run_id = {run_id} AND step_id = {step_id}"
             ).format(
                 table=table.ident(),
                 run_id=sql.Placeholder("run_id"),

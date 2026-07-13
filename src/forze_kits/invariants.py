@@ -14,7 +14,8 @@ only a filter against.
 from __future__ import annotations
 
 import contextlib
-from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence, final
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import Any, Literal, final
 
 import attrs
 
@@ -84,9 +85,7 @@ async def evaluate(
         raw = page.hits[0].get(AGGREGATE_FIELD) if page.hits else 0
         observed = float(raw if raw is not None else 0)
 
-    return InvariantResult(
-        name=invariant.name, observed=observed, held=invariant.holds(observed)
-    )
+    return InvariantResult(name=invariant.name, observed=observed, held=invariant.holds(observed))
 
 
 # ....................... #
@@ -339,9 +338,7 @@ async def propose(
             except CoreException as rejection:
                 apply_error.append(str(rejection))
             else:
-                results.extend(
-                    [await evaluate(law, ctx, params) for law, params in checks]
-                )
+                results.extend([await evaluate(law, ctx, params) for law, params in checks])
 
             raise _ProposalRollback()  # always roll back — a dry-run persists nothing
 

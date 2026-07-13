@@ -41,8 +41,9 @@ in that namespace — sound, if coarse).
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextvars import ContextVar
-from typing import Any, Iterator
+from typing import Any
 
 import attrs
 
@@ -204,9 +205,7 @@ class MvccTx:
         # faithful snapshot). Read-committed reads through to the live store instead, so it needs
         # no frozen snapshot.
         snapshots = (
-            {}
-            if read_committed
-            else {ns: dict(store) for ns, store in state.documents.items()}
+            {} if read_committed else {ns: dict(store) for ns, store in state.documents.items()}
         )
         begin_version = state.mvcc_version
         state.mvcc_active.append(begin_version)
@@ -231,9 +230,7 @@ class MvccTx:
 
         state.mvcc_active.remove(self.begin_version)
         horizon = min(state.mvcc_active) if state.mvcc_active else state.mvcc_version
-        state.mvcc_commit_log[:] = [
-            entry for entry in state.mvcc_commit_log if entry[0] > horizon
-        ]
+        state.mvcc_commit_log[:] = [entry for entry in state.mvcc_commit_log if entry[0] > horizon]
 
     # ....................... #
 
@@ -378,9 +375,7 @@ class MvccTx:
         state.mvcc_version += 1
 
         if write_sets := {
-            ns: frozenset(overlay.keys())
-            for ns, overlay in self.overlays.items()
-            if overlay
+            ns: frozenset(overlay.keys()) for ns, overlay in self.overlays.items() if overlay
         }:
             state.mvcc_commit_log.append((state.mvcc_version, write_sets))
 

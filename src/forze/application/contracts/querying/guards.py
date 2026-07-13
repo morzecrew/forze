@@ -28,7 +28,7 @@ _ELEMENT_QUANTIFIER_KEYS = frozenset(get_args(QueryElementQuantifier))  # type: 
 def is_query_conjunction(expr: QueryFilterExpression) -> TypeGuard[QueryConjunction]:  # type: ignore[valid-type]
     """Return ``True`` when the expression is a conjunction (``$and``)."""
 
-    return "$and" in expr.keys()  # type: ignore[attr-defined]
+    return "$and" in expr  # type: ignore[attr-defined]
 
 
 # ....................... #
@@ -37,7 +37,7 @@ def is_query_conjunction(expr: QueryFilterExpression) -> TypeGuard[QueryConjunct
 def is_query_disjunction(expr: QueryFilterExpression) -> TypeGuard[QueryDisjunction]:  # type: ignore[valid-type]
     """Return ``True`` when the expression is a disjunction (``$or``)."""
 
-    return "$or" in expr.keys()  # type: ignore[attr-defined]
+    return "$or" in expr  # type: ignore[attr-defined]
 
 
 # ....................... #
@@ -46,7 +46,7 @@ def is_query_disjunction(expr: QueryFilterExpression) -> TypeGuard[QueryDisjunct
 def is_query_negation(expr: QueryFilterExpression) -> TypeGuard[QueryNegation]:  # type: ignore[valid-type]
     """Return ``True`` when the expression is a negation (``$not``)."""
 
-    return "$not" in expr.keys()  # type: ignore[attr-defined]
+    return "$not" in expr  # type: ignore[attr-defined]
 
 
 # ....................... #
@@ -65,7 +65,7 @@ def is_query_constraint(expr: QueryFilterExpression) -> TypeGuard[QueryConstrain
 def has_query_values(expr: QueryFilterExpression) -> bool:  # type: ignore[valid-type]
     """Return ``True`` when ``$values`` is present."""
 
-    return "$values" in expr.keys()  # type: ignore[attr-defined]
+    return "$values" in expr  # type: ignore[attr-defined]
 
 
 # ....................... #
@@ -74,7 +74,7 @@ def has_query_values(expr: QueryFilterExpression) -> bool:  # type: ignore[valid
 def has_query_fields(expr: QueryFilterExpression) -> bool:  # type: ignore[valid-type]
     """Return ``True`` when field-to-field ``$fields`` is present."""
 
-    return "$fields" in expr.keys()  # type: ignore[attr-defined]
+    return "$fields" in expr  # type: ignore[attr-defined]
 
 
 # ....................... #

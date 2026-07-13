@@ -69,8 +69,7 @@ def maybe_wrap_configurable(
     if not deps.runtime_tracer.enabled:
         return result
 
-    from ..tracing.port_proxy import infer_port_metadata
-    from ..tracing.port_proxy import wrap_port
+    from ..tracing.port_proxy import infer_port_metadata, wrap_port
 
     domain, surface, route_name, phase = infer_port_metadata(
         key,

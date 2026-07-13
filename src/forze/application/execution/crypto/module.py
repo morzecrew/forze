@@ -23,11 +23,9 @@ from forze.application.contracts.crypto import (
     KeyringDepKey,
     RequiredReachDepKey,
 )
-from forze.application.contracts.deps import DepKey
+from forze.application.contracts.deps import DepKey, Deps
 from forze.application.integrations.crypto import DeterministicFieldCipher, Keyring
 from forze.base.crypto import Aead
-
-from forze.application.contracts.deps import Deps
 
 # ----------------------- #
 

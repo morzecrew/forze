@@ -1,6 +1,6 @@
 """Type aliases for tenant-scoped value resolution."""
 
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 # ----------------------- #

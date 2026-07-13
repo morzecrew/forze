@@ -5,9 +5,9 @@ from typing import final
 
 import attrs
 
+from forze.application.contracts.deps import ResolutionFrame, format_cycle_error
 from forze.base.exceptions import exc
 
-from forze.application.contracts.deps import ResolutionFrame, format_cycle_error
 from .tracer import ResolutionTracer
 
 # ----------------------- #

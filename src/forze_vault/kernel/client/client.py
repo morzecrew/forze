@@ -45,9 +45,7 @@ class VaultClient(VaultClientPort):
     config: VaultConfig
     _client: Any = attrs.field(default=None, init=False, repr=False)
     _lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
-    _renew_task: asyncio.Task[None] | None = attrs.field(
-        default=None, init=False, repr=False
-    )
+    _renew_task: asyncio.Task[None] | None = attrs.field(default=None, init=False, repr=False)
 
     # ....................... #
 
@@ -137,7 +135,7 @@ class VaultClient(VaultClientPort):
             except asyncio.CancelledError:
                 raise
 
-            except Exception as e:  # noqa: BLE001 - renewal must not crash
+            except Exception as e:
                 logger.warning(
                     "Vault token renewal failed, retrying in "
                     f"{RENEW_FAILURE_RETRY_SECONDS:.0f}s: {e}",
@@ -242,14 +240,10 @@ class VaultClient(VaultClientPort):
             return False
 
         except VaultError as e:
-            raise exc.infrastructure(
-                f"Vault exists check failed for {path!r}: {e}"
-            ) from e
+            raise exc.infrastructure(f"Vault exists check failed for {path!r}: {e}") from e
 
         except Exception as e:
-            raise exc.infrastructure(
-                f"Vault exists check failed for {path!r}: {e}"
-            ) from e
+            raise exc.infrastructure(f"Vault exists check failed for {path!r}: {e}") from e
 
     # ....................... #
 
@@ -324,14 +318,10 @@ class VaultClient(VaultClientPort):
             ) from e
 
         except VaultError as e:
-            raise exc.infrastructure(
-                f"Vault transit decrypt failed for {key_name!r}: {e}"
-            ) from e
+            raise exc.infrastructure(f"Vault transit decrypt failed for {key_name!r}: {e}") from e
 
         except Exception as e:
-            raise exc.infrastructure(
-                f"Vault transit decrypt failed for {key_name!r}: {e}"
-            ) from e
+            raise exc.infrastructure(f"Vault transit decrypt failed for {key_name!r}: {e}") from e
 
         plaintext_b64 = response.get("data", {}).get("plaintext")
 
@@ -384,14 +374,10 @@ class VaultClient(VaultClientPort):
             ) from e
 
         except VaultError as e:
-            raise exc.infrastructure(
-                f"Vault transit sign failed for {key_name!r}: {e}"
-            ) from e
+            raise exc.infrastructure(f"Vault transit sign failed for {key_name!r}: {e}") from e
 
         except Exception as e:
-            raise exc.infrastructure(
-                f"Vault transit sign failed for {key_name!r}: {e}"
-            ) from e
+            raise exc.infrastructure(f"Vault transit sign failed for {key_name!r}: {e}") from e
 
         signature = response.get("data", {}).get("signature")
 
@@ -453,14 +439,10 @@ class VaultClient(VaultClientPort):
             ) from e
 
         except VaultError as e:
-            raise exc.infrastructure(
-                f"Vault transit read-key failed for {key_name!r}: {e}"
-            ) from e
+            raise exc.infrastructure(f"Vault transit read-key failed for {key_name!r}: {e}") from e
 
         except Exception as e:
-            raise exc.infrastructure(
-                f"Vault transit read-key failed for {key_name!r}: {e}"
-            ) from e
+            raise exc.infrastructure(f"Vault transit read-key failed for {key_name!r}: {e}") from e
 
         data = response.get("data", {})
         keys = data.get("keys", {})
@@ -510,14 +492,10 @@ class VaultClient(VaultClientPort):
             ) from e
 
         except VaultError as e:
-            raise exc.infrastructure(
-                f"Vault transit rewrap failed for {key_name!r}: {e}"
-            ) from e
+            raise exc.infrastructure(f"Vault transit rewrap failed for {key_name!r}: {e}") from e
 
         except Exception as e:
-            raise exc.infrastructure(
-                f"Vault transit rewrap failed for {key_name!r}: {e}"
-            ) from e
+            raise exc.infrastructure(f"Vault transit rewrap failed for {key_name!r}: {e}") from e
 
         rewrapped = response.get("data", {}).get("ciphertext")
 
@@ -574,9 +552,7 @@ class VaultClient(VaultClientPort):
         generation (envelope encryption), ``rsa-2048`` / ``ecdsa-p256`` for signing.
         """
 
-        return await asyncio.to_thread(
-            self._transit_create_key_sync, key_name, key_type
-        )
+        return await asyncio.to_thread(self._transit_create_key_sync, key_name, key_type)
 
     # ....................... #
 
@@ -654,5 +630,5 @@ class VaultClient(VaultClientPort):
         try:
             return await asyncio.to_thread(self._health_sync)
 
-        except Exception as e:  # noqa: BLE001 - health must not raise
+        except Exception as e:
             return str(e), False

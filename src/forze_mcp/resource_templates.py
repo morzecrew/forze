@@ -13,7 +13,8 @@ explicitly (it does not assume any aggregate-kit naming convention).
 """
 
 import inspect
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import attrs
 from fastmcp import FastMCP

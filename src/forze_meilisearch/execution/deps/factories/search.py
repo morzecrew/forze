@@ -76,32 +76,24 @@ def result_snapshot(
     cipher = resolve_snapshot_cipher(
         encrypted=encrypted,
         keyring=(
-            context.deps.provide(KeyringDepKey)
-            if context.deps.exists(KeyringDepKey)
-            else None
+            context.deps.provide(KeyringDepKey) if context.deps.exists(KeyringDepKey) else None
         ),
     )
 
-    return SearchResultSnapshot(
-        store=port, cipher=cipher, cipher_tenant=context.inv_ctx.get_tenant
-    )
+    return SearchResultSnapshot(store=port, cipher=cipher, cipher_tenant=context.inv_ctx.get_tenant)
 
 
 # ....................... #
 
 
-def _encrypting_spec[M: BaseModel](
-    context: ExecutionContext, spec: SearchSpec[M]
-) -> SearchSpec[M]:
+def _encrypting_spec[M: BaseModel](context: ExecutionContext, spec: SearchSpec[M]) -> SearchSpec[M]:
     """Wrap the read codec so encrypted/searchable fields are sealed in the index and
     decrypted on read (shared resolver — default AAD label, fail-closed)."""
 
     return resolve_search_read_codec_spec(
         spec,
         keyring=(
-            context.deps.provide(KeyringDepKey)
-            if context.deps.exists(KeyringDepKey)
-            else None
+            context.deps.provide(KeyringDepKey) if context.deps.exists(KeyringDepKey) else None
         ),
         deterministic=(
             context.deps.provide(DeterministicCipherDepKey)

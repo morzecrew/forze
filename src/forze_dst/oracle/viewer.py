@@ -103,16 +103,14 @@ _TEMPLATE = """<!doctype html>
 # ....................... #
 
 
-def _report_data(report: "ViolationReport") -> dict[str, Any]:
+def _report_data(report: ViolationReport) -> dict[str, Any]:
     """The JSON-able view a viewer steps through — metadata, violations, workload, timeline."""
 
     return {
         "seed": report.seed,
         "schedule_seed": report.schedule_seed,
         "fingerprint": report.registry_fingerprint,
-        "violations": [
-            {"invariant": v.invariant, "message": v.message} for v in report.violations
-        ],
+        "violations": [{"invariant": v.invariant, "message": v.message} for v in report.violations],
         "workload": [
             (
                 list(item)  # pyright: ignore[reportUnknownArgumentType]
@@ -128,7 +126,7 @@ def _report_data(report: "ViolationReport") -> dict[str, Any]:
 # ....................... #
 
 
-def render_html(report: "ViolationReport") -> str:
+def render_html(report: ViolationReport) -> str:
     """Render *report* as a single self-contained HTML time-travel viewer (string).
 
     Embeds the virtual-time timeline + counterexample metadata; no external assets. Write it to a

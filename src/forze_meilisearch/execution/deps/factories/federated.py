@@ -48,9 +48,7 @@ class ConfigurableMeilisearchFederatedSearch(FederatedSearchQueryDepPort):
 
         for m in spec.members:
             if isinstance(m, HubSearchSpec):
-                raise exc.internal(
-                    "Hub members are not supported for Meilisearch federation."
-                )
+                raise exc.internal("Hub members are not supported for Meilisearch federation.")
 
             c = self.config.members.get(m.name)
 

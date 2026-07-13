@@ -9,7 +9,8 @@ header list. An end-to-end-encrypted payload survives to the consumer opaquely
 (the relay forwards ciphertext), exactly as the Redis codec handles it.
 """
 
-from typing import Any, Final, Mapping, Sequence, final
+from collections.abc import Mapping, Sequence
+from typing import Any, Final, final
 
 import attrs
 import orjson
@@ -83,9 +84,7 @@ class KafkaStreamCodec[M]:
         out: list[tuple[str, bytes]] = []
 
         if headers:
-            out.extend(
-                (k, v.encode("utf-8")) for k, v in headers.items() if k != _HEADER_TYPE
-            )
+            out.extend((k, v.encode("utf-8")) for k, v in headers.items() if k != _HEADER_TYPE)
 
         if type is not None:
             out.append((_HEADER_TYPE, type.encode("utf-8")))

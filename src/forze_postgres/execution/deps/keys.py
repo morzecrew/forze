@@ -10,7 +10,5 @@ from ...kernel.client import PostgresClientPort
 PostgresClientDepKey: DepKey[PostgresClientPort] = DepKey("postgres_client")
 """Key used to register a Postgres client (single-DSN or routed) in the deps container."""
 
-PostgresIntrospectorDepKey: DepKey[PostgresIntrospector] = DepKey(
-    "postgres_introspector"
-)
+PostgresIntrospectorDepKey: DepKey[PostgresIntrospector] = DepKey("postgres_introspector")
 """Key used to register the :class:`PostgresIntrospector` in the deps container."""

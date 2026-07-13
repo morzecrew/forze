@@ -1,9 +1,9 @@
+from collections.abc import Awaitable
 from typing import TYPE_CHECKING, Protocol, final
 
 import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from collections.abc import Awaitable
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext

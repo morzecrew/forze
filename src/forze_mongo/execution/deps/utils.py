@@ -2,7 +2,6 @@
 
 from typing import Any, Literal
 
-from forze.base.serialization import default_model_codec
 from forze.application.contracts.document import (
     DocumentCodecs,
     DocumentWriteTypes,
@@ -10,7 +9,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.resolution import RelationSpec
 from forze.application.execution import ExecutionContext, resolve_resilience_executor
-from forze.base.serialization import ModelCodec
+from forze.base.serialization import ModelCodec, default_model_codec
 
 from ...kernel.gateways import MongoHistoryGateway, MongoReadGateway, MongoWriteGateway
 from .keys import MongoClientDepKey

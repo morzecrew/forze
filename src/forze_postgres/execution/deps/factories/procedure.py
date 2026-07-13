@@ -40,11 +40,7 @@ class ConfigurablePostgresProcedure:
         client = ctx.deps.provide(PostgresClientDepKey)
         spec = resolve_procedure_codecs_spec(
             spec,
-            keyring=(
-                ctx.deps.provide(KeyringDepKey)
-                if ctx.deps.exists(KeyringDepKey)
-                else None
-            ),
+            keyring=(ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None),
             deterministic=(
                 ctx.deps.provide(DeterministicCipherDepKey)
                 if ctx.deps.exists(DeterministicCipherDepKey)

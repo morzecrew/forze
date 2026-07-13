@@ -6,8 +6,7 @@ import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from forze.application.contracts.querying import QueryExpr
-from forze.application.contracts.querying import QueryAnd, QueryField
+from forze.application.contracts.querying import QueryAnd, QueryExpr, QueryField
 from forze.application.contracts.resolution import is_static_relation
 from forze.application.contracts.search import SearchOptions
 from forze.domain.constants import ID_FIELD
@@ -216,7 +215,7 @@ def index_first_heap_limit(
 
     margin = max(float(filter_margin), 1.0)
 
-    return max(cap, int(math.ceil(cap * margin)))
+    return max(cap, math.ceil(cap * margin))
 
 
 def ensure_pgroonga_plan_with_candidate_cap(

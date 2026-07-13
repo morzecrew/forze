@@ -5,7 +5,8 @@ require_psycopg()
 # ....................... #
 
 import re
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from psycopg import errors
 
@@ -132,9 +133,7 @@ def _psycopg_eh(  # skipcq: PY-R1000
                 details=details,
             )
 
-        case (
-            errors.AdminShutdown() | errors.CrashShutdown() | errors.CannotConnectNow()
-        ):
+        case errors.AdminShutdown() | errors.CrashShutdown() | errors.CannotConnectNow():
             return CoreException.infrastructure(
                 "Database is not available (shutdown/starting).",
                 details=details,

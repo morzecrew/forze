@@ -5,9 +5,8 @@ from typing import Any, final
 import attrs
 
 from forze.application.contracts.crypto import KeyManagementDepKey, KeyManagementPort
-from forze.application.contracts.deps import DepKey
+from forze.application.contracts.deps import DepKey, Deps, DepsModule
 from forze.application.contracts.secrets import SecretsDepKey, SecretsPort
-from forze.application.contracts.deps import Deps, DepsModule
 
 from ...adapters import VaultKvSecrets
 from ...kernel.client import VaultClientPort
@@ -35,11 +34,7 @@ class VaultDepsModule(DepsModule):
     # ....................... #
 
     def __call__(self) -> Deps:
-        adapter = (
-            self.secrets
-            if self.secrets is not None
-            else VaultKvSecrets(client=self.client)
-        )
+        adapter = self.secrets if self.secrets is not None else VaultKvSecrets(client=self.client)
 
         deps: dict[DepKey[Any], Any] = {
             VaultClientDepKey: self.client,

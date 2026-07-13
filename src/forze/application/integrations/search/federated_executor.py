@@ -19,7 +19,8 @@ adapters fall back to the full-fetch path otherwise (see :func:`federated_thin_e
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -63,9 +64,7 @@ def federated_thin_format(
     path, and the fingerprint marker. Requires the opt-in and that every member read
     model carries an ``id`` field (the fused identity and re-fetch key)."""
 
-    return thin_merge and all(
-        ID_FIELD in member.model_type.model_fields for member in members
-    )
+    return thin_merge and all(ID_FIELD in member.model_type.model_fields for member in members)
 
 
 def federated_thin_eligible(
@@ -137,10 +136,7 @@ async def _hydrate_federated_page(
 
     members_in_order = list(ids_by_member.items())
     pages = await run_legs(
-        [
-            _hydrate(ports[member], query, filters, ids, leg_opts)
-            for member, ids in members_in_order
-        ]
+        [_hydrate(ports[member], query, filters, ids, leg_opts) for member, ids in members_in_order]
     )
 
     hydrated: dict[tuple[str, str], BaseModel] = {}
@@ -161,9 +157,7 @@ def federated_snapshot_rehydrator(
     ports: dict[str, SearchQueryPort[Any]],
     leg_opts: SearchOptions | None,
     run_legs: RunLegs,
-) -> Callable[
-    [Sequence[tuple[str, str]]], Awaitable[Sequence[FederatedSearchReadModel[Any]]]
-]:
+) -> Callable[[Sequence[tuple[str, str]]], Awaitable[Sequence[FederatedSearchReadModel[Any]]]]:
     """A re-fetch-by-id callback for thin-snapshot replay (current content, by id only).
 
     Replay re-fetches each key's hit by id (no query/filters: the snapshot froze the
@@ -302,10 +296,7 @@ async def execute_federated_thin_offset(
     )
 
     if return_type is not None:
-        rows = [
-            {"hit": fm.hit.model_dump(mode="json"), "member": fm.member}
-            for fm in models
-        ]
+        rows = [{"hit": fm.hit.model_dump(mode="json"), "member": fm.member} for fm in models]
         hits: list[Any] = default_model_codec(return_type).decode_mapping_many(rows)
 
     else:

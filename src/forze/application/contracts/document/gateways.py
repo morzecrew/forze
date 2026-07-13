@@ -1,12 +1,11 @@
 """Gateway port protocols for document persistence adapters."""
 
+from collections.abc import Awaitable, Sequence
 from typing import (
     Any,
-    Awaitable,
     Generic,
     Never,
     Protocol,
-    Sequence,
     TypeVar,
     overload,
 )

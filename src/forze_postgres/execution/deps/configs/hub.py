@@ -1,6 +1,7 @@
 """Postgres hub search execution configs and validation."""
 
-from typing import Any, Literal, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal
 
 import attrs
 
@@ -60,8 +61,7 @@ class PostgresHubSearchMemberConfig(PostgresSearchConfig):
         """
 
         base = {
-            (f.alias or f.name): getattr(config, f.name)
-            for f in attrs.fields(PostgresSearchConfig)
+            (f.alias or f.name): getattr(config, f.name) for f in attrs.fields(PostgresSearchConfig)
         }
 
         return cls(
@@ -137,8 +137,7 @@ class PostgresHubSearchConfig(TenantAwareIntegrationConfig):
 
         if self.read_validation not in ("strict", "trusted"):
             raise ValueError(
-                "read_validation must be 'strict' or 'trusted', "
-                f"got {self.read_validation!r}",
+                f"read_validation must be 'strict' or 'trusted', got {self.read_validation!r}",
             )
 
         fk_seen: set[str] = set()
@@ -153,9 +152,7 @@ class PostgresHubSearchConfig(TenantAwareIntegrationConfig):
                 fk_seen.add(col)
 
             if leg.engine == "fts" and not leg.fts_groups:
-                raise exc.internal(
-                    f"Hub search leg {i} with engine 'fts' requires fts_groups."
-                )
+                raise exc.internal(f"Hub search leg {i} with engine 'fts' requires fts_groups.")
 
             if leg.same_heap_as_hub:
                 _validate_same_heap_as_hub(leg, i, self)

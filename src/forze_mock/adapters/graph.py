@@ -81,9 +81,7 @@ class MockGraphAdapter(MockTenancyMixin):
         node = self.spec.graph_node_by_kind(kind)
 
         if node is None:
-            raise exc.configuration(
-                f"Unknown node kind {kind!r}", code="graph_unknown_node_kind"
-            )
+            raise exc.configuration(f"Unknown node kind {kind!r}", code="graph_unknown_node_kind")
 
         return node
 
@@ -91,23 +89,17 @@ class MockGraphAdapter(MockTenancyMixin):
         edge = self.spec.graph_edge_by_kind(kind)
 
         if edge is None:
-            raise exc.configuration(
-                f"Unknown edge kind {kind!r}", code="graph_unknown_edge_kind"
-            )
+            raise exc.configuration(f"Unknown edge kind {kind!r}", code="graph_unknown_edge_kind")
 
         return edge
 
     # ....................... #
 
     def _vmodel(self, kind: str, props: JsonDict) -> BaseModel:
-        return default_model_codec(self._node(kind).read).decode_mapping(
-            props, trust_source=True
-        )
+        return default_model_codec(self._node(kind).read).decode_mapping(props, trust_source=True)
 
     def _emodel(self, kind: str, props: JsonDict) -> BaseModel:
-        return default_model_codec(self._edge(kind).read).decode_mapping(
-            props, trust_source=True
-        )
+        return default_model_codec(self._edge(kind).read).decode_mapping(props, trust_source=True)
 
     # ....................... #
     # GraphQueryPort
@@ -182,9 +174,7 @@ class MockGraphAdapter(MockTenancyMixin):
             return
 
         sealed: frozenset[str] = (
-            encryption.encrypted | encryption.searchable
-            if encryption is not None
-            else frozenset()
+            encryption.encrypted | encryption.searchable if encryption is not None else frozenset()
         )
 
         if blocked := sorted(k for k in property_filter if k in sealed):
@@ -246,9 +236,7 @@ class MockGraphAdapter(MockTenancyMixin):
 
         return out
 
-    async def expand(
-        self, start: VertexRef, params: GraphWalkParams
-    ) -> Sequence[GraphWalkStep]:
+    async def expand(self, start: VertexRef, params: GraphWalkParams) -> Sequence[GraphWalkStep]:
         with self.state.lock:
             verts = dict(self._verts())
             edges = list(self._edges_store())
@@ -293,9 +281,7 @@ class MockGraphAdapter(MockTenancyMixin):
         if params.weight_property is None:
             path = _bfs_shortest(src, dst, adj, verts, params.max_hops)
         else:
-            path = _dijkstra_shortest(
-                src, dst, adj, verts, params.weight_property, params.max_hops
-            )
+            path = _dijkstra_shortest(src, dst, adj, verts, params.weight_property, params.max_hops)
 
         if path is None:
             return None
@@ -323,9 +309,7 @@ class MockGraphAdapter(MockTenancyMixin):
         if anchor_node not in verts:
             return []
 
-        frontier: set[tuple[tuple[str, str], frozenset[int]]] = {
-            (anchor_node, frozenset())
-        }
+        frontier: set[tuple[tuple[str, str], frozenset[int]]] = {(anchor_node, frozenset())}
 
         for step in params.steps:
             adj = _adjacency(edges, step.direction, step.edge_kinds)
@@ -340,9 +324,7 @@ class MockGraphAdapter(MockTenancyMixin):
                 seen.add(node)
                 targets.append(node)
 
-        return [
-            self._vmodel(params.target_kind, verts[n]) for n in targets[: params.limit]
-        ]
+        return [self._vmodel(params.target_kind, verts[n]) for n in targets[: params.limit]]
 
     # ....................... #
     # GraphCommandPort
@@ -391,9 +373,7 @@ class MockGraphAdapter(MockTenancyMixin):
         *,
         return_new: bool = True,
     ) -> BaseModel | None:
-        return await self._write_edge(
-            edge_kind, cmd, merge=False, return_new=return_new
-        )
+        return await self._write_edge(edge_kind, cmd, merge=False, return_new=return_new)
 
     async def ensure_edge(
         self,
@@ -460,16 +440,9 @@ class MockGraphAdapter(MockTenancyMixin):
                         and existing["from_key"] == rec["from_key"]
                         and existing["to_kind"] == rec["to_kind"]
                         and existing["to_key"] == rec["to_key"]
-                        and (
-                            key_field is None
-                            or existing["props"].get(key_field) == edge_key
-                        )
+                        and (key_field is None or existing["props"].get(key_field) == edge_key)
                     ):
-                        return (
-                            self._emodel(edge_kind, existing["props"])
-                            if return_new
-                            else None
-                        )
+                        return self._emodel(edge_kind, existing["props"]) if return_new else None
 
             store.append(rec)
 
@@ -478,9 +451,7 @@ class MockGraphAdapter(MockTenancyMixin):
     # ....................... #
     # GraphRawQueryPort
 
-    async def run(
-        self, query: str, params: JsonDict | None = None
-    ) -> Sequence[JsonDict]:
+    async def run(self, query: str, params: JsonDict | None = None) -> Sequence[JsonDict]:
         raise _nyi("raw run")
 
     # ....................... #
@@ -534,9 +505,7 @@ class MockGraphAdapter(MockTenancyMixin):
             for (kind, _key), props in verts
         )
 
-    async def count_edges(
-        self, edge_kind: str, *, property_filter: JsonDict | None = None
-    ) -> int:
+    async def count_edges(self, edge_kind: str, *, property_filter: JsonDict | None = None) -> int:
         edge = self._edge(edge_kind)
         self._validate_filter(property_filter, edge.encryption)
 
@@ -544,10 +513,7 @@ class MockGraphAdapter(MockTenancyMixin):
             edges = list(self._edges_store())
 
         return sum(
-            bool(
-                rec["kind"] == edge_kind
-                and self._matches(rec["props"], property_filter)
-            )
+            bool(rec["kind"] == edge_kind and self._matches(rec["props"], property_filter))
             for rec in edges
         )
 
@@ -627,8 +593,7 @@ class MockGraphAdapter(MockTenancyMixin):
             matches = [
                 rec
                 for rec in self._edges_store()
-                if rec["kind"] == edge_kind
-                and self._matches(rec["props"], property_filter)
+                if rec["kind"] == edge_kind and self._matches(rec["props"], property_filter)
             ]
 
         if edge.key_field is not None:
@@ -685,9 +650,7 @@ class MockGraphAdapter(MockTenancyMixin):
             rec = self._find_edge_rec(ref, self._edges_store())
 
             if rec is None:
-                raise exc.not_found(
-                    f"Edge {ref.kind!r} not found", code="graph_edge_not_found"
-                )
+                raise exc.not_found(f"Edge {ref.kind!r} not found", code="graph_edge_not_found")
 
             rec["props"] = {**rec["props"], **patch}
             merged = rec["props"]

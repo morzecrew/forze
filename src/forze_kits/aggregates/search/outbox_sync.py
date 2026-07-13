@@ -160,7 +160,7 @@ class SearchSyncOutboxWiring:
         return OnSuccessStep(
             id=step_id,
             factory=self._stage_factory(
-                lambda args, result: str(written_read_model(result).id),  # noqa: ARG005
+                lambda args, result: str(written_read_model(result).id),
             ),
         )
 
@@ -171,7 +171,7 @@ class SearchSyncOutboxWiring:
 
         return OnSuccessStep(
             id=step_id,
-            factory=self._stage_factory(lambda args, result: str(args.id)),  # noqa: ARG005
+            factory=self._stage_factory(lambda args, result: str(args.id)),
         )
 
     # ....................... #
@@ -258,9 +258,7 @@ class SearchSyncOutboxWiring:
                 pubsub_spec=None,
             )
             steps.append(
-                relay.as_lifecycle_step(
-                    self.outbox_spec, step_id=f"search_sync_relay:{route}"
-                )
+                relay.as_lifecycle_step(self.outbox_spec, step_id=f"search_sync_relay:{route}")
             )
 
         if self.config.consume:
@@ -271,9 +269,7 @@ class SearchSyncOutboxWiring:
             steps.append(
                 queue_consumer_factory_background_lifecycle_step(
                     queue=route,
-                    consumer_factory=lambda ctx: self.queue_consumer(
-                        ctx, tx_route=tx_route
-                    ),
+                    consumer_factory=lambda ctx: self.queue_consumer(ctx, tx_route=tx_route),
                     restart_backoff=self.config.consumer_restart_backoff,
                     step_id=f"search_sync_consumer:{route}",
                 )
@@ -283,9 +279,7 @@ class SearchSyncOutboxWiring:
 
     # ....................... #
 
-    def _stage_factory(
-        self, document_id_of: Callable[[Any, Any], str]
-    ) -> OnSuccessFactory:
+    def _stage_factory(self, document_id_of: Callable[[Any, Any], str]) -> OnSuccessFactory:
         """An in-tx ``on_success`` factory staging + flushing one marker for the written row.
 
         Runs inside the write's transaction (attach with ``bind_tx``), so a rolled-back

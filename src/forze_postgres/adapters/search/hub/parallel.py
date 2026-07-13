@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import partial
-from typing import Any, Sequence, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.search import (
-    FacetResults,
-    SearchCursorPage,
-    search_page_from_limit_offset,
-)
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
@@ -24,7 +20,13 @@ from forze.application.contracts.querying import (
     row_passes_keyset_seek,
     validate_cursor_token,
 )
-from forze.application.contracts.search import SearchOptions, SearchResultSnapshotOptions
+from forze.application.contracts.search import (
+    FacetResults,
+    SearchCursorPage,
+    SearchOptions,
+    SearchResultSnapshotOptions,
+    search_page_from_limit_offset,
+)
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     decrypt_search_rows,
@@ -81,9 +83,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         thin_fields = self._hub_thin_projection(plan)
         select_fields = thin_fields if thin_fields is not None else sorted(host.read_fields)
 
-        hub_cols = sql.SQL(", ").join(
-            sql.Identifier(HUB_ROW_ALIAS, f) for f in select_fields
-        )
+        hub_cols = sql.SQL(", ").join(sql.Identifier(HUB_ROW_ALIAS, f) for f in select_fields)
         materialized = bool(getattr(host, "parallel_hub_cte_materialized", True))
 
         leg_ctx = HubLegSqlContext(
@@ -268,9 +268,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
                     hub_stmt, [*fp, *restrict_params], row_factory="dict"
                 )
 
-            leg_ranked = [
-                (leg, m) for (_, leg, _), m in zip(active, leg_maps, strict=True)
-            ]
+            leg_ranked = [(leg, m) for (_, leg, _), m in zip(active, leg_maps, strict=True)]
             weights = [w for _, _, w in active]
             merged = merge_hub_combo_rows(
                 hub_rows=hub_rows,
@@ -332,13 +330,11 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         """
 
         host = cast(HubSearchHost[M], self)
-        with_clause, params, _, count_relation, _ = (
-            await self._hub_build_with_clause_from_plan(
-                plan,
-                filters=filters,
-                combo_limit=combo_limit,
-                thin=True,
-            )
+        with_clause, params, _, count_relation, _ = await self._hub_build_with_clause_from_plan(
+            plan,
+            filters=filters,
+            combo_limit=combo_limit,
+            thin=True,
         )
 
         return await fetch_hub_facets(
@@ -404,18 +400,12 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         offset = int(pagination_dict.get("offset") or 0)
         limit_raw = pagination_dict.get("limit")
 
-        if limit_raw is None:
-            page_limit = len(merged)
-
-        else:
-            page_limit = int(cast(int | str, limit_raw))
+        page_limit = len(merged) if limit_raw is None else int(cast(int | str, limit_raw))
 
         page_slice = merged[offset : offset + page_limit]
         # The merged rows carry the hub score (``_hub_rank``); capture it before hydration
         # strips it. A filter-only browse (``not do_legs``) has no meaningful score.
-        scores = (
-            [float(r[HUB_RANK]) for r in page_slice] if plan.do_legs else None
-        )
+        scores = [float(r[HUB_RANK]) for r in page_slice] if plan.do_legs else None
         page_rows = await self._hub_parallel_page_rows(
             plan,
             page_slice,
@@ -424,9 +414,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         )
         trust = search_trust_source(host.read_validation)
         # Decrypt sealed hub-row fields once, before materialization (no-op if plaintext).
-        page_rows, decode_codec = await decrypt_search_rows(
-            hub_spec.resolved_read_codec, page_rows
-        )
+        page_rows, decode_codec = await decrypt_search_rows(hub_spec.resolved_read_codec, page_rows)
 
         page = materialize_search_page(
             page_rows=page_rows,

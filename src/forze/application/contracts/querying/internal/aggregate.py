@@ -1,7 +1,8 @@
 """Aggregate expression parsing and validation."""
 
 import re
-from typing import Any, Literal, Mapping, cast, get_args
+from collections.abc import Mapping
+from typing import Any, Literal, cast, get_args
 
 import attrs
 
@@ -178,16 +179,12 @@ class AggregatesExpressionParser:
 
         groups_obj: object = expr.get("$groups", {})
         groups = cls._group_keys(groups_obj)
-        computed_fields = tuple(
-            cls._computed(alias, spec) for alias, spec in raw_computed.items()
-        )
+        computed_fields = tuple(cls._computed(alias, spec) for alias, spec in raw_computed.items())
 
         if not computed_fields:
             raise exc.precondition("Aggregates expression requires $computed")
 
-        aliases = [group.alias for group in groups] + [
-            field.alias for field in computed_fields
-        ]
+        aliases = [group.alias for group in groups] + [field.alias for field in computed_fields]
         duplicates = sorted({alias for alias in aliases if aliases.count(alias) > 1})
 
         if duplicates:

@@ -4,13 +4,13 @@
 runtime tracer (or one passed explicitly) and appends an event when tracing is enabled.
 """
 
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from typing import TYPE_CHECKING, Any, Iterator, Mapping
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..deps.frozen import FrozenDeps
-
     from .tracers import RuntimeTracer
 
 # ----------------------- #
@@ -133,7 +133,7 @@ def record(
     pass the invoke's ``seq`` as ``corr`` on the matching ``complete``/``error`` record.
     """
 
-    tracer: "RuntimeTracer | None"
+    tracer: RuntimeTracer | None
 
     if deps is not None:
         tracer = deps.runtime_tracer if deps.runtime_tracer.enabled else None

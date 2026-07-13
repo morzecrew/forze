@@ -1,6 +1,7 @@
 """Type-checker host protocol for Postgres analytics mixins."""
 
-from typing import Any, AsyncGenerator, Awaitable, Callable, Protocol, Sequence, TypeVar
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from typing import Any, Protocol, TypeVar
 
 from pydantic import BaseModel
 

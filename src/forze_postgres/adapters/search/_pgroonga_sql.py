@@ -6,7 +6,8 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Literal, Mapping
+from collections.abc import Mapping
+from typing import Any, Literal
 
 from psycopg import sql
 
@@ -17,8 +18,8 @@ from forze.application.contracts.search import (
     calculate_effective_field_weights,
 )
 
-from ...kernel.gateways import PostgresQualifiedName
 from ...kernel.catalog.introspect import PostgresIntrospector
+from ...kernel.gateways import PostgresQualifiedName
 from ._pgroonga_index_fields import resolve_pgroonga_index_alignment
 
 # ----------------------- #
@@ -38,9 +39,7 @@ def pgroonga_literal_phrase(term: str) -> str:
     return f'"{escaped}"'
 
 
-def pgroonga_phrase_match_text(
-    terms: tuple[str, ...], *, combine: PhraseCombine
-) -> str:
+def pgroonga_phrase_match_text(terms: tuple[str, ...], *, combine: PhraseCombine) -> str:
     """Build one PGroonga query string from literal phrases: ``OR`` (any) or implicit AND (all).
 
     Each term is quoted as a literal phrase (:func:`pgroonga_literal_phrase`) so user
@@ -125,24 +124,21 @@ async def pgroonga_match_clause(
         if use_fuzzy:
             params.append(float(ratio))
             cond = sql.SQL(
-                (
-                    "pgroonga_condition({}::text, "
-                    "index_name => {}::text, "
-                    "fuzzy_max_distance_ratio => {}::float4)"
-                )
+                "pgroonga_condition({}::text, "
+                "index_name => {}::text, "
+                "fuzzy_max_distance_ratio => {}::float4)"
             ).format(q_ph, idx_ph, r_ph)
 
         else:
-            cond = sql.SQL(
-                "pgroonga_condition({}::text, index_name => {}::text)"
-            ).format(q_ph, idx_ph)
+            cond = sql.SQL("pgroonga_condition({}::text, index_name => {}::text)").format(
+                q_ph, idx_ph
+            )
 
         return sql.SQL("{} &@~ {}").format(text_expr, cond), params
 
     array_expr = sql.SQL("(ARRAY[{}])").format(
         sql.SQL(", ").join(
-            sql.SQL("coalesce({}::text, '')").format(sql.Identifier(ia, c))
-            for c in heap_cols
+            sql.SQL("coalesce({}::text, '')").format(sql.Identifier(ia, c)) for c in heap_cols
         )
     )
     params.append(weights)
@@ -150,21 +146,15 @@ async def pgroonga_match_clause(
     if use_fuzzy:
         params.append(float(ratio))
         cond = sql.SQL(
-            (
-                "pgroonga_condition({}::text, "
-                "index_name => {}::text, "
-                "weights => {}::int[], "
-                "fuzzy_max_distance_ratio => {}::float4)"
-            )
+            "pgroonga_condition({}::text, "
+            "index_name => {}::text, "
+            "weights => {}::int[], "
+            "fuzzy_max_distance_ratio => {}::float4)"
         ).format(q_ph, idx_ph, w_ph, r_ph)
 
     else:
         cond = sql.SQL(
-            (
-                "pgroonga_condition({}::text, "
-                "index_name => {}::text, "
-                "weights => {}::int[])"
-            )
+            "pgroonga_condition({}::text, index_name => {}::text, weights => {}::int[])"
         ).format(q_ph, idx_ph, w_ph)
 
     return sql.SQL("{} &@~ {}").format(array_expr, cond), params

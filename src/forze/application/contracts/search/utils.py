@@ -1,4 +1,5 @@
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from .specs import SearchSpec
 from .types import PhraseCombine, SearchOptions
@@ -64,4 +65,4 @@ def calculate_effective_field_weights(
         return dict(spec.default_weights)
 
     else:
-        return {f: 1.0 for f in spec.fields}
+        return dict.fromkeys(spec.fields, 1.0)

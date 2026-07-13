@@ -1,5 +1,6 @@
+from collections.abc import Awaitable
 from datetime import timedelta
-from typing import Awaitable, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from .specs import DistributedLockSpec
 from .value_objects import AcquiredLock, DistributedLockCapabilities

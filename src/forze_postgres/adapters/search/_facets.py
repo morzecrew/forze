@@ -12,7 +12,8 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from psycopg import sql
 
@@ -62,12 +63,9 @@ async def fetch_pg_facets(
             """
         ).format(col=col, body=body, lim=sql.Placeholder())
 
-        rows = await client.fetch_all(
-            stmt, [*params, int(size)], row_factory="dict"
-        )
+        rows = await client.fetch_all(stmt, [*params, int(size)], row_factory="dict")
         out[field] = tuple(
-            FacetBucket(value=row["facet_value"], count=int(row["facet_count"]))
-            for row in rows
+            FacetBucket(value=row["facet_value"], count=int(row["facet_count"])) for row in rows
         )
 
     return out
@@ -96,9 +94,7 @@ async def fetch_hub_facets(
     """
 
     read_alias = "fct"
-    body = sql.SQL(
-        "FROM {combo} {ca} JOIN {read} {ra} ON {ra}.{idf} = {ca}.{idf}"
-    ).format(
+    body = sql.SQL("FROM {combo} {ca} JOIN {read} {ra} ON {ra}.{idf} = {ca}.{idf}").format(
         combo=sql.Identifier(count_relation),
         ca=sql.Identifier(combo_alias),
         read=read_relation.ident(),

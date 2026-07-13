@@ -2,7 +2,8 @@
 
 import asyncio
 from collections import deque
-from typing import Callable, Literal
+from collections.abc import Callable
+from typing import Literal
 
 import attrs
 
@@ -335,11 +336,9 @@ class AdaptiveBulkheadState:
     )
     """Last instant the wait queue was observed empty (congestion anchor)."""
 
-    _waiters: deque[tuple[asyncio.Future[None], float | None, float, Criticality]] = (
-        attrs.field(
-            factory=deque,
-            init=False,
-        )
+    _waiters: deque[tuple[asyncio.Future[None], float | None, float, Criticality]] = attrs.field(
+        factory=deque,
+        init=False,
     )
 
     # ....................... #
@@ -362,9 +361,7 @@ class AdaptiveBulkheadState:
 
         incoming = current_criticality()
 
-        return any(
-            crit < incoming for waiter, _, _, crit in self._waiters if not waiter.done()
-        )
+        return any(crit < incoming for waiter, _, _, crit in self._waiters if not waiter.done())
 
     # ....................... #
 
@@ -403,11 +400,7 @@ class AdaptiveBulkheadState:
             await waiter
 
         except asyncio.CancelledError:
-            if (
-                waiter.done()
-                and not waiter.cancelled()
-                and waiter.exception() is None
-            ):
+            if waiter.done() and not waiter.cancelled() and waiter.exception() is None:
                 # A slot was *granted* concurrently with this cancellation —
                 # ``_wake`` did ``in_use += 1`` then ``set_result(None)`` — so
                 # return it or the capacity leaks. A waiter completed with an

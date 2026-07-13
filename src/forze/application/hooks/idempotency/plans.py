@@ -1,11 +1,13 @@
 """Wire engine-level idempotency into operation-registry plans."""
 
-from typing import Any, Awaitable, Callable, final
+from collections.abc import Awaitable, Callable
+from typing import Any, final
 
 import attrs
 from pydantic import BaseModel
 
 from forze.application._logger import logger
+from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.execution import (
     Middleware,
     MiddlewareFactory,
@@ -13,7 +15,6 @@ from forze.application.contracts.execution import (
     OnSuccess,
     OnSuccessFactory,
 )
-from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.idempotency import (
     IdempotencyPort,
     IdempotencyRecord,
@@ -84,8 +85,7 @@ class IdempotencyWrap(MiddlewareFactory):
             and issubclass(self.result_type, BaseModel)
         ):
             raise exc.configuration(
-                f"IdempotencyWrap result_type must be a Pydantic model, "
-                f"got {self.result_type!r}",
+                f"IdempotencyWrap result_type must be a Pydantic model, got {self.result_type!r}",
             )
 
     # ....................... #
@@ -99,9 +99,7 @@ class IdempotencyWrap(MiddlewareFactory):
             port = encrypting_idempotency_port(
                 port,
                 cipher=(
-                    ctx.deps.provide(KeyringDepKey)
-                    if ctx.deps.exists(KeyringDepKey)
-                    else None
+                    ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
                 ),
                 tenant_provider=ctx.inv_ctx.get_tenant,
                 spec_name=str(self.spec.name),

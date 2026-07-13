@@ -177,9 +177,7 @@ class OperationRegistry:
         new_descriptors = dict(self._descriptors)
 
         if namespace is not None:
-            descriptors = {
-                namespace.key(op): descriptor for op, descriptor in descriptors.items()
-            }
+            descriptors = {namespace.key(op): descriptor for op, descriptor in descriptors.items()}
 
         for op, descriptor in descriptors.items():
             if op in new_descriptors and not override:
@@ -366,8 +364,7 @@ class OperationRegistry:
         if not self._patches:
             if selectors:
                 raise exc.configuration(
-                    "materialize_patches called with selectors but the registry "
-                    "has no plan patches"
+                    "materialize_patches called with selectors but the registry has no plan patches"
                 )
 
             return self
@@ -378,25 +375,16 @@ class OperationRegistry:
             present = {patch.selector for patch in self._patches}
 
             if missing := [sel for sel in targets if sel not in present]:
-                raise exc.configuration(
-                    f"No plan patch found for selectors: {missing!r}"
-                )
+                raise exc.configuration(f"No plan patch found for selectors: {missing!r}")
 
-        selected = [
-            patch for patch in self._patches if not targets or patch.selector in targets
-        ]
+        selected = [patch for patch in self._patches if not targets or patch.selector in targets]
         remaining = tuple(
-            patch
-            for patch in self._patches
-            if targets and patch.selector not in targets
+            patch for patch in self._patches if targets and patch.selector not in targets
         )
 
         # Orphan guard: materializing asserts the patch is local and complete.
         for patch in selected:
-            if not any(
-                str_key_selector.matches(patch.selector, str(op))
-                for op in self._handlers
-            ):
+            if not any(str_key_selector.matches(patch.selector, str(op)) for op in self._handlers):
                 raise exc.configuration(
                     "Orphan plan patch: selector "
                     f"{patch.selector!r} matches no registered operations"
@@ -408,16 +396,12 @@ class OperationRegistry:
         for op in self._handlers:
             op_str = str(op)
 
-            if not any(
-                str_key_selector.matches(patch.selector, op_str) for patch in selected
-            ):
+            if not any(str_key_selector.matches(patch.selector, op_str) for patch in selected):
                 continue
 
             materialized = resolution.resolve(op_str)
             old_plan = new_plans.get(op)
-            new_plans[op] = (
-                old_plan.merge(materialized) if old_plan is not None else materialized
-            )
+            new_plans[op] = old_plan.merge(materialized) if old_plan is not None else materialized
 
         return attrs.evolve(self, plans=new_plans, patches=remaining)
 
@@ -568,9 +552,7 @@ class OperationRegistry:
                 cross-registry patch reach without *cross_registry*.
         """
 
-        return type(self).merge(
-            self, *registries, override=override, cross_registry=cross_registry
-        )
+        return type(self).merge(self, *registries, override=override, cross_registry=cross_registry)
 
     # ....................... #
 
@@ -591,9 +573,7 @@ class OperationRegistry:
         RegistryFreezeValidator.validate_all(self._handlers, resolution)
 
         frozen_handlers = dict(self._handlers)
-        frozen_plans = {
-            op: resolution.resolve(str(op)).freeze() for op in frozen_handlers
-        }
+        frozen_plans = {op: resolution.resolve(str(op)).freeze() for op in frozen_handlers}
 
         # Visibility, not an error: descriptor-less operations stay executable but are
         # invisible/half-visible to catalog-driven surfaces (generated routes refuse
@@ -685,9 +665,7 @@ class FrozenOperationRegistry:
             "supports_idempotency_key": entry.supports_idempotency_key,
             "requires_authn": entry.requires_authn,
             "required_permissions": sorted(entry.required_permissions),
-            "deadline_s": (
-                entry.deadline.total_seconds() if entry.deadline is not None else None
-            ),
+            "deadline_s": (entry.deadline.total_seconds() if entry.deadline is not None else None),
         }
 
     def operation_fingerprint(self, op: StrKey) -> str:
@@ -719,7 +697,7 @@ class FrozenOperationRegistry:
     def _dispatch(
         self,
         step: DispatchStep,
-        ctx: "ExecutionContext",
+        ctx: ExecutionContext,
     ) -> DispatchedOperation[Any, Any]:
         resolved = self.resolve(step.target, ctx)
 
@@ -730,7 +708,7 @@ class FrozenOperationRegistry:
     def resolve(
         self,
         op: StrKey,
-        ctx: "ExecutionContext",
+        ctx: ExecutionContext,
     ) -> ResolvedOperation[Any, Any]:
         cached = ctx.cached_operation(op)
 
@@ -765,8 +743,7 @@ class FrozenOperationRegistry:
         # clear error here (once per resolve) instead of an opaque AttributeError
         # deep in execution.
         if resolved_plan.two_phase and not (
-            callable(getattr(built, "prepare", None))
-            and callable(getattr(built, "apply", None))
+            callable(getattr(built, "prepare", None)) and callable(getattr(built, "apply", None))
         ):
             raise exc.configuration(
                 f"Operation {op!r} is marked two-phase (.two_phase()) but its handler "

@@ -1,4 +1,5 @@
-from typing import Any, Awaitable, Generic, Protocol, runtime_checkable
+from collections.abc import Awaitable
+from typing import Any, Generic, Protocol, runtime_checkable
 
 from .ports import BaseDurableWorkflowPort
 from .specs import (

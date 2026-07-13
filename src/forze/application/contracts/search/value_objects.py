@@ -1,4 +1,5 @@
-from typing import Any, Mapping, Tuple, TypeAlias, final
+from collections.abc import Mapping
+from typing import Any, TypeAlias, final
 
 import attrs
 
@@ -47,12 +48,12 @@ class FacetBucket:
     """Number of matching documents carrying this value."""
 
 
-FacetResults: TypeAlias = Mapping[str, Tuple[FacetBucket, ...]]
+FacetResults: TypeAlias = Mapping[str, tuple[FacetBucket, ...]]
 """Facet distributions keyed by facetable field name → buckets ordered count-descending.
 
 Result-level metadata attached to a paged search response (:attr:`~.pages.SearchCountlessPage.facets`)."""
 
-HitHighlights: TypeAlias = Mapping[str, Tuple[str, ...]]
+HitHighlights: TypeAlias = Mapping[str, tuple[str, ...]]
 """Highlighted fragments for a single hit, keyed by field name → marked-up snippets.
 
 Each fragment already carries the requested ``pre_tag`` / ``post_tag`` markers. A field

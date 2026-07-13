@@ -9,7 +9,8 @@ contract); the result is whatever the operation returns, serialized by FastMCP.
 
 import inspect
 import warnings
-from typing import Any, Awaitable, Callable, Final
+from collections.abc import Awaitable, Callable
+from typing import Any, Final
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
@@ -107,9 +108,7 @@ def _flat_tool_handler(
             )
             annotations[field_name] = field.annotation
 
-    return_annotation: Any = (
-        output_type if output_type is not None else inspect.Signature.empty
-    )
+    return_annotation: Any = output_type if output_type is not None else inspect.Signature.empty
 
     _handler.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
         params, return_annotation=return_annotation

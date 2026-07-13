@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from forze.application.contracts.search import (
     PhraseCombine,
@@ -63,11 +63,7 @@ def build_browse_pipeline(
     return [
         *_pre_match_stages(pre_filter),
         {"$addFields": {rank_field: 1}},
-        {
-            "$sort": _sort_dict(
-                ranked=False, user_sorts=user_sorts, rank_field=rank_field
-            )
-        },
+        {"$sort": _sort_dict(ranked=False, user_sorts=user_sorts, rank_field=rank_field)},
     ]
 
 
@@ -105,9 +101,7 @@ def build_text_ranked_pipeline(
             rank_field=rank_field,
         )
 
-    stages.append(
-        {"$sort": _sort_dict(ranked=True, user_sorts=user_sorts, rank_field=rank_field)}
-    )
+    stages.append({"$sort": _sort_dict(ranked=True, user_sorts=user_sorts, rank_field=rank_field)})
 
     return stages
 
@@ -175,9 +169,7 @@ def build_atlas_ranked_pipeline(
         stages.append({"$match": pre_filter})
 
     stages.append({"$addFields": {rank_field: {"$meta": "searchScore"}}})
-    stages.append(
-        {"$sort": _sort_dict(ranked=True, user_sorts=user_sorts, rank_field=rank_field)}
-    )
+    stages.append({"$sort": _sort_dict(ranked=True, user_sorts=user_sorts, rank_field=rank_field)})
 
     return stages
 
@@ -296,7 +288,7 @@ def thin_ranked_pipeline(
         sort = stage.get("$sort")
 
         if sort is not None:
-            projection: JsonDict = {key: 1 for key in sort}
+            projection: JsonDict = dict.fromkeys(sort, 1)
             projection["_id"] = 1
 
             return [*pipeline[:index], {"$project": projection}, *pipeline[index:]]
@@ -320,8 +312,6 @@ def build_count_pipeline(
     matcher itself (``$match`` / ``$search`` / ``$vectorSearch``) is kept.
     """
 
-    counted = [
-        stage for stage in pipeline if not _is_rank_only_stage(stage, rank_field)
-    ]
+    counted = [stage for stage in pipeline if not _is_rank_only_stage(stage, rank_field)]
 
     return [*counted, {"$count": "total"}]

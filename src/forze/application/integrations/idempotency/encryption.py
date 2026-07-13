@@ -48,9 +48,7 @@ class EncryptingIdempotencyPort:
 
     # ....................... #
 
-    async def begin(
-        self, op: str, key: str | None, payload_hash: str
-    ) -> IdempotencyRecord | None:
+    async def begin(self, op: str, key: str | None, payload_hash: str) -> IdempotencyRecord | None:
         record = await self.inner.begin(op, key, payload_hash)
 
         if record is None or key is None:
@@ -127,6 +125,4 @@ def encrypting_idempotency_port(
             code=_WIRING_CODE,
         )
 
-    return EncryptingIdempotencyPort(
-        inner=inner, cipher=cipher, tenant_provider=tenant_provider
-    )
+    return EncryptingIdempotencyPort(inner=inner, cipher=cipher, tenant_provider=tenant_provider)

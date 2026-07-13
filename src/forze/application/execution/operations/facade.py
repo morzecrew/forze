@@ -122,9 +122,7 @@ class OperationFacadeFactory[F: OperationFacade]:
 
     def __call__(self) -> F:
         if self.type.namespace_required and self.ns is None:
-            raise exc.configuration(
-                f"{self.type.__name__} requires namespace at runtime"
-            )
+            raise exc.configuration(f"{self.type.__name__} requires namespace at runtime")
 
         return self.type(
             ctx=self.ctx_factory(),

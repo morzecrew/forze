@@ -6,7 +6,8 @@ per-tenant *bucket* resolver (``namespace``), and a routed per-tenant client / c
 carries and enforces a declared ``required_tenant_isolation`` floor.
 """
 
-from typing import Any, Callable, Mapping, Protocol
+from collections.abc import Callable, Mapping
+from typing import Any, Protocol
 
 from forze.application.contracts.tenancy import (
     TenancyRouteGroup,

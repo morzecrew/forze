@@ -6,15 +6,12 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.search import (
-    HitHighlights,
-    SearchCursorPage,
-)
 from forze.application.contracts.querying import (
     CursorBinding,
     CursorPaginationExpression,
@@ -29,6 +26,8 @@ from forze.application.contracts.querying import (
     validate_cursor_token,
 )
 from forze.application.contracts.search import (
+    HitHighlights,
+    SearchCursorPage,
     SearchSpec,
     cursor_return_fields_for_select,
     ranked_search_cursor_key_spec,
@@ -37,9 +36,6 @@ from forze.application.integrations.search import decrypt_search_rows
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, build_projection
 from forze.base.serialization import ModelCodec
-
-from ._highlights import extract_and_strip_highlights
-from ._materialize_hits import decode_search_hits
 from forze_postgres.kernel.sql import (
     build_order_by_sql,
     build_ranked_cursor_order_by_sql,
@@ -49,6 +45,8 @@ from forze_postgres.kernel.sql.query.nested import sort_key_expr
 
 from ...kernel.gateways import PostgresGateway
 from ._engine import RankedPipelineSql
+from ._highlights import extract_and_strip_highlights
+from ._materialize_hits import decode_search_hits
 
 # ----------------------- #
 
@@ -157,9 +155,7 @@ async def execute_projection_keyset_cursor[M: BaseModel](
     fw, fp = await gw.where_clause(filters, parsed=parsed_filters)
     types = await gw.column_types()
 
-    binding = _search_cursor_binding(
-        gw, spec.name, filters=filters, parsed=parsed_filters
-    )
+    binding = _search_cursor_binding(gw, spec.name, filters=filters, parsed=parsed_filters)
 
     exprs = [
         sort_key_expr(
@@ -217,9 +213,7 @@ async def execute_projection_keyset_cursor[M: BaseModel](
     )
     params.append(lim + 1)
 
-    raw_rows = list(
-        await gw.client.fetch_all(data_stmt, params, row_factory="dict")
-    )  # type: ignore[assignment, arg-type]
+    raw_rows = list(await gw.client.fetch_all(data_stmt, params, row_factory="dict"))  # type: ignore[assignment, arg-type]
 
     rows, has_more, nxt, prv = keyset_page_bounds(
         raw_rows,
@@ -386,9 +380,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
     )
     params.append(lim + 1)
 
-    raw_rows = list(
-        await gw.client.fetch_all(data_stmt, params, row_factory="dict")
-    )  # type: ignore[assignment, arg-type]
+    raw_rows = list(await gw.client.fetch_all(data_stmt, params, row_factory="dict"))  # type: ignore[assignment, arg-type]
 
     rows, has_more, nxt, prv = keyset_page_bounds(
         raw_rows,

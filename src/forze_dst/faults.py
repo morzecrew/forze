@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import asyncio
 import random
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing
 from datetime import timedelta
-from typing import Any, AsyncGenerator, AsyncIterator, cast, final
+from typing import Any, cast, final
 
 import attrs
 
@@ -121,14 +122,8 @@ class PortFaultInterceptor(PortSelector):
     # ....................... #
 
     async def around(self, call: PortCall, nxt: PortNext) -> Any:
-        if (
-            self.matches(call)
-            and self.probability > 0.0
-            and self.rng.random() < self.probability
-        ):
-            await asyncio.sleep(
-                0
-            )  # yield so the failure interleaves at the port boundary
+        if self.matches(call) and self.probability > 0.0 and self.rng.random() < self.probability:
+            await asyncio.sleep(0)  # yield so the failure interleaves at the port boundary
             _record_fault("error", call)
             raise exc.infrastructure(
                 f"injected transient fault at {call.surface}[{call.route}].{call.op}",
@@ -166,18 +161,10 @@ class CrashInterceptor(PortSelector):
     # ....................... #
 
     async def around(self, call: PortCall, nxt: PortNext) -> Any:
-        if (
-            self.matches(call)
-            and self.probability > 0.0
-            and self.rng.random() < self.probability
-        ):
-            await asyncio.sleep(
-                0
-            )  # yield so the crash interleaves at the port boundary
+        if self.matches(call) and self.probability > 0.0 and self.rng.random() < self.probability:
+            await asyncio.sleep(0)  # yield so the crash interleaves at the port boundary
             _record_fault("crash", call)
-            raise SimulatedCrash(
-                f"simulated crash at {call.surface}[{call.route}].{call.op}"
-            )
+            raise SimulatedCrash(f"simulated crash at {call.surface}[{call.route}].{call.op}")
 
         return await nxt(call)
 
@@ -358,16 +345,12 @@ class _FaultPolicyInterceptor:
         if rule.error > 0.0 and self.rng.random() < rule.error:
             await asyncio.sleep(0)
             _record_fault("error", call)
-            raise exc.infrastructure(
-                f"injected fault at {where}", code="dst.injected_port_fault"
-            )
+            raise exc.infrastructure(f"injected fault at {where}", code="dst.injected_port_fault")
 
         if rule.timeout > 0.0 and self.rng.random() < rule.timeout:
             await asyncio.sleep(0)
             _record_fault("timeout", call)
-            raise exc.timeout(
-                f"injected timeout at {where}", code="dst.injected_timeout"
-            )
+            raise exc.timeout(f"injected timeout at {where}", code="dst.injected_timeout")
 
         # Transport behaviours (only on broker-delivery ops). Drop skips the real call; delay
         # advances virtual time before it (never rewriting the call's args); duplicate re-runs
@@ -417,9 +400,7 @@ class _FaultPolicyInterceptor:
 
     # ....................... #
 
-    async def around_stream(
-        self, call: PortCall, nxt: StreamPortNext
-    ) -> AsyncIterator[Any]:
+    async def around_stream(self, call: PortCall, nxt: StreamPortNext) -> AsyncIterator[Any]:
         """Fault an async-generator port call. The pre-open rolls (crash / error / timeout /
         delay) match :meth:`around` exactly — same rates, order, and RNG draws — so a stream
         with ``stream_faults`` off behaves identically to before (fail before opening, then
@@ -433,9 +414,7 @@ class _FaultPolicyInterceptor:
             # ``aclosing`` guarantees the inner stream is closed (backend cursor/connection
             # released) even when the consumer stops iterating early. Seam streams are async
             # generators (they have ``aclose``); the annotated ``AsyncIterator`` is narrowed.
-            async with aclosing(
-                cast("AsyncGenerator[Any, None]", nxt(call))
-            ) as stream:
+            async with aclosing(cast("AsyncGenerator[Any]", nxt(call))) as stream:
                 async for item in stream:
                     yield item
             return
@@ -451,16 +430,12 @@ class _FaultPolicyInterceptor:
         if rule.error > 0.0 and self.rng.random() < rule.error:
             await asyncio.sleep(0)
             _record_fault("error", call)
-            raise exc.infrastructure(
-                f"injected fault at {where}", code="dst.injected_port_fault"
-            )
+            raise exc.infrastructure(f"injected fault at {where}", code="dst.injected_port_fault")
 
         if rule.timeout > 0.0 and self.rng.random() < rule.timeout:
             await asyncio.sleep(0)
             _record_fault("timeout", call)
-            raise exc.timeout(
-                f"injected timeout at {where}", code="dst.injected_timeout"
-            )
+            raise exc.timeout(f"injected timeout at {where}", code="dst.injected_timeout")
 
         if rule.delay > 0.0 and self.rng.random() < rule.delay:
             seconds = self.rng.uniform(0.0, rule.max_delay.total_seconds())
@@ -470,7 +445,7 @@ class _FaultPolicyInterceptor:
         # ``aclosing`` closes the inner stream deterministically on every exit — a mid-stream
         # fault raising out of the loop, or the consumer stopping early — so no backend
         # cursor/connection is leaked.
-        async with aclosing(cast("AsyncGenerator[Any, None]", nxt(call))) as stream:
+        async with aclosing(cast("AsyncGenerator[Any]", nxt(call))) as stream:
             async for item in stream:
                 yield item
 
@@ -481,9 +456,7 @@ class _FaultPolicyInterceptor:
 # ....................... #
 
 
-def compile_fault_policy(
-    policy: FaultPolicy, rng: random.Random
-) -> _FaultPolicyInterceptor:
+def compile_fault_policy(policy: FaultPolicy, rng: random.Random) -> _FaultPolicyInterceptor:
     """Compile *policy* into a seam interceptor that shares one seeded fault RNG."""
 
     return _FaultPolicyInterceptor(rules=policy.rules, rng=rng)

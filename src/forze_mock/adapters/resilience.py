@@ -33,7 +33,7 @@ class PassthroughResilienceExecutor:
         try:
             return await fn()
 
-        except Exception as error:  # noqa: BLE001 — fallback boundary
+        except Exception as error:
             if fallback is not None:
                 return await fallback(error)
 

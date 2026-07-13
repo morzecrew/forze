@@ -14,18 +14,18 @@ require_mcp()
 
 # ....................... #
 
-import time  # noqa: E402
-from typing import Any  # noqa: E402
+import time
+from typing import Any
 
-from fastmcp.server.middleware import (  # noqa: E402
+from fastmcp.server.middleware import (
     CallNext,
     Middleware,
     MiddlewareContext,
 )
 
-from forze.base.exceptions import CoreException  # noqa: E402
-from forze.base.logging import AccessLogSampler, Logger  # noqa: E402
-from forze_mcp._logging import ForzeMCPLogger  # noqa: E402
+from forze.base.exceptions import CoreException
+from forze.base.logging import AccessLogSampler, Logger
+from forze_mcp._logging import ForzeMCPLogger
 
 # ----------------------- #
 
@@ -70,16 +70,16 @@ class LoggingMiddleware(Middleware):
         duration_ms: int,
         outcome: str,
     ) -> dict[str, Any]:
-        return dict(
-            mcp={
+        return {
+            "mcp": {
                 "method": context.method,
                 "type": context.type,
                 "source": context.source,
                 "target": _target(context.message),
             },
-            duration=duration_ms,
-            outcome=outcome,
-        )
+            "duration": duration_ms,
+            "outcome": outcome,
+        }
 
     # ....................... #
 
@@ -116,8 +116,6 @@ class LoggingMiddleware(Middleware):
         duration_ms = int((time.perf_counter() - start_time) * 1000)
 
         if self.access_log.should_log(subject=context.method, is_error=False):
-            logger.info(
-                "Processed MCP request", **self._extra(context, duration_ms, "ok")
-            )
+            logger.info("Processed MCP request", **self._extra(context, duration_ms, "ok"))
 
         return result

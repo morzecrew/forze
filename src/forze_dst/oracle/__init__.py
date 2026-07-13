@@ -11,10 +11,6 @@ subset from here.
 from __future__ import annotations
 
 from forze_dst.oracle.commutativity import commutative_convergence
-from forze_dst.oracle.system_invariants import (
-    CompiledOracle,
-    compile_oracle,
-)
 from forze_dst.oracle.confidence import ConfidenceReport, assess_confidence
 from forze_dst.oracle.coverage import (
     Behavior,
@@ -93,6 +89,10 @@ from forze_dst.oracle.report import (
     build_timeline,
     format_report,
     render_timeline,
+)
+from forze_dst.oracle.system_invariants import (
+    CompiledOracle,
+    compile_oracle,
 )
 from forze_dst.oracle.viewer import render_html
 

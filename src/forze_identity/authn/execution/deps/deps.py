@@ -38,7 +38,7 @@ from forze.application.integrations.authn import (
     LoginLockoutGuard,
 )
 from forze.base.exceptions import exc
-
+from forze.base.primitives import StrKey
 from forze_identity.authz.application import policy_principal_spec
 
 from ...adapters import (
@@ -70,8 +70,6 @@ from ...verifiers import (
     ForzeJwtTokenVerifier,
     HmacApiKeyVerifier,
 )
-from forze.base.primitives import StrKey
-
 from .configs import AuthnSharedServices
 
 # ----------------------- #
@@ -125,9 +123,7 @@ class ConfigurableArgon2PasswordVerifier:
                 "Password verifier requires kernel.password",
             )
 
-        pa_cmd = (
-            ctx.doc.command(password_account_spec) if self.rehash_on_login else None
-        )
+        pa_cmd = ctx.doc.command(password_account_spec) if self.rehash_on_login else None
 
         return Argon2PasswordVerifier(
             password_svc=self.shared.password_svc,
@@ -255,11 +251,7 @@ class ConfigurableMappingTableResolver:
     ) -> PrincipalResolverPort:
         _ = spec
 
-        cmd = (
-            ctx.doc.command(identity_mapping_spec)
-            if self.provision_on_first_sight
-            else None
-        )
+        cmd = ctx.doc.command(identity_mapping_spec) if self.provision_on_first_sight else None
 
         return MappingTableResolver(
             qry=ctx.doc.query(identity_mapping_spec),
@@ -306,17 +298,13 @@ class ConfigurableAuthn:
         api_key_v: ApiKeyVerifierPort | None = None
 
         if "password" in self.enabled_methods:
-            password_v = ctx.deps.provide(PasswordVerifierDepKey, route=spec.name)(
-                ctx, spec
-            )
+            password_v = ctx.deps.provide(PasswordVerifierDepKey, route=spec.name)(ctx, spec)
 
         if "token" in self.enabled_methods:
             token_v = ctx.deps.provide(TokenVerifierDepKey, route=spec.name)(ctx, spec)
 
         if "api_key" in self.enabled_methods:
-            api_key_v = ctx.deps.provide(ApiKeyVerifierDepKey, route=spec.name)(
-                ctx, spec
-            )
+            api_key_v = ctx.deps.provide(ApiKeyVerifierDepKey, route=spec.name)(ctx, spec)
 
         resolver = ctx.deps.provide(PrincipalResolverDepKey, route=spec.name)(ctx, spec)
         eligibility = _resolve_eligibility(ctx, spec)
@@ -562,12 +550,8 @@ class ConfigurablePasswordAccountProvisioning:
             raise exc.internal("Password provisioning requires kernel.password")
 
         invite_svc = self.shared.invite_svc
-        invite_qry = (
-            ctx.doc.query(password_invite_spec) if invite_svc is not None else None
-        )
-        invite_cmd = (
-            ctx.doc.command(password_invite_spec) if invite_svc is not None else None
-        )
+        invite_qry = ctx.doc.query(password_invite_spec) if invite_svc is not None else None
+        invite_cmd = ctx.doc.command(password_invite_spec) if invite_svc is not None else None
 
         return PasswordAccountProvisioningAdapter(
             password_svc=self.shared.password_svc,

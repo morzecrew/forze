@@ -43,12 +43,7 @@ def shorten_traceback_text(stack: str, *, max_lines: int = 18) -> str:
 def is_access_log(event: EventDict) -> bool:
     http = event.get("http")
 
-    return (
-        isinstance(http, dict)
-        and "method" in http
-        and "url" in http
-        and "status_code" in http
-    )
+    return isinstance(http, dict) and "method" in http and "url" in http and "status_code" in http
 
 
 # ....................... #
@@ -89,8 +84,7 @@ def process_common_log(
         err_stack = shorten_traceback_text(exc_str, max_lines=max_traceback_lines)
 
     extras = tuple(
-        (k, sanitize_extra_value(ed[k]))
-        for k in sorted(k for k in ed if not k.startswith("_"))
+        (k, sanitize_extra_value(ed[k])) for k in sorted(k for k in ed if not k.startswith("_"))
     )
 
     return ed, NormalizedEvent(

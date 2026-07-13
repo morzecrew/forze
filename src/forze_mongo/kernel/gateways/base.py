@@ -6,7 +6,8 @@ require_mongo()
 
 # ....................... #
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 from uuid import UUID
 
 import attrs
@@ -20,9 +21,9 @@ from forze.application.contracts.querying import (
     QueryFilterLimits,
     QuerySortExpression,
     assert_default_null_ordering,
-    validate_runtime_sort_fields,
     default_nulls,
     resolve_sort_keys,
+    validate_runtime_sort_fields,
 )
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.integrations.persistence import (
@@ -406,7 +407,7 @@ class MongoGateway[M: BaseModel](
         if return_fields is None:
             return None
 
-        return {**{root: 1 for root in projection_roots(return_fields)}, "_id": 0}
+        return {**dict.fromkeys(projection_roots(return_fields), 1), "_id": 0}
 
     # ....................... #
 

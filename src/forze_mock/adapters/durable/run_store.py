@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Any, Sequence, final
+from typing import Any, final
 from uuid import UUID
 
 import attrs
@@ -175,16 +176,12 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort):
         output_json: JsonDict | None,
         fence: int | None = None,
     ) -> None:
-        self._finish(
-            run_id, status=DurableRunStatus.COMPLETED, output=output_json, fence=fence
-        )
+        self._finish(run_id, status=DurableRunStatus.COMPLETED, output=output_json, fence=fence)
 
     # ....................... #
 
     async def fail(self, run_id: str, *, error: str, fence: int | None = None) -> None:
-        self._finish(
-            run_id, status=DurableRunStatus.FAILED, error=error, fence=fence
-        )
+        self._finish(run_id, status=DurableRunStatus.FAILED, error=error, fence=fence)
 
     # ....................... #
 
@@ -236,16 +233,10 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort):
 
             # Newest first on (created_at, run_id) — run_id is a uuid7, so it breaks a
             # same-instant tie in creation order, matching the Postgres ORDER BY.
-            matched.sort(
-                key=lambda data: (data["created_at"], data["run_id"]), reverse=True
-            )
+            matched.sort(key=lambda data: (data["created_at"], data["run_id"]), reverse=True)
 
             if after is not None:
-                matched = [
-                    data
-                    for data in matched
-                    if (data["created_at"], data["run_id"]) < after
-                ]
+                matched = [data for data in matched if (data["created_at"], data["run_id"]) < after]
 
             # Over-fetch one so build_run_page can seed next_cursor (mirrors Postgres).
             records = [_to_record(data) for data in matched[: limit + 1]]

@@ -4,6 +4,13 @@ from typing import final
 
 import attrs
 
+from forze.application.contracts.deps import (
+    Deps,
+    DepsModule,
+    merge_deps,
+    routed_constant,
+    routed_shared_factories,
+)
 from forze.application.contracts.graph import (
     GraphCommandDepKey,
     GraphManagementDepKey,
@@ -16,12 +23,6 @@ from forze.application.contracts.tenancy import (
     validate_module_tenancy,
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
-from forze.application.contracts.deps import Deps, DepsModule
-from forze.application.contracts.deps import (
-    merge_deps,
-    routed_constant,
-    routed_shared_factories,
-)
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ...kernel.client import Neo4jClientPort, RoutedNeo4jClient

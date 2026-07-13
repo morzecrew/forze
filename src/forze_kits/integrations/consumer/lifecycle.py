@@ -11,12 +11,12 @@ from typing import Any, final
 import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze_kits.integrations._logger import logger
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.queue import QueueMessage, QueueSpec
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
+from forze_kits.integrations._logger import logger
 
 from .runner import QueueConsumer
 
@@ -113,7 +113,7 @@ class _QueueConsumerBackgroundShutdown(LifecycleHook):
 
     # ....................... #
 
-    async def __call__(self, ctx: ExecutionContext) -> None:  # noqa: ARG002
+    async def __call__(self, ctx: ExecutionContext) -> None:
         task = self.startup.task
 
         if task is None:
@@ -212,7 +212,7 @@ def queue_consumer_background_lifecycle_step(
     )
     return queue_consumer_factory_background_lifecycle_step(
         queue=queue,
-        consumer_factory=lambda ctx: consumer,  # noqa: ARG005
+        consumer_factory=lambda ctx: consumer,
         restart_backoff=restart_backoff,
         step_id=step_id,
     )

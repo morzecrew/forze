@@ -10,8 +10,8 @@ from .execution import (
     RabbitMQClientDepKey,
     RabbitMQDepsModule,
     RabbitMQQueueConfig,
-    routed_rabbitmq_lifecycle_step,
     rabbitmq_lifecycle_step,
+    routed_rabbitmq_lifecycle_step,
 )
 from .kernel.client import (
     RabbitMQClient,

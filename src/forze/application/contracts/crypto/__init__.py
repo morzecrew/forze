@@ -31,6 +31,13 @@ from .directory import (
     TenantTemplateKeyDirectory,
 )
 from .field_encryption import FieldEncryption
+from .payload_envelope import (
+    ENCRYPTED_PAYLOAD_KEY,
+    encrypted_payload_ciphertext,
+    is_encrypted_payload,
+    looks_encrypted_body,
+    wrap_encrypted_payload,
+)
 from .ports import (
     BytesCipherPort,
     ChunkedStreamOpener,
@@ -39,13 +46,6 @@ from .ports import (
     KeyManagementPort,
     KeyringPort,
     StreamingBytesCipherPort,
-)
-from .payload_envelope import (
-    ENCRYPTED_PAYLOAD_KEY,
-    encrypted_payload_ciphertext,
-    is_encrypted_payload,
-    looks_encrypted_body,
-    wrap_encrypted_payload,
 )
 from .value_objects import CryptoKeyringStats, DataKey, KeyRef
 from .wiring import (

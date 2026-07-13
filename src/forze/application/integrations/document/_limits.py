@@ -37,9 +37,5 @@ def assert_cursor_advanced(
 ) -> None:
     """Raise when opaque cursor pagination fails to advance."""
 
-    if (
-        next_cursor is not None
-        and prev_cursor is not None
-        and next_cursor == prev_cursor
-    ):
+    if next_cursor is not None and prev_cursor is not None and next_cursor == prev_cursor:
         raise exc.internal("Cursor pagination did not advance")

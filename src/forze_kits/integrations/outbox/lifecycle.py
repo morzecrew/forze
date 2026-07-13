@@ -12,7 +12,6 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze_kits.integrations._logger import logger
 from forze.application.contracts.outbox import (
     OutboxDestinationKind,
     OutboxRelayResult,
@@ -25,6 +24,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
+from forze_kits.integrations._logger import logger
 
 from ._relay_core import validate_retry_options
 from .relay import OutboxRelay
@@ -95,10 +95,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         if not 0.0 <= self.jitter < 1.0:
             raise exc.configuration("Jitter must be in [0, 1)")
 
-        if (
-            self.reclaim_stale_after is not None
-            and self.reclaim_stale_after.total_seconds() <= 0
-        ):
+        if self.reclaim_stale_after is not None and self.reclaim_stale_after.total_seconds() <= 0:
             raise exc.configuration("Reclaim stale after must be positive")
 
         if self.max_batches_per_tick < 1:
@@ -130,9 +127,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
         if self.transport == "queue":
             if self.queue_spec is None:
-                raise exc.precondition(
-                    "queue_spec is required for queue background relay"
-                )
+                raise exc.precondition("queue_spec is required for queue background relay")
 
             return await relay.to_queue(ctx, self.queue_spec, limit=self.limit)
 
@@ -205,9 +200,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                 raise
 
             except Exception:
-                logger.exception(
-                    "Outbox background relay failed for tenant", tenant=str(tenant)
-                )
+                logger.exception("Outbox background relay failed for tenant", tenant=str(tenant))
 
     # ....................... #
 
@@ -235,9 +228,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                     # Desynchronization jitter, not security randomness.
                     * (
                         1.0
-                        + current_entropy_source()
-                        .as_random()
-                        .uniform(-self.jitter, self.jitter)
+                        + current_entropy_source().as_random().uniform(-self.jitter, self.jitter)
                     )
                 )
 
@@ -263,7 +254,7 @@ class _OutboxRelayBackgroundShutdown(LifecycleHook):
 
     # ....................... #
 
-    async def __call__(self, ctx: ExecutionContext) -> None:  # noqa: ARG002
+    async def __call__(self, ctx: ExecutionContext) -> None:
         task = self.startup.task
 
         if task is None:

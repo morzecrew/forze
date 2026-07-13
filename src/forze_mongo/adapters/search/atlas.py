@@ -12,9 +12,9 @@ from forze.application.contracts.resolution import (
     NamedResourceSpec,
     resolve_scoped_namespace,
 )
+from forze.application.contracts.search import SearchOptions
 from forze.base.primitives import OnceCell
 from forze_mongo.kernel.relation import resolve_mongo_named_resource
-from forze.application.contracts.search import SearchOptions
 
 from ._pipeline import build_atlas_ranked_pipeline
 from ._simple_base import MongoSimpleSearchAdapter

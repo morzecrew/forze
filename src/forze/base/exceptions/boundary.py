@@ -11,7 +11,8 @@ renders the resulting envelope its own way. Logging stays with the caller via th
 ``on_server_error`` hook, so this boundary performs no I/O of its own.
 """
 
-from typing import Any, Awaitable, Callable, final
+from collections.abc import Awaitable, Callable
+from typing import Any, final
 
 import attrs
 
@@ -87,7 +88,7 @@ async def guard_frame(
 
         return FrameErr(envelope)
 
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         if on_server_error is not None:
             on_server_error(None, error)
 

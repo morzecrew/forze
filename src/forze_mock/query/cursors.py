@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Sequence
 from functools import cmp_to_key
 from typing import (
     Any,
-    Sequence,
     cast,
 )
 
@@ -56,9 +56,7 @@ def _mock_cursor_start_and_limit(  # pyright: ignore[reportPrivateUsage, reportU
     c = dict(cursor or {})
 
     if c.get("after") and c.get("before"):
-        raise exc.validation(
-            "Cursor pagination: pass at most one of 'after' or 'before'"
-        )
+        raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
     # Shared coerce + positive-check + clamp to [1, MAX_CURSOR_LIMIT] (a non-int is a 400,
     # a huge value is bounded), keeping the mock's paging identical to the real backends.
@@ -96,9 +94,7 @@ def _mock_keyset_parse(  # pyright: ignore[reportPrivateUsage]
     c = dict(cursor or {})
 
     if c.get("after") and c.get("before"):
-        raise exc.validation(
-            "Cursor pagination: pass at most one of 'after' or 'before'"
-        )
+        raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
     # Coerced + clamped like the offset path above and the real backends: a non-integer is a
     # clean 400 (not a raw ValueError) and a huge value is clamped to MAX_CURSOR_LIMIT rather
@@ -123,9 +119,7 @@ def _mock_keyset_sort_docs(  # pyright: ignore[reportPrivateUsage]
     """
 
     def _cmp(a: JsonDict, b: JsonDict) -> int:
-        for key, direction, null_order in zip(
-            sort_keys, directions, nulls, strict=True
-        ):
+        for key, direction, null_order in zip(sort_keys, directions, nulls, strict=True):
             c = ordered_compare(
                 row_value_for_sort_key(a, key),
                 row_value_for_sort_key(b, key),
@@ -164,9 +158,7 @@ def _mock_keyset_window(  # pyright: ignore[reportPrivateUsage, reportUnusedFunc
     lim, use_after, use_before = _mock_keyset_parse(cursor)
     c = dict(cursor or {})
 
-    ordered = _mock_keyset_sort_docs(
-        docs, sort_keys=sort_keys, directions=directions, nulls=nulls
-    )
+    ordered = _mock_keyset_sort_docs(docs, sort_keys=sort_keys, directions=directions, nulls=nulls)
 
     if use_after or use_before:
         token = str(c["after" if use_after else "before"])

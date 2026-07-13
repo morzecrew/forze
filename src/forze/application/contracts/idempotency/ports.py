@@ -1,6 +1,7 @@
 """Port for engine-level idempotency handling."""
 
-from typing import Awaitable, Protocol, runtime_checkable
+from collections.abc import Awaitable
+from typing import Protocol, runtime_checkable
 
 from .value_objects import IdempotencyRecord
 

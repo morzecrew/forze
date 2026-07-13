@@ -83,7 +83,7 @@ class _RealtimeGatewayShutdown(LifecycleHook):
 
     # ....................... #
 
-    async def __call__(self, ctx: ExecutionContext) -> None:  # noqa: ARG002
+    async def __call__(self, ctx: ExecutionContext) -> None:
         task = self.startup.task
 
         if task is None:

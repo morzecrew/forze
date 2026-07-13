@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import (
     TypeVar,
 )
+
 from pydantic import BaseModel
+
 from forze.base.primitives.projection import MISSING as _MISSING
 from forze.domain.models import BaseDTO, Document, ReadDocument
 

@@ -63,8 +63,8 @@ from forze_kits.aggregates.soft_deletion import (
     exclude_soft_deleted_mapper,
     soft_delete_wiring,
 )
-from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
 from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
+from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
 from forze_kits.integrations.outbox import OutboxEmit, bind_outbox
 from forze_kits.invariants import InvariantEnforcement, bind_invariants
 
@@ -305,9 +305,7 @@ class AggregateKit(Generic[R, D, C, U]):
 
     # ....................... #
 
-    def backend_requirements(
-        self, *, tx_route: StrKey = "default"
-    ) -> BackendRequirements:
+    def backend_requirements(self, *, tx_route: StrKey = "default") -> BackendRequirements:
         """What the deps module must wire for this declaration — a checklist derived from the spec.
 
         Describes the routes / keyring / tx the author wires (the backend-specific config values
@@ -346,9 +344,7 @@ class AggregateKit(Generic[R, D, C, U]):
             )
 
             if self.search_delivery is None:
-                reg = bind_search_sync(
-                    reg, document=spec, search=self.search, tx_route=tx_route
-                )
+                reg = bind_search_sync(reg, document=spec, search=self.search, tx_route=tx_route)
             else:
                 reg = self._stage_search_sync(reg, ns=ns, tx_route=tx_route)
 
@@ -539,11 +535,7 @@ class AggregateKit(Generic[R, D, C, U]):
 
             if key in reg.operation_keys():
                 reg = (
-                    reg.bind(key)
-                    .bind_tx()
-                    .set_route(tx_route)
-                    .on_success(flush)
-                    .finish(deep=True)
+                    reg.bind(key).bind_tx().set_route(tx_route).on_success(flush).finish(deep=True)
                 )
 
         return reg
@@ -560,7 +552,7 @@ class AggregateKit(Generic[R, D, C, U]):
 
         keys = law.read_set.scope_keys
 
-        def _params(args: Any, result: Any) -> Mapping[str, Any]:  # noqa: ARG001
+        def _params(args: Any, result: Any) -> Mapping[str, Any]:
             row = written_read_model(result)
             return {
                 key: getattr(row, key)  # pyright: ignore[reportUnknownArgumentType]

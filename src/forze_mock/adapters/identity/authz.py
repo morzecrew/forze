@@ -214,9 +214,7 @@ class MockDelegationPort(DelegationPort):
     ) -> bool:
         _ = scope
 
-        if (str(actor_id), str(subject_id)) in _delegation_store(
-            self.state, self.route
-        ):
+        if (str(actor_id), str(subject_id)) in _delegation_store(self.state, self.route):
             return True
 
         return self.allow_by_default
@@ -288,14 +286,11 @@ class MockAuthzDecisionPort(AuthzDecisionPort):
 
             principal_id = str(request.subject.principal_id)
             tenant_id = (
-                str(request.scope.tenant_id)
-                if request.scope.tenant_id is not None
-                else None
+                str(request.scope.tenant_id) if request.scope.tenant_id is not None else None
             )
 
             matched = (principal_id, request.action, None) in grants or (
-                tenant_id is not None
-                and (principal_id, request.action, tenant_id) in grants
+                tenant_id is not None and (principal_id, request.action, tenant_id) in grants
             )
 
         if matched:

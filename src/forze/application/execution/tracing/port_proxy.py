@@ -1,7 +1,8 @@
 """Tracing wrapper for configurable dependency ports, with port-metadata inference."""
 
+from collections.abc import Callable, Mapping
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Callable, Mapping, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 import attrs
@@ -149,9 +150,7 @@ class TracingPortProxy(PortProxy):
         else:
             return None
 
-        return (
-            data if isinstance(data, dict) else None
-        )  # pyright: ignore[reportUnknownVariableType]
+        return data if isinstance(data, dict) else None  # pyright: ignore[reportUnknownVariableType]
 
     # ....................... #
 
@@ -161,10 +160,7 @@ class TracingPortProxy(PortProxy):
         if not self.redact:
             return data
 
-        return {
-            key: (REDACTED if key in self.redact else value)
-            for key, value in data.items()
-        }
+        return {key: (REDACTED if key in self.redact else value) for key, value in data.items()}
 
     # ....................... #
 
@@ -202,11 +198,7 @@ class TracingPortProxy(PortProxy):
         """
 
         if self.phase == "query":
-            candidate = (
-                kwargs["filters"]
-                if "filters" in kwargs
-                else (args[0] if args else None)
-            )
+            candidate = kwargs["filters"] if "filters" in kwargs else (args[0] if args else None)
             data = self._dump(candidate)
             return self._redact(data) if data is not None else None
 

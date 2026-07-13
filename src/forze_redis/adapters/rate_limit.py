@@ -77,7 +77,7 @@ class RedisRateLimitStore(RateLimitStore):
                 self._strat_args(strat),
             )
 
-        except Exception:  # noqa: BLE001 — fail-open: the store must never break calls
+        except Exception:
             self._degrade(key)
             return await self.fallback.try_acquire(key, strat)
 

@@ -1,7 +1,7 @@
 """Structural protocol for Inngest clients."""
 
-from typing import TYPE_CHECKING, Protocol
 from collections.abc import Awaitable
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     import inngest

@@ -17,7 +17,6 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
-
 from forze_kits.integrations._logger import logger
 
 from .runner import DurableFunctionRunner
@@ -97,18 +96,14 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
 
         for tenant in tenants:
             try:
-                with ctx.inv_ctx.bind_identity(
-                    tenant=TenantIdentity(tenant_id=tenant)
-                ):
+                with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
                     await self._drain(ctx)
 
             except asyncio.CancelledError:
                 raise
 
             except Exception:
-                logger.exception(
-                    "Durable recovery failed for tenant", tenant=str(tenant)
-                )
+                logger.exception("Durable recovery failed for tenant", tenant=str(tenant))
 
     # ....................... #
 
@@ -132,16 +127,12 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
                     self.interval.total_seconds()
                     * (
                         1.0
-                        + current_entropy_source()
-                        .as_random()
-                        .uniform(-self.jitter, self.jitter)
+                        + current_entropy_source().as_random().uniform(-self.jitter, self.jitter)
                     )
                 )
 
         if self.task is not None and not self.task.done():
-            logger.warning(
-                "Durable recovery already running; ignoring duplicate startup"
-            )
+            logger.warning("Durable recovery already running; ignoring duplicate startup")
             return
 
         self.task = asyncio.create_task(_loop(), name="durable_recovery_background")
@@ -159,7 +150,7 @@ class _DurableRecoveryBackgroundShutdown(LifecycleHook):
 
     # ....................... #
 
-    async def __call__(self, ctx: ExecutionContext) -> None:  # noqa: ARG002
+    async def __call__(self, ctx: ExecutionContext) -> None:
         task = self.startup.task
 
         if task is None:
@@ -280,18 +271,14 @@ class _DurableSchedulerBackgroundStartup(LifecycleHook):
 
         for tenant in tenants:
             try:
-                with ctx.inv_ctx.bind_identity(
-                    tenant=TenantIdentity(tenant_id=tenant)
-                ):
+                with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
                     await self._drain(ctx)
 
             except asyncio.CancelledError:
                 raise
 
             except Exception:
-                logger.exception(
-                    "Durable scheduler failed for tenant", tenant=str(tenant)
-                )
+                logger.exception("Durable scheduler failed for tenant", tenant=str(tenant))
 
     # ....................... #
 
@@ -332,16 +319,12 @@ class _DurableSchedulerBackgroundStartup(LifecycleHook):
                     self.interval.total_seconds()
                     * (
                         1.0
-                        + current_entropy_source()
-                        .as_random()
-                        .uniform(-self.jitter, self.jitter)
+                        + current_entropy_source().as_random().uniform(-self.jitter, self.jitter)
                     )
                 )
 
         if self.task is not None and not self.task.done():
-            logger.warning(
-                "Durable scheduler already running; ignoring duplicate startup"
-            )
+            logger.warning("Durable scheduler already running; ignoring duplicate startup")
             return
 
         self.task = asyncio.create_task(_loop(), name="durable_scheduler_background")
@@ -359,7 +342,7 @@ class _DurableSchedulerBackgroundShutdown(LifecycleHook):
 
     # ....................... #
 
-    async def __call__(self, ctx: ExecutionContext) -> None:  # noqa: ARG002
+    async def __call__(self, ctx: ExecutionContext) -> None:
         task = self.startup.task
 
         if task is None:

@@ -5,8 +5,8 @@ tools) construct your own :class:`FastMCP` and call
 :func:`~forze_mcp.registration.register_tools` instead.
 """
 
+from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from typing import Callable
 
 from fastmcp import FastMCP
 from fastmcp.server.auth import AuthProvider
@@ -68,9 +68,7 @@ def build_mcp_server(
     # matching the HTTP edge's server-error masking. Boundary ``CoreException``s are translated to
     # a client-safe ``ToolError`` in ``register_tools`` (egress-masked envelope), so a caller-caused
     # error still carries an actionable message.
-    server: FastMCP = FastMCP(
-        name, auth=auth, lifespan=lifespan, mask_error_details=True
-    )
+    server: FastMCP = FastMCP(name, auth=auth, lifespan=lifespan, mask_error_details=True)
 
     register_tools(
         server,

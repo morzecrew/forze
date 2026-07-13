@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import (
     Any,
-    AsyncGenerator,
-    Mapping,
-    Sequence,
     cast,
     final,
 )
@@ -33,7 +31,7 @@ from forze_mock.tenancy import MockTenancyMixin
 # ----------------------- #
 
 
-def _sleep_interval( # pyright: ignore[reportUnusedFunction]
+def _sleep_interval(  # pyright: ignore[reportUnusedFunction]
     timeout: timedelta | None,
 ) -> float:
     if timeout is None:
@@ -152,9 +150,7 @@ class MockQueueAdapter(MockTenancyMixin, QueueQueryPort[M], QueueCommandPort[M])
 
         pending = self._pending_store().setdefault(queue, {})
         queued = self._queue_store().setdefault(queue, [])
-        expired_ids = [
-            pid for pid, entry in pending.items() if entry.redeliver_at <= now
-        ]
+        expired_ids = [pid for pid, entry in pending.items() if entry.redeliver_at <= now]
         for pid in expired_ids:
             entry = pending.pop(pid)
             queued.append(
@@ -213,9 +209,7 @@ class MockQueueAdapter(MockTenancyMixin, QueueQueryPort[M], QueueCommandPort[M])
         message_headers: Sequence[Mapping[str, str]] | None = None,
     ) -> list[str]:
         if message_headers is not None and len(message_headers) != len(payloads):
-            raise exc.precondition(
-                "message_headers length must match payloads length."
-            )
+            raise exc.precondition("message_headers length must match payloads length.")
 
         out: list[str] = []
         for i, payload in enumerate(payloads):
@@ -294,9 +288,7 @@ class MockQueueAdapter(MockTenancyMixin, QueueQueryPort[M], QueueCommandPort[M])
         # waits in real time (small polling sleeps), so a frozen ``TimeSource``
         # must not be able to wedge a finite idle timeout into an endless loop.
         idle_seconds = None if timeout is None else timeout.total_seconds()
-        idle_deadline = (
-            None if idle_seconds is None else monotonic() + idle_seconds
-        )
+        idle_deadline = None if idle_seconds is None else monotonic() + idle_seconds
         while True:
             batch = await self.receive(queue, limit=1, timeout=timeout)
             if batch:

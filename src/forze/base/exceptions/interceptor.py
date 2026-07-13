@@ -1,3 +1,4 @@
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from contextlib import (
     AbstractAsyncContextManager,
     AbstractContextManager,
@@ -7,11 +8,6 @@ from contextlib import (
 from functools import wraps
 from typing import (
     Any,
-    AsyncGenerator,
-    Awaitable,
-    Callable,
-    Generator,
-    Mapping,
     Never,
     ParamSpec,
     TypeVar,
@@ -245,9 +241,7 @@ class ExceptionInterceptor:
     def contextmanager(
         self,
         site: str | None = None,
-    ) -> Callable[
-        [Callable[P, AbstractContextManager[R]]], Callable[P, AbstractContextManager[R]]
-    ]:
+    ) -> Callable[[Callable[P, AbstractContextManager[R]]], Callable[P, AbstractContextManager[R]]]:
         """Wrap a context manager function to intercept exceptions."""
 
         def decorator(
@@ -298,9 +292,7 @@ class ExceptionInterceptor:
             resolved_site = resolve_site(fn, site)
 
             @wraps(fn)
-            def wrapper(
-                *args: P.args, **kwargs: P.kwargs
-            ) -> AbstractAsyncContextManager[R]:
+            def wrapper(*args: P.args, **kwargs: P.kwargs) -> AbstractAsyncContextManager[R]:
                 try:
                     cm = fn(*args, **kwargs)
 

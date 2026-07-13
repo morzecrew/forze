@@ -8,8 +8,9 @@ it only stores ``next_fire_at`` and does the claim/advance.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Sequence
 from datetime import datetime
-from typing import Awaitable, Protocol, Sequence, final, runtime_checkable
+from typing import Protocol, final, runtime_checkable
 from uuid import UUID
 
 import attrs

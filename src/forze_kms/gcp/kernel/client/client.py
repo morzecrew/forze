@@ -7,8 +7,9 @@ require_kms_gcp()
 # ....................... #
 
 import asyncio
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, final
+from typing import Any, final
 
 import attrs
 import grpc
@@ -58,9 +59,7 @@ class GcpKmsClient(GcpKmsClientPort):
     plaintext emulator (*endpoint* set) it builds an insecure gRPC channel.
     """
 
-    __client: KeyManagementServiceAsyncClient | None = attrs.field(
-        default=None, init=False
-    )
+    __client: KeyManagementServiceAsyncClient | None = attrs.field(default=None, init=False)
     __channel: grpc.aio.Channel | None = attrs.field(default=None, init=False)
     """The insecure channel opened for an emulator endpoint (owned here, closed on
     :meth:`close`). ``None`` for the real-GCP path, where the client owns its
@@ -96,14 +95,10 @@ class GcpKmsClient(GcpKmsClientPort):
             self.__request_timeout = cfg.request_timeout
 
             if endpoint is not None:
-                channel = grpc.aio.insecure_channel(
-                    endpoint, options=_EMULATOR_CHANNEL_OPTS
-                )
+                channel = grpc.aio.insecure_channel(endpoint, options=_EMULATOR_CHANNEL_OPTS)
 
                 try:
-                    transport = KeyManagementServiceGrpcAsyncIOTransport(
-                        channel=channel
-                    )
+                    transport = KeyManagementServiceGrpcAsyncIOTransport(channel=channel)
                     client = KeyManagementServiceAsyncClient(transport=transport)
 
                 # Nothing is published until every piece is built. Otherwise a failure
@@ -225,9 +220,7 @@ class GcpKmsClient(GcpKmsClientPort):
             created = await c.create_crypto_key(  # pyright: ignore[reportUnknownMemberType]
                 parent=parent,
                 crypto_key_id=crypto_key_id,
-                crypto_key=CryptoKey(
-                    purpose=CryptoKey.CryptoKeyPurpose.ENCRYPT_DECRYPT
-                ),
+                crypto_key=CryptoKey(purpose=CryptoKey.CryptoKeyPurpose.ENCRYPT_DECRYPT),
                 **self.__timeout_kwargs(),
             )
 

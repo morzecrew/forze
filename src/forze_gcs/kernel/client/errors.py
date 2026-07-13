@@ -23,6 +23,7 @@ def _gcs_http_message(status: int | None) -> str:
 
 # ....................... #
 
+
 def _object_scoped_404(error: BaseException) -> bool:
     """Only an object-addressed 404 is a caller miss.
 

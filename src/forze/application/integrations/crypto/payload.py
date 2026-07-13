@@ -60,9 +60,7 @@ __all__ = [
 ]
 
 
-def payload_aad(
-    domain: str, tenant_id: UUID | None, record_id: UUID | str | None
-) -> bytes:
+def payload_aad(domain: str, tenant_id: UUID | None, record_id: UUID | str | None) -> bytes:
     """AAD binding a ciphertext to its ``(domain, tenant, record_id)``.
 
     *record_id* accepts a ``str`` as well as a ``UUID`` so non-message contexts (e.g. a

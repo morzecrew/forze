@@ -21,7 +21,8 @@ cache is a pure latency optimization: a cold value simply pays one KMS call inli
 import asyncio
 import zlib
 from collections import OrderedDict
-from typing import Any, AsyncIterator, Iterable, final
+from collections.abc import AsyncIterator, Iterable
+from typing import Any, final
 
 import attrs
 
@@ -399,9 +400,7 @@ class Keyring:
     def _is_expired(self, expires_at: float | None) -> bool:
         """Whether a cached key's deadline has passed (always ``False`` with no TTL)."""
 
-        return expires_at is not None and (
-            current_time_source().monotonic() >= expires_at
-        )
+        return expires_at is not None and (current_time_source().monotonic() >= expires_at)
 
     # ....................... #
 

@@ -1,6 +1,7 @@
 """Port for persisting and recovering a node's HLC high-water mark."""
 
-from typing import Awaitable, Protocol, runtime_checkable
+from collections.abc import Awaitable
+from typing import Protocol, runtime_checkable
 
 from forze.base.primitives import HlcTimestamp
 

@@ -1,10 +1,7 @@
+from collections.abc import AsyncGenerator, Awaitable, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import (
-    AsyncGenerator,
-    Awaitable,
-    Mapping,
     Protocol,
-    Sequence,
     runtime_checkable,
 )
 

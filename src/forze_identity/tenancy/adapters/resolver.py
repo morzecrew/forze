@@ -30,14 +30,9 @@ class TenantResolverAdapter(TenantResolverPort):
 
     def __attrs_post_init__(self) -> None:
         if self.binding_qry.spec.name != principal_tenant_binding_spec.name:
-            raise exc.internal(
-                "binding_qry spec must match principal_tenant_binding_spec"
-            )
+            raise exc.internal("binding_qry spec must match principal_tenant_binding_spec")
 
-        if (
-            self.tenant_qry is not None
-            and self.tenant_qry.spec.name != tenant_spec.name
-        ):
+        if self.tenant_qry is not None and self.tenant_qry.spec.name != tenant_spec.name:
             raise exc.internal("tenant_qry spec must match tenant_spec")
 
         forbid_cache_and_history(

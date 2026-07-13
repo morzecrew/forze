@@ -6,8 +6,9 @@ require_bigquery()
 
 import asyncio
 import os
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from datetime import timedelta
-from typing import Any, AsyncGenerator, Awaitable, Callable, Sequence, TypeVar, final
+from typing import Any, TypeVar, final
 
 import attrs
 from aiohttp import ClientSession
@@ -121,9 +122,7 @@ class BigQueryClient(BigQueryClientPort):
                 raise errors[0]
 
             if len(errors) > 1:
-                raise ExceptionGroup(
-                    "BigQuery client close failed", errors
-                ) from errors[0]
+                raise ExceptionGroup("BigQuery client close failed", errors) from errors[0]
 
             logger.trace("BigQuery client closed")
 
@@ -315,9 +314,7 @@ class BigQueryClient(BigQueryClientPort):
         default_dataset: str | None = None,
     ) -> BigQueryQueryResult:
         async def _run() -> BigQueryQueryResult:
-            query_parameters = (
-                params_to_query_parameters(params) if params is not None else None
-            )
+            query_parameters = params_to_query_parameters(params) if params is not None else None
             max_billed = (
                 maximum_bytes_billed
                 if maximum_bytes_billed is not None
@@ -496,9 +493,7 @@ class BigQueryClient(BigQueryClientPort):
             def insert_id_fn(row: JsonDict, *, field: str = insert_id_field) -> str:
                 val = row.get(field)
                 return (
-                    str(val)
-                    if val is not None
-                    else Table._mk_unique_insert_id(row)  # type: ignore[reportPrivateUsage]
+                    str(val) if val is not None else Table._mk_unique_insert_id(row)  # type: ignore[reportPrivateUsage]
                 )
 
         else:

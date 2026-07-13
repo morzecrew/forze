@@ -5,12 +5,11 @@ from __future__ import annotations
 import builtins
 import hashlib
 import mimetypes
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import (
     Any,
     Literal,
-    Mapping,
     final,
 )
 
@@ -30,7 +29,6 @@ from forze.application.contracts.storage import (
     UploadPart,
     UploadSession,
 )
-from forze.base.crypto import DEFAULT_CHUNK_SIZE
 from forze.application.integrations.storage.adapter import (
     _reject_duplicate_part_numbers,  # pyright: ignore[reportPrivateUsage]
 )
@@ -40,6 +38,7 @@ from forze.application.integrations.storage.client import (
     unsatisfiable_range,
     validate_range,
 )
+from forze.base.crypto import DEFAULT_CHUNK_SIZE
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow, uuid7
 from forze_mock.state import MockState
@@ -148,9 +147,7 @@ class MockStorageAdapter(
         data = bytes(buffer)
         key = f"{prefix.strip('/') + '/' if prefix else ''}{uuid7()}"
         resolved_type = (
-            content_type
-            or mimetypes.guess_type(filename)[0]
-            or "application/octet-stream"
+            content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
         )
 
         stored = StoredObject(
@@ -369,8 +366,7 @@ class MockStorageAdapter(
 
         if if_none_match is None and if_modified_since is None:
             raise exc.validation(
-                "download_if_changed requires at least one of if_none_match / "
-                "if_modified_since",
+                "download_if_changed requires at least one of if_none_match / if_modified_since",
             )
 
         with self.state.lock:

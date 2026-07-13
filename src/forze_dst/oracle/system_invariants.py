@@ -34,8 +34,8 @@ part. The oracle reads simulated state — it does not itself re-establish that 
 """
 
 from collections import defaultdict
-from collections.abc import Mapping
-from typing import Any, Awaitable, Callable, Iterable, cast, final
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from typing import Any, cast, final
 
 import attrs
 
@@ -176,9 +176,9 @@ def _aggregate_by_scope(
         # predicate oracle use (so the per-commit fold agrees with the runtime on the full filter DSL,
         # incl. dotted paths) — not a second, restricted matcher.
         if evaluate_filter(cast(JsonDict, entity), law.read_set.where):
-            groups[
-                tuple(value_at_path(entity, key) for key in law.read_set.scope_keys)
-            ].append(entity)
+            groups[tuple(value_at_path(entity, key) for key in law.read_set.scope_keys)].append(
+                entity
+            )
 
     aggregate = law.aggregate
 
@@ -227,9 +227,7 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
         # Per-transaction mutations in trace order: an upsert (create/update result event) carries the
         # full post-write entity; a delete (``kill``) carries only its key and removes the row — so the
         # fold drops it rather than letting a deleted document linger and skew the aggregate.
-        mutations: dict[int, list[tuple[Any, Mapping[str, Any] | None]]] = defaultdict(
-            list
-        )
+        mutations: dict[int, list[tuple[Any, Mapping[str, Any] | None]]] = defaultdict(list)
         saw_upsert_op = False
         captured_upsert = False
 
@@ -303,9 +301,7 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
         for tx_id, _seq in commits:
             for entity_id, entity in mutations.get(tx_id, []):
                 if entity is None:
-                    materialized.pop(
-                        entity_id, None
-                    )  # a committed delete drops the row
+                    materialized.pop(entity_id, None)  # a committed delete drops the row
                 else:
                     materialized[entity_id] = entity
 
@@ -321,7 +317,7 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
                 invariant=law.name,
                 message=(
                     f"system invariant {law.name!r} was violated at a committed point (tx{tx_id}) "
-                    f"— scope {dict(zip(law.read_set.scope_keys, scope))}: aggregate observed "
+                    f"— scope {dict(zip(law.read_set.scope_keys, scope, strict=False))}: aggregate observed "
                     f"{observed}"
                 ),
             )

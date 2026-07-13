@@ -138,16 +138,16 @@ class CoverageStats:
     plateaued: bool
     """Whether the sweep stopped early because coverage saturated (vs exhausting the pool)."""
 
-    violation: "ViolationReport | None" = None
+    violation: ViolationReport | None = None
     """The first violating seed's minimized report, if the sweep hit one (it stops there)."""
 
-    reachability: "ReachabilityReport | None" = None
+    reachability: ReachabilityReport | None = None
     """Cross-sweep reachability outcome, when ``config.reachability_targets`` was declared: which
     "sometimes" states actually fired across the swept seeds (``None`` when none were declared).
     A non-empty :attr:`~forze_dst.oracle.reachability.ReachabilityReport.unreached` is false confidence —
     a target the sweep never drove."""
 
-    confidence: "ConfidenceReport | None" = None
+    confidence: ConfidenceReport | None = None
     """What the sweep actually exercised — operations that never raced, declared faults that never
     fired. Makes a green result honest: a clean sweep that left gaps here passed only what it
     tested. ``None`` when not computed (a bare ``coverage`` call still fills it)."""
@@ -176,8 +176,7 @@ class CoverageStats:
         lines = [
             "DST coverage report",
             f"  behaviors covered: {self.size}",
-            f"  seeds run:         {self.seeds_run}"
-            + ("  (saturated)" if self.plateaued else ""),
+            f"  seeds run:         {self.seeds_run}" + ("  (saturated)" if self.plateaued else ""),
             f"  productive seeds:  {list(self.productive_seeds)}",
         ]
 

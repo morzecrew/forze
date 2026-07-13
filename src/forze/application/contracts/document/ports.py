@@ -1,12 +1,10 @@
 """Ports for document storage and retrieval."""
 
+from collections.abc import AsyncGenerator, Awaitable, Sequence
 from typing import (
     Any,
-    AsyncGenerator,
-    Awaitable,
     Literal,
     Protocol,
-    Sequence,
     TypeVar,
     overload,
     runtime_checkable,
@@ -656,9 +654,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: bool = True,
         return_diff: bool = False,
-    ) -> Awaitable[
-        Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None
-    ]:
+    ) -> Awaitable[Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None]:
         """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
 

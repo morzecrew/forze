@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence, cast
+from collections.abc import Mapping, Sequence
+from typing import Any, cast
 
 from forze_postgres._compat import require_psycopg
 
@@ -101,9 +102,7 @@ class HubSearchSqlMixin[M: BaseModel]:
 
         ha = sql.Identifier(HUB_ROW_ALIAS)
         ext = sql.SQL("{}, {}").format(
-            sql.SQL("{}.tableoid AS {}").format(
-                ha, sql.Identifier(HUB_GROONGA_TABLEOID)
-            ),
+            sql.SQL("{}.tableoid AS {}").format(ha, sql.Identifier(HUB_GROONGA_TABLEOID)),
             sql.SQL("{}.ctid AS {}").format(ha, sql.Identifier(HUB_GROONGA_CTID)),
         )
 
@@ -220,13 +219,9 @@ class HubSearchSqlMixin[M: BaseModel]:
             dir_sql = "ASC" if str(order).lower() == "asc" else "DESC"
 
             if nulls is not None:
-                nulls_sql = (
-                    "NULLS FIRST" if str(nulls).lower() == "first" else "NULLS LAST"
-                )
+                nulls_sql = "NULLS FIRST" if str(nulls).lower() == "first" else "NULLS LAST"
                 parts.append(
-                    sql.SQL("{} {} {}").format(
-                        key, sql.SQL(dir_sql), sql.SQL(nulls_sql)
-                    ),
+                    sql.SQL("{} {} {}").format(key, sql.SQL(dir_sql), sql.SQL(nulls_sql)),
                 )
             else:
                 parts.append(sql.SQL("{} {}").format(key, sql.SQL(dir_sql)))
@@ -273,11 +268,7 @@ class HubSearchSqlMixin[M: BaseModel]:
         need_groonga_sys = False
 
         thin_fields = self._hub_thin_projection(plan) if thin else None
-        proj_fields = (
-            thin_fields
-            if thin_fields is not None
-            else sorted(self._hub_host.read_fields)
-        )
+        proj_fields = thin_fields if thin_fields is not None else sorted(self._hub_host.read_fields)
 
         hub_cte = build_hub_cte(
             hub_cols=self._hub_select_list(
@@ -397,9 +388,7 @@ class HubSearchSqlMixin[M: BaseModel]:
         data_relation = "combo"
         combo_tail: sql.Composable = sql.SQL("")
 
-        effective_combo = (
-            combo_limit if combo_limit is not None else plan.resolved_combo
-        )
+        effective_combo = combo_limit if combo_limit is not None else plan.resolved_combo
 
         if effective_combo is not None and do_legs:
             combo_top_order = await self._hub_combo_top_order_sql(plan)
@@ -509,14 +498,18 @@ class HubSearchSqlMixin[M: BaseModel]:
             count_policy=plan.count_policy,
             execution=plan.execution,
         )
-        with_clause, params, _do_legs, count_relation, _data_rel = (
-            await self._hub_build_with_clause_from_plan(
-                count_plan,
-                filters=filters,
-                combo_limit=None,
-                uncapped_legs=True,
-                thin=True,
-            )
+        (
+            with_clause,
+            params,
+            _do_legs,
+            count_relation,
+            _data_rel,
+        ) = await self._hub_build_with_clause_from_plan(
+            count_plan,
+            filters=filters,
+            combo_limit=None,
+            uncapped_legs=True,
+            thin=True,
         )
         count_stmt = sql.SQL(
             """

@@ -6,8 +6,9 @@ require_firestore()
 
 # ....................... #
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, final
+from typing import final
 
 import attrs
 

@@ -4,7 +4,7 @@ from typing import Any, final
 
 import attrs
 
-from forze.application.contracts.deps import DepKey
+from forze.application.contracts.deps import DepKey, Deps
 from forze.application.contracts.resilience import (
     CircuitBreakerStore,
     LatencyDigestStore,
@@ -18,7 +18,6 @@ from forze.application.contracts.resilience import (
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
-from forze.application.contracts.deps import Deps
 from .executor import InProcessResilienceExecutor, reject_blanket_ambiguous_retry
 from .policies import builtin_default_policies
 
@@ -62,8 +61,7 @@ class ResilienceDepsModule:
         for port_policy in self.port_policies:
             if port_policy.key in seen:
                 raise exc.configuration(
-                    f"Duplicate port policy for dependency key "
-                    f"{port_policy.key.name!r}",
+                    f"Duplicate port policy for dependency key {port_policy.key.name!r}",
                 )
 
             seen.add(port_policy.key)
@@ -83,8 +81,7 @@ class ResilienceDepsModule:
             str(pp.policy) for pp in self.port_policies if pp.policy not in policies
         ):
             raise exc.configuration(
-                "Port policies reference unknown resilience policies: "
-                + ", ".join(unknown),
+                "Port policies reference unknown resilience policies: " + ", ".join(unknown),
             )
 
         # A retrying policy applied to *every* method (``methods=None``) will retry writes
@@ -131,8 +128,6 @@ class ResilienceDepsModule:
         }
 
         if self.port_policies:
-            deps[ResiliencePortPoliciesDepKey] = {
-                pp.key: pp for pp in self.port_policies
-            }
+            deps[ResiliencePortPoliciesDepKey] = {pp.key: pp for pp in self.port_policies}
 
         return Deps.plain(deps)

@@ -80,9 +80,7 @@ class ProcedureSpec[In: BaseModel, Out](BaseSpec):
 
         return (
             self.result is not None
-            and isinstance(
-                self.result, type
-            )  # pyright: ignore[reportUnnecessaryIsInstance]
+            and isinstance(self.result, type)  # pyright: ignore[reportUnnecessaryIsInstance]
             and issubclass(self.result, BaseModel)
         )
 
@@ -131,13 +129,9 @@ def validate_procedure_spec(spec: ProcedureSpec[Any, Any]) -> None:
         isinstance(spec.params, type)  # pyright: ignore[reportUnnecessaryIsInstance]
         and issubclass(spec.params, BaseModel)
     ):
-        raise exc.configuration(
-            "ProcedureSpec.params must be a Pydantic BaseModel subclass."
-        )
+        raise exc.configuration("ProcedureSpec.params must be a Pydantic BaseModel subclass.")
 
-    if spec.result is not None and not isinstance(
-        spec.result, type
-    ):  # pyright: ignore[reportUnnecessaryIsInstance]
+    if spec.result is not None and not isinstance(spec.result, type):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise exc.configuration(
             "ProcedureSpec.result must be a type — a Pydantic model (single row) or a scalar "
             "type (single value) — or None for a side-effect-only procedure."

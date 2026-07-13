@@ -10,8 +10,8 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.document import DocumentQueryPort
 from forze.base.exceptions import exc
-from forze_identity._secure_spec import forbid_cache_and_history
 from forze.base.primitives import utcnow
+from forze_identity._secure_spec import forbid_cache_and_history
 
 from ..adapters._utils import find_api_key_account_by_key_hash
 from ..domain.constants import ISSUER_FORZE_API_KEY

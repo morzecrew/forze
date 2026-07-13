@@ -101,8 +101,7 @@ class WiringReport:
             return
 
         lines = "\n".join(
-            f"  - {failure.op}: [{failure.kind}] {failure.message}"
-            for failure in self.failures
+            f"  - {failure.op}: [{failure.kind}] {failure.message}" for failure in self.failures
         )
         raise exc.configuration(
             f"Operation wiring check failed for {len(self.failures)} of "
@@ -114,10 +113,10 @@ class WiringReport:
 
 
 def check_wiring(
-    registry: "FrozenOperationRegistry",
-    context_factory: "Callable[[], ExecutionContext]",
+    registry: FrozenOperationRegistry,
+    context_factory: Callable[[], ExecutionContext],
     *,
-    ops: "Iterable[StrKey] | None" = None,
+    ops: Iterable[StrKey] | None = None,
 ) -> WiringReport:
     """Dry-run resolve every operation to catch missing/misrouted dependencies.
 
@@ -149,7 +148,7 @@ def check_wiring(
                     code=error.code,
                 )
             )
-        except Exception as error:  # noqa: BLE001 — surface, don't swallow, unexpected build errors
+        except Exception as error:
             failures.append(
                 WiringFailure(
                     op=op,
@@ -165,7 +164,7 @@ def check_wiring(
 
 
 def check_facade_factory_wiring(
-    factory: "OperationFacadeFactory[OperationFacade]",
+    factory: OperationFacadeFactory[OperationFacade],
 ) -> WiringReport:
     """Convenience wrapper: check a facade factory's registry using its own context factory."""
 

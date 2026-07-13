@@ -89,12 +89,6 @@ __getattr__, __dir__ = lazy_exports(__name__, _EXPORTS)
 if TYPE_CHECKING:
     # Eager imports for IDEs and type checkers only
     from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
-    from forze.base.logging import (
-        Logger,
-        bootstrap_logging,
-        configure_logging,
-        get_logger,
-    )
     from forze.application.contracts.invariants import (
         CountAll,
         ReadSet,
@@ -108,6 +102,12 @@ if TYPE_CHECKING:
         ExecutionContext,
         ExecutionRuntime,
         build_runtime,
+    )
+    from forze.base.logging import (
+        Logger,
+        bootstrap_logging,
+        configure_logging,
+        get_logger,
     )
     from forze.domain.models import (
         AggregateRoot,

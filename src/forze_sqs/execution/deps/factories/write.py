@@ -56,11 +56,7 @@ class ConfigurableSQSQueueWrite(QueueCommandDepPort):
             tenant_provider=ctx.inv_ctx.get_tenant,
             max_batch_payload_bytes=self.config.max_batch_payload_bytes,
         )
-        cipher = (
-            ctx.deps.provide(KeyringDepKey)
-            if ctx.deps.exists(KeyringDepKey)
-            else None
-        )
+        cipher = ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
         return encrypting_queue_command(
             adapter, spec, cipher=cipher, tenant_provider=ctx.inv_ctx.get_tenant
         )

@@ -25,7 +25,8 @@ require_socketio()
 
 # ....................... #
 
-from typing import AsyncIterator, Awaitable, Protocol, final, runtime_checkable
+from collections.abc import AsyncIterator, Awaitable
+from typing import Protocol, final, runtime_checkable
 
 import attrs
 
@@ -75,9 +76,7 @@ class RealtimeMailbox(Protocol):
 
         ...  # pragma: no cover
 
-    def position_of(
-        self, *, principal: str, event_id: str
-    ) -> Awaitable[HlcTimestamp | None]:
+    def position_of(self, *, principal: str, event_id: str) -> Awaitable[HlcTimestamp | None]:
         """The HLC position of *event_id*, or ``None`` if no longer retained.
 
         The client acks by the event id it last saw (the frame ``id``); this maps it
@@ -98,16 +97,12 @@ class RealtimeMailbox(Protocol):
 class MailboxCursors(Protocol):
     """Per-device read positions over a principal's mailbox."""
 
-    def get(
-        self, *, principal: str, client_key: str
-    ) -> Awaitable[HlcTimestamp | None]:
+    def get(self, *, principal: str, client_key: str) -> Awaitable[HlcTimestamp | None]:
         """The device's last-acked position, or ``None`` for a device seen first time."""
 
         ...  # pragma: no cover
 
-    def advance(
-        self, *, principal: str, client_key: str, up_to: HlcTimestamp
-    ) -> Awaitable[None]:
+    def advance(self, *, principal: str, client_key: str, up_to: HlcTimestamp) -> Awaitable[None]:
         """Advance the device's cursor to *up_to* (monotonic: never moves backwards)."""
 
         ...  # pragma: no cover
@@ -147,9 +142,7 @@ class InMemoryRealtimeMailbox(RealtimeMailbox):
         )
         log.sort(key=lambda entry: entry.hlc)
 
-    async def read_since(
-        self, *, principal: str, since: HlcTimestamp | None
-    ) -> list[MailboxEntry]:
+    async def read_since(self, *, principal: str, since: HlcTimestamp | None) -> list[MailboxEntry]:
         log = self._logs.get(principal, [])
 
         if since is None:
@@ -165,15 +158,9 @@ class InMemoryRealtimeMailbox(RealtimeMailbox):
         for entry in await self.read_since(principal=principal, since=since):
             yield entry
 
-    async def position_of(
-        self, *, principal: str, event_id: str
-    ) -> HlcTimestamp | None:
+    async def position_of(self, *, principal: str, event_id: str) -> HlcTimestamp | None:
         return next(
-            (
-                entry.hlc
-                for entry in self._logs.get(principal, [])
-                if entry.event_id == event_id
-            ),
+            (entry.hlc for entry in self._logs.get(principal, []) if entry.event_id == event_id),
             None,
         )
 
@@ -197,9 +184,7 @@ class InMemoryMailboxCursors(MailboxCursors):
     async def get(self, *, principal: str, client_key: str) -> HlcTimestamp | None:
         return self._cursors.get((principal, client_key))
 
-    async def advance(
-        self, *, principal: str, client_key: str, up_to: HlcTimestamp
-    ) -> None:
+    async def advance(self, *, principal: str, client_key: str, up_to: HlcTimestamp) -> None:
         key = (principal, client_key)
         current = self._cursors.get(key)
 

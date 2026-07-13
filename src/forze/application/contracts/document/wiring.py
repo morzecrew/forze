@@ -1,6 +1,7 @@
 """Shared document wiring helpers for integration deps modules."""
 
-from typing import Callable, Protocol
+from collections.abc import Callable
+from typing import Protocol
 
 from forze.application.contracts.resolution import RelationSpec
 

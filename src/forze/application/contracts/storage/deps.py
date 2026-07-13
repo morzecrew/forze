@@ -54,6 +54,4 @@ class StorageDeps(ConvenientDeps):
         cannot acquire it and therefore cannot begin uploads.
         """
 
-        return self._resolve_command(
-            StorageUploadSessionDepKey, spec, route=spec.name
-        )
+        return self._resolve_command(StorageUploadSessionDepKey, spec, route=spec.name)

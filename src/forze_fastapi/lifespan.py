@@ -6,8 +6,8 @@ require_fastapi()
 
 # ....................... #
 
+from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import AsyncGenerator, Callable
 
 from fastapi import FastAPI
 

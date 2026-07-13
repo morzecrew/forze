@@ -1,6 +1,7 @@
 """Policy evaluation for document-backed grants."""
 
-from typing import Final, Iterable, final
+from collections.abc import Iterable
+from typing import Final, final
 
 import attrs
 
@@ -102,9 +103,7 @@ class AuthzPolicyService:
                         key.replace("{resource_type}", resource.resource_type)
                         for key in self.owner_override_permissions
                     }
-                    if not any(
-                        p.permission_key in override_keys for p in grants.permissions
-                    ):
+                    if not any(p.permission_key in override_keys for p in grants.permissions):
                         return AuthzDecision(
                             allowed=False,
                             reason="Resource owner does not match subject",

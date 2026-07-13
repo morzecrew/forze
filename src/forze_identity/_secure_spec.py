@@ -6,7 +6,8 @@ are forbidden. Centralizing the check keeps the secure default a single call and
 prevents a future port author from silently omitting it.
 """
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from forze.application.contracts.document import DocumentSpec
 from forze.base.exceptions import CoreException, exc

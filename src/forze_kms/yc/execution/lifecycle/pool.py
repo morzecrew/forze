@@ -1,6 +1,7 @@
 """Yandex Cloud KMS client lifecycle hooks and step factory."""
 
-from typing import Any, Mapping, cast, final
+from collections.abc import Mapping
+from typing import Any, cast, final
 
 import attrs
 
@@ -26,9 +27,7 @@ class YcKmsStartupHook(LifecycleHook):
     oauth_token: str | None = attrs.field(default=None, repr=False)
     """Long-lived OAuth token."""
 
-    service_account_key: Mapping[str, str] | None = attrs.field(
-        default=None, repr=False
-    )
+    service_account_key: Mapping[str, str] | None = attrs.field(default=None, repr=False)
     """Authorized-key JSON for a service account (the SDK refreshes IAM tokens)."""
 
     config: YcKmsConfig | None = attrs.field(default=None, repr=False)

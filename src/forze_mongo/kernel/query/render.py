@@ -1,7 +1,8 @@
 """Renderer that translates abstract query expressions into Mongo filter dicts."""
 
+from collections.abc import Sequence
 from datetime import timedelta
-from typing import Any, Sequence, cast
+from typing import Any, cast
 
 import attrs
 
@@ -11,8 +12,8 @@ from forze.application.contracts.querying import (
     AggregateComputedField,
     AggregatesExpression,
     AggregatesExpressionParser,
-    GroupKey,
     GroupField,
+    GroupKey,
     GroupTrunc,
     ParsedAggregates,
     QueryAnd,
@@ -63,17 +64,14 @@ def _reject_operator_field(field: str) -> None:
 
     if any(seg.startswith("$") for seg in field.split(".")):
         raise exc.precondition(
-            f"Invalid Mongo field name {field!r}: path segments must not start "
-            "with '$'.",
+            f"Invalid Mongo field name {field!r}: path segments must not start with '$'.",
         )
 
 
 # ....................... #
 
 
-MONGO_QUERY_CAPABILITIES = attrs.evolve(
-    FULL_QUERY_CAPABILITIES, supports_hierarchy=False
-)
+MONGO_QUERY_CAPABILITIES = attrs.evolve(FULL_QUERY_CAPABILITIES, supports_hierarchy=False)
 """Mongo compiles the full DSL surface at the AST level (every operator, element
 quantifiers via ``$elemMatch``, ``$not`` via ``$nor``, field-to-field comparison via
 ``$expr``) — *except* the hierarchy operators (``$descendant_of`` / ``$ancestor_of``),
@@ -127,9 +125,7 @@ class MongoQueryRenderer:
     ) -> tuple[ParsedAggregates, list[JsonDict]]:
         """Render an aggregate expression into a Mongo aggregation pipeline."""
 
-        validate_aggregate_capabilities(
-            aggregates, MONGO_QUERY_CAPABILITIES, backend="mongo"
-        )
+        validate_aggregate_capabilities(aggregates, MONGO_QUERY_CAPABILITIES, backend="mongo")
 
         parsed = AggregatesExpressionParser.parse(aggregates)
         pipeline: list[JsonDict] = []
@@ -194,10 +190,7 @@ class MongoQueryRenderer:
         if bad:
             raise exc.precondition(f"Invalid aggregate sort fields: {bad}")
 
-        return [
-            (field, 1 if direction == "asc" else -1)
-            for field, direction in sorts.items()
-        ]
+        return [(field, 1 if direction == "asc" else -1) for field, direction in sorts.items()]
 
     # ....................... #
 
@@ -276,14 +269,10 @@ class MongoQueryRenderer:
 
             case "$stddev_pop" | "$var_pop":
                 # Variance is rendered as the population stddev, squared in projection.
-                return {
-                    "$stdDevPop": self._conditional_value(computed, field_ref, None)
-                }
+                return {"$stdDevPop": self._conditional_value(computed, field_ref, None)}
 
             case "$stddev_samp" | "$var_samp":
-                return {
-                    "$stdDevSamp": self._conditional_value(computed, field_ref, None)
-                }
+                return {"$stdDevSamp": self._conditional_value(computed, field_ref, None)}
 
             case "$percentile":
                 # Returns a 1-element array; the projection extracts the scalar.
@@ -331,9 +320,7 @@ class MongoQueryRenderer:
             cond: JsonDict = not_null
 
         else:
-            expr = computed.parsed_filter or QueryFilterExpressionParser.parse(
-                computed.filter
-            )
+            expr = computed.parsed_filter or QueryFilterExpressionParser.parse(computed.filter)
             cond = {"$and": [not_null, self.render_expr_predicate(expr)]}
 
         return {"$cond": [cond, field_ref, "$$REMOVE"]}
@@ -448,17 +435,11 @@ class MongoQueryRenderer:
 
             case "$null":
                 null_check: JsonDict = {"$eq": [ref, None]}
-                return (
-                    null_check if self.caster.as_bool(value) else {"$not": [null_check]}
-                )
+                return null_check if self.caster.as_bool(value) else {"$not": [null_check]}
 
             case "$empty":
                 empty_check: JsonDict = {"$eq": [ref, []]}
-                return (
-                    empty_check
-                    if self.caster.as_bool(value)
-                    else {"$not": [empty_check]}
-                )
+                return empty_check if self.caster.as_bool(value) else {"$not": [empty_check]}
 
             case "$in":
                 if isinstance(value, QueryValue.Scalar | None):
@@ -739,16 +720,12 @@ class MongoQueryRenderer:
 
             case QueryAnd(items):
                 return {
-                    "$and": [
-                        self._elem_cond_expr(i, this=this, depth=depth) for i in items
-                    ],
+                    "$and": [self._elem_cond_expr(i, this=this, depth=depth) for i in items],
                 }
 
             case QueryOr(items):
                 return {
-                    "$or": [
-                        self._elem_cond_expr(i, this=this, depth=depth) for i in items
-                    ],
+                    "$or": [self._elem_cond_expr(i, this=this, depth=depth) for i in items],
                 }
 
             case QueryNot(item):
@@ -817,9 +794,7 @@ class MongoQueryRenderer:
             return {path: {"$elemMatch": elem_match}}
 
         if quantifier == "$all":
-            return {
-                path: {"$not": {"$elemMatch": self._negate_elem_object(elem_match)}}
-            }
+            return {path: {"$not": {"$elemMatch": self._negate_elem_object(elem_match)}}}
 
         return {"$nor": [{path: {"$elemMatch": elem_match}}]}
 
@@ -876,11 +851,7 @@ class MongoQueryRenderer:
             return {"$in": ["$$this", [self.caster.pass_through(v) for v in value]]}
 
         if op == "$nin":
-            return {
-                "$not": [
-                    {"$in": ["$$this", [self.caster.pass_through(v) for v in value]]}
-                ]
-            }
+            return {"$not": [{"$in": ["$$this", [self.caster.pass_through(v) for v in value]]}]}
 
         val = self.caster.pass_through(value)
 
@@ -939,9 +910,7 @@ class MongoQueryRenderer:
                     spec["$options"] = options
 
             elif f.op in ("$in", "$nin"):
-                spec[f.op] = [
-                    self.caster.pass_through(v) for v in cast(Sequence[Any], f.value)
-                ]
+                spec[f.op] = [self.caster.pass_through(v) for v in cast(Sequence[Any], f.value)]
 
             else:
                 spec[_SCALAR_ELEM_CMP[f.op]] = self.caster.pass_through(f.value)

@@ -68,7 +68,7 @@ def _merge_exclusion(filters: QueryFilterExpression | None) -> QueryFilterExpres
     return {"$and": [_exclusion(), filters]}
 
 
-def exclude_soft_deleted_mapper(ctx: ExecutionContext) -> Mapper[Any, Any]:  # noqa: ARG001
+def exclude_soft_deleted_mapper(ctx: ExecutionContext) -> Mapper[Any, Any]:
     """A request mapper that conjoins the soft-deleted exclusion into ``filters``.
 
     Shape-agnostic across every ``filters``-carrying request DTO: one mapper serves the
@@ -114,7 +114,7 @@ class SoftDeleteAwareGet[R: BaseModel](Handler[DocumentIdDTO, R]):
 
 def _purge_factory(purge: PurgeHook) -> OnSuccessFactory:
     def _factory(ctx: ExecutionContext) -> OnSuccess[Any, Any]:
-        async def _hook(args: Any, result: Any) -> None:  # noqa: ARG001
+        async def _hook(args: Any, result: Any) -> None:
             await purge(ctx, result)
 
         return _hook
@@ -200,9 +200,7 @@ class SoftDeleteWiring:
                 reg.bind(ns.key(SoftDeletionKernelOp.DELETE))
                 .bind_tx()
                 .set_route(tx_route)
-                .after_commit(
-                    OnSuccessStep(id=_PURGE_STEP_ID, factory=_purge_factory(self.purge))
-                )
+                .after_commit(OnSuccessStep(id=_PURGE_STEP_ID, factory=_purge_factory(self.purge)))
                 .finish(deep=True)
             )
 

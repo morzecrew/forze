@@ -1,6 +1,6 @@
 import asyncio
 import inspect
-from typing import Awaitable, Coroutine
+from collections.abc import Awaitable, Coroutine
 
 # ----------------------- #
 

@@ -54,7 +54,9 @@ class StoredFileKitSpec:
     # ....................... #
 
     @property
-    def document(self) -> DocumentSpec[
+    def document(
+        self,
+    ) -> DocumentSpec[
         StoredFileRead,
         StoredFileDocument,
         StoredFileCreateCmd,

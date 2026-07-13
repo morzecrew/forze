@@ -46,7 +46,7 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
         context: "ExecutionContext",
         spec: FederatedSearchSpec[Any],
     ) -> PostgresFederatedSearchAdapter[Any]:
-        legs: list[tuple[str, "SearchQueryPort[Any]"]] = []
+        legs: list[tuple[str, SearchQueryPort[Any]]] = []
 
         for m in spec.members:
             leg = self.config.members.get(m.name)
@@ -71,9 +71,7 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
                 legs.append((m.name, port))
                 continue
 
-            if not isinstance(
-                leg, PostgresFederatedSearchLegSearch
-            ):  # pyright: ignore[reportUnnecessaryIsInstance]
+            if not isinstance(leg, PostgresFederatedSearchLegSearch):  # pyright: ignore[reportUnnecessaryIsInstance]
                 raise exc.internal(
                     f"Unsupported federated leg type for member {m.name!r}.",
                 )
@@ -87,9 +85,7 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
             search_cfg = leg.search
             if search_cfg.engine == "fts":
                 if search_cfg.fts_groups is None:
-                    raise exc.internal(
-                        "FTS groups are required for FTS federated member."
-                    )
+                    raise exc.internal("FTS groups are required for FTS federated member.")
                 validate_fts_groups_for_search_spec(m, search_cfg.fts_groups)
 
             port_plain = postgres_search_port_for_config(

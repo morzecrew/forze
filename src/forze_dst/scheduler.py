@@ -31,7 +31,8 @@ from __future__ import annotations
 
 import asyncio
 import random
-from typing import Any, Callable, Protocol, Sequence, final, runtime_checkable
+from collections.abc import Callable, Sequence
+from typing import Any, Protocol, final, runtime_checkable
 
 import attrs
 
@@ -71,9 +72,7 @@ def _task_of(handle: Any) -> asyncio.Task[Any] | None:
 
     owner = getattr(getattr(handle, "_callback", None), "__self__", None)
 
-    return (
-        owner if isinstance(owner, asyncio.Task) else None
-    )  # pyright: ignore[reportUnknownVariableType]
+    return owner if isinstance(owner, asyncio.Task) else None  # pyright: ignore[reportUnknownVariableType]
 
 
 # ....................... #
@@ -109,12 +108,8 @@ class PCTReorderer(Reorderer):
 
         # d-1 change points at random ticks, sorted ascending; each demotes to a distinct
         # value below the high band, earlier change points staying above later ones.
-        points = sorted(
-            self.rng.randint(1, max(1, self.steps)) for _ in range(self.depth - 1)
-        )
-        self._change_points.update(
-            {point: -(index + 1) for index, point in enumerate(points)}
-        )
+        points = sorted(self.rng.randint(1, max(1, self.steps)) for _ in range(self.depth - 1))
+        self._change_points.update({point: -(index + 1) for index, point in enumerate(points)})
 
     # ....................... #
 
@@ -259,7 +254,7 @@ class PCTScheduler:
 
     # ....................... #
 
-    def factory(self) -> Callable[[int], "PCTReorderer"]:
+    def factory(self) -> Callable[[int], PCTReorderer]:
         """A per-seed :class:`PCTReorderer` builder carrying this spec's *depth* / *steps*."""
 
         return pct_reorderer_factory(depth=self.depth, steps=self.steps)

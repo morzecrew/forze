@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Iterator, final
+from typing import TYPE_CHECKING, Any, final
 
 import attrs
 
@@ -217,7 +218,7 @@ class FrozenDeps:
 
     def resolve_configurable(
         self,
-        ctx: "ExecutionContext",
+        ctx: ExecutionContext,
         key: DepKey[Any],
         spec: BaseSpec,
         *,
@@ -282,7 +283,7 @@ class FrozenDeps:
 
     def resolve_simple(
         self,
-        ctx: "ExecutionContext",
+        ctx: ExecutionContext,
         key: DepKey[Any],
         *,
         route: StrKey | None = None,

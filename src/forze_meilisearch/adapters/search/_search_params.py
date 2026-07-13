@@ -43,9 +43,11 @@ def attributes_to_search_on(
     weights = calculate_effective_field_weights(spec, options)
     active = [f for f, w in weights.items() if w > 0.0]
 
-    if spec.default_weights and not (options or {}).get("weights") and not (
-        options or {}
-    ).get("fields"):
+    if (
+        spec.default_weights
+        and not (options or {}).get("weights")
+        and not (options or {}).get("fields")
+    ):
         logger.warning(
             "meilisearch_default_weights_best_effort",
             message=(

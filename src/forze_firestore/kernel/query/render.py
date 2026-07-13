@@ -76,9 +76,7 @@ class FirestoreQueryRenderer:
     def render(self, expr: QueryExpr) -> BaseFilter | None:
         """Render a parsed query expression into a Firestore filter."""
 
-        validate_query_capabilities(
-            expr, FIRESTORE_QUERY_CAPABILITIES, backend="firestore"
-        )
+        validate_query_capabilities(expr, FIRESTORE_QUERY_CAPABILITIES, backend="firestore")
 
         return self._render_expr(expr)
 
@@ -117,9 +115,7 @@ class FirestoreQueryRenderer:
                 return self._render_field(name, op, value)
 
             case QueryAnd(items):
-                parts = [
-                    p for p in (self._render_expr(i) for i in items) if p is not None
-                ]
+                parts = [p for p in (self._render_expr(i) for i in items) if p is not None]
 
                 if not parts:
                     return None
@@ -130,9 +126,7 @@ class FirestoreQueryRenderer:
                 return And(filters=parts)
 
             case QueryOr(items):
-                parts = [
-                    p for p in (self._render_expr(i) for i in items) if p is not None
-                ]
+                parts = [p for p in (self._render_expr(i) for i in items) if p is not None]
 
                 if not parts:
                     raise exc.internal("Empty $or filter is not supported on Firestore")
@@ -143,9 +137,7 @@ class FirestoreQueryRenderer:
                 return Or(filters=parts)
 
             case QueryNot():
-                raise exc.internal(
-                    "Firestore adapter does not support $not filters in MVP"
-                )
+                raise exc.internal("Firestore adapter does not support $not filters in MVP")
 
             case QueryElem():
                 raise exc.internal(
@@ -196,9 +188,7 @@ class FirestoreQueryRenderer:
                 )
 
             case "$superset" | "$subset" | "$overlaps" | "$disjoint":
-                raise exc.internal(
-                    f"Firestore adapter does not support set operator {op!r} in MVP"
-                )
+                raise exc.internal(f"Firestore adapter does not support set operator {op!r} in MVP")
 
             case "$like" | "$ilike" | "$regex":
                 raise exc.internal(

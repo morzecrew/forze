@@ -16,15 +16,12 @@ require_socketio()
 
 # ....................... #
 
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager
 from datetime import datetime
 from inspect import isawaitable
 from typing import (
     Any,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Mapping,
     Protocol,
     final,
     runtime_checkable,
@@ -71,6 +68,7 @@ async def _iter_replay(
 
     for entry in await mailbox.read_since(principal=principal, since=since):
         yield entry
+
 
 # ----------------------- #
 
@@ -206,11 +204,7 @@ def _bind_connection(
     closed). Both come from the connection, never from the empty fresh ``ctx``.
     """
 
-    tenant = (
-        TenantIdentity(tenant_id=connection.tenant)
-        if connection.tenant is not None
-        else None
-    )
+    tenant = TenantIdentity(tenant_id=connection.tenant) if connection.tenant is not None else None
 
     return ctx.inv_ctx.bind_identity(authn=connection.authn, tenant=tenant)
 
@@ -247,11 +241,7 @@ class _ConnectionLifecycle:
     async def replay(self, connection: RealtimeConnection, sid: str) -> None:
         """Drain everything past this device's cursor to the freshly-connected socket."""
 
-        if (
-            self.mailbox_factory is None
-            or self.cursors_factory is None
-            or self.runtime is None
-        ):
+        if self.mailbox_factory is None or self.cursors_factory is None or self.runtime is None:
             return
 
         client_key = connection.client_key(sid)
@@ -262,16 +252,10 @@ class _ConnectionLifecycle:
         # query ports do not pin a connection between paged reads.
         async with self.runtime.scope():
             ctx = self.runtime.get_context()
-            with _bind_connection(
-                ctx, connection
-            ):  # connection identity — fresh scope is empty
-                mailbox = self.mailbox_factory(
-                    ctx
-                )  # ports resolved for this unit of work
+            with _bind_connection(ctx, connection):  # connection identity — fresh scope is empty
+                mailbox = self.mailbox_factory(ctx)  # ports resolved for this unit of work
                 cursors = self.cursors_factory(ctx)
-                since = await cursors.get(
-                    principal=connection.principal, client_key=client_key
-                )
+                since = await cursors.get(principal=connection.principal, client_key=client_key)
 
                 async for entry in _iter_replay(
                     mailbox, principal=connection.principal, since=since
@@ -288,11 +272,7 @@ class _ConnectionLifecycle:
     async def on_ack(self, sid: str, data: Any = None) -> None:
         """``realtime.ack {up_to}``: advance the device cursor, trim the all-device floor."""
 
-        if (
-            self.mailbox_factory is None
-            or self.cursors_factory is None
-            or self.runtime is None
-        ):
+        if self.mailbox_factory is None or self.cursors_factory is None or self.runtime is None:
             return
 
         session = await self.sio.get_session(sid, namespace=self.namespace)
@@ -333,14 +313,10 @@ class _ConnectionLifecycle:
 
     # ....................... #
 
-    async def on_connect(
-        self, sid: str, environ: Mapping[str, Any], auth: Any = None
-    ) -> None:
+    async def on_connect(self, sid: str, environ: Mapping[str, Any], auth: Any = None) -> None:
         """Authenticate (store the identity), auto-join the principal room, replay."""
 
-        connect = SocketIOConnect(
-            sid=sid, namespace=self.namespace, environ=environ, auth=auth
-        )
+        connect = SocketIOConnect(sid=sid, namespace=self.namespace, environ=environ, auth=auth)
 
         try:
             connection = await _resolve(self.resolve, connect)
@@ -355,7 +331,7 @@ class _ConnectionLifecycle:
 
             raise SocketIOConnectionRefusedError(error.summary) from error
 
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             log_server_error(error)
             raise SocketIOConnectionRefusedError(GENERIC_INTERNAL_DETAIL) from error
 
@@ -378,7 +354,7 @@ class _ConnectionLifecycle:
             try:
                 await self.replay(connection, sid)
 
-            except Exception as error:  # noqa: BLE001
+            except Exception as error:
                 log_server_error(error)
 
     # ....................... #

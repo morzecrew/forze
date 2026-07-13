@@ -5,8 +5,12 @@ external infrastructure. It is intended for development and tests.
 """
 
 from .adapters import (
+    MockAckStreamGroupAdapter,
+    MockAckStreamGroupAdminAdapter,
     MockAnalyticsAdapter,
     MockCacheAdapter,
+    MockCommitStreamGroupAdapter,
+    MockCommitStreamGroupAdminAdapter,
     MockCounterAdapter,
     MockDistributedLockAdapter,
     MockDocumentAdapter,
@@ -24,12 +28,12 @@ from .adapters import (
     MockHubSearchAdapter,
     MockIdempotencyAdapter,
     MockKeyManagement,
+    MockProcedureAdapter,
     MockProcedureHandler,
     MockProcedureRegistry,
-    MockProcedureAdapter,
+    MockPubSubAdapter,
     MockQueryParamsRegistry,
     MockQueryParamsSource,
-    MockPubSubAdapter,
     MockQueueAdapter,
     MockSearchAdapter,
     MockSearchCommandAdapter,
@@ -37,20 +41,16 @@ from .adapters import (
     MockState,
     MockStorageAdapter,
     MockStreamAdapter,
-    MockAckStreamGroupAdapter,
-    MockAckStreamGroupAdminAdapter,
-    MockCommitStreamGroupAdapter,
-    MockCommitStreamGroupAdminAdapter,
     MockStrictTxManagerAdapter,
     MockTxManagerAdapter,
     RecordingAuthnEventSink,
 )
+from .adapters.embeddings import MockHashEmbeddingsProvider
 from .adapters.identity import (
     MockSecretsPort,
     MockTenantManagementPort,
     MockTenantResolverPort,
 )
-from .adapters.embeddings import MockHashEmbeddingsProvider
 from .execution import (
     MockDepsModule,
     MockRouteConfig,

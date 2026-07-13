@@ -1,7 +1,8 @@
 """Neo4j client that resolves connection credentials per tenant via a ``SecretsPort``."""
 
+from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Callable, Mapping, cast, final
+from typing import cast, final
 from uuid import UUID
 
 import attrs
@@ -136,6 +137,5 @@ class RoutedNeo4jClient(
         *,
         database: str | None = None,
     ) -> AsyncGenerator[None]:
-        async with self._client_scope() as inner:
-            async with inner.transaction(database=database):
-                yield
+        async with self._client_scope() as inner, inner.transaction(database=database):
+            yield

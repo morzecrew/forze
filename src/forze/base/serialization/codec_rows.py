@@ -1,6 +1,7 @@
 """Shared helpers for :class:`~forze.base.serialization.ModelCodec` row work."""
 
-from typing import Any, Sequence, TypeVar, cast
+from collections.abc import Sequence
+from typing import Any, TypeVar, cast
 
 from pydantic import BaseModel
 

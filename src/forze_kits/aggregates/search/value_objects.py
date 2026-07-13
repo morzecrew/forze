@@ -37,15 +37,11 @@ class SearchMappers[Opt: SearchOptions]:
     search: MapperFactory[Sr[Opt], Sr[Opt]] | None = attrs.field(default=None)
     """Request DTO mapper."""
 
-    projected_search: MapperFactory[Psr[Opt], Psr[Opt]] | None = attrs.field(
-        default=None
-    )
+    projected_search: MapperFactory[Psr[Opt], Psr[Opt]] | None = attrs.field(default=None)
     """Projected request DTO mapper."""
 
     cursor_search: MapperFactory[Csr[Opt], Csr[Opt]] | None = attrs.field(default=None)
     """Cursor request DTO mapper."""
 
-    projected_search_cursor: MapperFactory[Pcsr[Opt], Pcsr[Opt]] | None = attrs.field(
-        default=None
-    )
+    projected_search_cursor: MapperFactory[Pcsr[Opt], Pcsr[Opt]] | None = attrs.field(default=None)
     """Projected cursor request DTO mapper."""

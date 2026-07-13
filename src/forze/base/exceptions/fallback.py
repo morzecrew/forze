@@ -1,6 +1,7 @@
 """Shared catch-all exception mapper for integration backends."""
 
-from typing import Any, Mapping, Protocol
+from collections.abc import Mapping
+from typing import Any, Protocol
 
 from .model import CoreException
 

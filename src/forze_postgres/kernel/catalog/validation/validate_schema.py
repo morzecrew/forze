@@ -1,13 +1,13 @@
 """Compare Pydantic document shapes to Postgres relation columns (startup validation)."""
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import attrs
 from pydantic import BaseModel
 
-from forze.base.serialization import stored_field_names_for
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import exc
+from forze.base.serialization import stored_field_names_for
 from forze.domain.models import DocumentHistory
 from forze_postgres.kernel._logger import logger
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
@@ -27,9 +27,7 @@ def _write_field_names_union(
     create: type[BaseModel],
     update: type[BaseModel] | None,
 ) -> frozenset[str]:
-    names = stored_field_names_for(
-        domain, include_computed=False
-    ) | stored_field_names_for(
+    names = stored_field_names_for(domain, include_computed=False) | stored_field_names_for(
         create,
         include_computed=False,
     )
@@ -222,8 +220,7 @@ def _warn_read_not_subset_of_write(
         return
 
     read_fields = (
-        stored_field_names_for(spec.read_model, include_computed=False)
-        | spec.materialized
+        stored_field_names_for(spec.read_model, include_computed=False) | spec.materialized
     ) - spec.read_omit_fields
 
     if extra := read_fields - frozenset(write_column_types.keys()):
@@ -274,10 +271,7 @@ async def validate_postgres_document_schemas(
 
     for spec in specs:
         read_need = frozenset(
-            (
-                stored_field_names_for(spec.read_model, include_computed=False)
-                | spec.materialized
-            )
+            (stored_field_names_for(spec.read_model, include_computed=False) | spec.materialized)
             - spec.read_omit_fields,
         )
         await _require_columns(
@@ -382,9 +376,7 @@ async def validate_postgres_document_schemas(
 
         if spec.history_relation is not None:
             hist_need = (
-                frozenset(
-                    stored_field_names_for(DocumentHistory, include_computed=False)
-                )
+                frozenset(stored_field_names_for(DocumentHistory, include_computed=False))
                 - spec.history_omit_fields
             )
 

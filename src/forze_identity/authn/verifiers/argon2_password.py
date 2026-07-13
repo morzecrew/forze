@@ -129,7 +129,7 @@ class Argon2PasswordVerifier(PasswordVerifierPort):
                 return_new=False,
             )
 
-        except Exception as e:  # noqa: BLE001 — rehash is best-effort; login must not fail
+        except Exception as e:
             logger.warning(
                 "Password rehash-on-login failed for account %s: %s",
                 account.id,

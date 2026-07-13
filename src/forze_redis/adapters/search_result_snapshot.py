@@ -6,8 +6,9 @@ require_redis()
 
 # ....................... #
 
+from collections.abc import Sequence
 from datetime import timedelta
-from typing import Any, Final, Sequence, cast, final
+from typing import Any, Final, cast, final
 
 import attrs
 
@@ -117,9 +118,7 @@ class RedisSearchResultSnapshotAdapter(
 
         return data
 
-    async def __load_meta_raw(
-        self, run_id: str
-    ) -> tuple[bytes | None, JsonDict | None]:
+    async def __load_meta_raw(self, run_id: str) -> tuple[bytes | None, JsonDict | None]:
         raw = await self.client.get(self.__key_meta(run_id))
 
         if raw is None:
@@ -193,9 +192,7 @@ class RedisSearchResultSnapshotAdapter(
             idx = start // cs
             is_last = start + cs >= n
 
-            await self.append_chunk(
-                run_id=run_id, chunk_index=idx, ids=sl, is_last=is_last
-            )
+            await self.append_chunk(run_id=run_id, chunk_index=idx, ids=sl, is_last=is_last)
 
     # ....................... #
 
@@ -244,9 +241,7 @@ class RedisSearchResultSnapshotAdapter(
         raw_meta, meta = await self.__load_meta_raw(run_id)
 
         if meta is None or raw_meta is None:
-            raise exc.internal(
-                "begin_run is required before append_chunk (missing meta)."
-            )
+            raise exc.internal("begin_run is required before append_chunk (missing meta).")
 
         if meta.get("complete"):
             raise exc.internal("Cannot append_chunk to a completed snapshot run.")
@@ -260,14 +255,10 @@ class RedisSearchResultSnapshotAdapter(
         ex = int(meta["ttl_seconds"])
 
         if len(ids) > chunk_size:
-            raise exc.internal(
-                f"Chunk has {len(ids)} ids; chunk_size is {chunk_size!r}."
-            )
+            raise exc.internal(f"Chunk has {len(ids)} ids; chunk_size is {chunk_size!r}.")
 
         if not is_last and len(ids) != chunk_size:
-            raise exc.internal(
-                "All non-final chunks must contain exactly ``chunk_size`` ids."
-            )
+            raise exc.internal("All non-final chunks must contain exactly ``chunk_size`` ids.")
 
         chunk_key = self.__key_chunk(run_id, chunk_index)
         total_ids = int(meta.get("total_ids", 0)) + len(ids)

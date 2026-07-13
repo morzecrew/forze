@@ -43,9 +43,7 @@ class MockDurableWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
     def _runs(self) -> dict[str, Any]:
         # Tenant-partition the run store (mirrors Temporal's per-tenant task queue);
         # fails closed when tenant_aware with no bound tenant.
-        return _workflow_runs(
-            self.state, self._partitioned_namespace(str(self.spec.name))
-        )
+        return _workflow_runs(self.state, self._partitioned_namespace(str(self.spec.name)))
 
     async def start(
         self,
@@ -123,9 +121,7 @@ class MockDurableWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
     state: MockState
 
     def _runs(self) -> dict[str, Any]:
-        return _workflow_runs(
-            self.state, self._partitioned_namespace(str(self.spec.name))
-        )
+        return _workflow_runs(self.state, self._partitioned_namespace(str(self.spec.name)))
 
     async def query[Q: BaseModel, Res: BaseModel](
         self,

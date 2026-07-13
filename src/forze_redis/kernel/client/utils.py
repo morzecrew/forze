@@ -1,6 +1,7 @@
 """Parsing utilities that normalise raw ``redis-py`` responses into typed structures."""
 
-from typing import Any, Iterable, cast
+from collections.abc import Iterable
+from typing import Any, cast
 
 from .types import (
     RawRedisPubSubMessage,
@@ -190,15 +191,11 @@ def _parse_stream_messages(
         msg_id = _to_str(msg_id_raw)
 
         if hasattr(data_raw, "items"):
-            data_dict: Iterable[tuple[Any, Any]] = (
-                data_raw.items()
-            )  # pyright: ignore[reportAttributeAccessIssue]
+            data_dict: Iterable[tuple[Any, Any]] = data_raw.items()  # pyright: ignore[reportAttributeAccessIssue]
         else:
             data_dict = cast(Iterable[tuple[Any, Any]], data_raw)
 
-        normalized: RedisStreamFields = {
-            _to_bytes(k): _to_bytes(v) for k, v in data_dict
-        }
+        normalized: RedisStreamFields = {_to_bytes(k): _to_bytes(v) for k, v in data_dict}
 
         out.append((msg_id, normalized))
 

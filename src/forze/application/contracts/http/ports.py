@@ -1,6 +1,7 @@
 """Ports for outbound HTTP service integrations."""
 
-from typing import Awaitable, Protocol, runtime_checkable
+from collections.abc import Awaitable
+from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
 

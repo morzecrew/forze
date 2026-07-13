@@ -7,8 +7,9 @@ require_redis()
 # ....................... #
 
 import asyncio
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Mapping, Sequence, final
+from typing import final
 
 import attrs
 from pydantic import BaseModel
@@ -16,10 +17,10 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from forze.application.contracts.stream import (
-    PendingEntry,
-    StreamCommandPort,
     AckStreamGroupAdminPort,
     AckStreamGroupQueryPort,
+    PendingEntry,
+    StreamCommandPort,
     StreamMessage,
     StreamQueryPort,
 )
@@ -56,10 +57,7 @@ def _stream_wire_and_back(
     tenant_id = mixin.require_tenant_if_aware()
 
     for logical, cursor in stream_mapping.items():
-        if tenant_id is not None:
-            physical = f"tenant:{tenant_id}:stream:{logical}"
-        else:
-            physical = logical
+        physical = f"tenant:{tenant_id}:stream:{logical}" if tenant_id is not None else logical
 
         wired[physical] = cursor
         back[physical] = logical
@@ -322,11 +320,7 @@ class RedisStreamGroupAdapter[M: BaseModel](AckStreamGroupQueryPort[M], TenancyM
             if remaining is not None and remaining <= 0:
                 break
 
-            count = (
-                _PENDING_PAGE_SIZE
-                if remaining is None
-                else min(_PENDING_PAGE_SIZE, remaining)
-            )
+            count = _PENDING_PAGE_SIZE if remaining is None else min(_PENDING_PAGE_SIZE, remaining)
 
             rows = await self.client.xpending(
                 physical,
@@ -377,6 +371,6 @@ class RedisStreamGroupAdminAdapter(AckStreamGroupAdminPort, TenancyMixin):
                 _stream_physical(self, stream), group, id=start_id, mkstream=True
             )
 
-        except Exception as error:  # noqa: BLE001 - idempotent: ignore an existing group
+        except Exception as error:
             if "BUSYGROUP" not in str(error):
                 raise

@@ -50,8 +50,5 @@ class InngestConfig:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if (
-            self.request_timeout is not None
-            and self.request_timeout.total_seconds() <= 0
-        ):
+        if self.request_timeout is not None and self.request_timeout.total_seconds() <= 0:
             raise exc.configuration("Request timeout must be positive")

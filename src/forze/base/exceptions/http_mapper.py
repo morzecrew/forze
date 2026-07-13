@@ -77,27 +77,17 @@ def make_http_exception_mapper(
                 )
 
                 if caller_miss:
-                    return CoreException.not_found(
-                        f"{label} resource not found.", details=details
-                    )
+                    return CoreException.not_found(f"{label} resource not found.", details=details)
 
-                return CoreException.infrastructure(
-                    f"{label} resource not found.", details=details
-                )
+                return CoreException.infrastructure(f"{label} resource not found.", details=details)
 
             if status in {401, 403}:
-                return CoreException.infrastructure(
-                    f"{label} access denied.", details=details
-                )
+                return CoreException.infrastructure(f"{label} access denied.", details=details)
 
             if status == 429:
-                return CoreException.infrastructure(
-                    f"{label} request throttled.", details=details
-                )
+                return CoreException.infrastructure(f"{label} request throttled.", details=details)
 
-            return CoreException.infrastructure(
-                http_status_message(status), details=details
-            )
+            return CoreException.infrastructure(http_status_message(status), details=details)
 
         if fallback is not None:
             return fallback(exc, site=site, details=details)

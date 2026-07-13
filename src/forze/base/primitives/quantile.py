@@ -103,17 +103,11 @@ class P2Quantile:
         for i in range(1, 4):
             d = nd[i] - n[i]
 
-            if (d >= 1.0 and n[i + 1] - n[i] > 1.0) or (
-                d <= -1.0 and n[i - 1] - n[i] < -1.0
-            ):
+            if (d >= 1.0 and n[i + 1] - n[i] > 1.0) or (d <= -1.0 and n[i - 1] - n[i] < -1.0):
                 step = 1.0 if d > 0 else -1.0
                 candidate = self._parabolic(i, step)
 
-                q[i] = (
-                    candidate
-                    if q[i - 1] < candidate < q[i + 1]
-                    else self._linear(i, step)
-                )
+                q[i] = candidate if q[i - 1] < candidate < q[i + 1] else self._linear(i, step)
 
                 n[i] += step
 

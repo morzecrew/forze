@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Sequence, final
+from typing import Any, final
 from uuid import UUID
 
 import attrs
@@ -94,9 +95,7 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
     # ....................... #
 
     async def _table(self) -> PostgresQualifiedName:
-        return await resolve_postgres_qname(
-            self.config.relation, self._tenant_id_for_resolve()
-        )
+        return await resolve_postgres_qname(self.config.relation, self._tenant_id_for_resolve())
 
     # ....................... #
 
@@ -105,9 +104,7 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
         now = utcnow()
         # Tag the schedule with the bound tenant so a bound scheduler's claim matches it.
         tenant_id = (
-            record.tenant_id
-            if record.tenant_id is not None
-            else self._tenant_id_for_resolve()
+            record.tenant_id if record.tenant_id is not None else self._tenant_id_for_resolve()
         )
 
         await self.client.execute(
@@ -226,9 +223,7 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
         stored_sid = _scope_schedule_id(schedule_id, self._tenant_id_for_resolve())
 
         row = await self.client.fetch_one(
-            sql.SQL(
-                "SELECT {columns} FROM {table} WHERE schedule_id = {sid}"
-            ).format(
+            sql.SQL("SELECT {columns} FROM {table} WHERE schedule_id = {sid}").format(
                 columns=sql.SQL(_COLUMNS),
                 table=table.ident(),
                 sid=sql.Placeholder("sid"),

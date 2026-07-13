@@ -4,7 +4,8 @@ require_temporal()
 
 # ....................... #
 
-from typing import Callable, Final, Mapping
+from collections.abc import Callable, Mapping
+from typing import Final
 from uuid import UUID
 
 import attrs
@@ -51,24 +52,16 @@ class TemporalContextCodec:
         headers: dict[str, Payload] = {}
 
         if metadata is not None:
-            headers[_EXEC_HEADER] = Payload(
-                data=str(metadata.execution_id).encode(_ENCODING)
-            )
-            headers[_CORR_HEADER] = Payload(
-                data=str(metadata.correlation_id).encode(_ENCODING)
-            )
+            headers[_EXEC_HEADER] = Payload(data=str(metadata.execution_id).encode(_ENCODING))
+            headers[_CORR_HEADER] = Payload(data=str(metadata.correlation_id).encode(_ENCODING))
 
             # We don't encode causation id here
 
         if authn is not None:
-            headers[_PRINCIPAL_HEADER] = Payload(
-                data=str(authn.principal_id).encode(_ENCODING)
-            )
+            headers[_PRINCIPAL_HEADER] = Payload(data=str(authn.principal_id).encode(_ENCODING))
 
         if tenant is not None:
-            headers[_TENANT_HEADER] = Payload(
-                data=str(tenant.tenant_id).encode(_ENCODING)
-            )
+            headers[_TENANT_HEADER] = Payload(data=str(tenant.tenant_id).encode(_ENCODING))
 
         return headers
 
@@ -87,9 +80,7 @@ class TemporalContextCodec:
             execution_id=UUID(exec_raw.data.decode(_ENCODING)) if exec_raw else None,
             correlation_id=UUID(corr_raw.data.decode(_ENCODING)) if corr_raw else None,
             tenant_id=UUID(tenant_raw.data.decode(_ENCODING)) if tenant_raw else None,
-            principal_id=(
-                UUID(principal_raw.data.decode(_ENCODING)) if principal_raw else None
-            ),
+            principal_id=(UUID(principal_raw.data.decode(_ENCODING)) if principal_raw else None),
         )
 
 
@@ -123,10 +114,6 @@ class TemporalContextBinder:
         else:
             identity = AuthnIdentity(principal_id=decoded.principal_id)
 
-        if decoded.tenant_id is None:
-            tenant = None
-
-        else:
-            tenant = TenantIdentity(tenant_id=decoded.tenant_id)
+        tenant = None if decoded.tenant_id is None else TenantIdentity(tenant_id=decoded.tenant_id)
 
         return metadata, identity, tenant

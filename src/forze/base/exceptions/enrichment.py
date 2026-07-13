@@ -55,7 +55,7 @@ def pick_semantic_details(bound: "JsonDict | None") -> "JsonDict":
     if bound is None:
         return {}
 
-    out: "JsonDict" = {
+    out: JsonDict = {
         key: sanitize(value, context="egress")
         for key, value in bound.items()
         if key not in _SKIP_BOUND_KEYS

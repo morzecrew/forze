@@ -11,7 +11,8 @@ ambient binding and the wrapping proxy are execution machinery
 (``forze.application.execution.interception``).
 """
 
-from typing import Any, AsyncIterator, Awaitable, Callable, Protocol, runtime_checkable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any, Protocol, runtime_checkable
 
 import attrs
 
@@ -61,9 +62,7 @@ class PortSelector:
 
     # ....................... #
 
-    def matches_parts(
-        self, surface: str | None, route: str | None, op: str
-    ) -> bool:
+    def matches_parts(self, surface: str | None, route: str | None, op: str) -> bool:
         """Whether a call described by *(surface, route, op)* matches this selector."""
 
         return (
@@ -133,6 +132,4 @@ class StreamPortInterceptor(Protocol):
     an interceptor may implement one or both.
     """
 
-    def around_stream(
-        self, call: PortCall, nxt: StreamPortNext
-    ) -> AsyncIterator[Any]: ...
+    def around_stream(self, call: PortCall, nxt: StreamPortNext) -> AsyncIterator[Any]: ...

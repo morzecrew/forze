@@ -1,6 +1,7 @@
 """Validate Postgres tenant isolation wiring (client vs per-route tenant_aware)."""
 
-from typing import Literal, Sequence
+from collections.abc import Sequence
+from typing import Literal
 
 import attrs
 
@@ -10,7 +11,6 @@ from forze.application.contracts.tenancy import (
     derive_tenant_isolation_mode,
     validate_routed_client_tenancy_wiring,
 )
-
 from forze_postgres.kernel._logger import logger
 
 # ----------------------- #

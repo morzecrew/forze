@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Any, Sequence, final
+from typing import Any, final
 from uuid import UUID
 
 import attrs
@@ -145,9 +146,7 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort, DurableRunAdmin
     # ....................... #
 
     async def _table(self) -> PostgresQualifiedName:
-        return await resolve_postgres_qname(
-            self.config.relation, self._tenant_id_for_resolve()
-        )
+        return await resolve_postgres_qname(self.config.relation, self._tenant_id_for_resolve())
 
     # ....................... #
 
@@ -374,9 +373,7 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort, DurableRunAdmin
         # Seal under the bound tenant so the output AAD matches what ``_record_from_row``
         # reconstructs on load: the runner binds the run's tenant before completing it, so
         # this resolves the run's ``tenant_id`` (mirrors the input seal in ``enqueue``).
-        stored = await self._seal(
-            output_json, run_id, "output", self._tenant_id_for_resolve()
-        )
+        stored = await self._seal(output_json, run_id, "output", self._tenant_id_for_resolve())
         await self._finish(
             run_id,
             status=DurableRunStatus.COMPLETED,
@@ -463,9 +460,7 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort, DurableRunAdmin
             # Keyset seek past the last row of the previous page: a row-value comparison keeps
             # the same (created_at DESC, run_id DESC) order the ORDER BY imposes.
             cursor_ts, cursor_id = decode_run_cursor(cursor)
-            clauses.append(
-                sql.SQL("(created_at, run_id) < (%(cursor_ts)s, %(cursor_id)s)")
-            )
+            clauses.append(sql.SQL("(created_at, run_id) < (%(cursor_ts)s, %(cursor_id)s)"))
             params["cursor_ts"] = cursor_ts
             params["cursor_id"] = cursor_id
 
@@ -551,9 +546,7 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort, DurableRunAdmin
             return None
 
         row = await self.client.fetch_one(
-            sql.SQL(
-                "SELECT {columns} FROM {table} WHERE idempotency_key = {idem}"
-            ).format(
+            sql.SQL("SELECT {columns} FROM {table} WHERE idempotency_key = {idem}").format(
                 columns=sql.SQL(_COLUMNS),
                 table=table.ident(),
                 idem=sql.Placeholder("idem"),

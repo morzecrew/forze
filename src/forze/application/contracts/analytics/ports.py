@@ -12,12 +12,10 @@ cursors are unsupported.
 cheap total count.
 """
 
+from collections.abc import AsyncGenerator, Awaitable, Sequence
 from typing import (
     Any,
-    AsyncGenerator,
-    Awaitable,
     Protocol,
-    Sequence,
     TypeVar,
     runtime_checkable,
 )

@@ -14,7 +14,8 @@ site, never here.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping, final
+from collections.abc import Callable, Mapping
+from typing import Any, final
 
 import attrs
 
@@ -97,9 +98,7 @@ def computed_aggregate(reducer: Reducer) -> AggregateComputedFieldExpression:
     return {AGGREGATE_FIELD: {"$sum": reducer.field}}
 
 
-def scope_filter(
-    read_set: ReadSet, params: Mapping[str, Any]
-) -> QueryFilterExpression | None:
+def scope_filter(read_set: ReadSet, params: Mapping[str, Any]) -> QueryFilterExpression | None:
     """The filter selecting **one binding's** records: the scope-key equalities (from *params*) AND
     the constant :attr:`~ReadSet.where`.
 
@@ -117,9 +116,7 @@ def scope_filter(
         )
 
     scope_values = {key: params[key] for key in read_set.scope_keys}
-    scope_pred: QueryFilterExpression | None = (
-        {"$values": scope_values} if scope_values else None
-    )
+    scope_pred: QueryFilterExpression | None = {"$values": scope_values} if scope_values else None
 
     if read_set.where is not None and scope_pred is not None:
         return {"$and": [read_set.where, scope_pred]}

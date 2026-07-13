@@ -7,7 +7,8 @@ process-local implementations the executor falls back to when no shared
 (e.g. Redis-backed) adapter is wired.
 """
 
-from typing import Callable, final
+from collections.abc import Callable
+from typing import final
 
 import attrs
 
@@ -191,9 +192,7 @@ class InMemoryLatencyDigestStore(LatencyDigestStore):
 
     _estimators: BoundedLruMap[LatencyDigestKey, WindowedP2Quantile] = attrs.field(
         default=attrs.Factory(
-            lambda self: BoundedLruMap[LatencyDigestKey, WindowedP2Quantile](
-                self.max_entries
-            ),
+            lambda self: BoundedLruMap[LatencyDigestKey, WindowedP2Quantile](self.max_entries),
             takes_self=True,
         ),
         init=False,

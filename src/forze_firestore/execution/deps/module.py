@@ -1,11 +1,19 @@
 """Firestore dependency module for the application kernel."""
 
+from collections.abc import Callable
 from functools import partial
-from typing import Any, Callable, cast, final
+from typing import Any, cast, final
 
 import attrs
 
 from forze.application.contracts.crypto import EncryptionTier
+from forze.application.contracts.deps import (
+    Deps,
+    DepsModule,
+    merge_deps,
+    routed_constant,
+    routed_from_mapping,
+)
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -18,12 +26,6 @@ from forze.application.contracts.tenancy import (
     warn_integration_routes,
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
-from forze.application.contracts.deps import Deps, DepsModule
-from forze.application.contracts.deps import (
-    merge_deps,
-    routed_constant,
-    routed_from_mapping,
-)
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ...kernel._logger import logger

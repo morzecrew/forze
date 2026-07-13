@@ -66,9 +66,7 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
     base_url: str | None = None
     """Static service base URL (non-tenant deployments)."""
 
-    secret_ref_for_tenant: (
-        Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef] | None
-    ) = None
+    secret_ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef] | None = None
     """Per-tenant secret refs resolving :class:`~forze_http.kernel.client.HttpRoutingCredentials`."""
 
     timeout: timedelta = attrs.field(default=timedelta(seconds=30))
@@ -110,6 +108,5 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
 
         if self.secret_ref_for_tenant is not None:
             raise exc.configuration(
-                "HttpServiceConfig: secret_ref_for_tenant applies only when "
-                "tenant_aware=True",
+                "HttpServiceConfig: secret_ref_for_tenant applies only when tenant_aware=True",
             )

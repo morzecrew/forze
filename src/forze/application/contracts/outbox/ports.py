@@ -1,7 +1,8 @@
 """Outbox command and query port protocols."""
 
+from collections.abc import Awaitable, Sequence
 from datetime import datetime
-from typing import Any, Awaitable, Protocol, Sequence, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
 from pydantic import BaseModel

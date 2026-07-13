@@ -8,13 +8,12 @@ from forze.application.contracts.analytics import (
     AnalyticsIngestDepKey,
     AnalyticsQueryDepKey,
 )
+from forze.application.contracts.deps import Deps, DepsModule, merge_deps, routed_from_mapping
 from forze.application.contracts.tenancy import (
     TenancyRouteGroup,
     TenantIsolationMode,
     validate_module_tenancy,
 )
-from forze.application.contracts.deps import Deps, DepsModule
-from forze.application.contracts.deps import merge_deps, routed_from_mapping
 from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...kernel.client import BigQueryClientPort, RoutedBigQueryClient

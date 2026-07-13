@@ -173,9 +173,7 @@ class DelegationGrantAdapter(DelegationGrantPort):
     # ....................... #
 
     async def _require_principal(self, principal_id: UUID, label: str) -> None:
-        principal_row = await find_policy_principal_by_id(
-            self.principal_qry, principal_id
-        )
+        principal_row = await find_policy_principal_by_id(self.principal_qry, principal_id)
 
         if principal_row is None:
             raise exc.internal(f"Policy principal not found for {label}")

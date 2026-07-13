@@ -1,6 +1,6 @@
 """Bridge a domain event to a transactional-outbox integration event."""
 
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from pydantic import BaseModel
 

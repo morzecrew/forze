@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, runtime_checkable
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
@@ -70,7 +71,7 @@ class Finally[Args, R](Protocol):  # pragma: no cover
     def __call__(
         self,
         args: Args,
-        outcome: "Outcome[R]",  # noqa: F841
+        outcome: "Outcome[R]",
     ) -> Awaitable[None]: ...
 
 

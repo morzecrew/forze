@@ -28,7 +28,8 @@ formats apart, so a store can hold a mix during a migration.
 """
 
 import struct
-from typing import Iterator, final
+from collections.abc import Iterator
+from typing import final
 
 import attrs
 
@@ -217,17 +218,13 @@ def open_chunk(
     """
 
     aad = _chunk_aad(base_aad, index, frame.is_final)
-    return aead.open(
-        key=key, nonce=frame.nonce, ciphertext=frame.ciphertext, aad=aad
-    )
+    return aead.open(key=key, nonce=frame.nonce, ciphertext=frame.ciphertext, aad=aad)
 
 
 # ....................... #
 
 
-def _try_take(
-    buf: bytes | bytearray, offset: int, length: int
-) -> tuple[bytes, int] | None:
+def _try_take(buf: bytes | bytearray, offset: int, length: int) -> tuple[bytes, int] | None:
     end = offset + length
     if end > len(buf):
         return None
@@ -247,9 +244,7 @@ def _try_take_var(
 # ....................... #
 
 
-def _try_parse_header(
-    blob: bytes | bytearray, offset: int = 0
-) -> tuple[ChunkedHeader, int] | None:
+def _try_parse_header(blob: bytes | bytearray, offset: int = 0) -> tuple[ChunkedHeader, int] | None:
     """Parse a header at *offset*; ``None`` when incomplete, raising when malformed."""
 
     if len(blob) - offset < _HEADER.size:
@@ -479,9 +474,7 @@ class ChunkedStreamReader:
         """
 
         while True:
-            parsed = _try_parse_frame(
-                self._buf, 0, max_ciphertext=self._max_ciphertext
-            )
+            parsed = _try_parse_frame(self._buf, 0, max_ciphertext=self._max_ciphertext)
 
             if parsed is None:
                 return

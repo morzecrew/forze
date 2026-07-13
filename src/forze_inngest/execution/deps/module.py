@@ -1,10 +1,11 @@
 """Inngest dependency module for the application kernel."""
 
-from typing import Any, Sequence, final
+from collections.abc import Sequence
+from typing import Any, final
 
 import attrs
 
-from forze.application.contracts.deps import DepKey
+from forze.application.contracts.deps import DepKey, Deps, DepsModule
 from forze.application.contracts.durable.function import (
     DurableFunctionEventCommandDepKey,
     DurableFunctionStepDepKey,
@@ -14,7 +15,6 @@ from forze.application.contracts.tenancy import (
     TenantIsolationMode,
     validate_module_tenancy,
 )
-from forze.application.contracts.deps import Deps, DepsModule
 from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from ...adapters import InngestStepAdapter

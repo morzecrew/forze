@@ -1,8 +1,3 @@
-from .cursor_page import (
-    assert_cursor_projection_includes_sort_keys,
-    assemble_keyset_cursor_page,
-    resolved_cursor_limit,
-)
 from ..sort_resolution import (
     assert_default_null_ordering,
     default_nulls,
@@ -14,6 +9,11 @@ from ..sort_resolution import (
     resolve_sort_keys,
     validate_runtime_sort_fields,
     validate_sort_fields,
+)
+from .cursor_page import (
+    assemble_keyset_cursor_page,
+    assert_cursor_projection_includes_sort_keys,
+    resolved_cursor_limit,
 )
 from .cursor_token import (
     CursorBinding,

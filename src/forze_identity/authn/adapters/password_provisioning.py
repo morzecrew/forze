@@ -125,11 +125,7 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
             UpdatePasswordInviteCmd,
         ],
     ]:
-        if (
-            self.invite_svc is None
-            or self.invite_qry is None
-            or self.invite_cmd is None
-        ):
+        if self.invite_svc is None or self.invite_qry is None or self.invite_cmd is None:
             raise exc.configuration(
                 "Password invites require kernel.invite_token_pepper",
             )
@@ -206,11 +202,7 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
 
         invite = await find_password_invite_by_digest(qry, digest)
 
-        if (
-            invite is None
-            or invite.consumed_at is not None
-            or invite.principal_id != principal_id
-        ):
+        if invite is None or invite.consumed_at is not None or invite.principal_id != principal_id:
             raise exc.authentication(INVALID_INVITE_TOKEN_MSG)
 
         if invite.expires_at <= utcnow():

@@ -1,6 +1,8 @@
 from forze.application.contracts.storage import StorageSpec
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.base.primitives import StrKeyNamespace
+
 from .dto import (
     BeginUploadRequestDTO,
     CompleteUploadRequestDTO,
@@ -33,8 +35,6 @@ from .handlers import (
     PresignUpload,
     UploadObject,
 )
-from forze.base.primitives import StrKeyNamespace
-
 from .operations import StorageKernelOp
 
 # ----------------------- #
@@ -147,9 +147,7 @@ def build_storage_registry(
             # download_stream / download_range return raw byte transports (an async chunk
             # iterator / a byte-range window), not JSON — description-only, like DOWNLOAD.
             StorageKernelOp.DOWNLOAD_STREAM: OperationDescriptor(
-                description=(
-                    "Open a bounded-memory download stream for an object by storage key."
-                ),
+                description=("Open a bounded-memory download stream for an object by storage key."),
             ),
             StorageKernelOp.DOWNLOAD_RANGE: OperationDescriptor(
                 description="Download an inclusive byte range of an object by storage key.",
@@ -194,16 +192,14 @@ def build_storage_registry(
                 input_type=UploadSessionRequestDTO,
                 output_type=ListedPartsDTO,
                 description=(
-                    "List the parts already uploaded for a multipart session "
-                    "(resume primitive)."
+                    "List the parts already uploaded for a multipart session (resume primitive)."
                 ),
             ),
             StorageKernelOp.COMPLETE_UPLOAD: OperationDescriptor(
                 input_type=CompleteUploadRequestDTO,
                 output_type=ObjectHeadDTO,
                 description=(
-                    "Assemble the uploaded parts into the final object and return "
-                    "its head."
+                    "Assemble the uploaded parts into the final object and return its head."
                 ),
             ),
             StorageKernelOp.ABORT_UPLOAD: OperationDescriptor(

@@ -6,7 +6,8 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from psycopg import sql
 

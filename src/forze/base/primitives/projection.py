@@ -13,7 +13,8 @@ single implementation is what keeps those shapes identical — a second copy cou
 diverge a backend from the oracle.
 """
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from .types import JsonDict
 
@@ -74,7 +75,7 @@ class _PathNode:
     the next segments, insertion-ordered so the output mirrors the requested field order.
     """
 
-    __slots__ = ("terminal", "children")
+    __slots__ = ("children", "terminal")
 
     def __init__(self) -> None:
         self.terminal: bool = False

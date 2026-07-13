@@ -18,7 +18,8 @@ synthetic oracle and reused over any harness.
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING, Callable, final
+from collections.abc import Callable
+from typing import TYPE_CHECKING, final
 
 import attrs
 
@@ -117,8 +118,7 @@ def _pick(corpus: list[_Entry], rng: random.Random) -> _Entry:
     """
 
     weights = [
-        entry.contribution * (index + 1) / (1.0 + entry.uses)
-        for index, entry in enumerate(corpus)
+        entry.contribution * (index + 1) / (1.0 + entry.uses) for index, entry in enumerate(corpus)
     ]
     return rng.choices(corpus, weights=weights, k=1)[0]
 
@@ -143,7 +143,7 @@ class GuidedStats:
     new_by_run: tuple[int, ...]
     """Per run, in order: the count of behaviors it added that no earlier run had."""
 
-    violation: "ViolationReport | None" = None
+    violation: ViolationReport | None = None
     """The minimized counterexample, if a run tripped an invariant (the guided run stops there)."""
 
     # ....................... #
@@ -181,7 +181,7 @@ def coverage_guided_search(
     seed_genome: Genome,
     run: Callable[[Genome], History],
     is_violation: Callable[[History], bool],
-    on_violation: Callable[[Genome], "ViolationReport | None"],
+    on_violation: Callable[[Genome], ViolationReport | None],
     master_seed: int,
     budget: int,
     catalog_size: int,
@@ -197,9 +197,7 @@ def coverage_guided_search(
     *max_ops* bound the mutation space.
     """
 
-    rng = random.Random(
-        derive_seed(master_seed, "guided")
-    )  # nosec B311 - seeded fuzz lineage
+    rng = random.Random(derive_seed(master_seed, "guided"))  # nosec B311 - seeded fuzz lineage
     behaviors: set[Behavior] = set()
     new_by_run: list[int] = []
     corpus: list[_Entry] = []

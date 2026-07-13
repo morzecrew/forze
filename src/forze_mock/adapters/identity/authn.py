@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Any, Sequence, final
+from typing import Any, final
 from uuid import UUID
 
 import attrs
@@ -349,9 +350,7 @@ class MockPrincipalResolverPort(PrincipalResolverPort):
                     str(mapping[key])  # pyright: ignore[reportUnknownArgumentType]
                 )
             )
-        pid = UUID(
-            str(store.get("default_principal", "00000000-0000-4000-8000-000000000001"))
-        )
+        pid = UUID(str(store.get("default_principal", "00000000-0000-4000-8000-000000000001")))
         mapping[key] = str(pid)
         return AuthnIdentity(principal_id=pid)
 
@@ -793,10 +792,7 @@ class MockPasswordResetPort(PasswordResetPort):
 
             # Single active reset: supersede outstanding resets of the principal.
             for record in resets.values():
-                if (
-                    record.get("principal_id") == str(principal)
-                    and record.get("used_at") is None
-                ):
+                if record.get("principal_id") == str(principal) and record.get("used_at") is None:
                     record["used_at"] = now
 
             resets[token] = {
@@ -834,11 +830,7 @@ class MockPasswordResetPort(PasswordResetPort):
             store = _route_store(self.state, self.route)
             record = self._resets(store).get(token)
 
-            if (
-                record is None
-                or record.get("used_at") is not None
-                or record["expires_at"] <= now
-            ):
+            if record is None or record.get("used_at") is not None or record["expires_at"] <= now:
                 raise exc.authentication("Invalid or expired reset token")
 
             entry = store.get("passwords", {}).get(str(record["login"]))

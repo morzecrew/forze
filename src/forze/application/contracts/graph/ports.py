@@ -4,7 +4,8 @@ Ports are intentionally free of Cypher, AQL, and other engine-specific query
 strings; adapters map these operations to the underlying graph database.
 """
 
-from typing import Awaitable, Protocol, Sequence, runtime_checkable
+from collections.abc import Awaitable, Sequence
+from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -47,18 +48,18 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
 
     def get_vertices(
         self,
-        refs: Sequence[VertexRef],  # noqa: F841
+        refs: Sequence[VertexRef],
     ) -> Awaitable[Sequence[BaseModel]]:
         """Load many vertices; order may follow ``refs`` or be undefined (see adapter)."""
         ...  # pragma: no cover
 
-    def get_edge(self, ref: EdgeRef) -> Awaitable[BaseModel | None]:  # noqa: F841
+    def get_edge(self, ref: EdgeRef) -> Awaitable[BaseModel | None]:
         """Load one edge by ref."""
         ...  # pragma: no cover
 
     def get_edges(
         self,
-        refs: Sequence[EdgeRef],  # noqa: F841
+        refs: Sequence[EdgeRef],
     ) -> Awaitable[Sequence[BaseModel]]:
         """Load many edges by ref."""
         ...  # pragma: no cover
@@ -69,9 +70,9 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
 
     def count_vertices(
         self,
-        node_kind: str,  # noqa: F841
+        node_kind: str,
         *,
-        property_filter: JsonDict | None = None,  # noqa: F841
+        property_filter: JsonDict | None = None,
     ) -> Awaitable[int]:
         """Count vertices of a logical node kind, optionally with equality-style filters.
 
@@ -82,9 +83,9 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
 
     def count_edges(
         self,
-        edge_kind: str,  # noqa: F841
+        edge_kind: str,
         *,
-        property_filter: JsonDict | None = None,  # noqa: F841
+        property_filter: JsonDict | None = None,
     ) -> Awaitable[int]:
         """Count edges of a logical edge kind, with the same performance caveats as :meth:`count_vertices`."""
         ...  # pragma: no cover
@@ -96,7 +97,7 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
         edge_kinds: frozenset[str],
         *,
         limit: int,
-        to_vertex_kinds: frozenset[str] | None = None,  # noqa: F841
+        to_vertex_kinds: frozenset[str] | None = None,
     ) -> Awaitable[Sequence[NeighborRow]]:
         """
         :param to_vertex_kinds: If set, only return neighbors whose ``VertexRef.kind`` is in
@@ -125,8 +126,8 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
 
     def shortest_path(
         self,
-        from_ref: VertexRef,  # noqa: F841
-        to_ref: VertexRef,  # noqa: F841
+        from_ref: VertexRef,
+        to_ref: VertexRef,
         params: ShortestPathParams,
     ) -> Awaitable[ShortestPathResult | None]:
         """Return one of the shortest paths, or ``None`` if no path within *params* exists."""
@@ -134,7 +135,7 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
 
     def scoped_walk(
         self,
-        anchor: VertexRef,  # noqa: F841
+        anchor: VertexRef,
         params: ScopedWalkParams,
     ) -> Awaitable[Sequence[BaseModel]]:
         """Tenant-safe multi-segment walk returning the distinct typed target vertices.
@@ -151,8 +152,8 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
 
     def k_shortest_paths(
         self,
-        from_ref: VertexRef,  # noqa: F841
-        to_ref: VertexRef,  # noqa: F841
+        from_ref: VertexRef,
+        to_ref: VertexRef,
         params: ShortestPathParams,
         *,
         k: int,
@@ -162,9 +163,9 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
 
     def find_vertices(
         self,
-        node_kind: str,  # noqa: F841
+        node_kind: str,
         *,
-        property_filter: JsonDict | None = None,  # noqa: F841
+        property_filter: JsonDict | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> Awaitable[Sequence[BaseModel]]:
@@ -178,9 +179,9 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
 
     def find_edges(
         self,
-        edge_kind: str,  # noqa: F841
+        edge_kind: str,
         *,
-        property_filter: JsonDict | None = None,  # noqa: F841
+        property_filter: JsonDict | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> Awaitable[Sequence[BaseModel]]:
@@ -217,7 +218,7 @@ class GraphCommandPort(BaseGraphModulePort, Protocol):
 
     def create_vertex(
         self,
-        node_kind: str,  # noqa: F841
+        node_kind: str,
         cmd: BaseModel,
         *,
         return_new: bool = True,
@@ -239,7 +240,7 @@ class GraphCommandPort(BaseGraphModulePort, Protocol):
 
     def create_edge(
         self,
-        edge_kind: str,  # noqa: F841
+        edge_kind: str,
         cmd: BaseModel,
         *,
         return_new: bool = True,
@@ -275,7 +276,7 @@ class GraphCommandPort(BaseGraphModulePort, Protocol):
 
     def ensure_vertex(
         self,
-        node_kind: str,  # noqa: F841
+        node_kind: str,
         cmd: BaseModel,
         *,
         return_new: bool = True,
@@ -285,7 +286,7 @@ class GraphCommandPort(BaseGraphModulePort, Protocol):
 
     def ensure_edge(
         self,
-        edge_kind: str,  # noqa: F841
+        edge_kind: str,
         cmd: BaseModel,
         *,
         return_new: bool = True,
@@ -295,12 +296,12 @@ class GraphCommandPort(BaseGraphModulePort, Protocol):
 
     def delete_vertices(
         self,
-        refs: Sequence[VertexRef],  # noqa: F841
+        refs: Sequence[VertexRef],
     ) -> Awaitable[None]: ...  # pragma: no cover
 
     def delete_edges(
         self,
-        refs: Sequence[EdgeRef],  # noqa: F841
+        refs: Sequence[EdgeRef],
     ) -> Awaitable[None]: ...  # pragma: no cover
 
 
@@ -325,8 +326,8 @@ class GraphRawQueryPort(BaseGraphModulePort, Protocol):
 
     def run(
         self,
-        query: str,  # noqa: F841
-        params: JsonDict | None = None,  # noqa: F841
+        query: str,
+        params: JsonDict | None = None,
     ) -> Awaitable[Sequence[JsonDict]]:
         """Execute *query* with *params* and return raw result rows as mappings."""
         ...  # pragma: no cover

@@ -1,6 +1,7 @@
 """Authz dependency module for the application kernel."""
 
-from typing import Collection, final
+from collections.abc import Collection
+from typing import final
 
 import attrs
 
@@ -61,9 +62,7 @@ class AuthzDepsModule(DepsModule):
             return Deps()
 
         if self.kernel is None:
-            raise exc.internal(
-                "kernel is required when registering authz dependency routes"
-            )
+            raise exc.internal("kernel is required when registering authz dependency routes")
 
         shared = build_authz_shared_services(self.kernel)
 
@@ -84,9 +83,7 @@ class AuthzDepsModule(DepsModule):
             merged = merged.merge(
                 Deps.routed(
                     {
-                        RoleAssignmentDepKey: {
-                            name: ConfigurableRoleAssignment() for name in ra
-                        },
+                        RoleAssignmentDepKey: {name: ConfigurableRoleAssignment() for name in ra},
                     },
                 ),
             )
@@ -95,9 +92,7 @@ class AuthzDepsModule(DepsModule):
             merged = merged.merge(
                 Deps.routed(
                     {
-                        GrantQueryDepKey: {
-                            name: ConfigurableGrantQuery() for name in gq
-                        },
+                        GrantQueryDepKey: {name: ConfigurableGrantQuery() for name in gq},
                     },
                 ),
             )
@@ -106,9 +101,7 @@ class AuthzDepsModule(DepsModule):
             merged = merged.merge(
                 Deps.routed(
                     {
-                        DelegationDepKey: {
-                            name: ConfigurableDelegationQuery() for name in dl
-                        },
+                        DelegationDepKey: {name: ConfigurableDelegationQuery() for name in dl},
                     },
                 ),
             )
@@ -117,9 +110,7 @@ class AuthzDepsModule(DepsModule):
             merged = merged.merge(
                 Deps.routed(
                     {
-                        DelegationGrantDepKey: {
-                            name: ConfigurableDelegationGrant() for name in dg
-                        },
+                        DelegationGrantDepKey: {name: ConfigurableDelegationGrant() for name in dg},
                     },
                 ),
             )
@@ -129,8 +120,7 @@ class AuthzDepsModule(DepsModule):
                 Deps.routed(
                     {
                         AuthzDecisionDepKey: {
-                            name: ConfigurableAuthzDecision(shared=shared)
-                            for name in dc
+                            name: ConfigurableAuthzDecision(shared=shared) for name in dc
                         },
                     },
                 ),

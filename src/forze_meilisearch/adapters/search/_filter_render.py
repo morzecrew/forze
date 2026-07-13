@@ -135,9 +135,7 @@ class MeilisearchFilterRenderer:
             return None
 
         expr = self.parser.parse(filters)
-        validate_query_capabilities(
-            expr, MEILISEARCH_QUERY_CAPABILITIES, backend="meilisearch"
-        )
+        validate_query_capabilities(expr, MEILISEARCH_QUERY_CAPABILITIES, backend="meilisearch")
         rendered = self._render_expr(expr)
 
         if not rendered:
@@ -238,9 +236,7 @@ class MeilisearchFilterRenderer:
                         return f"{attr} IS NOT NULL"
 
                     case _:
-                        raise exc.internal(
-                            f"Unsupported Meilisearch filter operator: {op!r}."
-                        )
+                        raise exc.internal(f"Unsupported Meilisearch filter operator: {op!r}.")
 
             case _:
                 raise exc.internal(f"Unknown filter expression: {expr!r}")

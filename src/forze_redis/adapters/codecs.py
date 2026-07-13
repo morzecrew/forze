@@ -1,5 +1,6 @@
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, Final, Mapping, final
+from typing import Any, Final, final
 
 import attrs
 import orjson
@@ -70,9 +71,7 @@ class RedisKeyCodec:
         # Callers that must be collision-proof against untrusted input hash it to
         # a fixed-format, separator-free token before it reaches a key (the
         # idempotency adapter does exactly this).
-        segments.extend(
-            self.__part_segment(part) for part in parts if part is not None
-        )
+        segments.extend(self.__part_segment(part) for part in parts if part is not None)
 
         return self.sep.join(segments)
 
@@ -326,9 +325,7 @@ class RedisStreamCodec[M]:
         payload_raw = decoded.get(_F_PAYLOAD)
 
         if payload_raw is None:
-            raise exc.internal(
-                f"Redis stream message '{id}' in '{stream}' has no payload"
-            )
+            raise exc.internal(f"Redis stream message '{id}' in '{stream}' has no payload")
 
         timestamp_raw = decoded.get(_F_TIMESTAMP)
 

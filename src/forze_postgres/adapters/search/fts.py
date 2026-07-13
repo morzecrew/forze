@@ -6,7 +6,8 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Final, Mapping, Sequence, final
+from collections.abc import Mapping, Sequence
+from typing import Any, Final, final
 
 import attrs
 from psycopg import sql
@@ -17,15 +18,14 @@ from forze.application.contracts.search import (
     SearchSpec,
     effective_phrase_combine,
 )
-from ._search_count import effective_search_count
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.relation import RelationSpec
 
 from ._engine import RankedPipelineSql
-from ._highlights import build_fts_highlight
-from ._pgroonga_plan import effective_ranked_candidate_limit, is_trivial_filter
 from ._fts_sql import FtsGroupLetter
+from ._highlights import build_fts_highlight
 from ._leg_fts import build_fts_leg
+from ._pgroonga_plan import effective_ranked_candidate_limit, is_trivial_filter
 from ._pipeline_sql import (
     PipelineAliases,
     scored_key_columns,
@@ -33,6 +33,7 @@ from ._pipeline_sql import (
     validate_join_pairs,
 )
 from ._ranked_pipeline import build_filter_first_ranked_pipeline, ranked_parts_to_sql
+from ._search_count import effective_search_count
 from ._simple_base import PostgresRankedPipelineSearchAdapter
 
 # ----------------------- #
@@ -178,9 +179,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             join_pairs=join,
             proj_ident=proj_qname.ident(),
             heap_ident=index_heap_qname.ident(),
-            outer_proj_ident=(
-                index_heap_qname.ident() if coalesced else proj_qname.ident()
-            ),
+            outer_proj_ident=(index_heap_qname.ident() if coalesced else proj_qname.ident()),
             fw=fw,
             fp=fp,
             leg_params=leg_params,

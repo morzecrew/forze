@@ -1,4 +1,5 @@
-from typing import Awaitable, Protocol
+from collections.abc import Awaitable
+from typing import Protocol
 from uuid import UUID
 
 from ..value_objects import (
@@ -28,13 +29,13 @@ class PasswordAccountProvisioningPort(Protocol):  # pragma: no cover
 
     def issue_password_invite(
         self,
-        operator: AuthnIdentity,  # noqa: F841
+        operator: AuthnIdentity,
         principal_id: UUID,
     ) -> Awaitable[IssuedInvite]: ...
 
     def accept_invite_with_password(
         self,
-        invite_token: str,  # noqa: F841
+        invite_token: str,
         principal_id: UUID,
         credentials: PasswordCredentials,
     ) -> Awaitable[None]: ...

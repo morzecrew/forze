@@ -1,4 +1,5 @@
-from typing import Literal, Sequence, TypeAlias, TypedDict
+from collections.abc import Sequence
+from typing import Literal, TypeAlias, TypedDict
 
 from .capabilities import FusionStrategy
 

@@ -180,7 +180,7 @@ class FrozenLifecyclePlan:
 
     # ....................... #
 
-    async def startup(self, ctx: "ExecutionContext") -> None:
+    async def startup(self, ctx: ExecutionContext) -> None:
         """Run startup hooks in forward wave order."""
 
         await run_lifecycle_startup(self.graph, ctx, concurrent=self.concurrent)
@@ -189,7 +189,7 @@ class FrozenLifecyclePlan:
 
     async def shutdown(
         self,
-        ctx: "ExecutionContext",
+        ctx: ExecutionContext,
         *,
         step_timeout: float | None = None,
     ) -> None:

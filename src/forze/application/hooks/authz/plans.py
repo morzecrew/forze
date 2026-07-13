@@ -1,6 +1,7 @@
 """Wire authz into :class:`~forze.application.execution.operations.registry.OperationRegistry` plans."""
 
-from typing import Any, Awaitable, Callable, final
+from collections.abc import Awaitable, Callable
+from typing import Any, final
 
 import attrs
 
@@ -70,9 +71,7 @@ class AuthzBeforeAuthorize(BeforeFactory):
 
     spec: AuthzSpec
     action: str
-    resource_factory: Callable[[ExecutionContext, Any], AuthzResource | None] | None = (
-        None
-    )
+    resource_factory: Callable[[ExecutionContext, Any], AuthzResource | None] | None = None
     context_factory: Callable[[ExecutionContext, Any], dict[str, Any]] | None = None
 
     # ....................... #
@@ -82,9 +81,7 @@ class AuthzBeforeAuthorize(BeforeFactory):
         # Resolve eagerly when enforcement is on so a missing wiring fails loud at hook
         # build (per execution) instead of silently skipping the may_act check at runtime.
         delegation_port = (
-            ctx.authz.delegation(self.spec)
-            if self.spec.enforce_delegation_grant
-            else None
+            ctx.authz.delegation(self.spec) if self.spec.enforce_delegation_grant else None
         )
 
         async def _before(args: Any) -> None:
@@ -96,9 +93,7 @@ class AuthzBeforeAuthorize(BeforeFactory):
                     code="auth_required",
                 )
 
-            resource = (
-                self.resource_factory(ctx, args) if self.resource_factory else None
-            )
+            resource = self.resource_factory(ctx, args) if self.resource_factory else None
             context = self.context_factory(ctx, args) if self.context_factory else {}
 
             request = AuthzRequest(
@@ -125,14 +120,11 @@ class AuthzBeforeAuthorize(BeforeFactory):
 
             while node.actor is not None:
                 actor = node.actor
-                actor_result = await decision_port.authorize(
-                    attrs.evolve(request, subject=actor)
-                )
+                actor_result = await decision_port.authorize(attrs.evolve(request, subject=actor))
 
                 if not actor_result.allowed:
                     raise exc.authorization(
-                        actor_result.reason
-                        or f"Delegate not permitted: {self.action!r}",
+                        actor_result.reason or f"Delegate not permitted: {self.action!r}",
                         code="delegate_denied",
                     )
 

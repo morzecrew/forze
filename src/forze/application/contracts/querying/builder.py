@@ -29,7 +29,8 @@ element's own fields with :meth:`Q.field`.
 
 from __future__ import annotations
 
-from typing import Any, Iterable, cast
+from collections.abc import Iterable
+from typing import Any, cast
 
 import attrs
 
@@ -92,8 +93,7 @@ class QueryCondition:
         """
 
         raise exc.precondition(
-            f"{type(self).__name__} is not expressible inside an element quantifier "
-            "predicate",
+            f"{type(self).__name__} is not expressible inside an element quantifier predicate",
         )
 
     def _is_scalar_elem(self) -> bool:
@@ -105,8 +105,7 @@ class QueryCondition:
         """Element-relative ``(field, spec)`` for merging into an object ``$values`` map."""
 
         raise exc.precondition(
-            f"{type(self).__name__} cannot be combined inside an element quantifier "
-            "predicate",
+            f"{type(self).__name__} cannot be combined inside an element quantifier predicate",
         )
 
 

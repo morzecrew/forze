@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Self, cast, final
+from collections.abc import Mapping
+from typing import Any, Self, cast, final
 
 import attrs
 
 from forze.application._logger import logger
-from .keys import DepKey
 from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, StrKeyMapping
 
 from .frame import ResolutionFrame, frame_for
+from .keys import DepKey
 
 # ----------------------- #
 
@@ -161,9 +162,7 @@ class ProviderStore:
     def count(self) -> int:
         """Return total number of registered dependency entries."""
 
-        return len(self.plain_deps) + sum(
-            len(routes) for routes in self.routed_deps.values()
-        )
+        return len(self.plain_deps) + sum(len(routes) for routes in self.routed_deps.values())
 
     # ....................... #
 
@@ -188,16 +187,12 @@ class ProviderStore:
             if cross_overlap_left := set(plain_acc).intersection(store.routed_deps):
                 names = ", ".join(sorted(k.name for k in cross_overlap_left))
 
-                raise exc.internal(
-                    f"Dependency keys registered both as plain and routed: {names}"
-                )
+                raise exc.internal(f"Dependency keys registered both as plain and routed: {names}")
 
             if cross_overlap_right := set(routed_acc).intersection(store.plain_deps):
                 names = ", ".join(sorted(k.name for k in cross_overlap_right))
 
-                raise exc.internal(
-                    f"Dependency keys registered both as plain and routed: {names}"
-                )
+                raise exc.internal(f"Dependency keys registered both as plain and routed: {names}")
 
             plain_acc.update(store.plain_deps)  # type: ignore[attr-defined]
 
@@ -213,9 +208,7 @@ class ProviderStore:
                 if routing_key_overlap := set(existing).intersection(routes):
                     names = ", ".join(sorted(str(r) for r in routing_key_overlap))
 
-                    raise exc.internal(
-                        f"Conflicting routed dependencies for '{key.name}': {names}"
-                    )
+                    raise exc.internal(f"Conflicting routed dependencies for '{key.name}': {names}")
 
                 existing |= routes
                 routed_acc[key] = existing

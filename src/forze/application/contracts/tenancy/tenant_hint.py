@@ -5,7 +5,7 @@ tenant id, and the current authenticated tenant is read from a provider — soft
 (:func:`soft_tenant_id`) or fail-closed (:func:`require_tenant_id`).
 """
 
-from typing import Callable
+from collections.abc import Callable
 from uuid import UUID
 
 from forze.base.exceptions import exc

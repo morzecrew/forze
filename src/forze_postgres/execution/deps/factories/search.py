@@ -75,9 +75,7 @@ def postgres_search_port_for_config(
     member_spec = resolve_search_read_codec_spec(
         member_spec,
         keyring=(
-            context.deps.provide(KeyringDepKey)
-            if context.deps.exists(KeyringDepKey)
-            else None
+            context.deps.provide(KeyringDepKey) if context.deps.exists(KeyringDepKey) else None
         ),
         deterministic=(
             context.deps.provide(DeterministicCipherDepKey)
@@ -87,25 +85,25 @@ def postgres_search_port_for_config(
         tenant_provider=context.inv_ctx.get_tenant,
     )
 
-    common = dict(
-        spec=member_spec,
-        codec=member_spec.resolved_read_codec,
-        relation=c.read,
-        index_relation=c.index,
-        index_heap_relation=c.heap_relation,
-        join_pairs=c.join_pairs,
-        index_field_map=c.field_map,
-        client=context.deps.provide(PostgresClientDepKey),
-        model_type=member_spec.model_type,
-        introspector=context.deps.provide(PostgresIntrospectorDepKey),
-        tenant_provider=context.inv_ctx.get_tenant,
-        tenant_aware=c.tenant_aware,
-        filter_table_alias="v",
-        nested_field_hints=c.nested_field_hints,
-        result_snapshot=snap,
-        read_validation=c.read_validation,
-        lenient_read_fields=member_spec.resolved_lenient_read_fields,
-    )
+    common = {
+        "spec": member_spec,
+        "codec": member_spec.resolved_read_codec,
+        "relation": c.read,
+        "index_relation": c.index,
+        "index_heap_relation": c.heap_relation,
+        "join_pairs": c.join_pairs,
+        "index_field_map": c.field_map,
+        "client": context.deps.provide(PostgresClientDepKey),
+        "model_type": member_spec.model_type,
+        "introspector": context.deps.provide(PostgresIntrospectorDepKey),
+        "tenant_provider": context.inv_ctx.get_tenant,
+        "tenant_aware": c.tenant_aware,
+        "filter_table_alias": "v",
+        "nested_field_hints": c.nested_field_hints,
+        "result_snapshot": snap,
+        "read_validation": c.read_validation,
+        "lenient_read_fields": member_spec.resolved_lenient_read_fields,
+    }
 
     match c.engine:
         case "pgroonga":

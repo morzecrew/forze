@@ -1,6 +1,7 @@
 """Lifecycle wiring for optional Mongo document index validation."""
 
-from typing import Any, Sequence, final
+from collections.abc import Sequence
+from typing import Any, final
 
 import attrs
 

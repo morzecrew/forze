@@ -1,5 +1,5 @@
 from enum import StrEnum
-from functools import lru_cache
+from functools import cache
 from typing import Any, Final, Self, cast, final
 
 import attrs
@@ -106,7 +106,7 @@ class Logger:
         INFO rank and drop trace; configure with ``level="trace"`` to emit it.
         """
 
-        if _TRACE_RANK < _configured_min_rank:
+        if _configured_min_rank > _TRACE_RANK:
             return
 
         extras = {**extras, TRACE_LEVEL_KEY: "trace"}
@@ -171,9 +171,7 @@ class Logger:
     ) -> None:
         """Log at CRITICAL level (with exception info). Mostly for unhandled exceptions."""
 
-        exc_info: bool | ExcInfo = (
-            (type(exc), exc, exc.__traceback__) if exc is not None else True
-        )
+        exc_info: bool | ExcInfo = (type(exc), exc, exc.__traceback__) if exc is not None else True
 
         self.backend.critical(event, *sub, exc_info=exc_info, **extras)
 
@@ -202,7 +200,7 @@ def get_logger(name: str | StrEnum) -> Logger:
 # ....................... #
 
 
-@lru_cache(maxsize=None)
+@cache
 def _integration_logger(domain: str) -> Logger:
     """Memoized default logger for shared adapter/port machinery serving *domain*.
 

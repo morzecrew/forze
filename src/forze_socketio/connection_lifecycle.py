@@ -13,9 +13,10 @@ require_socketio()
 # ....................... #
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import timedelta
-from typing import Awaitable, Callable, final
+from typing import final
 
 import attrs
 from socketio.async_server import AsyncServer
@@ -46,7 +47,7 @@ class _PeriodicStartup(LifecycleHook):
 
     # ....................... #
 
-    async def __call__(self, ctx: ExecutionContext) -> None:  # noqa: ARG002
+    async def __call__(self, ctx: ExecutionContext) -> None:
         if self.task is not None and not self.task.done():
             return
 
@@ -64,7 +65,7 @@ class _PeriodicStartup(LifecycleHook):
             except asyncio.CancelledError:
                 raise
 
-            except Exception:  # noqa: BLE001 - a transient sweep error must not kill the loop
+            except Exception:
                 _logger.critical_exception(f"Realtime {self.label} tick failed")
 
             await asyncio.sleep(delay)
@@ -82,7 +83,7 @@ class _PeriodicShutdown(LifecycleHook):
 
     # ....................... #
 
-    async def __call__(self, ctx: ExecutionContext) -> None:  # noqa: ARG002
+    async def __call__(self, ctx: ExecutionContext) -> None:
         task = self.startup.task
 
         if task is None:
@@ -134,9 +135,7 @@ def realtime_identity_expiry_lifecycle_step(
     async def _tick() -> None:
         await sweep_expired_connections(sio, namespace=namespace)
 
-    return _periodic_step(
-        tick=_tick, interval=interval, label="identity_expiry", step_id=step_id
-    )
+    return _periodic_step(tick=_tick, interval=interval, label="identity_expiry", step_id=step_id)
 
 
 # ....................... #

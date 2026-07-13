@@ -1,6 +1,7 @@
 """Authz port protocols."""
 
-from typing import Awaitable, Protocol
+from collections.abc import Awaitable
+from typing import Protocol
 from uuid import UUID
 
 from forze.application.contracts.authn import AuthnIdentity
@@ -164,7 +165,7 @@ class RoleAssignmentPort(Protocol):
     def assign_role(
         self,
         subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
-        role_key: str,  # noqa: F841
+        role_key: str,
         *,
         scope: AuthzScope | None = None,
     ) -> Awaitable[None]:
@@ -174,7 +175,7 @@ class RoleAssignmentPort(Protocol):
     def revoke_role(
         self,
         subject: PrincipalRef | UUID | AuthnIdentity | AuthzSubject,
-        role_key: str,  # noqa: F841
+        role_key: str,
         *,
         scope: AuthzScope | None = None,
     ) -> Awaitable[None]:

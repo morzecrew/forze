@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Final, Sequence, cast, final
+from collections.abc import Sequence
+from typing import Any, Final, cast, final
 
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.search import (
-    SearchCountlessPage,
-    SearchPage,
-    search_page_from_limit_offset,
-)
 from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
@@ -22,13 +18,16 @@ from forze.application.contracts.search import (
     FederatedSearchSpec,
     MultiSourceSearchOptions,
     SearchCapabilities,
+    SearchCountlessPage,
     SearchOptions,
+    SearchPage,
     SearchQueryPort,
     SearchResultSnapshotOptions,
     normalize_search_queries,
     prepare_federated_search_options,
     reject_federated_facets,
     resolve_fusion,
+    search_page_from_limit_offset,
 )
 from forze.application.integrations.search import (
     SearchResultSnapshot,
@@ -162,11 +161,7 @@ class MockFederatedSearchAdapter[M: BaseModel](
         merged, hl_index = await self._merge_legs(query, filters, sorts, options)
         window = self._window(merged, pagination)
         hits = [hit for hit, _ in window]
-        scores = (
-            [score for _, score in window]
-            if normalize_search_queries(query)
-            else None
-        )
+        scores = [score for _, score in window] if normalize_search_queries(query) else None
         highlights = federated_highlights_for_hits(hits, hl_index)
         return search_page_from_limit_offset(
             hits, pagination or {}, total=None, highlights=highlights, scores=scores
@@ -186,11 +181,7 @@ class MockFederatedSearchAdapter[M: BaseModel](
         merged, hl_index = await self._merge_legs(query, filters, sorts, options)
         window = self._window(merged, pagination)
         hits = [hit for hit, _ in window]
-        scores = (
-            [score for _, score in window]
-            if normalize_search_queries(query)
-            else None
-        )
+        scores = [score for _, score in window] if normalize_search_queries(query) else None
         highlights = federated_highlights_for_hits(hits, hl_index)
         return search_page_from_limit_offset(
             hits, pagination or {}, total=len(merged), highlights=highlights, scores=scores

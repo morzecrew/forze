@@ -17,7 +17,7 @@ into the same explicit signal the mock produces by aborting.
 from __future__ import annotations
 
 import asyncio
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 import attrs
 

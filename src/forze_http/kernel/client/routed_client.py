@@ -1,6 +1,7 @@
 """HTTP client that resolves base URL and headers per tenant via secrets."""
 
-from typing import Any, Callable, Mapping, cast, final
+from collections.abc import Callable, Mapping
+from typing import Any, cast, final
 from uuid import UUID
 
 import attrs

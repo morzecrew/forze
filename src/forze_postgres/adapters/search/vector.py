@@ -6,7 +6,8 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Final, Mapping, Sequence, final
+from collections.abc import Mapping, Sequence
+from typing import Any, Final, final
 
 import attrs
 from psycopg import sql
@@ -22,7 +23,6 @@ from forze.application.contracts.search import (
     SearchSpec,
     effective_phrase_combine,
 )
-from ._search_count import effective_search_count
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.relation import RelationSpec
 
@@ -36,6 +36,7 @@ from ._pipeline_sql import (
     validate_join_pairs,
 )
 from ._ranked_pipeline import build_filter_first_ranked_pipeline, ranked_parts_to_sql
+from ._search_count import effective_search_count
 from ._simple_base import PostgresRankedPipelineSearchAdapter
 from ._vector_sql import VectorDistanceKind
 
@@ -200,9 +201,7 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
             join_pairs=join,
             proj_ident=proj_qname.ident(),
             heap_ident=index_heap_qname.ident(),
-            outer_proj_ident=(
-                index_heap_qname.ident() if coalesced else proj_qname.ident()
-            ),
+            outer_proj_ident=(index_heap_qname.ident() if coalesced else proj_qname.ident()),
             fw=fw,
             fp=fp,
             leg_params=leg_params,

@@ -68,9 +68,7 @@ class GraphKindCipher:
             return self.read_codec.decode_mapping(props, trust_source=True)
 
         await self.cipher.prepare_decrypt([props])
-        return self.read_codec.decode_mapping(
-            self.cipher.decrypt_mapping(props), trust_source=True
-        )
+        return self.read_codec.decode_mapping(self.cipher.decrypt_mapping(props), trust_source=True)
 
 
 # ....................... #

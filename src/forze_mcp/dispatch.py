@@ -10,7 +10,8 @@ client-safe ``ToolError`` / ``ResourceError`` at the registering surface (see
 ``mask_error_details``.
 """
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from forze.application.execution.context import (
     ExecutionContextFactory,

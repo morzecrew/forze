@@ -1,6 +1,7 @@
 """Trim over-fetched rows and build next/prev keyset tokens for cursor pages."""
 
-from typing import Any, Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -28,9 +29,7 @@ def _sort_key_in_projection(sort_key: str, return_fields: Sequence[str]) -> bool
     seek the cursor from the wrong key — so the root alone is not enough.
     """
 
-    return any(
-        sort_key == field or sort_key.startswith(f"{field}.") for field in return_fields
-    )
+    return any(sort_key == field or sort_key.startswith(f"{field}.") for field in return_fields)
 
 
 def assert_cursor_projection_includes_sort_keys(
@@ -75,9 +74,7 @@ def resolved_cursor_limit(cursor: Mapping[str, Any] | None) -> int:
     # OverflowError: a non-finite float (``float('inf')``) — coercion must be a clean 400,
     # not a 500 from the raw ``int(inf)``.
     except (TypeError, ValueError, OverflowError) as e:
-        raise exc.validation(
-            "Cursor pagination 'limit' must be an integer"
-        ) from e
+        raise exc.validation("Cursor pagination 'limit' must be an integer") from e
 
     if value < 1:
         raise exc.validation("Cursor pagination 'limit' must be positive")

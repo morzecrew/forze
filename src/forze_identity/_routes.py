@@ -1,6 +1,6 @@
 """Shared route-set normalization for identity deps modules."""
 
-from typing import Collection
+from collections.abc import Collection
 
 from forze.base.primitives import StrKey
 

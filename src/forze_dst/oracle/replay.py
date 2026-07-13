@@ -9,21 +9,18 @@ the deterministic loop, the report reproduces exactly.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from datetime import datetime
 from typing import (
     TYPE_CHECKING,
-    Awaitable,
-    Callable,
-    Iterable,
-    Sequence,
     TypeVar,
     final,
 )
 
 import attrs
 
-from forze_dst.oracle.invariants import Invariant, Violation, check
 from forze.application.execution.tracing import bind_tx_sequence
+from forze_dst.oracle.invariants import Invariant, Violation, check
 from forze_dst.oracle.recorder import History, Recorder, bind_recorder
 from forze_dst.runtime import run_simulation
 from forze_dst.time_source import DEFAULT_EPOCH
@@ -109,7 +106,7 @@ class ViolationReport:
     """Fingerprint of the operation registry the report was found against; a replay on a
     changed registry (different fingerprint) can no longer be trusted to reproduce."""
 
-    config: "SimulationConfig | None" = None
+    config: SimulationConfig | None = None
     """The full run configuration that found this counterexample (scheduler, concurrency,
     act_count, faults, latency, …), attached by ``Simulation.run``. Threaded so the rendered
     repro reflects the *actual* search that found the bug rather than the library defaults —
@@ -134,7 +131,7 @@ class ViolationReport:
 
     # ....................... #
 
-    def timeline(self) -> tuple["TimelineEntry", ...]:
+    def timeline(self) -> tuple[TimelineEntry, ...]:
         """The counterexample as a virtual-time-ordered timeline — the time-travel stream.
 
         A flat, JSON-able sequence of steps (operations, port calls with their captured value flow,
@@ -149,7 +146,7 @@ class ViolationReport:
 
     # ....................... #
 
-    def to_html(self, path: "str | Path | None" = None) -> str:
+    def to_html(self, path: str | Path | None = None) -> str:
         """Render a self-contained HTML time-travel viewer — a scrubber over the timeline.
 
         Returns the HTML string; when *path* is given, also writes it there. Open the file in any
@@ -182,9 +179,7 @@ def _attempt(
     epoch: datetime,
 ) -> ViolationReport | None:
     def run(workload: Sequence[T]) -> History:
-        return run_recorded(
-            build(workload), seed=seed, schedule_seed=schedule_seed, epoch=epoch
-        )
+        return run_recorded(build(workload), seed=seed, schedule_seed=schedule_seed, epoch=epoch)
 
     if not check(run(items), invariants):
         return None

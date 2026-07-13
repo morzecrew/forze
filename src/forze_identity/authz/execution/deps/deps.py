@@ -41,7 +41,6 @@ from ...application.specs import (
 from ...services.grants import AuthzGrantResolver, AuthzGrantResolverDeps
 from .configs import AuthzSharedServices
 
-
 # ----------------------- #
 
 

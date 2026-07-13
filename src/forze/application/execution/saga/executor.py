@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Awaitable, Callable, final
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, final
 
 import attrs
 
@@ -35,7 +36,7 @@ class InProcessSagaExecutor:
 
     async def run[Ctx](
         self,
-        ctx: "ExecutionContext",
+        ctx: ExecutionContext,
         definition: SagaDefinition[Ctx],
         initial: Ctx,
     ) -> Ctx:
@@ -86,7 +87,7 @@ class InProcessSagaExecutor:
 
     async def _run_step[Ctx](
         self,
-        ctx: "ExecutionContext",
+        ctx: ExecutionContext,
         step: SagaStep[Ctx],
         state: Ctx,
     ) -> Ctx:
@@ -98,9 +99,7 @@ class InProcessSagaExecutor:
             return await step.action(ctx, state)
 
         if step.retry_policy is not None:
-            return await resolve_resilience_executor(ctx).run(
-                _action, policy=step.retry_policy
-            )
+            return await resolve_resilience_executor(ctx).run(_action, policy=step.retry_policy)
 
         return await _action()
 
@@ -108,7 +107,7 @@ class InProcessSagaExecutor:
 
     async def _compensate[Ctx](
         self,
-        ctx: "ExecutionContext",
+        ctx: ExecutionContext,
         definition: SagaDefinition[Ctx],
         progress: SagaProgress,
         states: dict[int, Ctx],
@@ -126,7 +125,7 @@ class InProcessSagaExecutor:
                 await self._run_compensation(ctx, step, compensation, states[index])
                 self._emit("compensated", definition, step)
 
-            except Exception as comp_error:  # noqa: BLE001 — best-effort; collect all
+            except Exception as comp_error:
                 errors.append(comp_error)
                 self._emit("compensation_failed", definition, step)
 
@@ -136,9 +135,9 @@ class InProcessSagaExecutor:
 
     async def _run_compensation[Ctx](
         self,
-        ctx: "ExecutionContext",
+        ctx: ExecutionContext,
         step: SagaStep[Ctx],
-        compensation: Callable[["ExecutionContext", Ctx], Awaitable[None]],
+        compensation: Callable[[ExecutionContext, Ctx], Awaitable[None]],
         state: Ctx,
     ) -> None:
         async def _comp() -> None:
@@ -150,9 +149,7 @@ class InProcessSagaExecutor:
                 await compensation(ctx, state)
 
         if step.compensation_policy is not None:
-            await resolve_resilience_executor(ctx).run(
-                _comp, policy=step.compensation_policy
-            )
+            await resolve_resilience_executor(ctx).run(_comp, policy=step.compensation_policy)
 
         else:
             await _comp()

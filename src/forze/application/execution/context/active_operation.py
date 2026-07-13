@@ -27,9 +27,10 @@ dispatch they make is recognized as nested and rides the admitted slot.
 """
 
 import asyncio
+from collections.abc import Awaitable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, Awaitable, Generator
+from typing import Any
 
 # ----------------------- #
 

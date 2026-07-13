@@ -1,4 +1,5 @@
-from typing import Awaitable, Protocol
+from collections.abc import Awaitable
+from typing import Protocol
 from uuid import UUID
 
 # ----------------------- #
@@ -9,7 +10,7 @@ class PrincipalEligibilityPort(Protocol):  # pragma: no cover
 
     def require_authentication_allowed(
         self,
-        principal_id: UUID,  # noqa: F841
+        principal_id: UUID,
     ) -> Awaitable[None]:
         """Raise when ``principal_id`` is missing or inactive for authentication."""
         ...

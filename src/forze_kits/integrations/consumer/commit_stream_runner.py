@@ -253,9 +253,7 @@ class CommitStreamGroupConsumer[M]:
 
         port: CommitStreamGroupQueryPort[M] = ctx.stream.commit_query(self.stream_spec)
 
-        cipher = (
-            ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
-        )
+        cipher = ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
 
         dlq_producer: StreamCommandPort[M] | None = None
 

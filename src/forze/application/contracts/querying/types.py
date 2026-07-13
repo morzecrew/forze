@@ -1,7 +1,8 @@
 """Scalar and operator types for filter expressions."""
 
+from collections.abc import Sequence
 from datetime import date, datetime
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
 from uuid import UUID
 
 # ----------------------- #

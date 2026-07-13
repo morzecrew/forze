@@ -41,8 +41,10 @@ is the commit signal; its concurrency window is the span of trace sequences carr
 
 from __future__ import annotations
 
+import itertools
 from collections import defaultdict
-from typing import Any, Callable, Mapping, Sequence, cast, final
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, cast, final
 
 import attrs
 
@@ -235,9 +237,7 @@ class VersionedTxRecord:
     write_rows: tuple[WriteVersion, ...] = ()
 
 
-def _find_cycle(
-    nodes: set[str], edges: Mapping[tuple[str, str], str]
-) -> list[str] | None:
+def _find_cycle(nodes: set[str], edges: Mapping[tuple[str, str], str]) -> list[str] | None:
     """Return one directed cycle (a node ring) in the graph, or ``None`` if acyclic.
 
     Iterative DFS (an explicit stack, so a long dependency chain can't hit Python's recursion limit),
@@ -311,7 +311,7 @@ def _has_redaction(value: Any) -> bool:
     return False
 
 
-def _row_matches(matcher: "Callable[[dict[str, Any]], bool]", row: Mapping[str, Any]) -> bool:
+def _row_matches(matcher: Callable[[dict[str, Any]], bool], row: Mapping[str, Any]) -> bool:
     """Whether *row* satisfies a pre-compiled predicate *matcher*. A matcher that raises mid-match
     (it should not — the filter parsed cleanly) yields ``False`` — no edge — so a malformed predicate
     is a false-negative, never a false-positive.
@@ -428,7 +428,7 @@ def find_serializability_cycle(txns: Sequence[VersionedTxRecord]) -> list[Violat
 
     # Sorted iteration keeps the reported counterexample deterministic across hash seeds.
     for key, revs in sorted(ordered_revs.items(), key=lambda item: repr(item[0])):
-        for earlier, later in zip(revs, revs[1:]):  # ww: along the version chain
+        for earlier, later in itertools.pairwise(revs):  # ww: along the version chain
             add_edge(
                 writer_of[(key, earlier)],
                 writer_of[(key, later)],
@@ -438,17 +438,11 @@ def find_serializability_cycle(txns: Sequence[VersionedTxRecord]) -> list[Violat
     for tx in committed:
         for key, rev in sorted(tx.reads, key=repr):
             if (writer := writer_of.get((key, rev))) is not None:
-                add_edge(
-                    writer, tx.name, f"wr {key}@{rev}"
-                )  # read this writer's version
+                add_edge(writer, tx.name, f"wr {key}@{rev}")  # read this writer's version
 
             following = next((r for r in ordered_revs.get(key, ()) if r > rev), None)
-            if (
-                following is not None
-            ):  # rw: anti-depend on whoever overwrote what we read
-                add_edge(
-                    tx.name, writer_of[(key, following)], f"rw {key}@{rev}→{following}"
-                )
+            if following is not None:  # rw: anti-depend on whoever overwrote what we read
+                add_edge(tx.name, writer_of[(key, following)], f"rw {key}@{rev}→{following}")
 
     # Predicate (phantom) anti-dependency edges: a scan whose predicate a concurrent committed write
     # satisfies, where the write was not visible to the scan (committed after it in trace order).
@@ -461,9 +455,7 @@ def find_serializability_cycle(txns: Sequence[VersionedTxRecord]) -> list[Violat
         return []
 
     ring = " → ".join([*cycle, cycle[0]])
-    labels = ", ".join(
-        edges[(cycle[i], cycle[(i + 1) % len(cycle)])] for i in range(len(cycle))
-    )
+    labels = ", ".join(edges[(cycle[i], cycle[(i + 1) % len(cycle)])] for i in range(len(cycle)))
 
     return [
         Violation(
@@ -728,9 +720,7 @@ def versioned_transactions_from_history(
     ]
 
 
-def snapshot_isolation(
-    *, read_phase: str = "query", write_phase: str = "command"
-) -> Invariant:
+def snapshot_isolation(*, read_phase: str = "query", write_phase: str = "command") -> Invariant:
     """An :data:`Invariant`: the run's committed transactions are snapshot-isolated (no lost update).
 
     Derives per-transaction read/write sets from the trace (by ``tx_id``) and applies
@@ -739,9 +729,7 @@ def snapshot_isolation(
 
     def _check(history: History) -> list[Violation]:
         return find_snapshot_isolation_violations(
-            transactions_from_history(
-                history, read_phase=read_phase, write_phase=write_phase
-            )
+            transactions_from_history(history, read_phase=read_phase, write_phase=write_phase)
         )
 
     return _check
@@ -772,9 +760,7 @@ def serializable(
             )
 
         return find_serializable_violations(
-            transactions_from_history(
-                history, read_phase=read_phase, write_phase=write_phase
-            )
+            transactions_from_history(history, read_phase=read_phase, write_phase=write_phase)
         )
 
     return _check
@@ -810,9 +796,7 @@ def had_isolation_conflict(
     conformant backend.)
     """
 
-    txns = transactions_from_history(
-        history, read_phase=read_phase, write_phase=write_phase
-    )
+    txns = transactions_from_history(history, read_phase=read_phase, write_phase=write_phase)
 
     for a, b in _committed_concurrent_pairs(txns):
         if (a.writes & (b.reads | b.writes)) or (b.writes & (a.reads | a.writes)):
@@ -863,9 +847,7 @@ def isolation_oracle_for(
 
     match level:
         case IsolationLevel.SERIALIZABLE:
-            return serializable(
-                complete=complete, read_phase=read_phase, write_phase=write_phase
-            )
+            return serializable(complete=complete, read_phase=read_phase, write_phase=write_phase)
 
         case IsolationLevel.SNAPSHOT:
             return snapshot_isolation(read_phase=read_phase, write_phase=write_phase)

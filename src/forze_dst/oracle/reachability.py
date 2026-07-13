@@ -24,9 +24,10 @@ cheap and safe to leave in scenario/handler code.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Mapping
 from functools import cached_property
 from types import MappingProxyType
-from typing import Any, Callable, Iterable, Mapping, final
+from typing import Any, final
 
 import attrs
 
@@ -149,7 +150,7 @@ def assess_reachability(
     """
 
     declared = frozenset(targets)
-    hits: dict[str, int] = {target: 0 for target in declared}
+    hits: dict[str, int] = dict.fromkeys(declared, 0)
     runs = 0
 
     for history in histories:

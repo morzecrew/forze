@@ -31,26 +31,26 @@ require_mcp()
 
 # ....................... #
 
-from .auth import (  # noqa: E402
+from .auth import (
     AccessTokenIdentityResolver,
     ForzeApiKeyVerifier,
 )
-from .identity import (  # noqa: E402
+from .identity import (
     DelegatedIdentityResolver,
     MCPIdentityResolver,
     StaticIdentityResolver,
 )
-from .middlewares import LoggingMiddleware  # noqa: E402
-from .projection import exposed_operations  # noqa: E402
-from .prompts import register_dsl_query_prompts  # noqa: E402
-from .registration import register_tools  # noqa: E402
-from .resource_templates import (  # noqa: E402
+from .lifespan import runtime_lifespan
+from .middlewares import LoggingMiddleware
+from .projection import exposed_operations
+from .prompts import register_dsl_query_prompts
+from .registration import register_tools
+from .resource_templates import (
     ResourceTemplateSpec,
     register_resource_templates,
 )
-from .schemas import register_schema_resources  # noqa: E402
-from .lifespan import runtime_lifespan  # noqa: E402
-from .server import build_mcp_server  # noqa: E402
+from .schemas import register_schema_resources
+from .server import build_mcp_server
 
 # ----------------------- #
 

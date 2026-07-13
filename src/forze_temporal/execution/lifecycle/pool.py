@@ -1,6 +1,7 @@
 """Temporal client pool lifecycle hooks and step factories."""
 
-from typing import Any, Mapping, cast, final
+from collections.abc import Mapping
+from typing import Any, cast, final
 
 import attrs
 
@@ -123,8 +124,7 @@ async def _bootstrap_schedules(
 
         if config is None:
             raise exc.internal(
-                f"No Temporal workflow config for schedule bootstrap "
-                f"{bootstrap.workflow_name!r}",
+                f"No Temporal workflow config for schedule bootstrap {bootstrap.workflow_name!r}",
             )
 
         spec = DurableWorkflowSpec[Any, Any](

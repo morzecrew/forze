@@ -12,7 +12,8 @@ thunks), so it is safe to import inside the workflow sandbox; the failure path l
 (see :func:`_as_application_error`).
 """
 
-from typing import TYPE_CHECKING, Awaitable, Callable, final
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, final
 
 import attrs
 
@@ -135,10 +136,8 @@ class TemporalSaga:
             try:
                 await compensation()
 
-            except Exception as comp_error:  # noqa: BLE001 — best-effort; collect all
-                logger.warning(
-                    "Saga compensation step failed", step_index=index, exc_info=True
-                )
+            except Exception as comp_error:
+                logger.warning("Saga compensation step failed", step_index=index, exc_info=True)
                 errors.append(comp_error)
 
         return errors

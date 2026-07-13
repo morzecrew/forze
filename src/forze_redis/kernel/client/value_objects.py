@@ -1,5 +1,6 @@
+from collections.abc import Callable
 from datetime import timedelta
-from typing import Any, Callable, final
+from typing import Any, final
 
 import attrs
 
@@ -47,8 +48,5 @@ class RedisConfig:
         if self.socket_timeout is not None and self.socket_timeout.total_seconds() <= 0:
             raise exc.configuration("Socket timeout must be positive")
 
-        if (
-            self.connect_timeout is not None
-            and self.connect_timeout.total_seconds() <= 0
-        ):
+        if self.connect_timeout is not None and self.connect_timeout.total_seconds() <= 0:
             raise exc.configuration("Connect timeout must be positive")

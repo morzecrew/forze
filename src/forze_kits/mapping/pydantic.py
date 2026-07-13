@@ -71,9 +71,7 @@ class PydanticPipelineMapper[In: BaseModel, Out: BaseDTO](Mapper[In, Out]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PydanticPipelineMapperFactory[In: BaseModel, Out: BaseDTO](
-    MapperFactory[In, Out]
-):
+class PydanticPipelineMapperFactory[In: BaseModel, Out: BaseDTO](MapperFactory[In, Out]):
     """Factory that builds a pipeline mapper for a Pydantic source model to an output DTO."""
 
     in_: type[In]
@@ -82,9 +80,7 @@ class PydanticPipelineMapperFactory[In: BaseModel, Out: BaseDTO](
     out: type[Out]
     """Target DTO model class for validation."""
 
-    step_factories: tuple[PydanticPipelineMapperStepFactory[In], ...] = attrs.field(
-        factory=tuple
-    )
+    step_factories: tuple[PydanticPipelineMapperStepFactory[In], ...] = attrs.field(factory=tuple)
     """Ordered sequence of mapping step factories."""
 
     # ....................... #

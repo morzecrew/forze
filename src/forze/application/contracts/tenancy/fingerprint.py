@@ -6,7 +6,7 @@ when the fingerprint changes. The DSN path resolves via a :class:`TenantSecretRe
 the structured path takes a caller-supplied fingerprint callable.
 """
 
-from typing import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from uuid import UUID
 
 from forze.base.primitives.fingerprint import (

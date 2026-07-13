@@ -1,16 +1,13 @@
 """Async LRU registries for resources that require explicit disposal."""
 
 import asyncio
+from collections import OrderedDict
+from collections.abc import AsyncGenerator, Awaitable, Callable, Hashable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import (
     Any,
-    AsyncGenerator,
-    Awaitable,
-    Callable,
     Generic,
-    Hashable,
-    OrderedDict,
     TypeVar,
     final,
 )

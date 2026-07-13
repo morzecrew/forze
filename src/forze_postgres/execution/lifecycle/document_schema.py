@@ -1,6 +1,7 @@
 """Lifecycle wiring for optional Postgres document schema validation."""
 
-from typing import Any, Sequence, final
+from collections.abc import Sequence
+from typing import Any, final
 
 import attrs
 

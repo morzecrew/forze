@@ -1,8 +1,9 @@
 """Mock transaction managers: the default no-op and the opt-in strict variant."""
 
+from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, AsyncGenerator, final
+from typing import TYPE_CHECKING, final
 
 import attrs
 

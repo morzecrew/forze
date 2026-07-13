@@ -1,8 +1,9 @@
 """ContextVar-scoped resource nesting for integration kernel clients."""
 
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import AsyncGenerator, Awaitable, Callable, final
+from typing import final
 
 import attrs
 

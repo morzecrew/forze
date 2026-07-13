@@ -29,9 +29,7 @@ class PortProxy:
     inner: Any
     """The wrapped port."""
 
-    _wrapped_cache: dict[str, Any] = attrs.field(
-        factory=dict, init=False, repr=False, eq=False
-    )
+    _wrapped_cache: dict[str, Any] = attrs.field(factory=dict, init=False, repr=False, eq=False)
     """Per-attribute memo of wrapped methods. The inner port and the wrap decision are
     fixed for a proxy's lifetime, so each method is classified and wrapped once instead
     of on every access (every ``ctx.x.method(...)`` goes through :meth:`__getattr__`)."""

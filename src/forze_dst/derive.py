@@ -23,7 +23,8 @@ heuristics via the verb set or by editing the returned rules.
 from __future__ import annotations
 
 import random
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -94,9 +95,7 @@ def _arg_builder(
         return lambda _state, _rng: None
 
     def build(state: ModelState, rng: random.Random) -> Any:
-        picks = {
-            field: state.pick(entity, rng) for field, entity in entity_fields.items()
-        }
+        picks = {field: state.pick(entity, rng) for field, entity in entity_fields.items()}
         non_entity = set(input_type.model_fields) - set(entity_fields)
 
         if not non_entity:  # every field is an arranged handle — no generator needed
@@ -173,6 +172,7 @@ def derive_scenario(
         )
 
     return Scenario(state=ModelState, arrange=arrange, act=tuple(act))
+
 
 # ....................... #
 

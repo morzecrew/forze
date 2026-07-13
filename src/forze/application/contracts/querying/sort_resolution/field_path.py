@@ -41,9 +41,7 @@ def _is_any_like(annotation: Any) -> bool:
     # ``Any``, a bare object, or a wide union we cannot meaningfully walk into.
     if annotation is Any or annotation is object:
         return True
-    return (
-        get_origin(annotation) in (Union, UnionType) and len(get_args(annotation)) > 2
-    )
+    return get_origin(annotation) in (Union, UnionType) and len(get_args(annotation)) > 2
 
 
 def _str_keyed_mapping_value(annotation: Any) -> Any:
@@ -82,11 +80,7 @@ def _subpath_resolves(annotation: Any, segments: list[str]) -> bool:
     val = _str_keyed_mapping_value(annotation)
     if val is not _MISSING:
         # A dynamic-key hop; an untyped value is walkable for any remaining path.
-        return (
-            True
-            if val is None
-            else _subpath_resolves(_unwrap_optional(val), segments[1:])
-        )
+        return True if val is None else _subpath_resolves(_unwrap_optional(val), segments[1:])
 
     # A scalar leaf with path left over is invalid; an ``Any``/wide type cannot
     # be disproved, so allow it (avoid false rejections).
@@ -122,9 +116,7 @@ def field_path_resolves(
     if len(segments) == 1:
         return True
 
-    return _subpath_resolves(
-        _unwrap_optional(model.model_fields[head].annotation), segments[1:]
-    )
+    return _subpath_resolves(_unwrap_optional(model.model_fields[head].annotation), segments[1:])
 
 
 def _sort_field_resolves(  # pyright: ignore[reportUnusedFunction]

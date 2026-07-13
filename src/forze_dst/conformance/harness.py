@@ -14,9 +14,10 @@ never the mechanism, the error code, or which transaction was the victim.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, MutableMapping, Sequence
 from contextlib import asynccontextmanager
 from enum import Enum
-from typing import AsyncIterator, MutableMapping, Protocol, Sequence, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions.model import CoreException, ExceptionKind
@@ -79,9 +80,7 @@ def is_serialization_conflict(error: BaseException) -> bool:
 
 
 @asynccontextmanager
-async def record_outcome(
-    outcomes: MutableMapping[str, str], name: str
-) -> AsyncIterator[None]:
+async def record_outcome(outcomes: MutableMapping[str, str], name: str) -> AsyncIterator[None]:
     """Run a session body, recording ``"committed"`` or — on a conflict — ``"aborted"``.
 
     A conflict (rev-OCC or serialization failure) is swallowed and recorded, so it does not

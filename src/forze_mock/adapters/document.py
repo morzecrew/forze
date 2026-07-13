@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable, Sequence
 from typing import (
     Any,
-    AsyncGenerator,
     Literal,
-    Sequence,
     cast,
     final,
     overload,
@@ -109,7 +107,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     # ....................... #
 
-    def with_parameters(self, params: BaseModel) -> "MockDocumentAdapter[R, D, C, U]":
+    def with_parameters(self, params: BaseModel) -> MockDocumentAdapter[R, D, C, U]:
         # Bind the validated params onto a clone; reads then draw rows from the registered source
         # (modelling the parametrized relation) instead of stored documents.
         validate_query_parameters(self.spec, params)
@@ -254,9 +252,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             return
 
         self._mark_row_locked(
-            raw
-            if isinstance(raw, UUID)
-            else UUID(str(raw))  # pyright: ignore[reportUnknownArgumentType]
+            raw if isinstance(raw, UUID) else UUID(str(raw))  # pyright: ignore[reportUnknownArgumentType]
         )
 
     # ....................... #
@@ -323,9 +319,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         if self.spec.write is not None:
             domain = codecs.domain
             if domain is None:
-                raise exc.internal(
-                    "Domain codec is required when update codec is not configured"
-                )
+                raise exc.internal("Domain codec is required when update codec is not configured")
             return domain
         return self._read_codec()
 
@@ -696,11 +690,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             # Slice to the requested page *before* projecting/decoding, so only the page's rows
             # are materialized — matching the real adapters' late materialization (the DB
             # applies OFFSET/LIMIT before hydration) rather than decoding the whole match set.
-            return (
-                ordered[offset : offset + limit]
-                if limit is not None
-                else ordered[offset:]
-            )
+            return ordered[offset : offset + limit] if limit is not None else ordered[offset:]
 
         rows: list[Any]
 
@@ -735,9 +725,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
                 rows = default_model_codec(return_type).decode_mapping_many(dict_rows)
             else:
-                rows = [
-                    self._to_read_or_projection(doc, return_fields) for doc in page_docs
-                ]
+                rows = [self._to_read_or_projection(doc, return_fields) for doc in page_docs]
 
         if return_count:
             return page_from_limit_offset(
@@ -981,7 +969,10 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         # Python-mode dump keeps UUID/datetime objects intact, matching the
         # offset select path (audit: cursor vs offset value-type parity).
         return CursorPage(
-            hits=[default_model_codec(return_type).decode_mapping(hit.model_dump(mode="python")) for hit in page.hits],
+            hits=[
+                default_model_codec(return_type).decode_mapping(hit.model_dump(mode="python"))
+                for hit in page.hits
+            ],
             next_cursor=page.next_cursor,
             prev_cursor=page.prev_cursor,
             has_more=page.has_more,
@@ -1178,9 +1169,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 # only. Using a spec name here would diverge from the backends the mock models.
                 spec_name=None,
                 tenant_id=self.require_tenant_if_aware(),
-                filter_expr=(
-                    QueryFilterExpressionParser.parse(filters) if filters else None
-                ),
+                filter_expr=(QueryFilterExpressionParser.parse(filters) if filters else None),
             )
             if cursor_protection_active()
             else None
@@ -1196,9 +1185,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             binding=binding,
         )
         if return_fields is not None:
-            out_raw = [
-                self._to_read_or_projection(doc, return_fields) for doc in page_docs
-            ]
+            out_raw = [self._to_read_or_projection(doc, return_fields) for doc in page_docs]
             return CursorPage(
                 hits=cast(list[JsonDict], out_raw),
                 next_cursor=next_c,

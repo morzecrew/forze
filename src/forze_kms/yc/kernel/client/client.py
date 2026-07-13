@@ -7,7 +7,8 @@ require_kms_yc()
 # ....................... #
 
 import asyncio
-from typing import Any, Mapping, final
+from collections.abc import Mapping
+from typing import Any, final
 
 import attrs
 import yandexcloud
@@ -195,9 +196,7 @@ class YcKmsClient(YcKmsClientPort):
             data_key_spec=SymmetricAlgorithm.Value(algorithm),
         )
 
-        response = await asyncio.to_thread(
-            stub.GenerateDataKey, request, **self.__timeout_kwargs()
-        )
+        response = await asyncio.to_thread(stub.GenerateDataKey, request, **self.__timeout_kwargs())
 
         plaintext: bytes = response.data_key_plaintext
         ciphertext: bytes = response.data_key_ciphertext
@@ -222,9 +221,7 @@ class YcKmsClient(YcKmsClientPort):
         stub = self.__require_stub()
         request = SymmetricDecryptRequest(key_id=key_id, ciphertext=ciphertext)
 
-        response = await asyncio.to_thread(
-            stub.Decrypt, request, **self.__timeout_kwargs()
-        )
+        response = await asyncio.to_thread(stub.Decrypt, request, **self.__timeout_kwargs())
 
         plaintext: bytes = response.plaintext
 
@@ -248,9 +245,7 @@ class YcKmsClient(YcKmsClientPort):
             cursor = ""
 
             while True:
-                request = ListSymmetricKeysRequest(
-                    folder_id=folder_id, page_token=cursor
-                )
+                request = ListSymmetricKeysRequest(folder_id=folder_id, page_token=cursor)
                 response = key_stub.List(request, **timeout)
 
                 for key in response.keys:
@@ -318,9 +313,7 @@ class YcKmsClient(YcKmsClientPort):
         timeout = self.__timeout_kwargs()
 
         def _delete() -> None:
-            operation = key_stub.Delete(
-                DeleteSymmetricKeyRequest(key_id=key_id), **timeout
-            )
+            operation = key_stub.Delete(DeleteSymmetricKeyRequest(key_id=key_id), **timeout)
             sdk.wait_operation_and_get_result(operation, **timeout)
 
         await asyncio.to_thread(_delete)

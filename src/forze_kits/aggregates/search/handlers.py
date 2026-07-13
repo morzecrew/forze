@@ -6,6 +6,7 @@ from pydantic import BaseModel as Bm
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.mapping import Mapper
 from forze.application.contracts.search import SearchOptions, SearchQueryPort
+
 from .dto import (
     CursorSearchRequestDTO,
     ProjectedCursorSearchRequestDTO,
@@ -67,7 +68,9 @@ class Search[Out: Bm, Opt: SearchOptions = SearchOptions](Handler[Sr[Opt], Searc
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class ProjectedSearch[Opt: SearchOptions = SearchOptions](Handler[Psr[Opt], ProjectedSearchPaginated]):
+class ProjectedSearch[Opt: SearchOptions = SearchOptions](
+    Handler[Psr[Opt], ProjectedSearchPaginated]
+):
     """Operation handler that searches with field-projected raw results."""
 
     search: SearchQueryPort[Any, Opt]

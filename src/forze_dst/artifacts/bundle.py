@@ -12,8 +12,9 @@ that seed, so the bug reproduces on another machine, another day, from one comma
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, cast, final
+from typing import TYPE_CHECKING, Any, cast, final
 
 import attrs
 
@@ -131,8 +132,7 @@ def bundle_from_report(
         target=target,
         config=config_to_dict(config),
         workload=tuple(
-            (str(op), repr(arg))
-            for op, arg in cast("tuple[tuple[Any, Any], ...]", report.workload)
+            (str(op), repr(arg)) for op, arg in cast("tuple[tuple[Any, Any], ...]", report.workload)
         ),
         registry_fingerprint=report.registry_fingerprint,
         invariants=tuple(sorted({v.invariant for v in report.violations})),

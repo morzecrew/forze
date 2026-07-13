@@ -14,8 +14,8 @@ package stays free of any adapter dependency — the app supplies the mock modul
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
-from typing import Awaitable, Callable, Sequence
 
 import attrs
 
@@ -26,13 +26,13 @@ from forze.application.execution.interception import LatencyModel
 from forze.application.execution.lifecycle import FrozenLifecyclePlan
 from forze.application.execution.operations.registry import FrozenOperationRegistry
 from forze_dst import engines
-from forze_dst.engines.cases import OperationCase
 from forze_dst.config import SimulationConfig
-from forze_dst.oracle.coverage import CoverageStats
 from forze_dst.derive import DEFAULT_CREATE_VERBS
+from forze_dst.engines.cases import OperationCase
 from forze_dst.explore_guided import GuidedStats
-from forze_dst.oracle.invariants import Invariant
 from forze_dst.oracle import ViolationReport
+from forze_dst.oracle.coverage import CoverageStats
+from forze_dst.oracle.invariants import Invariant
 from forze_dst.reactive import ReactiveMap
 from forze_dst.scenario import Scenario
 from forze_dst.time_source import DEFAULT_EPOCH

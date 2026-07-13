@@ -10,7 +10,6 @@ from forze.application.contracts.analytics import (
     AnalyticsIngestDepKey,
     AnalyticsQueryDepKey,
 )
-from forze.application.contracts.procedure import ProcedureCommandDepKey
 from forze.application.contracts.authn import (
     ApiKeyLifecycleDepKey,
     ApiKeyVerifierDepKey,
@@ -57,7 +56,6 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
 )
 from forze.application.contracts.domain import DomainEventDispatcherDepKey
-from forze.application.contracts.hlc import HlcCheckpointDepKey
 from forze.application.contracts.durable.function import (
     DurableFunctionEventCommandDepKey,
     DurableFunctionStepDepKey,
@@ -79,6 +77,7 @@ from forze.application.contracts.graph import (
     GraphQueryDepKey,
     GraphRawQueryDepKey,
 )
+from forze.application.contracts.hlc import HlcCheckpointDepKey
 from forze.application.contracts.http import HttpServiceDepKey
 from forze.application.contracts.idempotency import (
     IdempotencyDepKey,
@@ -88,6 +87,7 @@ from forze.application.contracts.outbox import (
     OutboxCommandDepKey,
     OutboxQueryDepKey,
 )
+from forze.application.contracts.procedure import ProcedureCommandDepKey
 from forze.application.contracts.pubsub import (
     PubSubCommandDepKey,
     PubSubQueryDepKey,
@@ -112,11 +112,11 @@ from forze.application.contracts.storage import (
     StorageUploadSessionDepKey,
 )
 from forze.application.contracts.stream import (
-    StreamCommandDepKey,
     AckStreamGroupAdminDepKey,
     AckStreamGroupQueryDepKey,
     CommitStreamGroupAdminDepKey,
     CommitStreamGroupQueryDepKey,
+    StreamCommandDepKey,
     StreamQueryDepKey,
 )
 from forze.application.contracts.tenancy import (
@@ -170,10 +170,13 @@ from forze_mock.adapters.identity import (
 )
 from forze_mock.adapters.resilience import PassthroughResilienceExecutor
 from forze_mock.execution.factories import (
+    ConfigurableMockAckStreamGroup,
+    ConfigurableMockAckStreamGroupAdmin,
     ConfigurableMockAnalytics,
-    ConfigurableMockProcedure,
     ConfigurableMockAuthn,
     ConfigurableMockCache,
+    ConfigurableMockCommitStreamGroup,
+    ConfigurableMockCommitStreamGroupAdmin,
     ConfigurableMockCounter,
     ConfigurableMockDistributedLock,
     ConfigurableMockDocument,
@@ -197,20 +200,17 @@ from forze_mock.execution.factories import (
     ConfigurableMockPasswordLifecycle,
     ConfigurableMockPasswordReset,
     ConfigurableMockPrincipalDeactivation,
+    ConfigurableMockProcedure,
     ConfigurableMockPubSub,
     ConfigurableMockQueue,
     ConfigurableMockSearch,
     ConfigurableMockSearchCommand,
     ConfigurableMockSearchManagement,
-    ConfigurableMockAckStreamGroupAdmin,
-    ConfigurableMockCommitStreamGroup,
-    ConfigurableMockCommitStreamGroupAdmin,
     ConfigurableMockSearchSnapshot,
     ConfigurableMockStorageCommand,
     ConfigurableMockStorageQuery,
     ConfigurableMockStorageUploads,
     ConfigurableMockStream,
-    ConfigurableMockAckStreamGroup,
     ConfigurableMockTokenLifecycle,
     ConstantMockPortFactory,
     mock_journal_txmanager,
@@ -336,9 +336,7 @@ class MockDepsModule(DepsModule):
             aead=crypto_aead,
             directory=crypto_directory,
         )
-        crypto_deterministic = DeterministicFieldCipher(
-            root=b"mock-deterministic-root-secret!!"
-        )
+        crypto_deterministic = DeterministicFieldCipher(root=b"mock-deterministic-root-secret!!")
 
         resilience_executor = (
             PassthroughResilienceExecutor()
@@ -390,9 +388,7 @@ class MockDepsModule(DepsModule):
             AckStreamGroupQueryDepKey: ConfigurableMockAckStreamGroup(module=self),
             AckStreamGroupAdminDepKey: ConfigurableMockAckStreamGroupAdmin(module=self),
             CommitStreamGroupQueryDepKey: ConfigurableMockCommitStreamGroup(module=self),
-            CommitStreamGroupAdminDepKey: ConfigurableMockCommitStreamGroupAdmin(
-                module=self
-            ),
+            CommitStreamGroupAdminDepKey: ConfigurableMockCommitStreamGroupAdmin(module=self),
             OutboxCommandDepKey: ConfigurableMockOutboxCommand(module=self),
             OutboxQueryDepKey: ConfigurableMockOutboxQuery(module=self),
             DistributedLockQueryDepKey: dlock,
@@ -401,21 +397,15 @@ class MockDepsModule(DepsModule):
                 module=self,
                 dimensions=self.embeddings_dimensions,
             ),
-            DurableWorkflowCommandDepKey: ConfigurableMockDurableWorkflowCommand(
-                module=self
-            ),
-            DurableWorkflowQueryDepKey: ConfigurableMockDurableWorkflowQuery(
-                module=self
-            ),
+            DurableWorkflowCommandDepKey: ConfigurableMockDurableWorkflowCommand(module=self),
+            DurableWorkflowQueryDepKey: ConfigurableMockDurableWorkflowQuery(module=self),
             DurableWorkflowScheduleCommandDepKey: ConfigurableMockDurableWorkflowScheduleCommand(
                 module=self
             ),
             DurableWorkflowScheduleQueryDepKey: ConfigurableMockDurableWorkflowScheduleQuery(
                 module=self
             ),
-            DurableFunctionEventCommandDepKey: ConfigurableMockDurableFunctionEvent(
-                module=self
-            ),
+            DurableFunctionEventCommandDepKey: ConfigurableMockDurableFunctionEvent(module=self),
             DurableFunctionStepDepKey: ConfigurableMockDurableFunctionStep(module=self),
             DurableRunStoreDepKey: ConfigurableMockDurableRunStore(module=self),
             DurableRunAdminDepKey: ConfigurableMockDurableRunStore(module=self),
@@ -448,31 +438,22 @@ class MockDepsModule(DepsModule):
         # same shape the real identity modules use — so kit handlers, hooks, and
         # the ctx.authn / ctx.authz accessors resolve real working ports.
         identity_routed: dict[DepKey[Any], dict[StrKey, Any]] = {
-            AuthnDepKey: {route: authn_factory for route in authn_keys},
+            AuthnDepKey: dict.fromkeys(authn_keys, authn_factory),
             PasswordVerifierDepKey: route_stubs(
                 MockPasswordVerifierPort, authn_keys, state=self.state
             ),
-            TokenVerifierDepKey: route_stubs(
-                MockTokenVerifierPort, authn_keys, state=self.state
-            ),
-            ApiKeyVerifierDepKey: route_stubs(
-                MockApiKeyVerifierPort, authn_keys, state=self.state
-            ),
+            TokenVerifierDepKey: route_stubs(MockTokenVerifierPort, authn_keys, state=self.state),
+            ApiKeyVerifierDepKey: route_stubs(MockApiKeyVerifierPort, authn_keys, state=self.state),
             PrincipalResolverDepKey: route_stubs(
                 MockPrincipalResolverPort, authn_keys, state=self.state
             ),
-            PrincipalEligibilityDepKey: route_stubs(
-                MockPrincipalEligibilityPort, authn_keys
-            ),
+            PrincipalEligibilityDepKey: route_stubs(MockPrincipalEligibilityPort, authn_keys),
             PrincipalDeactivationDepKey: {
-                route: ConfigurableMockPrincipalDeactivation(module=self)
-                for route in authn_keys
+                route: ConfigurableMockPrincipalDeactivation(module=self) for route in authn_keys
             },
-            TokenLifecycleDepKey: {route: token_lifecycle for route in authn_keys},
-            PasswordLifecycleDepKey: {
-                route: password_lifecycle for route in authn_keys
-            },
-            PasswordResetDepKey: {route: password_reset for route in authn_keys},
+            TokenLifecycleDepKey: dict.fromkeys(authn_keys, token_lifecycle),
+            PasswordLifecycleDepKey: dict.fromkeys(authn_keys, password_lifecycle),
+            PasswordResetDepKey: dict.fromkeys(authn_keys, password_reset),
             ApiKeyLifecycleDepKey: route_stubs(MockApiKeyLifecyclePort, authn_keys),
             PasswordAccountProvisioningDepKey: route_stubs(
                 MockPasswordAccountProvisioningPort, authn_keys
@@ -485,12 +466,8 @@ class MockDepsModule(DepsModule):
             DelegationGrantDepKey: route_stubs(
                 MockDelegationGrantPort, authz_keys, state=self.state
             ),
-            DelegationDepKey: route_stubs(
-                MockDelegationPort, authz_keys, state=self.state
-            ),
-            AuthzDecisionDepKey: route_stubs(
-                MockAuthzDecisionPort, authz_keys, state=self.state
-            ),
+            DelegationDepKey: route_stubs(MockDelegationPort, authz_keys, state=self.state),
+            AuthzDecisionDepKey: route_stubs(MockAuthzDecisionPort, authz_keys, state=self.state),
             AuthzScopeDepKey: route_stubs(MockAuthzScopePort, authz_keys),
             TenantResolverDepKey: route_stubs(
                 MockTenantResolverPort, tenancy_keys, state=self.state

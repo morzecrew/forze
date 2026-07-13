@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from typing import Callable, final
+from typing import final
 from uuid import UUID
 
 import attrs
@@ -12,7 +13,6 @@ from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleStep
 from forze.application.contracts.tenancy import TenantClientRegistry
 from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
-
 from forze_mock.state import MockState
 
 # ----------------------- #

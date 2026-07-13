@@ -50,9 +50,7 @@ class UploadStoredFile(Handler[UploadStoredFileRequestDTO, StoredFileRead]):
         StoredFileCreateCmd,
         StoredFileUpdateCmd,
     ]
-    outbox: OutboxCommandPort[StoredFileOutboxPayload] | None = attrs.field(
-        default=None
-    )
+    outbox: OutboxCommandPort[StoredFileOutboxPayload] | None = attrs.field(default=None)
 
     # ....................... #
 
@@ -93,9 +91,7 @@ class ListStoredFiles(Handler[ListStoredFilesRequestDTO, Paginated[StoredFileRea
 
     # ....................... #
 
-    async def __call__(
-        self, args: ListStoredFilesRequestDTO
-    ) -> Paginated[StoredFileRead]:
+    async def __call__(self, args: ListStoredFilesRequestDTO) -> Paginated[StoredFileRead]:
         filters = merge_list_filters(
             args.filters,
             prefix=args.prefix,
@@ -155,9 +151,7 @@ class SoftDeleteStoredFile(Handler[StoredFileIdRevDTO, StoredFileRead]):
         StoredFileCreateCmd,
         StoredFileUpdateCmd,
     ]
-    outbox: OutboxCommandPort[StoredFileOutboxPayload] | None = attrs.field(
-        default=None
-    )
+    outbox: OutboxCommandPort[StoredFileOutboxPayload] | None = attrs.field(default=None)
 
     # ....................... #
 

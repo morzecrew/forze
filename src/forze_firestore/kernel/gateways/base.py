@@ -6,7 +6,8 @@ require_firestore()
 
 # ....................... #
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 from uuid import UUID
 
 import attrs
@@ -214,9 +215,7 @@ class FirestoreGateway[M: BaseModel](
         # Filter with the canonical string form — the same coercion writes use to
         # stamp the field — so stamped and filtered values compare equal and the
         # driver never sees a raw UUID (which it cannot encode).
-        tenant_filter = FieldFilter(
-            TENANT_ID_FIELD, "==", self._coerce_query_value(tenant_id)
-        )
+        tenant_filter = FieldFilter(TENANT_ID_FIELD, "==", self._coerce_query_value(tenant_id))
 
         if base is None:
             return tenant_filter

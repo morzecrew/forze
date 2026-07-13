@@ -83,9 +83,7 @@ PostgresIndexDefCache = dict[tuple[str, str, str], str]
 
 # ....................... #
 
-PostgresRelationKind = Literal[
-    "table", "view", "materialized_view", "partitioned_table", "other"
-]
+PostgresRelationKind = Literal["table", "view", "materialized_view", "partitioned_table", "other"]
 """Kind of a Postgres relation (table, view, etc.)."""
 
 PostgresRelationCache = dict[tuple[str, str, str], PostgresRelationKind]

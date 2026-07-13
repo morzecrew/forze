@@ -1,6 +1,7 @@
 """Kafka client that resolves bootstrap servers per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
-from typing import Callable, Mapping, Sequence, final
+from collections.abc import Callable, Mapping, Sequence
+from typing import final
 from uuid import UUID
 
 import attrs

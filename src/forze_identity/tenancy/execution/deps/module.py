@@ -1,16 +1,17 @@
 """Tenancy dependency module for the application kernel."""
 
-from typing import Collection, final
+from collections.abc import Collection
+from typing import final
 
 import attrs
 
+from forze.application.contracts.deps import Deps, DepsModule
 from forze.application.contracts.tenancy import (
     TenantManagementDepKey,
     TenantProvisionerPort,
     TenantResolverDepKey,
     TenantResolverDepPort,
 )
-from forze.application.contracts.deps import Deps, DepsModule
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_identity._routes import normalize_route_set as _normalize_route_set
 
@@ -71,8 +72,7 @@ class TenancyDepsModule(DepsModule):
                 Deps.routed(
                     {
                         TenantResolverDepKey: {
-                            name: resolver_overrides.get(name, default_factory)
-                            for name in tr
+                            name: resolver_overrides.get(name, default_factory) for name in tr
                         },
                     },
                 ),

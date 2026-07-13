@@ -1,8 +1,9 @@
 """File I/O helpers for YAML, text, and chunked byte iteration."""
 
 import io
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import yaml
 
@@ -22,7 +23,7 @@ def read_yaml(path: str | Path) -> dict[str, Any]:
 
     logger.trace("Reading YAML file '%s'", path)
 
-    with open(path, "r") as f:
+    with open(path) as f:
         r = yaml.safe_load(f)
 
     return r or {}
@@ -40,7 +41,7 @@ def read_text(path: str | Path) -> str:
 
     logger.trace("Reading text file '%s'", path)
 
-    with open(path, "r") as f:
+    with open(path) as f:
         return f.read()
 
 

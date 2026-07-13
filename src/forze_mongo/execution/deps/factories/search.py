@@ -4,16 +4,16 @@ from typing import Any, final
 
 import attrs
 
+from forze.application.contracts.crypto import (
+    DeterministicCipherDepKey,
+    KeyringDepKey,
+)
 from forze.application.contracts.embeddings import EmbeddingsSpec
 from forze.application.contracts.search import (
     SearchQueryDepPort,
     SearchResultSnapshotDepKey,
     SearchResultSnapshotSpec,
     SearchSpec,
-)
-from forze.application.contracts.crypto import (
-    DeterministicCipherDepKey,
-    KeyringDepKey,
 )
 from forze.application.contracts.search.ports import SearchQueryPort
 from forze.application.execution import ExecutionContext
@@ -72,15 +72,11 @@ def _result_snapshot(
     cipher = resolve_snapshot_cipher(
         encrypted=encrypted,
         keyring=(
-            context.deps.provide(KeyringDepKey)
-            if context.deps.exists(KeyringDepKey)
-            else None
+            context.deps.provide(KeyringDepKey) if context.deps.exists(KeyringDepKey) else None
         ),
     )
 
-    return SearchResultSnapshot(
-        store=port, cipher=cipher, cipher_tenant=context.inv_ctx.get_tenant
-    )
+    return SearchResultSnapshot(store=port, cipher=cipher, cipher_tenant=context.inv_ctx.get_tenant)
 
 
 # ....................... #
@@ -90,11 +86,7 @@ def _mongo_search_port_for_config(
     context: ExecutionContext,
     member_spec: SearchSpec[Any],
     c: MongoSearchConfig,
-) -> (
-    MongoTextSearchAdapter[Any]
-    | MongoAtlasSearchAdapter[Any]
-    | MongoVectorSearchAdapter[Any]
-):
+) -> MongoTextSearchAdapter[Any] | MongoAtlasSearchAdapter[Any] | MongoVectorSearchAdapter[Any]:
     c.validate_against_spec(member_spec)
 
     # Decrypt encrypted document fields out of in-place search results (the collection was
@@ -102,9 +94,7 @@ def _mongo_search_port_for_config(
     member_spec = resolve_search_read_codec_spec(
         member_spec,
         keyring=(
-            context.deps.provide(KeyringDepKey)
-            if context.deps.exists(KeyringDepKey)
-            else None
+            context.deps.provide(KeyringDepKey) if context.deps.exists(KeyringDepKey) else None
         ),
         deterministic=(
             context.deps.provide(DeterministicCipherDepKey)

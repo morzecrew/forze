@@ -21,7 +21,8 @@ require_psycopg()
 
 # ....................... #
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import attrs
 from psycopg import sql
@@ -87,9 +88,7 @@ class HighlightSelect:
 # ....................... #
 
 
-def _coalesced_text(
-    alias: str, field: str, *, scan_limit: int | None = None
-) -> sql.Composable:
+def _coalesced_text(alias: str, field: str, *, scan_limit: int | None = None) -> sql.Composable:
     text = sql.SQL("coalesce({}::text, '')").format(sql.Identifier(alias, field))
 
     if scan_limit is None:
@@ -172,8 +171,7 @@ def build_pgroonga_highlight(
     fragment_size, max_fragments = highlight_fragment_bounds(options)
 
     columns = tuple(
-        _coalesced_text(alias, field, scan_limit=spec.highlight_scan_limit)
-        for field in fields
+        _coalesced_text(alias, field, scan_limit=spec.highlight_scan_limit) for field in fields
     )
 
     return HighlightSelect(

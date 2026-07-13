@@ -17,11 +17,13 @@ class AuthnResourceName(StrEnum):
 # Document spec names used during authentication bootstrap. These reads must not rely on
 # ``tenant_aware=True`` predicate injection before :class:`~forze.application.contracts.tenancy.TenantIdentity`
 # is bound (configure Postgres/Mongo deps accordingly).
-AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES = frozenset({
-    AuthnResourceName.PASSWORD_ACCOUNTS,
-    AuthnResourceName.API_KEY_ACCOUNTS,
-    AuthnResourceName.PASSWORD_INVITES,
-    AuthnResourceName.PASSWORD_RESETS,
-    AuthnResourceName.TOKEN_SESSIONS,
-    AuthnResourceName.IDENTITY_MAPPINGS,
-})
+AUTHN_TENANT_UNAWARE_DOCUMENT_SPEC_NAMES = frozenset(
+    {
+        AuthnResourceName.PASSWORD_ACCOUNTS,
+        AuthnResourceName.API_KEY_ACCOUNTS,
+        AuthnResourceName.PASSWORD_INVITES,
+        AuthnResourceName.PASSWORD_RESETS,
+        AuthnResourceName.TOKEN_SESSIONS,
+        AuthnResourceName.IDENTITY_MAPPINGS,
+    }
+)

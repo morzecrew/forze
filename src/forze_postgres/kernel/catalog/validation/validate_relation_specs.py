@@ -1,6 +1,6 @@
 """Warnings for Postgres RelationSpec wiring on integration configs."""
 
-from typing import Sequence
+from collections.abc import Sequence
 
 from forze.application.contracts.resolution import RelationSpec
 from forze.application.contracts.tenancy import (

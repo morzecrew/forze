@@ -1,14 +1,12 @@
 """Helpers for declaring and collecting domain update validators."""
 
 import warnings
+from collections import OrderedDict
+from collections.abc import Callable, Iterable
 from typing import (
-    Callable,
     Final,
-    Iterable,
     Literal,
-    OrderedDict,
     TypeVar,
-    Union,
     cast,
     overload,
 )
@@ -39,11 +37,9 @@ M = TypeVar("M", bound=BaseModel)
 type UpdateValidator[X: BaseModel] = Callable[[X, X, JsonDict], None]
 """Update validator method signature."""
 
-type UpdateValidatorLike[X: BaseModel] = Union[
-    Callable[[X], None],
-    Callable[[X, X], None],
-    Callable[[X, X, JsonDict], None],
-]
+type UpdateValidatorLike[X: BaseModel] = (
+    Callable[[X], None] | Callable[[X, X], None] | Callable[[X, X, JsonDict], None]
+)
 """Allowed update validator signatures."""
 
 # ....................... #
@@ -74,7 +70,6 @@ def update_validator(
     _func: UpdateValidatorLike[M],
 ) -> UpdateValidator[M]:
     """Register a method as an update validator when used as a bare decorator."""
-    ...
 
 
 @overload
@@ -84,7 +79,6 @@ def update_validator(
     fields: Iterable[str] | None = None,
 ) -> Callable[[UpdateValidatorLike[M]], UpdateValidator[M]]:
     """Return a decorator that registers a method as an update validator with optional field filter."""
-    ...
 
 
 def update_validator(

@@ -60,9 +60,7 @@ class BaseSearchRequestDTO[O: SearchOptions = SearchOptions](BaseDTO):
 # ....................... #
 
 
-class SearchRequestDTO[O: SearchOptions = SearchOptions](
-    Pagination, BaseSearchRequestDTO[O]
-):
+class SearchRequestDTO[O: SearchOptions = SearchOptions](Pagination, BaseSearchRequestDTO[O]):
     """Search request payload for typed document search.
 
     When `query` is non-empty (or a non-empty list of phrases), backends run
@@ -100,9 +98,7 @@ class CursorSearchRequestDTO[O: SearchOptions = SearchOptions](
 # ....................... #
 
 
-class ProjectedCursorSearchRequestDTO[O: SearchOptions = SearchOptions](
-    CursorSearchRequestDTO[O]
-):
+class ProjectedCursorSearchRequestDTO[O: SearchOptions = SearchOptions](CursorSearchRequestDTO[O]):
     """Cursor search request with required field projection for raw results."""
 
     return_fields: set[str] = Field(min_length=1)
@@ -266,9 +262,7 @@ class SearchCursorPaginated[T: BaseModel](CursorPaginated[T]):
     # ....................... #
 
     @classmethod
-    def from_search_page[X: BaseModel](
-        cls, page: SearchCursorPage[X]
-    ) -> SearchCursorPaginated[X]:
+    def from_search_page[X: BaseModel](cls, page: SearchCursorPage[X]) -> SearchCursorPaginated[X]:
         out = cast(type[SearchCursorPaginated[X]], cls)
 
         return out(
@@ -293,9 +287,7 @@ class ProjectedSearchCursorPaginated(ProjectedCursorPaginated):
     # ....................... #
 
     @classmethod
-    def from_search_page(
-        cls, page: SearchCursorPage[JsonDict]
-    ) -> ProjectedSearchCursorPaginated:
+    def from_search_page(cls, page: SearchCursorPage[JsonDict]) -> ProjectedSearchCursorPaginated:
         return cls(
             **cursor_page_fields(page),
             facets=_facets_to_dto(page.facets),

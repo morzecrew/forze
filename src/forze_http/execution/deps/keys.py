@@ -1,7 +1,6 @@
 """HTTP dependency keys."""
 
 from forze.application.contracts.deps import DepKey
-
 from forze_http.kernel.client import HttpClientPort
 
 # ----------------------- #

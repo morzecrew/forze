@@ -1,6 +1,7 @@
 """Port for HashiCorp Vault KV access."""
 
-from typing import Any, Awaitable, Protocol
+from collections.abc import Awaitable
+from typing import Any, Protocol
 
 # ----------------------- #
 
@@ -80,9 +81,7 @@ class VaultClientPort(Protocol):
 
         ...  # pragma: no cover
 
-    def transit_create_key(
-        self, key_name: str, *, key_type: str
-    ) -> Awaitable[None]:
+    def transit_create_key(self, key_name: str, *, key_type: str) -> Awaitable[None]:
         """Create a Transit key of *key_type* (idempotent — existing key is a no-op)."""
 
         ...  # pragma: no cover

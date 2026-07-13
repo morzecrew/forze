@@ -101,9 +101,7 @@ class FieldEncryption:
 
     # ....................... #
 
-    def validate_fields_exist(
-        self, stored_fields: frozenset[str], *, spec_name: object
-    ) -> None:
+    def validate_fields_exist(self, stored_fields: frozenset[str], *, spec_name: object) -> None:
         """Reject a sealed field name absent from *stored_fields* (a typo footgun).
 
         A misspelt encrypted/searchable field silently encrypts nothing — the intended column

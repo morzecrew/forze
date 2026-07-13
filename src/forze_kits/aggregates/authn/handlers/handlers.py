@@ -1,4 +1,4 @@
-from typing import Callable
+from collections.abc import Callable
 
 import attrs
 
@@ -40,6 +40,7 @@ def _require_identity(
         raise exc.authentication("Authentication required", code="auth_required")
 
     return identity
+
 
 # ----------------------- #
 
@@ -159,9 +160,7 @@ class AuthnChangePassword(Handler[AuthnChangePasswordRequestDTO, None]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class AuthnIssueApiKey(
-    Handler[AuthnIssueApiKeyRequestDTO, AuthnIssuedApiKeyDTO]
-):
+class AuthnIssueApiKey(Handler[AuthnIssueApiKeyRequestDTO, AuthnIssuedApiKeyDTO]):
     """Self-service: issue an API key for the current identity (secret returned once).
 
     Optionally a user→agent **delegation** key (``actor_principal_id``). The secret
@@ -177,9 +176,7 @@ class AuthnIssueApiKey(
 
     # ....................... #
 
-    async def __call__(
-        self, args: AuthnIssueApiKeyRequestDTO
-    ) -> AuthnIssuedApiKeyDTO:
+    async def __call__(self, args: AuthnIssueApiKeyRequestDTO) -> AuthnIssuedApiKeyDTO:
         identity = _require_identity(self.resolver)
 
         issued = await self.api_key_lifecycle.issue_api_key(
@@ -194,9 +191,7 @@ class AuthnIssueApiKey(
             prefix=issued.key.prefix,
             hint=issued.hint,
             label=issued.label,
-            expires_at=(
-                issued.lifetime.expires_at if issued.lifetime is not None else None
-            ),
+            expires_at=(issued.lifetime.expires_at if issued.lifetime is not None else None),
         )
 
 

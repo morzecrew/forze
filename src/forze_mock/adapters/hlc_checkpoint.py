@@ -8,7 +8,6 @@ import attrs
 
 from forze.application.contracts.hlc import HlcCheckpointPort
 from forze.base.primitives import HlcTimestamp
-
 from forze_mock.adapters._journal import record_undo
 from forze_mock.state import MockState
 

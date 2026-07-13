@@ -1,4 +1,5 @@
-from typing import Awaitable, Protocol
+from collections.abc import Awaitable
+from typing import Protocol
 
 from ..value_objects import (
     AccessTokenCredentials,
@@ -23,21 +24,21 @@ class AuthnPort(Protocol):
 
     def authenticate_with_password(
         self,
-        credentials: PasswordCredentials,  # noqa: F841
+        credentials: PasswordCredentials,
     ) -> Awaitable[AuthnResult]:
         """Authenticate with password credentials and return the boundary authn result."""
         ...
 
     def authenticate_with_token(
         self,
-        credentials: AccessTokenCredentials,  # noqa: F841
+        credentials: AccessTokenCredentials,
     ) -> Awaitable[AuthnResult]:
         """Authenticate with access-token credentials and return the boundary authn result."""
         ...
 
     def authenticate_with_api_key(
         self,
-        credentials: ApiKeyCredentials,  # noqa: F841
+        credentials: ApiKeyCredentials,
     ) -> Awaitable[AuthnResult]:
         """Authenticate with API key credentials and return the boundary authn result."""
         ...

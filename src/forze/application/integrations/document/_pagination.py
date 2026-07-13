@@ -1,6 +1,7 @@
 """Internal offset/cursor pagination for document queries."""
 
-from typing import Any, AsyncGenerator, Generic, Sequence, cast
+from collections.abc import AsyncGenerator, Sequence
+from typing import Any, Generic, cast
 
 import attrs
 

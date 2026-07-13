@@ -120,10 +120,7 @@ class AuthzGrantResolver:
         if scope is None or scope.tenant_id is None:
             return
 
-        if (
-            self.invocation_tenant_id is not None
-            and scope.tenant_id != self.invocation_tenant_id
-        ):
+        if self.invocation_tenant_id is not None and scope.tenant_id != self.invocation_tenant_id:
             raise exc.internal(
                 "AuthzScope.tenant_id disagrees with the invocation tenant; refusing to "
                 "resolve grants against a different tenant's bindings.",

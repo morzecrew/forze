@@ -11,7 +11,8 @@ operation by the deps write-guard (see
 read belongs to analytics, not here.
 """
 
-from typing import Any, Awaitable, Protocol, runtime_checkable
+from collections.abc import Awaitable
+from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 

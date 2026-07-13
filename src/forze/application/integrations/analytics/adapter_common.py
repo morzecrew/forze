@@ -1,13 +1,8 @@
 """Shared helpers for warehouse analytics adapters."""
 
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from typing import (
     Any,
-    AsyncGenerator,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Mapping,
-    Sequence,
     TypeVar,
     cast,
 )
@@ -27,7 +22,11 @@ from forze.application.contracts.querying import (
 from forze.application.integrations.crypto import decrypt_rows
 from forze.application.integrations.tenancy_sql import (
     TENANT_PARAM as TENANT_PARAM,
+)
+from forze.application.integrations.tenancy_sql import (
     bind_tenant_param as bind_tenant_param,
+)
+from forze.application.integrations.tenancy_sql import (
     unreferenced_param_keys,
 )
 from forze.base.codecs import B64UrlJsonCodec
@@ -40,6 +39,7 @@ from forze.base.serialization import ModelCodec, default_model_codec
 T = TypeVar("T", bound=BaseModel)
 
 _ANALYTICS_CURSOR_CODEC = B64UrlJsonCodec()
+
 
 def assert_tenant_param_referenced(
     queries: Mapping[str, str],
@@ -182,9 +182,7 @@ async def decrypt_and_shape_rows(
     projections all see plaintext — so encrypted columns never leak as ciphertext on any path.
     """
 
-    rows, codec = await decrypt_rows(
-        read_codec or default_model_codec(read_type), rows
-    )
+    rows, codec = await decrypt_rows(read_codec or default_model_codec(read_type), rows)
 
     return shape_rows(
         rows,
@@ -366,9 +364,7 @@ def parse_offset_cursor_after(
     lim = parse_analytics_cursor_limit(cursor)
 
     if c.get("before"):
-        raise exc.precondition(
-            backward_not_supported, code="analytics_backward_cursor_unsupported"
-        )
+        raise exc.precondition(backward_not_supported, code="analytics_backward_cursor_unsupported")
 
     if not c.get("after"):
         return 0, lim
@@ -402,9 +398,7 @@ def parse_keyset_cursor_after(
     lim = parse_analytics_cursor_limit(cursor)
 
     if c.get("before"):
-        raise exc.precondition(
-            backward_not_supported, code="analytics_backward_cursor_unsupported"
-        )
+        raise exc.precondition(backward_not_supported, code="analytics_backward_cursor_unsupported")
 
     if not c.get("after"):
         return None, lim
@@ -431,9 +425,7 @@ def encode_offset_cursor_next_prev(
     limit: int,
 ) -> tuple[str | None, str | None]:
     has_more = page_len >= limit
-    next_c = (
-        _ANALYTICS_CURSOR_CODEC.dumps({"o": start + page_len}) if has_more else None
-    )
+    next_c = _ANALYTICS_CURSOR_CODEC.dumps({"o": start + page_len}) if has_more else None
     prev_c = _ANALYTICS_CURSOR_CODEC.dumps({"o": start}) if start > 0 else None
 
     return next_c, prev_c

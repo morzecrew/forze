@@ -1,6 +1,7 @@
 """Ports for async secret resolution."""
 
-from typing import Awaitable, Protocol
+from collections.abc import Awaitable
+from typing import Protocol
 
 from .value_objects import SecretRef
 

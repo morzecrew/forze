@@ -1,6 +1,7 @@
 """Prefetch Postgres catalog metadata used by search adapters (introspection cache)."""
 
-from typing import Any, Mapping, final
+from collections.abc import Mapping
+from typing import Any, final
 
 import attrs
 

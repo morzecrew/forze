@@ -4,10 +4,8 @@ from typing import Any, final
 
 import attrs
 
-from forze.application.contracts.deps import DepKey
+from forze.application.contracts.deps import DepKey, Deps
 from forze.application.contracts.saga import SagaExecutorDepKey, SagaExecutorPort
-
-from forze.application.contracts.deps import Deps
 
 # ----------------------- #
 

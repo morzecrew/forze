@@ -1,10 +1,13 @@
 """BigQuery client that resolves GCP credentials per tenant via :class:`~forze.application.contracts.secrets.SecretsPort`."""
 
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from datetime import timedelta
-from typing import Any, AsyncGenerator, Callable, Mapping, Sequence, cast, final
+from typing import Any, cast, final
 from uuid import UUID
 
 import attrs
+from pydantic import BaseModel
+
 from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.application.contracts.tenancy import require_tenant_id
 from forze.application.contracts.tenancy.routed_client_base import (
@@ -12,7 +15,6 @@ from forze.application.contracts.tenancy.routed_client_base import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from pydantic import BaseModel
 
 from .client import BigQueryClient
 from .port import BigQueryClientPort

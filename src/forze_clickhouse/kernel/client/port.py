@@ -1,7 +1,8 @@
 """Structural protocol for ClickHouse clients."""
 
+from collections.abc import AsyncGenerator, Awaitable, Sequence
 from datetime import timedelta
-from typing import AsyncGenerator, Awaitable, Protocol, Sequence
+from typing import Protocol
 
 from pydantic import BaseModel
 

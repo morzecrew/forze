@@ -1,5 +1,6 @@
+from collections.abc import Mapping
 from datetime import timedelta
-from typing import Mapping, final
+from typing import final
 
 import attrs
 from botocore.config import Config as AioConfig
@@ -55,10 +56,7 @@ class SQSConfig:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if (
-            self.connect_timeout is not None
-            and self.connect_timeout.total_seconds() <= 0
-        ):
+        if self.connect_timeout is not None and self.connect_timeout.total_seconds() <= 0:
             raise exc.configuration("Connect timeout must be positive")
 
         if self.read_timeout is not None and self.read_timeout.total_seconds() <= 0:
@@ -74,9 +72,7 @@ class SQSConfig:
 
         params = attrs.asdict(
             self,
-            filter=lambda attr, value: (
-                value is not None and attr.name not in _FORZE_ONLY_FIELDS
-            ),
+            filter=lambda attr, value: value is not None and attr.name not in _FORZE_ONLY_FIELDS,
         )
 
         for key in ("connect_timeout", "read_timeout"):

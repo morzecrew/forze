@@ -11,6 +11,8 @@ from forze.application.execution.operations.facade import (
     facade_op,
     namespaced_facade,
 )
+from forze.domain.models import BaseDTO
+
 from .handlers import (
     AggregatedListDocuments,
     CreateDocument,
@@ -22,8 +24,6 @@ from .handlers import (
     ProjectedListDocuments,
     UpdateDocument,
 )
-from forze.domain.models import BaseDTO
-
 from .operations import DocumentKernelOp
 
 if TYPE_CHECKING:

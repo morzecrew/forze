@@ -1,6 +1,7 @@
 """Sort-value parsing and canonical null placement (the per-key atom layer)."""
 
-from typing import Any, Mapping, NoReturn, cast
+from collections.abc import Mapping
+from typing import Any, NoReturn, cast
 
 from forze.base.exceptions import exc
 

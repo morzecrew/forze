@@ -1,5 +1,6 @@
 """Primitive types and helpers shared across the application."""
 
+from .bounded_lru_map import BoundedLruMap
 from .buffer import ContextualBuffer, ContextVarTrace
 from .cell import OnceCell
 from .context_scope import ContextScopedResource
@@ -50,7 +51,6 @@ from .fingerprint import (
     stable_json_bytes,
     stable_payload_fingerprint,
 )
-from .bounded_lru_map import BoundedLruMap
 from .graph import DirectedAcyclicGraph
 from .hlc import HlcTimestamp, HybridLogicalClock
 from .lanes import CachedInflightLane, CacheLane, InflightLane, LeaderFollowerLane
@@ -62,6 +62,12 @@ from .mapping import (
 )
 from .namespace import StrKeyNamespace
 from .numeric import clamp
+from .projection import (
+    MISSING,
+    build_projection,
+    path_get,
+    projection_roots,
+)
 from .quantile import P2Quantile, WindowedP2Quantile
 from .runtime import RuntimeVar
 from .selector import StrKeySelector, str_key_selector
@@ -74,12 +80,6 @@ from .time_source import (
     TimeSource,
     bind_time_source,
     current_time_source,
-)
-from .projection import (
-    MISSING,
-    build_projection,
-    path_get,
-    projection_roots,
 )
 from .types import JsonDict, StrKey
 from .uuid import uuid4, uuid7

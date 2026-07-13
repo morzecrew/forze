@@ -11,7 +11,8 @@ This is the **reference oracle**: the simplest correct semantics every other bac
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from forze.application.contracts.search import (
     FacetBucket,
@@ -60,9 +61,7 @@ def compute_facets(
 
         # Tie-break by the real value (so 2 sorts before 10), grouping by type name first
         # to keep a total order across the mixed value types a facet field may hold.
-        ordered = sorted(
-            counts.items(), key=lambda kv: (-kv[1], type(kv[0]).__name__, kv[0])
-        )
+        ordered = sorted(counts.items(), key=lambda kv: (-kv[1], type(kv[0]).__name__, kv[0]))
         results[field] = tuple(
             FacetBucket(value=value, count=count) for value, count in ordered[:size]
         )

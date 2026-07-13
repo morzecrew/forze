@@ -33,9 +33,7 @@ def normalize_before_after_diff(
     params = list(inspect.signature(f).parameters.values())
 
     if not params:
-        raise exc.internal(
-            f"{kind} must have at least one parameter (state before update)"
-        )
+        raise exc.internal(f"{kind} must have at least one parameter (state before update)")
 
     extra = len(params) - 1
 
