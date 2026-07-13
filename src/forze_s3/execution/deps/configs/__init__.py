@@ -73,9 +73,11 @@ class S3StorageConfig(TenantAwareIntegrationConfig):
 
     This is the **client-side** confidentiality axis and is independent of
     :attr:`sse` (server-side at-rest). Client-side ``encrypt`` still **refuses**
-    direct-upload flows (presigned/multipart/copy/range/move), so on those flows
-    :attr:`sse` is the only available encryption-at-rest. Both may be set: the
-    envelope bytes are then SSE-encrypted at rest over the ciphertext."""
+    direct-upload flows (presigned/multipart/copy/move), so on those flows
+    :attr:`sse` is the only available encryption-at-rest. Ranged reads decrypt
+    stream-uploaded (chunked) objects and are refused only for whole-payload
+    envelopes. Both may be set: the envelope bytes are then SSE-encrypted at
+    rest over the ciphertext."""
 
     sse: S3ServerSideEncryption = attrs.field(factory=S3ServerSideEncryption)
     """Server-side (backend, at-rest) encryption for this route. Defaults to off

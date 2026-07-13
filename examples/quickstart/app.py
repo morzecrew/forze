@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from pydantic import computed_field
 
 from forze import (
-    CreateDocumentCmd,
+    BaseDTO,
     Document,
     DocumentSpec,
     DocumentWriteTypes,
@@ -35,7 +35,7 @@ class User(Document):
     email: str | None = None
 
 
-class CreateUserCmd(CreateDocumentCmd):
+class CreateUserCmd(BaseDTO):
     name: str
     email: str | None = None
 

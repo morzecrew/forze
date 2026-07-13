@@ -46,11 +46,14 @@ Run a registered query by key with typed params; the shape × pagination naming 
 | `run_chunked(..., fetch_batch_size=2000)` | async generator of row batches |
 | `project_run*` / `select_run*` | `JsonDict` / caller-typed-model variants |
 
+`options: AnalyticsRunOptions` carries the per-run knobs — `dry_run`, `max_rows`, and
+`timeout`.
+
 ## Ingest port  (`ctx.analytics.ingest(spec)`)
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
-| `append` | `append(rows)` | append-only bulk insert; returns an `AnalyticsAppendResult` |
+| `append` | `append(rows)` | append-only bulk insert; returns an `AnalyticsAppendResult` (`accepted` / `rejected` / `errors`), or `None` when the backend reports nothing |
 
 Ingest is append-only — no update or delete. To recompute a rollup over an ingested batch,
 reach for the [procedures](procedure.md) port rather than per-row writes.

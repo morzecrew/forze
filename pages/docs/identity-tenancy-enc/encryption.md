@@ -147,6 +147,11 @@ envelope, decrypted transparently on read:
 S3StorageConfig(bucket="uploads", encrypt=True)
 ```
 
+The flag covers streaming too: `upload_stream` seals the object chunk by chunk
+in bounded memory, and `download_range` on such an object decrypts only the
+chunks the range covers. An object uploaded whole is a single sealed blob, so it
+cannot be sliced — read it back whole, via `download` or `download_stream`.
+
 ### Outbox and inbox
 
 The transactional outbox chooses **how far** ciphertext travels, via

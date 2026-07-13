@@ -28,6 +28,8 @@ extras in `pyproject.toml`; each `forze[<name>]` maps to the `<name>` extra.
 | **Outbound** | `http` |
 
 Each row maps to a `forze[<extra>]` package; their precise contract coverage is
-on each integration's page.
+on each integration's page. The remaining extras — `dst` and `cli` — are
+tooling, not backend integrations: [deterministic simulation
+testing](../dst/overview.md) and the `forze` command-line tool.
 
 Install one or several at once — `uv add 'forze[fastapi,postgres,redis]'`.

@@ -40,7 +40,7 @@ async with ctx.tx_ctx.scope(route, isolation=law.required_isolation):
     await enforce_preventive(law, ctx, params)
 ```
 
-Prevention is only sound at or above the law's `required_isolation` (default `SERIALIZABLE`): a weaker level lets a write-skew interleaving slip two concurrent writes past the check, each blind to the other. So `enforce_preventive` **fails closed** — it raises `exc.configuration` if the active transaction is weaker than required (or absent) rather than hand back enforcement a race would defeat. Opening the scope at the required level already pays the backend half of the gate, since `scope(isolation=…)` fail-closes against the manager's [`TxCapabilities`](concurrency-conflicts.md).
+Prevention is only sound at or above the law's `required_isolation` (default `SERIALIZABLE`): a weaker level lets a write-skew interleaving slip two concurrent writes past the check, each blind to the other. So `enforce_preventive` **fails closed** — it raises `exc.configuration` if the active transaction is weaker than required (or absent) rather than hand back enforcement a race would defeat. Opening the scope at the required level already pays the backend half of the gate, since `scope(isolation=…)` fail-closes against the manager's [`TxCapabilities`](transactions.md#isolation).
 
 ## Ask before you write: propose
 

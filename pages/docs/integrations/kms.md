@@ -190,7 +190,10 @@ What a `KeyRef.key_id` names, per provider:
   being told which version sealed it, so rotating the KEK never orphans data: new
   writes wrap under the new version while old ciphertext still decrypts. Nothing to
   migrate, no re-encrypt sweep — see [Searchable fields and rotation](../identity-tenancy-enc/encryption.md#searchable-fields-and-rotation)
-  for the one case that *does* need a re-index.
+  for the one case that *does* need a re-index. Pointing a tenant at a
+  *different* `key_id` is a migration, not a rotation — it needs a previous-key
+  read overlap and a re-encrypt sweep; see
+  [Replacing a key](../identity-tenancy-enc/encryption.md#replacing-a-key).
 - **Data-key length** is `dek_bytes` on the adapter — 32 bytes (AES-256) by
   default, matching the keyring's AEAD; 16 selects AES-128.
 - **Teardown is opt-in and never immediate.** `deprovision` does nothing unless you

@@ -11,7 +11,7 @@ attempt's result — the handler and its writes run exactly once.
 ## How it works
 
 When a request carries an **idempotency key**, the engine wraps the operation as
-its outermost layer. On each call it:
+the outermost wrap of its pipeline. On each call it:
 
 1. fingerprints the arguments (a stable payload hash);
 2. **claims** `(operation, key, payload hash)`;
@@ -20,8 +20,10 @@ its outermost layer. On each call it:
    transaction* entirely;
 4. otherwise runs the handler and stores the encoded result.
 
-Because the wrap sits *outside* the `before` hooks, authentication and
+The `before` hooks run ahead of the wrap chain, so authentication and
 authorization still run first — a replayed result is never an unauthorized one.
+What a duplicate skips is everything *inside* the wrap: the inner wraps, the
+transaction, and the handler.
 
 ## Keys and payloads
 

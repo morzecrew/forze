@@ -48,14 +48,16 @@ can't drift.
 
 | Surface | Coverage | Reach | Backends |
 |---------|----------|-------|----------|
-| Object storage | whole object (`encrypt=True`) | client-side — backend stores only the envelope | S3, GCS, mock |
+| Object storage | whole object or chunked stream (`encrypt=True`) | client-side — backend stores only the envelope | S3, GCS, mock |
 | Outbox | whole payload (`OutboxEncryptionTier`) | `none` / `at_rest` (relay decrypts before publish) / `end_to_end` (consumer decrypts after dedup) | Postgres / Mongo store → any transport |
 | Direct queue / stream / pub-sub | whole payload | `none` / `end_to_end` only (no store, so no `at_rest`) | SQS, RabbitMQ, Redis, Kafka, Inngest |
 | Idempotency result | whole cached result (`encrypt_result=True`) | at rest (sealed on commit, opened on replay; metadata stays plaintext) | Redis, Postgres |
 
 - **Object storage caveat:** multipart / presigned uploads are **blocked** when a route
   encrypts — the client would write bytes the app never sees, landing as plaintext. Use
-  a single-shot `upload()`.
+  a single-shot `upload()` or `upload_stream()` (seals chunk-by-chunk in bounded
+  memory). Ranged reads decrypt stream-uploaded objects; whole-payload envelopes
+  can't be sliced and must be read back whole.
 - **Outbox ↔ direct messaging:** both bind the payload AAD to `(tenant, event/message
   id)` reconstructable from envelope headers, and share a payload domain — so an
   `end_to_end` message decrypts identically whether it was relayed from the outbox or
@@ -82,7 +84,9 @@ can't drift.
 - **Replacing a KEK:** rotating a key *version* needs no action (the key id is unchanged, so
   old envelopes still decrypt). Replacing the *key* needs a read overlap —
   `TenantTemplateKeyDirectory(previous_template=…)` / `StaticKeyDirectory(previous_key_ref=…)`,
-  or a custom `KeyDirectoryWithPrevious` — then a sweep, then drop the previous key. Without
+  or a custom `KeyDirectoryWithPrevious` — then a re-encryption sweep (`reencrypt_documents`
+  for field-encrypted rows, `reencrypt_objects` for stored blobs), then drop the previous
+  key. Without
   the overlap the confused-deputy guard refuses the old envelopes and the data is stranded.
 - **KMS backends:** every one holds the KEK outside the app, and its wrapped data key is
   decryptable without being told which key version sealed it — so rotation never orphans

@@ -97,19 +97,23 @@ lifecycle = LifecyclePlan.from_steps(
 Resolve the service port by spec with `ctx.http.service(spec)`. Either call `port.invoke(op, args)` directly, or wrap it in the typed facade for IDE-friendly calls:
 
 ```python
+import attrs
+
 from forze.application.contracts.execution import Handler
 
 
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class ListOrders(Handler[ListOrdersCmd, OrdersListResponse]):
+    orders: OrdersClient  # typed facade over the resolved port
+
     async def __call__(self, args: ListOrdersCmd) -> OrdersListResponse:
-        port = self.ctx.http.service(orders_spec)
+        return await self.orders.get_orders(GetOrdersQuery(status=args.status))
+        # Equivalent untyped call on the raw port:
+        # await port.invoke("get_orders", GetOrdersQuery(status=args.status))
 
-        # Typed facade:
-        client = OrdersClient(port=port, spec=orders_spec)
-        return await client.get_orders(GetOrdersQuery(status=args.status))
 
-        # Equivalent untyped call:
-        # return await port.invoke("get_orders", GetOrdersQuery(status=args.status))
+# factory: lambda ctx: ListOrders(
+#     orders=OrdersClient(port=ctx.http.service(orders_spec), spec=orders_spec))
 ```
 
 ## Tenant-routed services

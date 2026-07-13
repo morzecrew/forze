@@ -399,6 +399,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Neo4j keyed-edge identity & quantifier coercion** — a keyed-edge ensure matches on the edge key so distinct keyed edges stay separate; every hop quantifier (including expand) is int-coerced before inlining; a filter key must be a plain identifier — a crafted key could reach query text through the parameter name (`graph_filter_key_invalid`); walk/path params validate their numeric bounds at construction. The mock graph adapter enforces the identical filter-key rule from a shared contracts helper, pinned by a differential conformance case.
 
+- **Logger-name constants are importable as documented** — `FORZE_POSTGRES_LOGGER_NAMES` / `FORZE_REDIS_LOGGER_NAMES` (and their logger enums) are now re-exported from the package roots for `bootstrap_logging` wiring, matching `forze_http`.
+
 - **`forze_redis` imports on redis-py 7 again** — version-specific typing aliases are self-owned; client-side caching fails closed below redis-py 8.
 
 - **Redis idempotency store cannot be corrupted via the idempotency key** — the untrusted key is hashed, results live in a disjoint scope, and commit/fail are fenced compare-and-set. The key format change resets the in-flight dedup window once on upgrade.

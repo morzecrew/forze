@@ -54,10 +54,11 @@ only the dependency wiring adds caching:
 
 ## Going further
 
-Read-through is the floor. The cache contract layers stampede protection, an
-in-process L1 (with W-TinyLFU admission and Redis push invalidation), and adaptive
-TTLs on top — each a one-line addition to the `CacheSpec`, covered in
-[Caching reads](../data-events/caching.md).
+Read-through is the floor. The cache contract layers stampede protection with
+background early refresh (serve the still-valid entry, refresh off the request
+path), an in-process L1 (with W-TinyLFU admission and Redis push invalidation),
+and adaptive TTLs on top — each a one-line addition to the `CacheSpec`, covered
+in [Caching reads](../data-events/caching.md).
 
 ## Run it
 

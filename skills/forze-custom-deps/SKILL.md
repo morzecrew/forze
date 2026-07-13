@@ -3,12 +3,12 @@ name: forze-custom-deps
 description: >-
   Authors custom DepKey and DepsModule implementations in an application when
   a private integration is not covered by shipped forze_* packages. Use for
-  Neo4j graph adapters, Redis pub/sub maps, or other app-specific backends.
+  vendor SDKs, niche datastores, or other app-specific backends.
 ---
 
 # Forze custom dependency modules
 
-Use when your **application** needs a private integration that no shipped `forze_*` package provides (for example graph databases, Redis pub/sub routes, or an internal HTTP client). For everyday wiring with `PostgresDepsModule`, `S3DepsModule`, and similar, use [`forze-deps-consumption`](../forze-deps-consumption/SKILL.md) and [`forze-wiring`](../forze-wiring/SKILL.md).
+Use when your **application** needs a private integration that no shipped `forze_*` package provides (for example a vendor SDK, a niche datastore, or a graph engine other than Neo4j). For everyday wiring with `PostgresDepsModule`, `S3DepsModule`, and similar, use [`forze-deps-consumption`](../forze-deps-consumption/SKILL.md) and [`forze-wiring`](../forze-wiring/SKILL.md).
 
 ## Container model
 
@@ -22,7 +22,7 @@ Use when your **application** needs a private integration that no shipped `forze
 
 ## Module shape
 
-Keep modules generic over `K: str | StrEnum` so routes stay type-safe with your application enums.
+Route keys are `str | StrEnum` (`StrKey`), so shared application enums stay type-safe as map keys.
 
 ```python
 from enum import StrEnum
@@ -40,24 +40,24 @@ WidgetDepKey = DepKey[WidgetDepPort]("widget")
 
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class WidgetDepsModule[K: str | StrEnum](DepsModule[K]):
+class WidgetDepsModule(DepsModule):
     client: WidgetClientPort
-    widgets: Mapping[K, WidgetConfig] | None = None
+    widgets: Mapping[str | StrEnum, WidgetConfig] | None = None
 
-    def __call__(self) -> Deps[K]:
-        plain = Deps[K].plain({WidgetClientDepKey: self.client})
-        routed = Deps[K]()
+    def __call__(self) -> Deps:
+        plain = Deps.plain({WidgetClientDepKey: self.client})
 
-        if self.widgets:
-            routed = Deps[K].routed(
-                {
-                    WidgetDepKey: {
-                        name: ConfigurableWidget(config=config)
-                        for name, config in self.widgets.items()
-                    }
+        if not self.widgets:
+            return plain
+
+        routed = Deps.routed(
+            {
+                WidgetDepKey: {
+                    name: ConfigurableWidget(config=config)
+                    for name, config in self.widgets.items()
                 }
-            )
-
+            }
+        )
         return plain.merge(routed)
 ```
 
@@ -89,7 +89,7 @@ Register a shared client as a plain dep; routed factories pick tenant-specific c
 ## Anti-patterns
 
 1. **Instantiating adapters directly in handlers** — register factories and resolve ports.
-2. **Using only raw strings for new routes** — prefer `K: str | StrEnum` on the module.
+2. **Using only raw strings for new routes** — prefer shared `StrEnum` values for route keys.
 3. **Opening connections in `DepsModule.__call__`** — use lifecycle steps.
 4. **Overlapping keys from multiple custom modules** — merge configs before constructing modules or use distinct routes.
 5. **Plain deps for multi-spec keys** — use routed deps keyed by `spec.name`.
@@ -100,5 +100,5 @@ Register a shared client as a plain dep; routed factories pick tenant-specific c
 
 - [Execution reference](https://morzecrew.github.io/forze/latest/writing-operation/wiring/)
 - [`forze-deps-consumption`](../forze-deps-consumption/SKILL.md)
-- [`forze-graph-contracts`](../forze-graph-contracts/SKILL.md) (graph ports + custom module)
-- [`forze-messaging-streaming`](../forze-messaging-streaming/SKILL.md) (Redis pub/sub/stream custom wiring)
+- [`forze-graph-contracts`](../forze-graph-contracts/SKILL.md) (graph ports; custom module for non-Neo4j engines)
+- [`forze-messaging-streaming`](../forze-messaging-streaming/SKILL.md) (queue/stream/pub-sub contracts)

@@ -2,8 +2,9 @@
 name: forze-messaging-streaming
 description: >-
   Uses Forze queue, pub/sub, and stream contracts with QueueSpec, PubSubSpec,
-  StreamSpec, SQSDepsModule, RabbitMQDepsModule, Redis adapters, and Mock
-  adapters. Use when producing, consuming, or testing async messages/events.
+  StreamSpec, SQSDepsModule, RabbitMQDepsModule, RedisDepsModule stream/pub-sub
+  maps, KafkaDepsModule commit-stream groups, and Mock adapters. Use when
+  producing, consuming, or testing async messages/events.
 ---
 
 # Forze messaging and streaming
@@ -64,16 +65,19 @@ await reader.ack("orders", [msg.id for msg in messages])
 Both integrations register `QueueQueryDepKey` and `QueueCommandDepKey` through routed maps.
 
 ```python
+from forze_rabbitmq import RabbitMQDepsModule, RabbitMQQueueConfig
+from forze_sqs import SQSDepsModule, SQSQueueConfig
+
 sqs_module = SQSDepsModule(
     client=sqs_client,
-    queue_readers={ResourceName.ORDERS: {"namespace": "app"}},
-    queue_writers={ResourceName.ORDERS: {"namespace": "app"}},
+    queue_readers={ResourceName.ORDERS: SQSQueueConfig(namespace="app")},
+    queue_writers={ResourceName.ORDERS: SQSQueueConfig(namespace="app")},
 )
 
 rabbit_module = RabbitMQDepsModule(
     client=rabbit_client,
-    queue_readers={ResourceName.ORDERS: {"namespace": "app"}},
-    queue_writers={ResourceName.ORDERS: {"namespace": "app"}},
+    queue_readers={ResourceName.ORDERS: RabbitMQQueueConfig(namespace="app")},
+    queue_writers={ResourceName.ORDERS: RabbitMQQueueConfig(namespace="app")},
 )
 ```
 
@@ -96,7 +100,7 @@ publisher = ctx.deps.resolve_configurable(
 await publisher.publish("orders.created", payload, type="order.created")
 ```
 
-`MockDepsModule` registers pub/sub factories. Redis pub/sub adapters exist, but `RedisDepsModule` does not currently expose pub/sub maps; register them through a custom deps module if needed.
+`MockDepsModule` registers pub/sub factories. For production, `RedisDepsModule` exposes a `pubsub={route: RedisPubSubConfig()}` map that registers `PubSubQueryDepKey` / `PubSubCommandDepKey` for those routes.
 
 ## Stream contracts
 
@@ -115,7 +119,7 @@ stream = ctx.deps.resolve_configurable(
 entry_id = await stream.append("orders", payload, type="order.created")
 ```
 
-Use `StreamQueryDepKey` for `read` / `tail`. Consumer groups come in two disciplines: `AckStreamGroupQueryDepKey` for per-message ack + `claim` recovery (Redis-class), and `CommitStreamGroupQueryDepKey` for per-partition offset `commit` on a Kafka-class log (with a `CommitStreamGroupAdminDepKey` for `ensure_topic` / `ensure_group` / `reset_offsets` / `lag`). `MockDepsModule` registers all of them. For Redis streams or pub/sub, `RedisDepsModule` does not register stream/pubsub maps yet — use [`forze-custom-deps`](../forze-custom-deps/SKILL.md) or `MockDepsModule`.
+Use `StreamQueryDepKey` for `read` / `tail`. Consumer groups come in two disciplines: `AckStreamGroupQueryDepKey` for per-message ack + `claim` recovery (Redis-class), and `CommitStreamGroupQueryDepKey` for per-partition offset `commit` on a Kafka-class log (with a `CommitStreamGroupAdminDepKey` for `ensure_topic` / `ensure_group` / `reset_offsets` / `lag`). `MockDepsModule` registers all of them. In production, `RedisDepsModule` wires the ack discipline via `streams={route: RedisStreamConfig()}` (stream query/command + `AckStreamGroup*` keys), and `KafkaDepsModule` wires the commit discipline via `streams=` / `commit_groups=` (`CommitStreamGroupQueryDepKey` / `CommitStreamGroupAdminDepKey`).
 
 ## Processing rules
 
@@ -129,8 +133,8 @@ Use `StreamQueryDepKey` for `read` / `tail`. Consumer groups come in two discipl
 1. **Resolving queue ports without `route=spec.name`** when using SQS/RabbitMQ routed modules.
 2. **Using queue names as spec names by accident** — spec names route deps; queue/topic/stream names are provider-level names.
 3. **Acknowledging before processing succeeds** — failures become data loss.
-4. **Assuming Redis pub/sub/stream maps are wired in `RedisDepsModule`** — use [`forze-custom-deps`](../forze-custom-deps/SKILL.md) or `MockDepsModule`.
-5. **Importing SQS/RabbitMQ adapters in handlers** — use contracts and dependency keys.
+4. **Mixing consumer-group disciplines** — Redis streams are ack-discipline (`AckStreamGroup*`), Kafka is commit-discipline (`CommitStreamGroup*`); a handler written for one does not port to the other unchanged.
+5. **Importing SQS/RabbitMQ/Redis/Kafka adapters in handlers** — use contracts and dependency keys.
 
 ## Reference
 
@@ -138,6 +142,8 @@ Use `StreamQueryDepKey` for `read` / `tail`. Consumer groups come in two discipl
 
 - [SQS integration](https://morzecrew.github.io/forze/latest/integrations/sqs/)
 - [RabbitMQ integration](https://morzecrew.github.io/forze/latest/integrations/rabbitmq/)
+- [Redis integration](https://morzecrew.github.io/forze/latest/integrations/redis/)
+- [Kafka integration](https://morzecrew.github.io/forze/latest/integrations/kafka/)
+- [Messaging delivery models](https://morzecrew.github.io/forze/latest/data-events/messaging-delivery-models/)
 - [Queue contracts](https://morzecrew.github.io/forze/latest/reference/contracts/messaging/)
-- [Pub/Sub contracts](https://morzecrew.github.io/forze/latest/reference/contracts/)
-- [Stream contracts](https://morzecrew.github.io/forze/latest/reference/contracts/)
+- [Stream contracts](https://morzecrew.github.io/forze/latest/reference/contracts/streaming/)

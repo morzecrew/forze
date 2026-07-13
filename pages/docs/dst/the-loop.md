@@ -13,7 +13,7 @@ Finding a bug is the start of the loop, not the end. A `ViolationReport` is a *r
 
 `report.format()` renders the whole failure: the minimised workload, the concurrency that triggered it, the causal trace (each operation and the port calls it caused — with the values they wrote and read back when `capture_values` is on), an **injected-environment timeline** (the faults, latency, and partitions the simulator applied, in virtual-time order), and the violated invariant.
 
-For a **time-travel** view, `report.timeline()` flattens the run into a virtual-time-ordered stream of steps — operations, port calls with their value flow, injected environment, recorded facts — that you scroll through like a debugger. `render_timeline(history)` prints it, and each `TimelineEntry.to_dict()` is JSON, so the timeline is a portable artifact a CLI or viewer steps through by virtual time:
+For a **time-travel** view, `report.timeline()` flattens the run into a virtual-time-ordered stream of steps — operations, port calls with their value flow, injected environment, recorded facts — that you scroll through like a debugger. `render_timeline(history)` renders it as text, and each `TimelineEntry.to_dict()` is JSON, so the timeline is a portable artifact a CLI or viewer steps through by virtual time:
 
 ```text
 DST timeline (by virtual time):
@@ -48,7 +48,7 @@ No plugin is needed for that — it is a plain assertion. It defaults to a `thor
 
 The friction a DST test usually hits is that the right seed count differs by where it runs — a handful while you iterate, thousands in CI. Enable the optional plugin and one flag scales every sweep without touching the test:
 
-```toml
+```python
 # conftest.py
 pytest_plugins = ["forze_dst.testing.plugin"]
 ```
@@ -120,8 +120,9 @@ report = replay_bundle(FailureBundle.load("bug.json"))   # reproduces, from one 
 
 DST is built from small seams, so you extend it without forking — each plugs in as a
 plain callable or protocol. An `Invariant` is any `Callable[[History], list[Violation]]`
-(the [built-ins](invariants.md) are factories returning one); `Scheduler` is a protocol
-you supply via `scheduler_factory`; faults and latency are declarative data
+(the [built-ins](invariants.md) are factories returning one); the interleaving strategy is a config
+variant, and a custom order is a `Reorderer` protocol you supply via the engines'
+`scheduler_factory`; faults and latency are declarative data
 (`FaultPolicy`, `LatencyProfile`), with an `interceptors` factory for anything custom;
 and each search strategy is a free function under `forze_dst.engines` you can call
 directly or compose. The `Simulation` class is a thin facade that binds the config and

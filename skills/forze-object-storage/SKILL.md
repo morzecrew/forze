@@ -49,7 +49,7 @@ s3_module = S3DepsModule(
 lifecycle = LifecyclePlan.from_steps(
     s3_lifecycle_step(
         # read credentials from env/secrets — never commit literal keys
-        endpoint=os.environ.get("S3_ENDPOINT"),          # e.g. http://localhost:9000 for MinIO or another S3-compatible endpoint
+        endpoint=os.environ["S3_ENDPOINT"],          # e.g. http://localhost:9000 for MinIO or another S3-compatible endpoint
         access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
         secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
         config=S3Config(max_pool_connections=20),
@@ -80,8 +80,10 @@ For local `fake-gcs-server`, set `STORAGE_EMULATOR_HOST=http://localhost:4443` b
 
 Storage spreads across three ports:
 
-- **`StorageQueryPort`** — `ctx.storage.query(spec)` — `download`, `download_range` (ranged), `download_if_changed` (conditional), `head` (metadata, no body), `list`, `presign_download`.
-- **`StorageCommandPort`** — `ctx.storage.command(spec)` — `upload`, `delete`, `copy`, `move`, `put_object_tags`, `presign_upload`.
+- **`StorageQueryPort`** — `ctx.storage.query(spec)` — `download`, `download_stream` (bounded-memory chunked download), `download_range` (ranged), `download_if_changed` (conditional), `head` (metadata, no body), `list`, `presign_download`.
+- **`StorageCommandPort`** — `ctx.storage.command(spec)` — `upload`, `upload_stream` / `overwrite_stream` (bounded-memory streaming writes), `delete`, `copy`, `move`, `put_object_tags`, `presign_upload`.
+
+Streaming works with client-side encryption: an encrypting route seals/decrypts **chunk-by-chunk** (chunked-AEAD), so large encrypted blobs — including ranged reads over them — never sit whole in memory.
 - **`StorageUploadSessionPort`** — `ctx.storage.uploads(spec)` — the multipart session ops `begin_upload`, `presign_part`, `list_parts`, `complete_upload`, `abort_upload`.
 
 After a presigned/direct upload (where the app never sees the bytes), confirm the object landed with `ctx.storage.query(spec).head(...)` before recording it — `head` is a port call, not a facade method.
@@ -112,7 +114,7 @@ files = StorageFacade(ctx=ctx, registry=storage_registry, namespace=attachments_
 #   list_parts + abort_upload(UploadSessionRequestDTO) / complete_upload(CompleteUploadRequestDTO)
 ```
 
-The facade stops there. The remaining port operations — `head`, `download_range`, `download_if_changed` (query) and `copy`, `move`, `put_object_tags` (command) — have no facade method; reach them through `ctx.storage.query(spec)` / `ctx.storage.command(spec)`.
+The facade stops there. The remaining port operations — `head`, `download_stream`, `download_range`, `download_if_changed` (query) and `upload_stream`, `overwrite_stream`, `copy`, `move`, `put_object_tags` (command) — have no facade method; reach them through `ctx.storage.query(spec)` / `ctx.storage.command(spec)`.
 
 **Inside a custom handler** — when an upload is one step of a domain operation, resolve the port directly in the factory:
 

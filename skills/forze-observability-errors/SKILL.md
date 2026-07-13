@@ -26,7 +26,8 @@ Raise expected domain/application failures as `CoreException`, built through the
 | `exc.infrastructure(...)` | `infrastructure` | 500 | backend/service failure |
 | `exc.throttled(...)` | `throttled` | 429 | rate limit / draining rejection (retryable) |
 | `exc.timeout(...)` | `timeout` | 504 | invocation time budget spent (non-retryable) |
-| `exc.internal(...)` / `exc.concurrency(...)` / `exc.configuration(...)` | — | 500 | unexpected/internal failures |
+| `exc.concurrency(...)` | `concurrency` | 409 | optimistic-lock / serialization race (retryable) |
+| `exc.internal(...)` / `exc.configuration(...)` | — | 500 | unexpected/internal failures |
 
 Each factory takes `(summary, *, code=None, details=None)`. Set a stable `code` for machine handling and use `details` for structured context.
 
@@ -64,14 +65,21 @@ For declarative mapping (what shipped adapters use internally), Forze also expos
 
 ## Logging
 
-Configure structlog once at application startup.
+Configure logging once at application startup — `bootstrap_logging` wires the framework loggers, named integration loggers, third-party stdlib loggers, and the uncaught-exception hook in one call:
 
 ```python
-from forze.base.logging import attach_foreign_loggers, configure_logging, ForzeConsoleRenderer
+from forze import bootstrap_logging
 
-configure_logging(level="info", render_mode="json", logger_names=["forze"])
-attach_foreign_loggers(["uvicorn", "fastapi"], render_mode="json")
+bootstrap_logging(
+    level="info",
+    render_mode="json",  # "console" for local dev
+    third_party=["uvicorn", "fastapi"],
+)
 ```
+
+Pass extra integration logger roots via `logger_names=[...]` when an integration's loggers are not already covered.
+
+`configure_logging` / `attach_foreign_loggers` (from `forze.base.logging`) remain the lower-level entry points when you want to wire the pieces yourself. Pass `otel_config=...` to inject the active span's `trace_id` / `span_id` into every log line.
 
 For console development output, tune traceback depth with `ForzeConsoleRenderer(max_traceback_frames=0)` (show all frames) or `traceback_supress=["uvicorn", "starlette"]`.
 
@@ -81,12 +89,12 @@ Log event fields are scrubbed by default (`sanitize_logs=True`; Logfire-aligned 
 from forze.base.scrubbing import dump_for_error_context, sanitize_pydantic_errors
 ```
 
-Use `Logger` instances in modules and bind stable context:
+Use `get_logger` in modules and bind stable context:
 
 ```python
-from forze.base.logging import Logger
+from forze import get_logger
 
-logger = Logger("app.projects").bind(component="projects")
+logger = get_logger("app.projects").bind(component="projects")
 logger.info("project_created", project_id=str(project_id))
 ```
 

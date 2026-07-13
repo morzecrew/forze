@@ -104,7 +104,7 @@ class CursorTokenCipher:
     HMAC: a cipher **supersedes** a :class:`CursorTokenSigner` when both are configured.
 
     The AES-256 key is derived from *secret* (like the signer's), so this is a static-secret
-    cipher, not a KMS-backed one; rotating the secret invalidates in-flight cursors (they 400
+    cipher, not a KMS-backed one; rotating the secret invalidates in-flight cursors (they 422
     once and the client restarts). Defaults to AES-256-GCM via :mod:`forze.base.crypto`, whose
     nonce comes from the ambient entropy source (deterministic under simulation).
     """
@@ -335,7 +335,7 @@ def configure_cursor_signer(
     """Set the cursor-token signer for the *current* context; return the previous one (restore).
 
     Opt-in: with a signer set, every keyset cursor token is HMAC-signed and verification
-    rejects any unsigned or tampered token (a hard cutover — cursors minted before it 400
+    rejects any unsigned or tampered token (a hard cutover — cursors minted before it 422
     once and the client restarts pagination). Call at startup, like ``configure_logging``; for
     a scoped binding that auto-restores (and isolates concurrent runtimes) use
     :func:`bind_cursor_signer`.
@@ -801,7 +801,7 @@ def decode_keyset_v1(
     When *cipher* is set the token must be AEAD-encrypted and is decrypted first (the tag
     authenticates); otherwise when *signer* is set the token must be signed and the HMAC must
     verify (constant-time). Either way an unprotected or tampered token is rejected — a hard
-    cutover, so enabling protection invalidates cursors minted without it (they 400 once and the
+    cutover, so enabling protection invalidates cursors minted without it (they 422 once and the
     client restarts pagination).
 
     When *binding* is also given, the token's embedded binding digest must equal the current

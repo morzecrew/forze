@@ -53,7 +53,7 @@ from forze_postgres.adapters.document import PostgresDocumentAdapter  # Never in
 | `ctx.search.query(spec)` | `SearchQueryPort` | Full-text search |
 | `ctx.search.hub(spec)` | `SearchQueryPort` | Hub search |
 | `ctx.search.federated(spec)` | `SearchQueryPort` | Federated search |
-| `ctx.tx_ctx.resolver(route)` | `TransactionManagerPort` | Transaction route (e.g. `"default"`) |
+| `ctx.transaction(route)` | `TransactionManagerPort` | Transaction route (e.g. `"default"`) |
 | `ctx.tx_ctx.scope(route)` | async context manager | Transaction scope |
 | `ctx.resilience()` | `ResilienceExecutorPort` | Run a call under a named policy — see [`forze-resilience-deadlines`](../forze-resilience-deadlines/SKILL.md) |
 
@@ -92,7 +92,7 @@ async with ctx.tx_ctx.scope(TxRoute.DEFAULT):
     await doc_c.create(cmd2)
 ```
 
-Use `ctx.tx_ctx.defer_after_commit()` for side effects that must run only after the root transaction commits.
+Use `await ctx.tx_ctx.run_or_defer(callback)` for side effects that must run only after the root transaction commits (runs immediately when no transaction is active).
 
 Stage hooks use `BeforeStep` / `OnSuccessStep` on `OperationRegistry.bind(...)` — see [Middleware and plans](https://morzecrew.github.io/forze/latest/writing-operation/capability-execution/).
 
@@ -149,15 +149,14 @@ rows = page.hits
 
 created = await doc_c.create(CreateProjectCmd(title="New"))
 updated = await doc_c.update(doc_id, current_rev, UpdateProjectCmd(title="Updated"))
-await doc_c.delete(doc_id, current_rev)
-await doc_c.kill(doc_id)
+await doc_c.kill(doc_id)  # hard delete; soft delete is a kit concern (SoftDeletionMixin + registry)
 ```
 
 ### Search
 
 ```python
 search = ctx.search.query(project_search_spec)
-page = await search.search_page(query="roadmap", filters=..., limit=20, offset=0)
+page = await search.search_page("roadmap", filters=..., pagination={"limit": 20, "offset": 0})
 hits, total = page.hits, page.count
 ```
 

@@ -27,8 +27,8 @@ where `end_to_end` seals the payload through the broker).
 
 | Method | Signature |
 |--------|-----------|
-| `enqueue` | `enqueue(queue, payload, *, type=None, key=None, enqueued_at=None, delay=None, not_before=None)` → message id |
-| `enqueue_many` | `enqueue_many(queue, payloads, *, type=None, key=None, enqueued_at=None, delay=None, not_before=None)` |
+| `enqueue` | `enqueue(queue, payload, *, type=None, key=None, enqueued_at=None, delay=None, not_before=None, headers=None)` → message id |
+| `enqueue_many` | `enqueue_many(queue, payloads, *, type=None, key=None, enqueued_at=None, delay=None, not_before=None, headers=None, message_headers=None)` |
 
 `delay` (a `timedelta`) and `not_before` (a tz-aware `datetime`) are mutually
 exclusive — see [Scheduled & delayed jobs](../../recipes/scheduled-queue-jobs.md).
@@ -54,7 +54,8 @@ relay. See [Transactional outbox](../../recipes/transactional-outbox.md).
 | `name` | `str \| StrEnum` | required | route name |
 | `codec` | `ModelCodec` | required | staged integration-event payload codec |
 | `destination` | `OutboxDestination \| None` | `None` | default relay target — `.queue` / `.stream` / `.pubsub(route, channel)` |
-| `encryption` | `OutboxEncryptionTier` | `"none"` | whole-payload tier: `none` · `at_rest` (relay decrypts before publish) · `end_to_end` (consumer decrypts) — see [encryption](../../identity-tenancy-enc/encryption.md) |
+| `encryption` | `EncryptionReach` | `"none"` | whole-payload tier: `none` · `at_rest` (relay decrypts before publish) · `end_to_end` (consumer decrypts) — see [encryption](../../identity-tenancy-enc/encryption.md) (`OutboxEncryptionTier` is a deprecated alias) |
+| `require_transaction` | `bool` | `False` | refuse to `flush` outside a transaction (the atomic stage-with-state guarantee, and the seam the HLC checkpoint advances through) |
 
 ### Command port
 

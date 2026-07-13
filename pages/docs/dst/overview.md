@@ -77,7 +77,7 @@ DST finds the race, shrinks it to **two** contending payments, and reports the s
 
 ## What DST gives you
 
-The harness is one small facade — `run`, `coverage`, `coverage_guided` — over a layered engine. Each page below takes one capability from "I pointed it at my app" to "I understand and can operate it":
+The harness is one small facade — `run`, `coverage`, `audit`, `coverage_guided` — over a layered engine. Each page below takes one capability from "I pointed it at my app" to "I understand and can operate it":
 
 <div class="grid cards fz-cards" markdown>
 

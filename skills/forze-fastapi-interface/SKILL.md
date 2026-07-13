@@ -176,6 +176,10 @@ register_scalar_docs(app, path="/docs")
 
 `SecurityContextMiddleware` binds `InvocationMetadata`, `AuthnIdentity`, and `TenantIdentity` at the boundary from an `AuthnRequirement`; handlers only read identity from `ExecutionContext`. `CustomHeadersMiddleware` adds response headers from `static_headers` and/or `dynamic_headers` (callables may be sync or async) and raises `CoreException` if a header is already set. `register_exception_handlers(app)` maps `CoreException` to JSON responses (and unhandled exceptions to 500) — see [`forze-observability-errors`](../forze-observability-errors/SKILL.md).
 
+## Exposing operations over MCP
+
+The same frozen registry can be projected to AI agents as MCP tools via `forze_mcp` (extra `mcp`, FastMCP-based): `register_tools(...)` + `exposed_operations(...)` project operation keys as tool names, `runtime_lifespan` scopes the runtime, and auth is **API-key-as-bearer** — `ForzeApiKeyVerifier` validates the inbound bearer through the same `AuthnSpec`/authn brain as your HTTP routes (pass both `auth=` and the identity binder). See [MCP integration](https://morzecrew.github.io/forze/latest/integrations/mcp/) and [Expose an aggregate over MCP](https://morzecrew.github.io/forze/latest/recipes/expose-an-aggregate-over-mcp/).
+
 ## Anti-patterns
 
 1. **Creating `ExecutionContext` per request by hand** — use `runtime.get_context()` via `ctx_dep`.
@@ -189,5 +193,7 @@ register_scalar_docs(app, path="/docs")
 > Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
 
 - [FastAPI integration](https://morzecrew.github.io/forze/latest/integrations/fastapi/)
+- [Generated routes reference](https://morzecrew.github.io/forze/latest/reference/fastapi-routes/)
+- [MCP integration](https://morzecrew.github.io/forze/latest/integrations/mcp/)
 - [`forze-wiring`](../forze-wiring/SKILL.md)
 - [`forze-auth-tenancy-secrets`](../forze-auth-tenancy-secrets/SKILL.md)

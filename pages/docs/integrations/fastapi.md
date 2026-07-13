@@ -142,6 +142,7 @@ runs them. The surface, at a glance:
 |-------|--------------|
 | `runtime_lifespan` | run the runtime's lifecycle from the app lifespan |
 | `InvocationMetadataMiddleware` / `SecurityContextMiddleware` | bind per-request context, identity, and tenant |
+| `CustomHeadersMiddleware` / `LoggingMiddleware` | inject response headers; sampled, probe-excluded access logs |
 | `register_exception_handlers` | map a `CoreException` to an HTTP response by kind |
 | `attach_readiness_route` | a drain-aware `GET /readyz` probe |
 | `attach_document_routes` / `attach_search_routes` / `attach_storage_routes` / `attach_authn_routes` | project a frozen registry's operations onto a router |

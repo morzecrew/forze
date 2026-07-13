@@ -44,12 +44,12 @@ on_invoice_paid = DurableFunctionSpec(
 
 ```python
 from forze.application.execution import DepsRegistry, LifecyclePlan
-from forze_inngest import InngestClient, InngestDepsModule, inngest_lifecycle_step
+from forze_inngest import InngestClient, InngestDepsModule, InngestEventConfig, inngest_lifecycle_step
 
 client = InngestClient(app_id="my-app")
 module = InngestDepsModule(
     client=client,
-    events={invoice_paid.name: {}},
+    events={invoice_paid.name: InngestEventConfig()},
 )
 
 deps = DepsRegistry.from_modules(module)
@@ -112,6 +112,26 @@ step = ctx.deps.provide(DurableFunctionStepDepKey)
 await step.run("notify", lambda: notifier.send(...))
 ```
 
+## Self-hosted alternative: durable functions on Postgres
+
+When the deployment runs only Postgres, the same durable-function form (memoized steps + crash recovery + cron schedules) works with **no external engine**. Wire `PostgresDepsModule(durable_step=PostgresDurableStepConfig(relation=...), durable_run=PostgresDurableRunConfig(relation=...), durable_schedule=...)`, then drive it with the `forze_kits.integrations.durable` runner:
+
+```python
+from forze_kits.integrations.durable import (
+    DurableFunctionRegistry,
+    DurableFunctionRunner,
+    durable_recovery_background_lifecycle_step,
+    resolve_durable_step,
+)
+
+registry = DurableFunctionRegistry()
+registry.register("fulfil-order", fulfil_order)  # async (ctx, input) -> output
+runner = DurableFunctionRunner(registry=registry)
+await runner.enqueue(ctx, "fulfil-order", {"order_id": str(order_id)})
+```
+
+Inside a registered function, `step = resolve_durable_step(ctx)` gives the same memoized `step.run(...)` port. Add `durable_recovery_background_lifecycle_step(runner=runner)` so crashed runs are re-claimed (`FOR UPDATE SKIP LOCKED`, multi-worker-safe) and replayed from the journal; `DurableScheduler` + `durable_scheduler_background_lifecycle_step(scheduler=scheduler, specs=[...])` fires cron-triggered specs. Setting `admin=True` on `PostgresDurableRunConfig` also registers a read-only `DurableRunAdminPort` (`list_runs`) for run inspection. Step results journal as **JSON** — keep step inputs/outputs JSON-serializable and step bodies idempotent. See [Durable execution](https://morzecrew.github.io/forze/latest/data-events/durable-execution/).
+
 ## Anti-patterns
 
 - Do not use `DurableWorkflow*` types or `forze_temporal` in Inngest-based apps for the same work — pick Temporal **or** Inngest per use case.
@@ -123,6 +143,7 @@ await step.run("notify", lambda: notifier.send(...))
 > Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
 
 - [Inngest integration](https://morzecrew.github.io/forze/latest/integrations/inngest/)
-- [Durable function contracts](https://morzecrew.github.io/forze/latest/reference/contracts/)
+- [Durable execution](https://morzecrew.github.io/forze/latest/data-events/durable-execution/)
+- [Durable function contracts](https://morzecrew.github.io/forze/latest/reference/contracts/durable/)
 - [`forze-wiring`](../forze-wiring/SKILL.md)
 - [`forze-framework-usage`](../forze-framework-usage/SKILL.md)

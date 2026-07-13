@@ -75,22 +75,3 @@ just run
 ```
 
 Then open [http://localhost:8000/docs](http://localhost:8000/docs).
-
-## Where next
-
-<div class="grid cards fz-cards" markdown>
-
--   :lucide-zap: **[Cache reads with Redis](cache-reads-with-redis.md)**
-
-    ---
-
-    Serve repeat reads from Redis and invalidate on writes — same handlers, one
-    extra module.
-
--   :lucide-copy-check: **[Add idempotency](add-idempotency.md)**
-
-    ---
-
-    Make a retried `POST` a no-op that returns the first result.
-
-</div>

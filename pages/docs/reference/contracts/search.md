@@ -32,6 +32,8 @@ result-set snapshots.
 | `materialized` | `frozenset[str]` | `∅` | `@computed_field` names that are real columns on the search relation, so results can be filtered/sorted by the derived value (mirror of [`DocumentSpec.materialized`](document.md#spec); relational in-place only, **not** startup-validated) |
 | `facetable_fields` | `frozenset[str]` | `∅` | fields a query may compute term (value) facet distributions over (must be real, non-lenient, non-encrypted columns) |
 | `highlightable_fields` | `frozenset[str] \| None` | `None` | searchable fields a query may highlight; `None` = all searchable `fields`, `∅` = none |
+| `highlight_scan_limit` | `int \| None` | `None` | cap on the characters of a field scanned for in-process highlighting (relational search) — a match beyond the cap isn't highlighted; the hit is unaffected |
+| `max_results` | `int \| None` | `None` | server-side cap on an offset search with **no** caller `limit` (an explicit `limit` is honoured as-is) — guards fetching the whole matched set |
 | `read_conformity` | `"strict" \| "lenient"` | `"strict"` | `"lenient"` auto-derives `lenient_read_fields` (every statically-defaulted, non-identity, non-indexed, non-`materialized` field); explicit fields added on top |
 | `lenient_read_fields` | `frozenset[str]` | `∅` | returned read-model fields with **no** backing column: dropped from the result projection, hydrated from their default, and excluded from sort keys (mirror of [`DocumentSpec.lenient_read_fields`](document.md#lenient-read-fields); must **not** be an indexed `fields` member) |
 | `snapshot` | `SearchResultSnapshotSpec \| None` | `None` | result-ID snapshotting defaults (stable re-pagination) |
@@ -64,11 +66,14 @@ argument; everything else mirrors the document side:
 
 `query` is a string (or a sequence of strings); `filters` and `sorts` use the
 [query DSL](../query-syntax.md). `options: SearchOptions` is the backend- and
-topology-agnostic per-request surface — relevance weights, fuzzy matching, the count
+topology-agnostic per-request surface — relevance `weights`, `fuzzy` matching, a per-request
+`fields` narrowing, multi-term combination (`phrase_combine`: `"any"` / `"all"`), the count
 policy (`search_count`), an advisory candidate cap (`max_candidates`), and the facet /
-highlight requests below. Hub and federated searches resolve to a `MultiSourceSearchOptions`
-port that also carries member selection (`member_weights` / `members`) and a post-merge cap
-(`merge_candidates`); passing those keys to a single-index `query(...)` port is a type error.
+highlight requests below (`facets`, `facet_size`, `highlight`). Hub and federated searches
+resolve to a `MultiSourceSearchOptions` port that also carries member selection
+(`member_weights` / `members`), a post-merge cap (`merge_candidates`), and the `fusion`
+strategy (`"rrf"` / `"weighted"`); passing those keys to a single-index `query(...)` port is
+a type error.
 
 ### Streaming exports
 
@@ -99,7 +104,8 @@ match snippets with `options={"highlight": True}` (or a `HighlightOptions` mappi
 fields / customize the `<em>` markers), over the spec's `facetable_fields` /
 `highlightable_fields`. Results ride the page as optional `page.facets` (one set per query,
 over the full matching set) and `page.highlights` (per hit, index-aligned with `hits`),
-`None` when not requested. A field or backend that cannot serve a request fails closed with
+`None` when not requested. (Pages also carry optional per-hit relevance `page.scores`,
+index-aligned the same way.) A field or backend that cannot serve a request fails closed with
 `query_feature_unsupported`.
 
 Support is per backend (single-index) and per topology (hub / federated). **fail-closed**

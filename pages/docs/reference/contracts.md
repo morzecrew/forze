@@ -34,7 +34,7 @@ from the `ExecutionContext`. Capabilities with a dedicated reference page are li
 |------------|-----------|-------------|
 | [Queue](contracts/messaging.md#queue) (produce / consume) | queue route | `QueueQueryDepKey` / `QueueCommandDepKey` |
 | [Pub/Sub](contracts/streaming.md#pubsub) | topic route | `PubSubCommandDepKey` / `PubSubQueryDepKey` |
-| [Stream](contracts/streaming.md#streams) | stream route | `StreamCommandDepKey` / `StreamQueryDepKey` |
+| [Stream](contracts/streaming.md#streams) | stream route | `StreamCommandDepKey` / `StreamQueryDepKey` (+ the ack / commit group dep keys; `ctx.stream.commit_query` / `.commit_admin` shortcuts) |
 | [Outbox](contracts/messaging.md#outbox) | `OutboxSpec` | `ctx.outbox.command(spec)` / `ctx.outbox.query(spec)` |
 | [Inbox](contracts/messaging.md#inbox) | `InboxSpec` | `ctx.inbox` |
 | Domain events | — | `ctx.domain` (dispatch) |
@@ -56,6 +56,7 @@ from the `ExecutionContext`. Capabilities with a dedicated reference page are li
 | [Durable workflows](contracts/durable.md#workflows) | `DurableWorkflowSpec` | `DurableWorkflowCommandDepKey` / `…QueryDepKey` |
 | [Workflow schedules](contracts/durable.md#schedules) | — | `DurableWorkflowScheduleCommandDepKey` / `…QueryDepKey` |
 | [Durable functions](contracts/durable.md#event-driven-functions) | `DurableFunctionSpec` | `DurableFunctionEventCommandDepKey` / `DurableFunctionStepDepKey` |
+| [Run & schedule stores, run listing](contracts/durable.md#event-driven-functions) | — | `DurableRunStoreDepKey` / `DurableRunAdminDepKey` / `DurableScheduleStoreDepKey` |
 
 ## Identity & access
 
@@ -72,6 +73,8 @@ from the `ExecutionContext`. Capabilities with a dedicated reference page are li
 |------------|------|-------------|
 | Outbound HTTP | `HttpServiceSpec` | `ctx.http.service(spec)` |
 
-Capabilities resolved by a `*DepKey` (queue, pub/sub, stream, durable) have no
-short `ctx.<x>` accessor — resolve them through the context's dependency
-resolution by their dep key and route.
+Capabilities resolved by a `*DepKey` (queue, pub/sub, durable) have no short
+`ctx.<x>` accessor — resolve them through the context's dependency resolution by
+their dep key and route. Streams have shortcuts for the commit sub-model only
+(`ctx.stream.commit_query` / `.commit_admin`); the rest of the stream family
+resolves by dep key too.

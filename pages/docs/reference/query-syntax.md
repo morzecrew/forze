@@ -56,6 +56,7 @@ filters = {
 | Empty | `$empty` | `true`: empty **array** · `false`: non-empty |
 | Set relations | `$superset` `$subset` `$overlaps` `$disjoint` | a list (see [Array fields](#array-fields)) |
 | Quantifiers | `$any` `$all` `$none` | an element predicate (see [Array fields](#array-fields)) |
+| Hierarchy | `$descendant_of` `$ancestor_of` | a path (or a list of paths → OR) on a `TreePath`-typed field — inclusive, materialized-path semantics; backend-specific and capability-gated |
 
 `$empty` tests **array** length (not string emptiness). `$like`/`$ilike` use
 `%`/`_` wildcards (`\` escapes); a list of patterns becomes an OR on that field.
@@ -76,7 +77,9 @@ field.
 ## Nested fields
 
 A field key is a **dot-separated path** into a nested/embedded object — usable in
-`$values`, `$fields`, sorts, `$groups`, and aggregate fields. Depth is unbounded;
+`$values`, `$fields`, sorts, `$groups`, aggregate fields, and the `fields` list of
+`project*` calls (a dotted projection returns a nested shape, and a path crossing a
+list maps over each element). Depth is unbounded;
 each segment walks one level deeper:
 
 ```python
@@ -182,13 +185,18 @@ the smallest value (`asc` → first, `desc` → last); some backends (Mongo, Fir
 support only that default and reject an explicit override. For
 [cursor pagination](../data-events/reading-data.md) directions may be mixed — each
 key seeks in its own direction — and an `id` tie-breaker is appended automatically.
+Cursor tokens can be HMAC-signed (`<payload>.<hmac>`) or AEAD-encrypted (a leading
+`~`) — see [Cursor tokens](../identity-tenancy-enc/cursor-tokens.md).
 
 ## Aggregates
 
 An aggregate expression groups and computes over matched rows. Group keys go in
 `$groups` (alias → source path, or a list of paths); outputs go in `$computed`
-(alias → function). Functions: `$count` (use `None` for row counts), `$sum`,
-`$avg`, `$min`, `$max`, `$median`.
+(alias → function). Functions: `$count` (use `None` for row counts),
+`$count_distinct`, `$sum`, `$avg`, `$min`, `$max`, `$median`, `$percentile`
+(requires the application form with a `p` quantile), `$stddev_pop`, `$stddev_samp`,
+`$var_pop`, `$var_samp`. `$median` / `$percentile` are exact on Postgres and the
+mock but approximate on Mongo.
 
 ```python
 aggregates = {
@@ -204,8 +212,10 @@ aggregates = {
 ```
 
 A computed metric's `filter` is a **per-metric row pre-filter** (it narrows the
-rows that feed *that* aggregate) — there is **no post-aggregate `HAVING`** stage.
-`$count` takes no field; every other function requires one.
+rows that feed *that* aggregate). For a post-aggregate stage, add `$having` — a
+filter (same grammar) over the **aggregated** rows, referencing only the output
+aliases (group keys and computed metrics). `$count` takes no field; every other
+function requires one.
 
 Calendar bucketing uses `$trunc` as a group value — `unit` is one of `hour` /
 `day` / `week` (Monday-start) / `month`; `timezone` is an IANA name or fixed

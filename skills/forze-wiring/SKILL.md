@@ -32,7 +32,7 @@ from forze_postgres import (
     PostgresDocumentConfig,
     postgres_lifecycle_step,
 )
-from forze_redis import RedisDepsModule, redis_lifecycle_step, RedisClient, RedisConfig
+from forze_redis import RedisCacheConfig, RedisClient, RedisConfig, RedisDepsModule, redis_lifecycle_step
 
 
 class ResourceName(StrEnum):
@@ -60,7 +60,7 @@ deps_registry = DepsRegistry.from_modules(
     ),
     RedisDepsModule(
         client=redis_client,
-        caches={ResourceName.PROJECTS: {"namespace": "app:projects"}},
+        caches={ResourceName.PROJECTS: RedisCacheConfig(namespace="app:projects")},
     ),
 )
 ```

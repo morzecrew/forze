@@ -58,6 +58,10 @@ Queued bulkheads (`max_queue >= 1`) take opt-in queue management on both kinds: 
 
 `HedgeStrategy(delay=, max_attempts=)` races a concurrent copy against a slow primary (idempotent reads only; `budget=` caps amplification), run via `ctx.resilience().run_hedged(...)`. Set `adaptive_delay_quantile=0.95` to hedge after the *observed* p95 per `(policy, route)` (streaming P² estimate, windowed) instead of the fixed delay — `delay` becomes the pre-warmup fallback, `delay_min`/`delay_max` clamp the estimate.
 
+### Control plane: `ResilienceAdminPort`
+
+`ctx.resilience.admin()` (or `ResilienceAdminDepKey`) inspects and retunes live policy state without a redeploy: `inspect(policy=...)` returns per-`(policy, route)` snapshots (forced-open flag, adaptive concurrency limit, in-use/waiting, effective hedge delay); `force_open(policy, route=None)` / `clear_forced_open(...)` are a manual breaker kill-switch; `retune(policy)` hot-swaps a `ResiliencePolicy` by name. See [Resilience tuning](https://morzecrew.github.io/forze/latest/reference/resilience-tuning/).
+
 ## Invocation deadlines
 
 Declare a time budget on the **operation plan**, not per route or caller:
@@ -114,6 +118,7 @@ Fleet-wide resilience state (`forze[redis]`): `ResilienceDepsModule(breaker_stor
 > Docs are versioned. These links use `latest` (the newest release). If your app pins an older `forze` minor, replace `latest` in the URL with that version (e.g. `.../forze/0.3/...`) or use the version selector on the site.
 
 - [Resilience](https://morzecrew.github.io/forze/latest/running-in-prod/resilience/)
+- [Resilience tuning reference](https://morzecrew.github.io/forze/latest/reference/resilience-tuning/)
 - [Deadlines](https://morzecrew.github.io/forze/latest/running-in-prod/deadlines/)
 - [Shutdown & fleets](https://morzecrew.github.io/forze/latest/running-in-prod/shutdown-and-fleets/)
 - [Observability](https://morzecrew.github.io/forze/latest/running-in-prod/observability/)

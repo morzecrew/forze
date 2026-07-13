@@ -40,8 +40,9 @@ Nothing forces these names — Forze imposes no project layout. What matters is 
 Dependencies point **inward**: `domain` imports nothing from your other layers,
 `application` imports only `domain`, and infrastructure and interface sit on the
 outside. This is what lets you swap Postgres for Mongo, or FastAPI for a CLI,
-without touching business logic — and it's enforced by import-linter contracts,
-not just convention. See [Architecture](../core-concepts/architecture.md).
+without touching business logic — and you can enforce it with import-linter
+contracts instead of relying on convention; Forze polices its own layers the
+same way. See [Architecture](../core-concepts/architecture.md).
 
 ## The name is the seam
 

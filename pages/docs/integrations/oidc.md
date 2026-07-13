@@ -52,4 +52,7 @@ Wire it onto a route via `AuthnDepsModule.token_verifiers` (the shipped
   eligibility instead.
 - `JwksKeyProvider`'s `cache_ttl` and `timeout` are `timedelta`s. Issuer and
   audience are required by default.
+- `require_nonce=True` (on the verifier or `OidcIdpPreset`) rejects tokens
+  missing a `nonce` claim — presence-only; bind the nonce *value* in your
+  callback handler with `verify_id_token_nonce`.
 - Vendor presets (Google, VK, Telegram) live in `forze_identity.builtin.idp`.
