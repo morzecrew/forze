@@ -134,7 +134,15 @@ class TaskEventPayload(BaseModel):
     task_id: str
 
 
-TASK_INDEX = SearchSpec(name="tasks_index", model_type=TaskRead, fields=["title"])
+# soft_delete + search together: the kit's search reads exclude soft-deleted rows, so the
+# index must be able to filter `is_deleted` — declaring it facetable provisions it as a
+# filterable attribute on external-index backends (ensure_index).
+TASK_INDEX = SearchSpec(
+    name="tasks_index",
+    model_type=TaskRead,
+    fields=["title"],
+    facetable_fields={"is_deleted"},
+)
 TASKS_QUEUE = QueueSpec(name="task-events", codec=PydanticModelCodec(TaskEventPayload))
 TASK_EVENTS = OutboxSpec(
     name="task-events",

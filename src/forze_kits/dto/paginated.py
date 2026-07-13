@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Final, cast
 
-from pydantic import BaseModel, PositiveInt
+from pydantic import BaseModel, Field, PositiveInt
 
 from forze.application.contracts.base import CursorPage, Page
 from forze.application.contracts.querying import (
@@ -16,15 +16,23 @@ from forze.domain.models import BaseDTO
 
 # ----------------------- #
 
+MAX_PAGE_SIZE: Final = 10_000
+"""Ceiling for a client-supplied offset page size. The size is untrusted boundary input,
+so an over-large value (``size=10**9``) is rejected at validation instead of materializing
+an unbounded result set — the same ceiling the cursor path clamps to (``MAX_CURSOR_LIMIT``)
+and the gateways' default implicit ``find_many`` cap."""
+
+# ....................... #
+
 
 class Pagination(BaseDTO):
     """Pagination request payload."""
 
-    page: PositiveInt = 1
+    page: int = Field(default=1, ge=1)
     """One-based page number."""
 
-    size: PositiveInt = 10
-    """Page size (number of records per page)."""
+    size: int = Field(default=10, ge=1, le=MAX_PAGE_SIZE)
+    """Page size (number of records per page), at most :data:`MAX_PAGE_SIZE`."""
 
     # ....................... #
 

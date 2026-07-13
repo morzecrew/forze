@@ -145,3 +145,141 @@ See `justfile` and `CONTRIBUTING.md` for the full list. Quick reference:
 - Integration tests (`tests/integration/`) require Docker (testcontainers). Many performance tests under `tests/perf/` also use Docker; perf tests without container fixtures (e.g. codec benchmarks) run in-process. Default CI (`just test`) excludes `-m perf`.
 - The package version is derived from git tags via `hatch-vcs`; importing `forze.__version__` does not work—use `forze._version.__version__` instead.
 - `uv sync` is called automatically by `justfile` recipes before test/quality commands, so manual re-sync is rarely needed.
+
+<!-- BEGIN sqz-claude-guidance (auto-installed by sqz init; remove this block to disable) -->
+
+## sqz — Context Compression (READ FIRST)
+
+sqz is installed in this project. It compresses tool output so large
+files, long logs, and verbose command output cost far fewer tokens.
+There are **two ways** sqz is wired in, and you should prefer each
+one in the situations below.
+
+### Preferred tools (MCP)
+
+The `sqz-mcp` server is registered in this project's MCP config. It
+exposes three read-only tools that compress their output through the
+sqz pipeline:
+
+- **`sqz_read_file`** — read a file from disk and return a compressed
+  view. **PREFER this over the built-in `Read` tool** for any file
+  larger than ~2KB or any file you might read more than once in the
+  same session. Repeat reads return a 13-token `§ref:HASH§` reference
+  instead of the full content.
+
+- **`sqz_grep`** — search files for a literal string or regex.
+  **PREFER this over the built-in `Grep`** for anything that might
+  match more than a handful of lines. Caps at 200 matches by default;
+  raise with `max_matches` if needed.
+
+- **`sqz_list_dir`** — list a directory. Skips `.git`, `node_modules`,
+  `target`, `dist`, `build`, `vendor`, `__pycache__` so the output
+  stays focused. **PREFER this over `ls -la` via Bash** when you want
+  to see a project layout.
+
+The built-in `Read`, `Grep`, `Glob` tools remain available. Use them for:
+- Tiny config files (<1KB) where compression can't help.
+- Byte-exact reads you'll hash or diff (lockfiles, signatures).
+- Globbing (sqz has no glob tool; `Glob` is still the right choice).
+
+### Bash commands (hooked automatically)
+
+When you run a shell command through the `Bash` tool, a PreToolUse hook
+rewrites it to pipe output through `sqz compress`. This is transparent:
+you don't need to remember to add anything, but it's useful to know
+that these commands get compressed automatically:
+
+```bash
+git status           # → git status 2>&1 | sqz compress --cmd git
+cargo test           # → cargo test 2>&1 | sqz compress --cmd cargo
+docker ps            # → docker ps 2>&1 | sqz compress --cmd docker
+kubectl get pods     # → kubectl get pods 2>&1 | sqz compress --cmd kubectl
+```
+
+The rewrite is skipped for interactive commands (`vim`, `ssh`,
+`python`), compound commands (`a && b`, `a > file.txt`), and anything
+already going through sqz.
+
+### Escape hatch — when you see a `§ref:HASH§` token
+
+If tool output contains a `§ref:a1b2c3d4§` token and you need the full
+content it points at, resolve it. Three equivalent ways:
+
+- Shell: `/usr/local/bin/sqz expand a1b2c3d4` (or paste the whole token
+  `/usr/local/bin/sqz expand §ref:a1b2c3d4§`).
+- MCP tool: call `expand` with `{ "prefix": "a1b2c3d4" }`.
+- To get uncompressed output for one command: prefix it with
+  `SQZ_NO_DEDUP=1` (e.g. `SQZ_NO_DEDUP=1 git log | sqz compress`).
+
+If the compressed output is actively making the task harder (looping
+on refs, small retries replacing one big read), call the `passthrough`
+MCP tool to get raw text.
+
+### When NOT to use sqz tools
+
+- Writing or editing files — use the built-in `Write`/`Edit` tools.
+  sqz has no write tools (by design; see issue #5 follow-up).
+- Running commands interactively or in watch mode.
+- Reading very small files (<1KB) where compression can't help.
+
+<!-- END sqz-claude-guidance -->
+
+<!-- BEGIN sqz-agents-guidance (auto-installed by sqz init; remove this block to disable) -->
+
+## sqz — Token-Optimized CLI Output
+
+When running shell commands whose output may be long (directory listings,
+git log/diff, test runners, build logs, `docker ps`, `kubectl get`, etc.),
+pipe the output through `sqz compress` to reduce token consumption.
+
+`sqz` is a stdin-to-stdout compressor, not a command wrapper. The correct
+usage is to pipe the command's output into `sqz compress`:
+
+```bash
+# Instead of:     Use:
+git status        git status 2>&1 | /usr/local/bin/sqz compress
+cargo test        cargo test 2>&1 | /usr/local/bin/sqz compress
+git log -10       git log -10 2>&1 | /usr/local/bin/sqz compress
+docker ps         docker ps 2>&1 | /usr/local/bin/sqz compress
+ls -la            ls -la 2>&1 | /usr/local/bin/sqz compress
+```
+
+The `2>&1` captures stderr too, which is useful for commands like `cargo
+test` where diagnostics go to stderr. `sqz compress` filters and compresses
+the combined output while preserving filenames, paths, and identifiers.
+It typically saves 60-90% tokens on verbose commands.
+
+Do NOT pipe output for:
+- Interactive commands (`vim`, `ssh`, `python`, REPLs)
+- Compound commands with shell operators (`cmd && other`, `cmd > file.txt`,
+  `cmd; other`) — run those directly
+- Short commands whose output is already a few lines
+
+If `sqz` is not on PATH, run commands normally.
+
+The `sqz-mcp` MCP server is also available — Codex reads it from
+`~/.codex/config.toml` under `[mcp_servers.sqz]`. It exposes three
+tools: `compress` (the default pipeline), `passthrough` (return text
+unchanged — the escape hatch below), and `expand` (resolve a
+`§ref:HASH§` token back to the original bytes).
+
+## Escape hatch — when sqz output confuses you
+
+If you see a `§ref:HASH§` token and can't parse it, or compressed
+output is leading you to make lots of small retries instead of one
+big request, use one of these:
+
+- **`/usr/local/bin/sqz expand <prefix>`** — resolve a dedup ref back to the
+  original bytes. Accepts bare hex (`sqz expand a1b2c3d4`) or the full
+  token pasted verbatim (`sqz expand §ref:a1b2c3d4§`).
+- **`SQZ_NO_DEDUP=1`** — set this env var for one command to disable
+  dedup: `SQZ_NO_DEDUP=1 git status 2>&1 | sqz compress`. You'll get
+  the full compressed output with no `§ref:…§` tokens.
+- **`--no-cache`** — same opt-out as a CLI flag:
+  `git status 2>&1 | sqz compress --no-cache`.
+
+If you're using the MCP server, the `passthrough` tool returns raw
+text and the `expand` tool resolves refs — call them when you need
+data sqz hasn't touched.
+
+<!-- END sqz-agents-guidance -->

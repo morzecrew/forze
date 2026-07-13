@@ -64,8 +64,9 @@ class SearchSyncSteps:
     backoff (:attr:`retry_attempts` / :attr:`retry_base_delay`), and on exhaustion a WARNING
     carrying the index name, action, and document id is logged and the failure is reported
     out-of-band — the committed write still returns, and the index stays stale for that row
-    until its next successful write. Route index maintenance through the transactional
-    outbox where stronger delivery is required.
+    until its next successful write. Where stronger delivery is required, route index
+    maintenance through the transactional outbox instead (``AggregateKit`` with
+    ``search_delivery=OutboxSearchSync()``, or :mod:`.outbox_sync` standalone).
     """
 
     search: SearchSpec[Any]

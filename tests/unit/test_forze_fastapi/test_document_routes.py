@@ -509,6 +509,36 @@ class TestDtoShapeValidation:
         assert response.headers[ERROR_CODE_HEADER] == "core.validation"
 
 
+class TestListPaginationBounds:
+    def test_oversized_page_size_answers_standard_422(self) -> None:
+        # The pagination size is untrusted boundary input: a huge value must fail request
+        # validation with the shared envelope, not materialize an unbounded result set.
+        client = TestClient(_build_app("rest"))
+
+        response = client.post("/notes/list", json={"size": 10**9})
+
+        assert response.status_code == 422
+        assert "detail" in response.json()
+        assert response.headers[ERROR_CODE_HEADER] == "request_validation_error"
+
+    def test_non_positive_page_answers_standard_422(self) -> None:
+        client = TestClient(_build_app("rest"))
+
+        response = client.post("/notes/list", json={"page": 0})
+
+        assert response.status_code == 422
+        assert response.headers[ERROR_CODE_HEADER] == "request_validation_error"
+
+    def test_boundary_page_size_is_accepted(self) -> None:
+        from forze_kits.dto.paginated import MAX_PAGE_SIZE
+
+        client = TestClient(_build_app("rest"))
+
+        response = client.post("/notes/list", json={"size": MAX_PAGE_SIZE})
+
+        assert response.status_code == 200
+
+
 class TestSensitiveSpecRefusal:
     def _sensitive_registry(self) -> tuple[DocumentSpec, FrozenOperationRegistry]:
         spec = DocumentSpec(

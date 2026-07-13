@@ -117,6 +117,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **AggregateKit** — one declaration composes a governed aggregate's wiring: document CRUD, soft delete, search-index sync, invariant enforcement, in-transaction outbox flush, route projection, and DST-verifiable invariants. Its four primitives (outbox emit, search sync, soft delete, invariants) are usable standalone.
 
+- **AggregateKit durable search sync** — opt-in `search_delivery=OutboxSearchSync()` routes index maintenance through the transactional outbox: an identity-only marker stages in the write's transaction and a consumer re-reads the committed row (idempotent, reorder-safe, no payload in the event), so a transient index failure converges instead of drifting. With soft delete composed, kit search reads exclude soft-deleted rows; the index must declare `is_deleted` facetable, checked fail-closed.
+
 - **Shared error helpers** — one client-safe error envelope and kind-to-HTTP-status mapping shared by the FastAPI and Socket.IO edges.
 
 - **Mock document adapter tenant scoping on every write** — the in-memory mock injects the tenant column on ensure/upsert/update/touch, matching Postgres.
@@ -353,7 +355,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Transport & agent surfaces**
 
-- **MCP no longer leaks internal error details** — boundary errors render through the same egress-masked envelope as HTTP; caller-caused errors keep message and code.
+- **MCP no longer leaks internal error details** — boundary errors render through the same egress-masked envelope as HTTP; caller-caused errors keep message and code. Resource templates now mask through the same shared helper as tools — a raw internal error no longer reaches the agent on a caller-owned server.
+
+- **Pre-built pagination DTO is bounded** — `page` and `size` validate at the boundary (`size` capped at 10,000, matching the cursor clamp and the implicit find-many limit), rendering as the standard 422 envelope instead of admitting unbounded materialization.
 
 - **MCP stops advertising idempotency it cannot honor** — the boundary binds no idempotency key, so the retry-replay claim is gone from tool descriptions.
 

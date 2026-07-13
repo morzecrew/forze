@@ -17,6 +17,13 @@ from .factories import (
 )
 from .handlers import CursorSearch, ProjectedCursorSearch, ProjectedSearch, Search
 from .operations import SearchKernelOp
+from .outbox_sync import (
+    SEARCH_SYNC_EVENT_TYPE,
+    OutboxSearchSync,
+    SearchSyncMarker,
+    SearchSyncOutboxWiring,
+    bind_search_sync_outbox,
+)
 from .sync import SearchSyncSteps, bind_search_sync
 from .value_objects import SearchDTOs, SearchMappers
 
@@ -32,6 +39,11 @@ __all__ = [
     "build_federated_search_registry",
     "SearchSyncSteps",
     "bind_search_sync",
+    "SEARCH_SYNC_EVENT_TYPE",
+    "OutboxSearchSync",
+    "SearchSyncMarker",
+    "SearchSyncOutboxWiring",
+    "bind_search_sync_outbox",
     "SearchRequestDTO",
     "ProjectedSearchRequestDTO",
     "CursorSearchRequestDTO",

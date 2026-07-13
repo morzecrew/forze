@@ -858,7 +858,7 @@ class TestErrorMasking:
             def critical_exception(self, event: str, **kw: object) -> None:
                 calls.append(("critical", event, dict(kw)))
 
-        monkeypatch.setattr("forze_mcp.registration._error_logger", _StubLogger())
+        monkeypatch.setattr("forze_mcp._errors._error_logger", _StubLogger())
 
         server = build_mcp_server(_error_registry(), _ctx_factory, name="e")
         async with Client(server) as client:
@@ -886,7 +886,7 @@ class TestErrorMasking:
             def critical_exception(self, event: str, **kw: object) -> None:
                 calls.append(("critical", event, dict(kw)))
 
-        monkeypatch.setattr("forze_mcp.registration._error_logger", _StubLogger())
+        monkeypatch.setattr("forze_mcp._errors._error_logger", _StubLogger())
 
         server = build_mcp_server(_error_registry(), _ctx_factory, name="e")
         async with Client(server) as client:
@@ -898,6 +898,105 @@ class TestErrorMasking:
         assert kind == "critical"
         assert event == "MCP server error"
         assert isinstance(kw["exc"], ValueError)  # the chained cause
+
+
+class _IdIn(BaseModel):
+    id: str
+
+
+class _BoomResource(Handler[_IdIn, _Out]):
+    async def __call__(self, args: _IdIn) -> _Out:
+        raise exc.internal("SECRET dsn=postgres://leak")
+
+
+class _GoneResource(Handler[_IdIn, _Out]):
+    async def __call__(self, args: _IdIn) -> _Out:
+        raise exc.validation("note is archived", code="notes.archived")
+
+
+def _resource_error_registry() -> FrozenOperationRegistry:
+    reg = OperationRegistry(
+        handlers={
+            "res.boom": lambda _c: _BoomResource(),
+            "res.gone": lambda _c: _GoneResource(),
+        }
+    )
+    reg = reg.set_descriptor(
+        "res.boom", OperationDescriptor(input_type=_IdIn, output_type=_Out, description="b")
+    )
+    reg = reg.set_descriptor(
+        "res.gone", OperationDescriptor(input_type=_IdIn, output_type=_Out, description="g")
+    )
+    reg = reg.bind("res.boom").as_query().finish()
+    reg = reg.bind("res.gone").as_query().finish()
+    return reg.freeze()
+
+
+class TestResourceTemplateErrorMasking:
+    """Resource-template reads translate boundary errors like tool calls do."""
+
+    def _server(self) -> FastMCP:
+        from forze_mcp import ResourceTemplateSpec, register_resource_templates
+
+        server = FastMCP("res")
+        register_resource_templates(
+            server,
+            _resource_error_registry(),
+            _ctx_factory,
+            [
+                ResourceTemplateSpec(op="res.boom", scheme="boom"),
+                ResourceTemplateSpec(op="res.gone", scheme="gone"),
+            ],
+        )
+        return server
+
+    async def test_internal_error_details_never_reach_the_agent(self) -> None:
+        async with Client(self._server()) as client:
+            with pytest.raises(Exception) as excinfo:
+                await client.read_resource("boom://1")
+
+        message = str(excinfo.value)
+        # The internal exception's message (a leaked secret) must be masked.
+        assert "SECRET" not in message and "postgres" not in message
+        assert "core.internal" in message  # a generic, code-tagged detail is fine
+
+    async def test_caller_caused_error_message_is_preserved(self) -> None:
+        async with Client(self._server()) as client:
+            with pytest.raises(Exception) as excinfo:
+                await client.read_resource("gone://1")
+
+        message = str(excinfo.value)
+        # A validation (caller-caused) error keeps its actionable message + code for the agent.
+        assert "note is archived" in message
+        assert "notes.archived" in message
+
+    async def test_server_error_is_logged_but_caller_error_is_not(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Same operator-side logging as tool calls: the agent gets a masked error, the real
+        # server failure lands in the logs; a caller-caused error is not logged.
+        calls: list[tuple[str, str, dict]] = []
+
+        class _StubLogger:
+            def error(self, event: str, **kw: object) -> None:
+                calls.append(("error", event, dict(kw)))
+
+            def critical_exception(self, event: str, **kw: object) -> None:
+                calls.append(("critical", event, dict(kw)))
+
+        monkeypatch.setattr("forze_mcp._errors._error_logger", _StubLogger())
+
+        async with Client(self._server()) as client:
+            with pytest.raises(Exception):
+                await client.read_resource("boom://1")  # server error → logged
+            with pytest.raises(Exception):
+                await client.read_resource("gone://1")  # caller error → not logged
+
+        assert len(calls) == 1
+        _, event, kw = calls[0]
+        assert event == "MCP server error"
+        assert kw["error_code"] == "core.internal"
+        assert kw["error_kind"] == "internal"
 
 
 class TestDefaultFactory:

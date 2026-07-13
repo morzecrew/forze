@@ -82,7 +82,14 @@ WIDGET_SPEC = DocumentSpec(
         domain=Widget, create_cmd=WidgetCreate, update_cmd=WidgetUpdate
     ),
 )
-WIDGET_INDEX = SearchSpec(name="widgets_index", model_type=WidgetRead, fields=["group"])
+# soft_delete + search: the kit requires `is_deleted` filterable on the index (facetable
+# provisions it via ensure_index) so its search read ops can exclude soft-deleted rows.
+WIDGET_INDEX = SearchSpec(
+    name="widgets_index",
+    model_type=WidgetRead,
+    fields=["group"],
+    facetable_fields={"is_deleted"},
+)
 QUEUE = QueueSpec(name="widget-events", codec=PydanticModelCodec(WidgetPayload))
 OUTBOX = OutboxSpec(
     name="widget-events",
@@ -256,6 +263,77 @@ class TestConcernsWiredThroughKit:
         async with runtime.scope():
             created = await widgets().create(WidgetCreate(group="A", qty=1))
             assert created.group == "A"
+
+
+# ....................... #
+
+
+class TestSearchReadExclusion:
+    """Kit search reads must never return a soft-deleted ghost, even one still indexed."""
+
+    async def test_ghost_in_the_index_is_not_returnable(self) -> None:
+        from forze_kits.aggregates.search import SearchKernelOp, SearchRequestDTO
+
+        runtime = build_runtime(
+            MockDepsModule(domain_events=_full_kit().domain_events())
+        )
+        reg = _full_kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            live = await _create(reg, ctx, "A", 1)
+            ghost = await _create(reg, ctx, "A", 1)
+
+            index = ctx.deps.provide(MockStateDepKey).documents["widgets_index"]
+            ghost_doc = dict(index[ghost.id])
+
+            # Soft-delete the second row, then re-inject its flagged document — the state
+            # a bulk backfill (or an in-flight upsert) can leave in the index.
+            await run_operation(
+                reg,
+                _key(SoftDeletionKernelOp.DELETE),
+                DocumentIdRevDTO(id=ghost.id, rev=ghost.rev),
+                ctx,
+            )
+            index[ghost.id] = {**ghost_doc, "is_deleted": True}
+
+            page = await run_operation(
+                reg,
+                WIDGET_INDEX.default_namespace.key(SearchKernelOp.TYPED),
+                SearchRequestDTO(),
+                ctx,
+            )
+
+            assert [hit.id for hit in page.hits] == [live.id]
+
+    async def test_caller_filters_are_conjoined_not_replaced(self) -> None:
+        from forze_kits.aggregates.search import SearchKernelOp, SearchRequestDTO
+
+        runtime = build_runtime(
+            MockDepsModule(domain_events=_full_kit().domain_events())
+        )
+        reg = _full_kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            in_group = await _create(reg, ctx, "A", 1)
+            await _create(reg, ctx, "B", 1)
+
+            page = await run_operation(
+                reg,
+                WIDGET_INDEX.default_namespace.key(SearchKernelOp.TYPED),
+                SearchRequestDTO(filters={"$values": {"group": "A"}}),
+                ctx,
+            )
+
+            assert [hit.id for hit in page.hits] == [in_group.id]
+
+    def test_soft_delete_with_unfilterable_index_fails_closed(self) -> None:
+        bare = SearchSpec(name="widgets_bare", model_type=WidgetRead, fields=["group"])
+
+        with pytest.raises(CoreException) as ei:
+            AggregateKit(spec=WIDGET_SPEC, soft_delete=True, search=bare)
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
 
 
 # ....................... #

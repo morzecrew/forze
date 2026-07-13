@@ -17,14 +17,16 @@ from typing import Any, Awaitable, Callable
 
 import attrs
 from fastmcp import FastMCP
+from fastmcp.exceptions import ResourceError
 from fastmcp.resources import ResourceTemplate
 from pydantic import BaseModel
 
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import FrozenOperationRegistry
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
 
+from ._errors import client_safe_error
 from .dispatch import invoke_operation
 from .identity import MCPIdentityResolver, StaticIdentityResolver
 
@@ -61,18 +63,27 @@ def _template_handler(
 
     FastMCP binds the URI placeholder to the handler parameter by name, so the synthesized
     signature carries exactly one parameter named ``id_param``. The operation result (a
-    Pydantic read model) is returned as a JSON-serializable mapping.
+    Pydantic read model) is returned as a JSON-serializable mapping. A boundary
+    :class:`CoreException` is translated to a client-safe :class:`ResourceError` (the same
+    egress-masked envelope tool calls raise as ``ToolError``) so internal error details
+    never leak to an agent while a caller-caused message still gets through.
     """
 
     async def _handler(**kwargs: Any) -> Any:
-        result = await invoke_operation(
-            registry=registry,
-            ctx_factory=ctx_factory,
-            identity=identity,
-            op=op,
-            descriptor=descriptor,
-            arguments=kwargs,
-        )
+        try:
+            result = await invoke_operation(
+                registry=registry,
+                ctx_factory=ctx_factory,
+                identity=identity,
+                op=op,
+                descriptor=descriptor,
+                arguments=kwargs,
+            )
+        except CoreException as e:
+            # Shared egress-masked translation (see :mod:`forze_mcp._errors`): a caller-caused
+            # kind keeps its message + code, an internal/server error is masked to a generic
+            # detail and logged server-side before the ResourceError reaches the agent.
+            raise client_safe_error(e, ResourceError) from e
 
         if isinstance(result, BaseModel):
             return result.model_dump(mode="json")

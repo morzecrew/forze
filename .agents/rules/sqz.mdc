@@ -1,0 +1,53 @@
+---
+description: sqz — Token-Optimized CLI Output
+alwaysApply: true
+---
+
+# sqz — Token-Optimized CLI Output
+
+When running shell commands whose output may be long (directory listings,
+git log/diff, test runners, build logs, `docker ps`, `kubectl get`, etc.),
+pipe the output through `sqz compress` to reduce token consumption.
+
+`sqz` is a stdin-to-stdout compressor, not a command wrapper. The correct
+usage is to pipe the command's output into `sqz compress`:
+
+```bash
+# Instead of:     Use:
+git status        git status 2>&1 | /usr/local/bin/sqz compress
+cargo test        cargo test 2>&1 | /usr/local/bin/sqz compress
+git log -10       git log -10 2>&1 | /usr/local/bin/sqz compress
+docker ps         docker ps 2>&1 | /usr/local/bin/sqz compress
+ls -la            ls -la 2>&1 | /usr/local/bin/sqz compress
+```
+
+The `2>&1` captures stderr too, which is useful for commands like `cargo
+test` where diagnostics go to stderr. `sqz compress` filters and compresses
+the combined output while preserving filenames, paths, and identifiers.
+It typically saves 60-90% tokens on verbose commands.
+
+Do NOT pipe output for:
+- Interactive commands (`vim`, `ssh`, `python`, REPLs)
+- Compound commands with operators (`cmd && other`, `cmd > file.txt`,
+  `cmd; other`) — run those directly
+- Short commands whose output is already a few lines
+
+If `sqz` is not on PATH, run commands normally.
+
+## Escape hatch — when sqz output confuses the agent
+
+If you see a `§ref:HASH§` token in tool output and can't parse it, or if
+compressed output is making it harder to work (loops, repeated tiny
+requests), you have three ways out:
+
+- **`/usr/local/bin/sqz expand <prefix>`** — resolve a ref back to the
+  original bytes. Accepts the bare hex prefix (`sqz expand a1b2c3d4`)
+  or the full token pasted verbatim (`sqz expand §ref:a1b2c3d4§`).
+- **`SQZ_NO_DEDUP=1`** — set this env var (e.g. `SQZ_NO_DEDUP=1 git
+  status 2>&1 | sqz compress`) to disable dedup for that one command.
+  Strictly more tokens, strictly less ambiguous.
+- **`--no-cache`** — the same opt-out as a CLI flag:
+  `git status 2>&1 | sqz compress --no-cache`.
+
+Use these when you genuinely need raw data. The default compressed
+path is still what you want for most output.

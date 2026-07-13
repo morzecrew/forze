@@ -49,15 +49,21 @@ from forze_kits.aggregates.document import (
 )
 from forze_kits.aggregates.document.dto import written_read_model
 from forze_kits.aggregates.search import (
+    OutboxSearchSync,
+    SearchMappers,
+    SearchSyncOutboxWiring,
     SearchSyncSteps,
     bind_search_sync,
+    bind_search_sync_outbox,
     build_search_registry,
 )
 from forze_kits.aggregates.soft_deletion import (
     PurgeHook,
     SoftDeletionKernelOp,
+    exclude_soft_deleted_mapper,
     soft_delete_wiring,
 )
+from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
 from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
 from forze_kits.integrations.outbox import OutboxEmit, bind_outbox
 from forze_kits.invariants import InvariantEnforcement, bind_invariants
@@ -103,6 +109,10 @@ class BackendRequirements:
     search_route: StrKey | None
     """External search index route (``searches={route: …}``), or ``None`` when no ``search``."""
 
+    search_sync_route: StrKey | None = None
+    """Durable index-maintenance route — an outbox, a queue, and an inbox all wired under
+    this one name — or ``None`` when index maintenance stays after-commit best-effort."""
+
     storage_route: StrKey | None
     """Object-storage route (``storages={route: …}``), or ``None`` when no ``storage``."""
 
@@ -133,7 +143,19 @@ class AggregateKit(Generic[R, D, C, U]):
     """Optional after-commit purge run when a row is soft-deleted (only with :attr:`soft_delete`)."""
 
     search: SearchSpec[R] | None = None
-    """Wire an external search index: its query ops plus after-commit index-on-write sync."""
+    """Wire an external search index: its query ops plus index-on-write sync (delivery per
+    :attr:`search_delivery`). With :attr:`soft_delete`, the kit's search query ops also
+    exclude soft-deleted rows, which requires the spec to declare ``is_deleted`` in
+    ``facetable_fields`` (the external index must be able to filter it)."""
+
+    search_delivery: OutboxSearchSync | None = None
+    """How index maintenance reaches the external index. ``None`` (default) keeps the
+    after-commit best-effort sync: bounded in-place retry, then an **at-most-once** loss —
+    the index stays stale for that row until its next successful write (a reconcilable
+    WARNING is logged). An :class:`OutboxSearchSync` replaces it with durable delivery:
+    an identity-only marker staged on a dedicated outbox route **in the write's
+    transaction**, relayed at-least-once, and applied by a consumer that re-reads the
+    row's committed state (idempotent, reorder-safe, inbox-deduped)."""
 
     storage: StorageSpec | None = None
     """Wire an object-storage bucket: the blob ops (upload/download/head/delete/…) alongside the
@@ -164,6 +186,24 @@ class AggregateKit(Generic[R, D, C, U]):
                 f"AggregateKit storage spec name {self.storage.name!r} must differ from the "
                 f"document spec name — their 'list'/'delete' operations would collide. Give the "
                 f"storage bucket its own name (e.g. {self.spec.name!r}_blobs).",
+            )
+
+        if self.search_delivery is not None and self.search is None:
+            raise exc.configuration(
+                "AggregateKit search_delivery requires a search spec (search=…) to deliver to.",
+            )
+
+        if (
+            self.soft_delete
+            and self.search is not None
+            and SOFT_DELETE_FIELD not in self.search.facetable_fields
+        ):
+            raise exc.configuration(
+                f"AggregateKit composes soft_delete with search {self.search.name!r}, so the "
+                f"kit's search query ops exclude soft-deleted rows — the index must be able "
+                f"to filter {SOFT_DELETE_FIELD!r}. Declare it on the search spec "
+                f"(facetable_fields={{{SOFT_DELETE_FIELD!r}}}); external-index provisioning "
+                f"(ensure_index) publishes facetable fields as filterable attributes.",
             )
 
     # ....................... #
@@ -228,10 +268,40 @@ class AggregateKit(Generic[R, D, C, U]):
 
     # ....................... #
 
-    def lifecycle_steps(self) -> Sequence[LifecycleStep]:
-        """The runtime lifecycle steps for the aggregate — the outbox relay (empty without one)."""
+    def lifecycle_steps(self, *, tx_route: StrKey = "default") -> Sequence[LifecycleStep]:
+        """The runtime lifecycle steps for the aggregate: the outbox relay, plus — with
+        durable :attr:`search_delivery` — the search-sync relay and consumer. *tx_route*
+        is the transaction route the sync consumer's inbox mark + apply commit on (pass
+        the same route the registry runs on)."""
 
-        return () if self.outbox is None else bind_outbox(self.outbox).lifecycle_steps
+        steps: list[LifecycleStep] = []
+
+        if self.outbox is not None:
+            steps.extend(bind_outbox(self.outbox).lifecycle_steps)
+
+        if self.search_delivery is not None:
+            steps.extend(self.search_sync_wiring().lifecycle_steps(tx_route=tx_route))
+
+        return tuple(steps)
+
+    # ....................... #
+
+    def search_sync_wiring(self) -> SearchSyncOutboxWiring:
+        """The durable index-maintenance wiring (requires ``search`` + ``search_delivery``).
+
+        Exposes the derived outbox / queue / inbox specs and the one-shot relay/consumer
+        builders — for out-of-process workers and tests.
+        """
+
+        if self.search is None or self.search_delivery is None:
+            raise exc.precondition(
+                "AggregateKit.search_sync_wiring requires search=… and search_delivery=… "
+                "on the kit",
+            )
+
+        return bind_search_sync_outbox(
+            document=self.spec, search=self.search, config=self.search_delivery
+        )
 
     # ....................... #
 
@@ -248,6 +318,11 @@ class AggregateKit(Generic[R, D, C, U]):
             document_route=self.spec.name,
             tx_route=tx_route,
             search_route=self.search.name if self.search is not None else None,
+            search_sync_route=(
+                self.search_delivery.resolved_route(self.search)
+                if self.search is not None and self.search_delivery is not None
+                else None
+            ),
             storage_route=self.storage.name if self.storage is not None else None,
             outbox_route=self.outbox.spec.name if self.outbox is not None else None,
             crypto_required=self.spec.encryption is not None,
@@ -266,10 +341,16 @@ class AggregateKit(Generic[R, D, C, U]):
         reg = build_document_registry(spec, mappers=mappers)
 
         if self.search is not None:
-            reg = type(reg).merge(reg, build_search_registry(self.search))
-            reg = bind_search_sync(
-                reg, document=spec, search=self.search, tx_route=tx_route
+            reg = type(reg).merge(
+                reg, build_search_registry(self.search, mappers=self._search_mappers())
             )
+
+            if self.search_delivery is None:
+                reg = bind_search_sync(
+                    reg, document=spec, search=self.search, tx_route=tx_route
+                )
+            else:
+                reg = self._stage_search_sync(reg, ns=ns, tx_route=tx_route)
 
         if self.storage is not None:
             reg = type(reg).merge(reg, build_storage_registry(self.storage))
@@ -292,6 +373,73 @@ class AggregateKit(Generic[R, D, C, U]):
 
     # ....................... #
 
+    def _search_mappers(self) -> SearchMappers[Any]:
+        """The kit's search request mappers — soft-delete exclusion on every query op.
+
+        With :attr:`soft_delete`, every kit search read conjoins ``is_deleted == False``
+        into its filters, so a ghost briefly present in the index is never returnable
+        (the spec-level ``facetable_fields`` requirement guarantees the index can filter
+        it). Without soft-delete the mappers stay empty — standalone
+        ``build_search_registry`` / ``bind_search_sync`` users are unaffected either way.
+        """
+
+        if not self.soft_delete:
+            return SearchMappers()
+
+        return SearchMappers(
+            search=exclude_soft_deleted_mapper,
+            projected_search=exclude_soft_deleted_mapper,
+            cursor_search=exclude_soft_deleted_mapper,
+            projected_search_cursor=exclude_soft_deleted_mapper,
+        )
+
+    # ....................... #
+
+    def _stage_search_sync(
+        self,
+        reg: OperationRegistry,
+        *,
+        ns: Any,
+        tx_route: StrKey,
+    ) -> OperationRegistry:
+        """Attach the durable delivery's in-tx marker staging to CREATE / UPDATE / KILL.
+
+        Replaces the after-commit best-effort steps: each write stages an identity-only
+        marker in its own transaction (nothing staged on rollback); the relay + consumer
+        (see :meth:`lifecycle_steps`) carry it to the index.
+        """
+
+        wiring = self.search_sync_wiring()
+        stage_write = wiring.stage_on_write()
+        present = reg.operation_keys()
+
+        for op in (DocumentKernelOp.CREATE, DocumentKernelOp.UPDATE):
+            key = ns.key(op)
+
+            if key in present:
+                reg = (
+                    reg.bind(key)
+                    .bind_tx()
+                    .set_route(tx_route)
+                    .on_success(stage_write)
+                    .finish(deep=True)
+                )
+
+        kill_key = ns.key(DocumentKernelOp.KILL)
+
+        if kill_key in present:
+            reg = (
+                reg.bind(kill_key)
+                .bind_tx()
+                .set_route(tx_route)
+                .on_success(wiring.stage_on_target())
+                .finish(deep=True)
+            )
+
+        return reg
+
+    # ....................... #
+
     def _sync_soft_delete_to_search(
         self,
         reg: OperationRegistry,
@@ -302,16 +450,34 @@ class AggregateKit(Generic[R, D, C, U]):
         """Extend external-index sync to the soft-delete ops (only ``bind_search_sync`` sees CREATE/
         UPDATE/KILL, added before these ops exist). A soft delete **removes** the row from the index
         like a hard delete, and a restore re-**upserts** it — so search never returns a soft-deleted
-        ghost that then 404s on read."""
+        ghost that then 404s on read. Durable :attr:`search_delivery` stages a marker in the op's
+        transaction instead (the consumer's re-read resolves delete-vs-upsert)."""
 
         search = self.search
         if search is None:  # pragma: no cover - guarded by the caller
             return reg
 
-        steps = SearchSyncSteps(search=search)
         present = reg.operation_keys()
-
         delete_key = ns.key(SoftDeletionKernelOp.DELETE)
+        restore_key = ns.key(SoftDeletionKernelOp.RESTORE)
+
+        if self.search_delivery is not None:
+            wiring = self.search_sync_wiring()
+
+            for key in (delete_key, restore_key):
+                if key in present:
+                    reg = (
+                        reg.bind(key)
+                        .bind_tx()
+                        .set_route(tx_route)
+                        .on_success(wiring.stage_on_target())
+                        .finish(deep=True)
+                    )
+
+            return reg
+
+        steps = SearchSyncSteps(search=search)
+
         if delete_key in present:
             reg = (
                 reg.bind(delete_key)
@@ -321,7 +487,6 @@ class AggregateKit(Generic[R, D, C, U]):
                 .finish(deep=True)
             )
 
-        restore_key = ns.key(SoftDeletionKernelOp.RESTORE)
         if restore_key in present:
             reg = (
                 reg.bind(restore_key)

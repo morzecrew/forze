@@ -52,7 +52,14 @@ _NOTE_SPEC = DocumentSpec(
         domain=_Note, create_cmd=_NoteCreate, update_cmd=_NoteUpdate
     ),
 )
-_NOTE_INDEX = SearchSpec(name="notes_index", model_type=_NoteRead, fields=["title"])
+# soft_delete + search: the kit requires `is_deleted` filterable on the index so its
+# search read ops can exclude soft-deleted rows.
+_NOTE_INDEX = SearchSpec(
+    name="notes_index",
+    model_type=_NoteRead,
+    fields=["title"],
+    facetable_fields={"is_deleted"},
+)
 
 
 def _kit(*, search: bool = True) -> AggregateKit[_NoteRead, _Note, _NoteCreate, _NoteUpdate]:
