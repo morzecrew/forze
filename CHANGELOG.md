@@ -71,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **KEK replacement with a migration overlap** — a key directory may name a previous key: reads accept current and previous while writes use current, re-encryption sweeps move the data, and dropping the previous key restores the strict guard. Key-version rotation still needs no action.
 
-- **Blob re-encryption sweep (`reencrypt_objects`)** — streams every object of a route down and back under a fresh data key in bounded memory, in place; metadata survives, an object deleted mid-sweep is counted and skipped, and the sweep returns a `ReencryptReport` (rewritten and skipped counts).
+- **Blob re-encryption sweep (`reencrypt_objects`)** — streams every object of a route down and back under a fresh data key in bounded memory, in place; metadata survives, an object deleted mid-sweep is counted and skipped, and the sweep returns a `ReencryptReport` (rewritten and skipped counts). The rewrite is conditional (`overwrite_stream(if_match=…)` — S3 If-Match, GCS generation match, mock parity), so a concurrent delete stays deleted instead of being resurrected and a concurrent change is retried once from fresh bytes.
 
 - **Cloud KMS backends (`forze_kms`)** — AWS, GCP and Yandex Cloud envelope-key backends behind the shared `KeyManagementPort` (extras kms-aws / kms-gcp / kms-yc), with transparent key-version rotation and per-tenant KEK provisioning through the same provisioner port as schemas and buckets.
 
@@ -299,6 +299,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`$neq` / `$nin` / `$disjoint` include NULL rows on Postgres** — the renderer uses IS DISTINCT FROM semantics, matching mock and Mongo.
 
+- **Tenant-aware Mongo text search works** — the prefilter (tenant tag, caller filters) was emitted as its own leading match stage, pushing the required first-stage `$text` to stage two, which the server rejects — every prefiltered text search failed. The first match now carries the text query and the prefilter together, across the offset, cursor, count and thin paths.
+
 - **Decimal cursor keys order numerically** — keyset comparison coerces numeric types to Decimal (was string-comparing) and a Decimal sort key round-trips exactly.
 
 - **Intercepted streams close deterministically** — the proxy wrap and both builtin stream interceptors now chain aclose to the backend cursor at close time instead of leaving release to garbage collection; abandonment logs nothing and mid-stream errors keep their classification.
@@ -369,7 +371,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **PostgreSQL**
 
-- **Query parameters no longer leak across reads in a caller transaction** — each param-bound read resets its session settings after the fetch.
+- **Query parameters no longer leak across reads in a caller transaction** — each param-bound read resets its session settings after the fetch; the analytics timeout/search-path settings get the same capture-and-restore inside a caller transaction. A failed reset never masks the original query error (logged as context; debug-level when the transaction was already aborted, where rollback discards the settings anyway).
+
+- **An OCC retry inside a caller transaction can no longer die on the aborted transaction** — on Mongo a write conflict aborts the whole server transaction, so the in-place retry failed with NoSuchTransaction; on Postgres a serialization failure or deadlock did the same, surfacing as masked infrastructure. Both now surface the original clean concurrency error for a whole-scope re-run; Postgres still heals a healthy zero-rows rev conflict in place.
 
 - **`find_many` warns when its implicit 10,000-row cap truncates** — pass an explicit limit or paginate to read past it.
 
@@ -389,7 +393,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Meilisearch write path** — a failed task raises instead of reporting success, task waits are bounded, tenant-tagged writes and deletes are scoped, and windows crossing maxTotalHits fail closed with the index provisioned to match.
 
-- **Neo4j keyed-edge identity & quantifier coercion** — a keyed-edge ensure matches on the edge key so distinct keyed edges stay separate; every hop quantifier (including expand) is int-coerced before inlining; a filter key must be a plain identifier — a crafted key could reach query text through the parameter name (`graph_filter_key_invalid`); walk/path params validate their numeric bounds at construction.
+- **Neo4j keyed-edge identity & quantifier coercion** — a keyed-edge ensure matches on the edge key so distinct keyed edges stay separate; every hop quantifier (including expand) is int-coerced before inlining; a filter key must be a plain identifier — a crafted key could reach query text through the parameter name (`graph_filter_key_invalid`); walk/path params validate their numeric bounds at construction. The mock graph adapter enforces the identical filter-key rule from a shared contracts helper, pinned by a differential conformance case.
 
 - **`forze_redis` imports on redis-py 7 again** — version-specific typing aliases are self-owned; client-side caching fails closed below redis-py 8.
 
