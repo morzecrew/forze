@@ -1,6 +1,6 @@
 """Unit tests for ``forze_mongo.kernel.gateways.write``."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
@@ -382,7 +382,7 @@ class TestMongoWriteGatewayInsertReturnShape:
     """Insert paths decode the exact inserted payload instead of reading back.
 
     The returned model must (a) be identical to what a subsequent read returns
-    (BSON: naive UTC datetimes, millisecond precision) and (b) have every field
+    (BSON: aware UTC datetimes, millisecond precision) and (b) have every field
     explicitly set so the adapter's ``hydrate_from_write`` transform
     (``exclude={"unset": True}``) does not drop default-factory fields.
     """
@@ -405,7 +405,8 @@ class TestMongoWriteGatewayInsertReturnShape:
     def _assert_read_identical_shape(self, doc: MyDoc) -> None:
         assert doc.__pydantic_fields_set__ == set(MyDoc.model_fields)
         for dt in (doc.created_at, doc.last_update_at):
-            assert dt.tzinfo is None  # naive UTC, like a BSON read
+            offset = dt.utcoffset()
+            assert offset is not None and offset == timedelta()  # aware UTC, like a BSON read
             assert dt.microsecond % 1000 == 0  # ms precision, like a BSON read
         # the adapter's hydrate_from_write transform must not crash
         read_codec = codec_for(MyDocRead)
@@ -434,7 +435,6 @@ class TestMongoWriteGatewayInsertReturnShape:
         assert inserted["_id"] == str(pk)
         expected_created_at = inserted["created_at"]
         assert created.created_at == expected_created_at.astimezone(UTC).replace(
-            tzinfo=None,
             microsecond=(expected_created_at.microsecond // 1000) * 1000,
         )
 

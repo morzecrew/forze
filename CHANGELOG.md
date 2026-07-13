@@ -317,6 +317,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Kafka commit-stream consumer is loss-free under poison and rebalance** — malformed payloads pause instead of raising, every pause or abort re-seeks to committed, a rebalance listener drops stale routing, and the supervised lifecycle restarts crash-loss-free.
 
+- **Mongo datetimes decode timezone-aware (UTC)** — the client now reads BSON dates as aware UTC like Postgres and the mock (was: naive UTC, caller-visible). The naive reads also made history OCC's three-way check flag a stale-rev update that echoed an unchanged datetime as a false `historical_consistency_violation`; Mongo document history is now covered by integration tests end-to-end.
+
 - **GCS conditional multipart completion covers the metadata stamp** — user metadata binds inside the same precondition boundary as the final write: the single-part rewrite carries it in the conditional write itself, and the compose paths pin the follow-up patch to the composed object's generation — a concurrent overwrite answers conflict instead of inheriting the completing caller's metadata.
 
 - **Firestore write path is OCC- and tenant-safe** — patch does real rev-CAS in a transaction, deletes are tenant-verified, unsupported operators fail closed, creates fail closed on an existing id, and Firestore joins the cross-backend DSL parity harness.

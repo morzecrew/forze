@@ -40,15 +40,15 @@ def _bson_normalize_value(value: Any) -> Any:
     """Normalize a value the way a BSON write/read round trip would.
 
     BSON stores datetimes as UTC milliseconds since the epoch, and the client
-    is not ``tz_aware``, so reads yield naive UTC datetimes truncated to
-    millisecond precision. Applying the same normalization to an insert
-    payload lets us decode it in memory and return a model identical to what
-    a subsequent read would produce.
+    decodes ``tz_aware``, so reads yield aware UTC datetimes truncated to
+    millisecond precision (a naive write is stored as-is, i.e. as UTC).
+    Applying the same normalization to an insert payload lets us decode it in
+    memory and return a model identical to what a subsequent read would
+    produce.
     """
 
     if isinstance(value, datetime):
-        if value.tzinfo is not None:
-            value = value.astimezone(UTC).replace(tzinfo=None)
+        value = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
         return value.replace(microsecond=(value.microsecond // 1000) * 1000)
 
@@ -257,7 +257,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         Mongo applies no server-side defaults or transforms, so the insert
         payload *is* the stored document; decoding it in memory replaces the
         post-insert read-back round trip. The document is first normalized via
-        :func:`_bson_normalize_value` (millisecond truncation, naive UTC) so
+        :func:`_bson_normalize_value` (millisecond truncation, aware UTC) so
         the returned model matches what a subsequent read returns. Unlike the
         raw ``_from_cdto`` model, the decoded model has every field explicitly
         set, which the adapter's ``hydrate_from_write`` transform
