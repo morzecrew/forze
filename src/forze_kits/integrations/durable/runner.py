@@ -404,9 +404,11 @@ class DurableFunctionRunner:
                 with suppress(asyncio.CancelledError):
                     await watcher
 
-            if not body.done():
-                # Only reachable when the awaiter itself was cancelled (a shutdown drain,
-                # an enclosing timeout): tear the body down with it and wait for its
+            if not body.done():  # pragma: no cover — _must_cancel timing edge
+                # Only reachable when the awaiter's cancellation was delivered at the
+                # exact await boundary without cancelling the body first (an asyncio
+                # ``_must_cancel`` edge; the normal path cancels the body through the
+                # awaiter's own cancellation): tear the body down and wait for its
                 # unwind, or it keeps executing — and heartbeating — detached.
                 body.cancel()
 
@@ -430,17 +432,24 @@ class DurableFunctionRunner:
             await asyncio.sleep(seconds)
 
             try:
-                held = await store.renew(
-                    run_id, lease_for=self.lease_for, fence=fence
-                )
+                # Bounded by the heartbeat interval: a renewal that cannot complete
+                # within one interval has already failed its purpose, and left
+                # unbounded a hung connection would wedge this loop silently while
+                # the lease lapsed server-side — the exact double-execution window
+                # the heartbeat exists to close.
+                async with asyncio.timeout(seconds):
+                    held = await store.renew(
+                        run_id, lease_for=self.lease_for, fence=fence
+                    )
 
             except Exception:
-                # A renewal that errors (DB/network blip) means we can no longer prove we hold
-                # the lease; another worker may reclaim it. Treat it as lease loss — stop the
-                # body before it double-executes and surface the lease-loss path — rather than
-                # letting the raw error escape the heartbeat task and override the body result.
-                # (``Exception`` leaves a genuine task cancellation — ``CancelledError`` — to
-                # propagate so the ``finally`` cancel path still works.)
+                # A renewal that errors (DB/network blip) or times out means we can no
+                # longer prove we hold the lease; another worker may reclaim it. Treat it
+                # as lease loss — stop the body before it double-executes and surface the
+                # lease-loss path — rather than letting the raw error escape the heartbeat
+                # task and override the body result. (``Exception`` leaves a genuine task
+                # cancellation — ``CancelledError`` — to propagate so the ``finally``
+                # cancel path still works.)
                 logger.warning(
                     "Durable run %s heartbeat renewal errored; treating as lease loss",
                     run_id,

@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_sqs.kernel.client import SQSClient
 
 
@@ -313,6 +314,7 @@ async def test_poison_copy_keeps_all_originals_under_slot_pressure(
     with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
         await client._SQSClient__send_poison_copy(  # type: ignore[attr-defined]
             source_queue="jobs.fifo",
+            source_queue_url="https://sqs/jobs.fifo",
             message_id="m-1",
             body="raw",
             attributes=originals,
@@ -348,6 +350,7 @@ async def test_poison_copy_prefers_message_id_when_one_slot_remains(
     with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
         await client._SQSClient__send_poison_copy(  # type: ignore[attr-defined]
             source_queue="jobs.fifo",
+            source_queue_url="https://sqs/jobs.fifo",
             message_id="m-1",
             body="raw",
             attributes=originals,
@@ -358,3 +361,129 @@ async def test_poison_copy_prefers_message_id_when_one_slot_remains(
     assert "forze_poison_source_queue" not in sent
     assert all(sent[k] == originals[k] for k in originals)
     assert any("no free attribute slots" in w for w in recorder.warnings)
+
+
+@pytest.mark.asyncio
+async def test_poison_copy_without_configured_url_is_an_internal_error() -> None:
+    # The caller gates on the knob before invoking; reaching the sender without
+    # a URL is a framework bug, not a caller mistake.
+    client = SQSClient()
+
+    with pytest.raises(CoreException) as ei:
+        await client._SQSClient__send_poison_copy(  # type: ignore[attr-defined]
+            source_queue="jobs.fifo",
+            source_queue_url="https://sqs/jobs.fifo",
+            message_id="m-1",
+            body="raw",
+            attributes=None,
+        )
+
+    assert ei.value.kind is ExceptionKind.INTERNAL
+
+
+@pytest.mark.asyncio
+async def test_poison_copy_original_attribute_wins_a_provenance_name_collision() -> (
+    None
+):
+    # An original attribute that already uses a provenance name is preserved
+    # verbatim — the copy never overwrites original context.
+    client = SQSClient()
+    client._SQSClient__poison_queue_url = "https://sqs/poison"  # type: ignore[attr-defined]
+
+    originals = {
+        "forze_poison_message_id": {"StringValue": "spoofed", "DataType": "String"},
+    }
+
+    mock_boto = AsyncMock()
+    mock_boto.send_message = AsyncMock(return_value={})
+
+    with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        await client._SQSClient__send_poison_copy(  # type: ignore[attr-defined]
+            source_queue="jobs.fifo",
+            source_queue_url="https://sqs/jobs.fifo",
+            message_id="m-1",
+            body="raw",
+            attributes=originals,
+        )
+
+    sent = mock_boto.send_message.await_args.kwargs["MessageAttributes"]
+    assert sent["forze_poison_message_id"]["StringValue"] == "spoofed"
+    assert sent["forze_poison_source_queue"]["StringValue"] == "jobs.fifo"
+
+
+@pytest.mark.asyncio
+async def test_poison_copy_with_no_original_attributes_sends_provenance_only() -> None:
+    client = SQSClient()
+    client._SQSClient__poison_queue_url = "https://sqs/poison"  # type: ignore[attr-defined]
+
+    mock_boto = AsyncMock()
+    mock_boto.send_message = AsyncMock(return_value={})
+
+    with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        await client._SQSClient__send_poison_copy(  # type: ignore[attr-defined]
+            source_queue="jobs",
+            source_queue_url="https://sqs/jobs",
+            message_id="m-2",
+            body="raw",
+            attributes=None,
+        )
+
+    sent = mock_boto.send_message.await_args.kwargs["MessageAttributes"]
+    assert set(sent) == {"forze_poison_message_id", "forze_poison_source_queue"}
+
+
+@pytest.mark.asyncio
+async def test_poison_copy_rejects_a_self_targeted_queue() -> None:
+    # poison_queue_url pointing back at the source queue would loop the copy
+    # (copy → undecodable → copy …); it is rejected before anything is sent.
+    client = SQSClient()
+    client._SQSClient__poison_queue_url = "https://sqs/jobs.fifo"  # type: ignore[attr-defined]
+
+    mock_boto = AsyncMock()
+
+    with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        with pytest.raises(CoreException) as ei:
+            await client._SQSClient__send_poison_copy(  # type: ignore[attr-defined]
+                source_queue="jobs.fifo",
+                source_queue_url="https://sqs/jobs.fifo",
+                message_id="m-1",
+                body="raw",
+                attributes=None,
+            )
+
+    assert ei.value.kind is ExceptionKind.INTERNAL
+    mock_boto.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_self_targeted_poison_queue_still_deletes_and_logs_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Through the receive path: the self-target rejection follows the existing
+    # failure ordering — the original is deleted anyway (unblocking the group is
+    # the primary duty) and the loss is logged as an ERROR.
+    recorder = _Recorder()
+    monkeypatch.setattr("forze_sqs.kernel.client.client.logger", recorder)
+
+    client = SQSClient()
+    client._SQSClient__poison_queue_url = "https://sqs/jobs.fifo"  # type: ignore[attr-defined]
+
+    mock_boto = AsyncMock()
+    mock_boto.receive_message = AsyncMock(
+        return_value={"Messages": [_b64_msg("bad", "!!! not base64 !!!")]}
+    )
+    mock_boto.send_message = AsyncMock(return_value={})
+    mock_boto.delete_message = AsyncMock(return_value={})
+
+    with patch.object(
+        client,
+        "_SQSClient__resolve_queue_url",
+        AsyncMock(return_value="https://sqs/jobs.fifo"),
+    ):
+        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+            msgs = await client.receive("jobs.fifo", limit=10)
+
+    assert msgs == []
+    mock_boto.send_message.assert_not_awaited()  # nothing published to itself
+    mock_boto.delete_message.assert_awaited_once()  # the group is still unblocked
+    assert len(recorder.errors) == 1

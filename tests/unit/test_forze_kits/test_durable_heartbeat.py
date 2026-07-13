@@ -181,6 +181,45 @@ class TestRunnerHeartbeat:
         # Left RUNNING (no terminal write) for a later recovery, not FAILED with the DB error.
         assert result.status is DurableRunStatus.RUNNING
 
+    async def test_hung_renew_is_treated_as_lease_loss(self) -> None:
+        # A renewal that BLOCKS (hung connection, no server timeout) must not wedge the
+        # heartbeat silently while the lease lapses server-side: bounded by the heartbeat
+        # interval, it times out and follows the same lease-loss path as an erroring one.
+        from unittest.mock import AsyncMock, patch
+
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+
+        side_effects = {"count": 0}
+
+        registry = DurableFunctionRegistry()
+
+        async def handler(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            await asyncio.sleep(1.0)
+            side_effects["count"] += 1  # must NOT run — the body is cancelled on lease loss
+            return {"ok": True}
+
+        registry.register("fn", handler)
+        runner = DurableFunctionRunner(
+            registry=registry,
+            lease_for=timedelta(milliseconds=60),
+            heartbeat_divisor=2,
+        )
+
+        async def hung_renew(*_a: object, **_kw: object) -> bool:
+            await asyncio.Event().wait()
+            return True  # pragma: no cover
+
+        with patch.object(
+            MockDurableRunStore,
+            "renew",
+            AsyncMock(side_effect=hung_renew),
+        ):
+            result = await runner.run_now(ctx, "fn")
+
+        assert side_effects["count"] == 0
+        assert result.status is DurableRunStatus.RUNNING
+
     async def test_side_effect_runs_once_across_would_be_reclaim_window(self) -> None:
         state = MockState()
         ctx = context_from_modules(MockDepsModule(state=state))

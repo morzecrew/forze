@@ -1039,6 +1039,7 @@ class SQSClient(SQSClientPort):
         self,
         *,
         source_queue: str,
+        source_queue_url: str,
         message_id: str,
         body: str,
         attributes: dict[str, Any] | None,
@@ -1068,6 +1069,15 @@ class SQSClient(SQSClientPort):
 
         if poison_queue_url is None:
             raise exc.internal("SQS poison queue URL is not configured")
+
+        if poison_queue_url.rstrip("/") == source_queue_url.rstrip("/"):
+            # A self-targeted copy would land back on the queue it poisoned and loop
+            # (copy → undecodable → copy …). Raising here follows the caller's existing
+            # failure path: the original is still deleted, the loss logged as an error.
+            raise exc.internal(
+                "SQS poison queue must differ from the source queue "
+                f"(both resolve to {poison_queue_url!r})"
+            )
 
         message_attributes: dict[str, Any] = dict(attributes) if attributes else {}
 
@@ -1222,6 +1232,7 @@ class SQSClient(SQSClientPort):
                     try:
                         await self.__send_poison_copy(
                             source_queue=queue,
+                            source_queue_url=queue_url,
                             message_id=message_id,
                             body=body,
                             attributes=attrs_,

@@ -182,3 +182,78 @@ class TestRunDeadline:
                 registry=DurableFunctionRegistry(),
                 max_run_duration=timedelta(0),
             )
+
+
+class TestDeadlineEdges:
+    async def test_no_cap_when_max_run_duration_is_none(self) -> None:
+        # ``None`` removes the cap: no watchdog is armed and a legitimate body
+        # completes untouched.
+        ctx = context_from_modules(MockDepsModule())
+
+        registry = DurableFunctionRegistry()
+
+        async def quick(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            return {"ok": True}
+
+        registry.register("quick", quick)
+
+        runner = DurableFunctionRunner(registry=registry, max_run_duration=None)
+
+        record = await runner.run_now(ctx, "quick")
+        assert record.status is DurableRunStatus.COMPLETED
+
+    async def test_run_now_lost_claim_returns_the_other_workers_record(self) -> None:
+        # A concurrent worker won the claim: ``run_now`` does not execute the body
+        # twice — it returns the freshest loadable record.
+        ctx = context_from_modules(MockDepsModule())
+        store = resolve_durable_run_store(ctx)
+
+        registry = DurableFunctionRegistry()
+        calls = {"n": 0}
+
+        async def once(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            calls["n"] += 1
+            return {"ok": True}
+
+        registry.register("once", once)
+        runner = DurableFunctionRunner(registry=registry)
+
+        record = await store.enqueue("once", input_json=None, idempotency_key="k")
+        # Another worker holds the lease already.
+        claimed = await store.begin(record.run_id, lease_for=timedelta(minutes=5))
+        assert claimed is not None
+
+        result = await runner.run_now(ctx, "once", idempotency_key="k")
+
+        assert calls["n"] == 0  # the body never ran here
+        assert result.run_id == record.run_id
+
+    async def test_recovery_records_a_plain_exception_and_continues(self) -> None:
+        # A non-CoreException body failure under recovery (reraise=False) lands
+        # FAILED with the error recorded and does not abort the sweep.
+        ctx = context_from_modules(MockDepsModule())
+        store = resolve_durable_run_store(ctx)
+
+        registry = DurableFunctionRegistry()
+
+        async def broken(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            raise ValueError("plain failure")
+
+        async def fine(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            return {"ok": True}
+
+        registry.register("broken", broken)
+        registry.register("fine", fine)
+        runner = DurableFunctionRunner(registry=registry)
+
+        bad = await store.enqueue("broken", input_json=None)
+        good = await store.enqueue("fine", input_json=None)
+
+        await runner.recover(ctx)
+
+        reloaded_bad = await store.load(bad.run_id)
+        reloaded_good = await store.load(good.run_id)
+        assert reloaded_bad is not None and reloaded_good is not None
+        assert reloaded_bad.status is DurableRunStatus.FAILED
+        assert "plain failure" in (reloaded_bad.error or "")
+        assert reloaded_good.status is DurableRunStatus.COMPLETED
