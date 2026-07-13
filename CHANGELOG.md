@@ -415,6 +415,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`configure_logging()` configures the root logger by default** — with no logger names it previously attached nothing and INFO logs vanished; an explicit list is still an allowlist.
 
+- **Console renderer no longer shares mutable defaults across instances** — the renderer's class-level dict and list defaults were shared by every instance, so per-instance customization leaked between renderers; they are now per-instance factories.
+
 - **Misc** — BigQuery empty-array params typed from annotations; timezone offsets validated; S3 multipart-ETag normalization; If-None-Match parsed per RFC 7232; outbound HTTP suppresses its default bearer when an Authorization header is set; GCS rejects reserved metadata keys.
 
 ## [0.4.1] - 2026-06-17
