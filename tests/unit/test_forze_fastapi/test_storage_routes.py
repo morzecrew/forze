@@ -1050,18 +1050,15 @@ class TestStreamingHeaderHelpers:
         )
         from forze.base.exceptions import exc
         from forze_fastapi.routes import storage as mod
-        from forze_kits.aggregates.storage import ObjectHeadDTO
 
         async def runner(_args: object) -> object:
             raise exc.precondition(
                 "cannot slice", code=RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE
             )
 
-        head = ObjectHeadDTO(content_type="x", size=100, etag="e", last_modified=None)
         out = await mod._range_response(  # pyright: ignore[reportPrivateUsage]
             key="k",
             range_header="bytes=0-10",
-            head=head,
             base_headers={},
             range_runner=runner,
             max_range_bytes=16 * 1024 * 1024,
@@ -1072,17 +1069,14 @@ class TestStreamingHeaderHelpers:
     async def test_range_response_reraises_other_core_exception(self) -> None:
         from forze.base.exceptions import CoreException, exc
         from forze_fastapi.routes import storage as mod
-        from forze_kits.aggregates.storage import ObjectHeadDTO
 
         async def runner(_args: object) -> object:
             raise exc.internal("boom")
 
-        head = ObjectHeadDTO(content_type="x", size=100, etag="e", last_modified=None)
         with pytest.raises(CoreException):
             await mod._range_response(  # pyright: ignore[reportPrivateUsage]
                 key="k",
                 range_header="bytes=0-10",
-                head=head,
                 base_headers={},
                 range_runner=runner,
                 max_range_bytes=16 * 1024 * 1024,

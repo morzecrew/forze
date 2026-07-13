@@ -31,6 +31,7 @@ from forze.base.primitives import StrKey, StrKeyNamespace
 from forze_kits.aggregates._logger import logger
 from forze_kits.aggregates.document.dto import written_read_model
 from forze_kits.aggregates.document.operations import DocumentKernelOp
+from forze_kits.aggregates.search.encryption import assert_search_encryption_parity
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
 
 if TYPE_CHECKING:
@@ -201,7 +202,13 @@ def bind_search_sync(
     *tx_route* — the commit boundary the after-commit sync fires past — so *tx_route* must
     resolve a transaction manager. Delivery is at-most-once (bounded in-place retry, then a
     reconcilable WARNING); see :class:`SearchSyncSteps` for the contract.
+
+    The two specs must declare the same field encryption — the upsert feeds *search* the
+    document's **decrypted** read model, so a field sealed on the document but omitted on the
+    search spec would reach the index in clear (see :func:`assert_search_encryption_parity`).
     """
+
+    assert_search_encryption_parity(document=document, search=search)
 
     ns = ns or document.default_namespace
     steps = SearchSyncSteps(search=search)

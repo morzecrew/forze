@@ -265,6 +265,66 @@ class TestCredentialFragmentCoverage:
         assert result["passphrase"] == SECRET_PLACEHOLDER
 
 
+class TestScrubSerializedBodyLeak:
+    """A credential inside a logged JSON / dict-repr body must be masked, not just ``k=v``.
+
+    In a serialized body the key's closing quote sits between the name and the separator
+    (``"api_key":"sk_live_…"``), which the bare assignment shape cannot see — so a logged
+    request/response/webhook body would otherwise go out with live credentials.
+    """
+
+    @pytest.mark.parametrize(
+        ("text", "secret"),
+        [
+            ('{"api_key":"sk_live_abc123"}', "sk_live_abc123"),
+            ('{"secret": "shh"}', "shh"),
+            ('{"password": "hunter2"}', "hunter2"),
+            ('{"client_secret":"cs_abc"}', "cs_abc"),
+            ('{"session_token":"deadbeef"}', "deadbeef"),
+            ('{"private_key":"-----BEGIN PRIVATE KEY-----"}', "BEGIN PRIVATE KEY"),
+            ('{"authorization":"Basic dXNlcjpwYXNz"}', "dXNlcjpwYXNz"),
+            # Python dict repr — the other serialized form logs carry.
+            ("{'api_key': 'sk_live_abc'}", "sk_live_abc"),
+            # Unquoted (numeric) JSON value.
+            ('{"session_id":12345}', "12345"),
+            # An escaped quote inside the value must not end the match early.
+            ('{"secret":"a\\"b"}', 'a\\"b'),
+        ],
+    )
+    def test_masks_quoted_key_value(self, text: str, secret: str) -> None:
+        result = scrub_log_string(text)
+        assert secret not in result
+        assert SECRET_PLACEHOLDER in result
+
+    def test_every_secret_term_is_covered_not_just_private_key(self) -> None:
+        # The whole point: the quoted-key rule is the *vocabulary's* projection, not one
+        # hand-written case. A body carrying several credentials loses all of them.
+        body = '{"api_key":"sk_live_1","secret":"s2","password":"p3","private_key":"pk4"}'
+        result = scrub_log_string(body)
+
+        for leaked in ("sk_live_1", "s2", "p3", "pk4"):
+            assert leaked not in result
+
+    def test_masking_is_bounded_to_the_value(self) -> None:
+        # Over-masking a whole log line is its own failure; the neighbours survive.
+        result = scrub_log_string('{"order_id":"A1","api_key":"sk_live_1","total":5}')
+
+        assert "sk_live_1" not in result
+        assert '"order_id":"A1"' in result
+        assert '"total":5' in result
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            '{"order_id":"A1","total":5}',
+            '{"secretary":"Jane"}',  # bare-word continuation, as in the assignment form
+            '{"description":"the session expired"}',
+        ],
+    )
+    def test_leaves_non_secret_bodies_untouched(self, text: str) -> None:
+        assert scrub_log_string(text) == text
+
+
 class TestFragmentListParity:
     """Drift guard: the key-heuristic and value-form term lists must stay reconciled.
 
@@ -275,13 +335,14 @@ class TestFragmentListParity:
     explicit exception sets below.
     """
 
-    # Key-heuristic terms with no value-form assignment counterpart, with the
+    # Key-heuristic terms with no *assignment* value-form counterpart, with the
     # reason the value form is handled elsewhere (or inapplicable).
     _KEY_ONLY_TERMS = frozenset({
-        # The value form is owned by the dedicated full-line
+        # The bare value form is owned by the dedicated full-line
         # ``authorization\s*:\s*[^\r\n]+`` extras pattern: an assignment-term
         # match would stop at the first token (the scheme word, e.g. ``Basic``)
-        # and leak the credential that follows it.
+        # and leak the credential that follows it. Its quoted-key form *is*
+        # in the vocabulary (a quoted value is bounded), see below.
         "authorization",
     })
 
@@ -334,12 +395,40 @@ class TestFragmentListParity:
             f" {sorted(missing_from_key - self._VALUE_ONLY_TERMS)}"
         )
 
+    def test_quoted_key_terms_cover_every_key_term(self) -> None:
+        # The quoted-key (serialized-body) rule has no exceptions: a term the key
+        # heuristic masks in an event dict must also be masked inside a logged body.
+        from forze.base.scrubbing import policy
+
+        key_terms = {
+            self._canonical_term(fragment)
+            for fragment in (
+                *policy._LOGFIRE_SENSITIVE_FRAGMENTS,
+                *policy._FORZE_KEY_EXTRAS,
+            )
+        }
+        quoted_terms = {
+            self._canonical_term(fragment)
+            for fragment in policy._LOG_QUOTED_KEY_TERM_FRAGMENTS
+        }
+
+        assert not key_terms - quoted_terms, (
+            "key-heuristic terms missing from the quoted-key (serialized-body) rule —"
+            " a logged JSON body would leak them:"
+            f" {sorted(key_terms - quoted_terms)}"
+        )
+
     def test_key_only_exception_still_masks_its_value_form(self) -> None:
         # The documented exception is only valid while the full-line pattern
-        # actually owns the authorization value form.
+        # actually owns the bare authorization value form...
         result = scrub_log_string("Authorization: Basic dXNlcjpwYXNz")
         assert "dXNlcjpwYXNz" not in result
         assert "Basic" not in result
+
+        # ...and the quoted-key rule owns it inside a serialized body.
+        body = scrub_log_string('{"authorization": "Basic dXNlcjpwYXNz"}')
+        assert "dXNlcjpwYXNz" not in body
+        assert "Basic" not in body
 
 
 class TestSanitizeNonStrKey:
@@ -508,10 +597,11 @@ class TestRegisterSensitivePatterns:
 # One matching sample per built-in log-string fragment. The exhaustiveness test
 # below fails when a fragment is added without a sample here.
 _FRAGMENT_SAMPLES: dict[str, str] = {
-    # The assignment fragment is assembled from _LOG_ASSIGNMENT_TERM_FRAGMENTS;
+    # Both value-form fragments are assembled from the shared term vocabulary;
     # per-term coverage lives in TestCredentialFragmentCoverage and the parity
-    # guard, so one representative sample suffices here.
+    # guard, so one representative sample each suffices here.
     _scrub_policy._LOG_ASSIGNMENT_FRAGMENTS[0]: "retry with api key=abc123",
+    _scrub_policy._LOG_ASSIGNMENT_FRAGMENTS[1]: 'body {"api_key": "abc123"}',
     r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}": "mail sent to alice@example.com today",
     r"Bearer\s+\S+": "header was Bearer eyJhbGci.x.y",
     r"authorization\s*:\s*[^\r\n]+": "Authorization: Basic dXNlcjpwYXNz",
@@ -520,7 +610,6 @@ _FRAGMENT_SAMPLES: dict[str, str] = {
     r"redis(?:\+[a-z]+)?://\S+": "cache at redis://cache:6379/0",
     r"amqps?://\S+": "broker amqps://guest:guest@mq:5671/",
     r"\w[\w+.-]*://[^\s/@:]+:[^\s@]+@": "olap clickhouse://user:pass@ch:9000/db",
-    r'"private_key"\s*:\s*"[^"]*"': 'cfg {"private_key": "-----BEGIN-----"}',
 }
 
 

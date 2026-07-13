@@ -81,10 +81,13 @@ _FORZE_KEY_EXTRAS: tuple[str, ...] = (
 # (Logfire fragments + Forze key extras): every key term has an assignment
 # counterpart here and vice versa, so a credential is masked whether it appears
 # as an event-dict key or inline in a message string. The one deliberate
-# key-only term is ``authorization``, whose value form is owned by the
+# key-only term is ``authorization``, whose *bare* value form is owned by the
 # full-line ``authorization\s*:`` rule below — an assignment match would stop
 # at the scheme word (``Basic``) and leak the credential after it. A parity
 # test enforces the reconciliation.
+#
+# These terms are also the vocabulary of the quoted-key rule below, which is what
+# catches the same credentials in a serialized body.
 _LOG_ASSIGNMENT_TERM_FRAGMENTS: tuple[str, ...] = (
     "password",
     "passwd",
@@ -112,8 +115,34 @@ _LOG_ASSIGNMENT_TERM_FRAGMENTS: tuple[str, ...] = (
     "uri",
 )
 
+# Quoted-key form of the same vocabulary — a credential inside a *serialized* body.
+#
+# The assignment rule above expects the separator to follow the name directly
+# (``api_key=…`` / ``api_key: …``), but in JSON — and in a Python dict repr — the
+# name's closing quote sits between them (``"api_key":"sk_live_…"``), so that rule
+# never fires and a logged request/response/webhook body would go out verbatim. Any
+# code path that logs a serialized payload hits this, which is most of them.
+#
+# The key's *closing* quote is what anchors the form (the opening one is irrelevant to a
+# search), and the value is quote-delimited, so it is masked exactly — not to the next
+# whitespace. That bound is also why ``authorization`` can join the vocabulary here
+# (unlike the assignment rule, whose match would stop at the scheme word ``Basic`` and
+# leak the credential after it): ``"authorization": "Basic dXNlcjpwYXNz"`` masks whole.
+# An unquoted JSON value (a number, ``null``) is masked up to the next structural
+# character, so the rest of the body survives.
+_LOG_QUOTED_KEY_TERM_FRAGMENTS: tuple[str, ...] = (
+    *_LOG_ASSIGNMENT_TERM_FRAGMENTS,
+    "authorization",
+)
+
+_QUOTED_VALUE = r"""(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,}\]]+)"""
+
 _LOG_ASSIGNMENT_FRAGMENTS: tuple[str, ...] = (
     "(?:" + "|".join(_LOG_ASSIGNMENT_TERM_FRAGMENTS) + r")(?:[._-]\w+){0,6}\s*[=:]\s*\S+",
+    "(?:"
+    + "|".join(_LOG_QUOTED_KEY_TERM_FRAGMENTS)
+    + r")(?:[._-]\w+){0,6}[\"']\s*[=:]\s*"
+    + _QUOTED_VALUE,
 )
 
 _LOG_STRING_EXTRAS: tuple[str, ...] = (
@@ -130,7 +159,6 @@ _LOG_STRING_EXTRAS: tuple[str, ...] = (
     # Scheme-agnostic ``scheme://user:pass@`` userinfo, so clickhouse://, mongodb://,
     # https://user:pass@ … DSNs are masked, not only the four schemes enumerated above.
     r"\w[\w+.-]*://[^\s/@:]+:[^\s@]+@",
-    r'"private_key"\s*:\s*"[^"]*"',
 )
 
 _SCRUB_FLAGS = re.IGNORECASE | re.DOTALL

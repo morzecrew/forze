@@ -48,6 +48,8 @@ class _MockClient:
         value: Any = None,
         row: dict[str, Any] | None = None,
         rowcount: int = 0,
+        in_caller_tx: bool = False,
+        session_settings: dict[str, str] | None = None,
     ) -> None:
         self.value = value
         self.row = row
@@ -56,6 +58,12 @@ class _MockClient:
         self.fetch_value_calls: list[tuple[Any, Any]] = []
         self.fetch_one_calls: list[tuple[Any, Any]] = []
         self.tx_opened = 0
+        # A caller transaction is already open (the normal command-handler case): the adapter's
+        # own `transaction()` is then a savepoint, whose SET LOCALs merge into the outer tx.
+        self.in_caller_tx = in_caller_tx
+        # The caller transaction's own GUC values, as `current_setting` would report them.
+        self.session_settings = session_settings or {}
+        self.captured: list[Any] = []
 
     def transaction(self) -> Any:
         @asynccontextmanager
@@ -64,6 +72,9 @@ class _MockClient:
             yield self
 
         return _tx()
+
+    def is_in_transaction(self) -> bool:
+        return self.in_caller_tx
 
     async def execute(
         self, query: Any, params: Any = None, *, return_rowcount: bool = False
@@ -76,7 +87,11 @@ class _MockClient:
         return self.value
 
     async def fetch_one(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
-        _ = kwargs
+        if kwargs.get("row_factory") == "tuple":
+            # The settings-capture probe (`SELECT current_setting(%s, true), ...`).
+            self.captured.append(params)
+            return tuple(self.session_settings.get(name) for name in (params or []))
+
         self.fetch_one_calls.append((query, params))
         return self.row
 
@@ -367,6 +382,112 @@ async def test_statement_timeout_sets_local() -> None:
         for q, _ in mock.executes
     ]
     assert any("statement_timeout" in s for s in rendered)
+
+
+class TestSetLocalDoesNotLeakIntoTheCallerTransaction:
+    """A procedure's ``SET LOCAL`` must not outlive the procedure.
+
+    Run inside an open operation transaction — the normal command-handler case — the adapter's
+    own ``transaction()`` is a savepoint, and Postgres merges a savepoint's ``SET LOCAL`` values
+    into the enclosing transaction when the savepoint is released. So the procedure's per-tenant
+    ``search_path`` and its ``statement_timeout`` would silently apply to every statement the
+    caller runs afterwards — a tenancy-isolation leak. The caller's values are captured before
+    the overrides and put back after (the analytics adapter's SET LOCAL scope, which this seam
+    shares).
+    """
+
+    @staticmethod
+    def _config() -> PostgresProcedureConfig:
+        return PostgresProcedureConfig(
+            sql="SELECT recompute(%(window)s)",
+            statement_timeout=timedelta(seconds=5),
+            query_schema="tenant_a",
+        )
+
+    @staticmethod
+    def _rendered(mock: _MockClient) -> list[str]:
+        return [
+            q.as_string(None) if hasattr(q, "as_string") else str(q)
+            for q, _ in mock.executes
+        ]
+
+    @pytest.mark.asyncio
+    async def test_caller_values_are_captured_and_restored(self) -> None:
+        mock = _MockClient(
+            rowcount=1,
+            in_caller_tx=True,
+            session_settings={
+                "search_path": "public",
+                "statement_timeout": "30s",
+            },
+        )
+        adapter = _adapter(
+            mock,
+            spec=ProcedureSpec(name="recompute", params=_Params),
+            config=self._config(),
+        )
+
+        await adapter.run(_Params())
+
+        # Both overridden settings were captured before being overridden...
+        assert mock.captured == [["statement_timeout", "search_path"]]
+
+        # ...and restored to the caller's own values after the procedure ran.
+        restore_query, restore_params = mock.executes[-1]
+        assert "set_config" in self._rendered(mock)[-1]
+        assert restore_params == [
+            "statement_timeout",
+            "30s",
+            "search_path",
+            "public",
+        ]
+        assert restore_query is not None
+
+    @pytest.mark.asyncio
+    async def test_at_the_root_nothing_is_captured_or_restored(self) -> None:
+        # No caller transaction: the adapter's own transaction ends with the statement and takes
+        # the SET LOCAL values with it, so the capture/restore round-trips are skipped.
+        mock = _MockClient(rowcount=1, in_caller_tx=False)
+        adapter = _adapter(
+            mock,
+            spec=ProcedureSpec(name="recompute", params=_Params),
+            config=self._config(),
+        )
+
+        await adapter.run(_Params())
+
+        assert mock.captured == []
+        assert not any("set_config" in s for s in self._rendered(mock))
+
+    @pytest.mark.asyncio
+    async def test_restores_even_when_the_procedure_raises(self) -> None:
+        class _Boom(_MockClient):
+            async def execute(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
+                await super().execute(query, params, **kwargs)
+
+                if kwargs.get("return_rowcount"):
+                    raise RuntimeError("procedure blew up")
+
+                return None
+
+        mock = _Boom(
+            in_caller_tx=True,
+            session_settings={"search_path": "public", "statement_timeout": "30s"},
+        )
+        adapter = _adapter(
+            mock,
+            spec=ProcedureSpec(name="recompute", params=_Params),
+            config=self._config(),
+        )
+
+        with pytest.raises(RuntimeError):
+            await adapter.run(_Params())
+
+        # A failing procedure must not leave its settings behind either.
+        assert any("set_config" in s for s in self._rendered(mock))
+
+
+# ....................... #
 
 
 class _EncParams(BaseModel):

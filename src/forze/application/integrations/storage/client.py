@@ -15,6 +15,7 @@ import attrs
 
 from forze.application.contracts.storage import (
     OVERWRITE_PRECONDITION_FAILED_CODE,
+    RANGE_NOT_SATISFIABLE_CODE,
     PresignedUrl,
 )
 from forze.base.exceptions import CoreException, exc
@@ -121,7 +122,7 @@ def unsatisfiable_range(start: int, total: int) -> CoreException:
 
     return exc.precondition(
         f"Requested range start {start} is beyond object size {total}",
-        code="range_not_satisfiable",
+        code=RANGE_NOT_SATISFIABLE_CODE,
     )
 
 

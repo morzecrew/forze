@@ -28,7 +28,10 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, OnceCell
 from forze.base.serialization import default_model_codec
 from forze_postgres.execution.deps.configs import PostgresProcedureConfig
-from forze_postgres.kernel.client import PostgresClientPort
+from forze_postgres.kernel.client import (
+    PostgresClientPort,
+    restore_local_settings_on_exit,
+)
 
 # ----------------------- #
 
@@ -128,7 +131,31 @@ class PostgresProcedureAdapter[In: BaseModel, Out](ProcedurePort[In, Out]):
         schema = await self._query_schema()
         timeout = self.config.statement_timeout
 
-        async with self.client.transaction():
+        overridden: list[str] = []
+
+        if timeout is not None:
+            overridden.append("statement_timeout")
+
+        if schema is not None:
+            overridden.append("search_path")
+
+        # Inside a caller transaction (the normal command-handler case) ours is a savepoint, and
+        # ``SET LOCAL`` merges into the *outer* transaction when the savepoint is released — so
+        # the procedure's per-tenant search_path and statement_timeout would outlive it and apply
+        # to every subsequent statement of the caller's transaction. Capture the caller's values
+        # first and put them back after (the same scope the analytics adapter runs its SET LOCALs
+        # in). At the root there is nothing to restore: the transaction ends with the statement,
+        # taking the settings with it.
+        in_caller_transaction = self.client.is_in_transaction()
+
+        async with (
+            self.client.transaction(),
+            restore_local_settings_on_exit(
+                self.client,
+                overridden,
+                enabled=in_caller_transaction,
+            ),
+        ):
             if timeout is not None:
                 await self.client.execute(
                     sql.SQL("SET LOCAL statement_timeout = {}").format(

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+Six defects from the v0.5.0 audit, all of the same shape: a guarantee held at one seam and undone at the seam below or beside it.
+
+- **Credentials leaked into logs from serialized bodies** — the log scrubber's value rule only matched `key=value` / `key: value`, so a credential inside a logged JSON or dict-repr body (`{"api_key":"sk_live_…"}`) went out verbatim for every secret term except `private_key`. The whole term vocabulary — plus `authorization`, whose quoted value is bounded — is now matched in quoted-key form, with the mask bounded to the value so neighbouring fields survive.
+
+- **A sealed document field could reach the external search index in clear** — the index is fed the aggregate's *decrypted* read model, so a `SearchSpec` that omitted a field the `DocumentSpec` sealed published its plaintext to Meilisearch. `AggregateKit`, `bind_search_sync`, and `bind_search_sync_outbox` now require both specs to declare the same `FieldEncryption` policy (`search_encryption_parity_mismatch`).
+
+- **Storage `list` no longer creates its bucket.** It was the only read path calling `ensure_bucket`, so listing a deleted bucket re-created it and answered "empty" — which is also why the re-encryption sweep's bucket-vanished guard could never fire, reporting a false-complete rotation. **Behavior change:** `list` on a missing bucket now raises, like `download` / `head`; only writes create on demand.
+
+- **Ranged downloads of client-side-encrypted objects served the wrong bytes (FastAPI)** — the streaming route resolved `Range` against the *stored* size, which is the ciphertext's, so a `bytes=-N` suffix returned a shifted window with a plausible-looking `Content-Range`, and a range past the plaintext end surfaced as a 400 instead of a 416. Ranges now resolve against the plaintext total. Adds `RANGE_NOT_SATISFIABLE_CODE`.
+
+- **Postgres procedures leaked `SET LOCAL` into the caller's transaction** — run inside an open operation transaction, a procedure's per-tenant `search_path` and `statement_timeout` merged into the outer transaction on savepoint release and applied to every later statement. Captured and restored, as the analytics adapter already did.
+
+- **Neo4j dropped the per-tenant database inside a transaction** — an enlisted transaction bound to the client's static default and ignored each statement's `database=`, so a `namespace`-tier tenant's transactional graph writes landed in the shared database. The transaction now binds to the database of its first statement (the tenant's); a second, different database within one transaction is refused (`neo4j_tx_database_conflict`).
+
 ## [0.5.0] - 2026-07-13
 
 ### Added
