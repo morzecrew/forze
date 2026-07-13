@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.46">
+      <meta name="generator" content="zensical-0.0.47">
     
     
       
@@ -36,7 +36,7 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.19d3147f.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5e19f6ca.min.css">
       
         
           
@@ -1709,6 +1709,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../identity-tenancy-enc/cursor-tokens/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-ticket-check" viewBox="0 0 24 24"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="m9 12 2 2 4-4"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Cursor tokens
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2780,6 +2809,35 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/kafka/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-list-ordered" viewBox="0 0 24 24"><path d="M11 5h10M11 12h10M11 19h10M4 4h1v5M4 9h2M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 0 0-2.6-1.02"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Kafka
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -5261,6 +5319,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#downloads-streaming-ranges-caching" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Downloads: streaming, ranges &amp; caching
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#direct-resumable-uploads" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5546,6 +5615,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#downloads-streaming-ranges-caching" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Downloads: streaming, ranges &amp; caching
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#direct-resumable-uploads" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5777,15 +5857,15 @@ every operation is <code>POST /&lt;op&gt;</code>:</p>
 <p><code>attach_storage_routes</code> covers a storage registry (<code>build_storage_registry</code>)
 and takes the same explicit <code>style</code>. Transport shapes are fixed by the
 payloads — multipart upload (the file plus optional <code>description</code>/<code>prefix</code>
-form fields), the listing DTO as JSON body, the object bytes back with content
+form fields), the listing DTO as JSON body, a streamed download with content
 type and a <code>Content-Disposition</code> filename, a void delete (204); keys may
 contain slashes. The style only decides paths and verbs:</p>
 <ul>
-<li><code>"rest"</code> — <code>POST /files</code> (201), <code>POST /files/list</code>, <code>GET /files/{key}</code>,
-  <code>DELETE /files/{key}</code>.</li>
+<li><code>"rest"</code> — <code>POST /files</code> (201), <code>POST /files/list</code>, <code>GET /files/{key}</code> (with a
+  <code>HEAD</code> sibling on the same path), <code>DELETE /files/{key}</code>.</li>
 <li><code>"rpc"</code> — <code>POST /files/upload</code>, <code>POST /files/list</code>,
-  <code>GET /files/download/{key}</code>, <code>DELETE /files/delete/{key}</code>. The key rides the
-  path tail in both styles since it is slash-bearing, not a JSON field.</li>
+  <code>GET /files/download/{key}</code> (+ <code>HEAD</code>), <code>DELETE /files/delete/{key}</code>. The key
+  rides the path tail in both styles since it is slash-bearing, not a JSON field.</li>
 </ul>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_storage_routes</span>
 
@@ -5799,6 +5879,76 @@ contain slashes. The style only decides paths and verbs:</p>
     <span class="n">style</span><span class="o">=</span><span class="s2">&quot;rest&quot;</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
+<h3 id="downloads-streaming-ranges-caching">Downloads: streaming, ranges &amp; caching<a class="headerlink" href="#downloads-streaming-ranges-caching" title="Permanent link">&para;</a></h3>
+<p>The <code>GET</code> download route <strong>streams by default</strong> (<code>stream=True</code>): the body is a
+<code>StreamingResponse</code> consumed chunk by chunk, so the process never buffers a
+whole object and a large download can't OOM it. It is backed by three read-only
+query operations the registry carries (<code>build_storage_registry</code> registers them;
+they acquire only the storage query port): <code>head</code>, <code>download_stream</code>, and
+<code>download_range</code>. A plain unconditional <code>GET</code> runs a single <code>download_stream</code>
+operation — the cache validators ride along on its result, no separate <code>head</code>
+round-trip; a conditional or <code>Range</code> request runs <code>head</code> first.</p>
+<p>The route is a full HTTP range/cache citizen:</p>
+<table>
+<thead>
+<tr>
+<th>Request</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>plain <code>GET</code></td>
+<td><strong>200</strong>, streamed body, <code>Accept-Ranges: bytes</code></td>
+</tr>
+<tr>
+<td><code>If-None-Match</code> / <code>If-Modified-Since</code> match</td>
+<td><strong>304</strong>, no body, validators echoed (<code>If-None-Match</code> takes precedence per RFC 7232)</td>
+</tr>
+<tr>
+<td><code>Range: bytes=…</code> within the object</td>
+<td><strong>206</strong> from a real backend-ranged fetch, with <code>Content-Range</code></td>
+</tr>
+<tr>
+<td>well-formed <code>Range</code> beyond the object</td>
+<td><strong>416</strong> with <code>Content-Range: bytes */total</code></td>
+</tr>
+<tr>
+<td>malformed / non-<code>bytes</code> / multi-range</td>
+<td>header ignored per RFC 7233 — full <strong>200</strong> stream</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Range cap.</strong> A single <code>Range</code> window is buffered, so it is capped —
+  <code>max_range_bytes</code>, default <strong>16 MiB</strong>. A wider request is served <em>truncated</em>
+  to the cap with a <code>206</code> whose <code>Content-Range</code> reports the bytes actually
+  returned — a valid partial the client simply re-requests from. Only explicit
+  range windows are bounded; a plain download always streams.</li>
+<li><strong>ETag is the backend's.</strong> <code>ETag</code> / <code>Last-Modified</code> come from the backend
+  head, not from hashing the body. For a client-side-encrypted object the ETag
+  is over the <em>stored ciphertext</em> — an opaque but stable validator, exactly what
+  conditional requests need.</li>
+<li><strong>Encrypted objects stream too.</strong> A client-side-encrypted object is decrypted
+  chunk by chunk on the way out; its plaintext size isn't known up front, so the
+  response carries <strong>no <code>Content-Length</code></strong> (chunked transfer). Ranged reads
+  still work over chunked-AEAD objects — only the chunks the window covers are
+  fetched and decrypted; a legacy <em>whole-payload</em> envelope can't be sliced, so a
+  <code>Range</code> request against one falls back to the full streamed body rather than
+  erroring.</li>
+<li><strong><code>HEAD</code> mirrors the <code>GET</code></strong> on the same path: <code>Content-Type</code>,
+  <code>Content-Length</code>, <code>ETag</code>, <code>Last-Modified</code>, <code>Accept-Ranges</code>, no body. Its
+  <code>Content-Length</code> is the <strong>stored</strong> size (for an encrypted object, the
+  ciphertext length — the streamed <code>GET</code> decrypts and uses chunked transfer
+  instead).</li>
+</ul>
+<p><code>stream=False</code> opts back into the legacy fully-buffered download: the whole
+object in memory, an ETag hashed from the body bytes, and <code>Range</code> served by
+slicing the buffer instead of a backend-ranged fetch. Prefer the default; if you
+must keep large objects out of the app entirely, expose <code>presign_download</code> (see
+below) so the client fetches straight from the backend. When a registry predates
+the three streaming operations, the attacher quietly keeps the buffered
+endpoint, so enabling <code>stream</code> is safe on any registry.</p>
 <h3 id="direct-resumable-uploads">Direct &amp; resumable uploads<a class="headerlink" href="#direct-resumable-uploads" title="Permanent link">&para;</a></h3>
 <p>For large or direct uploads the application stays <strong>out of the data path</strong>: the
 browser (or an Uppy client) transfers bytes straight to/from the object store
@@ -6020,7 +6170,7 @@ open. Use <code>exclude={"orders.deactivate", ...}</code> to leave a flagged ope
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.ee611ef6.min.js"></script>
+      <script src="../../assets/javascripts/bundle.0df4f2d0.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

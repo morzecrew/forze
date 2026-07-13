@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.46">
+      <meta name="generator" content="zensical-0.0.47">
     
     
       
@@ -36,7 +36,7 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.19d3147f.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5e19f6ca.min.css">
       
         
           
@@ -2713,6 +2713,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../identity-tenancy-enc/cursor-tokens/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-ticket-check" viewBox="0 0 24 24"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="m9 12 2 2 4-4"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Cursor tokens
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -3784,6 +3813,35 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/kafka/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-list-ordered" viewBox="0 0 24 24"><path d="M11 5h10M11 12h10M11 19h10M4 4h1v5M4 9h2M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 0 0-2.6-1.02"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Kafka
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -7522,6 +7580,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>AggregateKit</strong> — one declaration composes a governed aggregate's wiring: document CRUD, soft delete, search-index sync, invariant enforcement, in-transaction outbox flush, route projection, and <abbr title="Deterministic Simulation Testing">DST</abbr>-verifiable invariants. Its four primitives (outbox emit, search sync, soft delete, invariants) are usable standalone.</p>
 </li>
 <li>
+<p><strong>AggregateKit durable search sync</strong> — opt-in <code>search_delivery=OutboxSearchSync()</code> routes index maintenance through the transactional outbox: an identity-only marker stages in the write's transaction and a consumer re-reads the committed row (idempotent, reorder-safe, no payload in the event), so a transient index failure converges instead of drifting. With soft delete composed, kit search reads exclude soft-deleted rows; the index must declare <code>is_deleted</code> facetable, checked fail-closed.</p>
+</li>
+<li>
 <p><strong>Shared error helpers</strong> — one client-safe error envelope and kind-to-HTTP-status mapping shared by the FastAPI and Socket.IO edges.</p>
 </li>
 <li>
@@ -7870,7 +7931,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Transport &amp; agent surfaces</strong></p>
 <ul>
 <li>
-<p><strong><abbr title="Model Context Protocol">MCP</abbr> no longer leaks internal error details</strong> — boundary errors render through the same egress-masked envelope as HTTP; caller-caused errors keep message and code.</p>
+<p><strong><abbr title="Model Context Protocol">MCP</abbr> no longer leaks internal error details</strong> — boundary errors render through the same egress-masked envelope as HTTP; caller-caused errors keep message and code. Resource templates now mask through the same shared helper as tools — a raw internal error no longer reaches the agent on a caller-owned server.</p>
+</li>
+<li>
+<p><strong>Pre-built pagination DTO is bounded</strong> — <code>page</code> and <code>size</code> validate at the boundary (<code>size</code> capped at 10,000, matching the cursor clamp and the implicit find-many limit), rendering as the standard 422 envelope instead of admitting unbounded materialization.</p>
 </li>
 <li>
 <p><strong><abbr title="Model Context Protocol">MCP</abbr> stops advertising idempotency it cannot honor</strong> — the boundary binds no idempotency key, so the retry-replay claim is gone from tool descriptions.</p>
@@ -7955,6 +8019,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong><code>configure_logging()</code> configures the root logger by default</strong> — with no logger names it previously attached nothing and INFO logs vanished; an explicit list is still an allowlist.</p>
+</li>
+<li>
+<p><strong>Console renderer no longer shares mutable defaults across instances</strong> — the renderer's class-level dict and list defaults were shared by every instance, so per-instance customization leaked between renderers; they are now per-instance factories.</p>
 </li>
 <li>
 <p><strong>Misc</strong> — BigQuery empty-array params typed from annotations; timezone offsets validated; S3 multipart-ETag normalization; If-None-Match parsed per RFC 7232; outbound HTTP suppresses its default bearer when an Authorization header is set; GCS rejects reserved metadata keys.</p>
@@ -9451,7 +9518,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.ee611ef6.min.js"></script>
+      <script src="../../assets/javascripts/bundle.0df4f2d0.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

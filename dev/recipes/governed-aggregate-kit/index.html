@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.46">
+      <meta name="generator" content="zensical-0.0.47">
     
     
       
@@ -36,7 +36,7 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.19d3147f.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5e19f6ca.min.css">
       
         
           
@@ -1711,6 +1711,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../identity-tenancy-enc/cursor-tokens/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-ticket-check" viewBox="0 0 24 24"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="m9 12 2 2 4-4"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Cursor tokens
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2782,6 +2811,35 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/kafka/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-list-ordered" viewBox="0 0 24 24"><path d="M11 5h10M11 12h10M11 19h10M4 4h1v5M4 9h2M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 0 0-2.6-1.02"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Kafka
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -5755,7 +5813,21 @@ cross-record invariant, and event-relaying:</p>
   one; you get <code>delete</code>/<code>restore</code> ops and an optional after-commit <code>purge</code>.</li>
 <li><strong><code>search</code></strong> — the external index is kept in sync on every committed write
   (<a href="../../data-events/events-sagas/">search stays consistent</a>); a searchable aggregate
-  that silently drifts is worse than no search.</li>
+  that silently drifts is worse than no search. Delivery is after-commit best-effort by
+  default (bounded in-place retry, then an <strong>at-most-once</strong> loss logged with reconcilable
+  identity — the index stays stale for that row until its next write). Pass
+  <code>search_delivery=OutboxSearchSync()</code> to route index maintenance through a dedicated
+  transactional outbox instead: an <strong>identity-only marker</strong> (no row data, so nothing
+  sensitive rides the outbox) is staged in the same transaction as the write, relayed
+  at-least-once, and applied by a consumer that <strong>re-reads the row's committed state</strong> —
+  idempotent and reorder-safe (a stale upsert marker delivered after a later delete
+  re-reads the deleted state, so it can never resurrect a ghost), deduped by an inbox.
+  Wire the reported <code>search_sync_route</code> (one name for its outbox, queue, and inbox) in the
+  deps module; <code>lifecycle_steps(tx_route=…)</code> then carries the sync relay and consumer.
+  Composed with <code>soft_delete</code>, the kit's search reads also exclude soft-deleted rows — the
+  spec must declare <code>is_deleted</code> in <code>facetable_fields</code> (which <code>ensure_index</code> provisions as
+  a filterable attribute on external indexes); the kit fails closed at construction
+  otherwise.</li>
 <li><strong><code>invariants</code></strong> — each <a href="../../writing-operation/system-invariants/"><code>SystemInvariant</code></a> is enforced
   <em>preventively</em> inside the write transaction, at the isolation floor it needs, so a
   write that would break the law is rolled back.</li>
@@ -5784,7 +5856,8 @@ your call, wired into the deps module:</p>
   <code>tx_route</code> you gave <code>registry()</code> and the routes emitter, so every surface executes the write ops
   on the one transaction route the deps module registers a manager under.</li>
 <li><code>domain_events()</code> — the outbox staging bridges, for the deps module.</li>
-<li><code>lifecycle_steps()</code> — the outbox relay, for the runtime.</li>
+<li><code>lifecycle_steps(tx_route=…)</code> — the outbox relay (plus, with durable <code>search_delivery</code>,
+  the search-sync relay and consumer), for the runtime.</li>
 </ul>
 <p>Field encryption declared on the spec flows through untouched. Backend config
 (<code>rw_documents=</code> / <code>searches=</code> / <code>outboxes=</code>) and HTTP routes stay yours — wire them
@@ -5855,7 +5928,7 @@ soft-delete, search, and (under a <code>/blobs</code> sub-path) storage — in o
 <span class="n">attach_aggregate_routes</span><span class="p">(</span><span class="n">router</span><span class="p">,</span> <span class="n">TASKS</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx_dep</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">&quot;rest&quot;</span><span class="p">,</span> <span class="n">tx_route</span><span class="o">=</span><span class="s2">&quot;pg&quot;</span><span class="p">)</span>
 </code></pre></div>
 <p>The routes <em>execute</em> through the composed registry, so <code>tx_route</code> must match the deps module.
-<code>kit.backend_requirements(tx_route="pg")</code> reports the document / search / storage / outbox routes,
+<code>kit.backend_requirements(tx_route="pg")</code> reports the document / search / search-sync / storage / outbox routes,
 the transaction route, and the crypto requirement (<code>crypto_required</code> — whether a keyring is needed)
 that module must provide — a checklist you can assert in a startup test (and <code>check_wiring</code> fails
 closed on anything missing).</p>
@@ -5976,7 +6049,7 @@ closed on anything missing).</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.ee611ef6.min.js"></script>
+      <script src="../../assets/javascripts/bundle.0df4f2d0.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

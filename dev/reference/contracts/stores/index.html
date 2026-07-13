@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.46">
+      <meta name="generator" content="zensical-0.0.47">
     
     
       
@@ -36,7 +36,7 @@
       
         
       
-      <link rel="stylesheet" href="../../../assets/stylesheets/modern/main.19d3147f.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/modern/main.5e19f6ca.min.css">
       
         
           
@@ -1709,6 +1709,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../identity-tenancy-enc/cursor-tokens/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-ticket-check" viewBox="0 0 24 24"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="m9 12 2 2 4-4"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Cursor tokens
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2780,6 +2809,35 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../integrations/kafka/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-list-ordered" viewBox="0 0 24 24"><path d="M11 5h10M11 12h10M11 19h10M4 4h1v5M4 9h2M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 0 0-2.6-1.02"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Kafka
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -5756,12 +5814,42 @@ name). Objects are addressed by string <code>key</code>.</p>
 <td>query</td>
 <td><code>download</code></td>
 <td><code>download(key)</code></td>
-<td>returns a <code>DownloadedObject</code> (bytes + metadata)</td>
+<td>the whole object, buffered — a <code>DownloadedObject</code> (bytes + metadata)</td>
+</tr>
+<tr>
+<td>query</td>
+<td><code>download_stream</code></td>
+<td><code>download_stream(key)</code></td>
+<td>a <code>StreamedDownload</code> — single-use async chunk iterator, never buffers the whole object; encrypted objects decrypt chunk by chunk</td>
+</tr>
+<tr>
+<td>query</td>
+<td><code>download_range</code></td>
+<td><code>download_range(key, *, start, end=None)</code></td>
+<td>inclusive byte range as a <code>RangedDownload</code> (HTTP <code>Range</code> semantics); a <code>start</code> beyond the object is a precondition error (the 416 equivalent)</td>
+</tr>
+<tr>
+<td>query</td>
+<td><code>download_if_changed</code></td>
+<td><code>download_if_changed(key, *, if_none_match=None, if_modified_since=None)</code></td>
+<td><code>None</code> when unchanged (the 304 equivalent); at least one condition required</td>
+</tr>
+<tr>
+<td>query</td>
+<td><code>head</code></td>
+<td><code>head(key, *, include_tags=False)</code></td>
+<td>an <code>ObjectHead</code> — size, content type, ETag, last-modified — without the body; works for raw presigned uploads too</td>
+</tr>
+<tr>
+<td>query</td>
+<td><code>presign_download</code></td>
+<td><code>presign_download(key, *, expires_in)</code></td>
+<td>time-limited direct-<code>GET</code> URL — a bearer credential, never log it</td>
 </tr>
 <tr>
 <td>query</td>
 <td><code>list</code></td>
-<td><code>list(limit, offset, *, prefix=None)</code></td>
+<td><code>list(limit, offset, *, prefix=None, include_tags=False)</code></td>
 <td><code>(objects, total_count)</code></td>
 </tr>
 <tr>
@@ -5772,13 +5860,48 @@ name). Objects are addressed by string <code>key</code>.</p>
 </tr>
 <tr>
 <td>command</td>
+<td><code>upload_stream</code></td>
+<td><code>upload_stream(chunks, *, filename, ...)</code></td>
+<td>bounded-memory multipart upload from an async chunk iterator; an encrypting route seals it chunk by chunk</td>
+</tr>
+<tr>
+<td>command</td>
+<td><code>overwrite_stream</code></td>
+<td><code>overwrite_stream(key, chunks, *, ...)</code></td>
+<td>replace an existing key in place, in bounded memory (the re-encryption seam)</td>
+</tr>
+<tr>
+<td>command</td>
+<td><code>presign_upload</code></td>
+<td><code>presign_upload(key, *, expires_in, content_type=None)</code></td>
+<td>time-limited direct-<code>PUT</code> URL — a <strong>write grant</strong>, so it lives on the command port</td>
+</tr>
+<tr>
+<td>command</td>
 <td><code>delete</code></td>
 <td><code>delete(key)</code></td>
 <td>remove by key</td>
 </tr>
+<tr>
+<td>command</td>
+<td><code>copy</code> / <code>move</code></td>
+<td><code>copy(src_key, dst_key)</code></td>
+<td>server-side, same-bucket; <code>move</code> is copy-then-delete (non-atomic)</td>
+</tr>
+<tr>
+<td>command</td>
+<td><code>put_object_tags</code></td>
+<td><code>put_object_tags(key, tags)</code></td>
+<td>full tag replacement</td>
+</tr>
 </tbody>
 </table>
-<p>The core port has no presigned-URL method — that's backend-specific.</p>
+<p>A third port, <code>StorageUploadSessionPort</code>, drives resumable multipart uploads
+(begin / presign part / list parts / complete / abort) — its HTTP projection is
+on the <a href="../../fastapi-routes/#direct-resumable-uploads">FastAPI route generators</a>
+page. Ranged reads work over chunked-AEAD encrypted objects (only the covering
+chunks are fetched and decrypted); a legacy whole-payload envelope cannot be
+sliced and refuses with <code>core.storage.range_whole_payload_unsupported</code>.</p>
 <h2 id="implemented-by">Implemented by<a class="headerlink" href="#implemented-by" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5916,7 +6039,7 @@ name). Objects are addressed by string <code>key</code>.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.ee611ef6.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.0df4f2d0.min.js"></script>
       
         <script src="../../../_javascripts/theme.js"></script>
       

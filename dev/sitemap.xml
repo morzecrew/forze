@@ -100,6 +100,9 @@
         <loc>https://morzecrew.github.io/forze/dev/identity-tenancy-enc/encryption/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/identity-tenancy-enc/cursor-tokens/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/running-in-prod/deadlines/</loc>
       </url>
       <url>
@@ -173,6 +176,9 @@
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/integrations/duckdb/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/kafka/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/integrations/rabbitmq/</loc>
