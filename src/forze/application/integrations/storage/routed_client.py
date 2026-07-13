@@ -328,6 +328,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         content_type: str | None = None,
         metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
+        if_match: str | None = None,
     ) -> None:
         inner = await self._get_client()
 
@@ -340,6 +341,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 content_type=content_type,
                 metadata=metadata,
                 sse=sse,
+                if_match=if_match,
             )
 
     async def abort_multipart_upload(

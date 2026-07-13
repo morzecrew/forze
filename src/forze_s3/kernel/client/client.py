@@ -40,6 +40,7 @@ from forze.application.integrations.storage.client import (
     ObjectStorageSSE,
     build_range_header,
     normalize_list_window,
+    overwrite_precondition_failed,
     presign_expiry_seconds,
     unsatisfiable_range,
     validate_range,
@@ -1155,6 +1156,7 @@ class S3Client(S3ClientPort):
         content_type: str | None = None,
         metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
+        if_match: str | None = None,
     ) -> None:
         """Assemble the parts via ``CompleteMultipartUpload``.
 
@@ -1167,6 +1169,15 @@ class S3Client(S3ClientPort):
         completed object inherits them; ``CompleteMultipartUpload`` takes no
         such params. Accepted for port symmetry (GCS consumes them on
         ``compose``, having no native session).
+
+        *if_match* is sent as the ``If-Match`` header of
+        ``CompleteMultipartUpload`` (a native S3 conditional write), so the
+        service itself refuses to assemble over an object whose ETag no longer
+        matches: a 412 ``PreconditionFailed`` (or the 409
+        ``ConditionalRequestConflict`` raced-conditional variant) becomes a
+        ``conflict`` under the shared overwrite-precondition code, and a
+        vanished target answers 404 → ``not_found`` via the normal mapping —
+        crucially **without creating the object**.
         """
 
         # S3 inherits content type, metadata, and SSE from CreateMultipartUpload;
@@ -1185,12 +1196,32 @@ class S3Client(S3ClientPort):
             for p in ordered
         ]
 
-        await c.complete_multipart_upload(
-            Bucket=bucket,
-            Key=key,
-            UploadId=upload_id,
-            MultipartUpload=cast(Any, {"Parts": completed}),
-        )
+        kwargs: dict[str, Any] = {
+            "Bucket": bucket,
+            "Key": key,
+            "UploadId": upload_id,
+            "MultipartUpload": cast(Any, {"Parts": completed}),
+        }
+
+        if if_match is not None:
+            kwargs["IfMatch"] = _quote_etag(if_match)
+
+        try:
+            await c.complete_multipart_upload(**kwargs)
+
+        except c.exceptions.ClientError as e:  # type: ignore[attr-defined]
+            code = (e.response or {}).get("Error", {}).get("Code")
+
+            # Only a completion that carried the condition can fail it; the raced
+            # 409 variant means another conditional write was in flight — both
+            # read as "the object is no longer what the caller saw".
+            if if_match is not None and code in {
+                "PreconditionFailed",
+                "ConditionalRequestConflict",
+            }:
+                raise overwrite_precondition_failed(key) from e
+
+            raise
 
     # ....................... #
 

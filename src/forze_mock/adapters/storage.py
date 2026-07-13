@@ -34,6 +34,7 @@ from forze.application.integrations.storage.adapter import (
 )
 from forze.application.integrations.storage.client import (
     ObjectStorageSSE,
+    overwrite_precondition_failed,
     presign_expiry_seconds,
     unsatisfiable_range,
     validate_range,
@@ -178,12 +179,20 @@ class MockStorageAdapter(
         metadata: Mapping[str, str] | None = None,
         tags: Mapping[str, str] | None = None,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
+        if_match: str | None = None,
     ) -> StoredObject:
         """Replace the object at *key* from a stream (the mock holds no cipher).
 
         The mock stores plaintext, so an "re-encryption" round-trip is a faithful
         rewrite of the same bytes at the same key; it exists so a sweep can be exercised
         without a real backend.
+
+        *if_match* mirrors the real backends' conditional completion: a missing
+        object answers ``not_found`` (as it already does unconditionally — the
+        write never recreates a concurrently deleted object), and a stored ETag
+        that no longer matches the token answers the shared
+        overwrite-precondition ``conflict``, so simulations can exercise the
+        delete/overwrite race against this adapter exactly like against S3/GCS.
         """
 
         _ = (chunk_size, metadata)
@@ -199,6 +208,12 @@ class MockStorageAdapter(
 
             if existing is None:
                 raise exc.not_found(f"Object not found: {key}")
+
+            if if_match is not None:
+                current_etag = self._etag(self._payloads().get(key, b""))
+
+                if if_match.strip('"') != current_etag:
+                    raise overwrite_precondition_failed(key)
 
             stored = attrs.evolve(
                 existing,

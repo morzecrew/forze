@@ -13,7 +13,10 @@ from typing import (
 
 import attrs
 
-from forze.application.contracts.storage import PresignedUrl
+from forze.application.contracts.storage import (
+    OVERWRITE_PRECONDITION_FAILED_CODE,
+    PresignedUrl,
+)
 from forze.base.exceptions import CoreException, exc
 
 # ----------------------- #
@@ -119,6 +122,24 @@ def unsatisfiable_range(start: int, total: int) -> CoreException:
     return exc.precondition(
         f"Requested range start {start} is beyond object size {total}",
         code="range_not_satisfiable",
+    )
+
+
+# ....................... #
+
+
+def overwrite_precondition_failed(key: str) -> CoreException:
+    """Build the conflict for a conditional write whose match token no longer holds.
+
+    Mirrors the backend HTTP 412 (Precondition Failed) response on a write carrying
+    ``If-Match`` / ``ifGenerationMatch``: the object at *key* was replaced by concurrent
+    traffic between the caller's read and the write's visibility point. Shared by the
+    S3/GCS clients and the mock adapter so the mismatch surfaces under one code.
+    """
+
+    return exc.conflict(
+        f"Conditional write to {key!r} failed: the object changed since it was read",
+        code=OVERWRITE_PRECONDITION_FAILED_CODE,
     )
 
 
@@ -597,6 +618,7 @@ class ObjectStorageClientPort(Protocol):
         content_type: str | None = None,
         metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
+        if_match: str | None = None,
     ) -> Awaitable[None]:
         """Assemble the uploaded parts into the final object.
 
@@ -618,6 +640,20 @@ class ObjectStorageClientPort(Protocol):
         *sse* is likewise consumed by **GCS** only: it carries the per-object
         CMEK ``kmsKeyName`` for the final destination; S3 inherits the upload's
         encryption from ``CreateMultipartUpload`` and ignores *sse* here.
+
+        *if_match* makes the completion **conditional on the destination's
+        current ETag**: the assembled object only replaces *key* while the
+        stored object still carries that ETag, closing the window in which a
+        concurrent delete would be silently undone by the completion. **S3**
+        sends ``If-Match`` on ``CompleteMultipartUpload`` (server-enforced:
+        412 on mismatch, 404 when the target vanished). **GCS** resolves the
+        destination's current metadata, refuses on an ETag mismatch, and
+        passes the resolved generation as ``ifGenerationMatch`` on the final
+        ``compose``/rewrite so real GCS enforces the condition atomically at
+        the visibility point. A failed condition raises ``conflict`` with code
+        :data:`~forze.application.contracts.storage.OVERWRITE_PRECONDITION_FAILED_CODE`;
+        a vanished destination raises ``not_found``. ``None`` completes
+        unconditionally (the historical behavior).
         """
         ...  # pragma: no cover
 

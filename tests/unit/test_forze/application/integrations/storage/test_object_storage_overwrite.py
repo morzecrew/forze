@@ -84,19 +84,14 @@ class TestOverwriteStream:
         assert stored.key == "files/a"
         assert stored.size == 5  # the logical (pre-encryption) length
         assert client.create_multipart_upload.await_args.kwargs["key"] == "files/a"
-        assert (
-            client.complete_multipart_upload.await_args.kwargs["content_type"]
-            == "text/plain"
-        )
+        assert client.complete_multipart_upload.await_args.kwargs["content_type"] == "text/plain"
 
     async def test_metadata_is_bound_on_create_and_on_complete(self) -> None:
         """S3 binds it at create, GCS on the composed destination — pass it to both."""
 
         client = _client()
 
-        await _adapter(client).overwrite_stream(
-            "files/a", _chunks(b"hello"), metadata=_META
-        )
+        await _adapter(client).overwrite_stream("files/a", _chunks(b"hello"), metadata=_META)
 
         assert client.create_multipart_upload.await_args.kwargs["metadata"] == _META
         assert client.complete_multipart_upload.await_args.kwargs["metadata"] == _META
@@ -150,6 +145,26 @@ class TestOverwriteStream:
         await _adapter(client).overwrite_stream("files/a", _chunks(b"hello"))
 
         client.put_object_tags.assert_not_awaited()
+
+    async def test_if_match_rides_the_multipart_completion(self) -> None:
+        """The completion is the write's visibility point, so the ETag condition
+        must be enforced there — a condition checked any earlier would leave the
+        delete/overwrite window open for the whole part-upload phase."""
+
+        client = _client()
+
+        await _adapter(client).overwrite_stream(
+            "files/a", _chunks(b"hello"), if_match="etag-before"
+        )
+
+        assert client.complete_multipart_upload.await_args.kwargs["if_match"] == "etag-before"
+
+    async def test_without_if_match_the_completion_is_unconditional(self) -> None:
+        client = _client()
+
+        await _adapter(client).overwrite_stream("files/a", _chunks(b"hello"))
+
+        assert client.complete_multipart_upload.await_args.kwargs["if_match"] is None
 
     async def test_a_failed_write_aborts_the_multipart_upload(self) -> None:
         """Otherwise the parts linger and are billed until a lifecycle rule reaps them."""
