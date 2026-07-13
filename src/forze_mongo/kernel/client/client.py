@@ -180,6 +180,11 @@ class MongoClient(MongoClientPort):
                 maxPoolSize=config.max_pool_size,
                 minPoolSize=config.min_pool_size,
                 document_class=JsonDict,
+                # BSON dates are UTC instants; decode them timezone-aware like the
+                # other backends. Naive reads made an aware echo of an unchanged
+                # datetime look touched in the history OCC three-way comparison
+                # (naive != aware), raising a false consistency conflict.
+                tz_aware=True,
             )
             logger.trace("Mongo client connected", db=db_name)
 

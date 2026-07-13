@@ -27,6 +27,7 @@ from forze.application.contracts.graph import (
     VertexRef,
 )
 from forze.application.execution import ExecutionContext
+from forze.base.exceptions import CoreException
 from forze_mock import MockDepsModule, MockState
 from forze_neo4j.adapters import Neo4jGraphAdapter
 from forze_neo4j.kernel.client import Neo4jClient
@@ -117,8 +118,7 @@ async def _read_snapshot(port: Any) -> dict[str, Any]:
     )
     return {
         "get_vertices": [
-            m.model_dump()
-            for m in await port.get_vertices([_u("c"), _u("missing"), _u("a")])
+            m.model_dump() for m in await port.get_vertices([_u("c"), _u("missing"), _u("a")])
         ],
         "get_edges": _dump(
             await port.get_edges(
@@ -138,9 +138,7 @@ async def _read_snapshot(port: Any) -> dict[str, Any]:
             "User", property_filter={"name": "Ana"}
         ),
         "count_edges_follows": await port.count_edges("FOLLOWS"),
-        "count_edges_rated_filtered": await port.count_edges(
-            "RATED", property_filter={"score": 5}
-        ),
+        "count_edges_rated_filtered": await port.count_edges("RATED", property_filter={"score": 5}),
         "degree_out": await port.vertex_degree(_u("a"), direction=GraphDirection.OUT),
         "degree_follows": await port.vertex_degree(
             _u("a"), direction=GraphDirection.OUT, edge_kinds=frozenset({"FOLLOWS"})
@@ -354,9 +352,7 @@ async def _traversal_snapshot(port: Any) -> dict[str, Any]:
     )
     one = GraphPathStep(edge_kinds=frozenset({"FOLLOWS"}), direction=GraphDirection.OUT)
     walk1 = await port.scoped_walk(_u("a"), ScopedWalkParams(steps=(one,), target_kind="User"))
-    walk2 = await port.scoped_walk(
-        _u("a"), ScopedWalkParams(steps=(one, one), target_kind="User")
-    )
+    walk2 = await port.scoped_walk(_u("a"), ScopedWalkParams(steps=(one, one), target_kind="User"))
 
     return {
         # invariant multiset (intra-depth order is unspecified in Neo4j)
@@ -406,6 +402,46 @@ async def test_mock_matches_neo4j_weighted_shortest_path(
         return None if sp is None else [v.id for v in sp.vertices]
 
     assert _route(mock_sp) == _route(neo_sp) == ["a", "b", "c"]
+
+
+async def _filter_rejection_snapshot(port: Any) -> list[tuple[Any, str, str]]:
+    """(kind, code, summary) raised by each property-filter entry point for a bad key."""
+
+    bad = {"name = $tenant OR true //": "x"}
+    observed: list[tuple[Any, str, str]] = []
+
+    for call in (
+        lambda: port.count_vertices("User", property_filter=bad),
+        lambda: port.count_edges("RATED", property_filter=bad),
+        lambda: port.find_vertices("User", property_filter=bad),
+        lambda: port.find_edges("RATED", property_filter=bad),
+    ):
+        with pytest.raises(CoreException) as ei:
+            await call()
+
+        observed.append((ei.value.kind, ei.value.code, ei.value.summary))
+
+    return observed
+
+
+async def test_mock_matches_neo4j_filter_key_rejection(neo4j_client: Neo4jClient) -> None:
+    """A non-identifier property-filter key fails closed identically on both planes —
+    same exception kind, code, and message on every filter-taking entry point — so a
+    test that passes against the mock cannot smuggle a key Neo4j would reject."""
+
+    spec = _spec()
+
+    mock_ctx: ExecutionContext = context_from_deps(MockDepsModule(state=MockState())())
+    await _seed(mock_ctx.graph.command(spec))
+
+    neo = Neo4jGraphAdapter(spec=spec, client=neo4j_client)
+    await _seed(neo)
+
+    mock_snap = await _filter_rejection_snapshot(mock_ctx.graph.query(spec))
+    neo_snap = await _filter_rejection_snapshot(neo)
+
+    assert mock_snap == neo_snap
+    assert all(code == "graph_filter_key_invalid" for _kind, code, _summary in neo_snap)
 
 
 async def test_mock_matches_neo4j_read_surface(neo4j_client: Neo4jClient) -> None:

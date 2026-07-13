@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from pydantic import BaseModel
 
@@ -10,7 +12,11 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
     IngestSpec,
 )
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from tests.support.execution_context import (
+    context_from_deps,
+    context_from_modules,
+    frozen_deps_from_deps,
+)
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
 from forze_postgres.adapters.analytics import PostgresAnalyticsAdapter
@@ -137,11 +143,7 @@ async def test_run_cursor_offset_pagination(
     while cursor is not None:
         page = await adapter.run_cursor("all", _Params(), cursor=cursor)
         seen.extend(hit.event for hit in page.hits)
-        cursor = (
-            {"limit": 2, "after": page.next_cursor}
-            if page.next_cursor is not None
-            else None
-        )
+        cursor = {"limit": 2, "after": page.next_cursor} if page.next_cursor is not None else None
 
     assert len(seen) == 5
     assert len(set(seen)) == 5
@@ -165,3 +167,85 @@ async def test_run_cursor_rejects_before_cursor(
             _Params(),
             cursor={"limit": 2, "before": "opaque"},
         )
+
+
+@pytest.mark.asyncio
+async def test_timeout_option_does_not_leak_into_a_caller_transaction(
+    pg_client: PostgresClient,
+    pg_analytics_table: str,
+) -> None:
+    """Inside a caller transaction the analytics run becomes a savepoint; its
+    ``SET LOCAL statement_timeout`` must not survive the savepoint release."""
+
+    adapter = PostgresAnalyticsAdapter(
+        client=pg_client,
+        spec=_spec(),
+        config=_config(pg_analytics_table),
+    )
+
+    async with pg_client.transaction():
+        before = await pg_client.fetch_value("SHOW statement_timeout", None)
+        await adapter.run_page(
+            "all",
+            _Params(),
+            options={"timeout": timedelta(seconds=55)},
+        )
+        after = await pg_client.fetch_value("SHOW statement_timeout", None)
+
+    assert after == before
+
+
+@pytest.mark.asyncio
+async def test_query_schema_does_not_leak_search_path_into_a_caller_transaction(
+    pg_client: PostgresClient,
+    pg_analytics_table: str,
+) -> None:
+    """Same seam for the per-tenant query schema: the run's ``SET LOCAL search_path``
+    must not merge into the caller's transaction when the savepoint is released."""
+
+    table_id = pg_analytics_table
+    config = PostgresAnalyticsConfig(
+        queries={
+            "all": PostgresQueryConfig(
+                sql=f"SELECT event, value FROM public.{table_id}",
+            ),
+        },
+        ingest=IngestSpec(("public", table_id)),
+        query_schema="public",
+    )
+    adapter = PostgresAnalyticsAdapter(
+        client=pg_client,
+        spec=_spec(),
+        config=config,
+    )
+
+    async with pg_client.transaction():
+        before = await pg_client.fetch_value("SHOW search_path", None)
+        await adapter.run_page("all", _Params())
+        after = await pg_client.fetch_value("SHOW search_path", None)
+
+    assert after == before
+
+
+@pytest.mark.asyncio
+async def test_timeout_option_still_applies_at_the_root(
+    pg_client: PostgresClient,
+    pg_analytics_table: str,
+) -> None:
+    """Outside a caller transaction the run's own transaction ends with the query, so no
+    restore round-trips are needed and the timed run behaves as before."""
+
+    adapter = PostgresAnalyticsAdapter(
+        client=pg_client,
+        spec=_spec(),
+        config=_config(pg_analytics_table),
+    )
+
+    await adapter.append([_Ingest(event="timed", value=7)])
+
+    page = await adapter.run_page(
+        "all",
+        _Params(),
+        options={"timeout": timedelta(seconds=30)},
+    )
+    assert any(hit.event == "timed" for hit in page.hits)

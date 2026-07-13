@@ -47,6 +47,7 @@ from forze.application.contracts.graph import (
     ShortestPathParams,
     ShortestPathResult,
     VertexRef,
+    validate_property_filter_keys,
 )
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
@@ -257,14 +258,7 @@ class Neo4jGraphAdapter(TenancyMixin):
         if not property_filter:
             return {}
 
-        malformed = sorted(k for k in property_filter if not builders.is_valid_filter_key(k))
-
-        if malformed:
-            raise exc.validation(
-                f"Invalid graph property-filter keys {malformed}: a filter key must be "
-                "an identifier (letters, digits, underscores; not starting with a digit).",
-                code="graph_filter_key_invalid",
-            )
+        validate_property_filter_keys(property_filter)
 
         blocked = sorted(k for k in property_filter if k in sealed)
 

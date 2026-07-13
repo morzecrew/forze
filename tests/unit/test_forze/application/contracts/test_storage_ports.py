@@ -81,6 +81,7 @@ class _StubStorage:
         metadata: Optional[Mapping[str, str]] = None,
         tags: Optional[Mapping[str, str]] = None,
         chunk_size: int = 1 << 20,
+        if_match: Optional[str] = None,
     ) -> StoredObject:
         total = 0
         async for piece in chunks:

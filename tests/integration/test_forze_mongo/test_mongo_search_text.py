@@ -6,10 +6,11 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
+from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenantIdentity
 from forze.application.execution import Deps, ExecutionContext
 from forze_mongo.adapters.search import MongoTextSearchAdapter
-from forze_mongo.execution.deps.configs import MongoSearchConfig
 from forze_mongo.execution.deps import ConfigurableMongoSearch
+from forze_mongo.execution.deps.configs import MongoSearchConfig
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.client import MongoClient
 from tests.support.execution_context import context_from_deps
@@ -26,6 +27,7 @@ def _search_ctx(
     *,
     db_name: str,
     collection: str,
+    tenant_aware: bool = False,
 ) -> ExecutionContext:
     return context_from_deps(Deps.plain(
             {
@@ -34,6 +36,7 @@ def _search_ctx(
                     config=MongoSearchConfig(
                         read=(db_name, collection),
                         engine="text",
+                        tenant_aware=tenant_aware,
                     )
                 ),
             }
@@ -119,3 +122,98 @@ async def test_mongo_text_search_stream_exports_in_bounded_chunks(
     assert [len(c) for c in chunks] == [3, 3, 1]
     ids = {h.id for chunk in chunks for h in chunk}
     assert len(ids) == 7
+
+
+@pytest.mark.asyncio
+async def test_mongo_text_search_tenant_aware_scopes_hits(mongo_client: MongoClient) -> None:
+    """Tenant-aware ``$text`` search: the tenant prefilter must ride in the same first
+    ``$match`` as ``$text`` (Mongo rejects a pipeline where ``$text`` is not in the
+    first stage), and results must be scoped to the active tenant."""
+
+    db_name = (await mongo_client.db()).name
+    collection = f"search_text_tenant_{uuid4().hex[:10]}"
+    coll = await mongo_client.collection(collection, db_name=db_name)
+    await coll.create_index([("title", "text"), ("body", "text")])
+
+    tenant_a = uuid4()
+    tenant_b = uuid4()
+
+    def _doc(tenant: object, title: str) -> dict:
+        doc_id = str(uuid4())
+        return {
+            "_id": doc_id,
+            "id": doc_id,
+            "title": title,
+            "body": "shared searchable corpus",
+            TENANT_ID_FIELD: str(tenant),
+        }
+
+    await coll.insert_many(
+        [
+            _doc(tenant_a, "alpha corpus entry"),
+            _doc(tenant_a, "another corpus entry"),
+            _doc(tenant_b, "corpus entry for the other tenant"),
+        ]
+    )
+
+    ctx = _search_ctx(mongo_client, db_name=db_name, collection=collection, tenant_aware=True)
+    spec = SearchSpec(name="tenant_articles", model_type=SearchArticle, fields=("title", "body"))
+
+    with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant_a)):
+        adapter = ctx.search.query(spec)
+        assert isinstance(adapter, MongoTextSearchAdapter)
+
+        page = await adapter.search_page("corpus")
+        assert page.count == 2
+        assert len(page.hits) == 2
+
+        # Cursor path builds from the same first-stage pipeline.
+        cursor_page = await adapter.search_cursor("corpus", cursor={"limit": 10})
+        assert len(cursor_page.hits) == 2
+
+    with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant_b)):
+        adapter_b = ctx.search.query(spec)
+        page_b = await adapter_b.search_page("corpus")
+        assert page_b.count == 1
+        assert page_b.hits[0].title == "corpus entry for the other tenant"
+
+
+@pytest.mark.asyncio
+async def test_mongo_text_search_with_caller_prefilter(mongo_client: MongoClient) -> None:
+    """A caller-supplied filter combined with a ``$text`` query must produce a valid
+    single first ``$match`` and narrow the hits."""
+
+    db_name = (await mongo_client.db()).name
+    collection = f"search_text_filter_{uuid4().hex[:10]}"
+    coll = await mongo_client.collection(collection, db_name=db_name)
+    await coll.create_index([("title", "text"), ("body", "text")])
+
+    def _doc(title: str, body: str) -> dict:
+        doc_id = str(uuid4())
+        return {"_id": doc_id, "id": doc_id, "title": title, "body": body}
+
+    await coll.insert_many(
+        [
+            _doc("alpha guide", "full text search guide"),
+            _doc("beta guide", "full text search guide"),
+            _doc("alpha appendix", "unrelated content"),
+        ]
+    )
+
+    ctx = _search_ctx(mongo_client, db_name=db_name, collection=collection)
+    spec = SearchSpec(name="filtered_articles", model_type=SearchArticle, fields=("title", "body"))
+    adapter = ctx.search.query(spec)
+
+    page = await adapter.search_page(
+        "guide",
+        filters={"$values": {"title": {"$eq": "alpha guide"}}},
+    )
+    assert page.count == 1
+    assert page.hits[0].title == "alpha guide"
+
+    cursor_page = await adapter.search_cursor(
+        "guide",
+        filters={"$values": {"title": {"$eq": "alpha guide"}}},
+        cursor={"limit": 10},
+    )
+    assert [h.title for h in cursor_page.hits] == ["alpha guide"]

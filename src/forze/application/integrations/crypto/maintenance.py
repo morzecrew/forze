@@ -10,7 +10,11 @@ from forze.application.contracts.document import (
     DocumentQueryPort,
 )
 from forze.application.contracts.querying import QueryFilterExpression
-from forze.application.contracts.storage import StorageCommandPort, StorageQueryPort
+from forze.application.contracts.storage import (
+    OVERWRITE_PRECONDITION_FAILED_CODE,
+    StorageCommandPort,
+    StorageQueryPort,
+)
 from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
@@ -48,6 +52,50 @@ def _is_missing(error: CoreException) -> bool:
     """
 
     return error.kind is ExceptionKind.NOT_FOUND
+
+
+# ....................... #
+
+
+def _is_stale_overwrite(error: CoreException) -> bool:
+    """Whether *error* says a conditional overwrite lost to a concurrent replace.
+
+    The object still exists but no longer carries the ETag the sweep read — normal
+    traffic re-wrote it mid-rewrite. Recoverable by re-reading: the fresh bytes get
+    a fresh token and one retry. Every other conflict is a real failure.
+    """
+
+    return error.code == OVERWRITE_PRECONDITION_FAILED_CODE
+
+
+# ....................... #
+
+
+async def _rewrite_object_in_place(
+    query: StorageQueryPort,
+    command: StorageCommandPort,
+    key: str,
+) -> None:
+    """Stream one object down and conditionally back to the same key.
+
+    The head's ETag is threaded into the overwrite as its ``if_match`` token (the
+    sweep already heads each object for metadata carry-over, so no extra read), making
+    the write-back refuse — instead of resurrecting or clobbering — when the object is
+    deleted or replaced between this read and the write's visibility point. A backend
+    that reports no ETag falls back to the unconditional overwrite (no token to match).
+    """
+
+    head = await query.head(key, include_tags=True)
+    streamed = await query.download_stream(key)
+
+    await command.overwrite_stream(
+        key,
+        streamed.chunks,
+        content_type=head.content_type,
+        metadata=head.metadata,
+        tags=head.tags,
+        if_match=head.etag or None,
+    )
 
 
 # ....................... #
@@ -134,6 +182,16 @@ async def reencrypt_objects(
     a churning bucket a pass that aborted on the first such object could never complete.
     Returns a :class:`ReencryptReport` with the re-written and skipped counts.
 
+    Each rewrite is **conditional on the ETag it read** (``if_match``), so the write-back
+    cannot clobber concurrent traffic — and, critically, cannot *recreate* an object
+    deleted after the download started: an unconditional overwrite would silently undo
+    that delete, and the earlier not-found skip could never catch it because the write
+    succeeds. When the condition fails the sweep reacts by outcome: the object is gone
+    (``not_found``) → counted ``skipped_missing`` and it **stays deleted**; the object
+    was replaced (conflict) → re-read once from scratch (fresh bytes, fresh ETag) and
+    retried; replaced *again* mid-retry → the conflict propagates (that key is under
+    active contention, a rerun can pick it up).
+
     The route's keys are enumerated up front — one string each, not the payloads — so a
     rewrite can never perturb the pagination that is still walking over it.
     """
@@ -162,16 +220,20 @@ async def reencrypt_objects(
 
     for key in keys:
         try:
-            head = await query.head(key, include_tags=True)
-            streamed = await query.download_stream(key)
+            try:
+                await _rewrite_object_in_place(query, command, key)
 
-            await command.overwrite_stream(
-                key,
-                streamed.chunks,
-                content_type=head.content_type,
-                metadata=head.metadata,
-                tags=head.tags,
-            )
+            except CoreException as error:
+                if not _is_stale_overwrite(error):
+                    raise
+
+                # The object was replaced (not deleted) while its rewrite was in
+                # flight — the conditional write refused rather than clobbering the
+                # newer bytes. Re-read from scratch (fresh payload, fresh ETag) and
+                # retry once; a second replacement means the key is under active
+                # contention and the conflict propagates (a rerun can pick it up).
+                # A *deletion* mid-retry surfaces as not_found and is skipped below.
+                await _rewrite_object_in_place(query, command, key)
 
         except CoreException as error:
             if not _is_missing(error):

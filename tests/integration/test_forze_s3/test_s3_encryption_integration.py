@@ -17,9 +17,7 @@ from tests.support.execution_context import context_from_modules
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_s3_encrypted_upload_is_ciphertext_at_rest(
-    s3_client, s3_bucket: str
-) -> None:
+async def test_s3_encrypted_upload_is_ciphertext_at_rest(s3_client, s3_bucket: str) -> None:
     ctx = context_from_modules(
         CryptoDepsModule(
             kms=MockKeyManagement(),
@@ -176,3 +174,152 @@ async def test_reencrypt_objects_skips_an_object_deleted_mid_sweep(
 
     async with s3_client.client():
         assert not await s3_client.object_exists(bucket=s3_bucket, key=victim.key)
+
+
+# ....................... #
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_reencrypt_objects_does_not_resurrect_a_delete_racing_the_write_back(
+    s3_client, s3_bucket: str
+) -> None:
+    """The resurrection window: deleted AFTER the download, BEFORE the write-back.
+
+    The earlier not-found skip cannot catch this — an unconditional overwrite
+    *succeeds* and silently undoes the delete. The sweep's ETag-conditional
+    write-back must fail not_found instead, count the object as skipped, and
+    leave it deleted.
+    """
+
+    from forze.application.integrations.crypto import reencrypt_objects
+
+    ctx = context_from_modules(
+        CryptoDepsModule(
+            kms=MockKeyManagement(),
+            directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+        ),
+        S3DepsModule(
+            client=s3_client,
+            storages={s3_bucket: S3StorageConfig(bucket=s3_bucket, encrypt=True)},
+        ),
+    )
+    spec = StorageSpec(name=s3_bucket)
+    storage_q = ctx.storage.query(spec)
+    storage_c = ctx.storage.command(spec)
+
+    survivor = await storage_c.upload(
+        UploadedObject(filename="keep.txt", data=b"keep-me"),
+    )
+    victim = await storage_c.upload(
+        UploadedObject(filename="gone.txt", data=b"delete-me"),
+    )
+
+    class _DeletesVictimAfterItsDownload:
+        """Command wrapper: drain the downloaded chunks (the download is done),
+        then delete the object, then let the write-back proceed."""
+
+        def __getattr__(self, name: str):
+            return getattr(storage_c, name)
+
+        async def overwrite_stream(self, key: str, chunks, **kwargs):
+            if key != victim.key:
+                return await storage_c.overwrite_stream(key, chunks, **kwargs)
+
+            buffered = [piece async for piece in chunks]
+
+            async with s3_client.client():
+                await s3_client.delete_object(bucket=s3_bucket, key=victim.key)
+
+            async def _replay():
+                for piece in buffered:
+                    yield piece
+
+            return await storage_c.overwrite_stream(key, _replay(), **kwargs)
+
+    report = await reencrypt_objects(storage_q, _DeletesVictimAfterItsDownload())  # type: ignore[arg-type]
+
+    assert report.rewritten == 1
+    assert report.skipped_missing == 1
+
+    # The survivor round-trips; the victim STAYS deleted — the write-back did
+    # not recreate it.
+    assert (await storage_q.download(survivor.key)).data == b"keep-me"
+
+    async with s3_client.client():
+        assert not await s3_client.object_exists(bucket=s3_bucket, key=victim.key)
+
+
+# ....................... #
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_reencrypt_objects_retries_once_when_the_object_changed_mid_rewrite(
+    s3_client, s3_bucket: str
+) -> None:
+    """Replaced (not deleted) mid-rewrite: the conditional write-back answers 412,
+    the sweep re-reads once — fresh bytes, fresh ETag — and the retry lands with
+    the concurrent writer's content preserved."""
+
+    from forze.application.integrations.crypto import reencrypt_objects
+
+    ctx = context_from_modules(
+        CryptoDepsModule(
+            kms=MockKeyManagement(),
+            directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+        ),
+        S3DepsModule(
+            client=s3_client,
+            storages={s3_bucket: S3StorageConfig(bucket=s3_bucket, encrypt=True)},
+        ),
+    )
+    spec = StorageSpec(name=s3_bucket)
+    storage_q = ctx.storage.query(spec)
+    storage_c = ctx.storage.command(spec)
+
+    victim = await storage_c.upload(
+        UploadedObject(filename="hot.txt", data=b"sweep-read-me"),
+    )
+    attempts = 0
+
+    async def _one(data: bytes):
+        yield data
+
+    class _ReplacesVictimBeforeItsFirstWriteBack:
+        def __getattr__(self, name: str):
+            return getattr(storage_c, name)
+
+        async def overwrite_stream(self, key: str, chunks, **kwargs):
+            nonlocal attempts
+
+            if key != victim.key:
+                return await storage_c.overwrite_stream(key, chunks, **kwargs)
+
+            attempts += 1
+            # Drain the sweep's download first — the replacement below must race
+            # the WRITE-BACK, not the download (a replaced object mid-download is
+            # a different failure).
+            buffered = [piece async for piece in chunks]
+
+            if attempts == 1:
+                # Concurrent traffic re-writes the object under the sweep.
+                await storage_c.overwrite_stream(victim.key, _one(b"concurrent"))
+
+            async def _replay():
+                for piece in buffered:
+                    yield piece
+
+            return await storage_c.overwrite_stream(key, _replay(), **kwargs)
+
+    report = await reencrypt_objects(
+        storage_q,
+        _ReplacesVictimBeforeItsFirstWriteBack(),  # type: ignore[arg-type]
+    )
+
+    assert report.rewritten == 1
+    assert report.skipped_missing == 0
+    assert attempts == 2  # first write-back refused (412), the retry landed
+
+    # The retry re-read the object, so the concurrent write's content survives.
+    assert (await storage_q.download(victim.key)).data == b"concurrent"

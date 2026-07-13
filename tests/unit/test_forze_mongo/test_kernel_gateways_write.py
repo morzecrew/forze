@@ -1,25 +1,26 @@
 """Unit tests for ``forze_mongo.kernel.gateways.write``."""
 
-from forze.base.exceptions import CoreException, ExceptionKind, exc
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 
 from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenantIdentity
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_mongo.kernel.client import MongoClient
 from forze_mongo.kernel.gateways import (
     MongoHistoryGateway,
     MongoReadGateway,
     MongoWriteGateway,
 )
-from forze_mongo.kernel.client import MongoClient
 from tests.unit._gateway_codec_helpers import (
     codec_for,
     history_codecs_for,
     write_codecs_for,
 )
+
 
 class MyDoc(Document):
     name: str
@@ -55,6 +56,9 @@ def _build_client() -> MagicMock:
     client.collection.return_value = object()
     client.update_one = AsyncMock()
     client.find_one_and_update = AsyncMock()
+    # Out-of-transaction by default: gateway OCC retry only runs outside a
+    # transaction scope (a MagicMock return value would be truthy).
+    client.is_in_transaction.return_value = False
     return client
 
 _DOMAIN_CODEC, _CREATE_CODEC, _UPDATE_CODEC = write_codecs_for(
@@ -234,6 +238,37 @@ class TestMongoWriteGateway:
         assert client.find_one_and_update.await_count == 3
 
     @pytest.mark.asyncio
+    async def test_update_inside_transaction_runs_once_and_surfaces_concurrency(self) -> None:
+        """Inside a transaction a conflict is not retried at the gateway: a Mongo write
+        conflict aborts the whole server transaction (further session operations fail
+        with NoSuchTransaction) and a snapshot re-read cannot see fresher state, so the
+        method runs exactly once and ``concurrency`` propagates to the scope owner."""
+
+        pk = uuid4()
+        current = _domain_doc(pk, rev=1, name="before")
+        client = _build_client()
+        client.is_in_transaction.return_value = True
+        client.find_one_and_update.return_value = None
+        read = _build_read(client)
+        read.get.return_value = current
+
+        gw = MongoWriteGateway(
+            relation=("test_db", "docs"),
+            client=client,
+            read_gw=read,
+            create_cmd_type=MyCreateDoc,
+            update_cmd_type=MyUpdateDoc,
+            model_type=MyDoc,
+            **_WRITE_CODECS,
+        )
+
+        with pytest.raises(CoreException, match="Failed to update record"):
+            await gw.update(pk, MyUpdateDoc(name="after"))
+
+        assert client.find_one_and_update.await_count == 1
+        assert read.get.await_count == 1
+
+    @pytest.mark.asyncio
     async def test_touch_uses_find_one_and_update_with_rev_filter(self) -> None:
         pk = uuid4()
         current = _domain_doc(pk, rev=3, name="same")
@@ -347,7 +382,7 @@ class TestMongoWriteGatewayInsertReturnShape:
     """Insert paths decode the exact inserted payload instead of reading back.
 
     The returned model must (a) be identical to what a subsequent read returns
-    (BSON: naive UTC datetimes, millisecond precision) and (b) have every field
+    (BSON: aware UTC datetimes, millisecond precision) and (b) have every field
     explicitly set so the adapter's ``hydrate_from_write`` transform
     (``exclude={"unset": True}``) does not drop default-factory fields.
     """
@@ -370,7 +405,8 @@ class TestMongoWriteGatewayInsertReturnShape:
     def _assert_read_identical_shape(self, doc: MyDoc) -> None:
         assert doc.__pydantic_fields_set__ == set(MyDoc.model_fields)
         for dt in (doc.created_at, doc.last_update_at):
-            assert dt.tzinfo is None  # naive UTC, like a BSON read
+            offset = dt.utcoffset()
+            assert offset is not None and offset == timedelta()  # aware UTC, like a BSON read
             assert dt.microsecond % 1000 == 0  # ms precision, like a BSON read
         # the adapter's hydrate_from_write transform must not crash
         read_codec = codec_for(MyDocRead)
@@ -399,7 +435,6 @@ class TestMongoWriteGatewayInsertReturnShape:
         assert inserted["_id"] == str(pk)
         expected_created_at = inserted["created_at"]
         assert created.created_at == expected_created_at.astimezone(UTC).replace(
-            tzinfo=None,
             microsecond=(expected_created_at.microsecond // 1000) * 1000,
         )
 

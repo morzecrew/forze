@@ -194,6 +194,83 @@ async def test_complete_chain_binds_content_type_only_on_final_dest() -> None:
 
 
 @pytest.mark.asyncio
+async def test_complete_single_part_binds_metadata_in_rewrite() -> None:
+    # The rewrite body is the destination resource: user metadata rides the
+    # (conditional) final write itself — no follow-up patch that a concurrent
+    # overwrite could absorb.
+    fake = _fake_storage()
+    fake.patch_metadata = AsyncMock(return_value={})
+    client = _client(fake)
+
+    await client.complete_multipart_upload(
+        "b",
+        "k",
+        upload_id="SID",
+        parts=[ObjectStoragePartInfo(part_number=1)],
+        content_type="image/png",
+        metadata={"owner": "me"},
+    )
+
+    body = fake.copy.await_args.kwargs["metadata"]
+    assert body == {"contentType": "image/png", "metadata": {"owner": "me"}}
+    fake.patch_metadata.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_complete_compose_patch_pinned_to_composed_generation() -> None:
+    # Under if_match the metadata patch must address the exact object the final
+    # compose wrote (its new generation), not whatever sits at the key by then.
+    fake = _fake_storage()
+    fake.download_metadata = AsyncMock(return_value={"etag": '"E1"', "generation": "7"})
+    fake.compose = AsyncMock(return_value={"generation": "8"})
+    fake.patch_metadata = AsyncMock(return_value={})
+    client = _client(fake)
+
+    parts = [ObjectStoragePartInfo(part_number=n) for n in (1, 2)]
+    await client.complete_multipart_upload(
+        "b", "k", upload_id="SID", parts=parts, metadata={"owner": "me"}, if_match="E1"
+    )
+
+    # The compose carried the pre-read generation; the patch carries the new one.
+    assert fake.compose.await_args.kwargs["params"] == {"ifGenerationMatch": "7"}
+    patch_call = fake.patch_metadata.await_args
+    assert patch_call.args[2] == {"metadata": {"owner": "me"}}
+    assert patch_call.kwargs["params"] == {"ifGenerationMatch": "8"}
+
+
+@pytest.mark.asyncio
+async def test_complete_metadata_patch_412_maps_to_conflict() -> None:
+    # A 412 on the pinned patch means the destination was replaced right after
+    # the compose — the same conflict as the final-write precondition failure.
+    from aiohttp import ClientResponseError, RequestInfo
+    from yarl import URL
+
+    from forze.base.exceptions import CoreException, ExceptionKind
+
+    url = URL("http://example.com/storage/v1/b/b/o/k")
+    request_info = RequestInfo(url=url, method="PATCH", headers={}, real_url=url)
+
+    fake = _fake_storage()
+    fake.download_metadata = AsyncMock(return_value={"etag": '"E1"', "generation": "7"})
+    fake.compose = AsyncMock(return_value={"generation": "8"})
+    fake.patch_metadata = AsyncMock(
+        side_effect=ClientResponseError(
+            request_info=request_info, history=(), status=412, message="", headers={}
+        )
+    )
+    client = _client(fake)
+
+    parts = [ObjectStoragePartInfo(part_number=n) for n in (1, 2)]
+
+    with pytest.raises(CoreException) as e:
+        await client.complete_multipart_upload(
+            "b", "k", upload_id="SID", parts=parts, metadata={"owner": "me"}, if_match="E1"
+        )
+
+    assert e.value.kind == ExceptionKind.CONFLICT
+
+
+@pytest.mark.asyncio
 async def test_complete_requires_parts() -> None:
     from forze.base.exceptions import CoreException
 

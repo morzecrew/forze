@@ -28,7 +28,10 @@ from forze_postgres.execution.deps.configs import (
     PostgresAnalyticsConfig,
     PostgresQueryConfig,
 )
-from forze_postgres.kernel.client import PostgresClientPort
+from forze_postgres.kernel.client import (
+    PostgresClientPort,
+    restore_local_settings_on_exit,
+)
 from forze_postgres.kernel.gateways import PostgresQualifiedName
 from forze_postgres.kernel.relation import is_static_relation, resolve_postgres_qname
 from forze_postgres.kernel.sql import (
@@ -185,11 +188,33 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
         if timeout_sec is None and schema is None:
             return await fn()
 
+        overridden: list[str] = []
+
+        if timeout_sec is not None:
+            overridden.append("statement_timeout")
+
+        if schema is not None:
+            overridden.append("search_path")
+
+        in_caller_transaction = self.client.is_in_transaction()
+
         # A per-tenant query schema or a statement timeout needs a transaction so the
         # ``SET LOCAL`` is scoped to this query (schema-per-tenant isolation on a shared
         # connection: unqualified table names in the registered SQL resolve in the
         # tenant's own schema).
-        async with self.client.transaction():
+        #
+        # Inside a caller transaction that transaction is a savepoint, and ``SET LOCAL``
+        # merges into the outer transaction on the savepoint's release — so the caller's
+        # values are captured first and restored after the query. At the root there is
+        # nothing to restore: the transaction ends with the query.
+        async with (
+            self.client.transaction(),
+            restore_local_settings_on_exit(
+                self.client,
+                overridden,
+                enabled=in_caller_transaction,
+            ),
+        ):
             if timeout_sec is not None:
                 await self.client.execute(
                     sql.SQL("SET LOCAL statement_timeout = {}").format(
@@ -198,10 +223,11 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
                 )
 
             if schema is not None:
-                # Tenant schema first (so its tables shadow ``public``), then ``public`` so
-                # unqualified extension objects (uuid-ossp / pgcrypto / PostGIS, installed in
-                # public by default) and shared lookup tables stay reachable — a bare
-                # search_path would silently drop them and fail at query time.
+                # Tenant schema first (so its tables shadow ``public``), then ``public``
+                # so unqualified extension objects (uuid-ossp / pgcrypto / PostGIS,
+                # installed in public by default) and shared lookup tables stay
+                # reachable — a bare search_path would silently drop them and fail at
+                # query time.
                 await self.client.execute(
                     sql.SQL("SET LOCAL search_path TO {}, {}").format(
                         sql.Identifier(schema),

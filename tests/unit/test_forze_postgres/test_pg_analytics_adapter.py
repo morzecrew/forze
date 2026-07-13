@@ -52,6 +52,7 @@ class _MockClient:
         self.queries: list[str] = []
         self.params_seen: list[Any] = []
         self.executes: list[tuple[Any, Any]] = []
+        self.fetch_one_calls: list[tuple[Any, Any]] = []
         self._in_tx = False
 
     def is_in_transaction(self) -> bool:
@@ -82,6 +83,17 @@ class _MockClient:
         if "COUNT(*)" in query:
             return [{"forze_cnt": 2}]
         return [{"value": 10}, {"value": 20}]
+
+    async def fetch_one(
+        self,
+        query: Any,
+        params: Any = None,
+        **kwargs: Any,
+    ) -> tuple[str, ...]:
+        _ = kwargs
+        self.fetch_one_calls.append((query, params))
+        # Capture of current settings: one prior value per requested name.
+        return tuple(f"prior_{name}" for name in (params or ()))
 
     async def execute(
         self,
@@ -325,3 +337,60 @@ async def test_no_query_schema_does_not_open_transaction() -> None:
     await adapter.run("counts", _Params())
 
     assert mock.executes == []  # no SET LOCAL search_path
+
+
+@pytest.mark.asyncio
+async def test_timeout_restores_statement_timeout_inside_a_caller_transaction() -> None:
+    """A run inside a caller transaction executes in a savepoint whose ``SET LOCAL``
+    merges outward on release — the caller's value must be captured and put back."""
+
+    from datetime import timedelta
+
+    mock = _MockClient()
+    adapter = _adapter(mock)
+
+    async with mock.transaction():
+        await adapter.run("counts", _Params(), options={"timeout": timedelta(seconds=5)})
+
+    assert mock.fetch_one_calls  # the caller's setting was captured first
+    restore_query, restore_params = mock.executes[-1]
+    assert "set_config" in _rendered(restore_query)
+    assert restore_params == ["statement_timeout", "prior_statement_timeout"]
+
+
+@pytest.mark.asyncio
+async def test_query_schema_restores_search_path_inside_a_caller_transaction() -> None:
+    mock = _MockClient()
+    spec = AnalyticsSpec(
+        name="events",
+        read=_Row,
+        queries={"counts": AnalyticsQueryDefinition(params=_Params)},
+    )
+    config = PostgresAnalyticsConfig(
+        query_schema="tenant_a",
+        queries={"counts": PostgresQueryConfig(sql="SELECT value FROM t")},
+    )
+    adapter = PostgresAnalyticsAdapter(client=mock, spec=spec, config=config)
+
+    async with mock.transaction():
+        await adapter.run("counts", _Params())
+
+    restore_query, restore_params = mock.executes[-1]
+    assert "set_config" in _rendered(restore_query)
+    assert restore_params == ["search_path", "prior_search_path"]
+
+
+@pytest.mark.asyncio
+async def test_timeout_at_the_root_skips_capture_and_restore() -> None:
+    """With no caller transaction the run's own transaction ends with the query, taking
+    the ``SET LOCAL`` with it — no capture/restore round-trips are spent."""
+
+    from datetime import timedelta
+
+    mock = _MockClient()
+    adapter = _adapter(mock)
+
+    await adapter.run("counts", _Params(), options={"timeout": timedelta(seconds=5)})
+
+    assert mock.fetch_one_calls == []
+    assert all("set_config" not in _rendered(q) for q, _ in mock.executes)

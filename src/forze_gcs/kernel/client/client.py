@@ -26,6 +26,7 @@ from forze.application.integrations.storage.client import (
     ObjectStorageSSE,
     build_range_header,
     normalize_list_window,
+    overwrite_precondition_failed,
     presign_expiry_seconds,
     unsatisfiable_range,
     validate_range,
@@ -994,6 +995,7 @@ class GCSClient(GCSClientPort):
         content_type: str | None = None,
         metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
+        if_match: str | None = None,
     ) -> None:
         """Compose the temp parts in order into *key*, then delete the temps.
 
@@ -1012,6 +1014,23 @@ class GCSClient(GCSClientPort):
         compose parameter so the **final** destination object is encrypted at
         rest under the customer-managed key. (Intermediate compose accumulators
         for >32-part sets get the same key.)
+
+        *if_match* makes the completion conditional on the destination's
+        current ETag. GCS write preconditions speak *generations*, not ETags,
+        so the destination's metadata is read here: a vanished destination
+        answers 404 (``not_found`` — the write must not recreate it), a
+        mismatched ETag refuses immediately as a ``conflict``, and the matching
+        object's generation is passed as ``ifGenerationMatch`` on the **final**
+        write to *key* (compose or single-part rewrite — the visibility point;
+        intermediate accumulators need no condition) so real GCS enforces the
+        condition atomically: a concurrent change between the metadata read and
+        the compose answers 412, mapped to the same ``conflict``.
+
+        Caller *metadata* stays inside that conditional boundary: the
+        single-part rewrite binds it in the conditional write itself, and the
+        compose paths patch it pinned (``ifGenerationMatch``) to the generation
+        the final compose produced — a concurrent overwrite in between answers
+        412, mapped to the same ``conflict`` instead of inheriting the metadata.
         """
 
         storage = self.__require_storage()
@@ -1024,90 +1043,159 @@ class GCSClient(GCSClientPort):
         if not ordered:
             raise exc.validation("complete_multipart_upload requires at least one part")
 
+        precondition: dict[str, str] | None = None
+
+        if if_match is not None:
+            # 404 here maps to not_found via the object-scoped mapping — the
+            # destination was deleted, and completing would recreate it.
+            current = await storage.download_metadata(bucket, key, timeout=timeout)
+            current_etag = str(current.get("etag") or "").strip('"')
+
+            if current_etag != if_match.strip('"'):
+                raise overwrite_precondition_failed(key)
+
+            precondition = {"ifGenerationMatch": str(current.get("generation") or "")}
+
+        dest_params = {**(cmek_params or {}), **precondition} if precondition else cmek_params
+
         part_keys = [self._mpu_part_key(key, upload_id, p.part_number) for p in ordered]
 
         cleanup: set[str] = set(part_keys)
+
+        # The object resource answered by the final compose to *key* — its
+        # ``generation`` pins the follow-up metadata patch to the object this
+        # completion wrote. (The single-part rewrite binds metadata itself.)
+        final_resource: dict[str, Any] = {}
 
         # ``compose`` rejects a single-source request (it requires >= 2 sources).
         # Two code paths can otherwise produce one — a 1-part upload and the
         # final fold of a >32-part chain — so both are handled explicitly. Note:
         # fake-gcs-server is lenient and accepts single-source compose, which
         # masks this; real GCS returns 400.
-        if len(part_keys) == 1:
-            # Rewrite the lone part to the destination (compose can't take one
-            # source). Mirror copy_object's CMEK-aware ``storage.copy`` usage,
-            # including destinationKmsKeyName via the rewrite params.
-            await storage.copy(
-                bucket,
-                part_keys[0],
-                bucket,
-                new_name=key,
-                metadata={"contentType": content_type} if content_type else None,
-                params=_gcs_cmek_rewrite_params(sse) or None,
-                timeout=timeout,
-            )
+        try:
+            if len(part_keys) == 1:
+                # Rewrite the lone part to the destination (compose can't take one
+                # source). Mirror copy_object's CMEK-aware ``storage.copy`` usage,
+                # including destinationKmsKeyName via the rewrite params. The
+                # generation precondition rides the same rewrite params (it
+                # addresses the destination's current generation).
+                rewrite_params = {
+                    **(_gcs_cmek_rewrite_params(sse) or {}),
+                    **(precondition or {}),
+                }
 
-        elif len(part_keys) <= COMPOSE_MAX_SOURCES:
-            await storage.compose(
-                bucket,
-                key,
-                part_keys,
-                content_type=content_type,
-                params=cmek_params,
-                timeout=timeout,
-            )
+                # The rewrite body is the destination object resource, so the
+                # caller's user metadata binds in the same conditional write —
+                # no separate patch that could land on a concurrent overwrite.
+                rewrite_body: dict[str, Any] = {}
 
-        else:
-            # Chain composes when there are more than COMPOSE_MAX_SOURCES parts.
-            # The accumulated result is written to a temp object, then folded
-            # with the next batch, so no single compose exceeds the source cap.
-            # Each fold includes the accumulator itself plus >= 1 further part,
-            # so every compose always has >= 2 sources (never single-source).
-            acc_key = f"{self._mpu_prefix(key, upload_id)}__compose__"
-            cleanup.add(acc_key)
+                if content_type:
+                    rewrite_body["contentType"] = content_type
 
-            await storage.compose(
-                bucket,
-                acc_key,
-                part_keys[:COMPOSE_MAX_SOURCES],
-                # Intermediate accumulator: default type, deleted after assembly.
-                content_type=None,
-                params=cmek_params,
-                timeout=timeout,
-            )
+                if metadata:
+                    rewrite_body["metadata"] = dict(metadata)
 
-            rest = part_keys[COMPOSE_MAX_SOURCES:]
+                await storage.copy(
+                    bucket,
+                    part_keys[0],
+                    bucket,
+                    new_name=key,
+                    metadata=rewrite_body or None,
+                    params=rewrite_params or None,
+                    timeout=timeout,
+                )
 
-            while rest:
-                # compose includes the accumulator itself, so each step folds in
-                # at most (cap - 1) further parts.
-                batch = rest[: COMPOSE_MAX_SOURCES - 1]
-                rest = rest[COMPOSE_MAX_SOURCES - 1 :]
+            elif len(part_keys) <= COMPOSE_MAX_SOURCES:
+                final_resource = await storage.compose(
+                    bucket,
+                    key,
+                    part_keys,
+                    content_type=content_type,
+                    params=dest_params,
+                    timeout=timeout,
+                )
 
-                # The final fold writes straight to the destination key; earlier
-                # folds round-trip through the accumulator.
-                dest = acc_key if rest else key
+            else:
+                # Chain composes when there are more than COMPOSE_MAX_SOURCES parts.
+                # The accumulated result is written to a temp object, then folded
+                # with the next batch, so no single compose exceeds the source cap.
+                # Each fold includes the accumulator itself plus >= 1 further part,
+                # so every compose always has >= 2 sources (never single-source).
+                acc_key = f"{self._mpu_prefix(key, upload_id)}__compose__"
+                cleanup.add(acc_key)
 
                 await storage.compose(
                     bucket,
-                    dest,
-                    [acc_key, *batch],
-                    # Only the final destination object gets the caller's type;
-                    # intermediate accumulators keep the default and are deleted.
-                    content_type=content_type if dest == key else None,
+                    acc_key,
+                    part_keys[:COMPOSE_MAX_SOURCES],
+                    # Intermediate accumulator: default type, deleted after assembly.
+                    content_type=None,
                     params=cmek_params,
                     timeout=timeout,
                 )
 
-        if metadata:
-            # Neither compose nor copy carries user metadata over from the temp parts,
-            # so stamp it on the finished destination (S3 binds it at create instead).
-            await storage.patch_metadata(
-                bucket,
-                key,
-                {"metadata": dict(metadata)},
-                timeout=timeout,
-            )
+                rest = part_keys[COMPOSE_MAX_SOURCES:]
+
+                while rest:
+                    # compose includes the accumulator itself, so each step folds in
+                    # at most (cap - 1) further parts.
+                    batch = rest[: COMPOSE_MAX_SOURCES - 1]
+                    rest = rest[COMPOSE_MAX_SOURCES - 1 :]
+
+                    # The final fold writes straight to the destination key; earlier
+                    # folds round-trip through the accumulator. Only that final
+                    # fold carries the generation precondition — it is the write
+                    # that becomes visible at the destination.
+                    dest = acc_key if rest else key
+
+                    final_resource = await storage.compose(
+                        bucket,
+                        dest,
+                        [acc_key, *batch],
+                        # Only the final destination object gets the caller's type;
+                        # intermediate accumulators keep the default and are deleted.
+                        content_type=content_type if dest == key else None,
+                        params=dest_params if dest == key else cmek_params,
+                        timeout=timeout,
+                    )
+
+        except aiohttp.ClientResponseError as e:
+            # Only the precondition-carrying final write can answer 412: the
+            # destination's generation changed between the metadata read above
+            # and the compose/rewrite — the same "object is no longer what the
+            # caller saw" outcome as the client-side ETag refusal.
+            if if_match is not None and e.status == 412:
+                raise overwrite_precondition_failed(key) from e
+
+            raise
+
+        if metadata and len(part_keys) > 1:
+            # compose carries no user metadata from the temp parts, so stamp it on
+            # the finished destination (S3 binds it at create; the single-part
+            # rewrite above binds it in the write itself). Under ``if_match`` the
+            # patch addresses the exact object the final compose wrote — its new
+            # generation — so a concurrent overwrite landing in between answers
+            # 412 instead of inheriting this caller's metadata.
+            patch_params: dict[str, str] | None = None
+
+            if if_match is not None:
+                generation = str(final_resource.get("generation") or "")
+                patch_params = {"ifGenerationMatch": generation} if generation else None
+
+            try:
+                await storage.patch_metadata(
+                    bucket,
+                    key,
+                    {"metadata": dict(metadata)},
+                    params=patch_params,
+                    timeout=timeout,
+                )
+
+            except aiohttp.ClientResponseError as e:
+                if patch_params is not None and e.status == 412:
+                    raise overwrite_precondition_failed(key) from e
+
+                raise
 
         await self.__delete_mpu_keys(bucket, cleanup)
 

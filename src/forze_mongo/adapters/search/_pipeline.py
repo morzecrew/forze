@@ -78,32 +78,31 @@ def build_text_ranked_pipeline(
     user_sorts: list[tuple[str, int]] | None,
     rank_field: str = MONGO_RANK_FIELD,
 ) -> list[JsonDict]:
-    """Ranked pipeline using a compound ``$text`` index."""
+    """Ranked pipeline using a compound ``$text`` index.
+
+    The server only accepts ``$text`` in the first ``$match`` of a pipeline, so the
+    prefilter (tenant scope and caller filters) rides in that same stage — ordinary
+    field conditions are valid alongside ``$text`` in one ``$match``. A separate
+    leading prefilter stage would push ``$text`` to the second stage and the server
+    would reject the whole pipeline.
+    """
 
     search_str = build_text_search_string(terms, combine=combine)
-    stages: list[JsonDict] = [*_pre_match_stages(pre_filter)]
 
-    if search_str:
-        stages.extend(
-            (
-                {"$match": {"$text": {"$search": search_str}}},
-                {
-                    "$addFields": {
-                        rank_field: {"$meta": "textScore"},
-                    }
-                },
-            )
-        )
-    else:
+    if not search_str:
         return build_browse_pipeline(
             pre_filter=pre_filter,
             user_sorts=user_sorts,
             rank_field=rank_field,
         )
 
-    stages.append({"$sort": _sort_dict(ranked=True, user_sorts=user_sorts, rank_field=rank_field)})
+    first_match: JsonDict = {"$text": {"$search": search_str}, **pre_filter}
 
-    return stages
+    return [
+        {"$match": first_match},
+        {"$addFields": {rank_field: {"$meta": "textScore"}}},
+        {"$sort": _sort_dict(ranked=True, user_sorts=user_sorts, rank_field=rank_field)},
+    ]
 
 
 # ....................... #

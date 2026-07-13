@@ -218,6 +218,7 @@ class StorageCommandPort(Protocol):
         metadata: Mapping[str, str] | None = None,
         tags: Mapping[str, str] | None = None,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
+        if_match: str | None = None,
     ) -> Awaitable[StoredObject]:
         """Replace the object at *key* from a stream of chunks, in bounded memory.
 
@@ -230,6 +231,23 @@ class StorageCommandPort(Protocol):
         On an encrypting route the plaintext is re-sealed under a **fresh data key**.
         Pass the object's existing *content_type*, *metadata*, and *tags* (from a
         ``head``) so the round-trip preserves them.
+
+        **Conditional overwrite.** With ``if_match`` set to the ETag the caller already
+        holds (from the same ``head``), the replacement only becomes visible while the
+        stored object still carries that ETag — the backend enforces the condition at
+        the write's visibility point (S3 ``If-Match`` on the multipart completion; GCS
+        ``ifGenerationMatch`` on the final compose). This closes the delete/overwrite
+        race an unconditional replace leaves open: without it, an object deleted by
+        concurrent traffic after the caller read it is silently **recreated** by the
+        overwrite. Outcomes when the condition fails:
+
+        - object replaced concurrently (ETag changed) → ``conflict`` with code
+          :data:`~forze.application.contracts.storage.OVERWRITE_PRECONDITION_FAILED_CODE`
+          — re-read and retry, or give up;
+        - object deleted concurrently → ``not_found`` (the backends answer 404 for a
+          vanished target) — nothing left to overwrite, and the delete is **not** undone.
+
+        ``None`` (the default) keeps the historical unconditional replace.
         """
 
         ...  # pragma: no cover

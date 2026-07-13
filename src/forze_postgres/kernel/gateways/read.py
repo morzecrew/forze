@@ -8,6 +8,7 @@ require_psycopg()
 
 import json
 from collections.abc import AsyncGenerator, Sequence
+from contextlib import asynccontextmanager
 from typing import (
     Any,
     Literal,
@@ -42,6 +43,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, build_projection
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel._logger import logger
+from forze_postgres.kernel.client import undo_local_settings_on_exit
 from forze_postgres.kernel.sql import (
     build_order_by_sql,
     build_seek_condition,
@@ -207,6 +209,23 @@ class PostgresReadGateway[M: BaseModel](
 
     # ....................... #
 
+    @asynccontextmanager
+    async def _bound_params_scope(self) -> AsyncGenerator[None]:
+        """A transaction with the bound params applied for the body and reset afterwards.
+
+        The reset runs through :func:`undo_local_settings_on_exit`, so a fetch that fails
+        (and typically aborts the transaction, making the reset fail too) surfaces its own
+        error — the reset failure is logged, never raised in its place.
+        """
+
+        async with self.client.transaction():
+            applied = await self._apply_params()
+
+            async with undo_local_settings_on_exit(lambda: self._reset_params(applied)):
+                yield
+
+    # ....................... #
+
     async def _read_one(
         self,
         stmt: Any,
@@ -219,12 +238,8 @@ class PostgresReadGateway[M: BaseModel](
         if self.bound_params is None:
             return await self.client.fetch_one(stmt, params, row_factory=row_factory)
 
-        async with self.client.transaction():
-            applied = await self._apply_params()
-            try:
-                return await self.client.fetch_one(stmt, params, row_factory=row_factory)
-            finally:
-                await self._reset_params(applied)
+        async with self._bound_params_scope():
+            return await self.client.fetch_one(stmt, params, row_factory=row_factory)
 
     async def _read_all(
         self,
@@ -238,12 +253,8 @@ class PostgresReadGateway[M: BaseModel](
         if self.bound_params is None:
             return await self.client.fetch_all(stmt, params, row_factory=row_factory)
 
-        async with self.client.transaction():
-            applied = await self._apply_params()
-            try:
-                return await self.client.fetch_all(stmt, params, row_factory=row_factory)
-            finally:
-                await self._reset_params(applied)
+        async with self._bound_params_scope():
+            return await self.client.fetch_all(stmt, params, row_factory=row_factory)
 
     async def _read_value(self, stmt: Any, params: Any, *, default: Any = None) -> Any:
         self._require_params_bound()
@@ -251,12 +262,8 @@ class PostgresReadGateway[M: BaseModel](
         if self.bound_params is None:
             return await self.client.fetch_value(stmt, params, default=default)
 
-        async with self.client.transaction():
-            applied = await self._apply_params()
-            try:
-                return await self.client.fetch_value(stmt, params, default=default)
-            finally:
-                await self._reset_params(applied)
+        async with self._bound_params_scope():
+            return await self.client.fetch_value(stmt, params, default=default)
 
     async def _read_batched(
         self,
@@ -275,15 +282,11 @@ class PostgresReadGateway[M: BaseModel](
                 yield batch
             return
 
-        async with self.client.transaction():
-            applied = await self._apply_params()
-            try:
-                async for batch in self.client.fetch_all_batched(
-                    stmt, params, batch_size=batch_size, row_factory=row_factory
-                ):
-                    yield batch
-            finally:
-                await self._reset_params(applied)
+        async with self._bound_params_scope():
+            async for batch in self.client.fetch_all_batched(
+                stmt, params, batch_size=batch_size, row_factory=row_factory
+            ):
+                yield batch
 
     # ....................... #
 

@@ -600,6 +600,7 @@ class ObjectStorageAdapter(
         metadata: Mapping[str, str] | None = None,
         tags: Mapping[str, str] | None = None,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
+        if_match: str | None = None,
     ) -> StoredObject:
         """Replace the object at *key* from a stream of chunks, in bounded memory.
 
@@ -614,6 +615,13 @@ class ObjectStorageAdapter(
         data key** — that is the point: it is how a compromised key is retired. Carry the
         object's *metadata*, *content_type*, and *tags* over from a
         :meth:`head` so the round-trip preserves them.
+
+        *if_match* (the ETag from the same :meth:`head`) makes the replace conditional at
+        its **visibility point** — the multipart completion — so an object deleted or
+        replaced by concurrent traffic while the stream was being uploaded is not
+        clobbered (and a concurrent delete is not silently undone by recreating the
+        object): the completion fails ``not_found`` / ``conflict`` instead (see the port
+        contract). ``None`` keeps the unconditional replace.
         """
 
         self._validate_key(key)
@@ -654,6 +662,7 @@ class ObjectStorageAdapter(
                     content_type=resolved_type,
                     metadata=meta_map,
                     sse=self.sse,
+                    if_match=if_match,
                 )
 
             except BaseException:

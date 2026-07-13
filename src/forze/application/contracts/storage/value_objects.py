@@ -13,6 +13,18 @@ fallback (e.g. the FastAPI streaming route) reference one symbol and cannot drif
 
 # ....................... #
 
+OVERWRITE_PRECONDITION_FAILED_CODE: Final[str] = "core.storage.overwrite_precondition_failed"
+"""Error code (``conflict`` kind) raised when a conditional
+:meth:`~forze.application.contracts.storage.StorageCommandPort.overwrite_stream` finds the
+object's ETag no longer matching its ``if_match`` token — the object was replaced by
+concurrent traffic between the caller's ``head`` and the write becoming visible. Shared so
+the raising adapters and callers reacting to the mismatch (e.g. a re-encryption sweep
+re-reading and retrying) reference one symbol and cannot drift apart. A conditional
+overwrite of an object that was *deleted* concurrently surfaces as ``not_found`` instead
+(the backends answer 404, not 412, for a vanished target)."""
+
+# ....................... #
+
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class _InternalMetadata:

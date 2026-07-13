@@ -145,9 +145,9 @@ async def test_mongo_create_skips_read_back_and_matches_subsequent_read(
     assert commands == ["insert"], commands  # zero find commands
 
     loaded = await write.read_gw.get(created.id)
-    assert created == loaded  # incl. ms-truncated, naive-UTC datetimes
+    assert created == loaded  # incl. ms-truncated, aware-UTC datetimes
     assert created.created_at.microsecond % 1000 == 0
-    assert created.created_at.tzinfo is None
+    assert created.created_at.tzinfo is not None
     assert created.__pydantic_fields_set__ == set(RtDoc.model_fields)
 
     _RECORDER.start()

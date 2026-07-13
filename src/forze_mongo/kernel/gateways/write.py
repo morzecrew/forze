@@ -16,10 +16,7 @@ from pymongo import UpdateOne
 
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.resilience import ResilienceExecutorPort
-from forze.application.execution.resilience import (
-    default_resilience_executor,
-    occ_retry,
-)
+from forze.application.execution.resilience import default_resilience_executor
 from forze.application.integrations.persistence import (
     DocumentWriteCodecMixin,
     HistoryOccMixin,
@@ -31,6 +28,7 @@ from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, Document
 
 from ..relation import relations_match
+from ._occ import mongo_occ_retry
 from .base import MongoGateway
 from .history import MongoHistoryGateway
 from .read import MongoReadGateway
@@ -42,15 +40,15 @@ def _bson_normalize_value(value: Any) -> Any:
     """Normalize a value the way a BSON write/read round trip would.
 
     BSON stores datetimes as UTC milliseconds since the epoch, and the client
-    is not ``tz_aware``, so reads yield naive UTC datetimes truncated to
-    millisecond precision. Applying the same normalization to an insert
-    payload lets us decode it in memory and return a model identical to what
-    a subsequent read would produce.
+    decodes ``tz_aware``, so reads yield aware UTC datetimes truncated to
+    millisecond precision (a naive write is stored as-is, i.e. as UTC).
+    Applying the same normalization to an insert payload lets us decode it in
+    memory and return a model identical to what a subsequent read would
+    produce.
     """
 
     if isinstance(value, datetime):
-        if value.tzinfo is not None:
-            value = value.astimezone(UTC).replace(tzinfo=None)
+        value = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
         return value.replace(microsecond=(value.microsecond // 1000) * 1000)
 
@@ -259,7 +257,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         Mongo applies no server-side defaults or transforms, so the insert
         payload *is* the stored document; decoding it in memory replaces the
         post-insert read-back round trip. The document is first normalized via
-        :func:`_bson_normalize_value` (millisecond truncation, naive UTC) so
+        :func:`_bson_normalize_value` (millisecond truncation, aware UTC) so
         the returned model matches what a subsequent read returns. Unlike the
         raw ``_from_cdto`` model, the decoded model has every field explicitly
         set, which the adapter's ``hydrate_from_write`` transform
@@ -272,7 +270,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def create(self, payload: C, *, id: UUID | None = None) -> D:
         """Insert a new document from a creation payload and record its history.
 
@@ -295,7 +293,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def create_many(
         self,
         payloads: Sequence[C],
@@ -324,7 +322,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def ensure(self, id: UUID, payload: C) -> D:
         """Insert a document at *id* when missing using ``$setOnInsert``; no updates on match."""
 
@@ -347,7 +345,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def ensure_many(
         self,
         ids: Sequence[UUID],
@@ -392,7 +390,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def upsert(self, id: UUID, create: C, update: U) -> D:
         """Insert *create* at *id* with ``$setOnInsert`` when missing; else delegate to :meth:`update`."""
 
@@ -419,7 +417,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def upsert_many(
         self,
         ids: Sequence[UUID],
@@ -489,7 +487,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def _patch(
         self,
         pk: UUID,
@@ -536,7 +534,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def _patch_many(
         self,
         pks: Sequence[UUID],
@@ -654,7 +652,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    @occ_retry
+    @mongo_occ_retry
     async def update_matching(
         self,
         filters: QueryFilterExpression,  # type: ignore[valid-type]

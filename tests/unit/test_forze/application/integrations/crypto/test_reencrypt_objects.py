@@ -14,6 +14,7 @@ import pytest
 
 import attrs
 
+from forze.application.contracts.storage import OVERWRITE_PRECONDITION_FAILED_CODE
 from forze.application.integrations.crypto import ReencryptReport, reencrypt_objects
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockState
@@ -78,9 +79,7 @@ class TestReencryptObjects:
 
     async def test_scopes_to_a_prefix(self) -> None:
         adapter = _adapter()
-        kept = await adapter.upload_stream(
-            _chunks(b"in"), filename="in.txt", prefix="keep"
-        )
+        kept = await adapter.upload_stream(_chunks(b"in"), filename="in.txt", prefix="keep")
         await adapter.upload_stream(_chunks(b"out"), filename="out.txt", prefix="other")
 
         report = await reencrypt_objects(adapter, adapter, prefix="keep")
@@ -121,9 +120,7 @@ class TestReencryptObjects:
                 window = self._order[offset : offset + limit]
                 items = [await adapter.head(k) for k in window]
 
-                return [_Listed(k) for k, _ in zip(window, items, strict=True)], len(
-                    self._order
-                )
+                return [_Listed(k) for k, _ in zip(window, items, strict=True)], len(self._order)
 
             async def head(self, key: str, **kwargs: object):
                 return await adapter.head(key, **kwargs)  # type: ignore[arg-type]
@@ -227,6 +224,101 @@ class TestReencryptObjects:
             await adapter.head(victim)
         assert ei.value.kind is ExceptionKind.NOT_FOUND
 
+    async def test_the_write_back_is_conditional_on_the_etag_it_read(self) -> None:
+        """The sweep must thread the head's ETag into the overwrite as ``if_match``.
+
+        Without it the write-back is unconditional and a delete landing between the
+        download and the write's visibility point is silently undone — the earlier
+        not-found skip cannot catch that, because the overwrite *succeeds*.
+        """
+
+        adapter = _adapter()
+        key = await _upload(adapter, "a.txt", b"alpha")
+        etag_at_head = (await adapter.head(key)).etag
+        seen: list[str | None] = []
+
+        class _RecordingCommand:
+            async def overwrite_stream(self, key: str, chunks, **kwargs: object):
+                seen.append(kwargs.get("if_match"))  # type: ignore[arg-type]
+
+                return await adapter.overwrite_stream(key, chunks, **kwargs)  # type: ignore[arg-type]
+
+        report = await reencrypt_objects(
+            adapter,
+            _RecordingCommand(),  # type: ignore[arg-type]
+        )
+
+        assert report.rewritten == 1
+        assert seen == [etag_at_head]
+
+    async def test_an_object_replaced_mid_rewrite_is_retried_once(self) -> None:
+        """Concurrent traffic re-writes the object while its rewrite is in flight.
+
+        The conditional write refuses (the ETag the sweep read is stale) instead of
+        clobbering the newer bytes; the sweep re-reads once — fresh payload, fresh
+        ETag — and the retry lands. The concurrent writer's content must win.
+        """
+
+        adapter = _adapter()
+        victim = await _upload(adapter, "victim.txt", b"old")
+        kept = await _upload(adapter, "kept.txt", b"alpha")
+        attempts = 0
+
+        class _RacingCommand:
+            """Replaces the victim's content just before its first write-back."""
+
+            async def overwrite_stream(self, key: str, chunks, **kwargs: object):
+                nonlocal attempts
+
+                if key == victim:
+                    attempts += 1
+
+                    if attempts == 1:
+                        await adapter.overwrite_stream(victim, _chunks(b"concurrent"))
+
+                return await adapter.overwrite_stream(key, chunks, **kwargs)  # type: ignore[arg-type]
+
+        report = await reencrypt_objects(
+            adapter,
+            _RacingCommand(),  # type: ignore[arg-type]
+        )
+
+        assert report == ReencryptReport(rewritten=2, skipped_missing=0)
+        assert attempts == 2  # first refused, retry landed
+        # The retry re-read the object, so the concurrent write survives.
+        assert (await adapter.download(victim)).data == b"concurrent"
+        assert (await adapter.download(kept)).data == b"alpha"
+
+    async def test_an_object_under_active_contention_aborts_the_sweep(self) -> None:
+        """One refresh-and-retry per object; a second stale write-back propagates."""
+
+        adapter = _adapter()
+        victim = await _upload(adapter, "victim.txt", b"old")
+        generation = 0
+
+        class _ContendingCommand:
+            """Replaces the victim's content before every write-back attempt."""
+
+            async def overwrite_stream(self, key: str, chunks, **kwargs: object):
+                nonlocal generation
+
+                generation += 1
+                await adapter.overwrite_stream(victim, _chunks(f"gen-{generation}".encode()))
+
+                return await adapter.overwrite_stream(key, chunks, **kwargs)  # type: ignore[arg-type]
+
+        with pytest.raises(CoreException) as ei:
+            await reencrypt_objects(
+                adapter,
+                _ContendingCommand(),  # type: ignore[arg-type]
+            )
+
+        assert ei.value.code == OVERWRITE_PRECONDITION_FAILED_CODE
+        assert ei.value.kind is ExceptionKind.CONFLICT
+        # The contended object keeps the latest concurrent write — never the
+        # sweep's stale bytes.
+        assert (await adapter.download(victim)).data == f"gen-{generation}".encode()
+
     async def test_any_other_error_still_aborts_the_sweep(self) -> None:
         """Only a missing object is skipped; every other failure propagates."""
 
@@ -316,3 +408,50 @@ class TestOverwriteStream:
             await adapter.overwrite_stream("nope", _chunks(b"x"))
 
         assert ei.value.kind is ExceptionKind.NOT_FOUND
+
+    async def test_a_current_if_match_lets_the_conditional_overwrite_through(
+        self,
+    ) -> None:
+        adapter = _adapter()
+        key = await _upload(adapter, "a.txt", b"before")
+        etag = (await adapter.head(key)).etag
+
+        await adapter.overwrite_stream(key, _chunks(b"after"), if_match=etag)
+
+        assert (await adapter.download(key)).data == b"after"
+
+    async def test_a_stale_if_match_refuses_instead_of_clobbering(self) -> None:
+        """The DST-oracle side of the real backends' conditional completion: a
+        match token that no longer holds must fail here exactly like S3's 412,
+        so simulations can exercise the delete/overwrite race in-process."""
+
+        adapter = _adapter()
+        key = await _upload(adapter, "a.txt", b"before")
+        stale = (await adapter.head(key)).etag
+        await adapter.overwrite_stream(key, _chunks(b"concurrent"))
+
+        with pytest.raises(CoreException) as ei:
+            await adapter.overwrite_stream(key, _chunks(b"sweep"), if_match=stale)
+
+        assert ei.value.kind is ExceptionKind.CONFLICT
+        assert ei.value.code == OVERWRITE_PRECONDITION_FAILED_CODE
+        # The refused write left the concurrent bytes untouched.
+        assert (await adapter.download(key)).data == b"concurrent"
+
+    async def test_a_conditional_overwrite_of_a_deleted_object_stays_deleted(
+        self,
+    ) -> None:
+        """A vanished target answers not_found (the backends' 404), never a
+        recreate — the resurrection the conditional write exists to prevent."""
+
+        adapter = _adapter()
+        key = await _upload(adapter, "a.txt", b"before")
+        etag = (await adapter.head(key)).etag
+        await adapter.delete(key)
+
+        with pytest.raises(CoreException) as ei:
+            await adapter.overwrite_stream(key, _chunks(b"sweep"), if_match=etag)
+
+        assert ei.value.kind is ExceptionKind.NOT_FOUND
+        with pytest.raises(CoreException):
+            await adapter.head(key)

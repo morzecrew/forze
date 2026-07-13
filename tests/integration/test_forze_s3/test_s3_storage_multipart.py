@@ -49,9 +49,7 @@ async def _put_part(http: httpx.AsyncClient, url: str, data: bytes) -> str:
 
 
 @pytest.mark.asyncio
-async def test_multipart_full_flow_parallel(
-    s3_client: S3Client, s3_bucket: str
-) -> None:
+async def test_multipart_full_flow_parallel(s3_client: S3Client, s3_bucket: str) -> None:
     ctx = _ctx(s3_client, s3_bucket)
     spec = StorageSpec(name=s3_bucket)
     uploads = ctx.storage.uploads(spec)
@@ -72,16 +70,10 @@ async def test_multipart_full_flow_parallel(
 
     async with httpx.AsyncClient(timeout=60) as http:
         etags = await asyncio.gather(
-            *(
-                _put_part(http, url.url, body)
-                for url, body in zip(urls, bodies, strict=True)
-            )
+            *(_put_part(http, url.url, body) for url, body in zip(urls, bodies, strict=True))
         )
 
-    parts = [
-        UploadPart(part_number=n, etag=etag)
-        for n, etag in enumerate(etags, start=1)
-    ]
+    parts = [UploadPart(part_number=n, etag=etag) for n, etag in enumerate(etags, start=1)]
 
     head = await uploads.complete_upload(session, parts)
     assert head.size == sum(len(b) for b in bodies)
@@ -127,9 +119,7 @@ async def test_multipart_resume(s3_client: S3Client, s3_bucket: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_multipart_abort_then_use_errors(
-    s3_client: S3Client, s3_bucket: str
-) -> None:
+async def test_multipart_abort_then_use_errors(s3_client: S3Client, s3_bucket: str) -> None:
     ctx = _ctx(s3_client, s3_bucket)
     spec = StorageSpec(name=s3_bucket)
     uploads = ctx.storage.uploads(spec)
@@ -148,6 +138,114 @@ async def test_multipart_abort_then_use_errors(
         await uploads.list_parts(session)
 
     with pytest.raises(CoreException):
-        await uploads.complete_upload(
-            session, [UploadPart(part_number=1, etag=etag)]
+        await uploads.complete_upload(session, [UploadPart(part_number=1, etag=etag)])
+
+
+# ....................... #
+# Conditional multipart completion (the client's If-Match seam).
+#
+# Runs against both matrix backends: MinIO and floci were each probed to honor
+# CompleteMultipartUpload's If-Match natively — 412 PreconditionFailed on a
+# mismatched ETag, 404 NoSuchKey when the target vanished — so these tests are
+# a live fidelity check, not a special-cased emulation.
+
+
+@pytest.mark.asyncio
+async def test_conditional_completion_refuses_a_stale_etag(
+    s3_client: S3Client, s3_bucket: str
+) -> None:
+    """A mismatched If-Match answers `conflict` and the stored bytes survive."""
+
+    from forze.application.contracts.storage import OVERWRITE_PRECONDITION_FAILED_CODE
+    from forze.application.integrations.storage.client import ObjectStoragePartInfo
+
+    key = "conditional/stale.bin"
+
+    async with s3_client.client():
+        await s3_client.upload_bytes(bucket=s3_bucket, key=key, data=b"current")
+        stale = "d41d8cd98f00b204e9800998ecf8427e"  # a valid-shaped, wrong ETag
+
+        upload_id = await s3_client.create_multipart_upload(bucket=s3_bucket, key=key)
+        part = await s3_client.upload_multipart_part(
+            bucket=s3_bucket, key=key, upload_id=upload_id, part_number=1, data=b"new"
         )
+
+        with pytest.raises(CoreException) as ei:
+            await s3_client.complete_multipart_upload(
+                bucket=s3_bucket,
+                key=key,
+                upload_id=upload_id,
+                parts=[ObjectStoragePartInfo(part_number=1, etag=part.etag)],
+                if_match=stale,
+            )
+
+        assert ei.value.code == OVERWRITE_PRECONDITION_FAILED_CODE
+
+        body = await s3_client.download_bytes(bucket=s3_bucket, key=key)
+        assert body.data == b"current"
+
+
+@pytest.mark.asyncio
+async def test_conditional_completion_with_the_current_etag_lands(
+    s3_client: S3Client, s3_bucket: str
+) -> None:
+    from forze.application.integrations.storage.client import ObjectStoragePartInfo
+
+    key = "conditional/current.bin"
+
+    async with s3_client.client():
+        await s3_client.upload_bytes(bucket=s3_bucket, key=key, data=b"current")
+        head = await s3_client.head_object(bucket=s3_bucket, key=key)
+
+        upload_id = await s3_client.create_multipart_upload(bucket=s3_bucket, key=key)
+        part = await s3_client.upload_multipart_part(
+            bucket=s3_bucket, key=key, upload_id=upload_id, part_number=1, data=b"new"
+        )
+
+        await s3_client.complete_multipart_upload(
+            bucket=s3_bucket,
+            key=key,
+            upload_id=upload_id,
+            parts=[ObjectStoragePartInfo(part_number=1, etag=part.etag)],
+            if_match=head.etag,
+        )
+
+        body = await s3_client.download_bytes(bucket=s3_bucket, key=key)
+        assert body.data == b"new"
+
+
+@pytest.mark.asyncio
+async def test_conditional_completion_over_a_deleted_object_does_not_recreate_it(
+    s3_client: S3Client, s3_bucket: str
+) -> None:
+    """The resurrection window itself, at the client seam: the object is deleted
+    while the multipart upload is in flight; the conditional completion must
+    answer not_found and — critically — leave nothing behind at the key."""
+
+    from forze.application.integrations.storage.client import ObjectStoragePartInfo
+    from forze.base.exceptions import ExceptionKind
+
+    key = "conditional/deleted.bin"
+
+    async with s3_client.client():
+        await s3_client.upload_bytes(bucket=s3_bucket, key=key, data=b"current")
+        head = await s3_client.head_object(bucket=s3_bucket, key=key)
+
+        upload_id = await s3_client.create_multipart_upload(bucket=s3_bucket, key=key)
+        part = await s3_client.upload_multipart_part(
+            bucket=s3_bucket, key=key, upload_id=upload_id, part_number=1, data=b"boo"
+        )
+
+        await s3_client.delete_object(bucket=s3_bucket, key=key)
+
+        with pytest.raises(CoreException) as ei:
+            await s3_client.complete_multipart_upload(
+                bucket=s3_bucket,
+                key=key,
+                upload_id=upload_id,
+                parts=[ObjectStoragePartInfo(part_number=1, etag=part.etag)],
+                if_match=head.etag,
+            )
+
+        assert ei.value.kind is ExceptionKind.NOT_FOUND
+        assert not await s3_client.object_exists(bucket=s3_bucket, key=key)

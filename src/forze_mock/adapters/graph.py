@@ -35,6 +35,7 @@ from forze.application.contracts.graph import (
     ShortestPathParams,
     ShortestPathResult,
     VertexRef,
+    validate_property_filter_keys,
 )
 from forze.application.integrations.graph import resolve_write_endpoint
 from forze.base.exceptions import exc
@@ -172,6 +173,10 @@ class MockGraphAdapter(MockTenancyMixin):
     ) -> None:
         if not property_filter:
             return
+
+        # Same rule/order as the Neo4j adapter's ``_filter_params``: non-identifier keys
+        # first, then sealed properties — so the mock rejects exactly what production does.
+        validate_property_filter_keys(property_filter)
 
         sealed: frozenset[str] = (
             encryption.encrypted | encryption.searchable if encryption is not None else frozenset()
