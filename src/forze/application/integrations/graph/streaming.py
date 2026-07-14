@@ -10,12 +10,13 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.graph import (
     GraphEdgeSpec,
     GraphNodeSpec,
     GraphReadCapabilities,
     GraphStreamingAware,
+    edge_stream_blocker,
+    vertex_stream_blocker,
 )
 from forze.base.exceptions import exc
 
@@ -42,45 +43,18 @@ def graph_read_capabilities(port: object) -> GraphReadCapabilities:
 # ....................... #
 
 
-def _assert_key_orderable(
-    encryption: FieldEncryption | None,
-    key_field: str,
-    *,
-    kind: str,
-) -> None:
-    """Refuse a keyset walk bookmarked on a field that is sealed at rest.
-
-    A keyset cursor is an *order* over the stored values, and a field-encrypted one has none
-    it can use. Randomized ciphertext has no order at all; deterministic ciphertext has a
-    stable order that is not the plaintext's — and the bookmark would be taken from the
-    decrypted model and compared against ciphertext in the store, so the walk would seek to
-    the wrong place and skip rows without failing. The same rule the search plane already
-    applies to sort keys, for the same reason.
-    """
-
-    if encryption is None:
-        return
-
-    if key_field in (encryption.encrypted | encryption.searchable):
-        raise exc.precondition(
-            f"Graph kind {kind!r} cannot be streamed: its key field {key_field!r} is "
-            f"field-encrypted, and a sealed value has no usable order to seek on — a keyset "
-            f"walk over it would silently skip rows. Stream a kind whose key is plaintext, or "
-            f"remove the key field from the encryption policy.",
-            code=_UNSUPPORTED_CODE,
-        )
-
-
-# ....................... #
-
-
 def assert_vertex_streamable(
     node: GraphNodeSpec[BaseModel],
     *,
     kind: str,
     capabilities: GraphReadCapabilities,
 ) -> str:
-    """Refuse unless *node* can be keyset-walked; return the field to bookmark on."""
+    """Refuse unless *node* can be keyset-walked; return the field to bookmark on.
+
+    Two independent questions: can the *backend* seek (a port capability), and is the *kind*
+    shaped so that a cursor has anything to bookmark (a spec property, shared with the export
+    inventory — see :mod:`forze.application.contracts.graph.streamable`).
+    """
 
     if not capabilities.supports_vertex_streaming:
         raise exc.precondition(
@@ -90,7 +64,11 @@ def assert_vertex_streamable(
             code=_UNSUPPORTED_CODE,
         )
 
-    _assert_key_orderable(node.encryption, node.key_field, kind=kind)
+    if (reason := vertex_stream_blocker(node)) is not None:
+        raise exc.precondition(
+            f"Node kind {kind!r} cannot be streamed: {reason}.",
+            code=_UNSUPPORTED_CODE,
+        )
 
     return node.key_field
 
@@ -113,19 +91,21 @@ def assert_edge_streamable(
             code=_UNSUPPORTED_CODE,
         )
 
-    if edge.identity != "key" or edge.key_field is None:
+    if (reason := edge_stream_blocker(edge)) is not None:
         raise exc.precondition(
-            f"Edge kind {kind!r} is declared identity='endpoints', so its edges have no key "
-            f"of their own — there is nothing for a keyset cursor to bookmark, and a walk "
-            f"would have no way to resume where it left off. Only identity='key' edges can be "
-            f"streamed. (An endpoint-pair cursor is possible in principle and is not built: "
-            f"such an edge's identity *is* its pair.)",
+            f"Edge kind {kind!r} cannot be streamed: {reason}.",
             code=_UNSUPPORTED_CODE,
         )
 
-    _assert_key_orderable(edge.encryption, edge.key_field, kind=kind)
+    key_field = edge.key_field
 
-    return edge.key_field
+    if key_field is None:  # pragma: no cover — a keyless edge is already refused above
+        raise exc.internal(
+            f"Edge kind {kind!r} passed the streamability check with no key field.",
+            code=_UNSUPPORTED_CODE,
+        )
+
+    return key_field
 
 
 # ....................... #

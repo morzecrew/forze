@@ -21,7 +21,15 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
 )
 from forze.application.contracts.counter import CounterSpec
+from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.deps import Deps, frame_for
+from forze.application.contracts.graph import (
+    GraphEdgeDirectionality,
+    GraphEdgeEndpoint,
+    GraphEdgeSpec,
+    GraphModuleSpec,
+    GraphNodeSpec,
+)
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -58,7 +66,6 @@ def _document(name: str) -> DocumentSpec[_Model, _Model, _Model, _Model]:
     )
 
 
-
 def _analytics(
     name: str,
     provenance: AnalyticsProvenance = AnalyticsProvenance.UNDECLARED,
@@ -71,8 +78,33 @@ def _analytics(
     )
 
 
+def _graph(
+    name: str,
+    *,
+    edge_identity: str = "key",
+    node_encryption: FieldEncryption | None = None,
+) -> GraphModuleSpec:
+    """A one-node, one-edge module; ``edge_identity`` decides whether the edge can be walked."""
+
+    return GraphModuleSpec(
+        name=name,
+        nodes=(GraphNodeSpec(name="User", read=_Model, encryption=node_encryption),),
+        edges=(
+            GraphEdgeSpec(
+                name="RATED",
+                read=_Model,
+                identity=edge_identity,  # type: ignore[arg-type]
+                key_field="id" if edge_identity == "key" else None,
+                endpoints=(GraphEdgeEndpoint(from_kind="User", to_kind="User"),),
+                directionality=GraphEdgeDirectionality.DIRECTED,
+            ),
+        ),
+    )
+
+
 def _bound_analytics(*names: str) -> Deps:
     return Deps.routed({AnalyticsQueryDepKey: dict.fromkeys(names, object())})
+
 
 def _bound(*names: str) -> Deps:
     """Deps that bind each *name* as a routed document."""
@@ -186,6 +218,63 @@ def test_export_refuses_a_warehouse_system_of_record() -> None:
 
     with pytest.raises(CoreException, match="no full-scan read"):
         assert_exportable(registry)
+
+
+def test_a_graph_of_walkable_kinds_is_exportable() -> None:
+    registry = SpecRegistry().register(_graph("social")).freeze()
+
+    assert_exportable(registry)  # does not raise
+    assert registry.of_plane(SpecPlane.GRAPH)[0].disposition is PlaneDisposition.EXPORTABLE
+
+
+def test_a_graph_holding_an_endpoint_identified_edge_is_refused_up_front() -> None:
+    # The defect this test exists for: the graph plane used to be EXPORTABLE unconditionally,
+    # so an app with an ``identity="endpoints"`` edge sailed through ``assert_exportable`` and
+    # the export discovered it *mid-flight*, at the first ``find_edges_stream`` call — with
+    # rows already written. A half-written artifact is exactly the "looks complete and is not"
+    # outcome the doctrine exists to prevent, so the refusal has to come before the first row.
+    registry = SpecRegistry().register(_graph("social", edge_identity="endpoints")).freeze()
+
+    assert registry.of_plane(SpecPlane.GRAPH)[0].disposition is PlaneDisposition.REFUSED
+
+    with pytest.raises(CoreException) as exc_info:
+        assert_exportable(registry)
+
+    message = str(exc_info.value)
+
+    # Names the offending *kind*, not just the module — for the common cause the fix is one
+    # field on one edge spec, and "this graph is not exportable" leaves the author hunting.
+    assert "'RATED'" in message
+    assert "identity='endpoints'" in message
+    assert "key_field" in message
+
+
+def test_a_graph_whose_key_field_is_sealed_is_refused() -> None:
+    # A keyset cursor is an order over the *stored* values, and a sealed key has none it can
+    # use — the walk would seek to the wrong place and skip rows without failing.
+    registry = (
+        SpecRegistry()
+        .register(_graph("social", node_encryption=FieldEncryption(encrypted=frozenset({"id"}))))
+        .freeze()
+    )
+
+    assert registry.of_plane(SpecPlane.GRAPH)[0].disposition is PlaneDisposition.REFUSED
+
+    with pytest.raises(CoreException, match="no usable order"):
+        assert_exportable(registry)
+
+
+def test_encrypting_a_non_key_property_leaves_the_graph_exportable() -> None:
+    # The rule is about the *key*, not about encryption: sealing an ordinary property is fine.
+    registry = (
+        SpecRegistry()
+        .register(
+            _graph("social", node_encryption=FieldEncryption(encrypted=frozenset({"secret"})))
+        )
+        .freeze()
+    )
+
+    assert_exportable(registry)  # does not raise
 
 
 def test_export_no_longer_refuses_a_counter() -> None:

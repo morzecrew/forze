@@ -15,6 +15,7 @@ from typing import Any, cast
 from forze.base.exceptions import exc
 
 from ..analytics import AnalyticsProvenance, AnalyticsSpec
+from ..graph import GraphModuleSpec, graph_stream_blockers
 from .registry import FrozenSpecRegistry
 from .value_objects import PlaneDisposition, SpecRegistryEntry
 
@@ -48,6 +49,20 @@ def refusal_reason(entry: SpecRegistryEntry) -> str:
             return _SYSTEM_OF_RECORD_REASON
 
         return _UNDECLARED_ANALYTICS_REASON
+
+    if isinstance(entry.spec, GraphModuleSpec):
+        # Name the kinds, not the module: "this graph is not exportable" leaves the author
+        # hunting, and for the common cause the fix is one field on one edge spec.
+        blocked = "; ".join(
+            f"kind {kind!r} cannot be walked to exhaustion because {reason}"
+            for kind, reason in graph_stream_blockers(entry.spec)
+        )
+
+        return (
+            f"a graph travels only if *every* one of its kinds does — carrying the rest and "
+            f"leaving one out would produce an artifact that reads as a complete graph and is "
+            f"not one. {blocked}"
+        )
 
     return "the plane is declared REFUSED and cannot be carried or safely skipped."
 

@@ -30,6 +30,7 @@ from ..graph import (
     GraphModuleSpec,
     GraphQueryDepKey,
     GraphRawQueryDepKey,
+    graph_stream_blockers,
 )
 from ..idempotency import IdempotencyDepKey, IdempotencySpec
 from ..inbox import InboxDepKey, InboxSpec
@@ -200,14 +201,27 @@ _ANALYTICS_DISPOSITIONS: Final[dict[AnalyticsProvenance, PlaneDisposition]] = {
 def disposition_of(spec: BaseSpec, plane: SpecPlane) -> PlaneDisposition:
     """What an export may do with *spec*, unless its contributor overrides it.
 
-    Every other plane has one answer for every spec on it — a document travels, a search index
-    is rebuilt, an outbox is drained. **Analytics does not.** Whether a warehouse table is a
-    projection of data the app already owns, or the only place those rows exist, is a property
-    of that one table, and nothing but its author's declaration can tell them apart.
+    Most planes have one answer for every spec on them — a document travels, a search index is
+    rebuilt, an outbox is drained. **Two do not**, and both are asked here rather than read off
+    the plane, because in both cases the answer is a property of the individual spec:
+
+    - **Analytics.** Whether a warehouse table is a projection of data the app already owns, or
+      the only place those rows exist, nothing but its author's declaration can tell.
+    - **Graph.** A graph is exportable only if every one of its kinds can be walked to
+      exhaustion, and a module holding an ``identity="endpoints"`` edge (or a kind with a sealed
+      key field) holds one that cannot. Marking the plane exportable regardless would let
+      ``assert_exportable`` wave such an app through and leave the export to discover it
+      mid-flight, with rows already written — a half-written artifact being precisely the
+      "looks complete and is not" outcome the doctrine exists to prevent.
     """
 
     if isinstance(spec, AnalyticsSpec):
         return _ANALYTICS_DISPOSITIONS[spec.provenance]
+
+    if isinstance(spec, GraphModuleSpec):
+        return (
+            PlaneDisposition.REFUSED if graph_stream_blockers(spec) else PlaneDisposition.EXPORTABLE
+        )
 
     return DEFAULT_DISPOSITIONS[plane]
 

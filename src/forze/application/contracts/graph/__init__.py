@@ -28,6 +28,11 @@ from .specs import (
     resolve_query_directions,
     validate_graph_module_spec,
 )
+from .streamable import (
+    edge_stream_blocker,
+    graph_stream_blockers,
+    vertex_stream_blocker,
+)
 from .types import GraphDirection, GraphEdgeDirectionality
 from .value_objects import (
     EdgeRef,
@@ -47,6 +52,9 @@ from .value_objects import (
 __all__ = [
     "GraphReadCapabilities",
     "GraphStreamingAware",
+    "edge_stream_blocker",
+    "graph_stream_blockers",
+    "vertex_stream_blocker",
     "BaseGraphModulePort",
     "EdgeRef",
     "GraphCommandDepKey",
