@@ -183,6 +183,19 @@ class TestGraphModuleSpecLookup:
 
 
 class TestValidateGraphModuleSpec:
+    """A malformed graph module cannot be **constructed**.
+
+    ``validate_graph_module_spec`` has always existed and, until now, was never *called* — it
+    had zero call sites outside these tests, so every rule it states was a rule the framework
+    did not have. It now runs from ``GraphModuleSpec.__attrs_post_init__``, which is why each
+    case here asserts on the *construction* rather than on a separate validate call: an
+    incoherent spec never becomes an object.
+
+    Wiring it up promptly caught malformed specs the repo had been carrying — an edge whose
+    ``key_field`` named a property its own read model did not declare, so the key could never
+    have surfaced on a read.
+    """
+
     def test_valid_spec_passes(self) -> None:
         spec = GraphModuleSpec(
             name="social",
@@ -191,80 +204,123 @@ class TestValidateGraphModuleSpec:
                 _knows_edge(),
                 _knows_edge(
                     name="tagged",
-                    endpoints=(
-                        GraphEdgeEndpoint(from_kind="person", to_kind="tag"),
-                    ),
+                    endpoints=(GraphEdgeEndpoint(from_kind="person", to_kind="tag"),),
                 ),
             ),
         )
-        # Should not raise.
+        # Constructed, and the standalone validator agrees.
         validate_graph_module_spec(spec)
 
-    def test_empty_nodes_rejected_by_default(self) -> None:
+    def test_empty_nodes_construct_but_are_rejected_when_asked(self) -> None:
+        # The one check that is an *opinion* rather than an internal contradiction: an empty
+        # module does nothing, but it is not incoherent. So construction allows it and the
+        # explicit call can still refuse it.
         spec = GraphModuleSpec(name="empty", nodes=(), edges=())
+
+        validate_graph_module_spec(spec, require_non_empty_nodes=False)
+
         with pytest.raises(CoreException, match="must be non-empty"):
             validate_graph_module_spec(spec)
 
-    def test_empty_nodes_allowed_when_opted_out(self) -> None:
-        spec = GraphModuleSpec(name="empty", nodes=(), edges=())
-        validate_graph_module_spec(spec, require_non_empty_nodes=False)
-
     def test_duplicate_node_kind_rejected(self) -> None:
-        spec = GraphModuleSpec(
-            name="social",
-            nodes=(_person_node(), _person_node()),
-            edges=(),
-        )
         with pytest.raises(CoreException, match="Duplicate graph node kind"):
-            validate_graph_module_spec(spec)
+            GraphModuleSpec(
+                name="social",
+                nodes=(_person_node(), _person_node()),
+                edges=(),
+            )
 
     def test_duplicate_edge_kind_rejected(self) -> None:
-        spec = GraphModuleSpec(
-            name="social",
-            nodes=(_person_node(),),
-            edges=(_knows_edge(), _knows_edge()),
-        )
         with pytest.raises(CoreException, match="Duplicate graph edge kind"):
-            validate_graph_module_spec(spec)
+            GraphModuleSpec(
+                name="social",
+                nodes=(_person_node(),),
+                edges=(_knows_edge(), _knows_edge()),
+            )
 
     def test_edge_without_endpoints_rejected(self) -> None:
-        spec = GraphModuleSpec(
-            name="social",
-            nodes=(_person_node(),),
-            edges=(_knows_edge(endpoints=()),),
-        )
         with pytest.raises(CoreException, match="at least one GraphEdgeEndpoint"):
-            validate_graph_module_spec(spec)
+            GraphModuleSpec(
+                name="social",
+                nodes=(_person_node(),),
+                edges=(_knows_edge(endpoints=()),),
+            )
 
     def test_unknown_from_kind_rejected(self) -> None:
-        spec = GraphModuleSpec(
-            name="social",
-            nodes=(_person_node(),),
-            edges=(
-                _knows_edge(
-                    endpoints=(
-                        GraphEdgeEndpoint(from_kind="ghost", to_kind="person"),
+        with pytest.raises(CoreException, match="unknown from_kind 'ghost'"):
+            GraphModuleSpec(
+                name="social",
+                nodes=(_person_node(),),
+                edges=(
+                    _knows_edge(
+                        endpoints=(GraphEdgeEndpoint(from_kind="ghost", to_kind="person"),),
                     ),
                 ),
-            ),
-        )
-        with pytest.raises(CoreException, match="unknown from_kind 'ghost'"):
-            validate_graph_module_spec(spec)
+            )
 
     def test_unknown_to_kind_rejected(self) -> None:
-        spec = GraphModuleSpec(
-            name="social",
-            nodes=(_person_node(),),
-            edges=(
-                _knows_edge(
-                    endpoints=(
-                        GraphEdgeEndpoint(from_kind="person", to_kind="ghost"),
+        with pytest.raises(CoreException, match="unknown to_kind 'ghost'"):
+            GraphModuleSpec(
+                name="social",
+                nodes=(_person_node(),),
+                edges=(
+                    _knows_edge(
+                        endpoints=(GraphEdgeEndpoint(from_kind="person", to_kind="ghost"),),
                     ),
                 ),
-            ),
-        )
-        with pytest.raises(CoreException, match="unknown to_kind 'ghost'"):
-            validate_graph_module_spec(spec)
+            )
+
+    def test_a_keyed_edge_with_no_key_is_rejected_and_names_both_ways_out(self) -> None:
+        """The shape a first edge declaration falls into — and the framework's only chance.
+
+        ``identity`` defaults to ``"key"`` and ``key_field`` to ``None``, so the shortest edge
+        anyone would write is a **keyed edge with no key**: nothing can address it, and it used
+        to construct happily and fail at the first ``get_edge``.
+
+        Which fix is right is a *modelling* question the framework cannot answer — it turns on
+        whether two of these edges can ever run between the same pair — so the message must
+        offer both, or it sends half the readers the wrong way. (forze's own weighted-path tests
+        were on the wrong side of exactly this distinction.)
+        """
+
+        with pytest.raises(CoreException) as exc_info:
+            GraphModuleSpec(
+                name="social",
+                nodes=(_person_node(),),
+                edges=(
+                    GraphEdgeSpec(
+                        name="knows",
+                        read=_PersonRead,
+                        endpoints=(GraphEdgeEndpoint(from_kind="person", to_kind="person"),),
+                        directionality=GraphEdgeDirectionality.DIRECTED,
+                    ),
+                ),
+            )
+
+        message = str(exc_info.value)
+
+        assert exc_info.value.code == "graph_spec_missing_key_field"
+        assert "identity='endpoints'" in message  # at most one per pair
+        assert "key_field" in message  # …or they are distinct entities
+
+    def test_a_key_field_absent_from_its_read_model_is_rejected(self) -> None:
+        # ``key_field`` names the *read* field that supplies ``EdgeRef.key``, so a key the read
+        # model does not carry could never surface on a read. The repo was carrying one.
+        with pytest.raises(CoreException, match="is not a field of its read model"):
+            GraphModuleSpec(
+                name="social",
+                nodes=(_person_node(),),
+                edges=(
+                    GraphEdgeSpec(
+                        name="knows",
+                        read=_PersonRead,
+                        identity="key",
+                        key_field="nope",
+                        endpoints=(GraphEdgeEndpoint(from_kind="person", to_kind="person"),),
+                        directionality=GraphEdgeDirectionality.DIRECTED,
+                    ),
+                ),
+            )
 
 
 # ----------------------- #
@@ -392,30 +448,28 @@ class TestKeyField:
         assert GraphNodeSpec(name="x", read=_PersonRead, key_field="name").key_field == "name"
 
     def test_keyed_edge_requires_existing_key_field(self) -> None:
-        spec = GraphModuleSpec(
-            name="m",
-            nodes=(_person_node(),),
-            edges=(
-                GraphEdgeSpec(
-                    name="knows",
-                    read=_KnowsRead,
-                    identity="key",
-                    key_field="missing",
-                    endpoints=(GraphEdgeEndpoint(from_kind="person", to_kind="person"),),
-                    directionality=GraphEdgeDirectionality.DIRECTED,
-                ),
-            ),
-        )
+        # Refused at construction — the module never becomes an object.
         with pytest.raises(CoreException, match="key_field"):
-            validate_graph_module_spec(spec)
+            GraphModuleSpec(
+                name="m",
+                nodes=(_person_node(),),
+                edges=(
+                    GraphEdgeSpec(
+                        name="knows",
+                        read=_KnowsRead,
+                        identity="key",
+                        key_field="missing",
+                        endpoints=(GraphEdgeEndpoint(from_kind="person", to_kind="person"),),
+                        directionality=GraphEdgeDirectionality.DIRECTED,
+                    ),
+                ),
+            )
 
 
 class TestResolveQueryDirections:
     def test_directed_default(self) -> None:
         edge = _knows_edge(directionality=GraphEdgeDirectionality.DIRECTED)
-        assert resolve_query_directions(edge) == frozenset(
-            {GraphDirection.OUT, GraphDirection.IN}
-        )
+        assert resolve_query_directions(edge) == frozenset({GraphDirection.OUT, GraphDirection.IN})
 
     def test_symmetric_default(self) -> None:
         edge = _knows_edge(directionality=GraphEdgeDirectionality.SYMMETRIC)

@@ -61,6 +61,7 @@ from forze.application.integrations.graph import (
     GraphKindCipher,
     assert_edge_streamable,
     assert_vertex_streamable,
+    endpoints_conflict,
     resolve_write_endpoint,
     stream_keyset_pages,
 )
@@ -862,13 +863,7 @@ class Neo4jGraphAdapter(TenancyMixin):
             )
 
         if endpoints_create and not rows[0]["created"]:
-            raise exc.conflict(
-                f"Edge kind {edge_kind!r} is declared identity='endpoints', so at most one of "
-                f"its edges exists per (from, to) pair — and {from_key} -> {to_key} already has "
-                f"one. Use ensure_edge to leave the existing edge alone, or update_edge to "
-                f"change it.",
-                code="graph_edge_endpoints_conflict",
-            )
+            raise endpoints_conflict(edge_kind, from_key, to_key)
 
         if not return_new:
             return None

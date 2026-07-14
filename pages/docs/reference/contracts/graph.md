@@ -48,6 +48,27 @@ a workaround for a limitation; an edge that is a distinct entity needs a key to 
 Declaring such a kind `"endpoints"` leaves it with no identity at all: `get_edge` would return an
 arbitrary one of the parallel edges and `update_edge` / `delete_edge` would hit every one.
 
+`create_edge` enforces this: on an endpoint-identified kind, a second create on a pair that
+already has an edge raises `conflict` rather than laying a parallel one. A malformed spec —
+`identity="key"` with no `key_field`, an endpoint naming a node kind that does not exist, a key
+field absent from its own read model — is refused when the `GraphModuleSpec` is *constructed*.
+
+!!! tip "Finding pairs that already carry parallel edges"
+
+    `create_edge` refuses to make them, but a graph written before it did not, and the raw query
+    hatch (or any writer that is not forze) still can. The pair cursor surfaces them for free —
+    it yields one batch per `(from, to)` pair, so a batch with more than one edge *is* a
+    violating pair:
+
+    ```python
+    async for batch in ctx.graph.query(SOCIAL).find_edges_stream("FOLLOWS", chunk_size=1):
+        if len(batch) > 1:
+            ...  # this pair carries parallel edges — decide which one is real
+    ```
+
+    Worth running once after upgrading. The framework cannot pick for you, and an export will
+    carry all of them (it carries the graph it *finds*, not the graph the spec hoped for).
+
 ## Query port  (`ctx.graph.query(spec)`)
 
 | Method | Notes |

@@ -64,6 +64,12 @@ class FollowsRead(BaseModel):
     weight: int | None = None
 
 
+class SluggedRead(BaseModel):
+    """A node kind keyed on something other than ``id`` — the ordering conflict's other half."""
+
+    slug: str
+
+
 class FollowsCreate(BaseModel):
     from_key: str
     to_key: str
@@ -421,7 +427,7 @@ class TestRefusals:
             name="content",
             nodes=(
                 GraphNodeSpec(name="Post", read=UserRead, key_field="id"),
-                GraphNodeSpec(name="Note", read=KnowsRead, key_field="slug"),
+                GraphNodeSpec(name="Note", read=SluggedRead, key_field="slug"),
                 GraphNodeSpec(name="Tag", read=UserRead, key_field="id"),
             ),
             edges=(

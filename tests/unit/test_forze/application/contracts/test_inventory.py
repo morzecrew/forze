@@ -58,6 +58,12 @@ class _Model(BaseModel):
     id: str
 
 
+class _Slugged(BaseModel):
+    """Keyed on ``slug``, not ``id`` — a node kind whose key field disagrees with its siblings."""
+
+    slug: str
+
+
 def _document(name: str) -> DocumentSpec[_Model, _Model, _Model, _Model]:
     return DocumentSpec(
         name=name,
@@ -110,7 +116,7 @@ def _mixed_key_graph(name: str) -> GraphModuleSpec:
         name=name,
         nodes=(
             GraphNodeSpec(name="Post", read=_Model, key_field="id"),
-            GraphNodeSpec(name="Note", read=_Model, key_field="slug"),
+            GraphNodeSpec(name="Note", read=_Slugged, key_field="slug"),
             GraphNodeSpec(name="Tag", read=_Model, key_field="id"),
         ),
         edges=(

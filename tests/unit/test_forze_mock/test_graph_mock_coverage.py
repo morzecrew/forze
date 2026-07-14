@@ -39,6 +39,14 @@ class EdgeRead(BaseModel):
     weight: int | None = None
 
 
+class KeyedRead(BaseModel):
+    # ``key_field`` names the **read** field that supplies ``EdgeRef.key``, so the read model
+    # has to actually carry it — the spec used ``EdgeRead`` (weight only), which meant the key
+    # could never surface on a read. Nothing caught it, because the spec validator was never run.
+    edge_id: str | None = None
+    weight: int | None = None
+
+
 class LinkCreate(BaseModel):
     from_key: str
     to_key: str
@@ -79,7 +87,7 @@ def _spec() -> GraphModuleSpec:
             ),
             GraphEdgeSpec(
                 name="KEYED",
-                read=EdgeRead,
+                read=KeyedRead,
                 identity="key",
                 key_field="edge_id",
                 endpoints=(GraphEdgeEndpoint(from_kind="User", to_kind="User"),),
@@ -274,15 +282,11 @@ async def test_incident_edges_skips_non_touching_and_honors_limit(
     qry = ctx.graph.query(spec)
 
     # b->c does not touch a in the OUT direction, so it is skipped.
-    out = await qry.incident_edges(
-        _u("a"), GraphDirection.OUT, frozenset({"LINK"}), limit=10
-    )
+    out = await qry.incident_edges(_u("a"), GraphDirection.OUT, frozenset({"LINK"}), limit=10)
     assert len(out) == 2
 
     # limit stops the scan early once reached.
-    capped = await qry.incident_edges(
-        _u("a"), GraphDirection.OUT, frozenset({"LINK"}), limit=1
-    )
+    capped = await qry.incident_edges(_u("a"), GraphDirection.OUT, frozenset({"LINK"}), limit=1)
     assert len(capped) == 1
 
 

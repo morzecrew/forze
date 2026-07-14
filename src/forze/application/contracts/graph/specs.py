@@ -212,6 +212,31 @@ class GraphModuleSpec(BaseSpec):
 
     # ....................... #
 
+    def __attrs_post_init__(self) -> None:
+        """Validate the module's internal consistency at construction.
+
+        :func:`validate_graph_module_spec` has always existed and has never been *called* — it
+        had zero call sites outside its own tests, so every rule it states was a rule the
+        framework did not have. The consequence was not academic: ``identity`` defaults to
+        ``"key"`` and ``key_field`` to ``None``, so the shortest edge declaration anyone would
+        write —
+
+            GraphEdgeSpec(name="FOLLOWS", read=Follows, endpoints=(...), directionality=...)
+
+        — is a **keyed edge with no key**. It constructed happily and then failed at the first
+        ``get_edge``, which is the worst possible place to learn it.
+
+        ``require_non_empty_nodes=False`` because that is the one check here that is an *opinion*
+        (an empty module does nothing, but it is not incoherent) rather than an internal
+        contradiction. Everything else — a duplicate kind, an endpoint naming a node kind that
+        does not exist, a key field absent from its own read model — is a spec that cannot be
+        served, and the earliest place to say so is here.
+        """
+
+        validate_graph_module_spec(self, require_non_empty_nodes=False)
+
+    # ....................... #
+
     def graph_node_by_kind(self, kind: str) -> GraphNodeSpec[BaseModel] | None:
         """Return the ``GraphNodeSpec`` whose name matches *kind*, or ``None``."""
 
@@ -340,8 +365,18 @@ def validate_graph_module_spec(
 
         if e.identity == "key":
             if e.key_field is None:
+                # Both are defaults, so this is the shape a first edge declaration falls into.
+                # Name *both* ways out, because which one is right is a modelling question the
+                # framework cannot answer: it turns on whether two of these edges can ever run
+                # between the same pair.
                 raise exc.configuration(
-                    f"GraphEdgeSpec {ek!r} uses identity='key' but declares no key_field",
+                    f"GraphEdgeSpec {ek!r} uses identity='key' (the default) but declares no "
+                    f"key_field, so it is a keyed edge with no key — nothing can address it. "
+                    f"Decide what makes two of these edges the same edge: if at most one can "
+                    f"ever run between a given (from, to) pair, declare identity='endpoints' "
+                    f"and it is addressed by its endpoints; if two of them can (two flights "
+                    f"between two cities, two roads between two towns), they are distinct "
+                    f"entities and need a key_field to say so.",
                     code="graph_spec_missing_key_field",
                 )
             if not _model_has_field(e.read, e.key_field):

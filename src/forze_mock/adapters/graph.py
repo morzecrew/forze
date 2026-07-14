@@ -41,6 +41,7 @@ from forze.application.contracts.graph import (
 from forze.application.integrations.graph import (
     assert_edge_streamable,
     assert_vertex_streamable,
+    endpoints_conflict,
     resolve_write_endpoint,
     stream_keyset_pages,
 )
@@ -463,14 +464,7 @@ class MockGraphAdapter(MockTenancyMixin):
                         )
                     ):
                         if endpoints_create:
-                            raise exc.conflict(
-                                f"Edge kind {edge_kind!r} is declared identity='endpoints', so "
-                                f"at most one of its edges exists per (from, to) pair — and "
-                                f"{rec['from_key']} -> {rec['to_key']} already has one. Use "
-                                f"ensure_edge to leave the existing edge alone, or update_edge "
-                                f"to change it.",
-                                code="graph_edge_endpoints_conflict",
-                            )
+                            raise endpoints_conflict(edge_kind, rec["from_key"], rec["to_key"])
 
                         return self._emodel(edge_kind, existing["props"]) if return_new else None
 

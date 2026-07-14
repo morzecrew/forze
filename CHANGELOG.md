@@ -35,7 +35,19 @@ Each was invisible to the test suite for the same reason: **every payload model 
 
   Enforced with a `MERGE` rather than a constraint because no constraint can express it: Neo4j constrains properties, not graph shape. The `MERGE` also locks both anchor nodes, which serializes concurrent creates on the same pair, so the conflict is exact rather than best-effort.
 
-  **The endpoint-pair export cursor does not rely on this.** It still walks pairs and yields every edge of each, because a graph written before this change — or through the raw query hatch, or by anything outside the framework — can still hold duplicate pairs, and an export has to carry the graph it finds rather than the graph the spec hoped for.
+  **The endpoint-pair export cursor does not rely on this.** It still walks pairs and yields every edge of each, because a graph written before this change — or through the raw query hatch, or by anything outside the framework — can still hold duplicate pairs, and an export has to carry the graph it finds rather than the graph the spec hoped for. That also gives you the migration check for free: `find_edges_stream(kind, chunk_size=1)` yields one batch per pair, so a batch with more than one edge *is* a violating pair. Worth running once after upgrading — the framework cannot pick which edge is real.
+
+- **A `GraphModuleSpec` is now validated when it is constructed.** `validate_graph_module_spec` has existed all along and was **never called** — zero call sites outside its own tests — so every rule it stated was a rule the framework did not have. It now runs from `__attrs_post_init__`, and a malformed module raises `configuration` instead of becoming an object that fails later. **Breaking** for any spec that was already malformed; it will now fail at import or startup rather than at first use.
+
+  The one that matters: `identity` defaults to `"key"` and `key_field` to `None`, so the shortest edge declaration anyone would write —
+
+  ```python
+  GraphEdgeSpec(name="FOLLOWS", read=Follows, endpoints=(...), directionality=...)
+  ```
+
+  — was a **keyed edge with no key**. Nothing could address it, and it constructed happily and then failed at the first `get_edge`. The error now names *both* ways out, because which is right is a modelling question the framework cannot answer: declare `identity="endpoints"` if at most one such edge can run between a pair, or a `key_field` if two of them can. Also caught at construction: a duplicate kind name, an endpoint naming a node kind that does not exist, and a `key_field` absent from its own read model (the read model is where `EdgeRef.key` comes *from*, so a key it does not carry could never surface — the repo was carrying one of these).
+
+  The endpoint-identity conflict message carries the same two-sided advice, for the same reason.
 
 - **Background loops stop gracefully instead of being cancelled** — all five (outbox relay, queue consumer, commit-stream consumer, durable recovery, durable scheduler) now register with a new per-scope `ctx.drainables` registry, and `runtime.shutdown()` asks each to stop **between units of work, before lifecycle teardown begins**. Previously every one of them was killed with a bare `task.cancel()`, mid-whatever-it-was-doing: a queue consumer lost the ack for the message it was handling, a **commit-stream consumer never committed the offsets for the batch it had just processed** (so the whole batch was redelivered), a durable sweep left a run leased to a dying process. Nothing was ever *lost* — the work is at-least-once — but every shutdown paid for it in duplicates and delay.
 
