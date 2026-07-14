@@ -217,6 +217,39 @@ async def _stream_plane(
 # ....................... #
 
 
+async def _stop_in_process_loops(ctx: ExecutionContext, *, deadline: float) -> int:
+    """Stop the background loops this process owns, so the planes they feed stop moving.
+
+    Quiesce still does not *relay* — it waits for whatever does. But when the relay is the
+    in-process background step, waiting for it to notice on its own means waiting out a whole
+    tick ``interval`` (30s by default) with the gate already shut. Stopping the loops runs
+    their drains now instead: the outbox relay publishes what it can, the consumers finish the
+    message or batch in hand and commit it, and every plane below is finite from that moment.
+
+    An **external** relay — a cron job, a worker in another process, the shape production
+    usually takes — is not here to be stopped. Nothing in-process can reach it, and quiesce
+    goes back to doing the only thing it can: waiting and reporting.
+    """
+
+    loops = ctx.drainables.loops
+
+    if not loops:
+        return 0
+
+    logger.info(
+        "Quiesce stopping %d in-process background loop(s)",
+        len(loops),
+        loops=[one.loop_name for one in loops],
+    )
+
+    return await ctx.drainables.stop_all(
+        grace=max(0.0, deadline - asyncio.get_running_loop().time())
+    )
+
+
+# ....................... #
+
+
 async def _guarded(name: str, plane: Awaitable[QuiescePlane]) -> QuiescePlane:
     """Run one plane's sweep, turning a failed probe into an honest ``error`` rather than
     an exception that would hide every plane behind it."""
@@ -285,11 +318,15 @@ async def quiesce(
     was empty when it was read can be filled the moment the sweep looks away. Use it for a
     health check; do not build an export on it.
 
-    **It waits for the relay; it does not relay.** An outbox only empties because something
-    is relaying it — the background lifecycle step, or (the shape production usually takes)
-    an external worker this process cannot reach at all. Closing the gate makes the backlog
-    finite, but if nothing is draining it the plane is reported ``residual``, with the age of
-    the oldest pending row to say so. Give the budget room for at least one relay tick.
+    **It stops this process's loops; it does not relay.** With *close_gate*, quiesce stops the
+    background loops the runtime owns (``ctx.drainables``) before it starts watching — so the
+    relay drains *now* rather than on its next tick, and the consumers finish and commit what
+    they have in hand. It still relays nothing itself. An outbox fed by an **external** worker
+    — a cron job, another process, the shape production usually takes — cannot be reached from
+    here at all: closing the gate makes its backlog finite, but if nothing drains it the plane
+    is reported ``residual``, with the age of the oldest pending row to say so.
+
+    Stopping the loops is one-way, like the gate. ``close_gate=False`` leaves them running.
 
     *outboxes* defaults to **every outbox route in the runtime's spec inventory** — pass an
     explicit sequence to narrow it, or ``()`` to skip the plane. This is what the inventory is
@@ -320,6 +357,11 @@ async def quiesce(
     planes: list[QuiescePlane] = [
         await _operations_plane(ctx, deadline=deadline, close_gate=close_gate)
     ]
+
+    if close_gate:
+        # Only when we are already committing to a one-way quiesce. Stopping the loops is
+        # destructive — they do not restart — so a pure observation must leave them alone.
+        await _stop_in_process_loops(ctx, deadline=deadline)
 
     if outboxes is None:
         outboxes = _inventoried_outboxes(runtime)

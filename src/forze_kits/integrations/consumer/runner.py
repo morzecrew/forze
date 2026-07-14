@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from contextlib import aclosing
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import aclosing, suppress
 from datetime import timedelta
 from functools import partial
 from typing import Any, final
@@ -154,6 +154,55 @@ async def _decrypt_message[M](
 # ....................... #
 
 
+# ....................... #
+
+
+async def _next_or_stop(
+    messages: AsyncIterator[QueueMessage[Any]],
+    stop: asyncio.Event | None,
+) -> QueueMessage[Any] | None:
+    """The next message, or ``None`` when a stop is requested (or the stream ends).
+
+    The wait for a message and the wait for a stop **race**, and they have to: a consumer
+    parked on an idle queue is blocked inside the broker's generator, where it cannot see a
+    stop flag — so a shutdown would sit out the whole grace and then cancel it anyway.
+
+    When the stop wins, the pending fetch is abandoned. Any message the broker was about to
+    hand over stays unacked, so it is redelivered and the inbox dedups it — exactly the
+    contract a crash already has, and cheaper than cancelling a handler mid-transaction.
+    """
+
+    if stop is None:
+        return await anext(messages, None)
+
+    pull = asyncio.ensure_future(anext(messages, None))
+    halt = asyncio.ensure_future(stop.wait())
+
+    try:
+        await asyncio.wait({pull, halt}, return_when=asyncio.FIRST_COMPLETED)
+
+        if pull.done():
+            return pull.result()
+
+        pull.cancel()
+
+        # Await the cancellation before the caller closes the generator: an async generator
+        # cannot be aclosed while one of its ``__anext__`` calls is still in flight.
+        with suppress(asyncio.CancelledError):
+            await pull
+
+        return None
+
+    finally:
+        halt.cancel()
+
+        with suppress(asyncio.CancelledError):
+            await halt
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class QueueConsumer[M]:
@@ -235,12 +284,16 @@ class QueueConsumer[M]:
         ctx: ExecutionContext,
         *,
         timeout: timedelta | None = None,
+        stop: asyncio.Event | None = None,
     ) -> ConsumerRunResult:
         """Consume the queue and process each message exactly-once via the inbox.
 
         :param timeout: **Idle** timeout forwarded to ``consume``. ``None`` consumes
             forever; a finite value returns a :class:`ConsumerRunResult` once no message
             arrived for that long (one-shot drains, tests).
+        :param stop: Set to end the run at the next message boundary — *after* the message in
+            hand has been acked, never in the middle of it. The background step passes its
+            loop's stop signal here so shutdown does not have to cancel a handler mid-flight.
         """
 
         queue = self.queue
@@ -272,7 +325,12 @@ class QueueConsumer[M]:
         warned_no_delivery_count = False
 
         async with aclosing(port.consume(queue, timeout=timeout)) as messages:
-            async for message in messages:
+            while True:
+                message = await _next_or_stop(messages, stop)
+
+                if message is None:
+                    break
+
                 # -- Decrypt: end-to-end ciphertext → typed model before the ladder. -- #
                 try:
                     message = await _decrypt_message(

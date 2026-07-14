@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
-from contextlib import suppress
 from datetime import timedelta
 from typing import Any, Final, Literal, final
 from uuid import UUID
@@ -25,6 +24,7 @@ from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
+from forze_kits.lifecycle import BackgroundLoopControl
 
 from ._relay_core import validate_retry_options
 from .relay import OutboxRelay
@@ -184,13 +184,49 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
     # ....................... #
 
-    task: asyncio.Task[None] | None = attrs.field(default=None, init=False)
-
-    stop_event: asyncio.Event | None = attrs.field(default=None, init=False)
-    """Set to ask the loop to stop before its next batch. Created fresh on every startup."""
+    control: BackgroundLoopControl = attrs.field(
+        default=attrs.Factory(
+            lambda self: BackgroundLoopControl(
+                name=f"outbox_relay:{self.outbox_spec.name}",
+                stop_grace=timedelta(seconds=_STOP_WAIT_SECONDS),
+            ),
+            takes_self=True,
+        ),
+        init=False,
+    )
+    """Stop signal and bounded teardown, shared with every other background loop."""
 
     tenant_shard: list[UUID] | None = attrs.field(default=None, init=False)
     """The assigned shard, frozen at startup. ``None`` = tenant-global."""
+
+    scope_ctx: ExecutionContext | None = attrs.field(default=None, init=False, repr=False)
+    """The scope's context, kept so the drain can run from :meth:`stop`, which the runtime
+    calls without one."""
+
+    drained: bool = attrs.field(default=False, init=False)
+    """Whether the shutdown drain has already run this startup.
+
+    :meth:`stop` is asked twice by design — once by the runtime before teardown, once by this
+    step's own shutdown hook — and the drain must not be the part that repeats. A second pass
+    would **re-claim the rows the first one just rescheduled** (they return to the head of the
+    claim order once their backoff elapses), burning a second delivery attempt on each and
+    dead-lettering a backlog the next process would have delivered."""
+
+    # ....................... #
+
+    @property
+    def task(self) -> asyncio.Task[None] | None:
+        """The running loop, if any."""
+
+        return self.control.task
+
+    # ....................... #
+
+    @property
+    def loop_name(self) -> str:
+        """Satisfies ``DrainableLoop``."""
+
+        return self.control.loop_name
 
     # ....................... #
 
@@ -220,15 +256,14 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
     @property
     def _stop_requested(self) -> bool:
-        return self.stop_event is not None and self.stop_event.is_set()
+        return self.control.stopping
 
     # ....................... #
 
     def request_stop(self) -> None:
         """Ask the loop to stop before its next batch, and wake it from its tick sleep."""
 
-        if self.stop_event is not None:
-            self.stop_event.set()
+        self.control.request_stop()
 
     # ....................... #
 
@@ -455,11 +490,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     # ....................... #
 
     async def _sleep_or_stop(self) -> bool:
-        """Wait out the jittered tick interval; ``True`` when a stop was requested.
-
-        Interruptible, so shutdown neither has to sit through a whole interval nor cancel
-        the loop mid-batch to stop the relay.
-        """
+        """Wait out the jittered tick interval; ``True`` when a stop was requested."""
 
         # Jittered tick: N replicas polling at the same fixed interval synchronize into a
         # thundering herd against the claim query; the multiplicative jitter desynchronizes
@@ -468,16 +499,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
             1.0 + current_entropy_source().as_random().uniform(-self.jitter, self.jitter)
         )
 
-        stop = self.stop_event
-
-        if stop is None:  # pragma: no cover - the loop always runs with an event
-            await asyncio.sleep(delay)
-            return False
-
-        with suppress(TimeoutError):
-            await asyncio.wait_for(stop.wait(), timeout=delay)
-
-        return stop.is_set()
+        return await self.control.sleep_or_stop(delay)
 
     # ....................... #
 
@@ -497,8 +519,45 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
     # ....................... #
 
+    async def stop(self, *, deadline: float) -> bool:
+        """Stop the poll loop, then publish what is still claimable when asked to.
+
+        The ``DrainableLoop`` entry point: the runtime calls this *before* lifecycle teardown,
+        so the database client the drain needs is still open — which reverse-wave hook ordering
+        could never guarantee. Idempotent, so the step's own shutdown hook can ask again.
+        """
+
+        clock = asyncio.get_running_loop()
+        # The runtime's budget bounds us; our own is usually tighter.
+        budget = min(deadline, clock.time() + self.shutdown_drain_timeout.total_seconds())
+        stopped = await self.control.stop(deadline=budget)
+
+        if not self.drain_on_shutdown or self.scope_ctx is None or self.drained:
+            return stopped
+
+        self.drained = True
+
+        try:
+            async with asyncio.timeout_at(budget):
+                await self.drain_for_shutdown(self.scope_ctx, deadline=budget)
+
+        except TimeoutError:
+            # Admission control should end the drain before this fires. That it did means a
+            # batch was cut mid-flight, so its claimed rows sit ``processing`` — invisible to
+            # every replica — until ``reclaim_stale_after`` elapses.
+            logger.error(
+                "Outbox relay shutdown drain exceeded its %.1fs budget and was cut "
+                "mid-batch; claimed rows may sit in 'processing' until reclaim",
+                self.shutdown_drain_timeout.total_seconds(),
+            )
+            return False
+
+        return stopped
+
+    # ....................... #
+
     async def __call__(self, ctx: ExecutionContext) -> None:
-        if self.task is not None and not self.task.done():
+        if self.control.running:
             # The runtime invokes startup once per scope; a direct double call
             # must not leak (and orphan) the previous relay task.
             logger.warning("Outbox relay already running; ignoring duplicate startup")
@@ -506,7 +565,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
         # Fresh per startup: an event reused across scopes still carries the previous
         # shutdown's stop, and the new loop would exit before its first tick.
-        self.stop_event = asyncio.Event()
+        self.control.arm()
+        self.scope_ctx = ctx
+        self.drained = False
 
         # Freeze the assigned shard at **startup** (not inside the detached task), so a broken
         # tenants provider fails startup loudly instead of spawning a task that dies and
@@ -514,7 +575,10 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         # shared with the gateway source and the group-ensure step.
         self.tenant_shard = list(self.tenants()) if self.tenants is not None else None
 
-        self.task = asyncio.create_task(self._loop(ctx), name="outbox_relay_background")
+        self.control.task = asyncio.create_task(self._loop(ctx), name=self.control.loop_name)
+
+        # The runtime stops every registered loop before teardown begins.
+        ctx.drainables.register(self)
 
 
 # ....................... #
@@ -531,59 +595,22 @@ class _OutboxRelayBackgroundShutdown(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        task = self.startup.task
+        # Normally a no-op: the runtime stops every registered loop (``ctx.drainables``) before
+        # teardown begins, which is both earlier and safer than here — the client the drain
+        # needs is still open at that point, which reverse-wave hook ordering could never
+        # guarantee. This stays the fallback for a hand-driven lifecycle, and ``stop`` is
+        # idempotent, so asking twice costs nothing.
+        clock = asyncio.get_running_loop()
 
-        # Never started, or already stopped. Returning before any ``await task`` is also
-        # what keeps a second call from raising ``CancelledError`` out of this hook: the
-        # lifecycle runner reads ``task.exception()``, which *re-raises* a cancellation,
-        # and that would abort teardown of every remaining step — clients included.
-        if task is None or task.done():
-            return
-
-        self.startup.request_stop()
-
-        loop = asyncio.get_running_loop()
-        budget = self.startup.shutdown_drain_timeout.total_seconds()
-        deadline = loop.time() + budget
-
-        # Let the in-flight tick reach the end of its batch instead of cancelling it
-        # mid-flight: a batch cut between claim and mark strands rows ``processing``.
-        with suppress(TimeoutError):
-            await asyncio.wait_for(task, timeout=min(_STOP_WAIT_SECONDS, budget))
-
-        if not task.done():
-            task.cancel()
-
-            with suppress(asyncio.CancelledError):
-                await task
-
-        if not self.startup.drain_on_shutdown:
-            return
-
-        try:
-            async with asyncio.timeout_at(deadline):
-                await self.startup.drain_for_shutdown(ctx, deadline=deadline)
-
-        except TimeoutError:
-            # Admission control should end the drain before this fires. That it did means a
-            # batch was cut mid-flight, so its claimed rows sit ``processing`` — invisible
-            # to every replica — until ``reclaim_stale_after`` elapses.
-            logger.error(
-                "Outbox relay shutdown drain exceeded its %.1fs budget and was cut "
-                "mid-batch; claimed rows may sit in 'processing' until reclaim",
-                budget,
-            )
+        await self.startup.stop(
+            deadline=clock.time() + self.startup.shutdown_drain_timeout.total_seconds()
+        )
 
 
 # ....................... #
 
 
-def _validate_drain_wiring(
-    *,
-    transport: OutboxDestinationKind,
-    requires: tuple[StrKey, ...],
-    depends_on: tuple[StrKey, ...],
-) -> None:
+def _validate_drain_wiring(*, transport: OutboxDestinationKind) -> None:
     """Fail closed on a drain that cannot be safe, at wiring time rather than at teardown."""
 
     if transport == "pubsub":
@@ -592,15 +619,6 @@ def _validate_drain_wiring(
             "at-most-once past the broker, so publishing during teardown — exactly when "
             "subscribers are going away — turns a delayed delivery into a silent loss. "
             "Leave the rows pending; the next process relays them to live subscribers."
-        )
-
-    if not requires and not depends_on:
-        raise exc.precondition(
-            "drain_on_shutdown needs this step to declare an ordering dependency "
-            "(requires=... or depends_on=...) on the step owning its database client. "
-            "The drain reads and writes the outbox *during* teardown, and lifecycle "
-            "shutdown runs in reverse wave order — with no edge, the client's pool may "
-            "close first and the drain would strand claimed rows."
         )
 
 
@@ -672,16 +690,17 @@ def outbox_relay_background_lifecycle_step(
     reach within *shutdown_drain_timeout* stays ``pending`` for the next process, which is
     exactly where it would have been without the drain.
 
-    Draining touches the database **during teardown**, which constrains the wiring:
+    The drain needs the database, and it gets it: the runtime stops every background loop
+    (``ctx.drainables``) **before** lifecycle teardown begins, so the client is still open when
+    the relay drains. That is why *requires* / *depends_on* are ordinary passthroughs here and
+    not a precondition — declare them if the step needs ordering for its own reasons.
 
-    - Declare *requires* (a capability, e.g. the Postgres client's) or *depends_on* (a step
-      id) so the relay is ordered **after** whatever owns its database client. Lifecycle
-      shutdown runs in reverse wave order, so without that edge the pool can close while
-      the drain is mid-batch. Enabling the drain without one is rejected here.
+    Two things still constrain it:
+
     - Keep *shutdown_drain_timeout* below the runtime's ``shutdown_step_timeout``
-      (default 10s): on expiry the runtime cancels **and abandons** this hook, and a batch
-      cut between claim and mark strands rows ``processing`` until *reclaim_stale_after*
-      elapses. Consider lowering *reclaim_stale_after* when draining.
+      (default 10s), which bounds the whole loop-stopping pass. A batch cut mid-flight strands
+      rows ``processing`` until *reclaim_stale_after* elapses — consider lowering that when
+      draining.
     - A ``pubsub`` destination is rejected: it is at-most-once past the broker, so
       publishing while subscribers are going away turns a delayed delivery into a lost one.
 
@@ -699,7 +718,7 @@ def outbox_relay_background_lifecycle_step(
         raise exc.precondition("pubsub_spec is required when transport is pubsub")
 
     if drain_on_shutdown:
-        _validate_drain_wiring(transport=transport, requires=requires, depends_on=depends_on)
+        _validate_drain_wiring(transport=transport)
 
     startup = _OutboxRelayBackgroundStartup(
         outbox_spec=outbox_spec,

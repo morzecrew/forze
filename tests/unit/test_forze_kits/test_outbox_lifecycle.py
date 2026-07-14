@@ -499,17 +499,41 @@ async def test_relay_runs_again_after_a_previous_scope_shut_it_down() -> None:
     assert relay_mock.await_count > after_first  # the second loop actually ticked
 
 
-def test_drain_needs_an_ordering_dependency() -> None:
-    # The drain reads and writes the outbox *during* teardown, and lifecycle shutdown runs
-    # in reverse wave order — without an edge the client's pool can close underneath it.
+def test_drain_needs_no_ordering_dependency() -> None:
+    # It used to: the drain touches the database during teardown, and lifecycle shutdown runs
+    # in reverse wave order, so without an edge the pool could close underneath it. The runtime
+    # now stops every registered loop *before* teardown begins, so the client is open by
+    # construction and the app no longer has to know any of this.
     codec = PydanticModelCodec(_Payload)
 
-    with pytest.raises(CoreException, match="ordering dependency"):
-        outbox_relay_background_lifecycle_step(
-            outbox_spec=OutboxSpec(name="events", codec=codec),
-            queue_spec=QueueSpec(name="jobs", codec=codec),
-            drain_on_shutdown=True,
-        )
+    step = outbox_relay_background_lifecycle_step(
+        outbox_spec=OutboxSpec(name="events", codec=codec),
+        queue_spec=QueueSpec(name="jobs", codec=codec),
+        drain_on_shutdown=True,
+    )
+
+    assert step.requires == ()
+
+
+@pytest.mark.asyncio
+async def test_the_drain_runs_at_most_once_per_startup() -> None:
+    # `stop` is asked twice by design — by the runtime before teardown, and by this step's own
+    # shutdown hook. The drain must not be the part that repeats: a second pass would re-claim
+    # the rows the first just rescheduled (they return to the head of the claim order once
+    # their backoff elapses) and burn a second delivery attempt on each.
+    rows = [_outbox_row(index=i) for i in range(2)]
+    step = _drain_step(
+        limit=2,
+        max_attempts=2,  # a second attempt would park these rows `failed`
+        retry_base_delay=timedelta(microseconds=1),
+        retry_max_backoff=timedelta(seconds=1),
+    )
+
+    with patch(_ENQUEUE, AsyncMock(side_effect=RuntimeError("broker down"))):
+        await _scope_staging_rows_before_shutdown(step, rows)
+
+    assert [row.attempts for row in rows] == [1, 1]
+    assert [row.status for row in rows] == [OutboxStatus.PENDING] * 2
 
 
 def test_drain_is_rejected_for_a_pubsub_destination() -> None:

@@ -400,6 +400,14 @@ class ExecutionRuntime:
                     cancelled,
                 )
 
+            # Bring the background loops (relays, consumers, durable pollers) to a stop
+            # *between units of work*, before anything is torn down. Two reasons this is here
+            # and not left to each step's shutdown hook: cancelling a loop mid-unit costs an
+            # unacked message, an uncommitted offset or a stranded outbox row; and a loop whose
+            # graceful stop needs its database — the relay draining its outbox — still has an
+            # open pool at this point, which reverse-wave hook ordering cannot guarantee.
+            await ctx.drainables.stop_all(grace=self.shutdown_step_timeout.total_seconds())
+
             # Cancel detached background work (e.g. document-cache early refreshes) before
             # teardown closes the clients it uses — a straggler would otherwise run on
             # against a closing cache/gateway. Always runs, drain-timeout or not.

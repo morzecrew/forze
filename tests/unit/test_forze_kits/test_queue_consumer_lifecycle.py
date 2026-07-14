@@ -11,7 +11,11 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.inbox import InboxSpec
-from forze.application.contracts.queue import QueueMessage, QueueSpec
+from forze.application.contracts.queue import (
+    QueueCommandDepKey,
+    QueueMessage,
+    QueueSpec,
+)
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
@@ -184,3 +188,82 @@ def test_lifecycle_step_rejects_invalid_options() -> None:
 
     with pytest.raises(CoreException, match="max_deliveries"):
         _step(max_deliveries=0)
+
+
+# ----------------------- #
+# Graceful stop (the drainable-loop registry)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_finishes_the_in_flight_message_instead_of_cancelling_it() -> None:
+    # The whole point of stopping a loop rather than cancelling it. A handler cancelled
+    # mid-flight has its transaction rolled back and its message left unacked, so the next
+    # process redelivers it. Here the message in hand is allowed to finish.
+    state = MockState()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    finished: list[str] = []
+
+    async def _slow_handler(message: QueueMessage[Any]) -> None:
+        started.set()
+        await release.wait()
+        finished.append(message.payload.value)
+
+    runtime = _runtime(state)
+    step = _step(handler=_slow_handler)
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await ctx.deps.resolve_configurable(
+            ctx, QueueCommandDepKey, _QUEUE_SPEC, route="jobs"
+        ).enqueue("jobs", _Payload(value="in-flight"))
+
+        await step.startup(ctx)
+        await started.wait()  # the handler is now mid-message
+
+        # Shutdown begins while the handler is still running.
+        stopping = asyncio.create_task(ctx.drainables.stop_all(grace=5.0))
+        await asyncio.sleep(0.02)
+
+        assert finished == []  # ...and it has NOT been cancelled
+
+        release.set()
+        await stopping
+
+    assert finished == ["in-flight"]  # it ran to completion
+
+
+@pytest.mark.asyncio
+async def test_an_idle_consumer_stops_promptly_rather_than_sitting_out_the_grace() -> None:
+    # A consumer parked on an empty queue is blocked inside the broker's generator, where it
+    # cannot see a stop flag. If the stop did not race that wait, every shutdown would pay the
+    # full grace before cancelling it anyway.
+    runtime = _runtime(MockState())
+    step = _step()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await step.startup(ctx)
+        await asyncio.sleep(0.05)  # settle into the idle wait
+
+        startup = step.startup
+        assert isinstance(startup, _QueueConsumerBackgroundStartup)
+
+        clock = asyncio.get_running_loop()
+        began = clock.time()
+        stopped = await startup.stop(deadline=clock.time() + 5.0)
+
+        assert stopped  # it stopped on its own, it was not cancelled
+        assert clock.time() - began < 1.0  # ...and promptly
+
+
+@pytest.mark.asyncio
+async def test_the_consumer_registers_itself_as_drainable() -> None:
+    runtime = _runtime(MockState())
+    step = _step()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await step.startup(ctx)
+
+        assert [one.loop_name for one in ctx.drainables.loops] == ["queue_consumer:jobs"]

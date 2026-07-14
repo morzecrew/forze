@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
-from contextlib import suppress
 from datetime import timedelta
-from typing import Any, final
+from typing import Any, Final, final
 from uuid import UUID
 
 import attrs
@@ -18,11 +17,15 @@ from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
+from forze_kits.lifecycle import BackgroundLoopControl
 
 from .runner import DurableFunctionRunner
 from .scheduler import DurableScheduler
 
 # ----------------------- #
+
+_STOP_GRACE_SECONDS: Final[float] = 5.0
+"""Fallback budget when a hook stops a loop directly (the runtime supplies its own)."""
 
 
 @final
@@ -53,7 +56,42 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
     tenant in turn and recovers its per-tenant table. The shard is frozen at startup. ``None``
     recovers unbound — one pass over a tagged table claims every tenant's runs."""
 
-    task: asyncio.Task[None] | None = attrs.field(default=None, init=False)
+    control: BackgroundLoopControl = attrs.field(
+        default=attrs.Factory(
+            lambda self: BackgroundLoopControl(name="durable_recovery"),
+            takes_self=True,
+        ),
+        init=False,
+    )
+    """Stop signal and bounded teardown, shared with every other background loop."""
+
+    # ....................... #
+
+    @property
+    def task(self) -> asyncio.Task[None] | None:
+        """The running loop, if any."""
+
+        return self.control.task
+
+    # ....................... #
+
+    @property
+    def loop_name(self) -> str:
+        """Satisfies ``DrainableLoop``."""
+
+        return self.control.loop_name
+
+    # ....................... #
+
+    async def stop(self, *, deadline: float) -> bool:
+        """Stop the loop at its next tick boundary. Idempotent.
+
+        A sweep cut mid-claim leaves a run leased to a process that is going away; it is
+        recovered by the next one, but only after the lease expires. Stopping between ticks
+        costs nothing and hands the work over cleanly.
+        """
+
+        return await self.control.stop(deadline=deadline)
 
     # ....................... #
 
@@ -123,19 +161,22 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
 
                 # Multiplicative jitter desynchronizes N replicas' scanners so they don't
                 # synchronize into a thundering herd against the claim query.
-                await asyncio.sleep(
+                if await self.control.sleep_or_stop(
                     self.interval.total_seconds()
                     * (
                         1.0
                         + current_entropy_source().as_random().uniform(-self.jitter, self.jitter)
                     )
-                )
+                ):
+                    return
 
-        if self.task is not None and not self.task.done():
+        if self.control.running:
             logger.warning("Durable recovery already running; ignoring duplicate startup")
             return
 
-        self.task = asyncio.create_task(_loop(), name="durable_recovery_background")
+        self.control.arm()
+        self.control.task = asyncio.create_task(_loop(), name=self.control.loop_name)
+        ctx.drainables.register(self)
 
 
 # ....................... #
@@ -144,22 +185,19 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
 @final
 @attrs.define(slots=True, kw_only=True)
 class _DurableRecoveryBackgroundShutdown(LifecycleHook):
-    """Cancel the background durable-recovery task."""
+    """Stop the background durable-recovery loop.
+
+    Normally a no-op — the runtime stops every registered loop before teardown begins. This is
+    the fallback for a hand-driven lifecycle; :meth:`stop` is idempotent.
+    """
 
     startup: _DurableRecoveryBackgroundStartup
 
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        task = self.startup.task
-
-        if task is None:
-            return
-
-        task.cancel()
-
-        with suppress(asyncio.CancelledError):
-            await task
+        clock = asyncio.get_running_loop()
+        await self.startup.stop(deadline=clock.time() + _STOP_GRACE_SECONDS)
 
 
 # ....................... #
@@ -230,7 +268,42 @@ class _DurableSchedulerBackgroundStartup(LifecycleHook):
     """Durable-function specs whose cron triggers are auto-registered as schedules at
     startup (idempotent — a restart re-uses an unchanged schedule, so no due fire is lost)."""
 
-    task: asyncio.Task[None] | None = attrs.field(default=None, init=False)
+    control: BackgroundLoopControl = attrs.field(
+        default=attrs.Factory(
+            lambda self: BackgroundLoopControl(name="durable_scheduler"),
+            takes_self=True,
+        ),
+        init=False,
+    )
+    """Stop signal and bounded teardown, shared with every other background loop."""
+
+    # ....................... #
+
+    @property
+    def task(self) -> asyncio.Task[None] | None:
+        """The running loop, if any."""
+
+        return self.control.task
+
+    # ....................... #
+
+    @property
+    def loop_name(self) -> str:
+        """Satisfies ``DrainableLoop``."""
+
+        return self.control.loop_name
+
+    # ....................... #
+
+    async def stop(self, *, deadline: float) -> bool:
+        """Stop the loop at its next tick boundary. Idempotent.
+
+        A sweep cut mid-claim leaves a run leased to a process that is going away; it is
+        recovered by the next one, but only after the lease expires. Stopping between ticks
+        costs nothing and hands the work over cleanly.
+        """
+
+        return await self.control.stop(deadline=deadline)
 
     # ....................... #
 
@@ -315,19 +388,22 @@ class _DurableSchedulerBackgroundStartup(LifecycleHook):
                 except Exception:
                     logger.exception("Durable scheduler sweep failed")
 
-                await asyncio.sleep(
+                if await self.control.sleep_or_stop(
                     self.interval.total_seconds()
                     * (
                         1.0
                         + current_entropy_source().as_random().uniform(-self.jitter, self.jitter)
                     )
-                )
+                ):
+                    return
 
-        if self.task is not None and not self.task.done():
+        if self.control.running:
             logger.warning("Durable scheduler already running; ignoring duplicate startup")
             return
 
-        self.task = asyncio.create_task(_loop(), name="durable_scheduler_background")
+        self.control.arm()
+        self.control.task = asyncio.create_task(_loop(), name=self.control.loop_name)
+        ctx.drainables.register(self)
 
 
 # ....................... #
@@ -336,22 +412,19 @@ class _DurableSchedulerBackgroundStartup(LifecycleHook):
 @final
 @attrs.define(slots=True, kw_only=True)
 class _DurableSchedulerBackgroundShutdown(LifecycleHook):
-    """Cancel the background durable-scheduler task."""
+    """Stop the background durable-scheduler loop.
+
+    Normally a no-op — the runtime stops every registered loop before teardown begins. This is
+    the fallback for a hand-driven lifecycle; :meth:`stop` is idempotent.
+    """
 
     startup: _DurableSchedulerBackgroundStartup
 
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        task = self.startup.task
-
-        if task is None:
-            return
-
-        task.cancel()
-
-        with suppress(asyncio.CancelledError):
-            await task
+        clock = asyncio.get_running_loop()
+        await self.startup.stop(deadline=clock.time() + _STOP_GRACE_SECONDS)
 
 
 # ....................... #

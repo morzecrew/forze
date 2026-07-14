@@ -35,6 +35,7 @@ from ..tracing import (
 from .active_operation import warn_if_constructed_in_operation
 from .background import BackgroundOwners
 from .drain import OperationDrainGate
+from .drainable import Drainables
 from .invocation import InvocationContext
 from .transaction import AfterCommitErrorHandler, TransactionContext
 
@@ -165,6 +166,19 @@ class ExecutionContext:
     """Registry of detached-background-work owners (e.g. document caches with early-refresh
     tasks), cancelled at shutdown before lifecycle teardown closes their clients (see
     :mod:`~forze.application.execution.context.background`)."""
+
+    drainables: Drainables = attrs.field(
+        factory=Drainables,
+        init=False,
+        repr=False,
+    )
+    """Registry of background *loops* (relays, consumers, durable pollers), brought to a clean
+    stop at shutdown — between units of work, and before lifecycle teardown closes the clients
+    a graceful stop may still need (see :mod:`~forze.application.execution.context.drainable`).
+
+    Distinct from :attr:`background_owners`, which cancels detached *helper* work a port
+    spawned. These are long-running workers, and cancelling one mid-unit costs an unacked
+    message, an uncommitted offset, or a stranded outbox row."""
 
     outbox_staging: OutboxStagingContext = attrs.field(
         factory=OutboxStagingContext,

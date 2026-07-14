@@ -237,6 +237,7 @@ class CommitStreamGroupConsumer[M]:
         ctx: ExecutionContext,
         *,
         timeout: timedelta | None = None,
+        stop: asyncio.Event | None = None,
     ) -> CommitStreamGroupConsumerRunResult:
         """Consume the log and process each message exactly-once via the inbox.
 
@@ -247,6 +248,10 @@ class CommitStreamGroupConsumer[M]:
 
         :param timeout: ``None`` runs forever (polling on an empty log); a finite
             value drains what is currently available and returns a result.
+        :param stop: Set to end the run at the next **batch** boundary — after the batch in
+            hand has been processed *and its offsets committed*. This is the whole point of
+            stopping a commit-stream consumer gracefully: a run cancelled mid-batch never
+            commits, so every message it just handled is redelivered to whoever comes next.
         """
 
         executor = ctx.resilience() if self.retry_policy is not None else None
@@ -269,6 +274,10 @@ class CommitStreamGroupConsumer[M]:
         topics = list(self.topics)
 
         while True:
+            if stop is not None and stop.is_set():
+                # Between batches: the previous one is processed and committed.
+                return totals.finish()
+
             batch = await port.read(
                 self.group,
                 self.consumer,

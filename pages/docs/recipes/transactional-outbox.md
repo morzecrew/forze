@@ -192,7 +192,6 @@ relay = outbox_relay_background_lifecycle_step(
     outbox_spec=OUTBOX,
     queue_spec=JOBS,
     drain_on_shutdown=True,
-    requires=(POSTGRES_CLIENT_CAPABILITY,),   # order the relay ahead of the pool teardown
 )
 ```
 
@@ -203,22 +202,43 @@ hammered; and it never opens a batch it does not expect to finish inside
 `shutdown_drain_timeout` (default 5s). Anything it cannot reach stays `pending` for the
 next process — exactly where it would have been without the drain.
 
-Three constraints, two of which are enforced at wiring time:
+The drain needs the database, and it gets it: the runtime stops every background loop
+**before** lifecycle teardown begins (see below), so the client is still open. You do not have
+to declare any ordering for it.
 
-- **Declare the ordering edge.** The drain touches the database *during* teardown, and
-  lifecycle shutdown runs in reverse wave order — without `requires` (a capability) or
-  `depends_on` (a step id) tying the relay to whatever owns its client, the pool can close
-  underneath it. Enabling the drain without one is rejected.
-- **`pubsub` is rejected.** It is at-most-once past the broker, so publishing while
+Two things still constrain it:
+
+- **`pubsub` is rejected** at wiring. It is at-most-once past the broker, so publishing while
   subscribers are going away turns a delayed delivery into a lost one. Leaving the rows
   pending is strictly safer there.
 - **Keep `shutdown_drain_timeout` under the runtime's `shutdown_step_timeout`** (default
-  10s). On expiry the runtime cancels and abandons the hook, and a batch cut between claim
-  and mark leaves rows `processing` until `reclaim_stale_after` elapses — consider
-  lowering that when draining.
+  10s), which bounds the whole loop-stopping pass. A batch cut mid-flight leaves rows
+  `processing` until `reclaim_stale_after` elapses — consider lowering that when draining.
 
 The drain is a best-effort teardown courtesy, not a delivery guarantee: correctness still
 rests on the relay claiming those rows eventually, from this process or the next.
+
+## How background loops shut down
+
+The relay is one of five background loops the framework runs — the others are the queue
+consumer, the commit-stream consumer, and the durable recovery and scheduler pollers. Each
+registers itself with the scope's `ctx.drainables` at startup, and `runtime.shutdown()` asks
+every one of them to **stop between units of work**, concurrently, *before* lifecycle teardown
+begins:
+
+1. the drain gate stops admitting operations and waits for the in-flight ones;
+2. **background loops stop** — the relay drains, consumers finish and ack/commit what they
+   hold, the durable pollers finish their sweep;
+3. detached background work is cancelled;
+4. lifecycle teardown closes the clients.
+
+Step 2 sitting *before* step 4 is what lets a loop's graceful stop use its database. It also
+means a loop is never cancelled mid-unit unless it overruns its grace — which matters most for
+the commit-stream consumer, where a cancelled run never commits its offsets and every message
+it just handled is redelivered.
+
+A loop that will not stop within the grace is cancelled and logged, so one wedged loop can
+never hang process exit.
 
 ## Is the outbox drained?
 
