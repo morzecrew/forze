@@ -134,8 +134,13 @@ class BackgroundLoopControl:
         clock = asyncio.get_running_loop()
         budget = min(self.stop_grace.total_seconds(), max(0.0, deadline - clock.time()))
 
+        # Shielded, because ``wait_for`` **cancels what it is waiting on** when it times out.
+        # Waiting on the task directly would therefore kill the loop mid-work right here — and
+        # then ``task.done()`` is true, so this reports that it stopped on its own, the warning
+        # below never fires, and the explicit cancel is dead code. The loop would be killed
+        # exactly as bluntly as before, silently, while claiming a graceful stop.
         with suppress(TimeoutError):
-            await asyncio.wait_for(task, timeout=budget)
+            await asyncio.wait_for(asyncio.shield(task), timeout=budget)
 
         if task.done():
             return True

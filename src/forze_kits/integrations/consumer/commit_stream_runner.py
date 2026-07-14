@@ -248,10 +248,14 @@ class CommitStreamGroupConsumer[M]:
 
         :param timeout: ``None`` runs forever (polling on an empty log); a finite
             value drains what is currently available and returns a result.
-        :param stop: Set to end the run at the next **batch** boundary — after the batch in
-            hand has been processed *and its offsets committed*. This is the whole point of
-            stopping a commit-stream consumer gracefully: a run cancelled mid-batch never
-            commits, so every message it just handled is redelivered to whoever comes next.
+        :param stop: Set to end the run at the next **message** boundary — the messages
+            processed so far have their offsets committed before it returns, and the rest of
+            the batch is left uncommitted for redelivery. This is the whole point of stopping a
+            commit-stream consumer gracefully: a run cancelled mid-batch never commits, so
+            every message it just handled is redelivered to whoever comes next. The boundary is
+            the message rather than the batch precisely so it is *reachable* — a batch is
+            unbounded by default (``batch_limit=None`` reads the whole uncommitted tail) and
+            would routinely outlast the shutdown grace, making the cancel the normal path.
         """
 
         executor = ctx.resilience() if self.retry_policy is not None else None
@@ -301,6 +305,7 @@ class CommitStreamGroupConsumer[M]:
                 cipher=cipher,
                 dlq_producer=dlq_producer,
                 totals=totals,
+                stop=stop,
             )
 
             if not committed:
@@ -336,10 +341,12 @@ class CommitStreamGroupConsumer[M]:
         cipher: BytesCipherPort | None,
         dlq_producer: StreamCommandPort[M] | None,
         totals: _RunTotals,
+        stop: asyncio.Event | None = None,
     ) -> bool:
         """Process a batch; return ``False`` if a pause-and-alert message stopped it."""
 
         positions: list[StreamPosition] = []
+        stopped = False
 
         async def _flush() -> None:
             if positions:
@@ -355,6 +362,17 @@ class CommitStreamGroupConsumer[M]:
             return False
 
         for message in batch:
+            if stop is not None and stop.is_set():
+                # A batch is not a unit of work shutdown can afford to wait out: the default
+                # ``batch_limit=None`` is *the whole uncommitted tail*, so it can outlast any
+                # grace budget and be cancelled part-way — losing the offsets of every message
+                # it had already handled, which is exactly what the stop signal exists to
+                # prevent. So the stopping point is the message, not the batch: the flush below
+                # commits what this batch processed, and the tail it never reached stays
+                # uncommitted for redelivery.
+                stopped = True
+                break
+
             # -- Decode: a poison marker from the read path pauses like decode. --- #
             if isinstance(message.payload, UndecodableStreamPayload):
                 self._alert_pause(message, reason="decode")
@@ -430,6 +448,15 @@ class CommitStreamGroupConsumer[M]:
             positions.append(StreamPosition.from_message(message))
 
         await _flush()
+
+        if stopped:
+            # ``read`` advanced the reader past the *whole* fetched batch, so the tail this
+            # stop never looked at is only re-fetched if the reader is rewound — the same
+            # reason a crashed run rewinds (see :meth:`reset_to_committed`). Without it, a loop
+            # stopped and re-armed in-process (a quiesce, a re-scoped runtime) resumes past
+            # messages it never handled and skips them outright.
+            await port.seek_to_committed(self.group, list(self.topics))
+
         return True
 
     # ....................... #

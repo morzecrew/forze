@@ -78,11 +78,13 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
     # ....................... #
 
     async def stop(self, *, deadline: float) -> bool:
-        """Stop the consumer at its next batch boundary. Idempotent.
+        """Stop the consumer at its next message boundary. Idempotent.
 
         This is the loop that pays most for a blunt cancel: a run killed mid-batch never
         commits its offsets, so every message it had just processed is redelivered to whoever
-        starts next. Stopping *between* batches means the offsets are already committed.
+        starts next. The runner therefore stops *between messages* and commits what it has —
+        a batch is unbounded by default and would routinely outlast the grace budget, so a
+        batch boundary was one the loop could not reliably reach.
         """
 
         return await self.control.stop(deadline=deadline)
@@ -135,8 +137,8 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
                     continue
 
                 if self.control.stopping:
-                    # The run ended at a batch boundary because we asked it to — offsets
-                    # committed, nothing to alert about.
+                    # The run ended at a message boundary because we asked it to — the offsets
+                    # of everything it processed are committed, nothing to alert about.
                     return
 
                 # run() returned rather than raising: with timeout=None the only other exit

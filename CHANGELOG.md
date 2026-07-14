@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Behavior**
 
-- **Background loops stop gracefully instead of being cancelled** — all five (outbox relay, queue consumer, commit-stream consumer, durable recovery, durable scheduler) register with a new per-scope `ctx.drainables`, and `runtime.shutdown()` asks each to stop between units of work, before lifecycle teardown. A commit-stream consumer now commits the offsets for the batch it just processed instead of having the whole batch redelivered; consumers take a `stop` signal on `run()`. Because loops stop before teardown, `drain_on_shutdown=True` no longer requires an ordering edge to the database client.
+- **Background loops stop gracefully instead of being cancelled** — all five (outbox relay, queue consumer, commit-stream consumer, durable recovery, durable scheduler) register with a new per-scope `ctx.drainables`, and `runtime.shutdown()` asks each to stop between units of work, before lifecycle teardown. A commit-stream consumer stops between **messages** and commits the offsets of everything it has processed, instead of losing them to a cancel — its batch is the whole uncommitted tail by default, so a batch boundary was one it could not reliably reach inside the shutdown grace. Consumers take a `stop` signal on `run()`. Because loops stop before teardown, `drain_on_shutdown=True` no longer requires an ordering edge to the database client. A loop that overruns its grace is still cancelled, and now reports that it was: the wait is shielded, so a loop killed mid-work is no longer counted as a clean stop with no warning logged.
 
 ### Fixed
 

@@ -350,3 +350,65 @@ def test_lifecycle_step_rejects_invalid_options() -> None:
 
     with pytest.raises(CoreException, match="max_attempts"):
         _step(max_attempts=0)
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_stop_commits_the_messages_it_already_processed() -> None:
+    """A stop must not lose the offsets of work the consumer has already committed.
+
+    The unit of work used to be the whole batch, and ``batch_limit=None`` — the default — reads
+    the entire uncommitted tail. So a batch routinely outlasts the shutdown grace, the loop is
+    cancelled part-way through, and the offsets of every message it had already handled are
+    lost: each of those had its *business effect* committed in its own inbox transaction, but
+    the single ``commit`` of their offsets never ran. The inbox dedups the redelivery, so the
+    effect stays exactly-once — but not redelivering them at all is the entire point of the
+    stop signal.
+
+    Here the batch (10 x 0.1s) cannot possibly finish inside the 0.25s budget, so this passes
+    only if the consumer stops *between messages* and commits what it has.
+    """
+
+    state = MockState()
+    runtime = _runtime(state, strict_tx=True)
+
+    values: list[str] = []
+    second = asyncio.Event()
+
+    async def handler(message: StreamMessage[_Payload]) -> None:
+        await asyncio.sleep(0.1)
+        values.append(message.payload.value)
+
+        if len(values) == 2:
+            second.set()
+
+    producer = MockStreamAdapter(state=state, namespace=_TOPIC, codec=_CODEC)
+    admin = MockCommitStreamGroupAdminAdapter(stream=producer, state=state)
+    await admin.ensure_group("g", [_TOPIC], start=OffsetReset.EARLIEST)
+
+    for index in range(10):
+        await producer.append(_TOPIC, _Payload(value=f"m{index}"), key="k")
+
+    step = _step(handler=handler)
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        startup = step.startup
+        assert isinstance(startup, _CommitStreamConsumerBackgroundStartup)
+
+        await startup(ctx)
+        await asyncio.wait_for(second.wait(), timeout=5.0)
+
+        clock = asyncio.get_running_loop()
+        graceful = await startup.stop(deadline=clock.time() + 0.25)
+
+    committed = sum(nxt for key, nxt in state.commit_stream_offsets.items() if key[1] == "g")
+
+    assert graceful, "the loop was cancelled instead of reaching a stopping point"
+    assert 0 < len(values) < 10, "the run must stop mid-batch for this test to be about anything"
+    assert committed == len(values), (
+        f"{len(values)} messages were processed but only {committed} offsets committed — "
+        f"the rest are redelivered on restart"
+    )
