@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from decimal import Decimal
+from uuid import UUID, uuid4
+
 import pytest
 from pydantic import BaseModel
 
@@ -10,7 +14,11 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
     IngestSpec,
 )
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from tests.support.execution_context import (
+    context_from_deps,
+    context_from_modules,
+    frozen_deps_from_deps,
+)
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
 from forze_clickhouse.adapters import ClickHouseAnalyticsAdapter
@@ -175,11 +183,7 @@ async def test_run_cursor_offset_pagination(
     while cursor is not None:
         page = await adapter.run_cursor("all", _Params(), cursor=cursor)
         seen.extend(hit.event for hit in page.hits)
-        cursor = (
-            {"limit": 2, "after": page.next_cursor}
-            if page.next_cursor is not None
-            else None
-        )
+        cursor = {"limit": 2, "after": page.next_cursor} if page.next_cursor is not None else None
 
     assert len(seen) == 5
     assert len(set(seen)) == 5
@@ -203,3 +207,66 @@ async def test_run_cursor_rejects_before_cursor(
             _Params(),
             cursor={"limit": 2, "before": "opaque"},
         )
+
+
+class _RichRow(BaseModel):
+    order_id: UUID
+    placed_at: datetime
+
+
+class _RichIngest(BaseModel):
+    order_id: UUID
+    placed_at: datetime
+    total: Decimal
+
+
+@pytest.mark.asyncio
+async def test_ingest_of_uuid_datetime_and_decimal_binds_natively(clickhouse_client) -> None:
+    """A ``UUID`` / ``datetime`` / ``Decimal`` ingest row lands on its typed columns.
+
+    The mirror of the BigQuery test next door, and it exists to pin the *opposite* answer.
+    BigQuery's wire is JSON, so its rows must be encoded to JSON before they are sent; ClickHouse
+    binds Python values straight onto a ``UUID`` / ``DateTime64`` / ``Decimal`` column, so
+    encoding them to strings first would push them back through the column's own parser for
+    nothing. The shared ingest encoder therefore defaults to the Python encode and BigQuery opts
+    out — and this test is what stops a future "fix" from flipping the default and quietly making
+    ClickHouse round-trip its values through text.
+    """
+
+    table = f"rich_{uuid4().hex[:10]}"
+    await clickhouse_client.run_command(
+        f"CREATE TABLE default.{table} "
+        "(order_id UUID, placed_at DateTime64(3), total Decimal(18, 2)) ENGINE = Memory"
+    )
+
+    spec = AnalyticsSpec(
+        name="orders",
+        read=_RichRow,
+        queries={"all": AnalyticsQueryDefinition(params=_Params)},
+        ingest=_RichIngest,
+    )
+    adapter = ClickHouseAnalyticsAdapter(
+        client=clickhouse_client,
+        spec=spec,
+        config=ClickHouseAnalyticsConfig(
+            database="default",
+            queries={
+                "all": ClickHouseQueryConfig(sql=f"SELECT order_id, placed_at FROM default.{table}")
+            },
+            ingest=IngestSpec(("default", table)),
+        ),
+    )
+
+    sent = _RichIngest(
+        order_id=uuid4(),
+        placed_at=datetime(2026, 7, 14, 12, 30, tzinfo=UTC),
+        total=Decimal("19.99"),
+    )
+
+    await adapter.append([sent])
+
+    page = await adapter.run_page("all", _Params())
+
+    assert page.count == 1
+    assert page.hits[0].order_id == sent.order_id
+    assert isinstance(page.hits[0].order_id, UUID)

@@ -12,9 +12,10 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from psycopg import sql
@@ -64,6 +65,21 @@ from forze_redis.kernel.client import RedisClient
 
 
 class _OutboxPayload(BaseModel):
+    label: str
+
+
+class _RichPayload(BaseModel):
+    """The most ordinary integration-event payload there is.
+
+    Every other payload model in this suite is one or two ``str`` fields, and that is exactly
+    how the outbox went so long unable to carry a ``UUID``: the staged map goes into a ``JSONB``
+    column via psycopg's ``Jsonb``, which serializes with stdlib ``json.dumps``, and a
+    ``str``-only payload never asks it to encode anything it cannot.
+    """
+
+    order_id: UUID
+    placed_at: datetime
+    total: Decimal
     label: str
 
 
@@ -120,9 +136,7 @@ async def outbox_table(pg_client: PostgresClient) -> str:
     yield table
 
     await pg_client.execute(
-        sql.SQL("DROP TABLE IF EXISTS {table}").format(
-            table=sql.Identifier(schema, table)
-        )
+        sql.SQL("DROP TABLE IF EXISTS {table}").format(table=sql.Identifier(schema, table))
     )
 
 
@@ -191,9 +205,7 @@ async def test_outbox_rollback_discards_staged_rows(
                 raise RuntimeError("abort")
 
         rows = await pg_client.fetch_all(
-            sql.SQL("SELECT id FROM {t}").format(
-                t=sql.Identifier("public", outbox_table)
-            )
+            sql.SQL("SELECT id FROM {t}").format(t=sql.Identifier("public", outbox_table))
         )
 
     assert rows == []
@@ -244,6 +256,91 @@ async def test_outbox_relay_to_mock_queue(
 
 
 @pytest.mark.asyncio
+async def test_an_event_payload_of_uuid_datetime_and_decimal_round_trips(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    """A payload carrying a UUID, a datetime and a Decimal survives stage → relay → consume.
+
+    It did not. ``StagedOutboxCommand`` encoded the payload in the codec's default *python*
+    mode, which keeps those three as Python objects — correct for a driver that binds them
+    natively, and wrong for the ``JSONB`` column this map is actually bound into. So
+    ``stage()`` raised ``TypeError: Object of type UUID is not JSON serializable`` on Postgres
+    for the most natural event payload anyone would write, while the *same* payload staged
+    happily on Mongo (a BSON subdocument takes both) and on any encrypting route (orjson takes
+    both) — the accepted field types depended on the backend and on the encryption setting.
+
+    Asserting the decoded values rather than the stored bytes is the point: the payload has to
+    come back as the types it went in as, or the consumer gets strings where it declared a UUID.
+    """
+
+    codec = PydanticModelCodec(_RichPayload)
+    outbox_spec = OutboxSpec(
+        name="integration",
+        codec=codec,
+        destination=OutboxDestination.queue(route="relay", channel="relay"),
+    )
+    queue_spec = QueueSpec(name="relay", codec=codec)
+    pg_module = PostgresDepsModule(
+        client=pg_client,
+        tx={"default"},
+        outboxes={
+            "integration": PostgresOutboxConfig(relation=("public", outbox_table)),
+        },
+    )
+    shared_state = MockState()
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(pg_module)
+        .with_deps(_mock_queue_deps(shared_state))
+        .freeze(),
+    )
+
+    sent = _RichPayload(
+        order_id=uuid4(),
+        placed_at=datetime(2026, 7, 14, 12, 30, tzinfo=UTC),
+        total=Decimal("19.99"),
+        label="rich",
+    )
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        async with ctx.tx_ctx.scope("default"):
+            await ctx.outbox.command(outbox_spec).stage("order.placed", sent)
+            assert await ctx.outbox.command(outbox_spec).flush() == 1
+
+        # The row is really in Postgres, and the JSONB really holds JSON-native values.
+        rows = await pg_client.fetch_all(
+            sql.SQL("SELECT payload FROM {t} WHERE outbox_route = %s").format(
+                t=sql.Identifier("public", outbox_table)
+            ),
+            ("integration",),
+        )
+        stored = rows[0]["payload"]
+
+        assert stored["order_id"] == str(sent.order_id)
+        assert stored["total"] == "19.99"  # Decimal keeps its precision as a string
+
+        # …and decoding it gives back the model, with its declared types intact.
+        assert codec.decode_mapping(stored) == sent
+
+        result = await OutboxRelay(outbox_spec=outbox_spec).to_queue(ctx, queue_spec)
+
+    assert result.published == 1
+
+    # The whole journey: the consumer receives the payload it was sent, not a bag of strings.
+    delivered = shared_state.queues["relay"]["relay"]
+    assert len(delivered) == 1
+
+    received = delivered[0].message.payload
+
+    assert received == sent
+    assert isinstance(received.order_id, UUID)
+    assert isinstance(received.placed_at, datetime)
+    assert isinstance(received.total, Decimal)
+
+
+@pytest.mark.asyncio
 async def test_outbox_ordering_key_round_trips_stage_column_claim(
     pg_client: PostgresClient,
     outbox_table: str,
@@ -274,17 +371,15 @@ async def test_outbox_ordering_key_round_trips_stage_column_claim(
             assert await outbox.flush() == 2
 
         rows = await pg_client.fetch_all(
-            sql.SQL(
-                "SELECT event_type, ordering_key FROM {t} WHERE outbox_route = %s"
-            ).format(t=sql.Identifier("public", outbox_table)),
+            sql.SQL("SELECT event_type, ordering_key FROM {t} WHERE outbox_route = %s").format(
+                t=sql.Identifier("public", outbox_table)
+            ),
             ("integration",),
         )
         by_type = {row["event_type"]: row["ordering_key"] for row in rows}
         assert by_type == {"demo.created": "order-1", "demo.updated": None}
 
-        claims = {
-            c.event_type: c for c in await ctx.outbox.query(outbox_spec).claim_pending()
-        }
+        claims = {c.event_type: c for c in await ctx.outbox.query(outbox_spec).claim_pending()}
         assert claims["demo.created"].ordering_key == "order-1"
         assert claims["demo.updated"].ordering_key is None
 
@@ -704,9 +799,9 @@ async def test_outbox_terminal_failure_after_max_attempts(
             await asyncio.sleep(0.05)
 
         rows = await pg_client.fetch_all(
-            sql.SQL(
-                "SELECT status, attempts, last_error FROM {t} WHERE outbox_route = %s"
-            ).format(t=sql.Identifier("public", outbox_table)),
+            sql.SQL("SELECT status, attempts, last_error FROM {t} WHERE outbox_route = %s").format(
+                t=sql.Identifier("public", outbox_table)
+            ),
             ("integration",),
         )
 
@@ -768,8 +863,7 @@ async def test_outbox_requeue_failed_resets_attempts_then_drains(
 
         rows = await pg_client.fetch_all(
             sql.SQL(
-                "SELECT status, attempts, available_at, last_error FROM {t} "
-                "WHERE id = %s"
+                "SELECT status, attempts, available_at, last_error FROM {t} WHERE id = %s"
             ).format(t=sql.Identifier("public", outbox_table)),
             (row_id,),
         )
@@ -932,9 +1026,7 @@ async def test_propagate_trace_persists_and_round_trips(
         with tracer.start_as_current_span("publish"):
             expected = current_traceparent()
             async with ctx.tx_ctx.scope("default"):
-                await ctx.outbox.command(outbox_spec).stage(
-                    "demo.a", _OutboxPayload(label="a")
-                )
+                await ctx.outbox.command(outbox_spec).stage("demo.a", _OutboxPayload(label="a"))
                 assert await ctx.outbox.command(outbox_spec).flush() == 1
 
         assert expected is not None
@@ -998,9 +1090,9 @@ async def test_outbox_relays_to_module_wired_redis_stream(
             )
             await ctx.outbox.command(outbox_spec).flush()
 
-        result = await OutboxRelay(
-            outbox_spec=outbox_spec, reclaim_stale_after=None
-        ).to_stream(ctx, stream_spec)
+        result = await OutboxRelay(outbox_spec=outbox_spec, reclaim_stale_after=None).to_stream(
+            ctx, stream_spec
+        )
         assert result.published == 1
 
         # The event landed in the real Redis stream, read back via the module's query port.
@@ -1044,9 +1136,7 @@ def _drain_relay_runtime(
     # down before whatever owns the client. Declaring the capability is what puts it in a
     # later wave; the stub stands in for the real pool step, which would close the pool this
     # test still reads from afterwards.
-    client_step = LifecycleStep(
-        id="pg_client_stub", provides=(POSTGRES_CLIENT_CAPABILITY,)
-    )
+    client_step = LifecycleStep(id="pg_client_stub", provides=(POSTGRES_CLIENT_CAPABILITY,))
     relay_step = outbox_relay_background_lifecycle_step(
         outbox_spec=outbox_spec,
         queue_spec=queue_spec,
@@ -1169,7 +1259,9 @@ async def _seed_row(
     )
 
 
-def _admin_runtime(pg_client: PostgresClient, outbox_table: str) -> tuple[ExecutionRuntime, OutboxSpec[Any]]:
+def _admin_runtime(
+    pg_client: PostgresClient, outbox_table: str
+) -> tuple[ExecutionRuntime, OutboxSpec[Any]]:
     codec = PydanticModelCodec(_OutboxPayload)
     outbox_spec = OutboxSpec(name="integration", codec=codec)
     pg_module = PostgresDepsModule(
@@ -1245,9 +1337,7 @@ async def test_outbox_admin_is_empty_and_ageless_when_everything_is_published(
     pg_client: PostgresClient,
     outbox_table: str,
 ) -> None:
-    await _seed_row(
-        pg_client, outbox_table, status=OutboxStatus.PUBLISHED, created_at=utcnow()
-    )
+    await _seed_row(pg_client, outbox_table, status=OutboxStatus.PUBLISHED, created_at=utcnow())
 
     runtime, outbox_spec = _admin_runtime(pg_client, outbox_table)
 
@@ -1269,7 +1359,10 @@ async def test_outbox_oldest_pending_age_tracks_the_head_of_the_backlog(
         pg_client, outbox_table, status=OutboxStatus.PENDING, created_at=now - timedelta(seconds=30)
     )
     await _seed_row(
-        pg_client, outbox_table, status=OutboxStatus.PENDING, created_at=now - timedelta(seconds=120)
+        pg_client,
+        outbox_table,
+        status=OutboxStatus.PENDING,
+        created_at=now - timedelta(seconds=120),
     )
 
     runtime, outbox_spec = _admin_runtime(pg_client, outbox_table)

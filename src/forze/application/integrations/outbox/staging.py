@@ -96,7 +96,20 @@ class OutboxStaging[M: BaseModel]:
     # ....................... #
 
     async def _to_entry(self, event: IntegrationEvent[M]) -> StagedOutboxEntry:
-        payload_json = self.spec.codec.encode_mapping(event.payload)
+        # ``mode="json"`` because the staged payload **is** JSON — the field says so, the
+        # Postgres column is ``JSONB``, and the relay hands the same map to a broker that
+        # serializes it. The codec's default ``mode="python"`` keeps ``UUID`` / ``datetime`` /
+        # ``Decimal`` as Python objects, which is right for a driver that binds them natively
+        # and wrong for every consumer this map actually has. Left as-is, the payload's
+        # accepted field types depended on the *backend* and on whether the route encrypted:
+        # Postgres wrapped the map in ``Jsonb`` (stdlib ``json.dumps`` — no UUID, no datetime,
+        # no Decimal), Mongo stored it as a BSON subdocument (UUID and datetime fine), and an
+        # encrypting route serialized with orjson (UUID and datetime fine, Decimal not). So
+        # ``OrderPlaced(order_id: UUID)`` — the most ordinary event payload there is — staged
+        # happily on Mongo and raised ``TypeError`` on Postgres. Encoding to JSON here, once,
+        # collapses all four cases: every backend now receives the same bytes and accepts the
+        # same types.
+        payload_json = self.spec.codec.encode_mapping(event.payload, mode="json")
 
         if self.spec.encrypts and self.payload_cipher is not None:
             payload_json = await encrypt_outbox_payload(
