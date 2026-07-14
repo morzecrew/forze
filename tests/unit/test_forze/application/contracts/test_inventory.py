@@ -14,6 +14,13 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.analytics import (
+    AnalyticsProvenance,
+    AnalyticsQueryDefinition,
+    AnalyticsQueryDepKey,
+    AnalyticsSpec,
+)
+from forze.application.contracts.counter import CounterSpec
 from forze.application.contracts.deps import Deps, frame_for
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
@@ -22,6 +29,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.inventory import (
     PlaneDisposition,
+    assert_exportable,
     SpecEdgeKind,
     SpecPlane,
     SpecRegistry,
@@ -49,6 +57,22 @@ def _document(name: str) -> DocumentSpec[_Model, _Model, _Model, _Model]:
         write={"domain": _Model, "create_cmd": _Model, "update_cmd": _Model},
     )
 
+
+
+def _analytics(
+    name: str,
+    provenance: AnalyticsProvenance = AnalyticsProvenance.UNDECLARED,
+) -> AnalyticsSpec[_Model, _Model]:
+    return AnalyticsSpec(
+        name=name,
+        read=_Model,
+        queries={"top": AnalyticsQueryDefinition(params=_Model)},
+        provenance=provenance,
+    )
+
+
+def _bound_analytics(*names: str) -> Deps:
+    return Deps.routed({AnalyticsQueryDepKey: dict.fromkeys(names, object())})
 
 def _bound(*names: str) -> Deps:
     """Deps that bind each *name* as a routed document."""
@@ -90,11 +114,85 @@ def test_counter_and_analytics_default_to_refused() -> None:
     # target — a counter with no read path makes a migrated app reissue sequence numbers it
     # already handed out. "We didn't think about it" must not look like "there was nothing
     # there", so the default is a refusal rather than a shrug.
-    from forze.application.contracts.counter import CounterSpec
-
     registry = SpecRegistry().register(CounterSpec(name="invoice_no")).freeze()
 
     assert registry.of_disposition(PlaneDisposition.REFUSED)[0].name == "invoice_no"
+
+
+# ----------------------- #
+# Analytics provenance, and the refusal it feeds
+
+
+def test_analytics_disposition_is_derived_per_spec_not_per_plane() -> None:
+    # The one plane where the answer differs table by table. A warehouse an app projects into
+    # from documents it already owns can be thrown away and recomputed; one it ingests events
+    # straight into is the only place those rows exist. Same spec, same ports, same rows —
+    # nothing but the author's declaration tells them apart.
+    registry = SpecRegistry().register(
+        _analytics("undeclared"),
+        _analytics("projected", AnalyticsProvenance.PROJECTED),
+        _analytics("warehouse", AnalyticsProvenance.SYSTEM_OF_RECORD),
+    )
+
+    by_name = {entry.name: entry.disposition for entry in registry.freeze().entries}
+
+    assert by_name["projected"] is PlaneDisposition.REBUILDABLE
+    assert by_name["warehouse"] is PlaneDisposition.REFUSED
+    assert by_name["undeclared"] is PlaneDisposition.REFUSED
+
+
+def test_undeclared_provenance_is_legal_at_runtime() -> None:
+    # The whole point of the default: no existing application is broken by the field's
+    # arrival. It costs nothing until someone tries to export.
+    spec = _analytics("events")
+
+    assert spec.provenance is AnalyticsProvenance.UNDECLARED
+
+    build_runtime(deps=[_bound_analytics("events")], specs=SpecRegistry().register(spec))
+
+
+def test_an_exportable_app_passes_the_guard() -> None:
+    registry = (
+        SpecRegistry()
+        .register(_document("orders"), _analytics("sales", AnalyticsProvenance.PROJECTED))
+        .freeze()
+    )
+
+    assert_exportable(registry)  # must not raise
+
+
+def test_export_refuses_an_undeclared_analytics_table_and_says_what_to_do() -> None:
+    registry = SpecRegistry().register(_document("orders"), _analytics("events")).freeze()
+
+    with pytest.raises(CoreException) as caught:
+        assert_exportable(registry)
+
+    message = str(caught.value)
+
+    assert "analytics:events" in message
+    assert "PROJECTED" in message and "SYSTEM_OF_RECORD" in message  # both options offered
+    assert "looks complete and is not" in message
+
+
+def test_export_refuses_a_warehouse_system_of_record() -> None:
+    # Declared honestly, and still refused: the analytics port exposes only the app's named
+    # queries, so there is no full-scan read to export it with and nothing to rebuild it from.
+    registry = (
+        SpecRegistry()
+        .register(_analytics("warehouse", AnalyticsProvenance.SYSTEM_OF_RECORD))
+        .freeze()
+    )
+
+    with pytest.raises(CoreException, match="no full-scan read"):
+        assert_exportable(registry)
+
+
+def test_export_refuses_a_counter_and_offers_no_way_around_it() -> None:
+    # Unlike analytics, this one cannot be declared away — the plane needs a read port first.
+    registry = SpecRegistry().register(CounterSpec(name="invoice_no")).freeze()
+
+    with pytest.raises(CoreException, match="reissue sequence numbers"):
+        assert_exportable(registry)
 
 
 def test_re_registering_an_equal_spec_is_benign() -> None:

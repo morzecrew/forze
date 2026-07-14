@@ -8,7 +8,12 @@ from hardcoded strings: a renamed key breaks the import, not the reconciliation.
 
 from typing import Any, Final
 
-from ..analytics import AnalyticsIngestDepKey, AnalyticsQueryDepKey, AnalyticsSpec
+from ..analytics import (
+    AnalyticsIngestDepKey,
+    AnalyticsProvenance,
+    AnalyticsQueryDepKey,
+    AnalyticsSpec,
+)
 from ..base import BaseSpec
 from ..cache import CacheDepKey, CacheSpec
 from ..counter import CounterDepKey, CounterSpec
@@ -169,14 +174,39 @@ DEFAULT_DISPOSITIONS: Final[dict[SpecPlane, PlaneDisposition]] = {
     SpecPlane.STREAM: PlaneDisposition.DRAINED,
     SpecPlane.IDEMPOTENCY: PlaneDisposition.DRAINED,
     SpecPlane.DLOCK: PlaneDisposition.DRAINED,
-    # Both are durable state the framework cannot currently carry, and skipping either in
-    # silence corrupts the target: a counter has no read path, so a migrated app reissues
-    # sequence numbers it already handed out; an analytics table may be a warehouse system of
-    # record with no full-scan read. Refuse until each declares itself.
+    # Durable state the framework cannot carry today, and skipping it in silence corrupts the
+    # target: a counter has no read path, so a migrated app reissues sequence numbers it has
+    # already handed out. Refused until a ``CounterAdminPort`` gives it one.
     SpecPlane.COUNTER: PlaneDisposition.REFUSED,
+    # Overridden per spec by its provenance (see :func:`disposition_of`) — this is the fallback
+    # for an analytics spec that somehow reaches here without one.
     SpecPlane.ANALYTICS: PlaneDisposition.REFUSED,
 }
-"""The disposition a plane gets unless the contributor overrides it."""
+"""The disposition a plane gets unless the spec itself says otherwise."""
+
+
+# ....................... #
+
+_ANALYTICS_DISPOSITIONS: Final[dict[AnalyticsProvenance, PlaneDisposition]] = {
+    AnalyticsProvenance.PROJECTED: PlaneDisposition.REBUILDABLE,
+    AnalyticsProvenance.SYSTEM_OF_RECORD: PlaneDisposition.REFUSED,
+    AnalyticsProvenance.UNDECLARED: PlaneDisposition.REFUSED,
+}
+
+
+def disposition_of(spec: BaseSpec, plane: SpecPlane) -> PlaneDisposition:
+    """What an export may do with *spec*, unless its contributor overrides it.
+
+    Every other plane has one answer for every spec on it — a document travels, a search index
+    is rebuilt, an outbox is drained. **Analytics does not.** Whether a warehouse table is a
+    projection of data the app already owns, or the only place those rows exist, is a property
+    of that one table, and nothing but its author's declaration can tell them apart.
+    """
+
+    if isinstance(spec, AnalyticsSpec):
+        return _ANALYTICS_DISPOSITIONS[spec.provenance]
+
+    return DEFAULT_DISPOSITIONS[plane]
 
 
 # ....................... #
@@ -185,8 +215,7 @@ DEFAULT_DISPOSITIONS: Final[dict[SpecPlane, PlaneDisposition]] = {
 def plane_of_spec(spec: BaseSpec) -> SpecPlane | None:
     """The plane a spec belongs to, or ``None`` when its type is not inventoried."""
 
-    for spec_type, plane in SPEC_TYPE_PLANES:
-        if isinstance(spec, spec_type):
-            return plane
-
-    return None
+    return next(
+        (plane for spec_type, plane in SPEC_TYPE_PLANES if isinstance(spec, spec_type)),
+        None,
+    )

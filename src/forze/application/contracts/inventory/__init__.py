@@ -12,10 +12,12 @@ from .planes import (
     DEFAULT_DISPOSITIONS,
     PLANE_DEP_KEYS,
     SPEC_TYPE_PLANES,
+    disposition_of,
     plane_of_key,
     plane_of_spec,
 )
 from .reconcile import reconcile_specs
+from .refusal import assert_exportable, refusal_reason
 from .registry import FrozenSpecRegistry, SpecRegistry, spec_ref
 from .value_objects import (
     PlaneDisposition,
@@ -42,8 +44,11 @@ __all__ = [
     "SpecRegistry",
     "SpecRegistryEntry",
     "SpecSource",
+    "assert_exportable",
+    "disposition_of",
     "plane_of_key",
     "plane_of_spec",
     "reconcile_specs",
+    "refusal_reason",
     "spec_ref",
 ]

@@ -9,7 +9,7 @@ import attrs
 from forze.base.exceptions import exc
 
 from ..base import BaseSpec
-from .planes import DEFAULT_DISPOSITIONS, plane_of_spec
+from .planes import disposition_of, plane_of_spec
 from .value_objects import (
     PlaneDisposition,
     SpecEdge,
@@ -99,7 +99,7 @@ class SpecRegistry:
                     plane=plane,
                     name=str(spec.name),
                     spec=spec,
-                    disposition=disposition or DEFAULT_DISPOSITIONS[plane],
+                    disposition=disposition or disposition_of(spec, plane),
                     source=source,
                 )
             )

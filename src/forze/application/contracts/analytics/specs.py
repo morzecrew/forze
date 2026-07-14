@@ -17,6 +17,7 @@ from forze.base.serialization import (
 
 from ..base import BaseSpec
 from ..crypto import FieldEncryption
+from .value_objects import AnalyticsProvenance
 
 # ----------------------- #
 
@@ -56,6 +57,18 @@ class AnalyticsSpec(BaseSpec, Generic[R, Ing]):
 
     ingest: type[Ing] | None = attrs.field(default=None)
     """Optional row model for :class:`~.AnalyticsIngestPort`; ``None`` disables ingest."""
+
+    provenance: AnalyticsProvenance = attrs.field(default=AnalyticsProvenance.UNDECLARED)
+    """Where these rows come from — and so whether a portable export can carry them.
+
+    Only the author knows. An app that projects into its warehouse from documents it already
+    owns can throw the warehouse away and recompute it; one that ingests events straight into
+    it has made the warehouse a system of record, with nothing to recompute it from. The two
+    are indistinguishable from here: same spec, same ports, same rows.
+
+    Left ``UNDECLARED`` (the default) this changes nothing at runtime — but a portable export
+    refuses rather than guess, because guessing wrong in one direction silently drops the only
+    copy of the data. See :class:`~.AnalyticsProvenance`."""
 
     read_codec: ModelCodec[R, Any] | None = attrs.field(
         default=None,

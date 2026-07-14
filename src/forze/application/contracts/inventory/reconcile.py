@@ -73,12 +73,11 @@ def reconcile_specs(
     problems: list[str] = []
     warnings: list[str] = []
 
-    for entry in registry.entries:
-        if not _binds(entry.name, PLANE_DEP_KEYS[entry.plane], frames):
-            problems.append(
-                f"  - {entry.ref.label()}: catalogued (by {entry.source.value}) but no "
-                f"dependency binds it — the port cannot be resolved"
-            )
+    problems.extend(
+        f"  - {entry.ref.label()}: catalogued (by {entry.source.value}) but no dependency binds it — the port cannot be resolved"
+        for entry in registry.entries
+        if not _binds(entry.name, PLANE_DEP_KEYS[entry.plane], frames)
+    )
 
     catalogued = {(entry.plane, entry.name) for entry in registry.entries}
 
@@ -104,11 +103,11 @@ def reconcile_specs(
             problems.append(message)
 
     for edge in registry.edges:
-        for end in (edge.source, edge.target):
-            if (end.plane, end.name) not in catalogued:
-                problems.append(
-                    f"  - {edge.label()}: points at {end.label()}, which is not in the inventory"
-                )
+        problems.extend(
+            f"  - {edge.label()}: points at {end.label()}, which is not in the inventory"
+            for end in (edge.source, edge.target)
+            if (end.plane, end.name) not in catalogued
+        )
 
     if problems:
         raise exc.configuration(

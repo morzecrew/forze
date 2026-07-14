@@ -27,11 +27,30 @@ model:
 | `read` | `type[R]` | required | default read model for result rows |
 | `queries` | `Mapping[str, AnalyticsQueryDefinition]` | required | named queries (≥1); each declares a typed `params` model |
 | `ingest` | `type[Ing] \| None` | `None` | append-row model; `None` disables ingest |
+| `provenance` | `AnalyticsProvenance` | `UNDECLARED` | where these rows come from — see below |
 | `encryption` | `FieldEncryption \| None` | `None` | seal columns at rest (confidential, **not** aggregatable; `binds_record_id` unsupported — rows have no id) |
 | `read_codec` / `ingest_codec` | `ModelCodec \| None` | `None` | codec overrides (auto-derived otherwise) |
 
 Each `AnalyticsQueryDefinition` carries a Pydantic `params` model — the typed arguments a
 `run*` call passes — and an optional `description`.
+
+### Provenance
+
+`provenance` says whether this warehouse table *derives* from data the application already
+owns, or *is* the only place those rows exist. The framework cannot work that out for itself —
+both cases have the same spec, the same ports and the same rows — and guessing is unsafe in
+either direction, so the author declares it:
+
+| Value | Meaning |
+|-------|---------|
+| `PROJECTED` | recomputed from a plane that is itself exported (documents, say). A portable export does not carry it; the application recomputes it on the target. |
+| `SYSTEM_OF_RECORD` | the warehouse holds the only copy — the usual shape when events are ingested straight into ClickHouse or BigQuery. A portable export **refuses**: the query port exposes only your named queries, so there is no full-scan read to carry it with and nothing to rebuild it from. Use your warehouse's own tooling. |
+| `UNDECLARED` *(default)* | nobody has said. **Legal at runtime** — it changes nothing about how the port behaves — but a portable export refuses rather than guess. |
+
+It costs nothing until you try to [export](../../running-in-prod/index.md) the application:
+assume *projected* wrongly and the export silently drops the only copy of the data; assume
+*system of record* wrongly and it refuses to carry a table that was never more than a cache.
+"We didn't think about it" must not look like "there was nothing here."
 
 ## Query port  (`ctx.analytics.query(spec)`)
 
