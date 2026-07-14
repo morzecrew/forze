@@ -12,9 +12,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -22,6 +24,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
+from forze.application.contracts.execution import LifecycleStep
 from forze.application.contracts.outbox import (
     IntegrationEvent,
     OutboxClaim,
@@ -34,7 +37,6 @@ from forze.application.contracts.queue import (
     QueueQueryDepKey,
     QueueSpec,
 )
-from forze.application.contracts.execution import LifecycleStep
 from forze.application.contracts.stream import StreamQueryDepKey, StreamSpec
 from forze.application.execution import (
     Deps,
@@ -52,6 +54,7 @@ from forze_kits.integrations.outbox._relay_core import relay_outbox_claims
 from forze_mock import MockStateDepKey
 from forze_mock.adapters import MockState
 from forze_mock.execution.module import ConfigurableMockQueue, MockDepsModule
+from forze_postgres.adapters.outbox import PostgresOutboxStore
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.execution.deps.configs import PostgresOutboxConfig
 from forze_postgres.execution.lifecycle.capabilities import POSTGRES_CLIENT_CAPABILITY
@@ -1160,17 +1163,39 @@ async def _stage_after_first_tick(
     runtime: ExecutionRuntime,
     outbox_spec: OutboxSpec[_OutboxPayload],
 ) -> None:
-    """Run a scope that stages one row *after* the relay's first tick has come up empty."""
+    """Run a scope that stages one row *after* the relay's first tick has come up empty.
 
-    async with runtime.scope():
-        ctx = runtime.get_context()
-        await asyncio.sleep(0.05)
+    The barrier is the relay's own claim, not a sleep. Its first tick fires the moment the task
+    is scheduled, and that tick's first query — cold pool, cold plan — can outlast any duration
+    worth guessing at on a loaded machine. Sleep too little and the row commits *into* the tick
+    still in flight, which claims and publishes it: the ``drain_on_shutdown=False`` test then
+    fails outright, and its twin **passes for the wrong reason**, having proved nothing about the
+    drain at all. So wait for the thing we actually mean — the relay asked Postgres for pending
+    rows and got none — after which ``interval=1h`` guarantees it will not ask again.
+    """
 
-        async with ctx.tx_ctx.scope("default"):
-            outbox = ctx.outbox.command(outbox_spec)
-            await outbox.stage("demo.created", _OutboxPayload(label="drain"))
-            await outbox.flush()
-    # Scope exit runs lifecycle shutdown — the only thing that can publish this row.
+    tick_came_up_empty = asyncio.Event()
+    claim_pending = PostgresOutboxStore.claim_pending
+
+    async def _observed_claim(
+        self: PostgresOutboxStore[Any], **kwargs: Any
+    ) -> Sequence[OutboxClaim]:
+        try:
+            return await claim_pending(self, **kwargs)
+
+        finally:
+            tick_came_up_empty.set()
+
+    with patch.object(PostgresOutboxStore, "claim_pending", _observed_claim):
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await asyncio.wait_for(tick_came_up_empty.wait(), timeout=10.0)
+
+            async with ctx.tx_ctx.scope("default"):
+                outbox = ctx.outbox.command(outbox_spec)
+                await outbox.stage("demo.created", _OutboxPayload(label="drain"))
+                await outbox.flush()
+        # Scope exit runs lifecycle shutdown — the only thing that can publish this row.
 
 
 @pytest.mark.asyncio
