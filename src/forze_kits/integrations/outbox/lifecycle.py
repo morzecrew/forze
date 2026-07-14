@@ -105,6 +105,13 @@ def _admits_batch(*, remaining: float, last_batch: float | None) -> bool:
 def _log_drain_outcome(passes: Sequence[_RelayPass]) -> None:
     """Report what the shutdown drain managed to publish, and what it left behind."""
 
+    if not passes:
+        # Not one pass ran: an empty tenant shard, a budget already spent before the first
+        # tenant, or every tenant raising. Each of those already logged its own warning, and
+        # "published 0 row(s)" would land after it reading like a clean drain — the last word
+        # on a teardown that left the backlog where it was.
+        return
+
     published = sum(one.published for one in passes)
     incomplete = sorted({one.stop for one in passes if not one.drained})
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from datetime import timedelta
-from typing import final
+from typing import Final, final
 
 import attrs
 
@@ -21,6 +21,13 @@ from forze.base.exceptions import exc
 from forze_kits.lifecycle._logger import logger
 
 # ----------------------- #
+
+DEFAULT_STOP_GRACE_SECONDS: Final[float] = 5.0
+"""Budget a background step's own shutdown hook gives its loop to reach a stopping point.
+
+Only the fallback for a hand-driven lifecycle: the runtime stops every registered loop before
+teardown and supplies its own deadline, so this is what a step falls back on when nobody did.
+"""
 
 
 @final

@@ -181,23 +181,23 @@ async def _next_or_stop(
     try:
         await asyncio.wait({pull, halt}, return_when=asyncio.FIRST_COMPLETED)
 
-        if pull.done():
-            return pull.result()
-
-        pull.cancel()
-
-        # Await the cancellation before the caller closes the generator: an async generator
-        # cannot be aclosed while one of its ``__anext__`` calls is still in flight.
-        with suppress(asyncio.CancelledError):
-            await pull
-
-        return None
+        return pull.result() if pull.done() else None
 
     finally:
-        halt.cancel()
+        # Both futures are settled here on *every* path — including this task being cancelled
+        # inside the ``wait`` above, which is a live path now that an overrunning loop really is
+        # cancelled. A ``pull`` left in flight is not merely a leak: it is an unfinished
+        # ``__anext__`` on the broker's generator, and an async generator cannot be aclosed
+        # while one of its ``__anext__`` calls is still running — so the consumer's own cleanup
+        # would raise on the way out.
+        for pending in (pull, halt):
+            if pending.done():
+                continue
 
-        with suppress(asyncio.CancelledError):
-            await halt
+            pending.cancel()
+
+            with suppress(asyncio.CancelledError):
+                await pending
 
 
 # ....................... #

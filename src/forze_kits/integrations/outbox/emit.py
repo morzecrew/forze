@@ -23,6 +23,7 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.base import BaseSpec
 from forze.application.contracts.execution import (
     LifecycleStep,
     OnSuccessFactory,
@@ -123,9 +124,11 @@ class RelayBinding:
     drain_on_shutdown: bool = False
     """Publish what is still claimable at shutdown instead of leaving it pending.
 
-    Needs :attr:`requires` or :attr:`depends_on` (the drain touches the database during
-    teardown), and is rejected for a ``pubsub`` transport — see
-    :func:`~forze_kits.integrations.outbox.outbox_relay_background_lifecycle_step`."""
+    Rejected for a ``pubsub`` transport — see
+    :func:`~forze_kits.integrations.outbox.outbox_relay_background_lifecycle_step`. The drain
+    touches the database during teardown, but needs no ordering of its own to do so: the
+    runtime stops every background loop *before* lifecycle teardown begins, so the client is
+    still open."""
 
     shutdown_drain_timeout: timedelta = timedelta(seconds=5)
     """Budget for the shutdown drain; keep it under the runtime's ``shutdown_step_timeout``."""
@@ -135,6 +138,35 @@ class RelayBinding:
 
     depends_on: tuple[StrKey, ...] = ()
     """Step ids this step is ordered after."""
+
+    # ....................... #
+
+    @property
+    def transport_spec(self) -> BaseSpec | None:
+        """The one transport spec this relay actually binds, by its :attr:`transport`.
+
+        A queue *and* a stream spec may both be set; only the one :attr:`transport` names is ever
+        resolved, so this is the single answer. Handing the others to the inventory would have it
+        demand a dependency route that nothing wires.
+
+        ``None`` means the spec has not been supplied — legal only where something else supplies
+        it. An aggregate's search-sync relay is that case: its queue is *derived* by the kit and
+        evolved in, so the author writes tick knobs alone. On :class:`OutboxEmit` there is nothing
+        to derive from, and a relay with no destination is refused at construction.
+        """
+
+        match self.transport:
+            case "queue":
+                return self.queue_spec
+
+            case "stream":
+                return self.stream_spec
+
+            case "pubsub":
+                return self.pubsub_spec
+
+            case _:  # pragma: no cover - the destination kinds are exhaustive  # pyright: ignore[reportUnnecessaryComparison]
+                return None
 
     # ....................... #
 
@@ -186,7 +218,22 @@ class OutboxEmit:
     """The domain-event -> integration-event staging rules (at least one)."""
 
     relay: RelayBinding | None = None
-    """Optional background relay; omit when relay runs out-of-process."""
+    """Optional background relay; omit when relay runs out-of-process. Its transport spec is the
+    author's and is **required** — unlike a search-sync relay, whose queue the kit derives."""
+
+    # ....................... #
+
+    @property
+    def relay_transport_spec(self) -> BaseSpec | None:
+        """Where the relay publishes, or ``None`` when there is no relay.
+
+        ``None`` means *no relay* and never "a relay whose destination is missing" — that is
+        refused at construction. The distinction is the whole point: the inventory reads this
+        (``AggregateKit.spec_contributions``), and a missing destination there would not be an
+        error but an *absence*, quietly dropping the route from the catalogue.
+        """
+
+        return self.relay.transport_spec if self.relay is not None else None
 
     # ....................... #
 
@@ -194,6 +241,13 @@ class OutboxEmit:
         if not self.emits:
             raise exc.configuration(
                 f"OutboxEmit for route {self.spec.name!r} must declare at least one emit mapping"
+            )
+
+        if self.relay is not None and self.relay.transport_spec is None:
+            raise exc.precondition(
+                f"OutboxEmit for route {self.spec.name!r} declares a relay with transport "
+                f"{self.relay.transport!r} but no {self.relay.transport}_spec; the relay has "
+                f"nowhere to publish."
             )
 
 

@@ -274,8 +274,8 @@ class RedisClient(RedisClientPort):
 
         Value-returning methods (``get``, ``mget``, ``exists``, ``pttl``,
         ``pttl_raw_ms``, ``run_script``, ``incr``, ``decr``, ``reset``,
-        ``xadd``, ``xread``, ``xgroup_read``, ``xgroup_create``, ``xack``,
-        ``xautoclaim``, ``xpending``)
+        ``scan``, ``xadd``, ``xread``, ``xgroup_read``, ``xgroup_create``,
+        ``xack``, ``xautoclaim``, ``xpending``)
         raise a ``precondition`` error with code ``redis_read_in_pipeline``
         when called inside the scope — their results cannot be observed before
         ``execute()``, so returning anything would be silent corruption.

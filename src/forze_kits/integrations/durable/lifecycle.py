@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Sequence
 from datetime import timedelta
-from typing import Any, Final, final
+from typing import Any, final
 from uuid import UUID
 
 import attrs
@@ -17,15 +17,12 @@ from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
-from forze_kits.lifecycle import BackgroundLoopControl
+from forze_kits.lifecycle import DEFAULT_STOP_GRACE_SECONDS, BackgroundLoopControl
 
 from .runner import DurableFunctionRunner
 from .scheduler import DurableScheduler
 
 # ----------------------- #
-
-_STOP_GRACE_SECONDS: Final[float] = 5.0
-"""Fallback budget when a hook stops a loop directly (the runtime supplies its own)."""
 
 
 @final
@@ -197,7 +194,7 @@ class _DurableRecoveryBackgroundShutdown(LifecycleHook):
 
     async def __call__(self, ctx: ExecutionContext) -> None:
         clock = asyncio.get_running_loop()
-        await self.startup.stop(deadline=clock.time() + _STOP_GRACE_SECONDS)
+        await self.startup.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
 
 
 # ....................... #
@@ -296,11 +293,12 @@ class _DurableSchedulerBackgroundStartup(LifecycleHook):
     # ....................... #
 
     async def stop(self, *, deadline: float) -> bool:
-        """Stop the loop at its next tick boundary. Idempotent.
+        """Stop the cron-driven loop at its next tick boundary. Idempotent.
 
-        A sweep cut mid-claim leaves a run leased to a process that is going away; it is
-        recovered by the next one, but only after the lease expires. Stopping between ticks
-        costs nothing and hands the work over cleanly.
+        The scheduler only *fires* what is due: it claims nothing and holds no lease, so a tick
+        cut short costs no more than the schedules it had not reached — and those are still due
+        on the next process's first tick. Stopping between ticks just avoids interrupting a fire
+        already under way.
         """
 
         return await self.control.stop(deadline=deadline)
@@ -424,7 +422,7 @@ class _DurableSchedulerBackgroundShutdown(LifecycleHook):
 
     async def __call__(self, ctx: ExecutionContext) -> None:
         clock = asyncio.get_running_loop()
-        await self.startup.stop(deadline=clock.time() + _STOP_GRACE_SECONDS)
+        await self.startup.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
 
 
 # ....................... #

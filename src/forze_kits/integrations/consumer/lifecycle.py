@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from typing import Any, Final, final
+from typing import Any, final
 
 import attrs
 
@@ -16,14 +16,11 @@ from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
-from forze_kits.lifecycle import BackgroundLoopControl
+from forze_kits.lifecycle import DEFAULT_STOP_GRACE_SECONDS, BackgroundLoopControl
 
 from .runner import QueueConsumer
 
 # ----------------------- #
-
-_STOP_GRACE_SECONDS: Final[float] = 5.0
-"""Fallback budget when a hook stops a loop directly (the runtime supplies its own)."""
 
 
 @final
@@ -165,7 +162,7 @@ class _QueueConsumerBackgroundShutdown(LifecycleHook):
 
     async def __call__(self, ctx: ExecutionContext) -> None:
         clock = asyncio.get_running_loop()
-        await self.startup.stop(deadline=clock.time() + _STOP_GRACE_SECONDS)
+        await self.startup.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
 
 
 # ....................... #

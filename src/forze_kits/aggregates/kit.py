@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, final
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.base import BaseSpec
 from forze.application.contracts.execution import (
     LifecycleStep,
     OperationHandlerFactory,
@@ -72,7 +71,7 @@ from forze_kits.aggregates.soft_deletion import (
 )
 from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
-from forze_kits.integrations.outbox import OutboxEmit, RelayBinding, bind_outbox
+from forze_kits.integrations.outbox import OutboxEmit, bind_outbox
 from forze_kits.integrations.search import SearchRebuildReport, rebuild_search_index
 from forze_kits.invariants import InvariantEnforcement, bind_invariants
 
@@ -84,33 +83,6 @@ if TYPE_CHECKING:
 
 # ----------------------- #
 
-
-def _relay_transport_spec(relay: RelayBinding | None) -> BaseSpec | None:
-    """The one transport spec a relay actually binds.
-
-    ``RelayBinding`` lets a queue, a stream *and* a pubsub spec all be set, but only the one
-    its ``transport`` names is ever resolved. Contributing the others would have the inventory
-    demand a dependency route that nothing wires.
-    """
-
-    if relay is None:
-        return None
-
-    match relay.transport:
-        case "queue":
-            return relay.queue_spec
-
-        case "stream":
-            return relay.stream_spec
-
-        case "pubsub":
-            return relay.pubsub_spec
-
-        case _:  # pragma: no cover - the destination kinds are exhaustive  # pyright: ignore[reportUnnecessaryComparison]
-            return None
-
-
-# ....................... #
 
 R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
@@ -420,8 +392,10 @@ class AggregateKit(Generic[R, D, C, U]):
 
         if self.outbox is not None:
             registry.register(self.outbox.spec, source=SpecSource.KIT)
-            transport = _relay_transport_spec(self.outbox.relay)
+            transport = self.outbox.relay_transport_spec
 
+            # ``None`` here means *no relay* — ``OutboxEmit`` refuses one whose transport has no
+            # spec — so this can no longer skip a destination that was merely left unset.
             if transport is not None:
                 registry.register(transport, source=SpecSource.KIT)
 

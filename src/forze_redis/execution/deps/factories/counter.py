@@ -1,6 +1,6 @@
 """Redis counter dep factories (allocation port + admin enumeration port)."""
 
-from typing import final
+from typing import TypedDict, final
 
 import attrs
 
@@ -9,13 +9,32 @@ from forze.application.contracts.counter import (
     CounterDepPort,
     CounterSpec,
 )
+from forze.application.contracts.resolution import NamedResourceSpec
+from forze.application.contracts.tenancy import TenantProviderPort
 from forze.application.execution import ExecutionContext
 
 from ....adapters import RedisCounterAdapter, RedisCounterAdminAdapter
+from ....kernel.client import RedisClientPort
 from ..configs import RedisCounterConfig, RedisUniversalConfig
 from ..keys import RedisClientDepKey
 
 # ----------------------- #
+
+
+class _CounterAdapterKwargs(TypedDict):
+    """The construction arguments both counter adapters take, spelled out.
+
+    Typed so the two constructors below can consume it directly: a ``dict[str, object]`` makes
+    every keyword ``object`` at the call site, which then has to be silenced at each of them.
+    """
+
+    client: RedisClientPort
+    namespace: NamedResourceSpec
+    tenant_aware: bool
+    tenant_provider: TenantProviderPort
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -29,7 +48,7 @@ class _ConfigurableRedisCounterBase:
 
     # ....................... #
 
-    def _kwargs(self, ctx: ExecutionContext) -> dict[str, object]:
+    def _kwargs(self, ctx: ExecutionContext) -> _CounterAdapterKwargs:
         return {
             "client": ctx.deps.provide(RedisClientDepKey),
             "namespace": self.config.namespace,
@@ -51,7 +70,7 @@ class ConfigurableRedisCounter(_ConfigurableRedisCounterBase, CounterDepPort):
         ctx: ExecutionContext,
         spec: CounterSpec,
     ) -> RedisCounterAdapter:
-        return RedisCounterAdapter(**self._kwargs(ctx))  # type: ignore[arg-type]
+        return RedisCounterAdapter(**self._kwargs(ctx))
 
 
 # ....................... #
@@ -73,4 +92,4 @@ class ConfigurableRedisCounterAdmin(_ConfigurableRedisCounterBase, CounterAdminD
         ctx: ExecutionContext,
         spec: CounterSpec,
     ) -> RedisCounterAdminAdapter:
-        return RedisCounterAdminAdapter(**self._kwargs(ctx))  # type: ignore[arg-type]
+        return RedisCounterAdminAdapter(**self._kwargs(ctx))
