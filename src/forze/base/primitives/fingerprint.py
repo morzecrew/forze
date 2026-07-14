@@ -2,8 +2,8 @@
 
 import binascii
 import hashlib
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Iterable, Sequence
+from typing import Any, cast
 from urllib.parse import parse_qs, urlparse
 
 import orjson
@@ -25,17 +25,57 @@ _SECRET_DEDUP_SCRYPT_P = 1
 # ....................... #
 
 
+def _set_sort_key(item: Any) -> tuple[str, str]:
+    return (type(item).__name__, str(item))
+
+
+# ....................... #
+
+
+def _canonical(value: Any) -> Any:
+    """Render what orjson cannot, without letting iteration order or a repr decide the bytes.
+
+    orjson cannot serialize a ``set``, so a bare ``default=str`` would hash ``str(some_set)`` —
+    **iteration order, and string hashing is seeded per process.** The same payload would then
+    fingerprint differently in the next interpreter, which is undetectable in any test that
+    hashes it once and fatal for every caller here, since a fingerprint exists precisely to be
+    compared across processes (an idempotency key retried against another replica, a cursor
+    minted on one node and read on another).
+
+    Sets are therefore sorted. The order is canonical, not semantic — sorting by ``(type, str)``
+    puts ``"10"`` before ``"9"`` — which is all a fingerprint needs and all it can have, since
+    a set of mixed types has no natural order to appeal to.
+    """
+
+    if isinstance(value, frozenset | set):
+        return sorted(cast("Iterable[Any]", value), key=_set_sort_key)
+
+    return str(value)
+
+
+# ....................... #
+
+
 def stable_json_bytes(payload: Any) -> bytes:
     """Return canonical, key-sorted UTF-8 JSON bytes for fingerprinting.
 
-    Keys are sorted at every level (``OPT_SORT_KEYS``) for determinism; values
-    orjson cannot serialize natively fall back to ``str``. For cache/dedup
-    fingerprints only — the exact byte layout is not a stable wire format across
-    orjson versions/options (notably ``datetime`` is serialized natively, so a
-    payload's bytes differ from a ``str``-coerced encoding).
+    Keys are sorted at every level (``OPT_SORT_KEYS``) and sets are sorted (see
+    :func:`_canonical`), so the same payload yields the same bytes in any process. Values orjson
+    cannot serialize natively otherwise fall back to ``str``.
+
+    That fallback is the sharp edge: an object with no JSON form hashes as its ``repr``, and a
+    plain object's repr carries a **memory address**, so it is stable within one process and
+    different in the next. Hand this only payloads built from JSON primitives — render anything
+    else yourself, and refuse what you cannot render, rather than letting ``str`` decide (the
+    spec inventory's ``entry_shape`` and the operation registry's ``_operation_shape`` are the
+    two worked examples).
+
+    For cache/dedup fingerprints only — the exact byte layout is not a stable wire format across
+    orjson versions/options (notably ``datetime`` is serialized natively, so a payload's bytes
+    differ from a ``str``-coerced encoding).
     """
 
-    return orjson.dumps(payload, option=orjson.OPT_SORT_KEYS, default=str)
+    return orjson.dumps(payload, option=orjson.OPT_SORT_KEYS, default=_canonical)
 
 
 # ....................... #

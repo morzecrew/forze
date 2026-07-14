@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import textwrap
+
 import pytest
 from pydantic import BaseModel
 
@@ -251,3 +256,53 @@ class TestRecordingScopeIsolation:
             assert recorded_in_tx() is False
         finally:
             close_recording_scope(outer)
+
+
+# ....................... #
+
+
+def test_hash_args_is_identical_across_processes() -> None:
+    """A retry that lands on another replica must hash to the same key.
+
+    ``_hash_args`` encodes the command with the codec's ``mode="python"``, so a ``set`` field
+    survives as a real Python set into ``stable_payload_fingerprint``. orjson cannot serialize a
+    set, and the ``default`` fallback used to render it in **iteration order** — which is seeded
+    per process. So the *byte-identical* retry of an idempotent operation, sent with the same
+    key to a different replica (or the same one after a restart), computed a different
+    ``payload_hash`` and ``begin()`` answered ``conflict("Payload hash mismatch")``: the client
+    told it had reused its key with different arguments, when it had not — in exactly the
+    retry-after-failure case idempotency exists for. Single-process tests never see it.
+
+    This test also pins a trap for the next reader: switching ``_hash_args`` to ``mode="json"``
+    does **not** fix it and defeats the fix that does. Pydantic dumps a ``set[str]`` to a *list
+    in set-iteration order*, so the payload reaches orjson pre-flattened, already unordered, and
+    the canonicalization in ``stable_json_bytes`` never gets a set to sort.
+    """
+
+    script = textwrap.dedent(
+        """
+        from pydantic import BaseModel
+
+        from forze.application.hooks.idempotency.plans import _hash_args
+
+
+        class GrantRoles(BaseModel):
+            roles: set[str]
+
+
+        print(_hash_args(GrantRoles(roles={"admin", "billing", "support", "auditor", "owner"})))
+        """
+    )
+
+    digests = {
+        seed: subprocess.run(
+            [sys.executable, "-c", script],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        for seed in ("0", "1", "12345", "99999")
+    }
+
+    assert len(set(digests.values())) == 1, f"idempotency hash varies by hash seed: {digests}"

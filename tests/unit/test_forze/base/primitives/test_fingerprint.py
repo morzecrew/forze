@@ -24,6 +24,29 @@ def test_stable_json_bytes_is_key_order_independent() -> None:
     assert stable_json_bytes({"a": 1, "b": 2}) == stable_json_bytes({"b": 2, "a": 1})
 
 
+def test_stable_json_bytes_sorts_sets() -> None:
+    """A set has no order, so a canonical form must impose one.
+
+    orjson cannot serialize a ``set``, so without this it lands in ``default``, is rendered as
+    ``str(some_set)`` — iteration order — and **string hashing is seeded per process**. The same
+    payload would fingerprint differently in the next interpreter. See
+    ``test_hash_args_is_identical_across_processes``, which is the test that can actually observe
+    that; this one only pins the rendering.
+    """
+
+    assert stable_json_bytes({"s": {"b", "a", "c"}}) == b'{"s":["a","b","c"]}'
+    assert stable_json_bytes({"s": frozenset({"b", "a"})}) == stable_json_bytes({"s": {"a", "b"}})
+
+
+def test_stable_json_bytes_sorts_a_mixed_type_set_without_raising() -> None:
+    """``sorted`` on mixed types raises; a fingerprint may not. The order is canonical, not
+    semantic — it exists so two processes agree, not so a human approves."""
+
+    once = stable_json_bytes({"s": {1, "a", 2.5}})
+
+    assert once == stable_json_bytes({"s": {2.5, 1, "a"}})
+
+
 def test_stable_json_bytes_falls_back_to_str() -> None:
     # Non-JSON-native values are coerced via ``default=str`` rather than raising.
     assert stable_json_bytes({"x": object}) == stable_json_bytes({"x": object})

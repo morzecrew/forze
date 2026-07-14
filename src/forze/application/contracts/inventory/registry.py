@@ -7,8 +7,10 @@ from typing import Self, final
 import attrs
 
 from forze.base.exceptions import exc
+from forze.base.primitives import stable_payload_fingerprint
 
 from ..base import BaseSpec
+from .fingerprint import entry_shape
 from .planes import disposition_of, plane_of_spec
 from .value_objects import (
     PlaneDisposition,
@@ -208,3 +210,47 @@ class FrozenSpecRegistry:
         """Every relationship of one kind."""
 
         return tuple(edge for edge in self.edges if edge.kind is kind)
+
+    # ....................... #
+
+    def spec_fingerprint(self, plane: SpecPlane, name: str) -> str:
+        """Structural fingerprint of one catalogued spec (see :meth:`fingerprint`)."""
+
+        entry = self.find(plane, name)
+
+        if entry is None:
+            raise exc.precondition(
+                f"{SpecRef(plane=plane, name=name).label()!r} is not catalogued, so it has no "
+                f"fingerprint."
+            )
+
+        return stable_payload_fingerprint(entry_shape(entry))
+
+    # ....................... #
+
+    def fingerprint(self) -> str:
+        """Structural fingerprint of the whole inventory.
+
+        Covers every entry's plane, name and disposition, the portable shape of its spec — each
+        model's JSON schema, every encryption / materialized / lenient / omit field set, every
+        codec's model — and the catalogued edges.
+
+        It covers nothing about a *deployment*. Which backend a route lands on, the tenancy
+        floor, the relation names, the keyring: all of that lives in backend config on purpose,
+        and two deployments of the same application must fingerprint alike or the value is
+        useless for the thing it exists to do.
+
+        **A signal, not a gate.** It is structural, not behavioral: a handler that changes what
+        it writes into an unchanged model is invisible here. Read a *differing* fingerprint as
+        "this cannot be trusted to fit" and a *matching* one as "same shape, probably fits". It
+        errs toward differing — a new nullable field on a read model changes it, though an
+        artifact carrying that model would still load — which is the safe direction to be wrong
+        in.
+        """
+
+        return stable_payload_fingerprint(
+            {
+                "entries": [entry_shape(entry) for entry in self.entries],
+                "edges": [edge.label() for edge in self.edges],
+            }
+        )

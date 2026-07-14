@@ -8,6 +8,7 @@ spec. The inventory closes that gap, and :func:`reconcile_specs` keeps the two h
 each other at startup.
 """
 
+from .fingerprint import entry_shape
 from .planes import (
     DEFAULT_DISPOSITIONS,
     PLANE_DEP_KEYS,
@@ -46,6 +47,7 @@ __all__ = [
     "SpecSource",
     "assert_exportable",
     "disposition_of",
+    "entry_shape",
     "plane_of_key",
     "plane_of_spec",
     "reconcile_specs",
