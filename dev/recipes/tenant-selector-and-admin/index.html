@@ -4133,6 +4133,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#enumerating-every-tenant" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Enumerating every tenant
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5504,6 +5515,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#enumerating-every-tenant" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Enumerating every tenant
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5688,6 +5710,21 @@ an <code>AuthzBeforeAuthorize</code> on each operation before exposing the route
 </code></pre></div>
 <p><code>list_members</code> returns principal ids only (<code>TenantManagementPort.list_tenant_principals</code>); join
 them with identity-plane details out of band.</p>
+<h2 id="enumerating-every-tenant">Enumerating every tenant<a class="headerlink" href="#enumerating-every-tenant" title="Permanent link">&para;</a></h2>
+<p>The selector's <code>list_principal_tenants</code> answers <em>"which tenants may this principal see"</em>, so
+anything driven from it visits only the tenants somebody happens to be a member of. To drive
+work across the whole deployment — a migration, a per-tenant sweep, an export — use
+<code>TenantManagementPort.list_tenants</code>, which is not membership-scoped:</p>
+<div class="highlight"><pre><span></span><code><span class="n">tenants</span><span class="p">,</span> <span class="n">total</span> <span class="o">=</span> <span class="k">await</span> <span class="n">mgmt</span><span class="o">.</span><span class="n">list_tenants</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">offset</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>          <span class="c1"># every tenant, paged</span>
+<span class="n">live</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="k">await</span> <span class="n">mgmt</span><span class="o">.</span><span class="n">list_tenants</span><span class="p">(</span><span class="n">active_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>                    <span class="c1"># only the live ones</span>
+</code></pre></div>
+<p><code>active_only=False</code> is the default <strong>on purpose</strong>. Deactivating a tenant sets a flag; it does
+not delete the row, and it certainly does not delete the tenant's documents, blobs or counters.
+A sweep that quietly skipped them would drop real data and report success — so the complete
+answer is what you get unless you ask for less. Pass <code>active_only=True</code> for a "who is live"
+admin view, where that genuinely is the question.</p>
+<p>Like the rest of the admin plane, this lists <strong>every</strong> tenant in the deployment, including ones
+the caller belongs to none of — put it behind your authz hooks.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Both build on the base wiring.</strong> The middleware, deps modules, and enforcement hooks come

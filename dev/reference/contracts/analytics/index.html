@@ -4748,6 +4748,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Spec">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Provenance
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5499,6 +5516,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Spec">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Provenance
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5676,6 +5710,12 @@ model:</p>
 <td>append-row model; <code>None</code> disables ingest</td>
 </tr>
 <tr>
+<td><code>provenance</code></td>
+<td><code>AnalyticsProvenance</code></td>
+<td><code>UNDECLARED</code></td>
+<td>where these rows come from — see below</td>
+</tr>
+<tr>
 <td><code>encryption</code></td>
 <td><code>FieldEncryption \| None</code></td>
 <td><code>None</code></td>
@@ -5691,6 +5731,37 @@ model:</p>
 </table>
 <p>Each <code>AnalyticsQueryDefinition</code> carries a Pydantic <code>params</code> model — the typed arguments a
 <code>run*</code> call passes — and an optional <code>description</code>.</p>
+<h3 id="provenance">Provenance<a class="headerlink" href="#provenance" title="Permanent link">&para;</a></h3>
+<p><code>provenance</code> says whether this warehouse table <em>derives</em> from data the application already
+owns, or <em>is</em> the only place those rows exist. The framework cannot work that out for itself —
+both cases have the same spec, the same ports and the same rows — and guessing is unsafe in
+either direction, so the author declares it:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PROJECTED</code></td>
+<td>recomputed from a plane that is itself exported (documents, say). A portable export does not carry it; the application recomputes it on the target.</td>
+</tr>
+<tr>
+<td><code>SYSTEM_OF_RECORD</code></td>
+<td>the warehouse holds the only copy — the usual shape when events are ingested straight into ClickHouse or BigQuery. A portable export <strong>refuses</strong>: the query port exposes only your named queries, so there is no full-scan read to carry it with and nothing to rebuild it from. Use your warehouse's own tooling.</td>
+</tr>
+<tr>
+<td><code>UNDECLARED</code> <em>(default)</em></td>
+<td>nobody has said. <strong>Legal at runtime</strong> — it changes nothing about how the port behaves — but a portable export refuses rather than guess.</td>
+</tr>
+</tbody>
+</table>
+<p>It costs nothing until you try to <a href="../../../running-in-prod/">export</a> the application:
+assume <em>projected</em> wrongly and the export silently drops the only copy of the data; assume
+<em>system of record</em> wrongly and it refuses to carry a table that was never more than a cache.
+"We didn't think about it" must not look like "there was nothing here."</p>
 <h2 id="query-port-ctxanalyticsqueryspec">Query port  (<code>ctx.analytics.query(spec)</code>)<a class="headerlink" href="#query-port-ctxanalyticsqueryspec" title="Permanent link">&para;</a></h2>
 <p>Run a registered query by key with typed params; the shape × pagination naming mirrors the
 <a href="../document/">document query port</a>:</p>

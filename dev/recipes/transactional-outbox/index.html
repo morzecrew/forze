@@ -4433,6 +4433,50 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#draining-on-shutdown" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Draining on shutdown
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-background-loops-shut-down" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        How background loops shut down
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#is-the-outbox-drained" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Is the outbox drained?
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quiescing-before-a-shutdown-or-a-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Quiescing before a shutdown or a migration
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5624,6 +5668,50 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#draining-on-shutdown" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Draining on shutdown
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-background-loops-shut-down" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        How background loops shut down
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#is-the-outbox-drained" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Is the outbox drained?
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quiescing-before-a-shutdown-or-a-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Quiescing before a shutdown or a migration
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5891,6 +5979,114 @@ indexes, migration steps, and the optional Hybrid Logical Clock ordering column
   until a short claim, capped at <code>max_batches_per_tick=100</code>), then sleeps
   <code>interval</code>.</li>
 </ul>
+<h2 id="draining-on-shutdown">Draining on shutdown<a class="headerlink" href="#draining-on-shutdown" title="Permanent link">&para;</a></h2>
+<p>By default the relay task is cancelled at shutdown, so rows staged just before the
+process goes away stay <code>pending</code> until a later process claims them — up to <code>interval</code>
+later, or until the next deploy. Set <code>drain_on_shutdown=True</code> to publish what is still
+claimable first:</p>
+<div class="highlight"><pre><span></span><code><span class="n">relay</span> <span class="o">=</span> <span class="n">outbox_relay_background_lifecycle_step</span><span class="p">(</span>
+    <span class="n">outbox_spec</span><span class="o">=</span><span class="n">OUTBOX</span><span class="p">,</span>
+    <span class="n">queue_spec</span><span class="o">=</span><span class="n">JOBS</span><span class="p">,</span>
+    <span class="n">drain_on_shutdown</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The drain burns <strong>exactly one delivery attempt per row</strong> — the same blast radius as one
+ordinary tick. It ends the moment a batch reschedules a row, so it can never re-claim
+(and re-attempt) what it just parked; a failing destination stops it instead of being
+hammered; and it never opens a batch it does not expect to finish inside
+<code>shutdown_drain_timeout</code> (default 5s). Anything it cannot reach stays <code>pending</code> for the
+next process — exactly where it would have been without the drain.</p>
+<p>The drain needs the database, and it gets it: the runtime stops every background loop
+<strong>before</strong> lifecycle teardown begins (see below), so the client is still open. You do not have
+to declare any ordering for it.</p>
+<p>Two things still constrain it:</p>
+<ul>
+<li><strong><code>pubsub</code> is rejected</strong> at wiring. It is at-most-once past the broker, so publishing while
+  subscribers are going away turns a delayed delivery into a lost one. Leaving the rows
+  pending is strictly safer there.</li>
+<li><strong>Keep <code>shutdown_drain_timeout</code> under the runtime's <code>shutdown_step_timeout</code></strong> (default
+  10s), which bounds the whole loop-stopping pass. A batch cut mid-flight leaves rows
+  <code>processing</code> until <code>reclaim_stale_after</code> elapses — consider lowering that when draining.</li>
+</ul>
+<p>The drain is a best-effort teardown courtesy, not a delivery guarantee: correctness still
+rests on the relay claiming those rows eventually, from this process or the next.</p>
+<h2 id="how-background-loops-shut-down">How background loops shut down<a class="headerlink" href="#how-background-loops-shut-down" title="Permanent link">&para;</a></h2>
+<p>The relay is one of five background loops the framework runs — the others are the queue
+consumer, the commit-stream consumer, and the durable recovery and scheduler pollers. Each
+registers itself with the scope's <code>ctx.drainables</code> at startup, and <code>runtime.shutdown()</code> asks
+every one of them to <strong>stop between units of work</strong>, concurrently, <em>before</em> lifecycle teardown
+begins:</p>
+<ol>
+<li>the drain gate stops admitting operations and waits for the in-flight ones;</li>
+<li><strong>background loops stop</strong> — the relay drains, consumers finish and ack/commit what they
+   hold, the durable pollers finish their sweep;</li>
+<li>detached background work is cancelled;</li>
+<li>lifecycle teardown closes the clients.</li>
+</ol>
+<p>Step 2 sitting <em>before</em> step 4 is what lets a loop's graceful stop use its database. It also
+means a loop is never cancelled mid-unit unless it overruns its grace — which matters most for
+the commit-stream consumer, where a cancelled run never commits its offsets and every message
+it just handled is redelivered.</p>
+<p>A loop that will not stop within the grace is cancelled and logged, so one wedged loop can
+never hang process exit.</p>
+<h2 id="is-the-outbox-drained">Is the outbox drained?<a class="headerlink" href="#is-the-outbox-drained" title="Permanent link">&para;</a></h2>
+<p><code>ctx.outbox.admin(spec)</code> is a read-only view of a route's backlog. It exists because
+emptiness used to be observable only through <code>claim_pending</code> — which <em>claims</em>, so asking
+the question changed the answer and raced the relay for rows the caller did not want.</p>
+<div class="highlight"><pre><span></span><code><span class="n">admin</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">outbox</span><span class="o">.</span><span class="n">admin</span><span class="p">(</span><span class="n">OUTBOX</span><span class="p">)</span>
+
+<span class="k">await</span> <span class="n">admin</span><span class="o">.</span><span class="n">has_undrained</span><span class="p">()</span>      <span class="c1"># bool — one index seek; poll this</span>
+<span class="k">await</span> <span class="n">admin</span><span class="o">.</span><span class="n">depth</span><span class="p">()</span>              <span class="c1"># OutboxDepth(pending=, processing=, failed=)</span>
+<span class="k">await</span> <span class="n">admin</span><span class="o">.</span><span class="n">oldest_pending_age</span><span class="p">()</span> <span class="c1"># timedelta | None — &quot;is the relay stuck?&quot;</span>
+</code></pre></div>
+<p>Three semantics worth knowing, because they are deliberately <em>not</em> the claim path's:</p>
+<ul>
+<li><strong><code>pending</code> includes rows parked for a future retry.</strong> <code>claim_pending</code> hides them; a row
+  backing off is still undelivered work, and a check that ignored it would call an outbox
+  empty while events were queued behind a retry.</li>
+<li><strong><code>published</code> is never counted.</strong> Nothing prunes published rows, so that bucket grows with
+  every event the application has ever emitted — counting it would scan the whole history.
+  <code>depth()</code> reports only the undrained buckets.</li>
+<li><strong><code>failed</code> is reported apart and never waited on.</strong> Failed rows are terminal until an
+  operator calls <code>requeue_failed</code>, so treating them as work-in-progress would hang forever
+  on a poison row.</li>
+</ul>
+<p>These probes assume the route's claim index exists (the table is yours — see
+<a href="../../reference/outbox-schema/">Outbox table schema</a>). Without it they degrade to a
+sequential scan.</p>
+<h2 id="quiescing-before-a-shutdown-or-a-migration">Quiescing before a shutdown or a migration<a class="headerlink" href="#quiescing-before-a-shutdown-or-a-migration" title="Permanent link">&para;</a></h2>
+<p><code>quiesce()</code> stops the runtime admitting new work, then waits for the operational planes —
+outbox routes, durable runs, stream groups — to come to rest, and reports what did and did
+not settle:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.quiesce</span><span class="w"> </span><span class="kn">import</span> <span class="n">quiesce</span>
+
+<span class="n">report</span> <span class="o">=</span> <span class="k">await</span> <span class="n">quiesce</span><span class="p">(</span><span class="n">runtime</span><span class="p">,</span> <span class="n">outboxes</span><span class="o">=</span><span class="p">[</span><span class="n">OUTBOX</span><span class="p">],</span> <span class="n">timeout</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">60</span><span class="p">))</span>
+<span class="n">report</span><span class="o">.</span><span class="n">raise_if_unattested</span><span class="p">()</span>   <span class="c1"># or inspect report.attested / report.unsettled</span>
+</code></pre></div>
+<p><strong>Settled and attested are different claims</strong>, and the report keeps them apart. <em>Settled</em>
+means nothing was moving when the sweep finished. <em>Attested</em> means nothing was moving <strong>and
+nothing could arrive</strong>, because the runtime was holding the door shut. Only the second is
+safe to build on: an export written from a merely-settled runtime can be overtaken by a write
+before it finishes.</p>
+<ul>
+<li><strong>Closing the gate is one-way.</strong> By default <code>quiesce()</code> stops the runtime admitting work,
+  and the drain gate does not reopen — that is deliberate, because it is the <em>shutdown</em> gate.
+  This is the step before a shutdown, an export, or a migration.</li>
+<li><strong><code>close_gate=False</code> only looks.</strong> The sweep reads each plane and the scope keeps serving.
+  Nothing is holding the door, so the report can be <code>settled</code> but never <code>attested</code>. Use it
+  for a health check; do not build an export on it.</li>
+<li><strong>It waits for the relay; it does not relay.</strong> Closing the gate makes the backlog finite,
+  but something still has to publish it — the background step, or (the usual production
+  shape) an external worker this process cannot reach at all. If nothing does, the outbox
+  plane comes back <code>residual</code> with the age of the oldest pending row. Give the budget room
+  for at least one relay tick.</li>
+</ul>
+<p>Planes the runtime does not wire are reported <code>not_wired</code> and do not count against
+attestation. Two things sit outside what <code>quiesce()</code> can speak for in either mode: a
+Temporal-backed workflow, whose state lives in the Temporal cluster; and <strong>a sibling
+replica</strong> — quiesce holds <em>one process</em> still, and a fleet that is still serving writes
+elsewhere will invalidate whatever this one attested. Stop the fleet before you trust the
+attestation.</p>
 
 
 

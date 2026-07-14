@@ -4806,6 +4806,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Spec">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#choosing-an-edge-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Choosing an edge <code>identity</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4816,6 +4833,23 @@
       </span>
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Query port (ctx.graph.query(spec))">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#streaming-a-whole-kind" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streaming a whole kind
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -5521,6 +5555,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Spec">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#choosing-an-edge-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Choosing an edge <code>identity</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5531,6 +5582,23 @@
       </span>
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Query port (ctx.graph.query(spec))">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#streaming-a-whole-kind" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streaming a whole kind
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -5714,6 +5782,53 @@ optional <code>create</code> / <code>update</code> models. An edge also declares
 <code>"endpoints"</code>), its allowed <code>endpoints</code>, and its <code>directionality</code> (<code>directed</code> /
 <code>symmetric</code>). Field <a href="../../../identity-tenancy-enc/encryption/">encryption</a> covers nodes and
 key-addressed edges; endpoint-identity edges reject <code>binds_record_id</code>.</p>
+<h3 id="choosing-an-edge-identity">Choosing an edge <code>identity</code><a class="headerlink" href="#choosing-an-edge-identity" title="Permanent link">&para;</a></h3>
+<p>This is the one modelling decision the graph contract really asks of you, and it is <strong>not</strong> a
+question about whether the edge happens to have an id field. It is: <em>what makes one of these
+edges the same edge?</em></p>
+<table>
+<thead>
+<tr>
+<th><code>identity</code></th>
+<th>Means</th>
+<th>Then</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"endpoints"</code></td>
+<td><strong>At most one edge of this kind per <code>(from, to)</code> pair.</strong> The pair <em>is</em> the identity.</td>
+<td><code>EdgeRef.by_endpoints(...)</code> addresses it. A second <code>create_edge</code> on the same pair raises <code>conflict</code> — use <code>ensure_edge</code> to leave the existing one alone, or <code>update_edge</code> to change it.</td>
+</tr>
+<tr>
+<td><code>"key"</code> <em>(default)</em></td>
+<td>Each edge has a business key of its own (<code>key_field</code>).</td>
+<td><code>EdgeRef.by_key(...)</code> addresses it. <strong>Parallel edges between the same pair are allowed</strong> — they are distinct entities with distinct keys.</td>
+</tr>
+</tbody>
+</table>
+<p>So: <strong>if two edges of a kind can legitimately run between the same pair — two flights between
+two cities, two roads between two towns — the kind is <code>"key"</code>, not <code>"endpoints"</code>.</strong> That is not
+a workaround for a limitation; an edge that is a distinct entity needs a key to <em>be</em> one.
+Declaring such a kind <code>"endpoints"</code> leaves it with no identity at all: <code>get_edge</code> would return an
+arbitrary one of the parallel edges and <code>update_edge</code> / <code>delete_edge</code> would hit every one.</p>
+<p><code>create_edge</code> enforces this: on an endpoint-identified kind, a second create on a pair that
+already has an edge raises <code>conflict</code> rather than laying a parallel one. A malformed spec —
+<code>identity="key"</code> with no <code>key_field</code>, an endpoint naming a node kind that does not exist, a key
+field absent from its own read model — is refused when the <code>GraphModuleSpec</code> is <em>constructed</em>.</p>
+<div class="admonition tip">
+<p class="admonition-title">Finding pairs that already carry parallel edges</p>
+<p><code>create_edge</code> refuses to make them, but a graph written before it did not, and the raw query
+hatch (or any writer that is not forze) still can. The pair cursor surfaces them for free —
+it yields one batch per <code>(from, to)</code> pair, so a batch with more than one edge <em>is</em> a
+violating pair:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">ctx</span><span class="o">.</span><span class="n">graph</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">SOCIAL</span><span class="p">)</span><span class="o">.</span><span class="n">find_edges_stream</span><span class="p">(</span><span class="s2">&quot;FOLLOWS&quot;</span><span class="p">,</span> <span class="n">chunk_size</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="o">...</span>  <span class="c1"># this pair carries parallel edges — decide which one is real</span>
+</code></pre></div>
+<p>Worth running once after upgrading. The framework cannot pick for you, and an export will
+carry all of them (it carries the graph it <em>finds</em>, not the graph the spec hoped for).</p>
+</div>
 <h2 id="query-port-ctxgraphqueryspec">Query port  (<code>ctx.graph.query(spec)</code>)<a class="headerlink" href="#query-port-ctxgraphqueryspec" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5777,6 +5892,58 @@ key-addressed edges; endpoint-identity edges reject <code>binds_record_id</code>
 </tr>
 </tbody>
 </table>
+<h3 id="streaming-a-whole-kind">Streaming a whole kind<a class="headerlink" href="#streaming-a-whole-kind" title="Permanent link">&para;</a></h3>
+<p><code>find_vertices</code> and <code>find_edges</code> page by <strong>offset</strong>, which is fine for a screenful and wrong
+for a sweep: <code>SKIP n</code> counts rows from the start of a result set that is being written
+underneath it, so a node created before the cursor shifts every later row one place along and
+the next page steps over one. For a migration or an export, a skipped page and an empty page
+produce the same artifact.</p>
+<p>The streaming reads seek by key instead — <code>key_field &gt; last-seen</code> — so a bookmark cannot move:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>find_vertices_stream(node_kind, *, property_filter=None, chunk_size=500)</code></td>
+<td>async generator of keyset batches; walks the kind to exhaustion</td>
+</tr>
+<tr>
+<td><code>find_edges_stream(edge_kind, *, property_filter=None, chunk_size=500)</code></td>
+<td>same, for an edge kind of <strong>either</strong> identity</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">ctx</span><span class="o">.</span><span class="n">graph</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">SOCIAL</span><span class="p">)</span><span class="o">.</span><span class="n">find_vertices_stream</span><span class="p">(</span><span class="s2">&quot;User&quot;</span><span class="p">,</span> <span class="n">chunk_size</span><span class="o">=</span><span class="mi">500</span><span class="p">):</span>
+    <span class="o">...</span>  <span class="c1"># memory is bounded by chunk_size, whatever the graph&#39;s size</span>
+</code></pre></div>
+<p><strong>What an edge bookmarks on.</strong> A keyed edge (<code>identity="key"</code>) bookmarks on its own key. An
+edge declared <code>identity="endpoints"</code> has no key of its own — that is what the declaration means
+— so it bookmarks on the <strong><code>(tail, head)</code> node-key pair</strong>, which <em>is</em> the identity the author
+asserted. For such a kind, <code>chunk_size</code> bounds <strong>pairs, not edges</strong>, and every edge of a pair
+is yielded together: nothing enforces the one-edge-per-pair identity (<code>create_edge</code> will add a
+second parallel edge), so a page cut <em>within</em> a pair would leave edges behind a cursor that
+seeks strictly past it.</p>
+<p>They <strong>fail closed</strong> rather than serve a scan that looks complete and is not
+(<code>graph_streaming_unsupported</code>):</p>
+<ul>
+<li>a backend that does not report <code>GraphReadCapabilities</code> supports neither stream;</li>
+<li>a multi-endpoint edge kind whose endpoint node kinds key on <em>different</em> properties — a
+  <code>TAGGED</code> kind linking <code>Post → Tag</code> and <code>Note → Tag</code> where <code>Post</code> and <code>Note</code> key differently
+  has no single ordering that covers both.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">A key field may not be encrypted</p>
+<p>Naming a kind's <code>key_field</code> in its own <code>encryption</code> policy is refused at spec construction
+(<code>graph_sealed_key_field</code>). <strong>A sealed key is not a key.</strong> A lookup by key compares the
+caller's <em>plaintext</em> against what the write <em>sealed</em>, so the two never meet: a vertex
+created under a sealed key could never be fetched, updated or deleted by that key again —
+a write-only black hole. It also has no order to page or seek on. Encrypting an ordinary
+property is entirely fine; this is about the key alone.</p>
+</div>
 <h2 id="command-port-ctxgraphcommandspec">Command port  (<code>ctx.graph.command(spec)</code>)<a class="headerlink" href="#command-port-ctxgraphcommandspec" title="Permanent link">&para;</a></h2>
 <p>Every create/ensure takes <code>return_new: bool = True</code>.</p>
 <table>

@@ -4846,6 +4846,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Counter">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#enumerating-counters-admin" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Enumerating counters (admin)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5510,6 +5527,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Counter">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#enumerating-counters-admin" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Enumerating counters (admin)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5796,6 +5830,43 @@ under one spec.</p>
 </tr>
 </tbody>
 </table>
+<p>There is <strong>no read verb</strong>, deliberately: a counter's value is only meaningful at the
+instant it is allocated, so a handler that read one would be holding a number another
+allocation has already moved past. Allocate and use the value you were given.</p>
+<h3 id="enumerating-counters-admin">Enumerating counters (admin)<a class="headerlink" href="#enumerating-counters-admin" title="Permanent link">&para;</a></h3>
+<p><code>ctx.counter.admin(spec)</code> returns a <code>CounterAdminPort</code>. It exists because the missing read
+verb, correct as it is for handlers, left counters as the one plane that is <strong>durable state
+nothing can read</strong> — so a migration that faithfully rebuilt every other plane would restart
+the counters at zero and reissue invoice numbers already in customers' hands, with no error
+anywhere to say so.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Signature</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>list_counters</code></td>
+<td><code>list_counters()</code></td>
+<td>every counter under the spec, one <code>CounterEntry(suffix, value)</code> per partition</td>
+</tr>
+</tbody>
+</table>
+<p>Both properties hold at once: handlers still cannot read a counter (the admin port is a
+separate acquisition, and it cannot allocate), while operators and a portable export can.
+<code>suffix=None</code> is a real partition — the unsuffixed counter — not an absent one.</p>
+<p>Carrying counters to another deployment needs no new write verb; <code>reset</code> is already it:</p>
+<div class="highlight"><pre><span></span><code><span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="k">await</span> <span class="n">source</span><span class="o">.</span><span class="n">counter</span><span class="o">.</span><span class="n">admin</span><span class="p">(</span><span class="n">INVOICES</span><span class="p">)</span><span class="o">.</span><span class="n">list_counters</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">target</span><span class="o">.</span><span class="n">counter</span><span class="p">(</span><span class="n">INVOICES</span><span class="p">)</span><span class="o">.</span><span class="n">reset</span><span class="p">(</span><span class="n">entry</span><span class="o">.</span><span class="n">value</span><span class="p">,</span> <span class="n">suffix</span><span class="o">=</span><span class="n">entry</span><span class="o">.</span><span class="n">suffix</span><span class="p">)</span>
+</code></pre></div>
+<p>The value is the last number <strong>handed out</strong>, so the target's next <code>incr</code> continues the
+sequence rather than repeating its final number. Enumerate a counter you intend to carry only
+when nothing is allocating from it (a stopped fleet) — a value read while the source is live
+is stale the moment it is read. The whole set is returned at once, so a spec partitioned into
+millions of suffixes is not yet in scope.</p>
 <h2 id="storage">Storage<a class="headerlink" href="#storage" title="Permanent link">&para;</a></h2>
 <p>Object storage splits into query and command ports —
 <code>ctx.storage.query(spec)</code> / <code>ctx.storage.command(spec)</code> (<code>StorageSpec</code> carries only a
