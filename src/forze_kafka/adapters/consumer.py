@@ -286,19 +286,60 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
             if not assigned:
                 continue
 
-            # Best-effort: a concurrent rebalance may shift the assignment mid-seek;
-            # a fresh assignment already positions at committed, so a failure here is
-            # not loss-bearing.
             try:
                 await consumer.seek_to_committed(*assigned)
 
             except Exception:
-                logger.warning(
-                    "Kafka seek_to_committed failed for group %s; a rebalance may have "
-                    "shifted the assignment (fetch position defaults to committed)",
-                    group,
-                    exc_info=True,
-                )
+                await self._rewind_failed(group, consumer, assigned)
+
+    # ....................... #
+
+    async def _rewind_failed(
+        self,
+        group: str,
+        consumer: AIOKafkaConsumer,
+        attempted: set[TopicPartition],
+    ) -> None:
+        """A rewind that did not happen — the one failure here that silently loses records.
+
+        **A rebalance mid-seek is benign**, and that is the only case this used to assume. The
+        partitions are someone else's now, and the subscription's ``on_assign`` positions whoever
+        gets them at the committed offset. Nothing is owed.
+
+        **Anything else is not**, and treating it as such is how records disappear. A coordinator
+        timeout or a broker blip while the partitions are *still ours* leaves this consumer's
+        fetch position where ``getmany`` put it: past the whole batch, and so past the tail we
+        never processed and never committed. No listener fires, because nothing was reassigned.
+        Reuse the consumer — which a supervised in-process restart does, since it is pooled — and
+        the next read resumes beyond those records and commits past them. They are never handled,
+        and nothing ever says so.
+
+        So a position we could not restore is a position we must not keep: drop the consumer. The
+        next read builds a fresh one, and a fresh consumer starts where the group committed.
+        """
+
+        if not attempted & consumer.assignment():
+            logger.warning(
+                "Kafka seek_to_committed for group %s raced a rebalance; its partitions are "
+                "reassigned and their new owner starts at the committed offset",
+                group,
+                exc_info=True,
+            )
+            return
+
+        logger.error(
+            "Kafka seek_to_committed failed for group %s while it still holds the partitions, so "
+            "its fetch position is still past records nobody processed; discarding the pooled "
+            "consumer so the next read starts from the committed offset instead of skipping them",
+            group,
+            exc_info=True,
+        )
+
+        for key, pooled in list(self._cell.by_partition.items()):
+            if pooled is consumer:
+                del self._cell.by_partition[key]
+
+        await self.client.discard_consumer(consumer)
 
     # ....................... #
 

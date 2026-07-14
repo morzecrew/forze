@@ -240,6 +240,28 @@ class KafkaClient(KafkaClientPort):
 
     # ....................... #
 
+    async def discard_consumer(self, consumer: AIOKafkaConsumer) -> None:
+        """Evict a pooled consumer whose in-memory fetch position can no longer be trusted.
+
+        The next :meth:`get_consumer` for its key builds a fresh one, and a fresh consumer starts
+        where the group committed — which is what makes eviction the fail-closed answer to a
+        rewind that did not happen. Idempotent, and it must never raise: the consumer is being
+        thrown away precisely because it is already suspect, and the caller is on a path where a
+        second failure would take the original one down with it.
+        """
+
+        async with self.__consumer_lock:
+            for key in [k for k, pooled in self.__consumers.items() if pooled is consumer]:
+                del self.__consumers[key]
+
+        try:
+            await consumer.stop()
+
+        except Exception:  # pragma: no cover - discarding must never raise
+            logger.warning("Kafka discard_consumer: consumer stop failed", exc_info=True)
+
+    # ....................... #
+
     @exc_interceptor.coroutine("kafka.new_transient_consumer")
     async def new_transient_consumer(
         self,
