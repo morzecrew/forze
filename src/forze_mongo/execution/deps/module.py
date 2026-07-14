@@ -19,7 +19,11 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
 )
 from forze.application.contracts.document.wiring import derive_read_only_document_config
-from forze.application.contracts.outbox import OutboxCommandDepKey, OutboxQueryDepKey
+from forze.application.contracts.outbox import (
+    OutboxAdminDepKey,
+    OutboxCommandDepKey,
+    OutboxQueryDepKey,
+)
 from forze.application.contracts.search import SearchQueryDepKey
 from forze.application.contracts.tenancy import (
     TenancyRouteGroup,
@@ -46,6 +50,7 @@ from .configs import (
 )
 from .factories import (
     ConfigurableMongoDocument,
+    ConfigurableMongoOutboxAdmin,
     ConfigurableMongoOutboxCommand,
     ConfigurableMongoOutboxQuery,
     ConfigurableMongoReadOnlyDocument,
@@ -237,6 +242,8 @@ class MongoDepsModule(DepsModule):
                 bindings=[
                     (OutboxCommandDepKey, ConfigurableMongoOutboxCommand),
                     (OutboxQueryDepKey, ConfigurableMongoOutboxQuery),
+                    # Always registered: quiesce depends on it and it is read-only.
+                    (OutboxAdminDepKey, ConfigurableMongoOutboxAdmin),
                 ],
             ),
             plain={MongoClientDepKey: self.client},

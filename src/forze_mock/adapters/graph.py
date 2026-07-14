@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import heapq
 from collections import deque
-from collections.abc import Sequence
-from typing import final
+from collections.abc import AsyncGenerator, Sequence
+from typing import Any, final
 
 import attrs
 from pydantic import BaseModel
@@ -28,6 +28,7 @@ from forze.application.contracts.graph import (
     GraphModuleSpec,
     GraphNodeSpec,
     GraphPathStep,
+    GraphReadCapabilities,
     GraphWalkParams,
     GraphWalkStep,
     NeighborRow,
@@ -37,7 +38,13 @@ from forze.application.contracts.graph import (
     VertexRef,
     validate_property_filter_keys,
 )
-from forze.application.integrations.graph import resolve_write_endpoint
+from forze.application.integrations.graph import (
+    assert_edge_streamable,
+    assert_vertex_streamable,
+    endpoints_conflict,
+    resolve_write_endpoint,
+    stream_keyset_pages,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import default_model_codec
@@ -422,18 +429,23 @@ class MockGraphAdapter(MockTenancyMixin):
 
         with self.state.lock:
             store = self._edges_store()
+            key_field = edge.key_field
+            edge_key = data.get(key_field) if key_field is not None else None
 
-            if merge:
-                key_field = edge.key_field
-                edge_key = data.get(key_field) if key_field is not None else None
+            if merge and key_field is not None and edge_key is None:
+                raise exc.validation(
+                    f"Keyed edge command for {edge_kind!r} must include {key_field!r} "
+                    "to ensure a stable identity",
+                    code="graph_edge_key_required",
+                )
 
-                if key_field is not None and edge_key is None:
-                    raise exc.validation(
-                        f"Keyed edge command for {edge_kind!r} must include {key_field!r} "
-                        "to ensure a stable identity",
-                        code="graph_edge_key_required",
-                    )
+            # A create on an ``identity="endpoints"`` kind has the same identity to respect as a
+            # merge does — the pair — so both look for the existing edge; they differ only in
+            # what they do on finding one. A plain append laid a second parallel edge, after
+            # which the pair addressed two and ``get_edge`` returned an arbitrary one.
+            endpoints_create = not merge and edge.identity != "key"
 
+            if merge or endpoints_create:
                 for existing in store:
                     # Identity includes the endpoint *kinds* (so two multi-endpoint edges with the
                     # same key values but different kinds stay distinct) and, for a keyed edge kind,
@@ -445,8 +457,15 @@ class MockGraphAdapter(MockTenancyMixin):
                         and existing["from_key"] == rec["from_key"]
                         and existing["to_kind"] == rec["to_kind"]
                         and existing["to_key"] == rec["to_key"]
-                        and (key_field is None or existing["props"].get(key_field) == edge_key)
+                        and (
+                            endpoints_create
+                            or key_field is None
+                            or existing["props"].get(key_field) == edge_key
+                        )
                     ):
+                        if endpoints_create:
+                            raise endpoints_conflict(edge_kind, rec["from_key"], rec["to_key"])
+
                         return self._emodel(edge_kind, existing["props"]) if return_new else None
 
             store.append(rec)
@@ -607,6 +626,105 @@ class MockGraphAdapter(MockTenancyMixin):
 
         window = matches[offset : offset + limit]
         return [self._emodel(edge_kind, rec["props"]) for rec in window]
+
+    # ....................... #
+
+    def read_capabilities(self) -> GraphReadCapabilities:
+        return GraphReadCapabilities(
+            supports_vertex_streaming=True,
+            supports_edge_streaming=True,
+        )
+
+    # ....................... #
+
+    def find_vertices_stream(
+        self,
+        node_kind: str,
+        *,
+        property_filter: JsonDict | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
+        node = self._node(node_kind)
+        self._validate_filter(property_filter, node.encryption)
+        key_field = assert_vertex_streamable(
+            node, kind=node_kind, capabilities=self.read_capabilities()
+        )
+
+        async def _fetch(after: Any | None, limit: int) -> Sequence[tuple[Any, BaseModel]]:
+            with self.state.lock:
+                matches = sorted(
+                    (
+                        (str(props.get(key_field)), props)
+                        for (kind, _key), props in self._verts().items()
+                        if kind == node_kind and self._matches(props, property_filter)
+                    ),
+                    key=lambda item: item[0],
+                )
+
+            # The keyset seek, in the one line a real backend spends a WHERE clause on:
+            # strictly after the bookmark, never at it.
+            page = [item for item in matches if after is None or item[0] > after][:limit]
+
+            return [(key, self._vmodel(node_kind, props)) for key, props in page]
+
+        return stream_keyset_pages(_fetch, chunk_size=chunk_size)
+
+    # ....................... #
+
+    def find_edges_stream(
+        self,
+        edge_kind: str,
+        *,
+        property_filter: JsonDict | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
+        edge = self._edge(edge_kind)
+        self._validate_filter(property_filter, edge.encryption)
+        cursor = assert_edge_streamable(
+            self.spec, edge, kind=edge_kind, capabilities=self.read_capabilities()
+        )
+
+        def _cursor_key(rec: JsonDict) -> Any:
+            # One field = the edge's own key. Two = the (tail, head) node keys of an
+            # ``identity="endpoints"`` kind — the pair *is* its declared identity.
+            if len(cursor) == 1:
+                return str(rec["props"].get(cursor[0]))
+
+            return (str(rec["from_key"]), str(rec["to_key"]))
+
+        async def _fetch(after: Any | None, limit: int) -> Sequence[tuple[Any, BaseModel]]:
+            with self.state.lock:
+                matches = sorted(
+                    (
+                        (_cursor_key(rec), rec["props"])
+                        for rec in self._edges_store()
+                        if rec["kind"] == edge_kind and self._matches(rec["props"], property_filter)
+                    ),
+                    key=lambda item: item[0],
+                )
+
+            ahead = [item for item in matches if after is None or item[0] > after]
+
+            # ``limit`` bounds **distinct keys**, not rows, and every row of an included key
+            # travels with it — a key can carry more than one edge (nothing enforces the
+            # one-edge-per-pair identity), and a row-bounded page could cut between two of them,
+            # after which the next seek skips strictly past that pair and the leftover is never
+            # seen again.
+            admitted: list[Any] = []
+            page: list[tuple[Any, JsonDict]] = []
+
+            for key, props in ahead:
+                if key not in admitted:
+                    if len(admitted) == limit:
+                        break
+
+                    admitted.append(key)
+
+                page.append((key, props))
+
+            return [(key, self._emodel(edge_kind, props)) for key, props in page]
+
+        return stream_keyset_pages(_fetch, chunk_size=chunk_size)
 
     async def vertex_degree(
         self,

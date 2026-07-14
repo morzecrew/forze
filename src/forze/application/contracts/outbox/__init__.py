@@ -1,7 +1,10 @@
 """Transactional outbox contracts for integration events."""
 
 from ..base import EncryptionReach
+from .admin import OutboxAdminPort, OutboxDepth
 from .deps import (
+    OutboxAdminDepKey,
+    OutboxAdminDepPort,
     OutboxCommandDepKey,
     OutboxCommandDepPort,
     OutboxDeps,
@@ -30,10 +33,14 @@ from .value_objects import (
 __all__ = [
     "EncryptionReach",
     "IntegrationEvent",
+    "OutboxAdminDepKey",
+    "OutboxAdminDepPort",
+    "OutboxAdminPort",
     "OutboxClaim",
     "OutboxCommandDepKey",
     "OutboxCommandDepPort",
     "OutboxCommandPort",
+    "OutboxDepth",
     "OutboxDeps",
     "OutboxDestination",
     "OutboxIntegrationConfig",

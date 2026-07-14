@@ -56,7 +56,12 @@ class InngestEventCommandAdapter[M: BaseModel](DurableFunctionEventCommandPort[M
         event_id: str | None = None,
         occurred_at: datetime | None = None,
     ) -> str:
-        data: JsonDict = dict(self.spec.codec.encode_mapping(payload))
+        # ``mode="json"`` because an Inngest event's ``data`` **is** JSON — the SDK's own
+        # ``Event`` model types it as a JSON-value union and then posts it over HTTP. The
+        # codec's default Python encode keeps a ``UUID`` / ``datetime`` / ``Decimal`` as an
+        # object, which that model rejects outright, so an event payload carrying any of them
+        # could not be sent at all.
+        data: JsonDict = dict(self.spec.codec.encode_mapping(payload, mode="json"))
         tenant = self.execution_ctx.inv_ctx.get_tenant() if self.execution_ctx is not None else None
 
         if self.spec.encrypt:

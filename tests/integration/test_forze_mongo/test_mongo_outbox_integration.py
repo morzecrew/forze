@@ -12,9 +12,10 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel
@@ -45,6 +46,15 @@ from forze_mongo.kernel.client import MongoClient
 
 
 class _OutboxPayload(BaseModel):
+    label: str
+
+
+class _RichPayload(BaseModel):
+    """A UUID, a datetime and a Decimal — the ordinary integration-event payload."""
+
+    order_id: UUID
+    placed_at: datetime
+    total: Decimal
     label: str
 
 
@@ -120,6 +130,63 @@ async def test_mongo_outbox_flush_commits_with_transaction(
 
 
 @pytest.mark.asyncio
+async def test_an_event_payload_of_uuid_datetime_and_decimal_round_trips(
+    mongo_client_replica: MongoClient,
+    outbox_collection: tuple[str, str],
+) -> None:
+    """The same payload the Postgres suite stages, on the other backend that stores one.
+
+    Mongo is where the outbox's serialization split showed: a BSON subdocument takes a ``UUID``
+    and a ``datetime`` natively, so this payload staged *fine* here while the identical event
+    raised ``TypeError`` on Postgres (whose ``JSONB`` column goes through stdlib ``json.dumps``)
+    — the accepted field types depended on which database you had picked. Staging now encodes
+    to JSON before any backend sees it, so both store the same bytes, and Mongo gains ``Decimal``
+    (which BSON would not have taken either).
+    """
+
+    codec = PydanticModelCodec(_RichPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    db_name, coll_name = outbox_collection
+    mongo_module = MongoDepsModule(
+        client=mongo_client_replica,
+        tx={"default"},
+        outboxes={"integration": MongoOutboxConfig(collection=(db_name, coll_name))},
+    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mongo_module).freeze())
+
+    sent = _RichPayload(
+        order_id=uuid4(),
+        placed_at=datetime(2026, 7, 14, 12, 30, tzinfo=UTC),
+        total=Decimal("19.99"),
+        label="rich",
+    )
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        async with ctx.tx_ctx.scope("default"):
+            await ctx.outbox.command(outbox_spec).stage("order.placed", sent)
+            assert await ctx.outbox.command(outbox_spec).flush() == 1
+
+        coll = await mongo_client_replica.collection(coll_name, db_name=db_name)
+        rows = await mongo_client_replica.find_many(coll, {"outbox_route": "integration"})
+
+    stored = rows[0]["payload"]
+
+    # JSON-native in the document, same as the Postgres row — not a BSON UUID.
+    assert stored["order_id"] == str(sent.order_id)
+    assert stored["total"] == "19.99"
+
+    # …and it decodes back to the model with its declared types intact.
+    received = codec.decode_mapping(stored)
+
+    assert received == sent
+    assert isinstance(received.order_id, UUID)
+    assert isinstance(received.placed_at, datetime)
+    assert isinstance(received.total, Decimal)
+
+
+@pytest.mark.asyncio
 async def test_mongo_outbox_ordering_key_round_trips_stage_doc_claim(
     mongo_client_replica: MongoClient,
     outbox_collection: tuple[str, str],
@@ -158,9 +225,7 @@ async def test_mongo_outbox_ordering_key_round_trips_stage_doc_claim(
         by_type = {doc["event_type"]: doc.get("ordering_key") for doc in docs}
         assert by_type == {"demo.created": "order-1", "demo.updated": None}
 
-        claims = {
-            c.event_type: c for c in await ctx.outbox.query(outbox_spec).claim_pending()
-        }
+        claims = {c.event_type: c for c in await ctx.outbox.query(outbox_spec).claim_pending()}
         assert claims["demo.created"].ordering_key == "order-1"
         assert claims["demo.updated"].ordering_key is None
 
@@ -811,9 +876,7 @@ async def test_mongo_hlc_ordering_persists_and_claims_in_causal_order(
             assert await outbox.flush() == 3
 
         coll = await mongo_client_replica.collection(coll_name, db_name=db_name)
-        docs = await mongo_client_replica.find_many(
-            coll, {"outbox_route": "integration"}
-        )
+        docs = await mongo_client_replica.find_many(coll, {"outbox_route": "integration"})
         assert all(doc.get("hlc") is not None for doc in docs)
 
         async with ctx.tx_ctx.scope("default"):
@@ -824,3 +887,73 @@ async def test_mongo_hlc_ordering_persists_and_claims_in_causal_order(
     packed = [c.hlc.pack() for c in claims]  # type: ignore[union-attr]
     assert packed == sorted(packed)
     assert len(set(packed)) == 3
+
+
+# ----------------------- #
+# Admin (observability) port
+#
+# covers: OutboxAdminPort.has_undrained
+# covers: OutboxAdminPort.depth
+# covers: OutboxAdminPort.oldest_pending_age
+
+
+@pytest.mark.asyncio
+async def test_mongo_outbox_admin_depth_age_and_future_retries(
+    mongo_client_replica: MongoClient,
+    outbox_collection: tuple[str, str],
+) -> None:
+    db_name, coll_name = outbox_collection
+    codec = PydanticModelCodec(_OutboxPayload)
+    outbox_spec = OutboxSpec(name="integration", codec=codec)
+    now = utcnow()
+
+    def _doc(status: OutboxStatus, *, created_at: Any, available_at: Any = None) -> dict[str, Any]:
+        return {
+            "id": str(uuid4()),
+            "outbox_route": "integration",
+            "event_id": str(uuid4()),
+            "event_type": "demo.created",
+            "payload": {"label": "x"},
+            "status": status.value,
+            "occurred_at": created_at,
+            "created_at": created_at,
+            "available_at": available_at,
+            "attempts": 0,
+        }
+
+    coll = await mongo_client_replica.collection(coll_name, db_name=db_name)
+    await coll.insert_many(
+        [
+            # A row backing off: invisible to claim_pending, but still undelivered work.
+            _doc(
+                OutboxStatus.PENDING,
+                created_at=now - timedelta(seconds=90),
+                available_at=now + timedelta(hours=1),
+            ),
+            _doc(OutboxStatus.PENDING, created_at=now - timedelta(seconds=30)),
+            _doc(OutboxStatus.PROCESSING, created_at=now),
+            _doc(OutboxStatus.FAILED, created_at=now),
+            _doc(OutboxStatus.PUBLISHED, created_at=now),  # never counted: nothing prunes it
+        ]
+    )
+
+    mongo_module = MongoDepsModule(
+        client=mongo_client_replica,
+        tx={"default"},
+        outboxes={
+            "integration": MongoOutboxConfig(collection=(db_name, coll_name)),
+        },
+    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mongo_module).freeze())
+
+    async with runtime.scope():
+        admin = runtime.get_context().outbox.admin(outbox_spec)
+        depth = await admin.depth()
+        undrained = await admin.has_undrained()
+        age = await admin.oldest_pending_age()
+
+    assert (depth.pending, depth.processing, depth.failed) == (2, 1, 1)
+    assert depth.undrained == 3
+    assert undrained is True
+    assert age is not None
+    assert timedelta(seconds=80) < age < timedelta(seconds=100)  # the parked row is the oldest

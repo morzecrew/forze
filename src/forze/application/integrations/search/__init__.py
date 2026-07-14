@@ -6,6 +6,7 @@ from ._snapshot_stream import (
     build_snapshot_pool_streaming,
 )
 from .encryption import (
+    assert_search_encryption_parity,
     decrypt_search_rows,
     reject_encrypted_sort_fields,
     resolve_search_read_codec_spec,
@@ -40,6 +41,7 @@ __all__ = [
     "federated_thin_eligible",
     "federated_thin_format",
     "federated_highlights_for_hits",
+    "assert_search_encryption_parity",
     "decrypt_search_rows",
     "reject_encrypted_sort_fields",
     "resolve_search_read_codec_spec",

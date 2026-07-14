@@ -5,6 +5,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
+from .admin import OutboxAdminPort
 from .ports import OutboxCommandPort, OutboxQueryPort
 from .specs import OutboxSpec
 
@@ -20,6 +21,9 @@ OutboxCommandDepPort = ConfigurableDepPort[OutboxSpec[Any], OutboxCommandPort[An
 OutboxQueryDepPort = ConfigurableDepPort[OutboxSpec[Any], OutboxQueryPort]
 """Outbox query dependency port."""
 
+OutboxAdminDepPort = ConfigurableDepPort[OutboxSpec[Any], OutboxAdminPort]
+"""Outbox admin (observability) dependency port."""
+
 # ....................... #
 
 OutboxCommandDepKey = DepKey[OutboxCommandDepPort]("outbox_command")
@@ -27,6 +31,9 @@ OutboxCommandDepKey = DepKey[OutboxCommandDepPort]("outbox_command")
 
 OutboxQueryDepKey = DepKey[OutboxQueryDepPort]("outbox_query")
 """Key used to register the :class:`OutboxQueryPort` builder implementation."""
+
+OutboxAdminDepKey = DepKey[OutboxAdminDepPort]("outbox_admin")
+"""Key used to register the :class:`OutboxAdminPort` builder implementation."""
 
 # ....................... #
 
@@ -50,6 +57,21 @@ class OutboxDeps(ConvenientDeps):
 
         return self._resolve_configurable(
             OutboxQueryDepKey,
+            spec,
+            route=spec.name,
+        )
+
+    # ....................... #
+
+    def admin(self, spec: OutboxSpec[Any]) -> OutboxAdminPort:
+        """Resolve an outbox admin (observability) port for the given spec.
+
+        Read-only, so it resolves on the query path and is acquirable from a ``QUERY``
+        operation — the whole point of splitting it off the claim/mark port.
+        """
+
+        return self._resolve_configurable(
+            OutboxAdminDepKey,
             spec,
             route=spec.name,
         )

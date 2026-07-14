@@ -14,6 +14,7 @@ from .configs import (
 from .factories import (
     ConfigurableRedisCache,
     ConfigurableRedisCounter,
+    ConfigurableRedisCounterAdmin,
     ConfigurableRedisDistributedLock,
     ConfigurableRedisIdempotency,
     ConfigurableRedisPubSubCommand,
@@ -44,6 +45,7 @@ __all__ = [
     "RedisUniversalConfig",
     "ConfigurableRedisCache",
     "ConfigurableRedisCounter",
+    "ConfigurableRedisCounterAdmin",
     "ConfigurableRedisDistributedLock",
     "ConfigurableRedisIdempotency",
     "ConfigurableRedisPubSubCommand",

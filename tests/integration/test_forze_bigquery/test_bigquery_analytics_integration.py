@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from decimal import Decimal
+from uuid import UUID, uuid4
+
 import pytest
+import pytest_asyncio
+from gcloud.aio.bigquery import Table
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import (
@@ -10,12 +16,17 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
     IngestSpec,
 )
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from tests.support.execution_context import (
+    context_from_deps,
+    context_from_modules,
+    frozen_deps_from_deps,
+)
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_bigquery.adapters import BigQueryAnalyticsAdapter
 from forze_bigquery.execution import BigQueryAnalyticsConfig, BigQueryDepsModule
 from forze_bigquery.execution.deps.configs import BigQueryQueryConfig
+from tests.integration.test_forze_bigquery.conftest import TEST_PROJECT_ID
 
 pytestmark = pytest.mark.integration
 
@@ -71,6 +82,99 @@ async def test_append_and_query(bigquery_client, analytics_dataset) -> None:
     page = await adapter.run_page("all", _Params())
     assert page.count >= 1
     assert any(hit.event == "signup" and hit.value == 42 for hit in page.hits)
+
+
+class _RichRow(BaseModel):
+    order_id: str
+    placed_at: datetime
+
+
+class _RichIngest(BaseModel):
+    order_id: UUID
+    placed_at: datetime
+    total: Decimal
+
+
+@pytest_asyncio.fixture(scope="function")
+async def rich_table(bigquery_client, analytics_dataset):
+    """A table with the column types a ``str``/``int`` ingest model never exercises."""
+
+    dataset_id = analytics_dataset[0]
+    table_id = f"rich_{uuid4().hex[:12]}"
+    bq_table = Table(
+        dataset_name=dataset_id,
+        table_name=table_id,
+        project=TEST_PROJECT_ID,
+        session=bigquery_client.session,
+        api_root=bigquery_client.api_root,
+    )
+    await bq_table.create(
+        {
+            "tableReference": {
+                "projectId": TEST_PROJECT_ID,
+                "datasetId": dataset_id,
+                "tableId": table_id,
+            },
+            "schema": {
+                "fields": [
+                    {"name": "order_id", "type": "STRING", "mode": "NULLABLE"},
+                    {"name": "placed_at", "type": "TIMESTAMP", "mode": "NULLABLE"},
+                    {"name": "total", "type": "NUMERIC", "mode": "NULLABLE"},
+                ]
+            },
+        },
+        timeout=30,
+    )
+    return dataset_id, table_id
+
+
+@pytest.mark.asyncio
+async def test_ingest_of_uuid_datetime_and_decimal(bigquery_client, rich_table) -> None:
+    """An ingest row carrying a ``UUID``, a ``datetime`` and a ``Decimal`` reaches the table.
+
+    It did not. A BigQuery streaming insert is an HTTP ``insertAll``: the client hands the row
+    map straight to a JSON serializer, and the shared ingest encoder was producing Python
+    objects — right for Postgres and ClickHouse, which bind those values natively onto typed
+    columns, and impossible for a wire that is literally JSON. ``append`` raised ``TypeError:
+    Object of type UUID is not JSON serializable`` before the request was even sent.
+
+    Every other ingest model in this suite is ``event: str`` / ``value: int``, which is exactly
+    why nothing here ever asked the serializer to encode something it could not.
+    """
+
+    dataset_id, table_id = rich_table
+    spec = AnalyticsSpec(
+        name="orders",
+        read=_RichRow,
+        queries={"all": AnalyticsQueryDefinition(params=_Params)},
+        ingest=_RichIngest,
+    )
+    adapter = BigQueryAnalyticsAdapter(
+        client=bigquery_client,
+        spec=spec,
+        config=BigQueryAnalyticsConfig(
+            dataset=dataset_id,
+            queries={
+                "all": BigQueryQueryConfig(
+                    sql=f"SELECT order_id, placed_at FROM {dataset_id}.{table_id}"
+                )
+            },
+            ingest=IngestSpec((dataset_id, table_id)),
+        ),
+    )
+
+    sent = _RichIngest(
+        order_id=uuid4(),
+        placed_at=datetime(2026, 7, 14, 12, 30, tzinfo=UTC),
+        total=Decimal("19.99"),
+    )
+
+    await adapter.append([sent])
+
+    page = await adapter.run_page("all", _Params())
+
+    assert page.count == 1
+    assert page.hits[0].order_id == str(sent.order_id)
 
 
 @pytest.mark.asyncio

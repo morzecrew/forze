@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+**Export foundations** — make an application's state surface enumerable, quiescible and streamable, so a portable export can refuse rather than ship an artifact that looks complete and is not. Each piece is independently useful.
+
+- **Spec inventory** — `forze.application.contracts.inventory` catalogs every spec an app binds: `SpecRegistry.register(*specs)` infers each one's plane and disposition (`exportable` / `rebuildable` / `drained` / `refused`) from its type, and `build_runtime(specs=…)` reconciles it against the wired dependencies at construction — a spec catalogued but never bound, or a route bound but never catalogued, fails assembly (`allow_unregistered=True` downgrades the latter to a warning). Fed by `forze_identity.spec_contributions()` (the 19 document specs the identity plane binds on an app's behalf) and `AggregateKit.spec_contributions()` (including the outbox, queue and inbox a `search_delivery` mints, and the search→document `REBUILDS_FROM` edge).
+
+- **Inventory fingerprint** — `FrozenSpecRegistry.fingerprint()` and `.spec_fingerprint(plane, name)` hash an application's portable shape: each entry's plane, name and disposition, every model's JSON schema, every encryption / materialized / lenient / omit field set, every codec's model, and the catalogued edges. Deployment facts are excluded, so two deployments of one application agree. A *signal, not a gate*, like `FrozenOperationRegistry.fingerprint()` — a differing value means "cannot be trusted to fit". `entry_shape(entry)` exposes the rendering.
+
+- **Outbox observability** — `ctx.outbox.admin(spec)` (`OutboxAdminPort`, dep key `outbox_admin`; Postgres, Mongo, mock) exposes `has_undrained()`, `depth()` and `oldest_pending_age()`; read-only, so a CQRS `QUERY` can acquire it. Emptiness was previously observable only through `claim_pending`, which *claims*. `pending` counts rows parked for a future retry; `published` is never counted; `failed` is reported apart and never waited on.
+
+- **`quiesce()`** — `forze_kits.integrations.quiesce` stops admission, waits for in-flight operations, then polls each outbox route, the durable-run plane and each named stream group until they rest. Returns a `QuiesceReport` with per-plane state and two verdicts: `settled` (nothing was moving) and `attested` (nothing was moving **and** admission was held), plus `raise_if_unattested()`. `close_gate=False` runs it as a pure health check that leaves the scope serving and cannot attest.
+
+- **Outbox relay drains on shutdown** *(opt-in)* — `outbox_relay_background_lifecycle_step(drain_on_shutdown=True, shutdown_drain_timeout=…)` publishes rows still claimable at teardown instead of leaving them `pending` for a later process, burning exactly one delivery attempt per row. Rejects a `pubsub` destination at wiring. Also passed through on `RelayBinding`. Default behavior unchanged.
+
+- **Analytics provenance** — `AnalyticsSpec.provenance` (`AnalyticsProvenance.PROJECTED` / `SYSTEM_OF_RECORD` / `UNDECLARED`, default undeclared) declares whether a warehouse table is recomputable from a plane the app already owns or *is* the only copy of its rows. `UNDECLARED` is fully legal at runtime — no existing application is affected — and only costs something at export, where `assert_exportable(registry)` refuses any `REFUSED` plane and names what to do about each.
+
+- **Search-index rebuild** — `rebuild_search_index()` (or `kit.rebuild_search(ctx)`) streams a document plane into its external search index: the backfill the incremental syncs cannot do, since they only carry a row that is *written*. Applies the same rule they do — live rows upserted, soft-deleted rows removed — so a rebuilt index equals the one an unbroken sync would have produced. Keyset-paged and idempotent. `assert_search_encryption_parity` moves to `forze.application.integrations.search` (still re-exported from `forze_kits.aggregates.search`).
+
+- **Counter enumeration** — `ctx.counter.admin(spec)` (`CounterAdminPort.list_counters()`, dep key `counter_admin`; Redis, mock) returns a `CounterEntry(suffix, value)` per partition, so counters can be carried to another deployment instead of restarting at zero. Handlers still cannot read a counter; import reuses the existing `CounterPort.reset(value, suffix=)`. `RedisClientPort` gains `scan(cursor, *, match, count)`.
+
+- **Graph streaming reads** — `find_vertices_stream` / `find_edges_stream` on `GraphQueryPort` (Neo4j, mock) yield keyset batches of a whole kind, memory bounded by `chunk_size`, behind `GraphReadCapabilities` / `GraphStreamingAware`. Offset paging cannot promise completeness on a graph being written; a key bookmark can. An `identity="endpoints"` edge bookmarks on its `(tail, head)` node-key pair, and for those kinds `chunk_size` bounds **pairs, not edges**. Fails closed (`graph_streaming_unsupported`) on a backend that cannot seek and on a multi-endpoint kind whose endpoint kinds key on different properties. **Breaking** for custom `GraphQueryPort` implementations: the protocol gained two methods.
+
+- **Tenant enumeration** — `TenantManagementPort.list_tenants(limit, offset, *, active_only=False)` pages every tenant with the total; not membership-scoped, unlike `list_principal_tenants`, so a per-tenant sweep no longer skips a tenant nobody belongs to. `active_only` defaults to `False`: deactivation is a flag, not a delete, and that tenant's data is still there.
+
+### Changed
+
+**Breaking — graph**
+
+- **`identity="endpoints"` enforces the identity it declares** — at most one edge per `(from, to)` pair: `create_edge` on such a kind raises `conflict` (`graph_edge_endpoints_conflict`) instead of laying a second parallel edge. **Migration:** if two edges of a kind can legitimately run between the same pair (two flights between two cities), declare it `identity="key"` with a `key_field` — they are distinct entities and were never addressable by their endpoints anyway (`get_edge` returned an arbitrary one, `update_edge` / `delete_edge` hit both). `ensure_edge` (idempotent), `update_edge` and keyed kinds are unaffected.
+
+- **`GraphModuleSpec` is validated at construction** — `validate_graph_module_spec` now runs from `__attrs_post_init__`, so a malformed module raises `configuration` instead of becoming an object that fails at first use. Catches a duplicate kind name, an endpoint naming an unknown node kind, a `key_field` absent from its own read model, and `identity="key"` with no `key_field` — both are defaults, so the shortest edge declaration anyone would write was a keyed edge with no key.
+
+**Behavior**
+
+- **Background loops stop gracefully instead of being cancelled** — all five (outbox relay, queue consumer, commit-stream consumer, durable recovery, durable scheduler) register with a new per-scope `ctx.drainables`, and `runtime.shutdown()` asks each to stop between units of work, before lifecycle teardown; consumers take a `stop` signal on `run()`. A commit-stream consumer stops between **messages** and commits the offsets of everything it processed — including when a handler outlasts the grace and it is cancelled mid-batch. A loop that overruns is still cancelled, and now reports that it was rather than counting as a clean stop. `drain_on_shutdown=True` no longer needs an ordering edge to the database client.
+
+- **`OutboxEmit` rejects a relay with no destination** — a `RelayBinding` whose `transport` names a spec it was never given raises `precondition` at construction instead of quietly dropping that route from the inventory.
+
+### Fixed
+
+**JSON-boundary encoding** — a codec's default `mode="python"` keeps `UUID` / `datetime` / `Decimal` as Python objects, which is right for a driver that binds them natively (psycopg, PyMongo, clickhouse-connect) and impossible for anything that hands the map to a JSON serializer. Four adapters were on the wrong side and could not carry the ordinary contents of an event or a row. `ModelCodec.encode_mapping` now documents the rule at the seam; `encode_ingest_payloads` takes `mode` from its caller, and Postgres and ClickHouse keep the Python encode on purpose.
+
+- **The transactional outbox could not stage an event whose payload held a `UUID`** — the staged map binds into a `JSONB` column through stdlib `json.dumps`, so `OrderPlaced(order_id: UUID, placed_at: datetime, total: Decimal)` raised `TypeError` on `stage()`, and the accepted field types varied by backend *and* encryption setting. Staging now encodes to JSON before any backend sees it.
+
+- **Meilisearch could not index the framework's own document read model** — a standard `ReadDocument` carries a `UUID` id and `datetime` timestamps, so **every committed write on an aggregate wired with `AggregateKit(search=…)` or `bind_search_sync` raised `TypeError` against a real index.**
+
+- **BigQuery analytics ingest** raised `TypeError` on any of the three — a streaming insert is an HTTP `insertAll`.
+
+- **Inngest events** could carry none of the three — the SDK types an event's `data` as a JSON-value union and rejected them outright.
+
+**Cross-process fingerprints**
+
+- **Sets hashed in iteration order** — `stable_json_bytes` left a `set` to `orjson`'s `default=str`, and string hashing is seeded per process; sets are now sorted recursively, by canonical bytes. **Idempotency was live-broken by this:** a command model carrying a `set` field hashed differently on another replica, so a byte-identical retry with the same key got `conflict("Payload hash mismatch")` — told it had changed its arguments when it had not, in exactly the retry-after-failure case idempotency exists for. The search-snapshot and federated-cursor fingerprints are fixed with it.
+
+**Kafka**
+
+- **A failed rewind could silently skip records** — `seek_to_committed` swallowed every failure as a benign rebalance. It is benign only when the partitions were reassigned; a coordinator error with them **still held** left the fetch position past records nobody processed, and the pooled consumer — reused by the next read, including a supervised restart — then committed past them. The two cases are now told apart, and a consumer whose position cannot be restored is discarded (new `KafkaClientPort.discard_consumer`) so the next read starts at the committed offset.
+
+**Graph**
+
+- **A kind could seal its own key field, making its vertices unreachable** — naming a `key_field` in the same kind's `encryption` policy is now refused at spec construction (`graph_sealed_key_field`). A write sealed the key while a lookup by key matched the caller's plaintext, so a vertex created under a sealed key could never be fetched, updated or deleted by that key again. Encrypting an ordinary property is unaffected.
+
 ## [0.5.0] - 2026-07-13
 
 ### Added
@@ -1399,6 +1463,7 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.5.0...HEAD
 [0.5.0]: https://github.com/morzecrew/forze/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/morzecrew/forze/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/morzecrew/forze/compare/v0.3.0...v0.4.0

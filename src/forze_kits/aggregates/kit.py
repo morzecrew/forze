@@ -29,6 +29,11 @@ from forze.application.contracts.execution import (
     OperationHandlerFactory,
 )
 from forze.application.contracts.invariants import SystemInvariant
+from forze.application.contracts.inventory import (
+    SpecEdgeKind,
+    SpecRegistry,
+    SpecSource,
+)
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import StorageSpec
 from forze.application.execution.domain import DomainEventRegistry
@@ -37,6 +42,7 @@ from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
+from forze.application.integrations.search import assert_search_encryption_parity
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 from forze.domain.models import BaseDTO, Document
@@ -53,7 +59,6 @@ from forze_kits.aggregates.search import (
     SearchMappers,
     SearchSyncOutboxWiring,
     SearchSyncSteps,
-    assert_search_encryption_parity,
     bind_search_sync,
     bind_search_sync_outbox,
     build_search_registry,
@@ -67,13 +72,17 @@ from forze_kits.aggregates.soft_deletion import (
 from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
 from forze_kits.integrations.outbox import OutboxEmit, bind_outbox
+from forze_kits.integrations.search import SearchRebuildReport, rebuild_search_index
 from forze_kits.invariants import InvariantEnforcement, bind_invariants
 
 if TYPE_CHECKING:
     from forze.application.contracts.document import DocumentSpec
+    from forze.application.contracts.querying import QueryFilterExpression
     from forze.application.execution import ExecutionRuntime
+    from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
+
 
 R = TypeVar("R", bound=BaseModel)
 D = TypeVar("D", bound=Document)
@@ -314,6 +323,89 @@ class AggregateKit(Generic[R, D, C, U]):
         return bind_search_sync_outbox(
             document=self.spec, search=self.search, config=self.search_delivery
         )
+
+    # ....................... #
+
+    async def rebuild_search(
+        self,
+        ctx: ExecutionContext,
+        *,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        chunk_size: int = 500,
+    ) -> SearchRebuildReport:
+        """Backfill the kit's search index from its document plane (requires ``search``).
+
+        The index-sync bindings only carry rows that are *written*, so an aggregate that
+        gained ``search=…`` after it already held rows — or whose index was provisioned
+        fresh, restored, or left to drift — has no supported way to fill the gap without
+        this. Resolves both ports off *ctx* and runs the sweep; see
+        :func:`~forze_kits.integrations.search.rebuild_search_index` for the rule it applies
+        and the exactness it does and does not promise.
+
+        Run it once per tenant (under ``bind_identity(tenant=…)``) on a tenant-aware route.
+        """
+
+        if self.search is None:
+            raise exc.precondition(
+                "AggregateKit.rebuild_search requires a search spec (search=…) on the kit — "
+                "there is no index to rebuild.",
+            )
+
+        return await rebuild_search_index(
+            ctx.doc.query(self.spec),
+            ctx.search.command(self.search),
+            document=self.spec,
+            search=self.search,
+            filters=filters,
+            chunk_size=chunk_size,
+        )
+
+    # ....................... #
+
+    def spec_contributions(self) -> SpecRegistry:
+        """Every spec this declaration binds — including the ones the author never wrote.
+
+        The spec-valued sibling of :meth:`backend_requirements` (which reports route *names*).
+        Merge it into the application's inventory, or reconciliation will fail on routes the
+        kit wired behind the author's back:
+
+        - A ``search_delivery`` mints an **outbox, a queue and an inbox**, all named
+          ``<search-name>_sync``, none of which appear anywhere in the author's code.
+        - The relay binds exactly one transport spec — the one its ``transport`` selects.
+          ``RelayBinding`` lets all three be set and only consumes the selected one, so
+          contributing them all would demand a dependency route nothing ever resolves.
+
+        Also carries the ``REBUILDS_FROM`` edge from the search index to its source document.
+        A ``SearchSpec`` holds no pointer back, so this is the only place that pairing is
+        known; lose it here and no import can ever rebuild the index automatically.
+        """
+
+        registry = SpecRegistry().register(self.spec, source=SpecSource.KIT)
+
+        if self.storage is not None:
+            registry.register(self.storage, source=SpecSource.KIT)
+
+        if self.search is not None:
+            registry.register(self.search, source=SpecSource.KIT).link(
+                SpecEdgeKind.REBUILDS_FROM, source=self.search, target=self.spec
+            )
+
+        if self.outbox is not None:
+            registry.register(self.outbox.spec, source=SpecSource.KIT)
+            transport = self.outbox.relay_transport_spec
+
+            # ``None`` here means *no relay* — ``OutboxEmit`` refuses one whose transport has no
+            # spec — so this can no longer skip a destination that was merely left unset.
+            if transport is not None:
+                registry.register(transport, source=SpecSource.KIT)
+
+        if self.search is not None and self.search_delivery is not None:
+            sync = self.search_sync_wiring()
+            registry.register(
+                sync.outbox_spec, sync.queue_spec, sync.inbox_spec, source=SpecSource.KIT
+            )
+
+        return registry
 
     # ....................... #
 

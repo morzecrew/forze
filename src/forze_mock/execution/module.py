@@ -35,7 +35,7 @@ from forze.application.contracts.authz import (
     RoleAssignmentDepKey,
 )
 from forze.application.contracts.cache import CacheDepKey
-from forze.application.contracts.counter import CounterDepKey
+from forze.application.contracts.counter import CounterAdminDepKey, CounterDepKey
 from forze.application.contracts.crypto import (
     AeadDepKey,
     AesGcmAead,
@@ -84,6 +84,7 @@ from forze.application.contracts.idempotency import (
 )
 from forze.application.contracts.inbox import InboxDepKey
 from forze.application.contracts.outbox import (
+    OutboxAdminDepKey,
     OutboxCommandDepKey,
     OutboxQueryDepKey,
 )
@@ -178,6 +179,7 @@ from forze_mock.execution.factories import (
     ConfigurableMockCommitStreamGroup,
     ConfigurableMockCommitStreamGroupAdmin,
     ConfigurableMockCounter,
+    ConfigurableMockCounterAdmin,
     ConfigurableMockDistributedLock,
     ConfigurableMockDocument,
     ConfigurableMockDurableFunctionEvent,
@@ -368,6 +370,7 @@ class MockDepsModule(DepsModule):
             AnalyticsIngestDepKey: ConfigurableMockAnalytics(module=self),
             ProcedureCommandDepKey: ConfigurableMockProcedure(module=self),
             CounterDepKey: ConfigurableMockCounter(module=self),
+            CounterAdminDepKey: ConfigurableMockCounterAdmin(module=self),
             CacheDepKey: ConfigurableMockCache(module=self),
             IdempotencyDepKey: ConfigurableMockIdempotency(module=self),
             InboxDepKey: ConfigurableMockInbox(module=self),
@@ -391,6 +394,9 @@ class MockDepsModule(DepsModule):
             CommitStreamGroupAdminDepKey: ConfigurableMockCommitStreamGroupAdmin(module=self),
             OutboxCommandDepKey: ConfigurableMockOutboxCommand(module=self),
             OutboxQueryDepKey: ConfigurableMockOutboxQuery(module=self),
+            # The store serves both protocols; the admin key is separate so a read-only
+            # QUERY can acquire the depth probes without the claim/mark port.
+            OutboxAdminDepKey: ConfigurableMockOutboxQuery(module=self),
             DistributedLockQueryDepKey: dlock,
             DistributedLockCommandDepKey: dlock,
             EmbeddingsProviderDepKey: ConfigurableMockEmbeddings(

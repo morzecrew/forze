@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.outbox import OutboxRelayResult, OutboxSpec
+from forze.application.contracts.execution import LifecycleStep
+from forze.application.contracts.outbox import (
+    OutboxRelayResult,
+    OutboxSpec,
+    OutboxStatus,
+)
+from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.exceptions import CoreException
@@ -21,7 +27,8 @@ from forze_kits.integrations.outbox import (
     outbox_relay_background_lifecycle_step,
 )
 from forze_kits.integrations.outbox.lifecycle import _OutboxRelayBackgroundStartup
-from forze_mock import MockDepsModule
+from forze_mock import MockDepsModule, MockStateDepKey
+from forze_mock.adapters.outbox import MockOutboxRow
 
 
 class _Payload(BaseModel):
@@ -262,3 +269,289 @@ async def test_drain_tick_isolates_a_failing_tenant() -> None:
 
     assert seen == [_T1, _T2]  # T1 failed but T2 still drained this tick
     logger_mock.exception.assert_called_once()  # the failing tenant was logged
+
+
+# ----------------------- #
+# Shutdown drain (opt-in)
+#
+# Default shutdown cancels the relay task, so rows staged just before teardown sit
+# ``pending`` until some later process claims them. ``drain_on_shutdown`` publishes what is
+# still claimable instead. The drain must never be worse than that default, which is what
+# most of these tests pin: it burns exactly one delivery attempt per row (so it cannot
+# dead-letter a backlog the next process would have delivered), it stops instead of
+# hammering a dead backend, and it is bounded structurally rather than only by a clock.
+
+
+_ENQUEUE = "forze_mock.adapters.queue.MockQueueAdapter.enqueue"
+
+_T0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+
+def _outbox_row(*, index: int = 0) -> MockOutboxRow:
+    return MockOutboxRow(
+        id=uuid4(),
+        outbox_route="events",
+        event_id=uuid4(),
+        event_type="job.requested",
+        payload={"x": index},
+        status=OutboxStatus.PENDING,
+        tenant_id=None,
+        execution_id=None,
+        correlation_id=None,
+        causation_id=None,
+        occurred_at=_T0,
+        created_at=_T0 + timedelta(microseconds=index),
+        attempts=0,
+    )
+
+
+def _drain_step(**overrides: Any) -> LifecycleStep:
+    codec = PydanticModelCodec(_Payload)
+    kwargs: dict[str, Any] = {
+        "outbox_spec": OutboxSpec(name="events", codec=codec),
+        "queue_spec": QueueSpec(name="jobs", codec=codec),
+        "interval": timedelta(hours=1),
+        "reclaim_stale_after": None,
+        "drain_on_shutdown": True,
+        "requires": ("db",),
+    }
+    kwargs.update(overrides)
+    return outbox_relay_background_lifecycle_step(**kwargs)
+
+
+async def _scope_staging_rows_before_shutdown(
+    step: LifecycleStep,
+    rows: list[MockOutboxRow],
+) -> None:
+    """Start the relay on an empty route, stage *rows*, then shut down.
+
+    Staging only *after* the first tick has run and parked on its hour-long sleep is what
+    isolates the shutdown path: whatever publishes these rows can only be the drain.
+    """
+
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        state = ctx.deps.provide(MockStateDepKey)
+
+        await step.startup(ctx)
+        await asyncio.sleep(0.05)
+
+        state.outbox_rows["events"] = list(rows)
+        await step.shutdown(ctx)
+
+
+async def _drain_directly(
+    startup: _OutboxRelayBackgroundStartup,
+    *,
+    budget: float = 60.0,
+    **patch_kwargs: Any,
+) -> Any:
+    """Run just the drain (no poll loop) against a patched transport; return its mock."""
+
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    with patch.object(OutboxRelay, "to_queue", **patch_kwargs) as relay_mock:
+        async with runtime.scope():
+            deadline = asyncio.get_running_loop().time() + budget
+            await startup.drain_for_shutdown(runtime.get_context(), deadline=deadline)
+
+    return relay_mock
+
+
+@pytest.mark.asyncio
+async def test_shutdown_drain_publishes_rows_staged_after_the_last_tick() -> None:
+    rows = [_outbox_row(index=i) for i in range(3)]
+
+    await _scope_staging_rows_before_shutdown(_drain_step(), rows)
+
+    assert [row.status for row in rows] == [OutboxStatus.PUBLISHED] * 3
+
+
+@pytest.mark.asyncio
+async def test_shutdown_without_drain_leaves_rows_pending() -> None:
+    rows = [_outbox_row(index=i) for i in range(3)]
+
+    # The default: cancel the task and let the next process pick the rows up. This pair of
+    # tests is the whole feature — the drain is exactly the difference between them.
+    await _scope_staging_rows_before_shutdown(
+        _drain_step(drain_on_shutdown=False, requires=()), rows
+    )
+
+    assert [row.status for row in rows] == [OutboxStatus.PENDING] * 3
+
+
+@pytest.mark.asyncio
+async def test_shutdown_drain_burns_at_most_one_attempt_per_row() -> None:
+    # Destination down. A drain that kept going would re-claim the rows it just rescheduled
+    # (they sort back to the head of the queue by ``created_at``) and burn every attempt —
+    # dead-lettering a backlog the next process would have delivered. ``max_attempts=2``
+    # makes that visible: a second attempt would park these rows ``failed``.
+    rows = [_outbox_row(index=i) for i in range(2)]
+    step = _drain_step(
+        limit=2,  # a full claim, so the pass cannot end as "drained" on the first batch
+        max_attempts=2,
+        retry_base_delay=timedelta(microseconds=1),  # rescheduled rows are claimable again at once
+        retry_max_backoff=timedelta(seconds=1),
+    )
+
+    with patch(_ENQUEUE, AsyncMock(side_effect=RuntimeError("broker down"))):
+        await _scope_staging_rows_before_shutdown(step, rows)
+
+    assert [row.attempts for row in rows] == [1, 1]
+    assert [row.status for row in rows] == [OutboxStatus.PENDING] * 2  # never dead-lettered
+
+
+@pytest.mark.asyncio
+async def test_shutdown_drain_stops_on_a_failing_batch_instead_of_spinning() -> None:
+    # The steady tick tolerates a failing batch because the next tick retries it. The drain
+    # has no next tick, so it must not hammer a dead backend ``max_batches_per_tick`` times
+    # with no backoff.
+    relay_mock = await _drain_directly(
+        _startup(drain_on_shutdown=True, max_batches_per_tick=100),
+        new=AsyncMock(side_effect=RuntimeError("db down")),
+    )
+
+    assert relay_mock.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_shutdown_drain_is_bounded_by_the_batch_cap() -> None:
+    # A time-only bound is not a bound: under simulation the virtual clock does not advance
+    # while the loop has ready work, so a drain that only watched a deadline would never
+    # stop. The structural cap is what guarantees termination.
+    relay_mock = await _drain_directly(
+        _startup(limit=10, max_batches_per_tick=5, drain_on_shutdown=True),
+        new=AsyncMock(return_value=_result(10)),  # always a full claim: never "drained"
+    )
+
+    assert relay_mock.await_count == 5
+
+
+@pytest.mark.asyncio
+async def test_shutdown_drain_on_an_empty_outbox_costs_one_claim_and_skips_reclaim() -> None:
+    # The 99% case: shutdown must not get measurably slower. Reclaiming rows abandoned by
+    # some *other* dead process is not this teardown's business either.
+    relay_mock = await _drain_directly(
+        _startup(reclaim_stale_after=timedelta(minutes=5), drain_on_shutdown=True),
+        autospec=True,
+        return_value=_result(0),
+    )
+
+    assert relay_mock.await_count == 1
+    assert relay_mock.call_args_list[0].args[0].reclaim_stale_after is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_drain_covers_each_assigned_tenant_bound() -> None:
+    startup = _startup(tenants=lambda: [_T1, _T2], drain_on_shutdown=True)
+    startup.tenant_shard = [_T1, _T2]  # normally frozen at startup
+    seen: list[UUID | None] = []
+
+    async def _capture(self: Any, ctx: Any, queue_spec: Any, *, limit: Any = None) -> OutboxRelayResult:
+        tenant = ctx.inv_ctx.get_tenant()
+        seen.append(tenant.tenant_id if tenant is not None else None)
+        return _result(0)
+
+    await _drain_directly(startup, autospec=True, side_effect=_capture)
+
+    assert seen == [_T1, _T2]
+
+
+@pytest.mark.asyncio
+async def test_double_shutdown_is_a_no_op() -> None:
+    # A CancelledError escaping this hook would abort teardown of *every* remaining
+    # lifecycle step — the runner reads ``task.exception()``, and that re-raises it.
+    step = _drain_step()
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await step.startup(ctx)
+        await asyncio.sleep(0.05)
+        await step.shutdown(ctx)
+        await step.shutdown(ctx)
+
+
+@pytest.mark.asyncio
+async def test_relay_runs_again_after_a_previous_scope_shut_it_down() -> None:
+    # The stop signal must not outlive its startup: a reused event would leave the next
+    # loop stopped before its first tick, and the relay would silently never run again.
+    step = _drain_step()
+    relay_mock = AsyncMock(return_value=_result(0))
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    with patch.object(OutboxRelay, "to_queue", relay_mock):
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            await step.startup(ctx)
+            await asyncio.sleep(0.05)
+            await step.shutdown(ctx)
+            after_first = relay_mock.await_count
+
+            await step.startup(ctx)
+            await asyncio.sleep(0.05)
+            await step.shutdown(ctx)
+
+    assert after_first >= 1
+    assert relay_mock.await_count > after_first  # the second loop actually ticked
+
+
+def test_drain_needs_no_ordering_dependency() -> None:
+    # It used to: the drain touches the database during teardown, and lifecycle shutdown runs
+    # in reverse wave order, so without an edge the pool could close underneath it. The runtime
+    # now stops every registered loop *before* teardown begins, so the client is open by
+    # construction and the app no longer has to know any of this.
+    codec = PydanticModelCodec(_Payload)
+
+    step = outbox_relay_background_lifecycle_step(
+        outbox_spec=OutboxSpec(name="events", codec=codec),
+        queue_spec=QueueSpec(name="jobs", codec=codec),
+        drain_on_shutdown=True,
+    )
+
+    assert step.requires == ()
+
+
+@pytest.mark.asyncio
+async def test_the_drain_runs_at_most_once_per_startup() -> None:
+    # `stop` is asked twice by design — by the runtime before teardown, and by this step's own
+    # shutdown hook. The drain must not be the part that repeats: a second pass would re-claim
+    # the rows the first just rescheduled (they return to the head of the claim order once
+    # their backoff elapses) and burn a second delivery attempt on each.
+    rows = [_outbox_row(index=i) for i in range(2)]
+    step = _drain_step(
+        limit=2,
+        max_attempts=2,  # a second attempt would park these rows `failed`
+        retry_base_delay=timedelta(microseconds=1),
+        retry_max_backoff=timedelta(seconds=1),
+    )
+
+    with patch(_ENQUEUE, AsyncMock(side_effect=RuntimeError("broker down"))):
+        await _scope_staging_rows_before_shutdown(step, rows)
+
+    assert [row.attempts for row in rows] == [1, 1]
+    assert [row.status for row in rows] == [OutboxStatus.PENDING] * 2
+
+
+def test_drain_is_rejected_for_a_pubsub_destination() -> None:
+    # Pubsub is at-most-once past the broker, so draining while subscribers are going away
+    # turns a delayed delivery into a lost one. Leaving the rows pending is strictly safer.
+    codec = PydanticModelCodec(_Payload)
+
+    with pytest.raises(CoreException, match="pubsub"):
+        outbox_relay_background_lifecycle_step(
+            outbox_spec=OutboxSpec(name="events", codec=codec),
+            transport="pubsub",
+            pubsub_spec=PubSubSpec(name="topic", codec=codec),
+            drain_on_shutdown=True,
+            requires=("db",),
+        )
+
+
+def test_drain_step_carries_its_ordering_edge() -> None:
+    step = _drain_step(requires=("postgres_client",))
+
+    assert step.requires == ("postgres_client",)

@@ -237,6 +237,7 @@ class CommitStreamGroupConsumer[M]:
         ctx: ExecutionContext,
         *,
         timeout: timedelta | None = None,
+        stop: asyncio.Event | None = None,
     ) -> CommitStreamGroupConsumerRunResult:
         """Consume the log and process each message exactly-once via the inbox.
 
@@ -247,6 +248,14 @@ class CommitStreamGroupConsumer[M]:
 
         :param timeout: ``None`` runs forever (polling on an empty log); a finite
             value drains what is currently available and returns a result.
+        :param stop: Set to end the run at the next **message** boundary — the messages
+            processed so far have their offsets committed before it returns, and the rest of
+            the batch is left uncommitted for redelivery. This is the whole point of stopping a
+            commit-stream consumer gracefully: a run cancelled mid-batch never commits, so
+            every message it just handled is redelivered to whoever comes next. The boundary is
+            the message rather than the batch precisely so it is *reachable* — a batch is
+            unbounded by default (``batch_limit=None`` reads the whole uncommitted tail) and
+            would routinely outlast the shutdown grace, making the cancel the normal path.
         """
 
         executor = ctx.resilience() if self.retry_policy is not None else None
@@ -269,6 +278,10 @@ class CommitStreamGroupConsumer[M]:
         topics = list(self.topics)
 
         while True:
+            if stop is not None and stop.is_set():
+                # Between batches: the previous one is processed and committed.
+                return totals.finish()
+
             batch = await port.read(
                 self.group,
                 self.consumer,
@@ -292,6 +305,7 @@ class CommitStreamGroupConsumer[M]:
                 cipher=cipher,
                 dlq_producer=dlq_producer,
                 totals=totals,
+                stop=stop,
             )
 
             if not committed:
@@ -327,10 +341,12 @@ class CommitStreamGroupConsumer[M]:
         cipher: BytesCipherPort | None,
         dlq_producer: StreamCommandPort[M] | None,
         totals: _RunTotals,
+        stop: asyncio.Event | None = None,
     ) -> bool:
         """Process a batch; return ``False`` if a pause-and-alert message stopped it."""
 
         positions: list[StreamPosition] = []
+        stopped = False
 
         async def _flush() -> None:
             if positions:
@@ -345,82 +361,117 @@ class CommitStreamGroupConsumer[M]:
             totals.failed += 1
             return False
 
-        for message in batch:
-            # -- Decode: a poison marker from the read path pauses like decode. --- #
-            if isinstance(message.payload, UndecodableStreamPayload):
-                self._alert_pause(message, reason="decode")
-                return await _pause()
+        try:
+            for message in batch:
+                if stop is not None and stop.is_set():
+                    # A batch is not a unit of work shutdown can afford to wait out: the default
+                    # ``batch_limit=None`` is *the whole uncommitted tail*, so it can outlast any
+                    # grace budget and be cancelled part-way — losing the offsets of every message
+                    # it had already handled, which is exactly what the stop signal exists to
+                    # prevent. So the stopping point is the message, not the batch: the flush below
+                    # commits what this batch processed, and the tail it never reached stays
+                    # uncommitted for redelivery.
+                    stopped = True
+                    break
 
-            # Keep the message as received: a dead-letter forwards it untouched (an
-            # end-to-end-sealed envelope stays sealed, with the event-id/tenant
-            # headers its AAD is bound to), so the copy is decryptable on the
-            # dead-letter stream and correlates back to the source event.
-            received = message
+                # -- Decode: a poison marker from the read path pauses like decode. --- #
+                if isinstance(message.payload, UndecodableStreamPayload):
+                    self._alert_pause(message, reason="decode")
+                    return await _pause()
 
-            # -- Decrypt: end-to-end ciphertext → typed model before the ladder. -- #
-            try:
-                message = await _decrypt_message(
-                    message, stream_spec=self.stream_spec, cipher=cipher
-                )
+                # Keep the message as received: a dead-letter forwards it untouched (an
+                # end-to-end-sealed envelope stays sealed, with the event-id/tenant
+                # headers its AAD is bound to), so the copy is decryptable on the
+                # dead-letter stream and correlates back to the source event.
+                received = message
 
-            except asyncio.CancelledError:
-                raise
-
-            except CoreException as e:
-                if e.code == _CIPHER_MISSING_CODE:
-                    raise  # deployment fault — abort, don't dead-letter every message
-
-                # Decrypt runs through the KMS-backed keyring, so a transient
-                # dependency fault (KMS unavailable/throttled on a cold data key)
-                # surfaces here too and is indistinguishable from tampering by
-                # failure alone — classify by kind. A retryable kind is
-                # crash-shaped, not poison: commit the successes so far and
-                # re-raise so the supervised lifecycle restarts the run with
-                # backoff (rewinding to committed), instead of pausing for an
-                # operator; the message is redelivered once the blip clears.
-                if exception_egress_policy(e.kind).retryable:
-                    logger.warning(
-                        "Commit-stream consumer could not decrypt %s on %s "
-                        "(transient %s failure); raising for supervised restart",
-                        message.id,
-                        message.stream,
-                        e.kind.value,
-                        exc_info=True,
+                # -- Decrypt: end-to-end ciphertext → typed model before the ladder. -- #
+                try:
+                    message = await _decrypt_message(
+                        message, stream_spec=self.stream_spec, cipher=cipher
                     )
-                    await _flush()
+
+                except asyncio.CancelledError:
                     raise
 
-                # Decrypt-poison: no typed model in hand, so it cannot be
-                # re-produced through the typed DLQ port — pause and alert.
-                self._alert_pause(message, reason="decrypt")
-                return await _pause()
+                except CoreException as e:
+                    if e.code == _CIPHER_MISSING_CODE:
+                        raise  # deployment fault — abort, don't dead-letter every message
 
-            except Exception:
-                # Decode-poison: same as decrypt — nothing decodable to forward.
-                self._alert_pause(message, reason="decode")
-                return await _pause()
+                    # Decrypt runs through the KMS-backed keyring, so a transient
+                    # dependency fault (KMS unavailable/throttled on a cold data key)
+                    # surfaces here too and is indistinguishable from tampering by
+                    # failure alone — classify by kind. A retryable kind is
+                    # crash-shaped, not poison: commit the successes so far and
+                    # re-raise so the supervised lifecycle restarts the run with
+                    # backoff (rewinding to committed), instead of pausing for an
+                    # operator; the message is redelivered once the blip clears.
+                    if exception_egress_policy(e.kind).retryable:
+                        logger.warning(
+                            "Commit-stream consumer could not decrypt %s on %s "
+                            "(transient %s failure); raising for supervised restart",
+                            message.id,
+                            message.stream,
+                            e.kind.value,
+                            exc_info=True,
+                        )
+                        await _flush()
+                        raise
 
-            # -- Process: dedup mark + handler in one transaction, up to N tries. -- #
-            outcome = await self._process_one(ctx, message, executor=executor)
+                    # Decrypt-poison: no typed model in hand, so it cannot be
+                    # re-produced through the typed DLQ port — pause and alert.
+                    self._alert_pause(message, reason="decrypt")
+                    return await _pause()
 
-            if outcome is None:
-                # Exhausted max_attempts — poison.
-                if await self._dead_letter(received, dlq_producer, reason="handler"):
-                    positions.append(StreamPosition.from_message(message))
-                    totals.dead_lettered += 1
-                    continue
+                except Exception:
+                    # Decode-poison: same as decrypt — nothing decodable to forward.
+                    self._alert_pause(message, reason="decode")
+                    return await _pause()
 
-                self._alert_pause(message, reason="handler")
-                return await _pause()
+                # -- Process: dedup mark + handler in one transaction, up to N tries. -- #
+                outcome = await self._process_one(ctx, message, executor=executor)
 
-            if outcome:
-                totals.processed += 1
-            else:
-                totals.duplicates += 1
+                if outcome is None:
+                    # Exhausted max_attempts — poison.
+                    if await self._dead_letter(received, dlq_producer, reason="handler"):
+                        positions.append(StreamPosition.from_message(message))
+                        totals.dead_lettered += 1
+                        continue
 
-            positions.append(StreamPosition.from_message(message))
+                    self._alert_pause(message, reason="handler")
+                    return await _pause()
+
+                if outcome:
+                    totals.processed += 1
+                else:
+                    totals.duplicates += 1
+
+                positions.append(StreamPosition.from_message(message))
+        except asyncio.CancelledError:
+            # The grace ran out *inside* a handler, so the loop was cancelled rather than reaching
+            # a stopping point. Every message before this one already committed its effect in its
+            # own inbox transaction — their offsets are **owed**, and the single ``commit`` that
+            # would have paid them is precisely what a cancel here skips. That is why a hard stop
+            # used to redeliver work it had already done, even though nothing was lost by it.
+            #
+            # Awaiting during a cancellation is sound: it is delivered once, so these two calls
+            # run to completion, and the runtime stops every loop *before* it tears down the
+            # client they need. The rewind is the same one a graceful stop does, for the same
+            # reason — the tail this batch never reached must be re-fetched, not skipped.
+            await _flush()
+            await port.seek_to_committed(self.group, list(self.topics))
+            raise
 
         await _flush()
+
+        if stopped:
+            # ``read`` advanced the reader past the *whole* fetched batch, so the tail this
+            # stop never looked at is only re-fetched if the reader is rewound — the same
+            # reason a crashed run rewinds (see :meth:`reset_to_committed`). Without it, a loop
+            # stopped and re-armed in-process (a quiesce, a re-scoped runtime) resumes past
+            # messages it never handled and skips them outright.
+            await port.seek_to_committed(self.group, list(self.topics))
+
         return True
 
     # ....................... #

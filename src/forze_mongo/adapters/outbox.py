@@ -9,7 +9,7 @@ require_mongo()
 # ....................... #
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, final
 from uuid import UUID
 
@@ -19,7 +19,9 @@ from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.errors import BulkWriteError
 
 from forze.application.contracts.outbox import (
+    OutboxAdminPort,
     OutboxClaim,
+    OutboxDepth,
     OutboxQueryPort,
     OutboxSpec,
     OutboxStatus,
@@ -74,8 +76,8 @@ def _claim_from_doc(doc: JsonDict) -> OutboxClaim:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
-    """Mongo-backed outbox persistence and query port."""
+class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort, OutboxAdminPort):
+    """Mongo-backed outbox persistence, query, and admin port."""
 
     client: MongoClientPort
     spec: OutboxSpec[M]
@@ -375,3 +377,59 @@ class MongoOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort):
                 }
             },
         )
+
+    # ....................... #
+    # Admin (observability) port
+
+    def _undrained_filter(self) -> dict[str, Any]:
+        flt = self._route_filter()
+        flt["status"] = {"$in": [OutboxStatus.PENDING.value, OutboxStatus.PROCESSING.value]}
+        return flt
+
+    # ....................... #
+
+    async def has_undrained(self) -> bool:
+        coll = await self._collection()
+        # find_one over count: stops at the first match instead of walking the whole
+        # matching set, so a quiesce loop can poll it cheaply.
+        hit = await self.client.find_one(coll, self._undrained_filter(), projection={"_id": 1})
+
+        return hit is not None
+
+    # ....................... #
+
+    async def depth(self) -> OutboxDepth:
+        coll = await self._collection()
+        counts: dict[OutboxStatus, int] = {}
+
+        # Undrained buckets only: `published` is never pruned, so counting it would walk
+        # every event the app has ever emitted.
+        for status in (OutboxStatus.PENDING, OutboxStatus.PROCESSING, OutboxStatus.FAILED):
+            flt = self._route_filter()
+            flt["status"] = status.value
+            counts[status] = await self.client.count(coll, flt)
+
+        return OutboxDepth(
+            pending=counts[OutboxStatus.PENDING],
+            processing=counts[OutboxStatus.PROCESSING],
+            failed=counts[OutboxStatus.FAILED],
+        )
+
+    # ....................... #
+
+    async def oldest_pending_age(self) -> timedelta | None:
+        coll = await self._collection()
+        flt = self._route_filter()
+        flt["status"] = OutboxStatus.PENDING.value
+
+        oldest = await self.client.find_one(
+            coll,
+            flt,
+            projection={"created_at": 1},
+            sort=[("created_at", 1)],
+        )
+
+        if oldest is None:
+            return None
+
+        return utcnow() - oldest["created_at"]

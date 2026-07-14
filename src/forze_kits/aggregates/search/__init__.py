@@ -1,3 +1,5 @@
+from forze.application.integrations.search import assert_search_encryption_parity
+
 from .dto import (
     CursorSearchRequestDTO,
     FacetBucketDTO,
@@ -9,7 +11,6 @@ from .dto import (
     SearchPaginated,
     SearchRequestDTO,
 )
-from .encryption import assert_search_encryption_parity
 from .facades import SearchFacade
 from .factories import (
     build_federated_search_registry,

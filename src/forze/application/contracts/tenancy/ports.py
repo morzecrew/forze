@@ -64,6 +64,31 @@ class TenantManagementPort(Protocol):
         """
         ...
 
+    def list_tenants(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        *,
+        active_only: bool = False,
+    ) -> Awaitable[tuple[Sequence[TenantIdentity], int]]:
+        """Page through **every** tenant, with the total. Not membership-scoped.
+
+        The global enumeration that drives per-tenant work: a sweep, a migration, an export.
+        :meth:`list_principal_tenants` cannot do that job — it answers "which tenants may
+        *this* principal see", so anything driven from it visits only the tenants somebody
+        happens to be a member of.
+
+        ``active_only=False`` is the default **on purpose**. Deactivating a tenant sets a
+        flag; it does not delete a row, so a deactivated tenant's documents, blobs and
+        counters are all still there. A sweep that quietly skipped them would drop real data
+        and report success — so the complete answer is what you get unless you ask for less.
+        Pass ``active_only=True`` for a "who is live" admin view, where that is the question.
+
+        Expose this only on an authorization-gated admin surface: it lists every tenant in
+        the deployment, including ones the caller has no membership in.
+        """
+        ...
+
     def attach_principal(
         self,
         principal_id: UUID,

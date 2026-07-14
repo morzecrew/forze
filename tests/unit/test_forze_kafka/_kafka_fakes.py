@@ -9,8 +9,9 @@ ordering / replay is covered by the integration testcontainer suite and RFC
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from aiokafka.errors import TopicAlreadyExistsError
 from aiokafka.structs import (
@@ -34,9 +35,7 @@ class Msg(BaseModel):
 
 def make_codec() -> KafkaStreamCodec[Msg]:
     return KafkaStreamCodec(
-        payload_codec=StreamSpec(
-            name="s", codec=PydanticModelCodec(model_type=Msg)
-        ).codec
+        payload_codec=StreamSpec(name="s", codec=PydanticModelCodec(model_type=Msg)).codec
     )
 
 
@@ -82,6 +81,8 @@ class FakeConsumer:
         ends: dict[TopicPartition, int] | None = None,
         times: dict[TopicPartition, OffsetAndTimestamp | None] | None = None,
         assignment: set[TopicPartition] | None = None,
+        seek_error: Exception | None = None,
+        assignment_after_seek: set[TopicPartition] | None = None,
     ) -> None:
         self._batches = batches or {}
         self._batch_sequence = batch_sequence
@@ -90,6 +91,8 @@ class FakeConsumer:
         self._ends = ends or {}
         self._times = times or {}
         self._assignment = assignment or set()
+        self._seek_error = seek_error
+        self._assignment_after_seek = assignment_after_seek
         self.committed: dict[TopicPartition, OffsetAndMetadata] = {}
         self.assigned: list[TopicPartition] = []
         self.sought: list[list[TopicPartition]] = []
@@ -126,14 +129,20 @@ class FakeConsumer:
     async def seek_to_committed(self, *partitions: TopicPartition) -> None:
         self.sought.append(list(partitions))
 
+        if self._seek_error is not None:
+            # A rebalance that lands mid-seek takes the partitions with it; a coordinator
+            # blip does not, and the difference is the whole point of the guard.
+            if self._assignment_after_seek is not None:
+                self._assignment = self._assignment_after_seek
+
+            raise self._seek_error
+
     async def beginning_offsets(
         self, partitions: list[TopicPartition]
     ) -> dict[TopicPartition, int]:
         return {tp: self._begins.get(tp, 0) for tp in partitions}
 
-    async def end_offsets(
-        self, partitions: list[TopicPartition]
-    ) -> dict[TopicPartition, int]:
+    async def end_offsets(self, partitions: list[TopicPartition]) -> dict[TopicPartition, int]:
         return {tp: self._ends.get(tp, 0) for tp in partitions}
 
     async def offsets_for_times(
@@ -180,9 +189,7 @@ class FakeAdmin:
         return [
             {
                 "topic": topic,
-                "partitions": [
-                    {"partition": p} for p in self._topic_partitions.get(topic, [])
-                ],
+                "partitions": [{"partition": p} for p in self._topic_partitions.get(topic, [])],
             }
             for topic in topics
         ]
@@ -215,6 +222,7 @@ class FakeKafkaClient:
         self._admin = admin or FakeAdmin()
         self.get_consumer_calls: list[dict[str, Any]] = []
         self.last_listener: KafkaCommitRebalanceListener | None = None
+        self.discarded: list[FakeConsumer] = []
 
     async def close(self) -> None:  # pragma: no cover - not exercised
         return None
@@ -243,6 +251,9 @@ class FakeKafkaClient:
         return SimpleNamespace(
             topic=topic, partition=self._send_partition, offset=self._send_offset
         )
+
+    async def discard_consumer(self, consumer: Any) -> None:
+        self.discarded.append(consumer)
 
     async def get_consumer(
         self,

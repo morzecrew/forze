@@ -36,11 +36,11 @@ from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
 from forze.application.contracts.queue import QueueMessage, QueueSpec
 from forze.application.contracts.search import SearchSpec
+from forze.application.integrations.search import assert_search_encryption_parity
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import StrKey
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.aggregates.document.dto import written_read_model
-from forze_kits.aggregates.search.encryption import assert_search_encryption_parity
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
 from forze_kits.integrations.outbox import RelayBinding
 

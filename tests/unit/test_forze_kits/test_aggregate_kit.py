@@ -17,6 +17,7 @@ from forze import build_runtime
 from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.execution import Handler
+from forze.application.contracts.inventory import SpecEdgeKind, SpecPlane, SpecSource
 from forze.application.contracts.invariants import ReadSet, SumOf, SystemInvariant
 from forze.application.contracts.outbox import (
     OutboxDestination,
@@ -24,6 +25,7 @@ from forze.application.contracts.outbox import (
 )
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.stream import StreamSpec
 from forze.application.contracts.storage import StorageSpec
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import OperationRegistry
@@ -564,3 +566,82 @@ class TestStorageSlice:
 
         async with runtime.scope():
             assert isinstance(factory(), StorageFacade)
+
+
+# ----------------------- #
+# Spec contributions (the inventory)
+#
+# covers: forze_kits.aggregates.kit.AggregateKit.spec_contributions
+
+
+def test_spec_contributions_include_the_specs_no_author_wrote() -> None:
+    # One line of declaration (`search_delivery=`) mints an outbox, a queue AND an inbox, all
+    # named `<search-name>_sync`, none of which appear anywhere in the author's code. If the
+    # inventory misses them, reconciliation false-positives on routes the kit wired itself.
+    kit = AggregateKit(
+        spec=WIDGET_SPEC,
+        search=WIDGET_INDEX,
+        search_delivery=OutboxSearchSync(),
+        outbox=_outbox(),
+    )
+
+    entries = kit.spec_contributions().freeze()
+    by_plane = {
+        plane: {entry.name for entry in entries.of_plane(plane)}
+        for plane in (SpecPlane.DOCUMENT, SpecPlane.SEARCH, SpecPlane.OUTBOX, SpecPlane.QUEUE, SpecPlane.INBOX)
+    }
+    sync = f"{WIDGET_INDEX.name}_sync"
+
+    assert by_plane[SpecPlane.DOCUMENT] == {str(WIDGET_SPEC.name)}
+    assert by_plane[SpecPlane.SEARCH] == {str(WIDGET_INDEX.name)}
+    assert by_plane[SpecPlane.OUTBOX] == {str(OUTBOX.name), sync}  # the author's + the derived
+    assert by_plane[SpecPlane.QUEUE] == {str(QUEUE.name), sync}
+    assert by_plane[SpecPlane.INBOX] == {sync}
+    assert all(entry.source is SpecSource.KIT for entry in entries.entries)
+
+
+def test_spec_contributions_carry_the_rebuilds_from_edge() -> None:
+    # A SearchSpec holds no pointer back to the document it indexes — the pairing exists only
+    # where the two were bound together. Lose it here and no import can ever rebuild the index.
+    kit = AggregateKit(spec=WIDGET_SPEC, search=WIDGET_INDEX)
+
+    (edge,) = kit.spec_contributions().freeze().edges_of(SpecEdgeKind.REBUILDS_FROM)
+
+    assert edge.source.name == str(WIDGET_INDEX.name)
+    assert edge.target.name == str(WIDGET_SPEC.name)
+
+
+def test_spec_contributions_bind_only_the_selected_transport() -> None:
+    # RelayBinding lets a queue, a stream and a pubsub spec all be set, but only the one its
+    # `transport` names is ever resolved. Contributing the others would have the inventory
+    # demand a dependency route that nothing wires.
+    stray = StreamSpec(name="unused-stream", codec=PydanticModelCodec(WidgetPayload))
+    kit = AggregateKit(
+        spec=WIDGET_SPEC,
+        outbox=OutboxEmit(
+            spec=OUTBOX,
+            emits=(
+                EmitMapping(
+                    event=WidgetCreated,
+                    event_type="widget.created",
+                    to_payload=lambda e: WidgetPayload(widget_id=str(e.aggregate_id)),
+                ),
+            ),
+            relay=RelayBinding(transport="queue", queue_spec=QUEUE, stream_spec=stray),
+        ),
+    )
+
+    entries = kit.spec_contributions().freeze()
+
+    assert {e.name for e in entries.of_plane(SpecPlane.QUEUE)} == {str(QUEUE.name)}
+    assert entries.of_plane(SpecPlane.STREAM) == ()  # the stray stream is not bound
+
+
+def test_spec_contributions_are_stable_across_calls() -> None:
+    # The kit re-derives its search-sync trio on every access, so a naive identity-keyed
+    # inventory would emit duplicate routes. Value equality is what makes the merge idempotent.
+    kit = AggregateKit(spec=WIDGET_SPEC, search=WIDGET_INDEX, search_delivery=OutboxSearchSync())
+
+    merged = kit.spec_contributions().merge(kit.spec_contributions()).freeze()
+
+    assert len(merged.entries) == len(kit.spec_contributions().freeze().entries)

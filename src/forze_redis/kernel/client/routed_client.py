@@ -104,6 +104,16 @@ class RoutedRedisClient(DsnRoutedTenantClientBase[RedisClient], RedisClientPort)
         inner = await self._get_client()
         return await inner.mget(keys)
 
+    async def scan(
+        self,
+        cursor: int = 0,
+        *,
+        match: str | None = None,
+        count: int | None = None,
+    ) -> tuple[int, list[str]]:
+        inner = await self._get_client()
+        return await inner.scan(cursor, match=match, count=count)
+
     async def set(
         self,
         key: str,

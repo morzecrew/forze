@@ -100,6 +100,12 @@ class RoutedKafkaClient(DsnRoutedTenantClientBase[KafkaClient], KafkaClientPort)
 
     # ....................... #
 
+    async def discard_consumer(self, consumer: AIOKafkaConsumer) -> None:
+        inner = await self._get_client()
+        await inner.discard_consumer(consumer)
+
+    # ....................... #
+
     async def new_transient_consumer(
         self,
         *,

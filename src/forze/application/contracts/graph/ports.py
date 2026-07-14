@@ -4,7 +4,7 @@ Ports are intentionally free of Cypher, AQL, and other engine-specific query
 strings; adapters map these operations to the underlying graph database.
 """
 
-from collections.abc import Awaitable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Sequence
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
@@ -188,6 +188,53 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
         offset: int = 0,
     ) -> Awaitable[Sequence[BaseModel]]:
         """List edges of *edge_kind* with simple filtering and offset pagination."""
+        ...  # pragma: no cover
+
+    def find_vertices_stream(
+        self,
+        node_kind: str,
+        *,
+        property_filter: JsonDict | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
+        """Yield keyset batches of every vertex of *node_kind* — the whole-kind read.
+
+        The streaming counterpart of :meth:`find_vertices`, and **not** the same thing with a
+        bigger ``limit``: it seeks by key (``key_field > last-seen``) rather than by offset, so
+        a graph being written while it is walked cannot shift rows past the cursor. Offset
+        paging over a live graph silently skips and repeats — the failure an export must not
+        have, because a page that was skipped and a page that was empty produce the same
+        artifact.
+
+        No total count, memory bounded by *chunk_size*. Fails closed on a backend that does not
+        report vertex streaming, rather than serving a partial scan that reads like a complete
+        one.
+        """
+        ...  # pragma: no cover
+
+    def find_edges_stream(
+        self,
+        edge_kind: str,
+        *,
+        property_filter: JsonDict | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
+        """Yield keyset batches of every edge of *edge_kind*.
+
+        As :meth:`find_vertices_stream`. A **keyed** edge (``identity="key"``) bookmarks on its
+        own key; an **endpoint-identified** one has no key of its own — that is what the
+        declaration means — so it bookmarks on the ``(tail, head)`` node-key pair, which *is*
+        the identity the author asserted.
+
+        For an endpoint-identified kind, *chunk_size* therefore bounds **pairs, not edges**, and
+        every edge of a pair is yielded with it. The framework does not enforce the
+        one-edge-per-pair identity that declaration promises (``create_edge`` will add a second
+        parallel edge), so a page cut *within* a pair would leave edges behind the cursor that
+        the next seek steps straight over — a walk that looked complete and was not.
+
+        Fails closed on a multi-endpoint kind whose endpoint node kinds key on *different*
+        properties: there is no single ordering that covers both, and no partial one is offered.
+        """
         ...  # pragma: no cover
 
     def vertex_degree(

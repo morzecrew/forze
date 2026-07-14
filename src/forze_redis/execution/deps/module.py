@@ -6,7 +6,7 @@ from typing import Any, TypeGuard, cast, final
 import attrs
 
 from forze.application.contracts.cache import CacheDepKey
-from forze.application.contracts.counter import CounterDepKey
+from forze.application.contracts.counter import CounterAdminDepKey, CounterDepKey
 from forze.application.contracts.deps import (
     Deps,
     DepsModule,
@@ -61,6 +61,7 @@ from .configs import (
 from .factories import (
     ConfigurableRedisCache,
     ConfigurableRedisCounter,
+    ConfigurableRedisCounterAdmin,
     ConfigurableRedisDistributedLock,
     ConfigurableRedisIdempotency,
     ConfigurableRedisPubSubCommand,
@@ -346,7 +347,10 @@ class RedisDepsModule(DepsModule):
             ),
             routed_from_mapping(
                 self.counters,
-                bindings=[(CounterDepKey, ConfigurableRedisCounter)],
+                bindings=[
+                    (CounterDepKey, ConfigurableRedisCounter),
+                    (CounterAdminDepKey, ConfigurableRedisCounterAdmin),
+                ],
             ),
             idempotency_deps,
             routed_from_mapping(

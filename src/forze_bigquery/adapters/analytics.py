@@ -484,7 +484,14 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 f"Analytics ingest codec is not configured for route {self.spec.name!r}."
             )
 
-        payloads = await encode_ingest_payloads(ingest_codec, list(rows))
+        # ``mode="json"`` because this backend's wire *is* JSON: a streaming insert is an HTTP
+        # ``insertAll``, and the client hands the row map straight to a JSON serializer. The
+        # default Python encode keeps a ``UUID`` / ``datetime`` / ``Decimal`` as an object, which
+        # ``json.dumps`` cannot encode at all — those rows raised ``TypeError`` before the
+        # request was even sent. (Postgres and ClickHouse keep the Python encode on purpose:
+        # both bind those values natively onto typed columns.) BigQuery takes RFC-3339 strings
+        # for ``TIMESTAMP`` and decimal strings for ``NUMERIC``, so this is what it wants.
+        payloads = await encode_ingest_payloads(ingest_codec, list(rows), mode="json")
 
         dataset, table = await self._resolved_ingest_target()
 

@@ -8,14 +8,17 @@ author wires by hand, now bound from one declaration. Plus the shape/guard check
 
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import UUID, uuid4
 
+import attrs
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.execution import LifecycleStep, OnSuccessStep
 from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
 from forze.application.contracts.queue import QueueQueryDepKey, QueueSpec
+from forze.application.contracts.stream import StreamSpec
 from forze.application.execution import DepsRegistry, ExecutionContext
 from forze.application.execution.domain import InProcessDomainEventDispatcher
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -162,3 +165,55 @@ class TestBindOutboxComposesEndToEnd:
 
         result = await OutboxRelay(outbox_spec=OUTBOX).to_queue(ctx, QUEUE)
         assert result.published == 0
+
+
+# ....................... #
+
+
+class TestRelayDestinationIsRequired:
+    """A relay with no destination must not construct — and must not merely go missing.
+
+    ``AggregateKit.spec_contributions`` reads the relay's transport spec into the inventory. A
+    transport whose spec was never supplied does not surface there as an error; it surfaces as an
+    *absence* — the destination route drops silently out of the catalogue, which is the one thing
+    an inventory may never do. So it is refused where the author declares it.
+    """
+
+    @pytest.mark.parametrize("transport", ["queue", "stream", "pubsub"])
+    def test_a_transport_without_its_spec_is_refused(self, transport: str) -> None:
+        with pytest.raises(CoreException) as ei:
+            _emit(relay=RelayBinding(transport=transport))  # type: ignore[arg-type]
+
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+        assert "nowhere to publish" in str(ei.value)
+
+    def test_the_declared_transport_is_the_one_that_counts(self) -> None:
+        # A stream spec set on a queue-transport relay is not the destination and cannot stand in
+        # for the missing queue: only the spec ``transport`` names is ever resolved.
+        stray = StreamSpec(name="elsewhere", codec=PydanticModelCodec(OrderConfirmedPayload))
+
+        with pytest.raises(CoreException):
+            _emit(relay=RelayBinding(transport="queue", stream_spec=stray))
+
+        emit = _emit(relay=RelayBinding(transport="queue", queue_spec=QUEUE, stream_spec=stray))
+
+        assert emit.relay_transport_spec is QUEUE
+
+    def test_no_relay_means_no_transport_spec(self) -> None:
+        # The one remaining ``None`` — and now the only thing it can mean.
+        assert _emit().relay_transport_spec is None
+
+    def test_a_search_sync_relay_may_omit_its_queue(self) -> None:
+        """The kit derives that queue and evolves it in, so the author writes tick knobs alone.
+
+        This is why the guard lives on ``OutboxEmit`` and not on ``RelayBinding``: the same class
+        serves a role where the destination is genuinely not the author's to supply.
+        """
+
+        partial = RelayBinding(interval=timedelta(milliseconds=20), jitter=0.0)
+
+        assert partial.transport_spec is None
+
+        completed = attrs.evolve(partial, transport="queue", queue_spec=QUEUE)
+
+        assert completed.transport_spec is QUEUE

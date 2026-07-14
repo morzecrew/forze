@@ -1,11 +1,48 @@
 """Value objects returned by analytics ports."""
 
+from enum import StrEnum
+
 import attrs
 
 from forze.application.contracts.resolution import RelationSpec, coerce_relation_spec
 from forze.base.primitives import JsonDict
 
 # ----------------------- #
+
+
+class AnalyticsProvenance(StrEnum):
+    """Where an analytics table's rows come from — and therefore whether they can be carried.
+
+    The framework cannot work this out for itself, and the two cases are not close. An
+    application that *projects* into its warehouse from documents it already owns can throw the
+    warehouse away and recompute it. One that **ingests events straight into it** — the shape a
+    ClickHouse or BigQuery pipeline usually takes — has made that warehouse a system of record,
+    and there is nothing to recompute it from. From the outside the two look identical: the same
+    spec, the same ports, the same rows.
+
+    Guessing is not an option in either direction. Assume *projected* and a portable export
+    silently drops the only copy of the data; assume *system of record* and it refuses to export
+    a table that was never anything but a cache. So the author declares it.
+    """
+
+    UNDECLARED = "undeclared"
+    """Nobody has said. Legal at runtime — this is the default, and no existing application is
+    affected by it — but a portable export **refuses** rather than guess. "We did not think
+    about it" and "there is nothing here to carry" must not look the same."""
+
+    PROJECTED = "projected"
+    """Derived from an exportable plane. Not carried in an artifact; the application recomputes
+    it on the target. (There is no generic warehouse rebuild — the projection logic is the
+    app's, so the recompute is too.)"""
+
+    SYSTEM_OF_RECORD = "system_of_record"
+    """The warehouse *is* the source of truth for these rows — nothing else holds them. A
+    portable export refuses, loudly: ``AnalyticsQueryPort`` exposes only the app's named
+    queries, with no generic full-scan read, so the framework has no way to carry the data and
+    no way to rebuild it either."""
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, frozen=True)

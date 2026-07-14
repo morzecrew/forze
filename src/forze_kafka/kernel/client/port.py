@@ -52,6 +52,18 @@ class KafkaClientPort(Protocol):
         """
         ...  # pragma: no cover
 
+    def discard_consumer(self, consumer: AIOKafkaConsumer) -> Awaitable[None]:
+        """Evict a pooled consumer whose in-memory fetch position can no longer be trusted.
+
+        The next :meth:`get_consumer` for its key builds a fresh one, and a fresh consumer starts
+        where the group committed. That is what makes this the fail-closed answer to a rewind that
+        did not happen: a position we cannot restore is a position we must not keep.
+
+        Idempotent, and never raises — the consumer is being thrown away precisely because it is
+        already suspect.
+        """
+        ...  # pragma: no cover
+
     def new_transient_consumer(
         self,
         *,

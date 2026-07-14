@@ -11,7 +11,7 @@ dimensions/measures). ``binds_record_id`` is unsupported (analytics rows have no
 """
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import attrs
 from pydantic import BaseModel
@@ -87,14 +87,34 @@ def resolve_analytics_codecs_spec(
 
 
 async def encode_ingest_payloads(
-    ingest_codec: ModelCodec[Any, Any], rows: list[Any]
+    ingest_codec: ModelCodec[Any, Any],
+    rows: list[Any],
+    *,
+    mode: Literal["json", "python"] = "python",
 ) -> list[JsonDict]:
     """Encode ingest *rows* to property maps, sealing encrypted columns when the codec encrypts.
 
     Shared by every backend's ``append`` path: when *ingest_codec* is an encrypting codec it is
     warmed once and rows go through ``encode_persistence_mapping`` (which seals the fields); a
-    plain codec keeps the existing ``encode_mapping`` (event/JSON) behaviour unchanged. Rows
-    must be instances of the ingest model (or any ``BaseModel``, re-decoded through the codec).
+    plain codec keeps the existing ``encode_mapping`` behaviour unchanged. Rows must be
+    instances of the ingest model (or any ``BaseModel``, re-decoded through the codec).
+
+    **The caller picks *mode*, because the right answer is a property of the transport, not of
+    the rows.** An ingest row is not JSON — it is a row of typed warehouse columns, and how a
+    ``UUID`` or a ``datetime`` should be spelled depends entirely on what carries it there:
+
+    - ``"python"`` (the default) keeps them as Python objects, which is what a driver that binds
+      values natively wants — Postgres (psycopg) and ClickHouse (clickhouse-connect) both map
+      them straight onto a ``UUID`` / ``DateTime64`` / ``Decimal`` column, and handing those
+      drivers strings instead would be a lossy round-trip through the column's own parser.
+    - ``"json"`` is for a backend whose transport **is** JSON. BigQuery's streaming insert is an
+      HTTP ``insertAll`` — the client hands the row map to a JSON serializer, which cannot encode
+      a ``UUID``, a ``datetime`` or a ``Decimal`` at all, so those rows raised ``TypeError``
+      before the request was ever sent. BigQuery accepts RFC-3339 strings for ``TIMESTAMP`` and
+      decimal strings for ``NUMERIC``, so the JSON encode is exactly what that wire wants.
+
+    A single default for both would be wrong for one of them, which is why this is a parameter
+    and not a decision made here.
     """
 
     # ``prepare_encrypt`` is the encrypting-codec discriminator (only ``EncryptingModelCodec``
@@ -117,9 +137,9 @@ async def encode_ingest_payloads(
             raise exc.internal("Analytics ingest rows must be Pydantic model instances.")
 
         out.append(
-            ingest_codec.encode_persistence_mapping(model)
+            ingest_codec.encode_persistence_mapping(model, mode=mode)
             if encrypts
-            else ingest_codec.encode_mapping(model)
+            else ingest_codec.encode_mapping(model, mode=mode)
         )
 
     return out

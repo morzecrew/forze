@@ -310,3 +310,58 @@ async def test_tail_yields_messages() -> None:
 
     assert first.payload.body == "z"
     assert first.offset == 0
+
+
+async def test_a_rewind_that_fails_while_still_assigned_discards_the_consumer() -> None:
+    """The failure this path used to swallow — and the only one here that loses records.
+
+    ``getmany`` moved the fetch position past the whole batch. A rewind that does not happen
+    leaves it there, past the tail nobody processed and nobody committed. If the partitions are
+    *still ours* no rebalance listener fires to fix it, and the pooled consumer is reused by the
+    very next read — including the supervised in-process restart — which then resumes beyond
+    those records and commits past them. They are never handled, and nothing ever says so.
+
+    So the consumer is dropped: the next read builds a fresh one, which starts at committed.
+    """
+
+    codec = make_codec()
+    tp = TopicPartition("events", 0)
+    consumer = FakeConsumer(
+        batches={tp: [record("events", 0, 0, codec.encode_value(Msg(body="a")))]},
+        assignment={tp},
+        seek_error=RuntimeError("coordinator not available"),  # not a rebalance
+    )
+    client = FakeKafkaClient(consumer=consumer)
+    adapter = _adapter(client)
+
+    await adapter.read("g", "m", ["events"])  # registers partition routing
+    await adapter.seek_to_committed("g", ["events"])
+
+    assert consumer.sought == [[tp]]  # it did try
+    assert client.discarded == [consumer], "a position it could not restore must not be kept"
+    assert consumer.stopped is False  # the *client* stops it; the fake only records the eviction
+
+
+async def test_a_rewind_that_races_a_rebalance_keeps_the_consumer() -> None:
+    """The benign case, and the reason the swallow existed at all.
+
+    The partitions were reassigned mid-seek, so they are someone else's now and the
+    subscription's ``on_assign`` positions their new owner at committed. Nothing is owed, and
+    discarding a healthy pooled consumer over a routine rebalance would be its own bug.
+    """
+
+    codec = make_codec()
+    tp = TopicPartition("events", 0)
+    consumer = FakeConsumer(
+        batches={tp: [record("events", 0, 0, codec.encode_value(Msg(body="a")))]},
+        assignment={tp},
+        seek_error=RuntimeError("not assigned"),
+        assignment_after_seek=set(),  # the rebalance took them
+    )
+    client = FakeKafkaClient(consumer=consumer)
+    adapter = _adapter(client)
+
+    await adapter.read("g", "m", ["events"])
+    await adapter.seek_to_committed("g", ["events"])
+
+    assert client.discarded == []

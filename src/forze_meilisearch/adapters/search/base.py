@@ -188,10 +188,17 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
         # excluding pydantic ``@computed_field`` values, which the plain index path keeps —
         # so re-enable them here to index the same field set, just with the encrypted ones
         # sealed. Plain routes use ``encode_mapping`` directly (computed fields already in).
+        #
+        # ``mode="json"`` on both, because Meilisearch is a JSON-over-HTTP store and this is
+        # the boundary: the SDK hands the mapping straight to ``json.dumps``, which cannot
+        # serialize the Python objects the default ``mode="python"`` preserves. A ``UUID`` id
+        # and ``datetime`` timestamps are exactly what a standard ``ReadDocument`` carries —
+        # i.e. what the index-sync path feeds this on every committed write — so the plain
+        # encode raised ``TypeError`` for the framework's own document read model.
         data = (
-            codec.encode_persistence_mapping(model, exclude={"computed_fields": False})
+            codec.encode_persistence_mapping(model, mode="json", exclude={"computed_fields": False})
             if self._encrypts
-            else codec.encode_mapping(model)
+            else codec.encode_mapping(model, mode="json")
         )
         out: dict[str, Any] = {}
 

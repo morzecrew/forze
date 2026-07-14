@@ -83,7 +83,31 @@ class ModelCodec[T, TSource](Protocol):
         *,
         mode: EncodeMode = "python",
         exclude: ModelDumpExcludeOptions | None = None,
-    ) -> JsonDict: ...
+    ) -> JsonDict:
+        """Encode *obj* to a property map. **Pick `mode` from what will consume the map.**
+
+        The default ``"python"`` keeps a ``UUID``, a ``datetime`` and a ``Decimal`` as Python
+        objects. The return type says ``JsonDict``, and in that mode it is not one — the
+        annotation describes the *shape*, not the values, and reading it as a promise of
+        JSON-safety is how this goes wrong. There are exactly two kinds of consumer, and the
+        wrong choice fails loudly on one of them and lossily on the other:
+
+        - **A driver that binds values natively** — psycopg, PyMongo, clickhouse-connect, the
+          Neo4j driver — wants ``"python"``. It maps those objects straight onto a ``uuid`` /
+          ``timestamptz`` / ``Decimal`` column. Handing it strings pushes every value back
+          through the column's own parser for nothing.
+        - **Anything that serializes the map to JSON** — an HTTP API (Meilisearch, BigQuery's
+          ``insertAll``, Inngest), a ``JSONB`` parameter (psycopg wraps it in ``Jsonb``, which
+          calls ``json.dumps``), a broker envelope — needs ``"json"``. ``json.dumps`` cannot
+          encode any of those three types, so the default mode raises ``TypeError`` before the
+          value ever leaves the process.
+
+        Every one of those JSON consumers has been caught getting this wrong at least once, and
+        the failure is invisible in tests: a payload model of ``str`` and ``int`` fields never
+        asks the serializer to encode anything it cannot. Cover a new adapter with a model that
+        carries a ``UUID``, a ``datetime`` and a ``Decimal``, against the real backend.
+        """
+        ...
 
     def encode_mapping_many(
         self,

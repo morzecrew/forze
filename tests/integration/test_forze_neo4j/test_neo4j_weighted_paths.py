@@ -33,10 +33,12 @@ class WUserCreate(BaseModel):
 
 
 class WEdgeRead(BaseModel):
+    id: str
     w: float
 
 
 class WEdgeCreate(BaseModel):
+    id: str
     from_key: str
     to_key: str
     w: float
@@ -47,10 +49,20 @@ def _spec() -> GraphModuleSpec:
         name="wpaths",
         nodes=(GraphNodeSpec(name="WUser", read=WUserRead, create=WUserCreate),),
         edges=(
+            # **Keyed**, not endpoint-identified — and the distinction is the point of this
+            # file. These tests lay *parallel* edges between the same pair (different weights),
+            # which is a perfectly good graph model: two flights between two cities, two roads
+            # between two towns. But such an edge cannot be addressed *by its endpoints*, so it
+            # is not an ``identity="endpoints"`` kind — that declaration means "at most one edge
+            # of this kind per (from, to) pair", and an edge kind that breaks it has no identity
+            # at all: ``get_edge`` would return an arbitrary one of the parallel edges, and
+            # ``update_edge`` / ``delete_edge`` would hit every one of them. An edge that is a
+            # distinct entity needs a key of its own to be one.
             GraphEdgeSpec(
                 name="WLINK",
                 read=WEdgeRead,
-                identity="endpoints",
+                identity="key",
+                key_field="id",
                 endpoints=(GraphEdgeEndpoint(from_kind="WUser", to_kind="WUser"),),
                 directionality=GraphEdgeDirectionality.DIRECTED,
             ),
@@ -66,9 +78,9 @@ async def _triangle(adapter: Neo4jGraphAdapter, *, direct_w: float) -> None:
     # direct a→b at weight ``direct_w``; detour a→c→b at total weight 0.2 (0.1 + 0.1).
     for key in ("a", "b", "c"):
         await adapter.create_vertex("WUser", WUserCreate(id=key))
-    await adapter.create_edge("WLINK", WEdgeCreate(from_key="a", to_key="b", w=direct_w))
-    await adapter.create_edge("WLINK", WEdgeCreate(from_key="a", to_key="c", w=0.1))
-    await adapter.create_edge("WLINK", WEdgeCreate(from_key="c", to_key="b", w=0.1))
+    await adapter.create_edge("WLINK", WEdgeCreate(id="ab", from_key="a", to_key="b", w=direct_w))
+    await adapter.create_edge("WLINK", WEdgeCreate(id="ac", from_key="a", to_key="c", w=0.1))
+    await adapter.create_edge("WLINK", WEdgeCreate(id="cb", from_key="c", to_key="b", w=0.1))
 
 
 # --- capability gate (no GDS needed — fails before any GDS call) ---
@@ -184,14 +196,14 @@ async def test_weighted_shortest_grows_window_past_candidate_buffer(
     await adapter.create_vertex("WUser", WUserCreate(id="a"))
     await adapter.create_vertex("WUser", WUserCreate(id="b"))
     # Expensive direct a→b (1 hop) — the only route within max_hops=1.
-    await adapter.create_edge("WLINK", WEdgeCreate(from_key="a", to_key="b", w=100.0))
+    await adapter.create_edge("WLINK", WEdgeCreate(id="ab", from_key="a", to_key="b", w=100.0))
     # 40 cheap 2-hop detours a→mᵢ→b, well past the 32-candidate buffer and each far cheaper than
     # the direct edge — so Yen's fills a fixed window with these over-long paths before the direct.
     for i in range(40):
         mid = f"m{i}"
         await adapter.create_vertex("WUser", WUserCreate(id=mid))
-        await adapter.create_edge("WLINK", WEdgeCreate(from_key="a", to_key=mid, w=1.0))
-        await adapter.create_edge("WLINK", WEdgeCreate(from_key=mid, to_key="b", w=1.0))
+        await adapter.create_edge("WLINK", WEdgeCreate(id=f"a_{mid}", from_key="a", to_key=mid, w=1.0))
+        await adapter.create_edge("WLINK", WEdgeCreate(id=f"{mid}_b", from_key=mid, to_key="b", w=1.0))
 
     path = await adapter.shortest_path(
         VertexRef(kind="WUser", key="a"),
@@ -220,11 +232,11 @@ async def test_weighted_is_tenant_scoped(gds_neo4j_client: Neo4jClient) -> None:
     # Tenant A: a→c only. Tenant B: c→b only. No same-tenant a→b route exists.
     await a_adapter.create_vertex("WUser", WUserCreate(id="a"))
     await a_adapter.create_vertex("WUser", WUserCreate(id="c"))
-    await a_adapter.create_edge("WLINK", WEdgeCreate(from_key="a", to_key="c", w=0.1))
+    await a_adapter.create_edge("WLINK", WEdgeCreate(id="ac", from_key="a", to_key="c", w=0.1))
 
     await b_adapter.create_vertex("WUser", WUserCreate(id="c"))
     await b_adapter.create_vertex("WUser", WUserCreate(id="b"))
-    await b_adapter.create_edge("WLINK", WEdgeCreate(from_key="c", to_key="b", w=0.1))
+    await b_adapter.create_edge("WLINK", WEdgeCreate(id="cb", from_key="c", to_key="b", w=0.1))
 
     path = await a_adapter.shortest_path(
         VertexRef(kind="WUser", key="a"),
@@ -245,8 +257,8 @@ async def test_weighted_k_shortest_rebuilds_correct_parallel_edge(
     await adapter.create_vertex("WUser", WUserCreate(id="a"))
     await adapter.create_vertex("WUser", WUserCreate(id="b"))
     # Two parallel a→b relationships with distinct weights.
-    await adapter.create_edge("WLINK", WEdgeCreate(from_key="a", to_key="b", w=1.0))
-    await adapter.create_edge("WLINK", WEdgeCreate(from_key="a", to_key="b", w=3.0))
+    await adapter.create_edge("WLINK", WEdgeCreate(id="ab1", from_key="a", to_key="b", w=1.0))
+    await adapter.create_edge("WLINK", WEdgeCreate(id="ab3", from_key="a", to_key="b", w=3.0))
 
     paths = await adapter.k_shortest_paths(
         VertexRef(kind="WUser", key="a"),

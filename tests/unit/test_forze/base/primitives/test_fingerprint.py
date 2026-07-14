@@ -1,5 +1,10 @@
 """Tests for :mod:`forze.base.primitives.fingerprint`."""
 
+import os
+import subprocess
+import sys
+import textwrap
+
 import pytest
 from pydantic import SecretStr
 
@@ -22,6 +27,80 @@ from forze_clickhouse.kernel.client.routing_credentials import (
 
 def test_stable_json_bytes_is_key_order_independent() -> None:
     assert stable_json_bytes({"a": 1, "b": 2}) == stable_json_bytes({"b": 2, "a": 1})
+
+
+def test_stable_json_bytes_sorts_sets() -> None:
+    """A set has no order, so a canonical form must impose one.
+
+    orjson cannot serialize a ``set``, so without this it lands in ``default``, is rendered as
+    ``str(some_set)`` — iteration order — and **string hashing is seeded per process**. The same
+    payload would fingerprint differently in the next interpreter. See
+    ``test_hash_args_is_identical_across_processes``, which is the test that can actually observe
+    that; this one only pins the rendering.
+    """
+
+    assert stable_json_bytes({"s": {"b", "a", "c"}}) == b'{"s":["a","b","c"]}'
+    assert stable_json_bytes({"s": frozenset({"b", "a"})}) == stable_json_bytes({"s": {"a", "b"}})
+
+
+def test_stable_json_bytes_sorts_a_mixed_type_set_without_raising() -> None:
+    """``sorted`` on mixed types raises; a fingerprint may not. The order is canonical, not
+    semantic — it exists so two processes agree, not so a human approves."""
+
+    once = stable_json_bytes({"s": {1, "a", 2.5}})
+
+    assert once == stable_json_bytes({"s": {2.5, 1, "a"}})
+
+
+def test_stable_json_bytes_sorts_nested_sets() -> None:
+    """A set *of sets* — where sorting the outer one by each element's repr reintroduces the very
+    bug it closes, one level down.
+
+    ``str(frozenset)`` renders in iteration order too, so a repr-keyed sort has a **seed-dependent
+    sort key** and the outer order flips between processes even though each inner set is sorted.
+    Sorting by canonical bytes recurses, so everything below is already ordered when compared.
+    See ``test_nested_sets_hash_identically_across_processes`` — this only pins the rendering.
+    """
+
+    nested = {frozenset({"zulu", "alpha"}), frozenset({"charlie", "bravo"})}
+
+    assert stable_json_bytes({"s": nested}) == b'{"s":[["alpha","zulu"],["bravo","charlie"]]}'
+
+
+def test_nested_sets_hash_identically_across_processes() -> None:
+    """The test that can fail for a real reason: a fingerprint is compared *between* processes,
+    so anything hash-seeded is invisible to a test that computes it once."""
+
+    script = textwrap.dedent(
+        """
+        from forze.base.primitives import stable_payload_fingerprint
+
+        print(
+            stable_payload_fingerprint(
+                {
+                    "outer": {
+                        frozenset({"alpha", "zulu"}),
+                        frozenset({"bravo", "charlie"}),
+                        frozenset({"delta", "echo", "foxtrot"}),
+                    }
+                }
+            )
+        )
+        """
+    )
+
+    digests = {
+        seed: subprocess.run(
+            [sys.executable, "-c", script],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        for seed in ("0", "1", "7", "12345")
+    }
+
+    assert len(set(digests.values())) == 1, f"nested-set fingerprint varies by seed: {digests}"
 
 
 def test_stable_json_bytes_falls_back_to_str() -> None:

@@ -28,7 +28,7 @@ require_neo4j()
 
 # ....................... #
 
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Sequence
 from typing import Any, Literal, final
 
 import attrs
@@ -40,6 +40,7 @@ from forze.application.contracts.graph import (
     GraphEdgeSpec,
     GraphModuleSpec,
     GraphNodeSpec,
+    GraphReadCapabilities,
     GraphWalkParams,
     GraphWalkStep,
     NeighborRow,
@@ -58,7 +59,11 @@ from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.graph import (
     GraphCodecs,
     GraphKindCipher,
+    assert_edge_streamable,
+    assert_vertex_streamable,
+    endpoints_conflict,
     resolve_write_endpoint,
+    stream_keyset_pages,
 )
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, OnceCell, uuid4
@@ -810,16 +815,36 @@ class Neo4jGraphAdapter(TenancyMixin):
                     code="graph_edge_key_required",
                 )
 
-        query = builders.create_edge(
-            from_label=endpoint.from_kind,
-            from_key_field=from_node.key_field,
-            to_label=endpoint.to_kind,
-            to_key_field=to_node.key_field,
-            edge_type=edge_kind,
-            merge=merge,
-            tenant_field=self._tenant_field,
-            key_field=edge.key_field if merge else None,
-        )
+        # An endpoint-identified edge's identity **is** its pair, so a create on a pair that
+        # already has one is a conflict — not a second edge. A plain ``CREATE`` laid one anyway,
+        # and the pair then addressed two edges with ``get_edge`` returning an arbitrary one. No
+        # constraint can catch it (Neo4j constrains properties, not graph shape), so the create
+        # goes through a ``MERGE`` that reports whether it created. Keyed edges keep the plain
+        # ``CREATE``: their identity is a property, which ``ensure_schema`` *does* constrain.
+        endpoints_create = not merge and edge.identity != "key"
+
+        if endpoints_create:
+            query = builders.create_edge_by_endpoints(
+                from_label=endpoint.from_kind,
+                from_key_field=from_node.key_field,
+                to_label=endpoint.to_kind,
+                to_key_field=to_node.key_field,
+                edge_type=edge_kind,
+                tenant_field=self._tenant_field,
+            )
+
+        else:
+            query = builders.create_edge(
+                from_label=endpoint.from_kind,
+                from_key_field=from_node.key_field,
+                to_label=endpoint.to_kind,
+                to_key_field=to_node.key_field,
+                edge_type=edge_kind,
+                merge=merge,
+                tenant_field=self._tenant_field,
+                key_field=edge.key_field if merge else None,
+            )
+
         params = {"props": data, **self._params(from_key=from_key, to_key=to_key)}
 
         if edge_key is not None:
@@ -836,6 +861,9 @@ class Neo4jGraphAdapter(TenancyMixin):
                 f"Edge endpoints for {edge_kind!r} not found ({from_key} -> {to_key})",
                 code="graph_edge_endpoints_not_found",
             )
+
+        if endpoints_create and not rows[0]["created"]:
+            raise endpoints_conflict(edge_kind, from_key, to_key)
 
         if not return_new:
             return None
@@ -1176,6 +1204,166 @@ class Neo4jGraphAdapter(TenancyMixin):
             database=await self._resolved_database(),
         )
         return [await self._edge_model(edge_kind, row["r"]) for row in rows]
+
+    # ....................... #
+
+    def read_capabilities(self) -> GraphReadCapabilities:
+        # Both streams are a keyset seek over an indexed key field, which Cypher expresses
+        # directly — so Neo4j supports both.
+        return GraphReadCapabilities(
+            supports_vertex_streaming=True,
+            supports_edge_streaming=True,
+        )
+
+    # ....................... #
+
+    def find_vertices_stream(
+        self,
+        node_kind: str,
+        *,
+        property_filter: JsonDict | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
+        node = self._node(node_kind)
+        key_field = assert_vertex_streamable(
+            node, kind=node_kind, capabilities=self.read_capabilities()
+        )
+        filter_params = self._filter_params(property_filter, self._sealed_fields(node.encryption))
+        filter_keys = list(property_filter or {})
+
+        async def _fetch(after: Any | None, limit: int) -> Sequence[tuple[Any, BaseModel]]:
+            query = builders.find_vertices_keyset(
+                node_kind,
+                key_field,
+                after=after is not None,
+                tenant_field=self._tenant_field,
+                filter_keys=filter_keys,
+            )
+            params = self._params(limit=limit, **filter_params)
+
+            if after is not None:
+                params["after"] = after
+
+            rows = await self.client.run(query, params, database=await self._resolved_database())
+
+            # The bookmark is read off the **raw** property map, before decoding — the stored
+            # value is what the next query's seek predicate is compared against.
+            return [
+                (row["n"].get(key_field), await self._vertex_model(node_kind, row["n"]))
+                for row in rows
+            ]
+
+        return stream_keyset_pages(_fetch, chunk_size=chunk_size)
+
+    # ....................... #
+
+    def find_edges_stream(
+        self,
+        edge_kind: str,
+        *,
+        property_filter: JsonDict | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
+        edge = self._edge(edge_kind)
+        cursor = assert_edge_streamable(
+            self.spec, edge, kind=edge_kind, capabilities=self.read_capabilities()
+        )
+        filter_params = self._filter_params(property_filter, self._sealed_fields(edge.encryption))
+        filter_keys = list(property_filter or {})
+
+        # One cursor field = the edge's own key. Two = the (tail, head) node keys of an
+        # ``identity="endpoints"`` kind, whose identity *is* that pair.
+        if len(cursor) == 1:
+            return self._stream_keyed_edges(
+                edge_kind,
+                cursor[0],
+                filter_params=filter_params,
+                filter_keys=filter_keys,
+                chunk_size=chunk_size,
+            )
+
+        return self._stream_endpoint_edges(
+            edge_kind,
+            cursor[0],
+            cursor[1],
+            filter_params=filter_params,
+            filter_keys=filter_keys,
+            chunk_size=chunk_size,
+        )
+
+    # ....................... #
+
+    def _stream_keyed_edges(
+        self,
+        edge_kind: str,
+        key_field: str,
+        *,
+        filter_params: JsonDict,
+        filter_keys: list[str],
+        chunk_size: int,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
+        async def _fetch(after: Any | None, limit: int) -> Sequence[tuple[Any, BaseModel]]:
+            query = builders.find_edges_keyset(
+                edge_kind,
+                key_field,
+                after=after is not None,
+                tenant_field=self._tenant_field,
+                filter_keys=filter_keys,
+            )
+            params = self._params(limit=limit, **filter_params)
+
+            if after is not None:
+                params["after"] = after
+
+            rows = await self.client.run(query, params, database=await self._resolved_database())
+
+            return [
+                (row["r"].get(key_field), await self._edge_model(edge_kind, row["r"]))
+                for row in rows
+            ]
+
+        return stream_keyset_pages(_fetch, chunk_size=chunk_size)
+
+    # ....................... #
+
+    def _stream_endpoint_edges(
+        self,
+        edge_kind: str,
+        from_key_field: str,
+        to_key_field: str,
+        *,
+        filter_params: JsonDict,
+        filter_keys: list[str],
+        chunk_size: int,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
+        async def _fetch(after: Any | None, limit: int) -> Sequence[tuple[Any, BaseModel]]:
+            query = builders.find_edges_keyset_by_endpoints(
+                edge_kind,
+                from_key_field,
+                to_key_field,
+                after=after is not None,
+                tenant_field=self._tenant_field,
+                filter_keys=filter_keys,
+            )
+            params = self._params(limit=limit, **filter_params)
+
+            if after is not None:
+                params["after_from"], params["after_to"] = after
+
+            rows = await self.client.run(query, params, database=await self._resolved_database())
+
+            # The cursor key is the pair, and the query hands back **every** edge of each pair it
+            # includes — so a page can hold more rows than ``limit``, and the shared loop counts
+            # distinct keys rather than rows to decide it is done.
+            return [
+                (
+                    (row["from_key"], row["to_key"]),
+                    await self._edge_model(edge_kind, row["r"]),
+                )
+                for row in rows
+            ]
+
+        return stream_keyset_pages(_fetch, chunk_size=chunk_size)
 
     async def vertex_degree(
         self,

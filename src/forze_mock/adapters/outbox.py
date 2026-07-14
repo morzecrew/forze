@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, final
 from uuid import UUID
 
@@ -11,7 +12,9 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.outbox import (
+    OutboxAdminPort,
     OutboxClaim,
+    OutboxDepth,
     OutboxQueryPort,
     OutboxSpec,
     OutboxStatus,
@@ -102,7 +105,7 @@ class MockOutboxRow:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
+class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort, OutboxAdminPort):
     """In-memory outbox persistence and query port."""
 
     spec: OutboxSpec[M]
@@ -334,3 +337,35 @@ class MockOutboxStore[M: BaseModel](MockTenancyMixin, OutboxQueryPort):
                 updated += 1
 
         return updated
+
+    # ....................... #
+    # Admin (observability) port
+
+    def _rows(self) -> list[MockOutboxRow]:
+        with self.state.lock:
+            return list(self.state.outbox_rows.get(self._route(), []))
+
+    # ....................... #
+
+    async def has_undrained(self) -> bool:
+        return any(
+            row.status in (OutboxStatus.PENDING, OutboxStatus.PROCESSING) for row in self._rows()
+        )
+
+    # ....................... #
+
+    async def depth(self) -> OutboxDepth:
+        counts = Counter(row.status for row in self._rows())
+
+        return OutboxDepth(
+            pending=counts[OutboxStatus.PENDING],
+            processing=counts[OutboxStatus.PROCESSING],
+            failed=counts[OutboxStatus.FAILED],
+        )
+
+    # ....................... #
+
+    async def oldest_pending_age(self) -> timedelta | None:
+        pending = [row.created_at for row in self._rows() if row.status == OutboxStatus.PENDING]
+
+        return utcnow() - min(pending) if pending else None

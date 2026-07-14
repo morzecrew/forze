@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from contextlib import suppress
 from datetime import timedelta
 from typing import Any
 from uuid import uuid4
@@ -39,6 +40,7 @@ from forze.base.serialization import PydanticModelCodec
 from tests.support.execution_context import context_from_deps, context_from_modules
 
 from forze_kits.integrations.consumer import ConsumerRunResult, QueueConsumer
+from forze_kits.integrations.consumer.runner import _next_or_stop
 from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.adapters import MockQueueAdapter, MockState
 from forze_mock.execution.module import (
@@ -713,3 +715,68 @@ async def test_stats_across_mixed_outcomes_in_one_run() -> None:
     assert result == ConsumerRunResult(processed=2, duplicates=1, failed=1)
     assert _pending(state) == {}
     assert q.dead_letters("jobs") == []
+
+
+# ....................... #
+
+
+class TestNextOrStopCleansUpOnCancellation:
+    """``_next_or_stop`` races a fetch against the stop signal — and must settle both, always.
+
+    Including when its *own* task is cancelled inside the ``wait``. That is a live path: a loop
+    that overruns its shutdown grace really is cancelled. A ``pull`` left in flight is not just a
+    leaked future — it is an unfinished ``__anext__`` on the broker's generator, and an async
+    generator cannot be aclosed while one of its ``__anext__`` calls is still running, so the
+    consumer's own cleanup would raise on the way out.
+    """
+
+    async def test_an_outer_cancel_leaves_no_pull_in_flight(self) -> None:
+        started = asyncio.Event()
+        closed = False
+
+        async def messages() -> AsyncIterator[Any]:
+            nonlocal closed
+
+            try:
+                started.set()
+                await asyncio.sleep(30)  # parked in the broker, as an idle consumer is
+                yield None  # pragma: no cover - never reached
+
+            finally:
+                closed = True
+
+        stream = messages()
+        stop = asyncio.Event()  # never set: the fetch is what is pending when we cancel
+
+        task = asyncio.create_task(_next_or_stop(stream, stop))
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+
+        task.cancel()
+
+        with suppress(asyncio.CancelledError):
+            await task
+
+        # The generator must now be closable: nothing of ours is still inside it.
+        await stream.aclose()
+
+        assert closed is True
+
+    async def test_a_stop_settles_the_abandoned_fetch(self) -> None:
+        started = asyncio.Event()
+
+        async def messages() -> AsyncIterator[Any]:
+            started.set()
+            await asyncio.sleep(30)
+            yield None  # pragma: no cover - never reached
+
+        stream = messages()
+        stop = asyncio.Event()
+
+        task = asyncio.create_task(_next_or_stop(stream, stop))
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+
+        stop.set()
+
+        assert await asyncio.wait_for(task, timeout=1.0) is None
+
+        await stream.aclose()  # would raise if the pull were still running

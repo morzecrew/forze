@@ -173,6 +173,54 @@ def get_edge_by_key(
 # ....................... #
 
 
+CREATED_FLAG = "_forze_created"
+"""Transient marker naming the edge a ``MERGE`` created, so a create can tell it apart.
+
+Cypher has no ``wasCreated(r)``, and an *endpoint-identified* edge's create needs the answer:
+its identity is the ``(from, to)`` pair, so a second create on the same pair is a conflict, not
+a second edge. ``ON CREATE`` fires only on the create branch and runs under the same lock the
+``MERGE`` took on ``a`` and ``b``, which makes the marker exact even against a concurrent
+create — and it is ``REMOVE``d in the same statement, so it never reaches disk.
+"""
+
+
+def create_edge_by_endpoints(
+    *,
+    from_label: str,
+    from_key_field: str,
+    to_label: str,
+    to_key_field: str,
+    edge_type: str,
+    tenant_field: str | None = None,
+) -> str:
+    """Create an ``identity="endpoints"`` edge a→b, reporting whether it already existed.
+
+    Such an edge's identity **is** its endpoint pair — that is what the declaration asserts, and
+    what ``get_edge`` / ``update_edge`` / ``delete_edge`` address it by. A plain ``CREATE``
+    ignored that and happily laid a second parallel relationship between the same two nodes,
+    after which the pair addressed two edges and ``get_edge`` returned an arbitrary one of them.
+
+    ``MERGE`` is what enforces the identity: no constraint can, because Neo4j cannot express
+    "at most one relationship of type T between two nodes" — only property uniqueness. The
+    ``MERGE`` also *locks* both anchor nodes, which serializes concurrent creates on the same
+    pair, so the returned ``created`` flag is exact rather than a best guess.
+    """
+
+    head = (
+        f"MATCH (a:{quote(from_label)} {_match_map(from_key_field, tenant_field, key_param='from_key')}), "
+        f"(b:{quote(to_label)} {_match_map(to_key_field, tenant_field, key_param='to_key')})\n"
+    )
+
+    return (
+        f"{head}"
+        f"MERGE (a)-[r:{quote(edge_type)}]->(b)\n"
+        f"ON CREATE SET r += $props, r.{quote(CREATED_FLAG)} = true\n"
+        f"WITH r, r.{quote(CREATED_FLAG)} IS NOT NULL AS created\n"
+        f"REMOVE r.{quote(CREATED_FLAG)}\n"
+        f"RETURN properties(r) AS r, created"
+    )
+
+
 def create_edge(
     *,
     from_label: str,
@@ -195,6 +243,12 @@ def create_edge(
     is ``(key, tenant)``: a foreign tenant reusing the key gets its own edge (and the
     property is stamped for the composite edge-uniqueness constraint) rather than
     matching another tenant's relationship.
+
+    The plain ``CREATE`` branch is for **keyed** edges only, whose identity is a property and is
+    therefore enforceable — ``ensure_schema`` provisions ``REQUIRE r.<key> IS UNIQUE``, and a
+    duplicate raises a constraint error the client maps to ``conflict``. An endpoint-identified
+    edge has no property to constrain, so its create goes through
+    :func:`create_edge_by_endpoints` instead.
     """
 
     head = (
@@ -737,6 +791,108 @@ def find_edges(
     return (
         f"MATCH (a)-[r:{quote(edge_type)}]->(b)\n{where}"
         f"RETURN properties(r) AS r\n{order}SKIP $offset LIMIT $limit"
+    )
+
+
+# ....................... #
+# Keyset (streaming) reads — seek past the last key seen instead of counting rows to skip.
+#
+# ``SKIP $offset`` is the wrong tool for a walk that has to be *complete*: it counts rows from
+# the start of a result set that is being written underneath it, so a vertex created before the
+# cursor shifts every later row one place along and the next page skips one. The keyset
+# predicate is stated against a value that does not move.
+
+
+def find_vertices_keyset(
+    label: str,
+    key_field: str,
+    *,
+    after: bool,
+    tenant_field: str | None = None,
+    filter_keys: Sequence[str] = (),
+) -> str:
+    # Strictly greater, never ``>=``: the bookmark is a key already yielded, so an inclusive
+    # seek would re-emit it forever and the walk would never advance.
+    seek = f"n.{quote(key_field)} > $after" if after else ""
+    where = _where(
+        _tenant_pred("n", tenant_field),
+        property_predicate("n", filter_keys),
+        seek,
+    )
+    return (
+        f"MATCH (n:{quote(label)})\n{where}"
+        f"RETURN properties(n) AS n\n"
+        f"ORDER BY n.{quote(key_field)}\nLIMIT $limit"
+    )
+
+
+def find_edges_keyset(
+    edge_type: str,
+    key_field: str,
+    *,
+    after: bool,
+    tenant_field: str | None = None,
+    filter_keys: Sequence[str] = (),
+) -> str:
+    seek = f"r.{quote(key_field)} > $after" if after else ""
+    where = _where(
+        _tenant_pred("a", tenant_field),
+        _tenant_pred("b", tenant_field),
+        property_predicate("r", filter_keys),
+        seek,
+    )
+    return (
+        f"MATCH (a)-[r:{quote(edge_type)}]->(b)\n{where}"
+        f"RETURN properties(r) AS r\n"
+        f"ORDER BY r.{quote(key_field)}\nLIMIT $limit"
+    )
+
+
+def find_edges_keyset_by_endpoints(
+    edge_type: str,
+    from_key_field: str,
+    to_key_field: str,
+    *,
+    after: bool,
+    tenant_field: str | None = None,
+    filter_keys: Sequence[str] = (),
+) -> str:
+    """Keyset-walk an ``identity="endpoints"`` edge kind, bookmarked on its endpoint pair.
+
+    Such an edge has no key of its own — that is the declaration — so the cursor is the
+    ``(tail, head)`` node-key pair, which *is* the identity the author asserted. The seek is the
+    standard lexicographic composite: strictly past the tail key, or equal on it and strictly
+    past the head key.
+
+    **The window is `LIMIT $limit` *pairs*, not rows, and every edge of a pair travels with it.**
+    That is the whole reason for the ``collect`` / ``UNWIND``: the framework does not enforce
+    one-edge-per-pair (``create_edge`` will add a second parallel relationship), and a row-bounded
+    page could cut between two edges sharing a pair — after which the next page seeks *strictly
+    past* that pair and the leftover is never seen again. A walk that silently drops edges is
+    exactly what a keyset cursor exists to prevent, so the page boundary is placed where no edge
+    can fall through it.
+    """
+
+    seek = (
+        f"(a.{quote(from_key_field)} > $after_from OR "
+        f"(a.{quote(from_key_field)} = $after_from AND b.{quote(to_key_field)} > $after_to))"
+        if after
+        else ""
+    )
+    where = _where(
+        _tenant_pred("a", tenant_field),
+        _tenant_pred("b", tenant_field),
+        property_predicate("r", filter_keys),
+        seek,
+    )
+
+    return (
+        f"MATCH (a)-[r:{quote(edge_type)}]->(b)\n{where}"
+        f"WITH a.{quote(from_key_field)} AS from_key, b.{quote(to_key_field)} AS to_key, "
+        f"collect(properties(r)) AS rels\n"
+        f"ORDER BY from_key, to_key\nLIMIT $limit\n"
+        f"UNWIND rels AS r\n"
+        f"RETURN r, from_key, to_key"
     )
 
 

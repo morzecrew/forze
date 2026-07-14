@@ -26,6 +26,7 @@ from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
+from forze_kits.lifecycle import DEFAULT_STOP_GRACE_SECONDS, BackgroundLoopControl
 
 from .commit_stream_runner import CommitStreamGroupConsumer
 
@@ -41,7 +42,49 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
     """The configured consumer; carries all consume options (validated on build)."""
 
     restart_backoff: timedelta
-    task: asyncio.Task[None] | None = attrs.field(default=None, init=False)
+
+    # ....................... #
+
+    control: BackgroundLoopControl = attrs.field(
+        default=attrs.Factory(
+            lambda self: BackgroundLoopControl(
+                name=f"commit_stream_consumer:{self.consumer.group}"
+            ),
+            takes_self=True,
+        ),
+        init=False,
+    )
+    """Stop signal and bounded teardown, shared with every other background loop."""
+
+    # ....................... #
+
+    @property
+    def task(self) -> asyncio.Task[None] | None:
+        """The running loop, if any."""
+
+        return self.control.task
+
+    # ....................... #
+
+    @property
+    def loop_name(self) -> str:
+        """Satisfies ``DrainableLoop``."""
+
+        return self.control.loop_name
+
+    # ....................... #
+
+    async def stop(self, *, deadline: float) -> bool:
+        """Stop the consumer at its next message boundary. Idempotent.
+
+        This is the loop that pays most for a blunt cancel: a run killed mid-batch never
+        commits its offsets, so every message it had just processed is redelivered to whoever
+        starts next. The runner therefore stops *between messages* and commits what it has —
+        a batch is unbounded by default and would routinely outlast the grace budget, so a
+        batch boundary was one the loop could not reliably reach.
+        """
+
+        return await self.control.stop(deadline=deadline)
 
     # ....................... #
 
@@ -60,7 +103,7 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
                     # rewinds to committed on a pause); only a mid-batch crash
                     # (broker connection loss, a transient KMS fault on decrypt, ...)
                     # escapes to here.
-                    result = await self.consumer.run(ctx, timeout=None)
+                    result = await self.consumer.run(ctx, timeout=None, stop=self.control.event)
 
                 except asyncio.CancelledError:
                     raise
@@ -81,14 +124,21 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
                     # hot-loop the consumer. Jittered: a shared downstream outage
                     # crashes every replica at once; without jitter they all restart
                     # (and re-crash) in lockstep.
-                    await asyncio.sleep(
+                    if await self.control.sleep_or_stop(
                         # Desynchronization jitter, not security randomness.
                         self.restart_backoff.total_seconds()
                         * current_entropy_source().as_random().uniform(1.0, 1.5)
-                    )
+                    ):
+                        return
+
                     continue
 
-                # run() returned rather than raising: with timeout=None the only exit
+                if self.control.stopping:
+                    # The run ended at a message boundary because we asked it to — the offsets
+                    # of everything it processed are committed, nothing to alert about.
+                    return
+
+                # run() returned rather than raising: with timeout=None the only other exit
                 # is a consumer-wide pause-and-alert poison (failed > 0). The runner
                 # already alerted and left the record uncommitted; restarting would
                 # re-fetch the same poison from the committed offset and pause again
@@ -103,7 +153,7 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
                 )
                 return
 
-        if self.task is not None and not self.task.done():
+        if self.control.running:
             # The runtime invokes startup once per scope; a direct double call must
             # not leak (and orphan) the previous consumer task.
             logger.warning(
@@ -112,10 +162,9 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
             )
             return
 
-        self.task = asyncio.create_task(
-            _loop(),
-            name=f"commit_stream_consumer:{self.consumer.group}",
-        )
+        self.control.arm()
+        self.control.task = asyncio.create_task(_loop(), name=self.control.loop_name)
+        ctx.drainables.register(self)
 
 
 # ....................... #
@@ -124,7 +173,11 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
 @final
 @attrs.define(slots=True, kw_only=True)
 class _CommitStreamConsumerBackgroundShutdown(LifecycleHook):
-    """Cancel the background commit-stream consumer task."""
+    """Stop the background commit-stream consumer.
+
+    Normally a no-op — the runtime stops every registered loop before teardown begins. This is
+    the fallback for a hand-driven lifecycle; ``stop`` is idempotent.
+    """
 
     startup: _CommitStreamConsumerBackgroundStartup
     """Startup hook."""
@@ -132,15 +185,8 @@ class _CommitStreamConsumerBackgroundShutdown(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        task = self.startup.task
-
-        if task is None:
-            return
-
-        task.cancel()
-
-        with suppress(asyncio.CancelledError):
-            await task
+        clock = asyncio.get_running_loop()
+        await self.startup.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
 
 
 # ....................... #

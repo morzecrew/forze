@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from contextlib import suppress
 from datetime import timedelta
 from typing import Any, final
 
@@ -17,6 +16,7 @@ from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
+from forze_kits.lifecycle import DEFAULT_STOP_GRACE_SECONDS, BackgroundLoopControl
 
 from .runner import QueueConsumer
 
@@ -40,7 +40,45 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
     """Builds the configured consumer once at startup, from the scope's context."""
 
     restart_backoff: timedelta
-    task: asyncio.Task[None] | None = attrs.field(default=None, init=False)
+
+    # ....................... #
+
+    control: BackgroundLoopControl = attrs.field(
+        default=attrs.Factory(
+            lambda self: BackgroundLoopControl(name=f"queue_consumer:{self.queue}"),
+            takes_self=True,
+        ),
+        init=False,
+    )
+    """Stop signal and bounded teardown, shared with every other background loop."""
+
+    # ....................... #
+
+    @property
+    def task(self) -> asyncio.Task[None] | None:
+        """The running loop, if any."""
+
+        return self.control.task
+
+    # ....................... #
+
+    @property
+    def loop_name(self) -> str:
+        """Satisfies ``DrainableLoop``."""
+
+        return self.control.loop_name
+
+    # ....................... #
+
+    async def stop(self, *, deadline: float) -> bool:
+        """Stop the consumer at its next message boundary. Idempotent.
+
+        Cancelling a consumer mid-handler rolls its transaction back and leaves the
+        message unacked, so the next process redelivers it. Stopping between messages
+        costs nothing.
+        """
+
+        return await self.control.stop(deadline=deadline)
 
     # ....................... #
 
@@ -61,8 +99,9 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
                     # timeout=None: consume forever. Per-message failures are
                     # absorbed inside the consumer's decision ladder; only a
                     # consume-generator crash (broker connection loss, ...)
-                    # escapes to here.
-                    await consumer.run(ctx, timeout=None)
+                    # escapes to here. The stop signal ends the run at a message
+                    # boundary, so shutdown never cancels a handler mid-flight.
+                    await consumer.run(ctx, timeout=None, stop=self.control.event)
 
                 except asyncio.CancelledError:
                     raise
@@ -73,19 +112,24 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
                         self.queue,
                     )
 
+                if self.control.stopping:
+                    # The run ended because we asked it to, not because it broke.
+                    return
+
                 # Reached on crash — or if the consume generator ever ends
                 # despite timeout=None: restart either way after the backoff
                 # so a flapping broker cannot hot-loop the consumer.
                 # Jittered restart: a downstream outage crashes every
                 # replica's consumer at once; without jitter they all restart
                 # (and re-crash) in lockstep.
-                await asyncio.sleep(
+                if await self.control.sleep_or_stop(
                     # Desynchronization jitter, not security randomness.
                     self.restart_backoff.total_seconds()
                     * current_entropy_source().as_random().uniform(1.0, 1.5)
-                )
+                ):
+                    return
 
-        if self.task is not None and not self.task.done():
+        if self.control.running:
             # The runtime invokes startup once per scope; a direct double call
             # must not leak (and orphan) the previous consumer task.
             logger.warning(
@@ -94,10 +138,9 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
             )
             return
 
-        self.task = asyncio.create_task(
-            _loop(),
-            name=f"queue_consumer:{self.queue}",
-        )
+        self.control.arm()
+        self.control.task = asyncio.create_task(_loop(), name=self.control.loop_name)
+        ctx.drainables.register(self)
 
 
 # ....................... #
@@ -106,7 +149,11 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
 @final
 @attrs.define(slots=True, kw_only=True)
 class _QueueConsumerBackgroundShutdown(LifecycleHook):
-    """Cancel the background queue consumer task."""
+    """Stop the background queue consumer.
+
+    Normally a no-op — the runtime stops every registered loop before teardown begins. This is
+    the fallback for a hand-driven lifecycle; ``stop`` is idempotent.
+    """
 
     startup: _QueueConsumerBackgroundStartup
     """Startup hook."""
@@ -114,15 +161,8 @@ class _QueueConsumerBackgroundShutdown(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        task = self.startup.task
-
-        if task is None:
-            return
-
-        task.cancel()
-
-        with suppress(asyncio.CancelledError):
-            await task
+        clock = asyncio.get_running_loop()
+        await self.startup.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
 
 
 # ....................... #

@@ -164,6 +164,55 @@ cannot provision or wipe an index.
 | `ensure_index` | `ensure_index()` | create / update the index settings |
 | `delete_all` | `delete_all()` | empty the index |
 
+## Rebuilding an index
+
+An external index is kept in step by the index-sync bindings (`AggregateKit(search=…)`, or
+`bind_search_sync` / `bind_search_sync_outbox` directly), and those are **incremental**: they
+carry a row into the index when that row is *written*. Nothing carries a row that was never
+written since the index existed. So an aggregate that gained `search=…` after it already held
+rows, an index provisioned fresh, one restored onto new infrastructure, and one that drifted
+while its sync was broken all end up the same way — correct-looking, and empty or stale for
+every untouched row.
+
+`rebuild_search_index` is the backfill. It streams the document plane and applies each row to
+the index under **the same rule the incremental syncs apply**, so a rebuilt index holds exactly
+what an unbroken sync would have produced:
+
+```python
+from forze_kits.integrations.search import rebuild_search_index
+
+report = await rebuild_search_index(
+    ctx.doc.query(CUSTOMER_SPEC),
+    ctx.search.command(CUSTOMER_INDEX),
+    document=CUSTOMER_SPEC,
+    search=CUSTOMER_INDEX,
+)
+report.indexed, report.removed, report.scanned   # live rows, soft-deleted rows, total
+```
+
+An `AggregateKit` already holds both specs, so it exposes the same sweep as
+`await kit.rebuild_search(ctx)`.
+
+Keyset-paged, so memory is bounded by `chunk_size` whatever the collection's size; idempotent,
+so an interrupted sweep is re-run rather than repaired. A soft-deleted row is **removed** from
+the index rather than upserted — a sweep that merely upserted everything it read would
+resurrect every soft-deleted row as a hit that `GET` then 404s. Run it once per tenant (under
+`bind_identity(tenant=…)`) on a tenant-aware route.
+
+!!! warning "Source-driven: it converges the index, it does not replace it"
+
+    Every row the document plane still holds ends up correct. An id the document plane no
+    longer holds *at all* — hard-deleted while the index kept it — is invisible to a sweep that
+    reads only the source, and survives it. Where that matters (an index of unknown provenance,
+    rather than a fresh one), `delete_all()` first and rebuild into the empty index. That is a
+    deliberate two-step: the wipe leaves search returning nothing until the sweep finishes, and
+    that outage is yours to choose.
+
+    For an *exact* result, sweep a source nothing is writing — a fresh import, or a quiesced
+    runtime. Against live traffic the sweep is best-effort: a row hard-deleted between being
+    read and being upserted comes back as a ghost. On an aggregate whose sync is working this
+    converges anyway, because the sync is applying the same rule to those same writes.
+
 ## Implemented by
 
 | Backend | Mode | Integration |

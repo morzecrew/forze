@@ -179,3 +179,131 @@ indexes, migration steps, and the optional Hybrid Logical Clock ordering column
 - The background lifecycle step drains the whole backlog each tick (batches
   until a short claim, capped at `max_batches_per_tick=100`), then sleeps
   `interval`.
+
+## Draining on shutdown
+
+By default the relay task is cancelled at shutdown, so rows staged just before the
+process goes away stay `pending` until a later process claims them — up to `interval`
+later, or until the next deploy. Set `drain_on_shutdown=True` to publish what is still
+claimable first:
+
+```python
+relay = outbox_relay_background_lifecycle_step(
+    outbox_spec=OUTBOX,
+    queue_spec=JOBS,
+    drain_on_shutdown=True,
+)
+```
+
+The drain burns **exactly one delivery attempt per row** — the same blast radius as one
+ordinary tick. It ends the moment a batch reschedules a row, so it can never re-claim
+(and re-attempt) what it just parked; a failing destination stops it instead of being
+hammered; and it never opens a batch it does not expect to finish inside
+`shutdown_drain_timeout` (default 5s). Anything it cannot reach stays `pending` for the
+next process — exactly where it would have been without the drain.
+
+The drain needs the database, and it gets it: the runtime stops every background loop
+**before** lifecycle teardown begins (see below), so the client is still open. You do not have
+to declare any ordering for it.
+
+Two things still constrain it:
+
+- **`pubsub` is rejected** at wiring. It is at-most-once past the broker, so publishing while
+  subscribers are going away turns a delayed delivery into a lost one. Leaving the rows
+  pending is strictly safer there.
+- **Keep `shutdown_drain_timeout` under the runtime's `shutdown_step_timeout`** (default
+  10s), which bounds the whole loop-stopping pass. A batch cut mid-flight leaves rows
+  `processing` until `reclaim_stale_after` elapses — consider lowering that when draining.
+
+The drain is a best-effort teardown courtesy, not a delivery guarantee: correctness still
+rests on the relay claiming those rows eventually, from this process or the next.
+
+## How background loops shut down
+
+The relay is one of five background loops the framework runs — the others are the queue
+consumer, the commit-stream consumer, and the durable recovery and scheduler pollers. Each
+registers itself with the scope's `ctx.drainables` at startup, and `runtime.shutdown()` asks
+every one of them to **stop between units of work**, concurrently, *before* lifecycle teardown
+begins:
+
+1. the drain gate stops admitting operations and waits for the in-flight ones;
+2. **background loops stop** — the relay drains, consumers finish and ack/commit what they
+   hold, the durable pollers finish their sweep;
+3. detached background work is cancelled;
+4. lifecycle teardown closes the clients.
+
+Step 2 sitting *before* step 4 is what lets a loop's graceful stop use its database. It also
+means a loop is never cancelled mid-unit unless it overruns its grace — which matters most for
+the commit-stream consumer, where a cancelled run never commits its offsets and every message
+it just handled is redelivered.
+
+A loop that will not stop within the grace is cancelled and logged, so one wedged loop can
+never hang process exit.
+
+## Is the outbox drained?
+
+`ctx.outbox.admin(spec)` is a read-only view of a route's backlog. It exists because
+emptiness used to be observable only through `claim_pending` — which *claims*, so asking
+the question changed the answer and raced the relay for rows the caller did not want.
+
+```python
+admin = ctx.outbox.admin(OUTBOX)
+
+await admin.has_undrained()      # bool — one index seek; poll this
+await admin.depth()              # OutboxDepth(pending=, processing=, failed=)
+await admin.oldest_pending_age() # timedelta | None — "is the relay stuck?"
+```
+
+Three semantics worth knowing, because they are deliberately *not* the claim path's:
+
+- **`pending` includes rows parked for a future retry.** `claim_pending` hides them; a row
+  backing off is still undelivered work, and a check that ignored it would call an outbox
+  empty while events were queued behind a retry.
+- **`published` is never counted.** Nothing prunes published rows, so that bucket grows with
+  every event the application has ever emitted — counting it would scan the whole history.
+  `depth()` reports only the undrained buckets.
+- **`failed` is reported apart and never waited on.** Failed rows are terminal until an
+  operator calls `requeue_failed`, so treating them as work-in-progress would hang forever
+  on a poison row.
+
+These probes assume the route's claim index exists (the table is yours — see
+[Outbox table schema](../reference/outbox-schema.md)). Without it they degrade to a
+sequential scan.
+
+## Quiescing before a shutdown or a migration
+
+`quiesce()` stops the runtime admitting new work, then waits for the operational planes —
+outbox routes, durable runs, stream groups — to come to rest, and reports what did and did
+not settle:
+
+```python
+from forze_kits.integrations.quiesce import quiesce
+
+report = await quiesce(runtime, outboxes=[OUTBOX], timeout=timedelta(seconds=60))
+report.raise_if_unattested()   # or inspect report.attested / report.unsettled
+```
+
+**Settled and attested are different claims**, and the report keeps them apart. *Settled*
+means nothing was moving when the sweep finished. *Attested* means nothing was moving **and
+nothing could arrive**, because the runtime was holding the door shut. Only the second is
+safe to build on: an export written from a merely-settled runtime can be overtaken by a write
+before it finishes.
+
+- **Closing the gate is one-way.** By default `quiesce()` stops the runtime admitting work,
+  and the drain gate does not reopen — that is deliberate, because it is the *shutdown* gate.
+  This is the step before a shutdown, an export, or a migration.
+- **`close_gate=False` only looks.** The sweep reads each plane and the scope keeps serving.
+  Nothing is holding the door, so the report can be `settled` but never `attested`. Use it
+  for a health check; do not build an export on it.
+- **It waits for the relay; it does not relay.** Closing the gate makes the backlog finite,
+  but something still has to publish it — the background step, or (the usual production
+  shape) an external worker this process cannot reach at all. If nothing does, the outbox
+  plane comes back `residual` with the age of the oldest pending row. Give the budget room
+  for at least one relay tick.
+
+Planes the runtime does not wire are reported `not_wired` and do not count against
+attestation. Two things sit outside what `quiesce()` can speak for in either mode: a
+Temporal-backed workflow, whose state lives in the Temporal cluster; and **a sibling
+replica** — quiesce holds *one process* still, and a fleet that is still serving writes
+elsewhere will invalidate whatever this one attested. Stop the fleet before you trust the
+attestation.

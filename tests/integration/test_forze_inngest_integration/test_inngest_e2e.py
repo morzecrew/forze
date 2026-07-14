@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from decimal import Decimal
+from uuid import UUID
+
 import inngest
 import pytest
 from pydantic import BaseModel
@@ -271,3 +275,77 @@ async def test_durable_function_step_port_inside_handler(
         harness.stop()
 
     assert label == "step:memo"
+
+
+# ....................... #
+
+
+class _RichPayload(BaseModel):
+    order_id: UUID
+    placed_at: datetime
+    total: Decimal
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_an_event_payload_of_uuid_datetime_and_decimal_round_trips(
+    inngest_dev_env: InngestDevTarget,
+) -> None:
+    """An event payload carrying a UUID, a datetime and a Decimal reaches the function.
+
+    It could not be sent at all. An Inngest event's ``data`` **is** JSON — the SDK's own
+    ``Event`` model types it as a JSON-value union and posts it over HTTP — but the adapter
+    encoded the payload with the codec's default *python* mode, which keeps those three as
+    Python objects. The SDK rejected them outright, so ``order_id: UUID`` (the most ordinary
+    field an event carries) made the send impossible.
+
+    Every other payload model in this suite is a single ``value: str``, which is exactly why
+    nothing here ever handed the SDK a type it could not take.
+    """
+
+    outcomes: list[_RichPayload] = []
+    event_name = "it/forze.inngest.rich"
+
+    event_spec = DurableFunctionEventSpec(
+        name=event_name, codec=PydanticModelCodec(model_type=_RichPayload)
+    )
+    fn_spec = DurableFunctionSpec(
+        name="it-forze-inngest-rich-fn",
+        run=DurableFunctionInvokeSpec(args_type=_RichPayload, return_type=_FnOut),
+        triggers=(DurableFunctionEventTrigger(event=event_name),),
+    )
+
+    async def _handler(args: _RichPayload) -> _FnOut:
+        outcomes.append(args)
+        return _FnOut()
+
+    harness = start_forze_inngest_app(
+        inngest_dev_env,
+        bindings=[InngestFunctionBinding(spec=fn_spec, handler_factory=lambda _ctx: _handler)],
+        events={event_spec.name: InngestEventConfig()},
+        app_id="forze-it-rich",
+    )
+
+    sent = _RichPayload(
+        order_id=uuid7(),
+        placed_at=datetime(2026, 7, 14, 12, 30, tzinfo=UTC),
+        total=Decimal("19.99"),
+    )
+
+    try:
+        ctx = harness.ctx_factory()
+        events = ctx.deps.resolve_configurable(
+            ctx, DurableFunctionEventCommandDepKey, event_spec, route=event_spec.name
+        )
+        await events.send(sent)
+        received = await wait_for_outcome(outcomes)
+
+    finally:
+        harness.stop()
+
+    # The function receives the model it was sent, with its declared types intact — not a bag
+    # of strings it has to re-parse.
+    assert received == sent
+    assert isinstance(received.order_id, UUID)
+    assert isinstance(received.placed_at, datetime)
+    assert isinstance(received.total, Decimal)

@@ -2,22 +2,26 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import (
     final,
 )
 
 import attrs
 
-from forze.application.contracts.counter import CounterPort
+from forze.application.contracts.counter import (
+    CounterAdminPort,
+    CounterEntry,
+    CounterPort,
+)
 from forze.base.exceptions import exc
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin
 
 
-@final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockCounterAdapter(MockTenancyMixin, CounterPort):
-    """In-memory counter adapter with namespace/suffix partitioning."""
+class _MockCounterBase(MockTenancyMixin):
+    """Shared namespace/suffix key resolution for the counter data and admin adapters."""
 
     state: MockState
     namespace: str
@@ -27,6 +31,12 @@ class MockCounterAdapter(MockTenancyMixin, CounterPort):
     def _key(self, suffix: str | None) -> tuple[str, str | None]:
         ns = self._partitioned_namespace(self.namespace)
         return ns, suffix
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MockCounterAdapter(_MockCounterBase, CounterPort):
+    """In-memory counter adapter with namespace/suffix partitioning."""
 
     # ....................... #
 
@@ -69,3 +79,27 @@ class MockCounterAdapter(MockTenancyMixin, CounterPort):
         with self.state.lock:
             self.state.counters[self._key(suffix)] = value
             return value
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MockCounterAdminAdapter(_MockCounterBase, CounterAdminPort):
+    """Enumerate the in-memory counters allocated under one namespace."""
+
+    async def list_counters(self) -> Sequence[CounterEntry]:
+        # ``state.counters`` is keyed ``(namespace, suffix)`` across *every* spec, so the
+        # namespace has to be matched exactly — a prefix match would fold a spec named
+        # ``orders`` together with one named ``orders_archive``. The tenant partition is
+        # already baked into the resolved namespace, so this is scoped to the bound tenant
+        # for free.
+        namespace = self._partitioned_namespace(self.namespace)
+
+        with self.state.lock:
+            return [
+                CounterEntry(suffix=suffix, value=value)
+                for (ns, suffix), value in self.state.counters.items()
+                if ns == namespace
+            ]
