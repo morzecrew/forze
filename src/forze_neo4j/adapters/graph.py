@@ -814,16 +814,36 @@ class Neo4jGraphAdapter(TenancyMixin):
                     code="graph_edge_key_required",
                 )
 
-        query = builders.create_edge(
-            from_label=endpoint.from_kind,
-            from_key_field=from_node.key_field,
-            to_label=endpoint.to_kind,
-            to_key_field=to_node.key_field,
-            edge_type=edge_kind,
-            merge=merge,
-            tenant_field=self._tenant_field,
-            key_field=edge.key_field if merge else None,
-        )
+        # An endpoint-identified edge's identity **is** its pair, so a create on a pair that
+        # already has one is a conflict — not a second edge. A plain ``CREATE`` laid one anyway,
+        # and the pair then addressed two edges with ``get_edge`` returning an arbitrary one. No
+        # constraint can catch it (Neo4j constrains properties, not graph shape), so the create
+        # goes through a ``MERGE`` that reports whether it created. Keyed edges keep the plain
+        # ``CREATE``: their identity is a property, which ``ensure_schema`` *does* constrain.
+        endpoints_create = not merge and edge.identity != "key"
+
+        if endpoints_create:
+            query = builders.create_edge_by_endpoints(
+                from_label=endpoint.from_kind,
+                from_key_field=from_node.key_field,
+                to_label=endpoint.to_kind,
+                to_key_field=to_node.key_field,
+                edge_type=edge_kind,
+                tenant_field=self._tenant_field,
+            )
+
+        else:
+            query = builders.create_edge(
+                from_label=endpoint.from_kind,
+                from_key_field=from_node.key_field,
+                to_label=endpoint.to_kind,
+                to_key_field=to_node.key_field,
+                edge_type=edge_kind,
+                merge=merge,
+                tenant_field=self._tenant_field,
+                key_field=edge.key_field if merge else None,
+            )
+
         params = {"props": data, **self._params(from_key=from_key, to_key=to_key)}
 
         if edge_key is not None:
@@ -839,6 +859,15 @@ class Neo4jGraphAdapter(TenancyMixin):
             raise exc.not_found(
                 f"Edge endpoints for {edge_kind!r} not found ({from_key} -> {to_key})",
                 code="graph_edge_endpoints_not_found",
+            )
+
+        if endpoints_create and not rows[0]["created"]:
+            raise exc.conflict(
+                f"Edge kind {edge_kind!r} is declared identity='endpoints', so at most one of "
+                f"its edges exists per (from, to) pair — and {from_key} -> {to_key} already has "
+                f"one. Use ensure_edge to leave the existing edge alone, or update_edge to "
+                f"change it.",
+                code="graph_edge_endpoints_conflict",
             )
 
         if not return_new:

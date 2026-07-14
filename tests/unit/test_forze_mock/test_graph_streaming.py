@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.graph import (
+    EdgeRef,
     GraphEdgeDirectionality,
     GraphEdgeEndpoint,
     GraphEdgeSpec,
@@ -22,6 +23,7 @@ from forze.application.contracts.graph import (
     GraphNodeSpec,
     GraphReadCapabilities,
     GraphStreamingAware,
+    VertexRef,
 )
 from forze.application.integrations.graph import (
     assert_edge_streamable,
@@ -96,6 +98,27 @@ def _spec() -> GraphModuleSpec:
 
 def _adapter(spec: GraphModuleSpec | None = None) -> MockGraphAdapter:
     return MockGraphAdapter(spec=spec or _spec(), state=MockState(), namespace="social")
+
+
+def _plant_duplicate(graph: MockGraphAdapter, *, from_key: str, to_key: str, weight: int) -> None:
+    """Write a second FOLLOWS edge onto a pair, straight into the store, past the port.
+
+    ``create_edge`` refuses this now — the pair *is* the kind's identity. But a graph written
+    before that did not, the raw query hatch still can, and nothing outside the framework is
+    bound by the declaration at all. So duplicate pairs exist in the wild, and an export has to
+    carry them: this is how one gets into a store for the cursor to be tested against.
+    """
+
+    graph._edges_store().append(  # noqa: SLF001
+        {
+            "kind": "FOLLOWS",
+            "from_kind": "User",
+            "from_key": from_key,
+            "to_kind": "User",
+            "to_key": to_key,
+            "props": {"weight": weight},
+        }
+    )
 
 
 async def _collect(stream) -> list:
@@ -225,18 +248,23 @@ class TestEdgeStreaming:
         assert sorted(row.weight for row in rows) == [0, 1, 2, 3]
 
     async def test_duplicate_edges_on_one_pair_are_all_walked(self) -> None:
-        # The hazard the pair cursor is designed around. Nothing enforces the one-edge-per-pair
-        # identity — ``create_edge`` will add a second parallel edge — so a page cut *within* a
-        # pair would leave edges behind a cursor that seeks strictly past it. ``chunk_size=1``
-        # puts a boundary on every pair, including the duplicated one.
+        # The hazard the pair cursor is designed around, and it did not go away when
+        # ``create_edge`` learned to enforce the one-edge-per-pair identity: a graph written
+        # *before* that (or through the raw query hatch, or by anything outside the framework)
+        # still holds duplicate pairs, and an export must not silently drop them. A page cut
+        # within a pair would leave edges behind a cursor that then seeks strictly past it.
+        #
+        # So the duplicate is planted the way it actually arises — straight into the store,
+        # past the port — and ``chunk_size=1`` puts a page boundary on every pair.
         graph = _adapter()
 
         for i in range(3):
             await graph.create_vertex("User", UserCreate(id=f"u{i}"))
 
         await graph.create_edge("FOLLOWS", FollowsCreate(from_key="u0", to_key="u1", weight=1))
-        await graph.create_edge("FOLLOWS", FollowsCreate(from_key="u0", to_key="u1", weight=99))
         await graph.create_edge("FOLLOWS", FollowsCreate(from_key="u1", to_key="u2", weight=2))
+
+        _plant_duplicate(graph, from_key="u0", to_key="u1", weight=99)
 
         rows = await _collect(graph.find_edges_stream("FOLLOWS", chunk_size=1))
 
@@ -247,19 +275,74 @@ class TestEdgeStreaming:
         # window — that is the whole point, and it is why exhaustion counts keys, not rows.
         graph = _adapter()
 
-        for i in range(3):
+        for i in range(2):
             await graph.create_vertex("User", UserCreate(id=f"u{i}"))
 
-        for weight in (1, 2, 3):
-            await graph.create_edge(
-                "FOLLOWS", FollowsCreate(from_key="u0", to_key="u1", weight=weight)
-            )
+        await graph.create_edge("FOLLOWS", FollowsCreate(from_key="u0", to_key="u1", weight=1))
+        _plant_duplicate(graph, from_key="u0", to_key="u1", weight=2)
+        _plant_duplicate(graph, from_key="u0", to_key="u1", weight=3)
 
-        batches = [
-            batch async for batch in graph.find_edges_stream("FOLLOWS", chunk_size=1)
-        ]
+        batches = [batch async for batch in graph.find_edges_stream("FOLLOWS", chunk_size=1)]
 
         assert [len(batch) for batch in batches] == [3]  # one pair, three edges, one page
+
+
+# ....................... #
+
+
+class TestEndpointIdentity:
+    """``identity="endpoints"`` means at most one edge per pair — and now it is enforced.
+
+    It was not. ``create_edge`` compiled to a bare ``CREATE``, so calling it twice on a pair
+    laid a second parallel edge — after which the pair addressed two edges and ``get_edge``
+    returned an arbitrary one of them, while ``update_edge`` and ``delete_edge`` hit both.
+    """
+
+    async def test_a_second_create_on_the_same_pair_conflicts(self) -> None:
+        graph = _adapter()
+        await graph.create_vertex("User", UserCreate(id="a"))
+        await graph.create_vertex("User", UserCreate(id="b"))
+
+        await graph.create_edge("FOLLOWS", FollowsCreate(from_key="a", to_key="b", weight=1))
+
+        with pytest.raises(CoreException) as exc_info:
+            await graph.create_edge("FOLLOWS", FollowsCreate(from_key="a", to_key="b", weight=2))
+
+        assert exc_info.value.kind is ExceptionKind.CONFLICT
+        assert exc_info.value.code == "graph_edge_endpoints_conflict"
+        assert await graph.count_edges("FOLLOWS") == 1  # not two
+
+    async def test_ensure_edge_remains_the_idempotent_path(self) -> None:
+        # The reason a create *conflicts* rather than upserting: the idempotent verb already
+        # exists, so the three verbs can mean three different things.
+        graph = _adapter()
+        await graph.create_vertex("User", UserCreate(id="a"))
+        await graph.create_vertex("User", UserCreate(id="b"))
+
+        await graph.create_edge("FOLLOWS", FollowsCreate(from_key="a", to_key="b", weight=1))
+        await graph.ensure_edge("FOLLOWS", FollowsCreate(from_key="a", to_key="b", weight=2))
+
+        edge = await graph.get_edge(
+            EdgeRef.by_endpoints(
+                "FOLLOWS", VertexRef(kind="User", key="a"), VertexRef(kind="User", key="b")
+            )
+        )
+
+        assert await graph.count_edges("FOLLOWS") == 1
+        assert edge.weight == 1  # left alone, not overwritten
+
+    async def test_a_keyed_edge_kind_is_untouched(self) -> None:
+        # A keyed edge's identity is a *property*, which a database can constrain — Neo4j's
+        # ``ensure_schema`` provisions ``REQUIRE r.<key> IS UNIQUE``. Two distinct keys between
+        # the same pair are two distinct edges, and must stay that way.
+        graph = _adapter()
+        await graph.create_vertex("User", UserCreate(id="a"))
+        await graph.create_vertex("User", UserCreate(id="b"))
+
+        await graph.create_edge("KNOWS", KnowsCreate(id="e1", from_key="a", to_key="b"))
+        await graph.create_edge("KNOWS", KnowsCreate(id="e2", from_key="a", to_key="b"))
+
+        assert await graph.count_edges("KNOWS") == 2
 
 
 # ....................... #

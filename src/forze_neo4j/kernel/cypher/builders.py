@@ -173,6 +173,54 @@ def get_edge_by_key(
 # ....................... #
 
 
+CREATED_FLAG = "_forze_created"
+"""Transient marker naming the edge a ``MERGE`` created, so a create can tell it apart.
+
+Cypher has no ``wasCreated(r)``, and an *endpoint-identified* edge's create needs the answer:
+its identity is the ``(from, to)`` pair, so a second create on the same pair is a conflict, not
+a second edge. ``ON CREATE`` fires only on the create branch and runs under the same lock the
+``MERGE`` took on ``a`` and ``b``, which makes the marker exact even against a concurrent
+create — and it is ``REMOVE``d in the same statement, so it never reaches disk.
+"""
+
+
+def create_edge_by_endpoints(
+    *,
+    from_label: str,
+    from_key_field: str,
+    to_label: str,
+    to_key_field: str,
+    edge_type: str,
+    tenant_field: str | None = None,
+) -> str:
+    """Create an ``identity="endpoints"`` edge a→b, reporting whether it already existed.
+
+    Such an edge's identity **is** its endpoint pair — that is what the declaration asserts, and
+    what ``get_edge`` / ``update_edge`` / ``delete_edge`` address it by. A plain ``CREATE``
+    ignored that and happily laid a second parallel relationship between the same two nodes,
+    after which the pair addressed two edges and ``get_edge`` returned an arbitrary one of them.
+
+    ``MERGE`` is what enforces the identity: no constraint can, because Neo4j cannot express
+    "at most one relationship of type T between two nodes" — only property uniqueness. The
+    ``MERGE`` also *locks* both anchor nodes, which serializes concurrent creates on the same
+    pair, so the returned ``created`` flag is exact rather than a best guess.
+    """
+
+    head = (
+        f"MATCH (a:{quote(from_label)} {_match_map(from_key_field, tenant_field, key_param='from_key')}), "
+        f"(b:{quote(to_label)} {_match_map(to_key_field, tenant_field, key_param='to_key')})\n"
+    )
+
+    return (
+        f"{head}"
+        f"MERGE (a)-[r:{quote(edge_type)}]->(b)\n"
+        f"ON CREATE SET r += $props, r.{quote(CREATED_FLAG)} = true\n"
+        f"WITH r, r.{quote(CREATED_FLAG)} IS NOT NULL AS created\n"
+        f"REMOVE r.{quote(CREATED_FLAG)}\n"
+        f"RETURN properties(r) AS r, created"
+    )
+
+
 def create_edge(
     *,
     from_label: str,
@@ -195,6 +243,12 @@ def create_edge(
     is ``(key, tenant)``: a foreign tenant reusing the key gets its own edge (and the
     property is stamped for the composite edge-uniqueness constraint) rather than
     matching another tenant's relationship.
+
+    The plain ``CREATE`` branch is for **keyed** edges only, whose identity is a property and is
+    therefore enforceable — ``ensure_schema`` provisions ``REQUIRE r.<key> IS UNIQUE``, and a
+    duplicate raises a constraint error the client maps to ``conflict``. An endpoint-identified
+    edge has no property to constrain, so its create goes through
+    :func:`create_edge_by_endpoints` instead.
     """
 
     head = (

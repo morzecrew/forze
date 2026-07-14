@@ -31,6 +31,23 @@ optional `create` / `update` models. An edge also declares its `identity` (`"key
 `symmetric`). Field [encryption](../../identity-tenancy-enc/encryption.md) covers nodes and
 key-addressed edges; endpoint-identity edges reject `binds_record_id`.
 
+### Choosing an edge `identity`
+
+This is the one modelling decision the graph contract really asks of you, and it is **not** a
+question about whether the edge happens to have an id field. It is: *what makes one of these
+edges the same edge?*
+
+| `identity` | Means | Then |
+|---|---|---|
+| `"endpoints"` | **At most one edge of this kind per `(from, to)` pair.** The pair *is* the identity. | `EdgeRef.by_endpoints(...)` addresses it. A second `create_edge` on the same pair raises `conflict` — use `ensure_edge` to leave the existing one alone, or `update_edge` to change it. |
+| `"key"` *(default)* | Each edge has a business key of its own (`key_field`). | `EdgeRef.by_key(...)` addresses it. **Parallel edges between the same pair are allowed** — they are distinct entities with distinct keys. |
+
+So: **if two edges of a kind can legitimately run between the same pair — two flights between
+two cities, two roads between two towns — the kind is `"key"`, not `"endpoints"`.** That is not
+a workaround for a limitation; an edge that is a distinct entity needs a key to *be* one.
+Declaring such a kind `"endpoints"` leaves it with no identity at all: `get_edge` would return an
+arbitrary one of the parallel edges and `update_edge` / `delete_edge` would hit every one.
+
 ## Query port  (`ctx.graph.query(spec)`)
 
 | Method | Notes |

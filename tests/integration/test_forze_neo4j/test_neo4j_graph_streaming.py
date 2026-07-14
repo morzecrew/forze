@@ -22,6 +22,7 @@ from forze.application.contracts.crypto import (
     StaticKeyDirectory,
 )
 from forze.application.contracts.graph import (
+    EdgeRef,
     GraphEdgeDirectionality,
     GraphEdgeEndpoint,
     GraphEdgeSpec,
@@ -36,7 +37,7 @@ from forze.application.integrations.graph import (
     graph_read_capabilities,
     resolve_graph_codecs,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockDepsModule, MockKeyManagement, MockState
 from forze_neo4j.adapters import Neo4jGraphAdapter
 from forze_neo4j.kernel.client import Neo4jClient
@@ -246,11 +247,15 @@ async def test_duplicate_edges_on_one_pair_are_all_walked(neo4j_client: Neo4jCli
     """No edge falls through a page boundary, even when a pair carries several.
 
     The hazard the pair cursor is built around, and the reason its Cypher groups by pair rather
-    than limiting rows. Nothing enforces the one-edge-per-pair identity an ``identity=
-    "endpoints"`` kind declares — ``create_edge`` will add a second parallel relationship — so a
-    row-bounded page could cut between two edges of a pair, after which the next seek steps
-    strictly past that pair and the leftover is never seen again. Silent, and indistinguishable
-    from an edge that was never there.
+    than limiting rows: a row-bounded page could cut between two edges of a pair, after which
+    the next seek steps strictly past that pair and the leftover is never seen again — silent,
+    and indistinguishable from an edge that was never there.
+
+    ``create_edge`` refuses to make such a duplicate now (the pair *is* the kind's identity),
+    but that does not retire the hazard: a graph written before it did not refuse, the raw query
+    hatch still can, and nothing outside the framework is bound by the declaration at all. So
+    the duplicate is planted the way it actually arises — raw Cypher, straight past the port —
+    because an export has to carry the graph it finds, not the graph the spec hoped for.
 
     ``chunk_size=1`` puts a page boundary on *every* pair, including the duplicated one.
     """
@@ -259,15 +264,59 @@ async def test_duplicate_edges_on_one_pair_are_all_walked(neo4j_client: Neo4jCli
     neo = Neo4jGraphAdapter(spec=spec, client=neo4j_client)
     await _seed(neo)
 
-    # A second FOLLOWS edge on a pair that already has one.
-    await neo.create_edge(
-        "FOLLOWS", FollowsCreate(from_key="u00", to_key="u01", weight=999)
+    await neo4j_client.run(
+        "MATCH (a:User {id: 'u00'}), (b:User {id: 'u01'}) CREATE (a)-[:FOLLOWS {weight: 999}]->(b)"
     )
 
     rows = await _collect(neo.find_edges_stream("FOLLOWS", chunk_size=1))
 
     assert len(rows) == _USERS  # the (_USERS - 1) seeded edges, plus the duplicate
     assert 999 in {r.weight for r in rows}
+
+
+async def test_create_edge_enforces_the_endpoint_identity(neo4j_client: Neo4jClient) -> None:
+    """``identity="endpoints"`` promises at most one edge per pair — and now keeps it.
+
+    It did not. ``create_edge`` compiled to a bare Cypher ``CREATE``, so a second call on the
+    same pair laid a parallel relationship: the pair then addressed two edges, ``get_edge``
+    returned an arbitrary one of them, and ``update_edge`` / ``delete_edge`` hit both. No
+    constraint could catch it — Neo4j constrains *properties*, not graph shape — so the create
+    goes through a ``MERGE`` (which also locks both anchor nodes, serializing concurrent creates
+    on the same pair) and reports whether it created.
+
+    A keyed edge keeps the plain ``CREATE``: its identity is a property, and ``ensure_schema``
+    provisions ``REQUIRE r.<key> IS UNIQUE`` for exactly this.
+    """
+
+    spec = _spec()
+    neo = Neo4jGraphAdapter(spec=spec, client=neo4j_client)
+
+    await neo.create_vertex("User", UserCreate(id="ea"))
+    await neo.create_vertex("User", UserCreate(id="eb"))
+    await neo.create_edge("FOLLOWS", FollowsCreate(from_key="ea", to_key="eb", weight=1))
+
+    with pytest.raises(CoreException) as exc_info:
+        await neo.create_edge("FOLLOWS", FollowsCreate(from_key="ea", to_key="eb", weight=2))
+
+    assert exc_info.value.kind is ExceptionKind.CONFLICT
+    assert exc_info.value.code == "graph_edge_endpoints_conflict"
+
+    # One edge, and the create that lost did not touch it.
+    edge = await neo.get_edge(
+        EdgeRef.by_endpoints(
+            "FOLLOWS", VertexRef(kind="User", key="ea"), VertexRef(kind="User", key="eb")
+        )
+    )
+    assert edge.weight == 1
+
+    # …and the transient marker the MERGE uses to report "created" never reaches disk. The read
+    # model would silently drop an unknown field, so ask Neo4j for the raw stored properties.
+    raw = await neo4j_client.run(
+        "MATCH (:User {id: 'ea'})-[r:FOLLOWS]->(:User {id: 'eb'}) RETURN properties(r) AS r"
+    )
+
+    assert len(raw) == 1
+    assert raw[0]["r"] == {"weight": 1}
 
 
 async def test_a_vertex_kind_cannot_seal_its_own_key_field(neo4j_client: Neo4jClient) -> None:

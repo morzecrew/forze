@@ -428,18 +428,23 @@ class MockGraphAdapter(MockTenancyMixin):
 
         with self.state.lock:
             store = self._edges_store()
+            key_field = edge.key_field
+            edge_key = data.get(key_field) if key_field is not None else None
 
-            if merge:
-                key_field = edge.key_field
-                edge_key = data.get(key_field) if key_field is not None else None
+            if merge and key_field is not None and edge_key is None:
+                raise exc.validation(
+                    f"Keyed edge command for {edge_kind!r} must include {key_field!r} "
+                    "to ensure a stable identity",
+                    code="graph_edge_key_required",
+                )
 
-                if key_field is not None and edge_key is None:
-                    raise exc.validation(
-                        f"Keyed edge command for {edge_kind!r} must include {key_field!r} "
-                        "to ensure a stable identity",
-                        code="graph_edge_key_required",
-                    )
+            # A create on an ``identity="endpoints"`` kind has the same identity to respect as a
+            # merge does — the pair — so both look for the existing edge; they differ only in
+            # what they do on finding one. A plain append laid a second parallel edge, after
+            # which the pair addressed two and ``get_edge`` returned an arbitrary one.
+            endpoints_create = not merge and edge.identity != "key"
 
+            if merge or endpoints_create:
                 for existing in store:
                     # Identity includes the endpoint *kinds* (so two multi-endpoint edges with the
                     # same key values but different kinds stay distinct) and, for a keyed edge kind,
@@ -451,8 +456,22 @@ class MockGraphAdapter(MockTenancyMixin):
                         and existing["from_key"] == rec["from_key"]
                         and existing["to_kind"] == rec["to_kind"]
                         and existing["to_key"] == rec["to_key"]
-                        and (key_field is None or existing["props"].get(key_field) == edge_key)
+                        and (
+                            endpoints_create
+                            or key_field is None
+                            or existing["props"].get(key_field) == edge_key
+                        )
                     ):
+                        if endpoints_create:
+                            raise exc.conflict(
+                                f"Edge kind {edge_kind!r} is declared identity='endpoints', so "
+                                f"at most one of its edges exists per (from, to) pair — and "
+                                f"{rec['from_key']} -> {rec['to_key']} already has one. Use "
+                                f"ensure_edge to leave the existing edge alone, or update_edge "
+                                f"to change it.",
+                                code="graph_edge_endpoints_conflict",
+                            )
+
                         return self._emodel(edge_kind, existing["props"]) if return_new else None
 
             store.append(rec)

@@ -20,7 +20,7 @@ from forze.application.contracts.graph import (
     VertexRef,
 )
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_neo4j.adapters import Neo4jGraphAdapter
 
 # ----------------------- #
@@ -51,6 +51,7 @@ def _spec() -> GraphModuleSpec:
         name="social",
         nodes=(GraphNodeSpec(name="User", read=UserRead, create=UserCreate),),
         edges=(
+            # Endpoint-identified: the (from, to) pair *is* its identity, so a create MERGEs.
             GraphEdgeSpec(
                 name="FOLLOWS",
                 read=FollowsRead,
@@ -153,14 +154,45 @@ async def test_create_vertex_returns_model() -> None:
 
 @pytest.mark.asyncio
 async def test_create_edge_endpoints_extracts_keys() -> None:
-    adapter, client = _adapter(rows=[{"r": {"weight": 5}}])
+    # FOLLOWS is an ``identity="endpoints"`` kind, so its create goes through a MERGE that
+    # reports whether it created — the pair *is* the identity, and a bare CREATE would lay a
+    # second parallel edge onto it.
+    adapter, client = _adapter(rows=[{"r": {"weight": 5}, "created": True}])
     out = await adapter.create_edge("FOLLOWS", FollowsCreate(from_key="a", to_key="b", weight=5))
     assert isinstance(out, FollowsRead)
     assert out.weight == 5
     query, params = client.calls[-1]
-    assert "CREATE (a)-[r:`FOLLOWS`]->(b)" in query
+    assert "MERGE (a)-[r:`FOLLOWS`]->(b)" in query
+    assert "CREATE (a)-[r:`FOLLOWS`]->(b)" not in query
     assert params["from_key"] == "a" and params["to_key"] == "b"
     assert "from_key" not in params["props"] and "to_key" not in params["props"]
+
+
+@pytest.mark.asyncio
+async def test_create_edge_on_a_taken_endpoint_pair_conflicts() -> None:
+    # The MERGE matched instead of creating: the pair already has an edge, and an
+    # ``identity="endpoints"`` kind declares at most one.
+    adapter, _client = _adapter(rows=[{"r": {"weight": 1}, "created": False}])
+
+    with pytest.raises(CoreException) as exc_info:
+        await adapter.create_edge("FOLLOWS", FollowsCreate(from_key="a", to_key="b", weight=2))
+
+    assert exc_info.value.kind is ExceptionKind.CONFLICT
+    assert exc_info.value.code == "graph_edge_endpoints_conflict"
+
+
+@pytest.mark.asyncio
+async def test_create_edge_on_a_keyed_kind_still_creates() -> None:
+    # A keyed edge's identity is a *property*, which a database can constrain — ``ensure_schema``
+    # provisions ``REQUIRE r.<key> IS UNIQUE`` — so its create stays a plain CREATE, and two
+    # distinct keys between the same pair stay two distinct edges.
+    client = _FakeClient(rows=[{"r": {"ref": "e1", "stars": 3}}])
+    adapter = Neo4jGraphAdapter(spec=_keyed_spec(), client=client)
+
+    await adapter.create_edge("RATED", _KeyedCreate(ref="e1", from_key="a", to_key="b", stars=3))
+
+    query, _params = client.calls[-1]
+    assert "CREATE (a)-[r:`RATED`]->(b)" in query
 
 
 @pytest.mark.asyncio
@@ -265,9 +297,7 @@ async def test_anchor_isolation_leaves_traversal_interior_open() -> None:
 
 @pytest.mark.asyncio
 async def test_tenant_required_when_aware_without_provider_value() -> None:
-    adapter, _ = _adapter(
-        rows=[], tenant_aware=True, tenant_provider=lambda: None
-    )
+    adapter, _ = _adapter(rows=[], tenant_aware=True, tenant_provider=lambda: None)
     with pytest.raises(CoreException):
         await adapter.get_vertex(VertexRef(kind="User", key="a"))
 
@@ -310,6 +340,13 @@ class RatedRead(BaseModel):
     stars: int | None = None
 
 
+class _KeyedCreate(BaseModel):
+    ref: str
+    from_key: str
+    to_key: str
+    stars: int | None = None
+
+
 def _keyed_spec() -> GraphModuleSpec:
     return GraphModuleSpec(
         name="social",
@@ -345,8 +382,7 @@ async def test_ensure_schema_provisions_constraints_and_index() -> None:
     assert any("REQUIRE (n.`id`, n.`tenant_id`) IS UNIQUE" in q for q in stmts)
     assert any("CREATE INDEX" in q and "ON (n.`tenant_id`)" in q for q in stmts)
     assert any(
-        "FOR ()-[r:`RATED`]-() REQUIRE (r.`ref`, r.`tenant_id`) IS UNIQUE" in q
-        for q in stmts
+        "FOR ()-[r:`RATED`]-() REQUIRE (r.`ref`, r.`tenant_id`) IS UNIQUE" in q for q in stmts
     )
     assert all("IF NOT EXISTS" in q for q in stmts)  # idempotent
 
@@ -461,9 +497,7 @@ async def test_property_filter_rejects_non_identifier_key() -> None:
     adapter, client = _adapter(rows=[{"c": 0}])
 
     with pytest.raises(CoreException, match="graph_filter_key_invalid"):
-        await adapter.count_vertices(
-            "User", property_filter={"name = $tenant OR true //": "x"}
-        )
+        await adapter.count_vertices("User", property_filter={"name = $tenant OR true //": "x"})
 
     assert client.calls == []
 
@@ -513,9 +547,7 @@ async def test_scoped_walk_builds_tenant_scoped_query_and_materializes() -> None
 async def test_scoped_walk_fails_closed_without_tenant() -> None:
     from forze.application.contracts.graph import GraphPathStep, ScopedWalkParams
 
-    adapter, client = _adapter(
-        rows=[], tenant_aware=True, tenant_provider=lambda: None
-    )
+    adapter, client = _adapter(rows=[], tenant_aware=True, tenant_provider=lambda: None)
 
     with pytest.raises(CoreException, match="tenant_required"):
         await adapter.scoped_walk(
@@ -580,7 +612,7 @@ async def test_multi_endpoint_edge_rejects_undeclared_pair() -> None:
 
 @pytest.mark.asyncio
 async def test_multi_endpoint_edge_routes_to_declared_pair() -> None:
-    client = _FakeClient(rows=[{"r": {"weight": 1}}])
+    client = _FakeClient(rows=[{"r": {"weight": 1}, "created": True}])
     adapter = Neo4jGraphAdapter(spec=_multi_spec(), client=client)
 
     await adapter.create_edge(
