@@ -18,6 +18,9 @@ import os
 import subprocess
 import sys
 import textwrap
+from datetime import UTC, datetime
+from decimal import Decimal
+from uuid import UUID
 
 import pytest
 from pydantic import BaseModel, create_model
@@ -288,6 +291,81 @@ def test_spec_fingerprint_refuses_an_uncatalogued_name() -> None:
 
     with pytest.raises(CoreException, match="not catalogued"):
         registry.spec_fingerprint(SpecPlane.DOCUMENT, "nope")
+
+
+# ....................... #
+
+
+def test_a_model_instance_with_a_set_field_hashes_identically_across_processes() -> None:
+    """The trap this module exists to avoid, one level in.
+
+    A pydantic *instance* reaching ``_shape`` used to be dumped with ``mode="json"`` — which
+    looks like the right answer and is not: pydantic renders a ``set`` field as a **list in
+    set-iteration order**, so the dump arrived pre-flattened and already unordered, past the one
+    branch that would have sorted it. String hashing is seeded per process, so the same model
+    fingerprinted four different ways in four interpreters. Python mode keeps the set a set, and
+    the set branch sorts it.
+    """
+
+    script = textwrap.dedent(
+        """
+        from pydantic import BaseModel
+
+        from forze.application.contracts.inventory.fingerprint import _shape
+        from forze.base.primitives import stable_payload_fingerprint
+
+
+        class Policy(BaseModel):
+            roles: set[str]
+
+
+        shaped = _shape(
+            Policy(roles={"admin", "billing", "support", "auditor", "owner"}), at="probe"
+        )
+        print(stable_payload_fingerprint(shaped))
+        """
+    )
+
+    digests = {
+        seed: subprocess.run(
+            [sys.executable, "-c", script],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        for seed in ("0", "1", "7", "12345")
+    }
+
+    assert len(set(digests.values())) == 1, f"model fingerprint varies by hash seed: {digests}"
+
+
+def test_a_model_instances_scalars_render_rather_than_refuse() -> None:
+    """A ``mode="python"`` dump hands back ``UUID`` / ``datetime`` / ``Decimal`` as objects.
+
+    Each has exactly one deterministic textual form, so they are rendered rather than refused —
+    the fail-closed branch is for values that have *no* portable form, not for these.
+    """
+
+    class Row(BaseModel):
+        id: UUID
+        at: datetime
+        total: Decimal
+        tags: set[str]
+
+    row = Row(
+        id=UUID("11111111-1111-1111-1111-111111111111"),
+        at=datetime(2026, 7, 15, 12, 0, tzinfo=UTC),
+        total=Decimal("10.50"),
+        tags={"b", "a"},
+    )
+
+    assert _shape(row, at="probe") == {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "at": "2026-07-15T12:00:00+00:00",
+        "total": "10.50",
+        "tags": ["a", "b"],
+    }
 
 
 # ....................... #

@@ -412,3 +412,63 @@ async def test_stop_commits_the_messages_it_already_processed() -> None:
         f"{len(values)} messages were processed but only {committed} offsets committed — "
         f"the rest are redelivered on restart"
     )
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_mid_handler_still_commits_what_the_batch_finished() -> None:
+    """The stopping point is the message — but a handler can outlast the grace anyway.
+
+    Then the loop is cancelled *inside* it, which is the backstop working as designed. What is
+    not by design is what the cancel used to take with it: the messages before that handler had
+    already committed their effects, each in its own inbox transaction, and their offsets were
+    accumulated for the single ``commit`` at the end of the batch — the very call a cancel skips.
+    So a hard stop redelivered work it had demonstrably already done.
+
+    Here the third handler never returns, so no grace can reach a boundary; this passes only if
+    the cancellation path pays the offsets it owes for the two that finished.
+    """
+
+    state = MockState()
+    runtime = _runtime(state, strict_tx=True)
+
+    completed: list[str] = []
+    wedged = asyncio.Event()
+
+    async def handler(message: StreamMessage[_Payload]) -> None:
+        if message.payload.value == "m2":
+            wedged.set()
+            await asyncio.sleep(30)  # outlasts any grace; the loop must be cancelled out of it
+
+        completed.append(message.payload.value)
+
+    producer = MockStreamAdapter(state=state, namespace=_TOPIC, codec=_CODEC)
+    admin = MockCommitStreamGroupAdminAdapter(stream=producer, state=state)
+    await admin.ensure_group("g", [_TOPIC], start=OffsetReset.EARLIEST)
+
+    for index in range(6):
+        await producer.append(_TOPIC, _Payload(value=f"m{index}"), key="k")
+
+    step = _step(handler=handler)
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        startup = step.startup
+        assert isinstance(startup, _CommitStreamConsumerBackgroundStartup)
+
+        await startup(ctx)
+        await asyncio.wait_for(wedged.wait(), timeout=5.0)
+
+        clock = asyncio.get_running_loop()
+        graceful = await startup.stop(deadline=clock.time() + 0.1)
+
+    committed = sum(nxt for key, nxt in state.commit_stream_offsets.items() if key[1] == "g")
+
+    assert graceful is False, "a loop wedged in a handler must be reported as cancelled"
+    assert completed == ["m0", "m1"], "the wedged handler must not have completed"
+    assert committed == 2, (
+        f"2 messages committed their effects but only {committed} offsets were committed — "
+        f"the cancel dropped work that was already done"
+    )

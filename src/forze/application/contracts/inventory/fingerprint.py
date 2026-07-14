@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence, Set
-from datetime import timedelta
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from enum import Enum
 from typing import Any
+from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
@@ -96,6 +98,14 @@ def _shape(value: Any, *, at: str) -> Any:
     if isinstance(value, timedelta):
         return value.total_seconds()
 
+    # The scalars a ``mode="python"`` model dump keeps as objects. Each has one deterministic
+    # textual form, which is what makes them safe to render rather than refuse.
+    if isinstance(value, UUID | Decimal):
+        return str(value)
+
+    if isinstance(value, date | datetime | time):  # `datetime` is a `date`; all three isoformat
+        return value.isoformat()
+
     if isinstance(value, type):
         if issubclass(value, BaseModel):
             return _model_schema(value, at=at)
@@ -111,7 +121,11 @@ def _shape(value: Any, *, at: str) -> Any:
         return _attrs_shape(value, at=at)
 
     if isinstance(value, BaseModel):
-        return value.model_dump(mode="json")
+        # ``mode="python"``, then rendered here — *not* ``mode="json"``, which looks like the
+        # right answer and is not. Pydantic dumps a ``set`` field to a **list in set-iteration
+        # order**, so a JSON-mode dump arrives pre-flattened and already unordered, past the one
+        # branch below that would have sorted it. Python mode keeps the set a set.
+        return _shape(value.model_dump(mode="python"), at=at)
 
     if _is_codec(value):
         return {"codec": _shape(value.model_type, at=f"{at}.model_type")}

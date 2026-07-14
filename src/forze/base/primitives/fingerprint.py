@@ -25,13 +25,6 @@ _SECRET_DEDUP_SCRYPT_P = 1
 # ....................... #
 
 
-def _set_sort_key(item: Any) -> tuple[str, str]:
-    return (type(item).__name__, str(item))
-
-
-# ....................... #
-
-
 def _canonical(value: Any) -> Any:
     """Render what orjson cannot, without letting iteration order or a repr decide the bytes.
 
@@ -42,13 +35,16 @@ def _canonical(value: Any) -> Any:
     compared across processes (an idempotency key retried against another replica, a cursor
     minted on one node and read on another).
 
-    Sets are therefore sorted. The order is canonical, not semantic — sorting by ``(type, str)``
-    puts ``"10"`` before ``"9"`` — which is all a fingerprint needs and all it can have, since
-    a set of mixed types has no natural order to appeal to.
+    Sets are therefore sorted — **by each element's canonical bytes, not its repr.** A repr key
+    reintroduces the very bug it is meant to close one level down: ``str`` of a *nested*
+    frozenset also renders in hash order, so the outer sort would itself be seed-dependent.
+    Recursing through :func:`stable_json_bytes` means every set below this one is already sorted
+    by the time it is compared. The order is canonical, not semantic (``"10"`` sorts before
+    ``"9"``), which is all a fingerprint needs and all a set of mixed types can have.
     """
 
     if isinstance(value, frozenset | set):
-        return sorted(cast("Iterable[Any]", value), key=_set_sort_key)
+        return sorted(cast("Iterable[Any]", value), key=stable_json_bytes)
 
     return str(value)
 
