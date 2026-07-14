@@ -1,6 +1,6 @@
 from .cache import RedisCacheAdapter
 from .codecs import RedisKeyCodec, RedisPubSubCodec, RedisStreamCodec
-from .counter import RedisCounterAdapter
+from .counter import RedisCounterAdapter, RedisCounterAdminAdapter
 from .dlock import RedisDistributedLockAdapter
 from .idempotency import RedisIdempotencyAdapter
 from .pubsub import RedisPubSubAdapter
@@ -17,6 +17,7 @@ from .stream import (
 __all__ = [
     "RedisCacheAdapter",
     "RedisCounterAdapter",
+    "RedisCounterAdminAdapter",
     "RedisIdempotencyAdapter",
     "RedisRealtimePresence",
     "RedisSearchResultSnapshotAdapter",

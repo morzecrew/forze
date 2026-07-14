@@ -43,6 +43,7 @@ from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
+from forze.application.integrations.search import assert_search_encryption_parity
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 from forze.domain.models import BaseDTO, Document
@@ -59,7 +60,6 @@ from forze_kits.aggregates.search import (
     SearchMappers,
     SearchSyncOutboxWiring,
     SearchSyncSteps,
-    assert_search_encryption_parity,
     bind_search_sync,
     bind_search_sync_outbox,
     build_search_registry,
@@ -73,11 +73,14 @@ from forze_kits.aggregates.soft_deletion import (
 from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
 from forze_kits.integrations.outbox import OutboxEmit, RelayBinding, bind_outbox
+from forze_kits.integrations.search import SearchRebuildReport, rebuild_search_index
 from forze_kits.invariants import InvariantEnforcement, bind_invariants
 
 if TYPE_CHECKING:
     from forze.application.contracts.document import DocumentSpec
+    from forze.application.contracts.querying import QueryFilterExpression
     from forze.application.execution import ExecutionRuntime
+    from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
 
@@ -347,6 +350,42 @@ class AggregateKit(Generic[R, D, C, U]):
 
         return bind_search_sync_outbox(
             document=self.spec, search=self.search, config=self.search_delivery
+        )
+
+    # ....................... #
+
+    async def rebuild_search(
+        self,
+        ctx: ExecutionContext,
+        *,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        chunk_size: int = 500,
+    ) -> SearchRebuildReport:
+        """Backfill the kit's search index from its document plane (requires ``search``).
+
+        The index-sync bindings only carry rows that are *written*, so an aggregate that
+        gained ``search=…`` after it already held rows — or whose index was provisioned
+        fresh, restored, or left to drift — has no supported way to fill the gap without
+        this. Resolves both ports off *ctx* and runs the sweep; see
+        :func:`~forze_kits.integrations.search.rebuild_search_index` for the rule it applies
+        and the exactness it does and does not promise.
+
+        Run it once per tenant (under ``bind_identity(tenant=…)``) on a tenant-aware route.
+        """
+
+        if self.search is None:
+            raise exc.precondition(
+                "AggregateKit.rebuild_search requires a search spec (search=…) on the kit — "
+                "there is no index to rebuild.",
+            )
+
+        return await rebuild_search_index(
+            ctx.doc.query(self.spec),
+            ctx.search.command(self.search),
+            document=self.spec,
+            search=self.search,
+            filters=filters,
+            chunk_size=chunk_size,
         )
 
     # ....................... #

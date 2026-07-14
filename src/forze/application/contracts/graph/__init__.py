@@ -1,5 +1,6 @@
 """Bounded graph module contracts: node/edge specs, refs, and ports."""
 
+from .capabilities import GraphReadCapabilities, GraphStreamingAware
 from .deps import (
     GraphCommandDepKey,
     GraphCommandDepPort,
@@ -44,6 +45,8 @@ from .value_objects import (
 # ----------------------- #
 
 __all__ = [
+    "GraphReadCapabilities",
+    "GraphStreamingAware",
     "BaseGraphModulePort",
     "EdgeRef",
     "GraphCommandDepKey",

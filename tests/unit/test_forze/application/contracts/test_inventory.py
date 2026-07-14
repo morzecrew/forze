@@ -109,14 +109,15 @@ def test_planes_and_dispositions_are_inferred_from_the_spec_type() -> None:
     assert by_plane[SpecPlane.OUTBOX] is PlaneDisposition.DRAINED
 
 
-def test_counter_and_analytics_default_to_refused() -> None:
-    # Neither can be carried faithfully today, and skipping either in silence corrupts the
-    # target — a counter with no read path makes a migrated app reissue sequence numbers it
-    # already handed out. "We didn't think about it" must not look like "there was nothing
-    # there", so the default is a refusal rather than a shrug.
+def test_a_counter_is_exportable_now_that_it_has_a_read_port() -> None:
+    # This plane was REFUSED — durable state with no read verb, so a migrated application
+    # restarted its counters at zero and reissued sequence numbers already in customers'
+    # hands. ``CounterAdminPort.list_counters()`` gave operators the read that handlers still
+    # (correctly) do not get, and the write half was always there: import calls ``reset()``.
     registry = SpecRegistry().register(CounterSpec(name="invoice_no")).freeze()
 
-    assert registry.of_disposition(PlaneDisposition.REFUSED)[0].name == "invoice_no"
+    assert registry.of_disposition(PlaneDisposition.REFUSED) == ()
+    assert registry.of_plane(SpecPlane.COUNTER)[0].disposition is PlaneDisposition.EXPORTABLE
 
 
 # ----------------------- #
@@ -187,12 +188,14 @@ def test_export_refuses_a_warehouse_system_of_record() -> None:
         assert_exportable(registry)
 
 
-def test_export_refuses_a_counter_and_offers_no_way_around_it() -> None:
-    # Unlike analytics, this one cannot be declared away — the plane needs a read port first.
+def test_export_no_longer_refuses_a_counter() -> None:
+    # It used to, and the refusal was right: a counter had no read path, so an export that
+    # carried on regardless would have handed the target a sequence starting at zero. Now the
+    # plane can be read (``CounterAdminPort``) and written (``CounterPort.reset``), so it
+    # travels — and the doctrine's promise is kept by carrying it, not by refusing.
     registry = SpecRegistry().register(CounterSpec(name="invoice_no")).freeze()
 
-    with pytest.raises(CoreException, match="reissue sequence numbers"):
-        assert_exportable(registry)
+    assert_exportable(registry)  # does not raise
 
 
 def test_re_registering_an_equal_spec_is_benign() -> None:

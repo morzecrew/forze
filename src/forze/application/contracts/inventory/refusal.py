@@ -16,15 +16,9 @@ from forze.base.exceptions import exc
 
 from ..analytics import AnalyticsProvenance, AnalyticsSpec
 from .registry import FrozenSpecRegistry
-from .value_objects import PlaneDisposition, SpecPlane, SpecRegistryEntry
+from .value_objects import PlaneDisposition, SpecRegistryEntry
 
 # ----------------------- #
-
-_COUNTER_REASON = (
-    "counters are durable state with no read path, so an export cannot copy them and a "
-    "migrated application would reissue sequence numbers it has already handed out. There is "
-    "no way to declare around this — the plane needs a read port before it can travel."
-)
 
 _UNDECLARED_ANALYTICS_REASON = (
     "provenance is undeclared. Set provenance=AnalyticsProvenance.PROJECTED if these rows are "
@@ -46,9 +40,6 @@ _SYSTEM_OF_RECORD_REASON = (
 
 def refusal_reason(entry: SpecRegistryEntry) -> str:
     """Why this plane cannot be carried, and what (if anything) the author can do about it."""
-
-    if entry.plane is SpecPlane.COUNTER:
-        return _COUNTER_REASON
 
     if isinstance(entry.spec, AnalyticsSpec):
         s = cast(AnalyticsSpec[Any, Any], entry.spec)  # type: ignore[redundant-cast]

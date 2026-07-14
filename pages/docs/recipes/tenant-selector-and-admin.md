@@ -83,6 +83,27 @@ attach_tenancy_admin_routes(
 `list_members` returns principal ids only (`TenantManagementPort.list_tenant_principals`); join
 them with identity-plane details out of band.
 
+## Enumerating every tenant
+
+The selector's `list_principal_tenants` answers *"which tenants may this principal see"*, so
+anything driven from it visits only the tenants somebody happens to be a member of. To drive
+work across the whole deployment — a migration, a per-tenant sweep, an export — use
+`TenantManagementPort.list_tenants`, which is not membership-scoped:
+
+```python
+tenants, total = await mgmt.list_tenants(limit=100, offset=0)          # every tenant, paged
+live, _ = await mgmt.list_tenants(active_only=True)                    # only the live ones
+```
+
+`active_only=False` is the default **on purpose**. Deactivating a tenant sets a flag; it does
+not delete the row, and it certainly does not delete the tenant's documents, blobs or counters.
+A sweep that quietly skipped them would drop real data and report success — so the complete
+answer is what you get unless you ask for less. Pass `active_only=True` for a "who is live"
+admin view, where that genuinely is the question.
+
+Like the rest of the admin plane, this lists **every** tenant in the deployment, including ones
+the caller belongs to none of — put it behind your authz hooks.
+
 ## Notes
 
 - **Both build on the base wiring.** The middleware, deps modules, and enforcement hooks come

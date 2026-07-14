@@ -190,6 +190,34 @@ class TenantManagementAdapter(TenantManagementPort):
 
     # ....................... #
 
+    async def list_tenants(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        *,
+        active_only: bool = False,
+    ) -> tuple[Sequence[TenantIdentity], int]:
+        # Unfiltered by default: a deactivated tenant is a flag on a row, not a deleted row,
+        # so its data is all still there and a sweep that skipped it would drop real records
+        # and report success.
+        filters: Any = {"$values": {"is_active": True}} if active_only else None
+
+        # Ordered by id so the offset walk is stable and pages do not overlap or gap. (Rows are
+        # not moving during an export — the fleet is stopped — but an admin paging a live
+        # deployment gets a coherent list rather than whatever order the backend felt like.)
+        page = await self.tenant_qry.find_page(
+            filters=filters,
+            pagination={"limit": limit, "offset": offset},
+            sorts={"id": "asc"},
+        )
+
+        return (
+            [TenantIdentity(tenant_id=row.id, tenant_key=row.tenant_key) for row in page.hits],
+            page.count,
+        )
+
+    # ....................... #
+
     async def deactivate_tenant(self, tenant_id: UUID) -> None:
         row = await self.tenant_qry.get(tenant_id)
 

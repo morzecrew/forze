@@ -18,7 +18,11 @@ from forze.application.contracts.authn import (
     resolve_authn_event_emitter,
 )
 from forze.application.contracts.cache import CachePort, CacheSpec
-from forze.application.contracts.counter import CounterPort, CounterSpec
+from forze.application.contracts.counter import (
+    CounterAdminPort,
+    CounterPort,
+    CounterSpec,
+)
 from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.dlock import DistributedLockSpec
@@ -75,6 +79,7 @@ from forze_mock.adapters import (
     MockCommitStreamGroupAdapter,
     MockCommitStreamGroupAdminAdapter,
     MockCounterAdapter,
+    MockCounterAdminAdapter,
     MockDistributedLockAdapter,
     MockDocumentAdapter,
     MockDurableFunctionEventAdapter,
@@ -406,6 +411,19 @@ class ConfigurableMockCounter(_MockFactoryBase):
     def __call__(self, context: ExecutionContext, spec: CounterSpec) -> CounterPort:
         cfg = self._route(spec.name)
         return MockCounterAdapter(
+            state=self._state(context),
+            namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockCounterAdmin(_MockFactoryBase):
+    def __call__(self, context: ExecutionContext, spec: CounterSpec) -> CounterAdminPort:
+        cfg = self._route(spec.name)
+        return MockCounterAdminAdapter(
             state=self._state(context),
             namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
             tenant_aware=cfg.tenant_aware if cfg else False,

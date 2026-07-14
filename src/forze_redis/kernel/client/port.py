@@ -66,6 +66,31 @@ class RedisClientPort(Protocol):
         keys: Sequence[str],
     ) -> Awaitable[list[bytes | None]]: ...  # pragma: no cover
 
+    def scan(
+        self,
+        cursor: int = 0,
+        *,
+        match: str | None = None,
+        count: int | None = None,
+    ) -> Awaitable[tuple[int, list[str]]]:
+        """One step of a non-blocking ``SCAN``: returns ``(next_cursor, keys)``.
+
+        Redis' own guarantees, which a caller must honour and cannot infer from the
+        signature:
+
+        - **Only a zero cursor means done.** A step may return *no keys* with a non-zero
+          cursor (``count`` is a hint about work done, not results returned), so a loop that
+          stops on an empty batch silently under-reports. Loop until the cursor comes back
+          ``0``.
+        - **A key may be returned more than once** across steps. Dedup if it matters.
+        - A key present for the whole iteration is returned at least once; one added or
+          removed mid-iteration may or may not appear.
+
+        ``match`` is a **glob**, not a literal prefix — escape any ``*?[]\\`` in a value you
+        interpolate into it, or the pattern silently matches the wrong keys (or none).
+        """
+        ...  # pragma: no cover
+
     def set(
         self,
         key: str,

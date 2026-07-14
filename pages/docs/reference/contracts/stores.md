@@ -61,6 +61,39 @@ under one spec.
 | `decr` | `decr(by=1, *, suffix=None)` | decrement, return the new value |
 | `reset` | `reset(value=1, *, suffix=None)` | reset, return `value` |
 
+There is **no read verb**, deliberately: a counter's value is only meaningful at the
+instant it is allocated, so a handler that read one would be holding a number another
+allocation has already moved past. Allocate and use the value you were given.
+
+### Enumerating counters (admin)
+
+`ctx.counter.admin(spec)` returns a `CounterAdminPort`. It exists because the missing read
+verb, correct as it is for handlers, left counters as the one plane that is **durable state
+nothing can read** — so a migration that faithfully rebuilt every other plane would restart
+the counters at zero and reissue invoice numbers already in customers' hands, with no error
+anywhere to say so.
+
+| Method | Signature | Notes |
+|--------|-----------|-------|
+| `list_counters` | `list_counters()` | every counter under the spec, one `CounterEntry(suffix, value)` per partition |
+
+Both properties hold at once: handlers still cannot read a counter (the admin port is a
+separate acquisition, and it cannot allocate), while operators and a portable export can.
+`suffix=None` is a real partition — the unsuffixed counter — not an absent one.
+
+Carrying counters to another deployment needs no new write verb; `reset` is already it:
+
+```python
+for entry in await source.counter.admin(INVOICES).list_counters():
+    await target.counter(INVOICES).reset(entry.value, suffix=entry.suffix)
+```
+
+The value is the last number **handed out**, so the target's next `incr` continues the
+sequence rather than repeating its final number. Enumerate a counter you intend to carry only
+when nothing is allocating from it (a stopped fleet) — a value read while the source is live
+is stale the moment it is read. The whole set is returned at once, so a spec partitioned into
+millions of suffixes is not yet in scope.
+
 ## Storage
 
 Object storage splits into query and command ports —

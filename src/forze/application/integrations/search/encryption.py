@@ -8,7 +8,8 @@ fields are decrypted out of search results (and, for an external index, sealed o
 The wrapped codec uses the **default** field-encryption AAD label and the spec's record-id
 binding, so an in-place search reproduces exactly the document write's configuration and
 decrypts the document's own ciphertext. The spec's ``encryption`` policy must therefore be
-the same as the underlying ``DocumentSpec.encryption``.
+the same as the underlying ``DocumentSpec.encryption`` —
+:func:`assert_search_encryption_parity` is that rule, enforced.
 """
 
 from collections.abc import Callable, Mapping
@@ -23,6 +24,8 @@ from forze.application.contracts.crypto import (
     FieldEncryption,
     KeyringPort,
 )
+from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import EncryptingModelCodec, decrypt_rows
 from forze.base.exceptions import exc
@@ -33,6 +36,14 @@ from forze.domain.constants import ID_FIELD
 # ----------------------- #
 
 _WIRING_CODE = "core.search.encryption_wiring"
+
+_NO_ENCRYPTION = FieldEncryption()
+"""The canonical "nothing is sealed" policy.
+
+``None`` and an empty :class:`FieldEncryption` are the same declaration — both seal zero
+fields — so they must compare equal. Normalizing here keeps the parity check on *policy*
+rather than on how the author happened to spell its absence.
+"""
 
 
 def search_spec_encrypts(spec: object) -> bool:
@@ -166,3 +177,80 @@ async def decrypt_search_rows(
     """
 
     return await decrypt_rows(codec, rows)
+
+
+def _policy(encryption: FieldEncryption | None) -> FieldEncryption:
+    return _NO_ENCRYPTION if encryption is None else encryption
+
+
+def _sealed(encryption: FieldEncryption) -> frozenset[str]:
+    return encryption.encrypted | encryption.searchable
+
+
+def assert_search_encryption_parity(
+    *,
+    document: DocumentSpec[Any, Any, Any, Any],
+    search: SearchSpec[Any],
+) -> None:
+    """Fail closed unless *search* declares the **same** field-encryption policy as *document*.
+
+    A search index over a document aggregate is fed the aggregate's own read model — the
+    decrypted, in-memory one. The index's codec is what re-seals it, and it seals exactly
+    what ``SearchSpec.encryption`` names. So a field the document seals but the search spec
+    omits is written to the external index (Meilisearch) **in clear**: the document's own
+    sealing is intact and the leak is entirely in the drift between the two declarations. For
+    in-place search (Postgres / Mongo over the encrypted table) the same drift breaks
+    decryption instead — the AAD no longer reproduces the document write's.
+
+    The two specs are two projections of one policy, so parity is the rule. Every seam that
+    holds both specs must therefore assert it — the ``AggregateKit`` declaration, the two
+    index-sync bindings, and the rebuild sweep — because a seam that holds both is the only
+    place the rule *can* be checked at all, and a new one that forgot to would re-open the
+    leak on its own. Declaring no encryption is parity too, however it is spelled: ``None``
+    and an empty ``FieldEncryption()`` seal the same zero fields, so a plain unencrypted
+    aggregate passes.
+    """
+
+    document_policy = _policy(document.encryption)
+    search_policy = _policy(search.encryption)
+
+    if document_policy == search_policy:
+        return
+
+    doc_sealed = _sealed(document_policy)
+    search_sealed = _sealed(search_policy)
+
+    # The two field sets can drift in either direction, and the two drifts are different
+    # failures: the document's extras leak, the search spec's extras cannot be produced. Only
+    # when neither set has extras is the disagreement down to the policy flags.
+    leaked = doc_sealed - search_sealed
+    unbacked = search_sealed - doc_sealed
+    reasons: list[str] = []
+
+    if leaked:
+        reasons.append(
+            f"fields sealed on the document but not on the search spec: {sorted(leaked)} — "
+            f"they would be written to the index in clear"
+        )
+
+    if unbacked:
+        reasons.append(
+            f"fields sealed on the search spec but not on the document: {sorted(unbacked)} — "
+            f"the document stores them in plaintext, so sealing them only on the index cannot "
+            f"be reproduced from the read model"
+        )
+
+    if not reasons:
+        reasons.append(
+            f"the field sets agree ({sorted(doc_sealed)}) but the policies differ "
+            f"(binds_record_id / reject_plaintext / encrypted-vs-searchable split)"
+        )
+
+    detail = "; ".join(reasons)
+
+    raise exc.configuration(
+        f"Search spec {search.name!r} and document spec {document.name!r} declare different "
+        f"field encryption, but the index is fed the document's decrypted read model: "
+        f"{detail}. Point both specs at the same FieldEncryption policy object.",
+        code="search_encryption_parity_mismatch",
+    )

@@ -35,7 +35,7 @@ from forze.application.contracts.authz import (
     RoleAssignmentDepKey,
 )
 from forze.application.contracts.cache import CacheDepKey
-from forze.application.contracts.counter import CounterDepKey
+from forze.application.contracts.counter import CounterAdminDepKey, CounterDepKey
 from forze.application.contracts.crypto import (
     AeadDepKey,
     AesGcmAead,
@@ -179,6 +179,7 @@ from forze_mock.execution.factories import (
     ConfigurableMockCommitStreamGroup,
     ConfigurableMockCommitStreamGroupAdmin,
     ConfigurableMockCounter,
+    ConfigurableMockCounterAdmin,
     ConfigurableMockDistributedLock,
     ConfigurableMockDocument,
     ConfigurableMockDurableFunctionEvent,
@@ -369,6 +370,7 @@ class MockDepsModule(DepsModule):
             AnalyticsIngestDepKey: ConfigurableMockAnalytics(module=self),
             ProcedureCommandDepKey: ConfigurableMockProcedure(module=self),
             CounterDepKey: ConfigurableMockCounter(module=self),
+            CounterAdminDepKey: ConfigurableMockCounterAdmin(module=self),
             CacheDepKey: ConfigurableMockCache(module=self),
             IdempotencyDepKey: ConfigurableMockIdempotency(module=self),
             InboxDepKey: ConfigurableMockInbox(module=self),

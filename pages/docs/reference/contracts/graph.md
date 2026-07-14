@@ -49,6 +49,38 @@ key-addressed edges; endpoint-identity edges reject `binds_record_id`.
 | `shortest_path(from_ref, to_ref, params)` | one path (`ShortestPathParams`: `max_hops`, `edge_kinds`, optional `weight_property` for weighted/native paths — needs a GDS-capable backend, else `graph_algorithm_unavailable`) |
 | `k_shortest_paths(from_ref, to_ref, params, *, k)` | the `k` best paths, same params |
 
+### Streaming a whole kind
+
+`find_vertices` and `find_edges` page by **offset**, which is fine for a screenful and wrong
+for a sweep: `SKIP n` counts rows from the start of a result set that is being written
+underneath it, so a node created before the cursor shifts every later row one place along and
+the next page steps over one. For a migration or an export, a skipped page and an empty page
+produce the same artifact.
+
+The streaming reads seek by key instead — `key_field > last-seen` — so a bookmark cannot move:
+
+| Method | Notes |
+|--------|-------|
+| `find_vertices_stream(node_kind, *, property_filter=None, chunk_size=500)` | async generator of keyset batches; walks the kind to exhaustion |
+| `find_edges_stream(edge_kind, *, property_filter=None, chunk_size=500)` | same, for a **keyed** edge kind |
+
+```python
+async for batch in ctx.graph.query(SOCIAL).find_vertices_stream("User", chunk_size=500):
+    ...  # memory is bounded by chunk_size, whatever the graph's size
+```
+
+Both **fail closed** rather than serve a scan that looks complete and is not
+(`graph_streaming_unsupported`):
+
+- a backend that does not report `GraphReadCapabilities` supports neither stream;
+- an edge kind declared `identity="endpoints"` has no key of its own, so there is nothing to
+  bookmark and no way to resume — only `identity="key"` edges can be streamed;
+- a kind whose **key field is field-encrypted** has no usable order to seek on. Randomized
+  ciphertext has no order at all, and deterministic ciphertext has one that is not the
+  plaintext's — the bookmark would be taken from the decrypted model and compared against
+  ciphertext in the store, so the walk would seek to the wrong place and skip rows without ever
+  failing. (Encrypting a *non-key* property is fine.)
+
 ## Command port  (`ctx.graph.command(spec)`)
 
 Every create/ensure takes `return_new: bool = True`.

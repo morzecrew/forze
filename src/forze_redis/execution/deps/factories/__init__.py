@@ -1,7 +1,7 @@
 """Redis dependency factories."""
 
 from .cache import ConfigurableRedisCache
-from .counter import ConfigurableRedisCounter
+from .counter import ConfigurableRedisCounter, ConfigurableRedisCounterAdmin
 from .dlock import ConfigurableRedisDistributedLock
 from .idempotency import ConfigurableRedisIdempotency
 from .pubsub import ConfigurableRedisPubSubCommand, ConfigurableRedisPubSubQuery
@@ -18,6 +18,7 @@ from .stream import (
 __all__ = [
     "ConfigurableRedisCache",
     "ConfigurableRedisCounter",
+    "ConfigurableRedisCounterAdmin",
     "ConfigurableRedisDistributedLock",
     "ConfigurableRedisIdempotency",
     "ConfigurableRedisPubSubCommand",

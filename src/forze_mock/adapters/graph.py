@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import heapq
 from collections import deque
-from collections.abc import Sequence
-from typing import final
+from collections.abc import AsyncGenerator, Sequence
+from typing import Any, final
 
 import attrs
 from pydantic import BaseModel
@@ -28,6 +28,7 @@ from forze.application.contracts.graph import (
     GraphModuleSpec,
     GraphNodeSpec,
     GraphPathStep,
+    GraphReadCapabilities,
     GraphWalkParams,
     GraphWalkStep,
     NeighborRow,
@@ -37,7 +38,12 @@ from forze.application.contracts.graph import (
     VertexRef,
     validate_property_filter_keys,
 )
-from forze.application.integrations.graph import resolve_write_endpoint
+from forze.application.integrations.graph import (
+    assert_edge_streamable,
+    assert_vertex_streamable,
+    resolve_write_endpoint,
+    stream_keyset_pages,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import default_model_codec
@@ -607,6 +613,80 @@ class MockGraphAdapter(MockTenancyMixin):
 
         window = matches[offset : offset + limit]
         return [self._emodel(edge_kind, rec["props"]) for rec in window]
+
+    # ....................... #
+
+    def read_capabilities(self) -> GraphReadCapabilities:
+        return GraphReadCapabilities(
+            supports_vertex_streaming=True,
+            supports_edge_streaming=True,
+        )
+
+    # ....................... #
+
+    def find_vertices_stream(
+        self,
+        node_kind: str,
+        *,
+        property_filter: JsonDict | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
+        node = self._node(node_kind)
+        self._validate_filter(property_filter, node.encryption)
+        key_field = assert_vertex_streamable(
+            node, kind=node_kind, capabilities=self.read_capabilities()
+        )
+
+        async def _fetch(after: Any | None, limit: int) -> Sequence[tuple[Any, BaseModel]]:
+            with self.state.lock:
+                matches = sorted(
+                    (
+                        (str(props.get(key_field)), props)
+                        for (kind, _key), props in self._verts().items()
+                        if kind == node_kind and self._matches(props, property_filter)
+                    ),
+                    key=lambda item: item[0],
+                )
+
+            # The keyset seek, in the one line a real backend spends a WHERE clause on:
+            # strictly after the bookmark, never at it.
+            page = [item for item in matches if after is None or item[0] > after][:limit]
+
+            return [(key, self._vmodel(node_kind, props)) for key, props in page]
+
+        return stream_keyset_pages(_fetch, chunk_size=chunk_size)
+
+    # ....................... #
+
+    def find_edges_stream(
+        self,
+        edge_kind: str,
+        *,
+        property_filter: JsonDict | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
+        edge = self._edge(edge_kind)
+        self._validate_filter(property_filter, edge.encryption)
+        key_field = assert_edge_streamable(
+            edge, kind=edge_kind, capabilities=self.read_capabilities()
+        )
+
+        async def _fetch(after: Any | None, limit: int) -> Sequence[tuple[Any, BaseModel]]:
+            with self.state.lock:
+                matches = sorted(
+                    (
+                        (str(rec["props"].get(key_field)), rec["props"])
+                        for rec in self._edges_store()
+                        if rec["kind"] == edge_kind and self._matches(rec["props"], property_filter)
+                    ),
+                    key=lambda item: item[0],
+                )
+
+            page = [item for item in matches if after is None or item[0] > after][:limit]
+
+            return [(key, self._emodel(edge_kind, props)) for key, props in page]
+
+        return stream_keyset_pages(_fetch, chunk_size=chunk_size)
 
     async def vertex_degree(
         self,

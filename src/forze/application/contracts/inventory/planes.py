@@ -16,7 +16,7 @@ from ..analytics import (
 )
 from ..base import BaseSpec
 from ..cache import CacheDepKey, CacheSpec
-from ..counter import CounterDepKey, CounterSpec
+from ..counter import CounterAdminDepKey, CounterDepKey, CounterSpec
 from ..deps import DepKey
 from ..dlock import (
     DistributedLockCommandDepKey,
@@ -118,7 +118,7 @@ PLANE_DEP_KEYS: Final[dict[SpecPlane, frozenset[str]]] = {
         SearchResultSnapshotDepKey,
     ),
     SpecPlane.CACHE: _names(CacheDepKey),
-    SpecPlane.COUNTER: _names(CounterDepKey),
+    SpecPlane.COUNTER: _names(CounterDepKey, CounterAdminDepKey),
     SpecPlane.ANALYTICS: _names(AnalyticsQueryDepKey, AnalyticsIngestDepKey),
     SpecPlane.OUTBOX: _names(OutboxCommandDepKey, OutboxQueryDepKey, OutboxAdminDepKey),
     SpecPlane.INBOX: _names(InboxDepKey),
@@ -174,10 +174,13 @@ DEFAULT_DISPOSITIONS: Final[dict[SpecPlane, PlaneDisposition]] = {
     SpecPlane.STREAM: PlaneDisposition.DRAINED,
     SpecPlane.IDEMPOTENCY: PlaneDisposition.DRAINED,
     SpecPlane.DLOCK: PlaneDisposition.DRAINED,
-    # Durable state the framework cannot carry today, and skipping it in silence corrupts the
-    # target: a counter has no read path, so a migrated app reissues sequence numbers it has
-    # already handed out. Refused until a ``CounterAdminPort`` gives it one.
-    SpecPlane.COUNTER: PlaneDisposition.REFUSED,
+    # Durable state, and carrying it is not optional: a migrated application whose counters
+    # restarted at zero reissues sequence numbers it has already handed out. ``CounterPort``
+    # has no read verb by design (a value read outside its allocation is already stale), so
+    # this plane was ``REFUSED`` until ``CounterAdminPort.list_counters()`` gave operators the
+    # read that handlers still — correctly — do not get. The write half was always there:
+    # import calls ``CounterPort.reset()``.
+    SpecPlane.COUNTER: PlaneDisposition.EXPORTABLE,
     # Overridden per spec by its provenance (see :func:`disposition_of`) — this is the fallback
     # for an analytics spec that somehow reaches here without one.
     SpecPlane.ANALYTICS: PlaneDisposition.REFUSED,

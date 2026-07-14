@@ -435,6 +435,31 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
+    @exc_interceptor.coroutine("redis.scan")  # type: ignore[untyped-decorator]
+    async def scan(
+        self,
+        cursor: int = 0,
+        *,
+        match: str | None = None,
+        count: int | None = None,
+    ) -> tuple[int, list[str]]:
+        self.__require_no_pipeline("scan")
+
+        async def _call() -> tuple[int, list[str]]:
+            next_cursor, raw = await self.__require_client().scan(  # pyright: ignore[reportUnknownMemberType]
+                cursor=cursor,
+                match=match,
+                count=count,
+            )
+
+            return int(next_cursor), [
+                key.decode() if isinstance(key, bytes) else str(key) for key in raw
+            ]
+
+        return await self.__maybe_read_retry("scan", _call)
+
+    # ....................... #
+
     @exc_interceptor.coroutine("redis.set")  # type: ignore[untyped-decorator]
     async def set(
         self,
@@ -450,10 +475,7 @@ class RedisClient(RedisClientPort):
 
         # Inside a pipeline the command is only queued; the outcome (incl.
         # NX/XX applicability) materializes at execute(). Report "queued".
-        if self.__in_pipeline():
-            return True
-
-        return bool(res)
+        return True if self.__in_pipeline() else bool(res)
 
     # ....................... #
 
@@ -517,10 +539,7 @@ class RedisClient(RedisClientPort):
         res = await self.__executor().delete(*keys)
 
         # Queued onto the pipeline; the deleted count materializes at execute().
-        if self.__in_pipeline():
-            return 0
-
-        return int(res)
+        return 0 if self.__in_pipeline() else int(res)
 
     # ....................... #
 
@@ -532,10 +551,7 @@ class RedisClient(RedisClientPort):
         res = await self.__executor().unlink(*keys)
 
         # Queued onto the pipeline; the unlinked count materializes at execute().
-        if self.__in_pipeline():
-            return 0
-
-        return int(res)
+        return 0 if self.__in_pipeline() else int(res)
 
     # ....................... #
 
@@ -547,10 +563,7 @@ class RedisClient(RedisClientPort):
         res = await self.__executor().expire(key, seconds, gt=gt)
 
         # Queued onto the pipeline; whether the key existed materializes at execute().
-        if self.__in_pipeline():
-            return True
-
-        return bool(res)
+        return True if self.__in_pipeline() else bool(res)
 
     # ....................... #
     # Counter methods
@@ -593,10 +606,7 @@ class RedisClient(RedisClientPort):
         )
 
         # Queued onto the pipeline; the receiver count materializes at execute().
-        if self.__in_pipeline():
-            return 0
-
-        return int(res)
+        return 0 if self.__in_pipeline() else int(res)
 
     # ....................... #
 
@@ -796,10 +806,7 @@ class RedisClient(RedisClientPort):
             limit=limit,
         )
 
-        if isinstance(res, bytes):
-            return res.decode("utf-8")
-
-        return str(res)  # type: ignore[reportUnknownReturnType]
+        return res.decode("utf-8") if isinstance(res, bytes) else str(res)  # type: ignore[reportUnknownReturnType]
 
     # ....................... #
 
@@ -831,10 +838,7 @@ class RedisClient(RedisClientPort):
         res = await self.__executor().xdel(stream, *ids)
 
         # Queued onto the pipeline; the deleted count materializes at execute().
-        if self.__in_pipeline():
-            return 0
-
-        return int(res)
+        return 0 if self.__in_pipeline() else int(res)
 
     # ....................... #
 
@@ -855,10 +859,7 @@ class RedisClient(RedisClientPort):
         )
 
         # Queued onto the pipeline; the trimmed count materializes at execute().
-        if self.__in_pipeline():
-            return 0
-
-        return int(res)
+        return 0 if self.__in_pipeline() else int(res)
 
     # ....................... #
 
@@ -879,10 +880,7 @@ class RedisClient(RedisClientPort):
         )
 
         # Queued onto the pipeline; the trimmed count materializes at execute().
-        if self.__in_pipeline():
-            return 0
-
-        return int(res)
+        return 0 if self.__in_pipeline() else int(res)
 
     # ....................... #
 

@@ -741,6 +741,60 @@ def find_edges(
 
 
 # ....................... #
+# Keyset (streaming) reads — seek past the last key seen instead of counting rows to skip.
+#
+# ``SKIP $offset`` is the wrong tool for a walk that has to be *complete*: it counts rows from
+# the start of a result set that is being written underneath it, so a vertex created before the
+# cursor shifts every later row one place along and the next page skips one. The keyset
+# predicate is stated against a value that does not move.
+
+
+def find_vertices_keyset(
+    label: str,
+    key_field: str,
+    *,
+    after: bool,
+    tenant_field: str | None = None,
+    filter_keys: Sequence[str] = (),
+) -> str:
+    # Strictly greater, never ``>=``: the bookmark is a key already yielded, so an inclusive
+    # seek would re-emit it forever and the walk would never advance.
+    seek = f"n.{quote(key_field)} > $after" if after else ""
+    where = _where(
+        _tenant_pred("n", tenant_field),
+        property_predicate("n", filter_keys),
+        seek,
+    )
+    return (
+        f"MATCH (n:{quote(label)})\n{where}"
+        f"RETURN properties(n) AS n\n"
+        f"ORDER BY n.{quote(key_field)}\nLIMIT $limit"
+    )
+
+
+def find_edges_keyset(
+    edge_type: str,
+    key_field: str,
+    *,
+    after: bool,
+    tenant_field: str | None = None,
+    filter_keys: Sequence[str] = (),
+) -> str:
+    seek = f"r.{quote(key_field)} > $after" if after else ""
+    where = _where(
+        _tenant_pred("a", tenant_field),
+        _tenant_pred("b", tenant_field),
+        property_predicate("r", filter_keys),
+        seek,
+    )
+    return (
+        f"MATCH (a)-[r:{quote(edge_type)}]->(b)\n{where}"
+        f"RETURN properties(r) AS r\n"
+        f"ORDER BY r.{quote(key_field)}\nLIMIT $limit"
+    )
+
+
+# ....................... #
 # Writes (update / delete / ensure / bulk)
 
 

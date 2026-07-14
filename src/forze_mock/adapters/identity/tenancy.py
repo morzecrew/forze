@@ -214,6 +214,32 @@ class MockTenantManagementPort(_TenantRouteStore, TenantManagementPort):
                 else []
             )
 
+    async def list_tenants(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        *,
+        active_only: bool = False,
+    ) -> tuple[Sequence[TenantIdentity], int]:
+        with self.state.lock:
+            # Inactive tenants are included unless asked otherwise: deactivation is a flag,
+            # not a delete, so their data is all still there for a sweep to carry.
+            matches = sorted(
+                (
+                    TenantIdentity(
+                        tenant_id=UUID(tid),
+                        tenant_key=str(entry.get("tenant_key", tid)),
+                    )
+                    for tid, entry in self._tenants().items()
+                    if not active_only or entry.get("active", True)
+                ),
+                key=lambda identity: identity.tenant_id,
+            )
+
+        # The count is of every match, not of the page — a caller paging to exhaustion needs
+        # to know how far it has to go.
+        return matches[offset : offset + limit], len(matches)
+
     async def deactivate_tenant(self, tenant_id: UUID) -> None:
         with self.state.lock:
             entry = self._tenants().get(str(tenant_id))

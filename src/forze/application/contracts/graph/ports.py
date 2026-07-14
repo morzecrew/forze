@@ -4,7 +4,7 @@ Ports are intentionally free of Cypher, AQL, and other engine-specific query
 strings; adapters map these operations to the underlying graph database.
 """
 
-from collections.abc import Awaitable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Sequence
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
@@ -188,6 +188,46 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
         offset: int = 0,
     ) -> Awaitable[Sequence[BaseModel]]:
         """List edges of *edge_kind* with simple filtering and offset pagination."""
+        ...  # pragma: no cover
+
+    def find_vertices_stream(
+        self,
+        node_kind: str,
+        *,
+        property_filter: JsonDict | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
+        """Yield keyset batches of every vertex of *node_kind* — the whole-kind read.
+
+        The streaming counterpart of :meth:`find_vertices`, and **not** the same thing with a
+        bigger ``limit``: it seeks by key (``key_field > last-seen``) rather than by offset, so
+        a graph being written while it is walked cannot shift rows past the cursor. Offset
+        paging over a live graph silently skips and repeats — the failure an export must not
+        have, because a page that was skipped and a page that was empty produce the same
+        artifact.
+
+        No total count, memory bounded by *chunk_size*. Fails closed on a backend that does
+        not report vertex streaming, and on a node kind whose key field is field-encrypted —
+        a sealed key has no usable order to seek on (see
+        :func:`~forze.application.integrations.graph.assert_vertex_streamable`).
+        """
+        ...  # pragma: no cover
+
+    def find_edges_stream(
+        self,
+        edge_kind: str,
+        *,
+        property_filter: JsonDict | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
+        """Yield keyset batches of every edge of *edge_kind*.
+
+        As :meth:`find_vertices_stream`, plus one more way to be refused: an edge kind
+        declared ``identity="endpoints"`` has no per-edge key, so there is nothing to
+        bookmark and it fails closed naming the kind. (The spec already rejects
+        ``binds_record_id`` encryption on those edges for the same underlying reason — they
+        have no stable id.)
+        """
         ...  # pragma: no cover
 
     def vertex_degree(

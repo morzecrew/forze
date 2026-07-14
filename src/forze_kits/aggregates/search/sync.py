@@ -27,11 +27,11 @@ from forze.application.contracts.execution import (
 from forze.application.contracts.search import SearchSpec
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.execution.resilience import retry_read
+from forze.application.integrations.search import assert_search_encryption_parity
 from forze.base.primitives import StrKey, StrKeyNamespace
 from forze_kits.aggregates._logger import logger
 from forze_kits.aggregates.document.dto import written_read_model
 from forze_kits.aggregates.document.operations import DocumentKernelOp
-from forze_kits.aggregates.search.encryption import assert_search_encryption_parity
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
 
 if TYPE_CHECKING:

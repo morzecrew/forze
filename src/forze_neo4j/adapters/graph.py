@@ -28,7 +28,7 @@ require_neo4j()
 
 # ....................... #
 
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Sequence
 from typing import Any, Literal, final
 
 import attrs
@@ -40,6 +40,7 @@ from forze.application.contracts.graph import (
     GraphEdgeSpec,
     GraphModuleSpec,
     GraphNodeSpec,
+    GraphReadCapabilities,
     GraphWalkParams,
     GraphWalkStep,
     NeighborRow,
@@ -58,7 +59,10 @@ from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.graph import (
     GraphCodecs,
     GraphKindCipher,
+    assert_edge_streamable,
+    assert_vertex_streamable,
     resolve_write_endpoint,
+    stream_keyset_pages,
 )
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, OnceCell, uuid4
@@ -1176,6 +1180,94 @@ class Neo4jGraphAdapter(TenancyMixin):
             database=await self._resolved_database(),
         )
         return [await self._edge_model(edge_kind, row["r"]) for row in rows]
+
+    # ....................... #
+
+    def read_capabilities(self) -> GraphReadCapabilities:
+        # Both streams are a keyset seek over an indexed key field, which Cypher expresses
+        # directly — so Neo4j supports both.
+        return GraphReadCapabilities(
+            supports_vertex_streaming=True,
+            supports_edge_streaming=True,
+        )
+
+    # ....................... #
+
+    def find_vertices_stream(
+        self,
+        node_kind: str,
+        *,
+        property_filter: JsonDict | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
+        node = self._node(node_kind)
+        key_field = assert_vertex_streamable(
+            node, kind=node_kind, capabilities=self.read_capabilities()
+        )
+        filter_params = self._filter_params(property_filter, self._sealed_fields(node.encryption))
+        filter_keys = list(property_filter or {})
+
+        async def _fetch(after: Any | None, limit: int) -> Sequence[tuple[Any, BaseModel]]:
+            query = builders.find_vertices_keyset(
+                node_kind,
+                key_field,
+                after=after is not None,
+                tenant_field=self._tenant_field,
+                filter_keys=filter_keys,
+            )
+            params = self._params(limit=limit, **filter_params)
+
+            if after is not None:
+                params["after"] = after
+
+            rows = await self.client.run(query, params, database=await self._resolved_database())
+
+            # The bookmark is read off the **raw** property map, before decoding — the stored
+            # value is what the next query's seek predicate is compared against.
+            return [
+                (row["n"].get(key_field), await self._vertex_model(node_kind, row["n"]))
+                for row in rows
+            ]
+
+        return stream_keyset_pages(_fetch, chunk_size=chunk_size)
+
+    # ....................... #
+
+    def find_edges_stream(
+        self,
+        edge_kind: str,
+        *,
+        property_filter: JsonDict | None = None,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
+        edge = self._edge(edge_kind)
+        key_field = assert_edge_streamable(
+            edge, kind=edge_kind, capabilities=self.read_capabilities()
+        )
+        filter_params = self._filter_params(property_filter, self._sealed_fields(edge.encryption))
+        filter_keys = list(property_filter or {})
+
+        async def _fetch(after: Any | None, limit: int) -> Sequence[tuple[Any, BaseModel]]:
+            query = builders.find_edges_keyset(
+                edge_kind,
+                key_field,
+                after=after is not None,
+                tenant_field=self._tenant_field,
+                filter_keys=filter_keys,
+            )
+            params = self._params(limit=limit, **filter_params)
+
+            if after is not None:
+                params["after"] = after
+
+            rows = await self.client.run(query, params, database=await self._resolved_database())
+
+            return [
+                (row["r"].get(key_field), await self._edge_model(edge_kind, row["r"]))
+                for row in rows
+            ]
+
+        return stream_keyset_pages(_fetch, chunk_size=chunk_size)
 
     async def vertex_degree(
         self,

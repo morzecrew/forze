@@ -535,6 +535,13 @@ class TestGraphDeps:
         assert GraphRawQueryDepKey.name == "graph_raw_query"
 
 
+async def _empty_stream():  # noqa: ANN202
+    """An async generator yielding nothing — the stream methods' shape, not their behaviour."""
+
+    return
+    yield  # pragma: no cover  (makes this a generator)
+
+
 class TestGraphPortProtocols:
     """``runtime_checkable`` structural checks for the port protocols."""
 
@@ -621,6 +628,24 @@ class TestGraphPortProtocols:
                 offset=0,  # noqa: ANN001
             ):
                 return []
+
+            def find_vertices_stream(  # noqa: ANN202
+                self,
+                node_kind,  # noqa: ANN001
+                *,
+                property_filter=None,  # noqa: ANN001
+                chunk_size=500,  # noqa: ANN001
+            ):
+                return _empty_stream()
+
+            def find_edges_stream(  # noqa: ANN202
+                self,
+                edge_kind,  # noqa: ANN001
+                *,
+                property_filter=None,  # noqa: ANN001
+                chunk_size=500,  # noqa: ANN001
+            ):
+                return _empty_stream()
 
             async def vertex_degree(self, ref, *, direction=GraphDirection.BOTH, edge_kinds=None):  # noqa: ANN001, ANN202
                 return 0
