@@ -1241,12 +1241,43 @@ class Neo4jGraphAdapter(TenancyMixin):
         chunk_size: int = 500,
     ) -> AsyncGenerator[Sequence[BaseModel]]:
         edge = self._edge(edge_kind)
-        key_field = assert_edge_streamable(
-            edge, kind=edge_kind, capabilities=self.read_capabilities()
+        cursor = assert_edge_streamable(
+            self.spec, edge, kind=edge_kind, capabilities=self.read_capabilities()
         )
         filter_params = self._filter_params(property_filter, self._sealed_fields(edge.encryption))
         filter_keys = list(property_filter or {})
 
+        # One cursor field = the edge's own key. Two = the (tail, head) node keys of an
+        # ``identity="endpoints"`` kind, whose identity *is* that pair.
+        if len(cursor) == 1:
+            return self._stream_keyed_edges(
+                edge_kind,
+                cursor[0],
+                filter_params=filter_params,
+                filter_keys=filter_keys,
+                chunk_size=chunk_size,
+            )
+
+        return self._stream_endpoint_edges(
+            edge_kind,
+            cursor[0],
+            cursor[1],
+            filter_params=filter_params,
+            filter_keys=filter_keys,
+            chunk_size=chunk_size,
+        )
+
+    # ....................... #
+
+    def _stream_keyed_edges(
+        self,
+        edge_kind: str,
+        key_field: str,
+        *,
+        filter_params: JsonDict,
+        filter_keys: list[str],
+        chunk_size: int,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
         async def _fetch(after: Any | None, limit: int) -> Sequence[tuple[Any, BaseModel]]:
             query = builders.find_edges_keyset(
                 edge_kind,
@@ -1264,6 +1295,47 @@ class Neo4jGraphAdapter(TenancyMixin):
 
             return [
                 (row["r"].get(key_field), await self._edge_model(edge_kind, row["r"]))
+                for row in rows
+            ]
+
+        return stream_keyset_pages(_fetch, chunk_size=chunk_size)
+
+    # ....................... #
+
+    def _stream_endpoint_edges(
+        self,
+        edge_kind: str,
+        from_key_field: str,
+        to_key_field: str,
+        *,
+        filter_params: JsonDict,
+        filter_keys: list[str],
+        chunk_size: int,
+    ) -> AsyncGenerator[Sequence[BaseModel]]:
+        async def _fetch(after: Any | None, limit: int) -> Sequence[tuple[Any, BaseModel]]:
+            query = builders.find_edges_keyset_by_endpoints(
+                edge_kind,
+                from_key_field,
+                to_key_field,
+                after=after is not None,
+                tenant_field=self._tenant_field,
+                filter_keys=filter_keys,
+            )
+            params = self._params(limit=limit, **filter_params)
+
+            if after is not None:
+                params["after_from"], params["after_to"] = after
+
+            rows = await self.client.run(query, params, database=await self._resolved_database())
+
+            # The cursor key is the pair, and the query hands back **every** edge of each pair it
+            # includes — so a page can hold more rows than ``limit``, and the shared loop counts
+            # distinct keys rather than rows to decide it is done.
+            return [
+                (
+                    (row["from_key"], row["to_key"]),
+                    await self._edge_model(edge_kind, row["r"]),
+                )
                 for row in rows
             ]
 

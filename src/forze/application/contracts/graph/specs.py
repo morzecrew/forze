@@ -26,6 +26,51 @@ ArangoDB unique ``[_from, _to]`` index).
 # ----------------------- #
 
 
+def assert_key_field_not_sealed(
+    encryption: FieldEncryption | None,
+    key_field: str | None,
+    *,
+    kind: str,
+    what: str,
+) -> None:
+    """Refuse a kind whose *key_field* is named by its own field-encryption policy.
+
+    **A sealed key is not a key.** Every use a key has requires the stored value to be the one
+    the caller holds, and encryption guarantees it is not:
+
+    - **It cannot be matched.** A lookup by key compiles to ``MATCH (n:Kind {key_field: $key})``
+      against the *plaintext* the caller passed, while the write sealed it — so a vertex created
+      under a sealed key could not be fetched, updated or deleted by that key. It was a
+      write-only black hole, and the in-memory mock hid it completely (it stores properties
+      unsealed and keys its store by the plaintext, so the round-trip worked there and only
+      there).
+    - **It cannot be ordered.** ``find_vertices`` / ``find_edges`` order by the key, and
+      ciphertext has no order the caller would recognize — randomized ciphertext has none at
+      all, and deterministic ciphertext has one that is not the plaintext's.
+    - **It cannot be bookmarked**, so a keyset stream cannot walk the kind.
+
+    Refused at construction because there is no later point at which it becomes safe, and every
+    symptom above is silent. Sealing an ordinary property is entirely fine — this is about the
+    key alone. (The search plane has the same rule for sort keys, for the same reason.)
+    """
+
+    if encryption is None or key_field is None:
+        return
+
+    if key_field in (encryption.encrypted | encryption.searchable):
+        raise exc.configuration(
+            f"{what} {kind!r} names {key_field!r} as its key_field and also seals it in its "
+            f"encryption policy. A sealed key is not a key: it cannot be matched (a lookup "
+            f"compares the caller's plaintext against stored ciphertext, so the row would "
+            f"never be found), it has no usable order, and a keyset stream has nothing to "
+            f"bookmark. Encrypt the confidential properties and leave the key in plaintext.",
+            code="graph_sealed_key_field",
+        )
+
+
+# ----------------------- #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class GraphNodeSpec[R: BaseModel](BaseSpec):
     """One vertex (node) kind in a ``GraphModuleSpec``.
@@ -52,7 +97,19 @@ class GraphNodeSpec[R: BaseModel](BaseSpec):
     which stored properties are sealed at rest. Encrypted properties are **confidential** —
     sealed on write, decrypted out of every read (get/neighbors/walk/path), but *not*
     matchable in traversal predicates (structural traversal is unaffected). ``binds_record_id``
-    binds :attr:`key_field`. Requires a wired keyring. ``None`` (default) = no encryption."""
+    binds :attr:`key_field`. Requires a wired keyring. ``None`` (default) = no encryption.
+
+    :attr:`key_field` itself may **not** be sealed — see :meth:`__attrs_post_init__`."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        assert_key_field_not_sealed(
+            self.encryption,
+            self.key_field,
+            kind=str(self.name),
+            what="GraphNodeSpec",
+        )
 
 
 # ....................... #
@@ -101,7 +158,20 @@ class GraphEdgeSpec[R: BaseModel](BaseSpec):
     """Field-encryption policy for this edge kind's properties (see :class:`FieldEncryption`),
     decrypted out of every read path. ``binds_record_id`` requires :attr:`key_field`
     (``identity="key"`` edges); it is rejected for ``identity="endpoints"`` edges, which have
-    no stable per-edge id. Requires a wired keyring. ``None`` (default) = no encryption."""
+    no stable per-edge id. Requires a wired keyring. ``None`` (default) = no encryption.
+
+    :attr:`key_field` itself may **not** be sealed — see
+    :func:`assert_key_field_not_sealed`."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        assert_key_field_not_sealed(
+            self.encryption,
+            self.key_field,
+            kind=str(self.name),
+            what="GraphEdgeSpec",
+        )
 
 
 # ....................... #

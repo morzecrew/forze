@@ -794,6 +794,54 @@ def find_edges_keyset(
     )
 
 
+def find_edges_keyset_by_endpoints(
+    edge_type: str,
+    from_key_field: str,
+    to_key_field: str,
+    *,
+    after: bool,
+    tenant_field: str | None = None,
+    filter_keys: Sequence[str] = (),
+) -> str:
+    """Keyset-walk an ``identity="endpoints"`` edge kind, bookmarked on its endpoint pair.
+
+    Such an edge has no key of its own — that is the declaration — so the cursor is the
+    ``(tail, head)`` node-key pair, which *is* the identity the author asserted. The seek is the
+    standard lexicographic composite: strictly past the tail key, or equal on it and strictly
+    past the head key.
+
+    **The window is `LIMIT $limit` *pairs*, not rows, and every edge of a pair travels with it.**
+    That is the whole reason for the ``collect`` / ``UNWIND``: the framework does not enforce
+    one-edge-per-pair (``create_edge`` will add a second parallel relationship), and a row-bounded
+    page could cut between two edges sharing a pair — after which the next page seeks *strictly
+    past* that pair and the leftover is never seen again. A walk that silently drops edges is
+    exactly what a keyset cursor exists to prevent, so the page boundary is placed where no edge
+    can fall through it.
+    """
+
+    seek = (
+        f"(a.{quote(from_key_field)} > $after_from OR "
+        f"(a.{quote(from_key_field)} = $after_from AND b.{quote(to_key_field)} > $after_to))"
+        if after
+        else ""
+    )
+    where = _where(
+        _tenant_pred("a", tenant_field),
+        _tenant_pred("b", tenant_field),
+        property_predicate("r", filter_keys),
+        seek,
+    )
+
+    return (
+        f"MATCH (a)-[r:{quote(edge_type)}]->(b)\n{where}"
+        f"WITH a.{quote(from_key_field)} AS from_key, b.{quote(to_key_field)} AS to_key, "
+        f"collect(properties(r)) AS rels\n"
+        f"ORDER BY from_key, to_key\nLIMIT $limit\n"
+        f"UNWIND rels AS r\n"
+        f"RETURN r, from_key, to_key"
+    )
+
+
 # ....................... #
 # Writes (update / delete / ensure / bulk)
 

@@ -1,8 +1,9 @@
 """The keyset walk behind ``find_vertices_stream`` / ``find_edges_stream``, and its guards.
 
-Both graph backends drive the same loop over the same three refusals, so both live here rather
-than being written twice and drifting once. The refusals are the interesting half: each one is
-a case where a stream *could* be served and the rows it returned would be a lie.
+Both graph backends drive the same loop, so it lives here rather than being written twice and
+drifting once. The cursor is a **tuple of stored property values** — one element for a vertex
+(its key) or a keyed edge (its key), two for an endpoint-identified edge (the tail's and head's
+node keys) — which is what lets a kind with no key of its own be walked at all.
 """
 
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
@@ -12,9 +13,11 @@ from pydantic import BaseModel
 
 from forze.application.contracts.graph import (
     GraphEdgeSpec,
+    GraphModuleSpec,
     GraphNodeSpec,
     GraphReadCapabilities,
     GraphStreamingAware,
+    edge_cursor_fields,
     edge_stream_blocker,
     vertex_stream_blocker,
 )
@@ -64,7 +67,7 @@ def assert_vertex_streamable(
             code=_UNSUPPORTED_CODE,
         )
 
-    if (reason := vertex_stream_blocker(node)) is not None:
+    if (reason := vertex_stream_blocker(node)) is not None:  # pragma: no cover
         raise exc.precondition(
             f"Node kind {kind!r} cannot be streamed: {reason}.",
             code=_UNSUPPORTED_CODE,
@@ -77,12 +80,17 @@ def assert_vertex_streamable(
 
 
 def assert_edge_streamable(
+    spec: GraphModuleSpec,
     edge: GraphEdgeSpec[BaseModel],
     *,
     kind: str,
     capabilities: GraphReadCapabilities,
-) -> str:
-    """Refuse unless *edge* can be keyset-walked; return the field to bookmark on."""
+) -> tuple[str, ...]:
+    """Refuse unless *edge* can be keyset-walked; return the properties to bookmark on.
+
+    One field for a keyed edge, two for an endpoint-identified one — see
+    :func:`~forze.application.contracts.graph.edge_cursor_fields`.
+    """
 
     if not capabilities.supports_edge_streaming:
         raise exc.precondition(
@@ -91,21 +99,21 @@ def assert_edge_streamable(
             code=_UNSUPPORTED_CODE,
         )
 
-    if (reason := edge_stream_blocker(edge)) is not None:
+    if (reason := edge_stream_blocker(spec, edge)) is not None:
         raise exc.precondition(
             f"Edge kind {kind!r} cannot be streamed: {reason}.",
             code=_UNSUPPORTED_CODE,
         )
 
-    key_field = edge.key_field
+    fields = edge_cursor_fields(spec, edge)
 
-    if key_field is None:  # pragma: no cover — a keyless edge is already refused above
+    if fields is None:  # pragma: no cover — refused above
         raise exc.internal(
-            f"Edge kind {kind!r} passed the streamability check with no key field.",
+            f"Edge kind {kind!r} passed the streamability check with no cursor.",
             code=_UNSUPPORTED_CODE,
         )
 
-    return key_field
+    return fields
 
 
 # ....................... #
@@ -118,10 +126,19 @@ async def stream_keyset_pages[R](
 ) -> AsyncGenerator[Sequence[R]]:
     """Drive a keyset cursor to exhaustion, yielding one batch of models per page.
 
-    *fetch* takes ``(after, limit)`` and returns ``(stored_key, model)`` pairs already ordered
-    by key — the **stored** key, not the model's, because on an encrypted kind those differ and
-    the cursor has to speak the store's language. The bookmark never leaves this generator, so
-    no caller can resume from a stale one or hand one to a user.
+    *fetch* takes ``(after, limit)`` and returns ``(cursor_key, model)`` pairs already ordered by
+    key. The key is the value **as the store holds it**, never the model's — the cursor has to
+    speak the backend's language, and the bookmark never leaves this generator, so no caller can
+    resume from a stale one or hand one to a user.
+
+    **A key may repeat.** For an endpoint-identified edge kind the cursor is the ``(tail, head)``
+    pair, and the framework does not (yet) *enforce* the one-edge-per-pair identity that
+    declaration asserts — ``create_edge`` will happily add a second parallel edge. So *limit* is
+    a bound on **distinct keys**, not on rows, and a backend must return **every** row of the
+    last key it includes. Anything else would silently drop the duplicates: the next page seeks
+    strictly past that key, and whatever the page boundary cut off is never revisited. The walk
+    would look complete and would not be — the failure the whole streaming contract exists to
+    prevent.
     """
 
     if chunk_size < 1:
@@ -138,12 +155,13 @@ async def stream_keyset_pages[R](
         if not page:
             return
 
-        last_key = page[-1][0]
+        keys = [key for key, _ in page]
+        last_key = keys[-1]
 
         # Forward progress, asserted rather than assumed: a backend whose seek predicate is
         # wrong (``>=`` instead of ``>``, a key it failed to order by) hands back a page that
-        # starts where the last one did, and the walk spins on it forever, yielding the same
-        # rows. Loud beats endless.
+        # ends where the last one did, and the walk spins on it forever, yielding the same rows.
+        # Loud beats endless.
         if after is not None and last_key == after:
             raise exc.internal(
                 f"Graph keyset stream made no progress: the page after key {after!r} ends on "
@@ -153,9 +171,11 @@ async def stream_keyset_pages[R](
 
         yield [model for _key, model in page]
 
-        # A short page means the keyset is exhausted — unlike an offset window, a keyset seek
-        # returns fewer rows than asked for only when there are no more.
-        if len(page) < chunk_size:
+        # Exhaustion is measured in **distinct keys**, matching what ``chunk_size`` bounds: a key
+        # may carry several rows, so a full page can be longer than the window. (Counting rows
+        # would still terminate — a page short on rows is necessarily short on keys — but it
+        # would ask for one more page than it needed whenever duplicates padded the last one.)
+        if len(set(keys)) < chunk_size:
             return
 
         after = last_key

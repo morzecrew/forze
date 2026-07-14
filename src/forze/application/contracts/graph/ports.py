@@ -206,10 +206,9 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
         have, because a page that was skipped and a page that was empty produce the same
         artifact.
 
-        No total count, memory bounded by *chunk_size*. Fails closed on a backend that does
-        not report vertex streaming, and on a node kind whose key field is field-encrypted —
-        a sealed key has no usable order to seek on (see
-        :func:`~forze.application.integrations.graph.assert_vertex_streamable`).
+        No total count, memory bounded by *chunk_size*. Fails closed on a backend that does not
+        report vertex streaming, rather than serving a partial scan that reads like a complete
+        one.
         """
         ...  # pragma: no cover
 
@@ -222,11 +221,19 @@ class GraphQueryPort(BaseGraphModulePort, Protocol):
     ) -> AsyncGenerator[Sequence[BaseModel]]:
         """Yield keyset batches of every edge of *edge_kind*.
 
-        As :meth:`find_vertices_stream`, plus one more way to be refused: an edge kind
-        declared ``identity="endpoints"`` has no per-edge key, so there is nothing to
-        bookmark and it fails closed naming the kind. (The spec already rejects
-        ``binds_record_id`` encryption on those edges for the same underlying reason — they
-        have no stable id.)
+        As :meth:`find_vertices_stream`. A **keyed** edge (``identity="key"``) bookmarks on its
+        own key; an **endpoint-identified** one has no key of its own — that is what the
+        declaration means — so it bookmarks on the ``(tail, head)`` node-key pair, which *is*
+        the identity the author asserted.
+
+        For an endpoint-identified kind, *chunk_size* therefore bounds **pairs, not edges**, and
+        every edge of a pair is yielded with it. The framework does not enforce the
+        one-edge-per-pair identity that declaration promises (``create_edge`` will add a second
+        parallel edge), so a page cut *within* a pair would leave edges behind the cursor that
+        the next seek steps straight over — a walk that looked complete and was not.
+
+        Fails closed on a multi-endpoint kind whose endpoint node kinds key on *different*
+        properties: there is no single ordering that covers both, and no partial one is offered.
         """
         ...  # pragma: no cover
 

@@ -84,7 +84,8 @@ def _graph(
     edge_identity: str = "key",
     node_encryption: FieldEncryption | None = None,
 ) -> GraphModuleSpec:
-    """A one-node, one-edge module; ``edge_identity`` decides whether the edge can be walked."""
+    """A one-node, one-edge module. Both edge identities are walkable — a keyed edge on its own
+    key, an endpoint-identified one on its endpoint pair."""
 
     return GraphModuleSpec(
         name=name,
@@ -96,6 +97,31 @@ def _graph(
                 identity=edge_identity,  # type: ignore[arg-type]
                 key_field="id" if edge_identity == "key" else None,
                 endpoints=(GraphEdgeEndpoint(from_kind="User", to_kind="User"),),
+                directionality=GraphEdgeDirectionality.DIRECTED,
+            ),
+        ),
+    )
+
+
+def _mixed_key_graph(name: str) -> GraphModuleSpec:
+    """The one unwalkable shape: an endpoint-identified kind whose tails key differently."""
+
+    return GraphModuleSpec(
+        name=name,
+        nodes=(
+            GraphNodeSpec(name="Post", read=_Model, key_field="id"),
+            GraphNodeSpec(name="Note", read=_Model, key_field="slug"),
+            GraphNodeSpec(name="Tag", read=_Model, key_field="id"),
+        ),
+        edges=(
+            GraphEdgeSpec(
+                name="TAGGED",
+                read=_Model,
+                identity="endpoints",
+                endpoints=(
+                    GraphEdgeEndpoint(from_kind="Post", to_kind="Tag"),
+                    GraphEdgeEndpoint(from_kind="Note", to_kind="Tag"),
+                ),
                 directionality=GraphEdgeDirectionality.DIRECTED,
             ),
         ),
@@ -227,13 +253,27 @@ def test_a_graph_of_walkable_kinds_is_exportable() -> None:
     assert registry.of_plane(SpecPlane.GRAPH)[0].disposition is PlaneDisposition.EXPORTABLE
 
 
-def test_a_graph_holding_an_endpoint_identified_edge_is_refused_up_front() -> None:
-    # The defect this test exists for: the graph plane used to be EXPORTABLE unconditionally,
-    # so an app with an ``identity="endpoints"`` edge sailed through ``assert_exportable`` and
-    # the export discovered it *mid-flight*, at the first ``find_edges_stream`` call — with
-    # rows already written. A half-written artifact is exactly the "looks complete and is not"
-    # outcome the doctrine exists to prevent, so the refusal has to come before the first row.
+def test_a_graph_holding_an_endpoint_identified_edge_is_exportable() -> None:
+    # It was not. Such an edge has no key of its own, so the first cut had nothing to bookmark
+    # and refused the whole module. It bookmarks on the ``(tail, head)`` pair now — which *is*
+    # the identity that declaration asserts — so the graph travels.
     registry = SpecRegistry().register(_graph("social", edge_identity="endpoints")).freeze()
+
+    assert_exportable(registry)  # does not raise
+    assert registry.of_plane(SpecPlane.GRAPH)[0].disposition is PlaneDisposition.EXPORTABLE
+
+
+def test_a_graph_whose_endpoint_kinds_key_differently_is_refused_up_front() -> None:
+    # The one graph shape left that cannot be walked: a multi-endpoint kind linking Post → Tag
+    # and Note → Tag, where Post and Note key on different properties — there is no single
+    # ORDER BY covering both.
+    #
+    # The refusal has to come *before* the first row. The graph plane used to be EXPORTABLE
+    # unconditionally, so an unwalkable module sailed through ``assert_exportable`` and the
+    # export discovered it mid-flight, at the first ``find_edges_stream`` call, with rows
+    # already written — a half-written artifact being exactly the "looks complete and is not"
+    # outcome the doctrine exists to prevent.
+    registry = SpecRegistry().register(_mixed_key_graph("content")).freeze()
 
     assert registry.of_plane(SpecPlane.GRAPH)[0].disposition is PlaneDisposition.REFUSED
 
@@ -242,26 +282,10 @@ def test_a_graph_holding_an_endpoint_identified_edge_is_refused_up_front() -> No
 
     message = str(exc_info.value)
 
-    # Names the offending *kind*, not just the module — for the common cause the fix is one
-    # field on one edge spec, and "this graph is not exportable" leaves the author hunting.
-    assert "'RATED'" in message
-    assert "identity='endpoints'" in message
-    assert "key_field" in message
-
-
-def test_a_graph_whose_key_field_is_sealed_is_refused() -> None:
-    # A keyset cursor is an order over the *stored* values, and a sealed key has none it can
-    # use — the walk would seek to the wrong place and skip rows without failing.
-    registry = (
-        SpecRegistry()
-        .register(_graph("social", node_encryption=FieldEncryption(encrypted=frozenset({"id"}))))
-        .freeze()
-    )
-
-    assert registry.of_plane(SpecPlane.GRAPH)[0].disposition is PlaneDisposition.REFUSED
-
-    with pytest.raises(CoreException, match="no usable order"):
-        assert_exportable(registry)
+    # Names the offending *kind*, not just the module — "this graph is not exportable" leaves
+    # the author hunting.
+    assert "'TAGGED'" in message
+    assert "do not agree on a key field" in message
 
 
 def test_encrypting_a_non_key_property_leaves_the_graph_exportable() -> None:

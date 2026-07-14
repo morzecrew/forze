@@ -62,24 +62,37 @@ The streaming reads seek by key instead — `key_field > last-seen` — so a boo
 | Method | Notes |
 |--------|-------|
 | `find_vertices_stream(node_kind, *, property_filter=None, chunk_size=500)` | async generator of keyset batches; walks the kind to exhaustion |
-| `find_edges_stream(edge_kind, *, property_filter=None, chunk_size=500)` | same, for a **keyed** edge kind |
+| `find_edges_stream(edge_kind, *, property_filter=None, chunk_size=500)` | same, for an edge kind of **either** identity |
 
 ```python
 async for batch in ctx.graph.query(SOCIAL).find_vertices_stream("User", chunk_size=500):
     ...  # memory is bounded by chunk_size, whatever the graph's size
 ```
 
-Both **fail closed** rather than serve a scan that looks complete and is not
+**What an edge bookmarks on.** A keyed edge (`identity="key"`) bookmarks on its own key. An
+edge declared `identity="endpoints"` has no key of its own — that is what the declaration means
+— so it bookmarks on the **`(tail, head)` node-key pair**, which *is* the identity the author
+asserted. For such a kind, `chunk_size` bounds **pairs, not edges**, and every edge of a pair
+is yielded together: nothing enforces the one-edge-per-pair identity (`create_edge` will add a
+second parallel edge), so a page cut *within* a pair would leave edges behind a cursor that
+seeks strictly past it.
+
+They **fail closed** rather than serve a scan that looks complete and is not
 (`graph_streaming_unsupported`):
 
 - a backend that does not report `GraphReadCapabilities` supports neither stream;
-- an edge kind declared `identity="endpoints"` has no key of its own, so there is nothing to
-  bookmark and no way to resume — only `identity="key"` edges can be streamed;
-- a kind whose **key field is field-encrypted** has no usable order to seek on. Randomized
-  ciphertext has no order at all, and deterministic ciphertext has one that is not the
-  plaintext's — the bookmark would be taken from the decrypted model and compared against
-  ciphertext in the store, so the walk would seek to the wrong place and skip rows without ever
-  failing. (Encrypting a *non-key* property is fine.)
+- a multi-endpoint edge kind whose endpoint node kinds key on *different* properties — a
+  `TAGGED` kind linking `Post → Tag` and `Note → Tag` where `Post` and `Note` key differently
+  has no single ordering that covers both.
+
+!!! warning "A key field may not be encrypted"
+
+    Naming a kind's `key_field` in its own `encryption` policy is refused at spec construction
+    (`graph_sealed_key_field`). **A sealed key is not a key.** A lookup by key compares the
+    caller's *plaintext* against what the write *sealed*, so the two never meet: a vertex
+    created under a sealed key could never be fetched, updated or deleted by that key again —
+    a write-only black hole. It also has no order to page or seek on. Encrypting an ordinary
+    property is entirely fine; this is about the key alone.
 
 ## Command port  (`ctx.graph.command(spec)`)
 

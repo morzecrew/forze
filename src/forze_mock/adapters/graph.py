@@ -667,22 +667,47 @@ class MockGraphAdapter(MockTenancyMixin):
     ) -> AsyncGenerator[Sequence[BaseModel]]:
         edge = self._edge(edge_kind)
         self._validate_filter(property_filter, edge.encryption)
-        key_field = assert_edge_streamable(
-            edge, kind=edge_kind, capabilities=self.read_capabilities()
+        cursor = assert_edge_streamable(
+            self.spec, edge, kind=edge_kind, capabilities=self.read_capabilities()
         )
+
+        def _cursor_key(rec: JsonDict) -> Any:
+            # One field = the edge's own key. Two = the (tail, head) node keys of an
+            # ``identity="endpoints"`` kind — the pair *is* its declared identity.
+            if len(cursor) == 1:
+                return str(rec["props"].get(cursor[0]))
+
+            return (str(rec["from_key"]), str(rec["to_key"]))
 
         async def _fetch(after: Any | None, limit: int) -> Sequence[tuple[Any, BaseModel]]:
             with self.state.lock:
                 matches = sorted(
                     (
-                        (str(rec["props"].get(key_field)), rec["props"])
+                        (_cursor_key(rec), rec["props"])
                         for rec in self._edges_store()
                         if rec["kind"] == edge_kind and self._matches(rec["props"], property_filter)
                     ),
                     key=lambda item: item[0],
                 )
 
-            page = [item for item in matches if after is None or item[0] > after][:limit]
+            ahead = [item for item in matches if after is None or item[0] > after]
+
+            # ``limit`` bounds **distinct keys**, not rows, and every row of an included key
+            # travels with it — a key can carry more than one edge (nothing enforces the
+            # one-edge-per-pair identity), and a row-bounded page could cut between two of them,
+            # after which the next seek skips strictly past that pair and the leftover is never
+            # seen again.
+            admitted: list[Any] = []
+            page: list[tuple[Any, JsonDict]] = []
+
+            for key, props in ahead:
+                if key not in admitted:
+                    if len(admitted) == limit:
+                        break
+
+                    admitted.append(key)
+
+                page.append((key, props))
 
             return [(key, self._emodel(edge_kind, props)) for key, props in page]
 

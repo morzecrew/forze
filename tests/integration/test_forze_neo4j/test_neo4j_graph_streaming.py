@@ -15,6 +15,12 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.crypto import (
+    AesGcmAead,
+    FieldEncryption,
+    KeyRef,
+    StaticKeyDirectory,
+)
 from forze.application.contracts.graph import (
     GraphEdgeDirectionality,
     GraphEdgeEndpoint,
@@ -22,11 +28,16 @@ from forze.application.contracts.graph import (
     GraphModuleSpec,
     GraphNodeSpec,
     GraphReadCapabilities,
+    VertexRef,
 )
 from forze.application.execution import ExecutionContext
-from forze.application.integrations.graph import graph_read_capabilities
+from forze.application.integrations.crypto import Keyring
+from forze.application.integrations.graph import (
+    graph_read_capabilities,
+    resolve_graph_codecs,
+)
 from forze.base.exceptions import CoreException
-from forze_mock import MockDepsModule, MockState
+from forze_mock import MockDepsModule, MockKeyManagement, MockState
 from forze_neo4j.adapters import Neo4jGraphAdapter
 from forze_neo4j.kernel.client import Neo4jClient
 from tests.support.execution_context import context_from_deps
@@ -100,13 +111,17 @@ async def _seed(cmd: Any) -> None:
     for i in range(_USERS):
         await cmd.create_vertex("User", UserCreate(id=f"u{i:02d}", name=f"n{i % 3}"))
 
+    # A keyed edge kind (bookmarked on its own key) and an endpoint-identified one (bookmarked
+    # on its endpoint pair) over the same chain of vertices — one edge of each per pair.
     for i in range(_USERS - 1):
         await cmd.create_edge(
             "RATED",
             RatedCreate(id=f"r{i:02d}", from_key=f"u{i:02d}", to_key=f"u{i + 1:02d}", score=i),
         )
-
-    await cmd.create_edge("FOLLOWS", FollowsCreate(from_key="u00", to_key="u01"))
+        await cmd.create_edge(
+            "FOLLOWS",
+            FollowsCreate(from_key=f"u{i:02d}", to_key=f"u{i + 1:02d}", weight=i),
+        )
 
 
 async def _collect(stream: Any) -> list[Any]:
@@ -201,14 +216,115 @@ async def test_a_vertex_inserted_behind_the_cursor_is_not_skipped(
     assert seen == [f"u{i:02d}" for i in range(_USERS)]
 
 
-async def test_an_endpoint_identified_edge_is_refused_on_neo4j_too(
+async def test_an_endpoint_identified_edge_walks_on_its_endpoint_pair(
     neo4j_client: Neo4jClient,
 ) -> None:
+    """An edge with no key of its own is bookmarked on the pair that *is* its identity.
+
+    It used to be refused outright — there was nothing to bookmark, so an app that modelled a
+    FOLLOWS-style edge by its endpoints could not export its graph at all.
+    """
+
     spec = _spec()
     neo = Neo4jGraphAdapter(spec=spec, client=neo4j_client)
+    await _seed(neo)
+
+    mock_ctx: ExecutionContext = context_from_deps(MockDepsModule(state=MockState())())
+    await _seed(mock_ctx.graph.command(spec))
+
+    neo_rows = await _collect(neo.find_edges_stream("FOLLOWS", chunk_size=2))
+    mock_rows = await _collect(
+        mock_ctx.graph.query(spec).find_edges_stream("FOLLOWS", chunk_size=2)
+    )
+
+    # The seed lays one FOLLOWS edge per consecutive pair.
+    assert sorted(r.weight for r in neo_rows) == sorted(r.weight for r in mock_rows)
+    assert len(neo_rows) == _USERS - 1
+
+
+async def test_duplicate_edges_on_one_pair_are_all_walked(neo4j_client: Neo4jClient) -> None:
+    """No edge falls through a page boundary, even when a pair carries several.
+
+    The hazard the pair cursor is built around, and the reason its Cypher groups by pair rather
+    than limiting rows. Nothing enforces the one-edge-per-pair identity an ``identity=
+    "endpoints"`` kind declares — ``create_edge`` will add a second parallel relationship — so a
+    row-bounded page could cut between two edges of a pair, after which the next seek steps
+    strictly past that pair and the leftover is never seen again. Silent, and indistinguishable
+    from an edge that was never there.
+
+    ``chunk_size=1`` puts a page boundary on *every* pair, including the duplicated one.
+    """
+
+    spec = _spec()
+    neo = Neo4jGraphAdapter(spec=spec, client=neo4j_client)
+    await _seed(neo)
+
+    # A second FOLLOWS edge on a pair that already has one.
+    await neo.create_edge(
+        "FOLLOWS", FollowsCreate(from_key="u00", to_key="u01", weight=999)
+    )
+
+    rows = await _collect(neo.find_edges_stream("FOLLOWS", chunk_size=1))
+
+    assert len(rows) == _USERS  # the (_USERS - 1) seeded edges, plus the duplicate
+    assert 999 in {r.weight for r in rows}
+
+
+async def test_a_vertex_kind_cannot_seal_its_own_key_field(neo4j_client: Neo4jClient) -> None:
+    """A sealed key is not a key — and the real backend is the only place that showed it.
+
+    ``create_vertex`` seals every property the encryption policy names, and a lookup by key
+    matches the caller's **plaintext** against what was stored. Name the key field in that
+    policy and the two never meet: the vertex was written, and could never be fetched, updated
+    or deleted by its own key again. The mock hid it entirely — it stores properties unsealed
+    and keys its store by the plaintext, so the round-trip worked there and only there.
+
+    Refused at spec construction now, so the state is unreachable rather than silent. This test
+    is against Neo4j because that is where the damage actually happened.
+    """
 
     with pytest.raises(CoreException) as exc_info:
-        await _collect(neo.find_edges_stream("FOLLOWS"))
+        GraphNodeSpec(
+            name="User",
+            read=UserRead,
+            create=UserCreate,
+            encryption=FieldEncryption(encrypted=frozenset({"id"})),
+        )
 
-    assert exc_info.value.code == "graph_streaming_unsupported"
-    assert "FOLLOWS" in str(exc_info.value)
+    assert exc_info.value.code == "graph_sealed_key_field"
+
+    # …and a kind that seals an ordinary property is untouched: it writes, reads back, and
+    # streams, against the real backend.
+    spec = GraphModuleSpec(
+        name="sealed_prop",
+        nodes=(
+            GraphNodeSpec(
+                name="SPUser",
+                read=UserRead,
+                create=UserCreate,
+                encryption=FieldEncryption(encrypted=frozenset({"name"})),
+            ),
+        ),
+        edges=(),
+    )
+    codecs = resolve_graph_codecs(
+        spec,
+        keyring=Keyring(
+            kms=MockKeyManagement(),
+            aead=AesGcmAead(),
+            directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+        ),
+        deterministic=None,
+        tenant_provider=lambda: None,
+    )
+    neo = Neo4jGraphAdapter(spec=spec, client=neo4j_client, codecs=codecs)
+
+    await neo.create_vertex("SPUser", UserCreate(id="sp1", name="Ana"))
+
+    found = await neo.get_vertex(VertexRef(kind="SPUser", key="sp1"))
+
+    assert found is not None
+    assert found.name == "Ana"  # sealed at rest, decrypted on read
+
+    streamed = await _collect(neo.find_vertices_stream("SPUser"))
+    assert [row.id for row in streamed] == ["sp1"]
