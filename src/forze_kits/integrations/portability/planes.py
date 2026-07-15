@@ -63,17 +63,22 @@ class ExportPlan:
 # ....................... #
 
 
-def plan_export(registry: FrozenSpecRegistry) -> ExportPlan:
+def plan_export(registry: FrozenSpecRegistry, *, exclude_identity: bool = False) -> ExportPlan:
     """Resolve *registry* into an :class:`ExportPlan`, or refuse.
 
     Three refusals, in order, each a fail-closed guard rather than a silent skip:
 
     - ``assert_exportable`` first — a ``REFUSED`` plane (an analytics table nobody declared
       recomputable, a graph holding an unwalkable kind) stops the export before it writes a byte.
-    - An ``EXPORTABLE`` plane this version does not yet carry (storage, counters, graph) — refused
-      by name, because skipping it would ship an archive that looks complete and is not.
+    - An ``EXPORTABLE`` plane this version does not yet carry — refused by name, because skipping it
+      would ship an archive that looks complete and is not.
     - A read-only document (no ``write`` model) — refused, because it cannot be imported, so
       exporting it produces a file no target can consume.
+
+    *exclude_identity* is the one deliberate **skip** (not a refusal): a per-tenant export omits
+    identity/credential specs by default (RFC §9 / decision #10), because a data-portability request
+    wants the tenant's business data, not their session tokens. It is a declared, intentional
+    exclusion — the manifest records it — not the silent-incompleteness the doctrine forbids.
     """
 
     assert_exportable(registry)
@@ -86,6 +91,11 @@ def plan_export(registry: FrozenSpecRegistry) -> ExportPlan:
     unsupported: list[str] = []
 
     for entry in registry.entries:
+        if entry.identity and exclude_identity:
+            # A per-tenant export leaves identity/credential material behind by default — sessions,
+            # API keys, unexpired invite/reset tokens. A full-system export never sets this.
+            continue
+
         if entry.disposition is PlaneDisposition.REBUILDABLE:
             rebuild.append(entry.ref.label())
             continue

@@ -72,6 +72,14 @@ class Manifest(BaseModel):
     scope: ScopeManifest
     consistency: Consistency
 
+    identity_included: bool = True
+    """Whether the archive carries identity/credential specs (sessions, API keys, invite/reset
+    tokens, roles, grants). A **full-system** export always includes them (``True``); a
+    **per-tenant** export excludes them by default (``False``) unless ``include_identity=True`` was
+    passed. Read it before treating an archive as safe: ``True`` means it is a credential store (RFC
+    §9). Defaults ``True`` so an archive whose producer never considered the question is treated as
+    the more dangerous case."""
+
     files: list[ArchiveFile] = Field(default_factory=list)
     """Every data file, checksummed. Import verifies all of them before decoding any row."""
 

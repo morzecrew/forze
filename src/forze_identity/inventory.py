@@ -87,4 +87,5 @@ def spec_contributions() -> SpecRegistry:
         *AUTHZ_SPECS,
         *TENANCY_SPECS,
         source=SpecSource.FRAMEWORK,
+        identity=True,
     )

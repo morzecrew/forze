@@ -79,12 +79,17 @@ class SpecRegistry:
         *specs: BaseSpec,
         source: SpecSource = SpecSource.AUTHOR,
         disposition: PlaneDisposition | None = None,
+        identity: bool = False,
     ) -> Self:
         """Catalogue *specs*, inferring each one's plane from its type.
 
         A spec whose type belongs to no inventoried plane (a ``ProcedureSpec``, an
         ``HttpServiceSpec`` — compute and I/O, holding no state of their own) is rejected
         rather than silently dropped: the caller thought it was contributing something.
+
+        *identity* marks the whole batch as identity/credential material (the ``forze_identity``
+        contribution), which a per-tenant export excludes by default — see
+        :attr:`~forze.application.contracts.inventory.SpecRegistryEntry.identity`.
         """
 
         for spec in specs:
@@ -103,6 +108,7 @@ class SpecRegistry:
                     spec=spec,
                     disposition=disposition or disposition_of(spec, plane),
                     source=source,
+                    identity=identity,
                 )
             )
 

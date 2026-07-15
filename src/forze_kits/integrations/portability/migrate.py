@@ -58,7 +58,7 @@ from ._core import (
 from ._graph import edge_create_from_row, exported_edge_row
 from .planes import plan_export
 from .report import CounterImport, DocumentImport, GraphImport, MigrateReport, StorageImport
-from .scope import ExportScope
+from .scope import ExportScope, TenantScope
 
 # ----------------------- #
 
@@ -89,6 +89,11 @@ class ArchiveMigrator:
     """Permit a full-system migration whose quiesce did not attest — off by default, so a
     still-moving source is refused rather than silently copied inconsistently (RFC 0017 §4)."""
 
+    include_identity: bool = False
+    """Carry identity/credential specs in a **per-tenant** migration. Off by default (RFC §9 /
+    decision #10); ignored under :class:`FullScope`, which always moves identity — migrating a live
+    system means moving its sessions."""
+
     # ....................... #
 
     async def __call__(
@@ -108,7 +113,9 @@ class ArchiveMigrator:
         the tenant on *both* sides, so reads and writes stay in the same partition.
         """
 
-        plan = plan_export(registry)
+        exclude_identity = isinstance(scope, TenantScope) and not self.include_identity
+
+        plan = plan_export(registry, exclude_identity=exclude_identity)
         assert_scope_permitted(scope, allow_fuzzy=self.allow_fuzzy)
 
         logger.info(
@@ -117,6 +124,7 @@ class ArchiveMigrator:
             storage=len(plan.storage),
             rebuild=len(plan.rebuild),
             on_conflict=self.on_conflict,
+            identity_included=not exclude_identity,
         )
 
         docs: list[DocumentImport] = []
@@ -318,6 +326,7 @@ async def migrate(
     batch_size: int = DEFAULT_BATCH,
     on_conflict: OnConflict = "skip",
     allow_fuzzy: bool = False,
+    include_identity: bool = False,
 ) -> MigrateReport:
     """Copy an application's state directly from one wired runtime into another — no artifact.
 
@@ -343,6 +352,7 @@ async def migrate(
         batch_size=batch_size,
         on_conflict=on_conflict,
         allow_fuzzy=allow_fuzzy,
+        include_identity=include_identity,
     )(
         source_runtime.get_context(),
         target_runtime.get_context(),

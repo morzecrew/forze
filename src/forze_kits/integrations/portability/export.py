@@ -87,6 +87,12 @@ class ArchiveExporter:
     ``forze[zstd]`` extra and fails closed without it; ``none`` stores rows uncompressed. Recorded
     in the manifest so import decodes with the same one. Blobs stay raw regardless."""
 
+    include_identity: bool = False
+    """Carry identity/credential specs (sessions, API keys, invite/reset tokens, roles, grants) in a
+    **per-tenant** export. Off by default: a data-portability request wants the tenant's business
+    data, not their session tokens (RFC §9 / decision #10). Ignored under :class:`FullScope`, which
+    always carries identity — moving a live system means moving its sessions."""
+
     # ....................... #
 
     async def __call__(
@@ -105,7 +111,11 @@ class ArchiveExporter:
         from a report that did not attest, unless :attr:`allow_fuzzy` opts into a ``fuzzy`` one.
         """
 
-        plan = plan_export(registry)
+        # A per-tenant export omits identity/credential specs unless the caller opts in; a
+        # full-system export always carries them (a live system needs its sessions).
+        exclude_identity = isinstance(scope, TenantScope) and not self.include_identity
+
+        plan = plan_export(registry, exclude_identity=exclude_identity)
         resolved = self._resolve_scope(ctx, scope)
 
         logger.info(
@@ -114,6 +124,7 @@ class ArchiveExporter:
             consistency=resolved.consistency,
             documents=len(plan.documents),
             rebuild=len(plan.rebuild),
+            identity_included=not exclude_identity,
         )
 
         files: list[ArchiveFile] = []
@@ -147,7 +158,15 @@ class ArchiveExporter:
                 counters.append(counter_outcome)
                 _write_spec_shape(dest, entry)
 
-        _write_manifest(dest, registry.fingerprint(), resolved, plan, files, self.compression)
+        _write_manifest(
+            dest,
+            registry.fingerprint(),
+            resolved,
+            plan,
+            files,
+            self.compression,
+            identity_included=not exclude_identity,
+        )
 
         logger.info(
             "Export complete",
@@ -377,6 +396,7 @@ async def export_archive(
     chunk_size: int = DEFAULT_CHUNK,
     allow_fuzzy: bool = False,
     compression: Compression = "gzip",
+    include_identity: bool = False,
 ) -> ExportReport:
     """Convenience over :class:`ArchiveExporter`: pull the registry and the active context off
     *runtime* and export.
@@ -392,7 +412,10 @@ async def export_archive(
     registry = require_registry(runtime)
 
     return await ArchiveExporter(
-        chunk_size=chunk_size, allow_fuzzy=allow_fuzzy, compression=compression
+        chunk_size=chunk_size,
+        allow_fuzzy=allow_fuzzy,
+        compression=compression,
+        include_identity=include_identity,
     )(runtime.get_context(), registry, dest, scope=scope)
 
 
@@ -439,6 +462,8 @@ def _write_manifest(
     plan: ExportPlan,
     files: list[ArchiveFile],
     compression: Compression,
+    *,
+    identity_included: bool,
 ) -> None:
     """Write ``manifest.json`` last — its presence is what marks the archive complete.
 
@@ -454,6 +479,7 @@ def _write_manifest(
         compression=compression,
         scope=resolved.manifest,
         consistency=resolved.consistency,
+        identity_included=identity_included,
         files=files,
         rebuild=list(plan.rebuild),
         quiesce_attestation=resolved.attestation,
