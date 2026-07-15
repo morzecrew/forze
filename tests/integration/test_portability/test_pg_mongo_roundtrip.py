@@ -166,7 +166,7 @@ def _corpus(count: int) -> list[tuple[UUID, _OrderCreate]]:
     ]
 
 
-async def _seed_pg(
+async def _seed(
     ctx: ExecutionContext, corpus: list[tuple[UUID, _OrderCreate]]
 ) -> dict[UUID, _OrderRead]:
     command = ctx.document.command(ORDER_SPEC)
@@ -217,7 +217,7 @@ async def test_roundtrip_through_real_postgres_preserves_rich_types(
     await _create_pg_table(pg_client, target_table)
 
     source = _pg_ctx(pg_client, source_table)
-    seeded = await _seed_pg(source, _corpus(count=4))
+    seeded = await _seed(source, _corpus(count=4))
 
     archive = tmp_path / "archive"
     export = await ArchiveExporter()(
@@ -248,7 +248,7 @@ async def test_export_postgres_import_mongo_preserves_rich_types(
     await _create_pg_table(pg_client, table)
 
     source = _pg_ctx(pg_client, table)
-    seeded = await _seed_pg(source, _corpus(count=4))
+    seeded = await _seed(source, _corpus(count=4))
 
     archive = tmp_path / "archive"
     await ArchiveExporter()(source, _registry(), archive, scope=TenantScope(tenant_id=tenant))
@@ -259,4 +259,39 @@ async def test_export_postgres_import_mongo_preserves_rich_types(
     assert result.total_imported == 4
 
     restored = await _read_all(mongo, list(seeded))
+    _assert_faithful(restored, seeded)
+
+
+@pytest.mark.asyncio
+async def test_export_mongo_import_postgres_preserves_rich_types(
+    pg_client: PostgresClient,
+    mongo_client: MongoClient,
+    tmp_path: Path,
+) -> None:
+    """The reverse cross-backend leg (RFC §8): export from real Mongo, import into real Postgres.
+
+    Exercises the read side of the forze_mongo fix end to end — the exported rows come out of
+    ``find_stream`` as read models whose ``Decimal`` field has already been decoded back from
+    ``Decimal128`` and whose ``UUID`` field back from its stored string, so the archive carries
+    plain JSON and Postgres lands the values in its typed columns.
+    """
+
+    tenant = uuid4()
+    db_name = (await mongo_client.db()).name
+    mongo = _mongo_ctx(mongo_client, db_name, f"orders_{uuid4().hex[:8]}")
+    seeded = await _seed(mongo, _corpus(count=4))
+
+    archive = tmp_path / "archive"
+    export = await ArchiveExporter()(
+        mongo, _registry(), archive, scope=TenantScope(tenant_id=tenant)
+    )
+    assert export.total_rows == 4
+
+    table = f"orders_{uuid4().hex[:8]}"
+    await _create_pg_table(pg_client, table)
+    target = _pg_ctx(pg_client, table)
+    result = await ArchiveImporter()(target, _registry(), archive)
+    assert result.total_imported == 4
+
+    restored = await _read_all(target, list(seeded))
     _assert_faithful(restored, seeded)
