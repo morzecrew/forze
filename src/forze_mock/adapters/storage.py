@@ -207,23 +207,40 @@ class MockStorageAdapter(
             existing = self._objects().get(key)
 
             if existing is None:
-                raise exc.not_found(f"Object not found: {key}")
+                if if_match is not None:
+                    # A *conditional* overwrite of an object that is gone — the delete/overwrite
+                    # race. The caller asserted an ETag on something that no longer exists.
+                    raise exc.not_found(f"Object not found: {key}")
 
-            if if_match is not None:
-                current_etag = self._etag(self._payloads().get(key, b""))
+                # Unconditional overwrite at a caller-supplied key: create-or-replace, matching
+                # an S3/GCS ``PUT`` (and the port contract — an unconditional replace recreates a
+                # missing target). This is what lets an import land a blob at its archived key on
+                # a fresh backend, where nothing exists to "over"-write yet.
+                stored = StoredObject(
+                    key=key,
+                    filename=key.rsplit("/", 1)[-1],
+                    content_type=content_type or "application/octet-stream",
+                    size=len(data),
+                    created_at=utcnow(),
+                    tags=dict(tags) if tags else None,
+                )
 
-                if if_match.strip('"') != current_etag:
-                    raise overwrite_precondition_failed(key)
+            else:
+                if if_match is not None:
+                    current_etag = self._etag(self._payloads().get(key, b""))
 
-            stored = attrs.evolve(
-                existing,
-                content_type=content_type or existing.content_type,
-                size=len(data),
-                # The object was rewritten, so head() and conditional downloads must
-                # see a fresh modification time rather than the original upload's.
-                created_at=utcnow(),
-                tags=dict(tags) if tags else existing.tags,
-            )
+                    if if_match.strip('"') != current_etag:
+                        raise overwrite_precondition_failed(key)
+
+                stored = attrs.evolve(
+                    existing,
+                    content_type=content_type or existing.content_type,
+                    size=len(data),
+                    # The object was rewritten, so head() and conditional downloads must
+                    # see a fresh modification time rather than the original upload's.
+                    created_at=utcnow(),
+                    tags=dict(tags) if tags else existing.tags,
+                )
 
             self._objects()[key] = stored
             self._payloads()[key] = data

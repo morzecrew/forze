@@ -16,11 +16,22 @@ class DocumentExport:
 
 
 @attrs.frozen(kw_only=True)
+class StorageExport:
+    """One storage route's contribution to an archive."""
+
+    name: str
+    blobs: int
+
+
+@attrs.frozen(kw_only=True)
 class ExportReport:
     """The outcome of an :func:`export_archive` run."""
 
     documents: tuple[DocumentExport, ...]
     """Per-spec row counts, in the order the specs were walked."""
+
+    storage: tuple[StorageExport, ...] = ()
+    """Per-route blob counts."""
 
     rebuild: tuple[str, ...]
     """Derived planes the target will recompute rather than receive — carried into the manifest so
@@ -31,6 +42,10 @@ class ExportReport:
     @property
     def total_rows(self) -> int:
         return sum(doc.rows for doc in self.documents)
+
+    @property
+    def total_blobs(self) -> int:
+        return sum(route.blobs for route in self.storage)
 
 
 # ....................... #
@@ -58,10 +73,19 @@ class DocumentImport:
 
 
 @attrs.frozen(kw_only=True)
+class StorageImport:
+    """One storage route's outcome on import."""
+
+    name: str
+    uploaded: int
+
+
+@attrs.frozen(kw_only=True)
 class ImportReport:
     """The outcome of an :func:`import_archive` run."""
 
     documents: tuple[DocumentImport, ...]
+    storage: tuple[StorageImport, ...] = ()
     rebuild: tuple[str, ...]
     """Derived planes the caller must now rebuild on the target (search indexes, projected
     analytics). Import does not rebuild them itself in P1; it reports what the manifest declared so
@@ -72,3 +96,7 @@ class ImportReport:
     @property
     def total_imported(self) -> int:
         return sum(doc.imported for doc in self.documents)
+
+    @property
+    def total_blobs(self) -> int:
+        return sum(route.uploaded for route in self.storage)

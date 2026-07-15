@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
-from collections.abc import AsyncGenerator, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from pathlib import Path
 from typing import BinaryIO, Final
 
@@ -163,3 +163,84 @@ def _iter_rows(path: Path) -> Iterator[JsonDict]:
         for line in handle:
             if line.strip():
                 yield orjson.loads(line)
+
+
+# ....................... #
+
+
+class _BlobSink:
+    """A content-addressed raw-blob file: written under a temp name, renamed to its own sha256.
+
+    Sync (like :class:`JsonlGzipWriter`) so its filesystem I/O stays out of the ``async`` body that
+    drives it — the blob writer just feeds it chunks. Content-addressed: the final name is the hash
+    of the bytes, so identical objects share one file (dedup) and a storage key — which may hold a
+    ``/`` or a ``..`` — never dictates a path. Blobs are stored **raw** (already binary), no gzip.
+    """
+
+    def __init__(self, objects_dir: Path) -> None:
+        self._dir = objects_dir
+        self._digest = hashlib.sha256()
+        self.size = 0
+        self._tmp = objects_dir / f".partial-{id(self):x}"
+        self._handle: BinaryIO | None = None
+
+    def __enter__(self) -> _BlobSink:
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._handle = self._tmp.open("wb")
+        return self
+
+    def write(self, chunk: bytes) -> None:
+        if self._handle is None:  # pragma: no cover - misuse outside the context manager
+            raise exc.internal("_BlobSink written to before entering its context")
+
+        self._digest.update(chunk)
+        self.size += len(chunk)
+        self._handle.write(chunk)
+
+    def __exit__(self, *_: object) -> None:
+        if self._handle is not None:
+            self._handle.close()
+            # Atomic publish; a re-run or a dedup just overwrites byte-identical content.
+            self._tmp.replace(self._dir / self.sha256)
+
+    @property
+    def sha256(self) -> str:
+        return self._digest.hexdigest()
+
+
+# ....................... #
+
+
+async def write_blob(chunks: AsyncIterator[bytes], objects_dir: Path) -> tuple[str, int]:
+    """Stream a blob to ``objects_dir/<sha256>`` in bounded memory, returning ``(sha256, bytes)``."""
+
+    with _BlobSink(objects_dir) as sink:
+        async for chunk in chunks:
+            sink.write(chunk)
+
+    return sink.sha256, sink.size
+
+
+# ....................... #
+
+
+def read_blob(path: Path, *, expected_sha256: str, chunk_size: int) -> AsyncGenerator[bytes]:
+    """Stream a stored blob back out in bounded chunks, after verifying its hash.
+
+    A content file whose bytes do not match the sha256 the index recorded raises **before the
+    stream is consumed for upload** — the object is hashed first (bounded memory), so a corrupt
+    blob cannot be re-uploaded under a key that still looks intact.
+    """
+
+    verify_file(path, expected_sha256)
+
+    async def _gen() -> AsyncGenerator[bytes]:
+        for chunk in _iter_file_chunks(path, chunk_size):
+            yield chunk
+
+    return _gen()
+
+
+def _iter_file_chunks(path: Path, chunk_size: int) -> Iterator[bytes]:
+    with path.open("rb") as handle:
+        yield from iter(lambda: handle.read(chunk_size), b"")

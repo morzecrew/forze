@@ -11,18 +11,20 @@ import attrs
 
 from forze.application.contracts.document import DocumentSpec, KeyedCreate
 from forze.application.contracts.inventory import FrozenSpecRegistry, SpecPlane
+from forze.application.contracts.storage import StorageSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionRuntime
 from forze.application.execution.context import ExecutionContext
+from forze.base.crypto import DEFAULT_CHUNK_SIZE
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import default_model_codec
 from forze_kits.integrations._logger import logger
 
 from .export import _require_registry  # pyright: ignore[reportPrivateUsage]
-from .format import read_rows, verify_file
+from .format import read_blob, read_rows, verify_file
 from .manifest import FORMAT_VERSION, ArchiveFile, Manifest
-from .report import DocumentImport, ImportReport
+from .report import DocumentImport, ImportReport, StorageImport
 
 # ----------------------- #
 
@@ -33,9 +35,13 @@ OnConflict = Literal["fail", "skip"]
   the caller assumed).
 - ``skip`` — leave the existing row untouched (``ensure`` semantics), so a crashed import re-runs
   to convergence. The default.
-"""
+
+Blobs are not gated by this: a blob is always written to its archived key (``overwrite_stream``),
+so a re-run converges by re-writing identical bytes."""
 
 _DOCUMENTS_PREFIX = "documents/"
+_BLOBS_PREFIX = "blobs/"
+_INDEX_SUFFIX = "/index.jsonl.gz"
 _DEFAULT_BATCH = 500
 
 
@@ -88,18 +94,28 @@ class ArchiveImporter:
             on_conflict=self.on_conflict,
         )
 
-        outcomes: list[DocumentImport] = []
+        docs: list[DocumentImport] = []
+        blobs: list[StorageImport] = []
 
         # A per-tenant archive restores into the tenant it names, so rows land in the right
         # partition on a tenant-aware backend (a tenant-agnostic target simply ignores the bind).
         with self._tenant_binding(ctx, manifest):
             for archive_file in manifest.files:
                 if archive_file.path.startswith(_DOCUMENTS_PREFIX):
-                    outcomes.append(await self._import_document(ctx, src, archive_file, registry))
+                    docs.append(await self._import_document(ctx, src, archive_file, registry))
 
-        logger.info("Import complete", imported=sum(o.imported for o in outcomes))
+                elif archive_file.path.startswith(_BLOBS_PREFIX):
+                    blobs.append(await self._import_storage(ctx, src, archive_file, registry))
 
-        return ImportReport(documents=tuple(outcomes), rebuild=tuple(manifest.rebuild))
+        logger.info(
+            "Import complete",
+            imported=sum(o.imported for o in docs),
+            blobs=sum(b.uploaded for b in blobs),
+        )
+
+        return ImportReport(
+            documents=tuple(docs), storage=tuple(blobs), rebuild=tuple(manifest.rebuild)
+        )
 
     # ....................... #
 
@@ -187,6 +203,56 @@ class ArchiveImporter:
         await flush()
 
         return DocumentImport(name=name, imported=imported, skipped_existing=skipped)
+
+    # ....................... #
+
+    async def _import_storage(
+        self,
+        ctx: ExecutionContext,
+        src: Path,
+        index_file: ArchiveFile,
+        registry: FrozenSpecRegistry,
+    ) -> StorageImport:
+        """Replay one ``blobs/<route>/index.jsonl.gz`` — each blob back to its archived key.
+
+        ``overwrite_stream`` is the only write that takes a caller-supplied key, so the object
+        lands under the *same* key it left with — which is what keeps a document field that
+        references a blob (``avatar_key``) pointing at something real after import. On an
+        encrypting target route the bytes re-seal under the target's keys as they are written (the
+        same KEK escape documents get). Each blob's bytes are verified against the sha256 the
+        index recorded before a single one is uploaded under an intact-looking key.
+        """
+
+        route = Path(index_file.path).parent.name  # blobs/<route>/index.jsonl.gz -> <route>
+        entry = registry.find(SpecPlane.STORAGE, route)
+
+        if entry is None:
+            raise exc.precondition(
+                f"Archive carries blobs for route {route!r}, which this runtime does not bind. It "
+                f"cannot be imported here."
+            )
+
+        spec = cast("StorageSpec", entry.spec)
+        command = ctx.storage.command(spec)
+        objects_dir = src / "blobs" / route / "objects"
+
+        uploaded = 0
+
+        async for row in read_rows(src / index_file.path):
+            key = str(row["key"])
+            sha256 = str(row["sha256"])
+            chunks = read_blob(
+                objects_dir / sha256, expected_sha256=sha256, chunk_size=DEFAULT_CHUNK_SIZE
+            )
+            await command.overwrite_stream(
+                key,
+                chunks,
+                content_type=row.get("content_type"),
+                tags=cast("dict[str, str]", row.get("tags") or {}),
+            )
+            uploaded += 1
+
+        return StorageImport(name=route, uploaded=uploaded)
 
 
 # ....................... #

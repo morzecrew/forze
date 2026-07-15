@@ -401,11 +401,22 @@ class TestOverwriteStream:
         assert stored.key == key
         assert (await adapter.download(key)).data == b"after"
 
-    async def test_rejects_an_unknown_key(self) -> None:
+    async def test_unconditional_overwrite_of_an_unknown_key_creates_it(self) -> None:
+        # Unconditional overwrite is create-or-replace, like an S3/GCS PUT (and the port
+        # contract: an unconditional replace recreates a missing target) — not a require-exists.
+        adapter = _adapter()
+
+        await adapter.overwrite_stream("fresh", _chunks(b"x"))
+
+        assert (await adapter.download("fresh")).data == b"x"
+
+    async def test_conditional_overwrite_of_an_unknown_key_is_not_found(self) -> None:
+        # With an if_match, the caller asserted an ETag on an object that is gone — the
+        # delete/overwrite race the reencrypt sweep relies on.
         adapter = _adapter()
 
         with pytest.raises(CoreException) as ei:
-            await adapter.overwrite_stream("nope", _chunks(b"x"))
+            await adapter.overwrite_stream("nope", _chunks(b"x"), if_match='"whatever"')
 
         assert ei.value.kind is ExceptionKind.NOT_FOUND
 

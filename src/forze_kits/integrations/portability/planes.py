@@ -27,9 +27,9 @@ from forze.base.exceptions import exc
 
 # ----------------------- #
 
-_CARRIED_PLANES = frozenset({SpecPlane.DOCUMENT})
-"""The exportable planes this version writes into an archive. Grows with each phase: blobs and
-counters (RFC §10 P2), graph (P4)."""
+_CARRIED_PLANES = frozenset({SpecPlane.DOCUMENT, SpecPlane.STORAGE})
+"""The exportable planes this version writes into an archive. Grows with each phase: counters
+(RFC §10 P2), graph (P4)."""
 
 
 # ....................... #
@@ -41,6 +41,9 @@ class ExportPlan:
 
     documents: tuple[SpecRegistryEntry, ...]
     """Document entries to stream out, in catalogue order."""
+
+    storage: tuple[SpecRegistryEntry, ...]
+    """Storage (blob) routes to enumerate and stream out."""
 
     rebuild: tuple[str, ...]
     """Rebuildable plane routes the target recomputes (search, cache, projected analytics) —
@@ -66,6 +69,7 @@ def plan_export(registry: FrozenSpecRegistry) -> ExportPlan:
     assert_exportable(registry)
 
     documents: list[SpecRegistryEntry] = []
+    storage: list[SpecRegistryEntry] = []
     rebuild: list[str] = []
     unsupported: list[str] = []
 
@@ -78,6 +82,10 @@ def plan_export(registry: FrozenSpecRegistry) -> ExportPlan:
             # DRAINED planes (outbox, inbox, durable, offsets) hold operational, in-flight work;
             # quiesce (or, per-tenant, tenant quiet) brings them to empty and they are never
             # carried. REFUSED was already handled by assert_exportable.
+            continue
+
+        if entry.plane is SpecPlane.STORAGE:
+            storage.append(entry)
             continue
 
         if entry.plane not in _CARRIED_PLANES:
@@ -96,9 +104,9 @@ def plan_export(registry: FrozenSpecRegistry) -> ExportPlan:
 
     if unsupported:
         raise exc.precondition(
-            "This export version carries the document plane only; it cannot yet carry "
-            f"{', '.join(sorted(unsupported))}. Exporting anyway would ship an archive that "
+            "This export version carries the document and storage planes only; it cannot yet "
+            f"carry {', '.join(sorted(unsupported))}. Exporting anyway would ship an archive that "
             f"looks complete and is not. Support arrives in a later phase (RFC 0017 §10)."
         )
 
-    return ExportPlan(documents=tuple(documents), rebuild=tuple(rebuild))
+    return ExportPlan(documents=tuple(documents), storage=tuple(storage), rebuild=tuple(rebuild))

@@ -22,24 +22,28 @@ from forze.application.contracts.document import (
     DocumentWriteTypes,
 )
 from forze.application.contracts.inventory import SpecRegistry
+from forze.application.contracts.storage import StorageSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionRuntime
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, Document, ReadDocument
-from forze_mock import MockDepsModule
-from forze_mock.state import MockState
-
 from forze_kits.dto import ImportTimestamps
 from forze_kits.integrations.portability import (
     ArchiveExporter,
     ArchiveImporter,
     ExportReport,
     ExportScope,
+    FullScope,
     ImportReport,
+    Manifest,
     TenantScope,
     export_archive,
     import_archive,
 )
+from forze_kits.integrations.quiesce import QuiesceReport
+from forze_kits.integrations.quiesce.report import QuiescePlane
+from forze_mock import MockDepsModule
+from forze_mock.state import MockState
 
 # ----------------------- #
 
@@ -100,7 +104,9 @@ async def _seed(runtime: ExecutionRuntime, tenant: UUID, count: int) -> dict[UUI
     return seeded
 
 
-async def _read_all(runtime: ExecutionRuntime, tenant: UUID, ids: list[UUID]) -> dict[UUID, _NoteRead]:
+async def _read_all(
+    runtime: ExecutionRuntime, tenant: UUID, ids: list[UUID]
+) -> dict[UUID, _NoteRead]:
     async with runtime.scope():
         ctx = runtime.get_context()
 
@@ -216,26 +222,12 @@ async def test_import_refuses_a_checksum_mismatch(tmp_path: Path) -> None:
         await _import(target, archive)
 
 
-@pytest.mark.asyncio
-async def test_full_scope_is_refused_in_p1(tmp_path: Path) -> None:
-    """The type exists so the API is stable; the whole-system walk lands in P2, and until then the
-    verb refuses it by name rather than silently doing a partial thing."""
-
-    source = _runtime(MockState())
-
-    class _NotTenant:
-        pass
-
-    with pytest.raises(CoreException, match="per-tenant"):
-        # A non-TenantScope stands in for FullScope, a valid ExportScope the API accepts.
-        async with source.scope():
-            await export_archive(source, tmp_path / "a", scope=_NotTenant())  # type: ignore[arg-type]
-
-
 def test_export_scope_union_is_the_public_api() -> None:
-    # TenantScope is one arm of the stable ExportScope union.
-    scope: ExportScope = TenantScope(tenant_id=uuid4())
-    assert isinstance(scope, TenantScope)
+    # Both arms of the stable ExportScope union.
+    tenant: ExportScope = TenantScope(tenant_id=uuid4())
+    full: ExportScope = FullScope(quiesce=_ATTESTED)
+    assert isinstance(tenant, TenantScope)
+    assert isinstance(full, FullScope)
 
 
 @pytest.mark.asyncio
@@ -252,7 +244,9 @@ async def test_callables_operate_on_a_caller_owned_context(tmp_path: Path) -> No
     async with source.scope():
         ctx = source.get_context()
         assert source.spec_registry is not None
-        await ArchiveExporter()(ctx, source.spec_registry, archive, scope=TenantScope(tenant_id=tenant))
+        await ArchiveExporter()(
+            ctx, source.spec_registry, archive, scope=TenantScope(tenant_id=tenant)
+        )
 
     target = _runtime(MockState())
 
@@ -265,3 +259,200 @@ async def test_callables_operate_on_a_caller_owned_context(tmp_path: Path) -> No
 
     restored = await _read_all(target, tenant, list(seeded))
     assert {doc.id for doc in restored.values()} == set(seeded)
+
+
+# ....................... #
+# Full-system scope (RFC §4 / §10 P2)
+
+
+def _manifest(archive: Path) -> Manifest:
+    return Manifest.model_validate_json((archive / "manifest.json").read_text())
+
+
+async def _seed_untenanted(runtime: ExecutionRuntime, count: int) -> list[UUID]:
+    ids: list[UUID] = []
+
+    async with runtime.scope():
+        command = runtime.get_context().document.command(NOTE_SPEC)
+
+        for index in range(count):
+            doc = await command.ensure(uuid4(), _NoteCreate(body=f"n{index}", weight=index))
+            ids.append(doc.id)
+
+    return ids
+
+
+_ATTESTED = QuiesceReport(planes=(), admission_held=True)
+_UNATTESTED = QuiesceReport(
+    planes=(QuiescePlane(name="outbox:events", state="residual", detail="3 pending"),),
+    admission_held=True,
+)
+
+
+@pytest.mark.asyncio
+async def test_full_scope_attested_stamps_quiesced_and_embeds_the_attestation(
+    tmp_path: Path,
+) -> None:
+    runtime = _runtime(MockState())
+    await _seed_untenanted(runtime, count=3)
+
+    archive = tmp_path / "archive"
+    async with runtime.scope():
+        report = await export_archive(runtime, archive, scope=FullScope(quiesce=_ATTESTED))
+
+    assert report.total_rows == 3
+
+    manifest = _manifest(archive)
+    assert manifest.scope.kind == "full"
+    assert manifest.scope.tenant_id is None
+    assert manifest.consistency == "quiesced"
+    assert manifest.quiesce_attestation is not None
+    assert manifest.quiesce_attestation["attested"] is True
+
+
+@pytest.mark.asyncio
+async def test_full_scope_unattested_is_refused_by_default(tmp_path: Path) -> None:
+    """An export must not stamp a whole-system artifact ``quiesced`` when the runtime never came
+    to a held standstill — silence there is the "looks complete and is not" outcome."""
+
+    runtime = _runtime(MockState())
+    await _seed_untenanted(runtime, count=1)
+
+    with pytest.raises(CoreException, match="not quiesced"):
+        async with runtime.scope():
+            await export_archive(runtime, tmp_path / "a", scope=FullScope(quiesce=_UNATTESTED))
+
+
+@pytest.mark.asyncio
+async def test_full_scope_unattested_is_fuzzy_when_explicitly_allowed(tmp_path: Path) -> None:
+    runtime = _runtime(MockState())
+    await _seed_untenanted(runtime, count=2)
+
+    archive = tmp_path / "archive"
+    async with runtime.scope():
+        await export_archive(
+            runtime, archive, scope=FullScope(quiesce=_UNATTESTED), allow_fuzzy=True
+        )
+
+    manifest = _manifest(archive)
+    assert manifest.consistency == "fuzzy"  # importable, but the manifest says what it is
+    assert manifest.quiesce_attestation["attested"] is False
+
+
+@pytest.mark.asyncio
+async def test_full_scope_round_trips_every_row(tmp_path: Path) -> None:
+    """The whole-system walk carries every document, unbound by any tenant, and import restores
+    them — the same fidelity as a per-tenant round-trip, over the full set."""
+
+    source = _runtime(MockState())
+    ids = await _seed_untenanted(source, count=5)
+
+    archive = tmp_path / "archive"
+    async with source.scope():
+        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED))
+
+    target = _runtime(MockState())
+    result = await _import(target, archive)
+
+    assert result.total_imported == 5
+
+    async with target.scope():
+        found = await target.get_context().document.query(NOTE_SPEC).get_many(ids)
+
+    assert {doc.id for doc in found} == set(ids)
+
+
+# ....................... #
+# Blob plane (RFC §5/§6 / §10 P2)
+
+ATTACHMENTS = StorageSpec(name="attachments")
+
+
+def _blob_runtime(state: MockState) -> ExecutionRuntime:
+    reg = SpecRegistry().register(NOTE_SPEC).register(ATTACHMENTS)
+    return build_runtime(MockDepsModule(state=state), specs=reg, allow_unregistered=True)
+
+
+async def _achunks(data: bytes):
+    yield data
+
+
+async def _seed_blobs(
+    runtime: ExecutionRuntime, blobs: list[tuple[bytes, dict[str, str]]]
+) -> dict[str, tuple[bytes, dict[str, str]]]:
+    seeded: dict[str, tuple[bytes, dict[str, str]]] = {}
+
+    async with runtime.scope():
+        command = runtime.get_context().storage.command(ATTACHMENTS)
+
+        for content, tags in blobs:
+            obj = await command.upload_stream(
+                _achunks(content), filename="f.bin", tags=tags, content_type="application/pdf"
+            )
+            seeded[obj.key] = (content, tags)
+
+    return seeded
+
+
+async def _download(runtime: ExecutionRuntime, key: str) -> bytes:
+    async with runtime.scope():
+        streamed = await runtime.get_context().storage.query(ATTACHMENTS).download_stream(key)
+        return b"".join([chunk async for chunk in streamed.chunks])
+
+
+@pytest.mark.asyncio
+async def test_blob_round_trip_preserves_bytes_keys_and_tags(tmp_path: Path) -> None:
+    """Export a storage route's objects and import them into a fresh backend — each blob lands
+    back under its *own* key (so a document field referencing it stays valid), byte-for-byte, with
+    its tags."""
+
+    source = _blob_runtime(MockState())
+    seeded = await _seed_blobs(
+        source,
+        [
+            (b"%PDF-1.4 first", {"kind": "invoice"}),
+            (b"\x00\x01\x02 binary bytes", {"kind": "avatar"}),
+            (b"", {}),  # a zero-byte object is still an object
+        ],
+    )
+
+    archive = tmp_path / "archive"
+    async with source.scope():
+        report = await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED))
+
+    assert report.total_blobs == 3
+    assert (archive / "blobs" / "attachments" / "index.jsonl.gz").exists()
+
+    target = _blob_runtime(MockState())
+    result = await _import(target, archive)
+
+    assert result.total_blobs == 3
+
+    for key, (content, tags) in seeded.items():
+        assert await _download(target, key) == content
+
+        async with target.scope():
+            head = (
+                await target.get_context().storage.query(ATTACHMENTS).head(key, include_tags=True)
+            )
+        assert dict(head.tags) == tags
+
+
+@pytest.mark.asyncio
+async def test_blob_import_verifies_object_checksums(tmp_path: Path) -> None:
+    """A corrupted blob object must be refused on import, not re-uploaded under an intact key."""
+
+    source = _blob_runtime(MockState())
+    await _seed_blobs(source, [(b"important bytes", {})])
+
+    archive = tmp_path / "archive"
+    async with source.scope():
+        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED))
+
+    objects = archive / "blobs" / "attachments" / "objects"
+    (blob,) = list(objects.iterdir())
+    blob.write_bytes(b"tampered")
+
+    target = _blob_runtime(MockState())
+    with pytest.raises(CoreException, match="checksum"):
+        await _import(target, archive)

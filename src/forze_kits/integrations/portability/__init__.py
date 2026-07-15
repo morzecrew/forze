@@ -21,6 +21,8 @@ from .report import (
     DocumentImport,
     ExportReport,
     ImportReport,
+    StorageExport,
+    StorageImport,
 )
 from .scope import ExportScope, FullScope, TenantScope
 
@@ -40,6 +42,8 @@ __all__ = [
     "Manifest",
     "OnConflict",
     "ScopeManifest",
+    "StorageExport",
+    "StorageImport",
     "TenantScope",
     "export_archive",
     "import_archive",

@@ -34,6 +34,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.inventory import FrozenSpecRegistry, SpecRegistry
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze.testing import context_from_deps
 from forze_kits.dto import ImportTimestamps
@@ -42,6 +43,7 @@ from forze_kits.integrations.portability import (
     ArchiveImporter,
     TenantScope,
 )
+from forze_kits.integrations.portability.format import read_rows
 from forze_mongo.execution.deps import ConfigurableMongoDocument, MongoDocumentConfig
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.client import MongoClient
@@ -295,3 +297,47 @@ async def test_export_mongo_import_postgres_preserves_rich_types(
 
     restored = await _read_all(target, list(seeded))
     _assert_faithful(restored, seeded)
+
+
+async def _export_rows(archive: Path) -> dict[str, JsonDict]:
+    """The canonical document rows an archive carries, keyed by id — the equality observable."""
+
+    rows: dict[str, JsonDict] = {}
+
+    async for row in read_rows(archive / "documents" / "orders.jsonl.gz"):
+        rows[str(row["id"])] = row
+
+    return rows
+
+
+@pytest.mark.asyncio
+async def test_reexport_from_mongo_equals_the_original_export(
+    pg_client: PostgresClient,
+    mongo_client: MongoClient,
+    tmp_path: Path,
+) -> None:
+    """RFC §8: the export projection *is* the equality observable — no separate comparator.
+
+    Export from Postgres, import into Mongo, re-export from Mongo: the two archives' document rows
+    are identical, so the round-trip is lossless by the format's own definition — and whatever the
+    format does not carry (``rev``) is honestly outside the claim rather than a field an assertion
+    forgot to check.
+    """
+
+    tenant = uuid4()
+    table = f"orders_{uuid4().hex[:8]}"
+    await _create_pg_table(pg_client, table)
+    source = _pg_ctx(pg_client, table)
+    await _seed(source, _corpus(count=4))
+
+    archive_a = tmp_path / "a"
+    await ArchiveExporter()(source, _registry(), archive_a, scope=TenantScope(tenant_id=tenant))
+
+    db_name = (await mongo_client.db()).name
+    mongo = _mongo_ctx(mongo_client, db_name, f"orders_{uuid4().hex[:8]}")
+    await ArchiveImporter()(mongo, _registry(), archive_a)
+
+    archive_b = tmp_path / "b"
+    await ArchiveExporter()(mongo, _registry(), archive_b, scope=TenantScope(tenant_id=tenant))
+
+    assert await _export_rows(archive_a) == await _export_rows(archive_b)

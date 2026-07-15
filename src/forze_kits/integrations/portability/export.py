@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,18 +17,37 @@ from forze.application.contracts.inventory import (
     SpecRegistryEntry,
     entry_shape,
 )
+from forze.application.contracts.storage import StorageSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionRuntime
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze_kits.integrations._logger import logger
+from forze_kits.integrations.quiesce import QuiesceReport
 
-from .format import JsonlGzipWriter
-from .manifest import ArchiveFile, Manifest, ScopeManifest
+from .format import JsonlGzipWriter, write_blob
+from .manifest import ArchiveFile, Consistency, Manifest, ScopeManifest
 from .planes import ExportPlan, plan_export
-from .report import DocumentExport, ExportReport
+from .report import DocumentExport, ExportReport, StorageExport
 from .scope import ExportScope, TenantScope
+
+# ----------------------- #
+
+_BLOB_PAGE = 100
+
+# ----------------------- #
+
+
+@attrs.frozen(kw_only=True)
+class _ResolvedScope:
+    """What a scope resolves to for the manifest and the walk."""
+
+    consistency: Consistency
+    manifest: ScopeManifest
+    attestation: dict[str, Any] | None
+    binding: AbstractContextManager[Any]
+
 
 # ----------------------- #
 
@@ -57,6 +77,11 @@ class ArchiveExporter:
     chunk_size: int = _DEFAULT_CHUNK
     """Keyset page size for ``find_stream`` — one page in memory per spec, whatever the size."""
 
+    allow_fuzzy: bool = False
+    """Permit a full-system export whose quiesce did not attest. Off by default: such an artifact
+    is stamped ``consistency: fuzzy`` (importable, but not point-consistent), and producing one at
+    all is a deliberate choice, not a silent fallback (RFC 0017 §4)."""
+
     # ....................... #
 
     async def __call__(
@@ -69,42 +94,75 @@ class ArchiveExporter:
     ) -> ExportReport:
         """Export *registry*'s document plane under *scope* into the archive directory *dest*.
 
-        Call inside the caller's ``async with runtime.scope():``. P1 implements
-        :class:`TenantScope`; :class:`FullScope` is accepted by the type but its whole-system walk
-        lands with the blob plane in a later phase.
+        Call inside the caller's ``async with runtime.scope():``. :class:`TenantScope` runs the
+        walk inside the tenant's bound identity; :class:`FullScope` walks unbound (every tenant's
+        rows) and embeds its quiesce attestation — refusing to stamp ``consistency: quiesced``
+        from a report that did not attest, unless :attr:`allow_fuzzy` opts into a ``fuzzy`` one.
         """
 
-        if not isinstance(scope, TenantScope):
-            raise exc.precondition(
-                "Full-system export is not implemented in this version — only per-tenant "
-                "(TenantScope). It arrives with the blob plane and quiesce attestation "
-                "(RFC 0017 §10)."
-            )
-
         plan = plan_export(registry)
+        resolved = self._resolve_scope(ctx, scope)
 
         logger.info(
-            "Exporting tenant",
-            tenant_id=str(scope.tenant_id),
+            "Exporting",
+            scope=resolved.manifest.kind,
+            consistency=resolved.consistency,
             documents=len(plan.documents),
             rebuild=len(plan.rebuild),
         )
 
         files: list[ArchiveFile] = []
-        outcomes: list[DocumentExport] = []
+        docs: list[DocumentExport] = []
+        blobs: list[StorageExport] = []
 
-        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=scope.tenant_id)):
+        with resolved.binding:
             for entry in plan.documents:
                 archive_file, outcome = await self._export_document(ctx, dest, entry)
                 files.append(archive_file)
-                outcomes.append(outcome)
+                docs.append(outcome)
                 _write_spec_shape(dest, entry)
 
-        _write_manifest(dest, registry.fingerprint(), scope, plan, files)
+            for entry in plan.storage:
+                index_file, blob_outcome = await self._export_storage(ctx, dest, entry)
+                files.append(index_file)
+                blobs.append(blob_outcome)
+                _write_spec_shape(dest, entry)
 
-        logger.info("Export complete", rows=sum(o.rows for o in outcomes))
+        _write_manifest(dest, registry.fingerprint(), resolved, plan, files)
 
-        return ExportReport(documents=tuple(outcomes), rebuild=plan.rebuild)
+        logger.info(
+            "Export complete", rows=sum(o.rows for o in docs), blobs=sum(b.blobs for b in blobs)
+        )
+
+        return ExportReport(documents=tuple(docs), storage=tuple(blobs), rebuild=plan.rebuild)
+
+    # ....................... #
+
+    def _resolve_scope(self, ctx: ExecutionContext, scope: ExportScope) -> _ResolvedScope:
+        """Turn a scope into its manifest facts and the identity binding the walk runs under."""
+
+        if isinstance(scope, TenantScope):
+            return _ResolvedScope(
+                consistency="tenant",
+                manifest=ScopeManifest(kind="tenant", tenant_id=scope.tenant_id),
+                attestation=None,
+                binding=ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=scope.tenant_id)),
+            )
+
+        report = scope.quiesce
+
+        if not report.attested and not self.allow_fuzzy:
+            # Refuse to write a whole-system artifact that only *looks* point-consistent. The
+            # report names what was still moving (or that admission was never held); pass
+            # allow_fuzzy=True to produce a `consistency: fuzzy` artifact deliberately.
+            report.raise_if_unattested()
+
+        return _ResolvedScope(
+            consistency="quiesced" if report.attested else "fuzzy",
+            manifest=ScopeManifest(kind="full", tenant_id=None),
+            attestation=_attestation_json(report),
+            binding=nullcontext(),  # full-system: every tenant's rows, no identity bound
+        )
 
     # ....................... #
 
@@ -133,6 +191,79 @@ class ArchiveExporter:
             DocumentExport(name=entry.name, rows=sink.rows),
         )
 
+    # ....................... #
+
+    async def _export_storage(
+        self,
+        ctx: ExecutionContext,
+        dest: Path,
+        entry: SpecRegistryEntry,
+    ) -> tuple[ArchiveFile, StorageExport]:
+        """Stream one storage route's objects — raw bytes under ``objects/``, one index row each.
+
+        The blob counterpart of ``reencrypt_objects``: keys are enumerated up front (one string
+        each, so a listing that reorders under a concurrent write cannot make an advancing offset
+        skip an object), then each object is ``head``-ed for its metadata and streamed down —
+        decrypting on read — straight to a content-addressed file, one chunk in memory. The index
+        is the integrity anchor: it carries every object's sha256, and the manifest checksums the
+        index, so a corrupt blob is caught on import before it is re-uploaded.
+        """
+
+        spec = cast("StorageSpec", entry.spec)
+        route = entry.name
+        query = ctx.storage.query(spec)
+
+        objects_dir = dest / "blobs" / route / "objects"
+        index_rel = f"blobs/{route}/index.jsonl.gz"
+
+        keys = await _list_keys(query)
+
+        with JsonlGzipWriter(dest / index_rel) as index:
+            for key in keys:
+                head = await query.head(key, include_tags=True)
+                streamed = await query.download_stream(key)
+                sha256, size = await write_blob(streamed.chunks, objects_dir)
+
+                index.write(
+                    {
+                        "key": key,
+                        "sha256": sha256,
+                        "size": size,
+                        "content_type": head.content_type,
+                        "tags": dict(head.tags),
+                    }
+                )
+
+        return (
+            ArchiveFile(path=index_rel, sha256=index.sha256, rows=index.rows),
+            StorageExport(name=route, blobs=index.rows),
+        )
+
+
+# ....................... #
+
+
+async def _list_keys(query: Any) -> list[str]:
+    """Every object key on a route, enumerated to exhaustion before any is streamed.
+
+    Paging and streaming must not interleave (the ``reencrypt_objects`` rule): ``list`` makes no
+    ordering promise, so a backend that orders by anything a read touches could reshuffle objects
+    under an advancing offset and silently skip some. Only the keys are held; the bytes stream one
+    object at a time below.
+    """
+
+    keys: list[str] = []
+    offset = 0
+
+    while True:
+        page, _ = await query.list(_BLOB_PAGE, offset)
+
+        if not page:
+            return keys
+
+        keys.extend(obj.key for obj in page)
+        offset += len(page)
+
 
 # ....................... #
 
@@ -143,6 +274,7 @@ async def export_archive(
     *,
     scope: ExportScope,
     chunk_size: int = _DEFAULT_CHUNK,
+    allow_fuzzy: bool = False,
 ) -> ExportReport:
     """Convenience over :class:`ArchiveExporter`: pull the registry and the active context off
     *runtime* and export.
@@ -157,7 +289,7 @@ async def export_archive(
 
     registry = _require_registry(runtime)
 
-    return await ArchiveExporter(chunk_size=chunk_size)(
+    return await ArchiveExporter(chunk_size=chunk_size, allow_fuzzy=allow_fuzzy)(
         runtime.get_context(), registry, dest, scope=scope
     )
 
@@ -212,10 +344,28 @@ def _write_spec_shape(dest: Path, entry: SpecRegistryEntry) -> None:
 # ....................... #
 
 
+def _attestation_json(report: QuiesceReport) -> dict[str, Any]:
+    """The quiesce report as a JSON snapshot for the manifest — the attestation the artifact was
+    written under, so an importer (and an operator) can see exactly what "quiesced" rested on."""
+
+    return {
+        "attested": report.attested,
+        "settled": report.settled,
+        "admission_held": report.admission_held,
+        "planes": [
+            {"name": plane.name, "state": plane.state, "detail": plane.detail}
+            for plane in report.planes
+        ],
+    }
+
+
+# ....................... #
+
+
 def _write_manifest(
     dest: Path,
     fingerprint: str,
-    scope: TenantScope,
+    resolved: _ResolvedScope,
     plan: ExportPlan,
     files: list[ArchiveFile],
 ) -> None:
@@ -230,9 +380,10 @@ def _write_manifest(
     manifest = Manifest(
         forze_version=__version__,
         registry_fingerprint=fingerprint,
-        scope=ScopeManifest(kind="tenant", tenant_id=scope.tenant_id),
-        consistency="tenant",
+        scope=resolved.manifest,
+        consistency=resolved.consistency,
         files=files,
         rebuild=list(plan.rebuild),
+        quiesce_attestation=resolved.attestation,
     )
     (dest / "manifest.json").write_text(manifest.model_dump_json(indent=2))
