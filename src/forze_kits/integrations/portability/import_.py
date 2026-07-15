@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import attrs
 
+from forze.application.contracts.counter import CounterSpec
 from forze.application.contracts.document import DocumentSpec, KeyedCreate
 from forze.application.contracts.graph import GraphModuleSpec
 from forze.application.contracts.inventory import FrozenSpecRegistry, SpecPlane
@@ -24,6 +25,7 @@ from forze_kits.integrations._logger import logger
 from ._core import (
     DEFAULT_BATCH,
     OnConflict,
+    counter_reset_args,
     ingest_documents,
     keyed_create,
     require_registry,
@@ -31,13 +33,14 @@ from ._core import (
 from ._graph import edge_create_from_row
 from .format import Compression, data_suffix, read_blob, read_rows, verify_file
 from .manifest import FORMAT_VERSION, ArchiveFile, Manifest
-from .report import DocumentImport, GraphImport, ImportReport, StorageImport
+from .report import CounterImport, DocumentImport, GraphImport, ImportReport, StorageImport
 
 # ----------------------- #
 
 _DOCUMENTS_PREFIX = "documents/"
 _BLOBS_PREFIX = "blobs/"
 _GRAPH_PREFIX = "graph/"
+_COUNTERS_PREFIX = "counters/"
 
 
 # ....................... #
@@ -91,6 +94,7 @@ class ArchiveImporter:
 
         docs: list[DocumentImport] = []
         blobs: list[StorageImport] = []
+        counters: list[CounterImport] = []
         graph_files: list[ArchiveFile] = []
 
         # A per-tenant archive restores into the tenant it names, so rows land in the right
@@ -111,6 +115,13 @@ class ArchiveImporter:
                         )
                     )
 
+                elif archive_file.path.startswith(_COUNTERS_PREFIX):
+                    counters.append(
+                        await self._import_counter(
+                            ctx, src, archive_file, registry, manifest.compression
+                        )
+                    )
+
                 elif archive_file.path.startswith(_GRAPH_PREFIX):
                     # Deferred: a graph is restored vertices-before-edges, which needs the whole
                     # module's files grouped rather than replayed one at a time in manifest order.
@@ -123,12 +134,14 @@ class ArchiveImporter:
             imported=sum(o.imported for o in docs),
             blobs=sum(b.uploaded for b in blobs),
             graph=sum(g.vertices + g.edges for g in graphs),
+            counters=sum(c.restored for c in counters),
         )
 
         return ImportReport(
             documents=tuple(docs),
             storage=tuple(blobs),
             graph=tuple(graphs),
+            counters=tuple(counters),
             rebuild=tuple(manifest.rebuild),
         )
 
@@ -241,6 +254,43 @@ class ArchiveImporter:
             uploaded += 1
 
         return StorageImport(name=route, uploaded=uploaded)
+
+    # ....................... #
+
+    async def _import_counter(
+        self,
+        ctx: ExecutionContext,
+        src: Path,
+        archive_file: ArchiveFile,
+        registry: FrozenSpecRegistry,
+        compression: Compression,
+    ) -> CounterImport:
+        """Replay one ``counters/<name>`` file — each partition ``reset`` to its archived value.
+
+        ``reset`` sets an absolute value, so it is idempotent and ``on_conflict`` does not gate the
+        counter plane (as with blobs and graph). Restoring the counters is exactly what stops a
+        migration from reissuing sequence numbers the source has already handed out.
+        """
+
+        name = Path(archive_file.path).name.removesuffix(data_suffix(compression))
+        entry = registry.find(SpecPlane.COUNTER, name)
+
+        if entry is None:
+            raise exc.precondition(
+                f"Archive carries counter {name!r}, which this runtime does not bind. It cannot be "
+                f"imported here."
+            )
+
+        spec = cast("CounterSpec", entry.spec)
+        port = ctx.counter(spec)
+
+        restored = 0
+        async for row in read_rows(src / archive_file.path, compression=compression):
+            value, suffix = counter_reset_args(row)
+            await port.reset(value, suffix=suffix)
+            restored += 1
+
+        return CounterImport(name=name, restored=restored)
 
     # ....................... #
 

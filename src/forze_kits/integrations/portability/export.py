@@ -10,6 +10,7 @@ import attrs
 import orjson
 
 from forze._version import __version__
+from forze.application.contracts.counter import CounterSpec
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.graph import GraphEdgeExportAware, GraphModuleSpec
 from forze.application.contracts.inventory import (
@@ -27,6 +28,7 @@ from forze_kits.integrations.quiesce import QuiesceReport
 from ._core import (
     DEFAULT_CHUNK,
     assert_scope_permitted,
+    counter_row,
     list_keys,
     portable_row,
     require_registry,
@@ -36,7 +38,7 @@ from ._graph import edge_file, exported_edge_row, node_file
 from .format import Compression, JsonlWriter, data_suffix, write_blob
 from .manifest import ArchiveFile, Consistency, Manifest, ScopeManifest
 from .planes import ExportPlan, plan_export
-from .report import DocumentExport, ExportReport, GraphExport, StorageExport
+from .report import CounterExport, DocumentExport, ExportReport, GraphExport, StorageExport
 from .scope import ExportScope, TenantScope
 
 # ----------------------- #
@@ -118,6 +120,7 @@ class ArchiveExporter:
         docs: list[DocumentExport] = []
         blobs: list[StorageExport] = []
         graphs: list[GraphExport] = []
+        counters: list[CounterExport] = []
 
         with resolved.binding:
             for entry in plan.documents:
@@ -138,6 +141,12 @@ class ArchiveExporter:
                 graphs.append(graph_outcome)
                 _write_spec_shape(dest, entry)
 
+            for entry in plan.counters:
+                counter_file, counter_outcome = await self._export_counter(ctx, dest, entry)
+                files.append(counter_file)
+                counters.append(counter_outcome)
+                _write_spec_shape(dest, entry)
+
         _write_manifest(dest, registry.fingerprint(), resolved, plan, files, self.compression)
 
         logger.info(
@@ -145,12 +154,14 @@ class ArchiveExporter:
             rows=sum(o.rows for o in docs),
             blobs=sum(b.blobs for b in blobs),
             graph=sum(g.vertices + g.edges for g in graphs),
+            counters=sum(c.partitions for c in counters),
         )
 
         return ExportReport(
             documents=tuple(docs),
             storage=tuple(blobs),
             graph=tuple(graphs),
+            counters=tuple(counters),
             rebuild=plan.rebuild,
         )
 
@@ -322,6 +333,37 @@ class ArchiveExporter:
             edges += sink.rows
 
         return files, GraphExport(name=module, vertices=vertices, edges=edges)
+
+    # ....................... #
+
+    async def _export_counter(
+        self,
+        ctx: ExecutionContext,
+        dest: Path,
+        entry: SpecRegistryEntry,
+    ) -> tuple[ArchiveFile, CounterExport]:
+        """Enumerate one counter spec's partitions into ``counters/<name>`` — one row per suffix.
+
+        A counter is durable state — *the* state behind every invoice, order and ticket number an
+        application has handed out — so an export that left it at zero would silently reissue
+        sequence numbers already in customers' hands. ``list_counters`` returns the complete set
+        (it drives the backend cursor internally); the values are point-in-time, which the
+        full-system quiesce is what makes safe to carry.
+        """
+
+        spec = cast("CounterSpec", entry.spec)
+        rel = f"counters/{entry.name}{data_suffix(self.compression)}"
+
+        entries = await ctx.counter.admin(spec).list_counters()
+
+        with JsonlWriter(dest / rel, compression=self.compression) as sink:
+            for counter in entries:
+                sink.write(counter_row(counter))
+
+        return (
+            ArchiveFile(path=rel, sha256=sink.sha256, rows=sink.rows),
+            CounterExport(name=entry.name, partitions=sink.rows),
+        )
 
 
 # ....................... #

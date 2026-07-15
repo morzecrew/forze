@@ -28,6 +28,7 @@ from typing import Any, cast
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.counter import CounterSpec
 from forze.application.contracts.document import (
     DocumentSpec,
     DocumentWriteTypes,
@@ -56,7 +57,7 @@ from ._core import (
 )
 from ._graph import edge_create_from_row, exported_edge_row
 from .planes import plan_export
-from .report import DocumentImport, GraphImport, MigrateReport, StorageImport
+from .report import CounterImport, DocumentImport, GraphImport, MigrateReport, StorageImport
 from .scope import ExportScope
 
 # ----------------------- #
@@ -121,6 +122,7 @@ class ArchiveMigrator:
         docs: list[DocumentImport] = []
         blobs: list[StorageImport] = []
         graphs: list[GraphImport] = []
+        counters: list[CounterImport] = []
 
         # Hold both scopes' bindings across the whole walk: the source read runs under the source
         # context's identity and the target write under the target context's, and each binds on its
@@ -135,17 +137,22 @@ class ArchiveMigrator:
             for entry in plan.graph:
                 graphs.append(await self._migrate_graph(source, target, entry))
 
+            for entry in plan.counters:
+                counters.append(await self._migrate_counter(source, target, entry))
+
         logger.info(
             "Migration complete",
             imported=sum(d.imported for d in docs),
             blobs=sum(b.uploaded for b in blobs),
             graph=sum(g.vertices + g.edges for g in graphs),
+            counters=sum(c.restored for c in counters),
         )
 
         return MigrateReport(
             documents=tuple(docs),
             storage=tuple(blobs),
             graph=tuple(graphs),
+            counters=tuple(counters),
             rebuild=plan.rebuild,
         )
 
@@ -272,6 +279,31 @@ class ArchiveMigrator:
                     edges += 1
 
         return GraphImport(name=module, vertices=vertices, edges=edges)
+
+    # ....................... #
+
+    async def _migrate_counter(
+        self,
+        source: ExecutionContext,
+        target: ExecutionContext,
+        entry: SpecRegistryEntry,
+    ) -> CounterImport:
+        """Copy one counter spec's partitions source → target — enumerate and reset, no row on disk.
+
+        A counter's shape is a suffix and an integer, so the file path's row projection is an
+        identity here: enumerating and resetting directly lands the target in the same state a file
+        round-trip would, without the JSON hop.
+        """
+
+        spec = cast("CounterSpec", entry.spec)
+        port = target.counter(spec)
+
+        restored = 0
+        for counter in await source.counter.admin(spec).list_counters():
+            await port.reset(counter.value, suffix=counter.suffix)
+            restored += 1
+
+        return CounterImport(name=entry.name, restored=restored)
 
 
 # ....................... #

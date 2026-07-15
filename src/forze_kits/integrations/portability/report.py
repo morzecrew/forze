@@ -33,6 +33,14 @@ class GraphExport:
 
 
 @attrs.frozen(kw_only=True)
+class CounterExport:
+    """One counter spec's contribution to an archive — one row per allocated ``suffix``."""
+
+    name: str
+    partitions: int
+
+
+@attrs.frozen(kw_only=True)
 class ExportReport:
     """The outcome of an :func:`export_archive` run."""
 
@@ -44,6 +52,9 @@ class ExportReport:
 
     graph: tuple[GraphExport, ...] = ()
     """Per-module vertex + edge counts."""
+
+    counters: tuple[CounterExport, ...] = ()
+    """Per-spec counter partition counts."""
 
     rebuild: tuple[str, ...]
     """Derived planes the target will recompute rather than receive — carried into the manifest so
@@ -66,6 +77,10 @@ class ExportReport:
     @property
     def total_edges(self) -> int:
         return sum(module.edges for module in self.graph)
+
+    @property
+    def total_counters(self) -> int:
+        return sum(spec.partitions for spec in self.counters)
 
 
 # ....................... #
@@ -110,12 +125,21 @@ class GraphImport:
 
 
 @attrs.frozen(kw_only=True)
+class CounterImport:
+    """One counter spec's outcome on import — each partition ``reset`` to its archived value."""
+
+    name: str
+    restored: int
+
+
+@attrs.frozen(kw_only=True)
 class ImportReport:
     """The outcome of an :func:`import_archive` run."""
 
     documents: tuple[DocumentImport, ...]
     storage: tuple[StorageImport, ...] = ()
     graph: tuple[GraphImport, ...] = ()
+    counters: tuple[CounterImport, ...] = ()
     rebuild: tuple[str, ...]
     """Derived planes the caller must now rebuild on the target (search indexes, projected
     analytics). Import does not rebuild them itself in P1; it reports what the manifest declared so
@@ -139,6 +163,10 @@ class ImportReport:
     def total_edges(self) -> int:
         return sum(module.edges for module in self.graph)
 
+    @property
+    def total_counters(self) -> int:
+        return sum(spec.restored for spec in self.counters)
+
 
 # ....................... #
 
@@ -156,6 +184,7 @@ class MigrateReport:
     documents: tuple[DocumentImport, ...]
     storage: tuple[StorageImport, ...] = ()
     graph: tuple[GraphImport, ...] = ()
+    counters: tuple[CounterImport, ...] = ()
     rebuild: tuple[str, ...]
 
     # ....................... #
@@ -175,3 +204,7 @@ class MigrateReport:
     @property
     def total_edges(self) -> int:
         return sum(module.edges for module in self.graph)
+
+    @property
+    def total_counters(self) -> int:
+        return sum(spec.restored for spec in self.counters)

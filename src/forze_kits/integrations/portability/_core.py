@@ -15,11 +15,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import AbstractContextManager, nullcontext
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel
 
+from forze.application.contracts.counter import CounterEntry
 from forze.application.contracts.document import KeyedCreate
 from forze.application.contracts.inventory import FrozenSpecRegistry
 from forze.application.contracts.tenancy import TenantIdentity
@@ -231,3 +232,24 @@ def scope_binding(ctx: ExecutionContext, scope: ExportScope) -> AbstractContextM
         return ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=scope.tenant_id))
 
     return nullcontext()
+
+
+# ....................... #
+
+
+def counter_row(entry: CounterEntry) -> JsonDict:
+    """One counter partition as an archive row: its ``suffix`` and its current ``value``.
+
+    ``suffix`` is kept as-is — ``None`` is a real, distinct counter (the unsuffixed one), not
+    "no counter", and dropping it would export every partition of a sequence except the one most
+    applications actually use.
+    """
+
+    return {"suffix": entry.suffix, "value": entry.value}
+
+
+def counter_reset_args(row: JsonDict) -> tuple[int, str | None]:
+    """The ``(value, suffix)`` a counter row restores through ``CounterPort.reset`` — read here, in
+    one place, so export's row shape and import's read cannot drift apart."""
+
+    return cast("int", row["value"]), cast("str | None", row["suffix"])

@@ -10,8 +10,8 @@ that looks complete and is not.
 This is a **portability** plane, not backup — durability stays your backend's job (WAL / PITR /
 snapshots). A file artifact is **plaintext by construction** (treat it as credential-adjacent, RFC
 0017 §9); the direct ``migrate`` mode fuses export and import ports-to-ports so nothing plaintext is
-ever written to disk — the recommended path for a backend migration. Documents, blobs, per-tenant
-and full-system scope ship today; counters and graph arrive with later phases.
+ever written to disk — the recommended path for a backend migration. Documents, blobs, graph and
+counters, under a per-tenant or full-system scope, all ship today.
 """
 
 from ._core import OnConflict
@@ -20,6 +20,8 @@ from .import_ import ArchiveImporter, import_archive
 from .manifest import FORMAT_VERSION, ArchiveFile, Manifest, ScopeManifest
 from .migrate import ArchiveMigrator, migrate
 from .report import (
+    CounterExport,
+    CounterImport,
     DocumentExport,
     DocumentImport,
     ExportReport,
@@ -40,6 +42,8 @@ __all__ = [
     "ArchiveFile",
     "ArchiveImporter",
     "ArchiveMigrator",
+    "CounterExport",
+    "CounterImport",
     "DocumentExport",
     "DocumentImport",
     "ExportReport",

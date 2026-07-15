@@ -28,9 +28,12 @@ from forze.base.exceptions import exc
 
 # ----------------------- #
 
-_CARRIED_PLANES = frozenset({SpecPlane.DOCUMENT, SpecPlane.STORAGE, SpecPlane.GRAPH})
-"""The exportable planes this version writes into an archive. Grows with each phase: counters
-(RFC §10 P2)."""
+_CARRIED_PLANES = frozenset(
+    {SpecPlane.DOCUMENT, SpecPlane.STORAGE, SpecPlane.GRAPH, SpecPlane.COUNTER}
+)
+"""The exportable planes this version writes into an archive — every plane the disposition table
+marks ``EXPORTABLE``. The refusal below stays as a forward guard: a plane added to the table as
+exportable before this driver learns to carry it must fail by name, not ship a half-archive."""
 
 
 # ....................... #
@@ -48,6 +51,9 @@ class ExportPlan:
 
     graph: tuple[SpecRegistryEntry, ...]
     """Graph modules to walk — every node and edge kind streamed out (P4)."""
+
+    counters: tuple[SpecRegistryEntry, ...]
+    """Counter specs to enumerate — one row per allocated ``suffix`` partition."""
 
     rebuild: tuple[str, ...]
     """Rebuildable plane routes the target recomputes (search, cache, projected analytics) —
@@ -75,6 +81,7 @@ def plan_export(registry: FrozenSpecRegistry) -> ExportPlan:
     documents: list[SpecRegistryEntry] = []
     storage: list[SpecRegistryEntry] = []
     graph: list[SpecRegistryEntry] = []
+    counters: list[SpecRegistryEntry] = []
     rebuild: list[str] = []
     unsupported: list[str] = []
 
@@ -98,6 +105,12 @@ def plan_export(registry: FrozenSpecRegistry) -> ExportPlan:
             graph.append(entry)
             continue
 
+        if entry.plane is SpecPlane.COUNTER:
+            # No read-only concern: every counter can be enumerated (list_counters) and restored
+            # (reset), so it is always carryable once the plane is supported.
+            counters.append(entry)
+            continue
+
         if entry.plane not in _CARRIED_PLANES:
             unsupported.append(entry.ref.label())
             continue
@@ -114,15 +127,17 @@ def plan_export(registry: FrozenSpecRegistry) -> ExportPlan:
 
     if unsupported:
         raise exc.precondition(
-            "This export version carries the document, storage and graph planes only; it cannot "
-            f"yet carry {', '.join(sorted(unsupported))}. Exporting anyway would ship an archive "
-            f"that looks complete and is not. Support arrives in a later phase (RFC 0017 §10)."
+            "This export version carries the document, storage, graph and counter planes only; it "
+            f"cannot yet carry {', '.join(sorted(unsupported))}. Exporting anyway would ship an "
+            f"archive that looks complete and is not. Support arrives in a later phase (RFC 0017 "
+            f"§10)."
         )
 
     return ExportPlan(
         documents=tuple(documents),
         storage=tuple(storage),
         graph=tuple(graph),
+        counters=tuple(counters),
         rebuild=tuple(rebuild),
     )
 
