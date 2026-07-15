@@ -1,0 +1,74 @@
+"""What an export or import did, per plane — enough for an operator to trust or to retry."""
+
+from __future__ import annotations
+
+import attrs
+
+# ----------------------- #
+
+
+@attrs.frozen(kw_only=True)
+class DocumentExport:
+    """One document spec's contribution to an archive."""
+
+    name: str
+    rows: int
+
+
+@attrs.frozen(kw_only=True)
+class ExportReport:
+    """The outcome of an :func:`export_archive` run."""
+
+    documents: tuple[DocumentExport, ...]
+    """Per-spec row counts, in the order the specs were walked."""
+
+    rebuild: tuple[str, ...]
+    """Derived planes the target will recompute rather than receive — carried into the manifest so
+    the import side can echo the same promise."""
+
+    # ....................... #
+
+    @property
+    def total_rows(self) -> int:
+        return sum(doc.rows for doc in self.documents)
+
+
+# ....................... #
+
+
+@attrs.frozen(kw_only=True)
+class DocumentImport:
+    """One document spec's outcome on import.
+
+    ``imported`` + ``skipped_existing`` = the rows the archive carried for this spec. They are kept
+    apart because ``ensure`` semantics make a re-run land entirely in ``skipped_existing`` — which
+    is convergence, not a no-op that lost data, and an operator reading the report must be able to
+    tell the difference.
+    """
+
+    name: str
+    imported: int
+    skipped_existing: int
+
+    # ....................... #
+
+    @property
+    def rows(self) -> int:
+        return self.imported + self.skipped_existing
+
+
+@attrs.frozen(kw_only=True)
+class ImportReport:
+    """The outcome of an :func:`import_archive` run."""
+
+    documents: tuple[DocumentImport, ...]
+    rebuild: tuple[str, ...]
+    """Derived planes the caller must now rebuild on the target (search indexes, projected
+    analytics). Import does not rebuild them itself in P1; it reports what the manifest declared so
+    nothing is silently missing."""
+
+    # ....................... #
+
+    @property
+    def total_imported(self) -> int:
+        return sum(doc.imported for doc in self.documents)
