@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, Literal, cast
-from uuid import UUID
+from typing import Any, cast
 
 import attrs
 
@@ -17,32 +17,24 @@ from forze.application.execution import ExecutionRuntime
 from forze.application.execution.context import ExecutionContext
 from forze.base.crypto import DEFAULT_CHUNK_SIZE
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
 from forze.base.serialization import default_model_codec
 from forze_kits.integrations._logger import logger
 
-from .export import _require_registry  # pyright: ignore[reportPrivateUsage]
+from ._core import (
+    DEFAULT_BATCH,
+    OnConflict,
+    ingest_documents,
+    keyed_create,
+    require_registry,
+)
 from .format import read_blob, read_rows, verify_file
 from .manifest import FORMAT_VERSION, ArchiveFile, Manifest
 from .report import DocumentImport, ImportReport, StorageImport
 
 # ----------------------- #
 
-OnConflict = Literal["fail", "skip"]
-"""What import does when a document id already exists in the target:
-
-- ``fail`` — refuse the whole import (a collision means the target was not the empty destination
-  the caller assumed).
-- ``skip`` — leave the existing row untouched (``ensure`` semantics), so a crashed import re-runs
-  to convergence. The default.
-
-Blobs are not gated by this: a blob is always written to its archived key (``overwrite_stream``),
-so a re-run converges by re-writing identical bytes."""
-
 _DOCUMENTS_PREFIX = "documents/"
 _BLOBS_PREFIX = "blobs/"
-_INDEX_SUFFIX = "/index.jsonl.gz"
-_DEFAULT_BATCH = 500
 
 
 # ....................... #
@@ -60,7 +52,7 @@ class ArchiveImporter:
     """
 
     on_conflict: OnConflict = "skip"
-    batch_size: int = _DEFAULT_BATCH
+    batch_size: int = DEFAULT_BATCH
 
     # ....................... #
 
@@ -161,48 +153,19 @@ class ArchiveImporter:
             )
 
         create_codec = default_model_codec(spec.write["create_cmd"])
-        query = ctx.document.query(spec)
-        command = ctx.document.command(spec)
 
-        imported = 0
-        skipped = 0
-        batch: list[KeyedCreate[Any]] = []
+        async def keyed_creates() -> AsyncIterator[KeyedCreate[Any]]:
+            async for row in read_rows(src / archive_file.path):
+                yield keyed_create(row, create_codec)
 
-        async def flush() -> None:
-            nonlocal imported, skipped
-
-            if not batch:
-                return
-
-            # A *soft* existence check: ``get_many`` raises on any absent id, but here most ids are
-            # expected to be absent (a fresh target), so a membership filter that returns the rows
-            # that do exist is the right shape — and it is what tells convergence (all skipped)
-            # apart from a no-op that silently dropped rows.
-            ids = [item.id for item in batch]
-            page = await query.find_many({"$values": {"id": {"$in": ids}}})
-            existing = {doc.id for doc in page.hits}
-
-            if self.on_conflict == "fail" and existing:
-                raise exc.conflict(
-                    f"{len(existing)} document(s) for {name!r} already exist in the target; import "
-                    f"was asked to fail on conflict. Use on_conflict='skip' to converge onto an "
-                    f"existing target instead."
-                )
-
-            await command.ensure_many(batch, return_new=False)
-            imported += len(batch) - len(existing)
-            skipped += len(existing)
-            batch.clear()
-
-        async for row in read_rows(src / archive_file.path):
-            batch.append(_keyed_create(row, create_codec))
-
-            if len(batch) >= self.batch_size:
-                await flush()
-
-        await flush()
-
-        return DocumentImport(name=name, imported=imported, skipped_existing=skipped)
+        return await ingest_documents(
+            query=ctx.document.query(spec),
+            command=ctx.document.command(spec),
+            name=name,
+            rows=keyed_creates(),
+            on_conflict=self.on_conflict,
+            batch_size=self.batch_size,
+        )
 
     # ....................... #
 
@@ -273,7 +236,7 @@ async def import_archive(
     :class:`ArchiveImporter` directly.
     """
 
-    registry = _require_registry(runtime)
+    registry = require_registry(runtime)
 
     return await ArchiveImporter(on_conflict=on_conflict)(runtime.get_context(), registry, src)
 
@@ -321,25 +284,3 @@ def _assert_compatible(manifest: Manifest, registry: FrozenSpecRegistry) -> None
 def _verify_files(src: Path, manifest: Manifest) -> None:
     for archive_file in manifest.files:
         verify_file(src / archive_file.path, archive_file.sha256)
-
-
-# ....................... #
-
-
-def _keyed_create(row: JsonDict, create_codec: Any) -> KeyedCreate[Any]:
-    """Reconstruct one create payload at its archived id.
-
-    The row decodes through the create codec with ``forbid_extra=False``, so the fields the create
-    model does not know — ``id`` (carried on the :class:`KeyedCreate` instead) and any ``rev`` a
-    future format leaves behind — are dropped, while ``created_at`` / ``last_update_at`` flow
-    through **only if** the create model mixes in ``ImportTimestamps``. Without it, the timestamps
-    fall back to the server's write-time stamp: ids and data are always faithful, timestamps are
-    faithful when the aggregate opted in.
-    """
-
-    raw_id = row.get("id")
-
-    if not isinstance(raw_id, str):
-        raise exc.precondition(f"Archive row is missing its 'id': {row!r}")
-
-    return KeyedCreate(id=UUID(raw_id), payload=create_codec.decode_mapping(row))

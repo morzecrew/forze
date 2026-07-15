@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, cast
 
 import attrs
 import orjson
-from pydantic import BaseModel
 
 from forze._version import __version__
 from forze.application.contracts.document import DocumentSpec
@@ -18,23 +17,24 @@ from forze.application.contracts.inventory import (
     entry_shape,
 )
 from forze.application.contracts.storage import StorageSpec
-from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionRuntime
 from forze.application.execution.context import ExecutionContext
-from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict
 from forze_kits.integrations._logger import logger
 from forze_kits.integrations.quiesce import QuiesceReport
 
+from ._core import (
+    DEFAULT_CHUNK,
+    assert_scope_permitted,
+    list_keys,
+    portable_row,
+    require_registry,
+    scope_binding,
+)
 from .format import JsonlGzipWriter, write_blob
 from .manifest import ArchiveFile, Consistency, Manifest, ScopeManifest
 from .planes import ExportPlan, plan_export
 from .report import DocumentExport, ExportReport, StorageExport
 from .scope import ExportScope, TenantScope
-
-# ----------------------- #
-
-_BLOB_PAGE = 100
 
 # ----------------------- #
 
@@ -47,11 +47,6 @@ class _ResolvedScope:
     manifest: ScopeManifest
     attestation: dict[str, Any] | None
     binding: AbstractContextManager[Any]
-
-
-# ----------------------- #
-
-_DEFAULT_CHUNK = 500
 
 
 # ....................... #
@@ -74,7 +69,7 @@ class ArchiveExporter:
     directory as credential-adjacent (RFC 0017 §9).
     """
 
-    chunk_size: int = _DEFAULT_CHUNK
+    chunk_size: int = DEFAULT_CHUNK
     """Keyset page size for ``find_stream`` — one page in memory per spec, whatever the size."""
 
     allow_fuzzy: bool = False
@@ -139,29 +134,31 @@ class ArchiveExporter:
     # ....................... #
 
     def _resolve_scope(self, ctx: ExecutionContext, scope: ExportScope) -> _ResolvedScope:
-        """Turn a scope into its manifest facts and the identity binding the walk runs under."""
+        """Turn a scope into its manifest facts and the identity binding the walk runs under.
+
+        Refuse an unattested whole-system capture up front (unless :attr:`allow_fuzzy`), so the
+        gate fires before a byte is written. The attestation check and the binding are shared with
+        the direct ``migrate`` (``assert_scope_permitted`` / ``scope_binding`` in ``_core``), so an
+        export and a migration of the same scope refuse — and scope — by exactly the same rule.
+        """
+
+        assert_scope_permitted(scope, allow_fuzzy=self.allow_fuzzy)
 
         if isinstance(scope, TenantScope):
             return _ResolvedScope(
                 consistency="tenant",
                 manifest=ScopeManifest(kind="tenant", tenant_id=scope.tenant_id),
                 attestation=None,
-                binding=ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=scope.tenant_id)),
+                binding=scope_binding(ctx, scope),
             )
 
         report = scope.quiesce
-
-        if not report.attested and not self.allow_fuzzy:
-            # Refuse to write a whole-system artifact that only *looks* point-consistent. The
-            # report names what was still moving (or that admission was never held); pass
-            # allow_fuzzy=True to produce a `consistency: fuzzy` artifact deliberately.
-            report.raise_if_unattested()
 
         return _ResolvedScope(
             consistency="quiesced" if report.attested else "fuzzy",
             manifest=ScopeManifest(kind="full", tenant_id=None),
             attestation=_attestation_json(report),
-            binding=nullcontext(),  # full-system: every tenant's rows, no identity bound
+            binding=scope_binding(ctx, scope),
         )
 
     # ....................... #
@@ -184,7 +181,7 @@ class ArchiveExporter:
         with JsonlGzipWriter(dest / rel) as sink:
             async for batch in query.find_stream(chunk_size=self.chunk_size):
                 for doc in batch:
-                    sink.write(_portable_row(doc))
+                    sink.write(portable_row(doc))
 
         return (
             ArchiveFile(path=rel, sha256=sink.sha256, rows=sink.rows),
@@ -216,7 +213,7 @@ class ArchiveExporter:
         objects_dir = dest / "blobs" / route / "objects"
         index_rel = f"blobs/{route}/index.jsonl.gz"
 
-        keys = await _list_keys(query)
+        keys = await list_keys(query)
 
         with JsonlGzipWriter(dest / index_rel) as index:
             for key in keys:
@@ -243,37 +240,12 @@ class ArchiveExporter:
 # ....................... #
 
 
-async def _list_keys(query: Any) -> list[str]:
-    """Every object key on a route, enumerated to exhaustion before any is streamed.
-
-    Paging and streaming must not interleave (the ``reencrypt_objects`` rule): ``list`` makes no
-    ordering promise, so a backend that orders by anything a read touches could reshuffle objects
-    under an advancing offset and silently skip some. Only the keys are held; the bytes stream one
-    object at a time below.
-    """
-
-    keys: list[str] = []
-    offset = 0
-
-    while True:
-        page, _ = await query.list(_BLOB_PAGE, offset)
-
-        if not page:
-            return keys
-
-        keys.extend(obj.key for obj in page)
-        offset += len(page)
-
-
-# ....................... #
-
-
 async def export_archive(
     runtime: ExecutionRuntime,
     dest: Path,
     *,
     scope: ExportScope,
-    chunk_size: int = _DEFAULT_CHUNK,
+    chunk_size: int = DEFAULT_CHUNK,
     allow_fuzzy: bool = False,
 ) -> ExportReport:
     """Convenience over :class:`ArchiveExporter`: pull the registry and the active context off
@@ -287,43 +259,11 @@ async def export_archive(
     already holds a context), use :class:`ArchiveExporter` directly.
     """
 
-    registry = _require_registry(runtime)
+    registry = require_registry(runtime)
 
     return await ArchiveExporter(chunk_size=chunk_size, allow_fuzzy=allow_fuzzy)(
         runtime.get_context(), registry, dest, scope=scope
     )
-
-
-# ....................... #
-
-
-def _require_registry(runtime: ExecutionRuntime) -> FrozenSpecRegistry:
-    if runtime.spec_registry is None:
-        raise exc.precondition(
-            "export/import needs the runtime's spec inventory and found none. Build the runtime "
-            "with build_runtime(specs=…) so it knows what it is carrying."
-        )
-
-    return runtime.spec_registry
-
-
-# ....................... #
-
-
-def _portable_row(doc: BaseModel) -> JsonDict:
-    """The backend-agnostic JSON for one read model.
-
-    Typed ``BaseModel`` on purpose: a document spec's read type is bound to it, so ``model_dump``
-    and ``model_computed_fields`` are guaranteed, not assumed. Model field names, not storage
-    columns — the archive must not carry one backend's column layout into another. ``rev`` is
-    dropped (optimistic-concurrency lineage resets to 1 on import, RFC §7, so carrying it would
-    only make a re-export diverge) and so are computed fields (they recompute on write from the
-    fields that *are* carried).
-    """
-
-    excluded = {"rev", *type(doc).model_computed_fields}
-
-    return doc.model_dump(mode="json", exclude=excluded)
 
 
 # ....................... #

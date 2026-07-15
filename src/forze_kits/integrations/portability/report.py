@@ -100,3 +100,31 @@ class ImportReport:
     @property
     def total_blobs(self) -> int:
         return sum(route.uploaded for route in self.storage)
+
+
+# ....................... #
+
+
+@attrs.frozen(kw_only=True)
+class MigrateReport:
+    """The outcome of a direct :func:`migrate` — what landed in the target, per plane.
+
+    A migration is an export and an import fused per chunk, so its result is the *import* half's
+    shape: the same :class:`DocumentImport` / :class:`StorageImport` outcomes, reporting what the
+    target received. ``rebuild`` comes from the source plan (not a manifest — there is none), so the
+    operator still learns which derived planes to recompute on the target after the copy.
+    """
+
+    documents: tuple[DocumentImport, ...]
+    storage: tuple[StorageImport, ...] = ()
+    rebuild: tuple[str, ...]
+
+    # ....................... #
+
+    @property
+    def total_imported(self) -> int:
+        return sum(doc.imported for doc in self.documents)
+
+    @property
+    def total_blobs(self) -> int:
+        return sum(route.uploaded for route in self.storage)

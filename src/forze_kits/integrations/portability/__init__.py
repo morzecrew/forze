@@ -8,19 +8,23 @@ or *drained*, and an export **refuses anything it cannot account for** rather th
 that looks complete and is not.
 
 This is a **portability** plane, not backup — durability stays your backend's job (WAL / PITR /
-snapshots). The artifact is **plaintext by construction**; treat it as credential-adjacent (RFC
-0017 §9). P1 implements the document plane under a per-tenant scope; blobs, counters, graph, the
-full-system scope, and the direct ``migrate`` mode arrive in later phases.
+snapshots). A file artifact is **plaintext by construction** (treat it as credential-adjacent, RFC
+0017 §9); the direct ``migrate`` mode fuses export and import ports-to-ports so nothing plaintext is
+ever written to disk — the recommended path for a backend migration. Documents, blobs, per-tenant
+and full-system scope ship today; counters and graph arrive with later phases.
 """
 
+from ._core import OnConflict
 from .export import ArchiveExporter, export_archive
-from .import_ import ArchiveImporter, OnConflict, import_archive
+from .import_ import ArchiveImporter, import_archive
 from .manifest import FORMAT_VERSION, ArchiveFile, Manifest, ScopeManifest
+from .migrate import ArchiveMigrator, migrate
 from .report import (
     DocumentExport,
     DocumentImport,
     ExportReport,
     ImportReport,
+    MigrateReport,
     StorageExport,
     StorageImport,
 )
@@ -33,6 +37,7 @@ __all__ = [
     "ArchiveExporter",
     "ArchiveFile",
     "ArchiveImporter",
+    "ArchiveMigrator",
     "DocumentExport",
     "DocumentImport",
     "ExportReport",
@@ -40,6 +45,7 @@ __all__ = [
     "FullScope",
     "ImportReport",
     "Manifest",
+    "MigrateReport",
     "OnConflict",
     "ScopeManifest",
     "StorageExport",
@@ -47,4 +53,5 @@ __all__ = [
     "TenantScope",
     "export_archive",
     "import_archive",
+    "migrate",
 ]
