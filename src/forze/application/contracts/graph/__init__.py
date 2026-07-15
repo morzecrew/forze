@@ -1,6 +1,10 @@
 """Bounded graph module contracts: node/edge specs, refs, and ports."""
 
-from .capabilities import GraphReadCapabilities, GraphStreamingAware
+from .capabilities import (
+    GraphEdgeExportAware,
+    GraphReadCapabilities,
+    GraphStreamingAware,
+)
 from .deps import (
     GraphCommandDepKey,
     GraphCommandDepPort,
@@ -39,6 +43,7 @@ from .streamable import (
 from .types import GraphDirection, GraphEdgeDirectionality
 from .value_objects import (
     EdgeRef,
+    ExportedEdge,
     GraphEdgeEndpoint,
     GraphPathStep,
     GraphWalkParams,
@@ -53,6 +58,8 @@ from .value_objects import (
 # ----------------------- #
 
 __all__ = [
+    "ExportedEdge",
+    "GraphEdgeExportAware",
     "GraphReadCapabilities",
     "GraphStreamingAware",
     "edge_cursor_fields",

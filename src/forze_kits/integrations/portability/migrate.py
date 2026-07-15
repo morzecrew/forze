@@ -26,12 +26,14 @@ from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import attrs
+from pydantic import BaseModel
 
 from forze.application.contracts.document import (
     DocumentSpec,
     DocumentWriteTypes,
     KeyedCreate,
 )
+from forze.application.contracts.graph import GraphEdgeExportAware, GraphModuleSpec
 from forze.application.contracts.inventory import FrozenSpecRegistry, SpecRegistryEntry
 from forze.application.contracts.storage import StorageSpec
 from forze.application.execution import ExecutionRuntime
@@ -52,8 +54,9 @@ from ._core import (
     require_registry,
     scope_binding,
 )
+from ._graph import edge_create_from_row, exported_edge_row
 from .planes import plan_export
-from .report import DocumentImport, MigrateReport, StorageImport
+from .report import DocumentImport, GraphImport, MigrateReport, StorageImport
 from .scope import ExportScope
 
 # ----------------------- #
@@ -117,6 +120,7 @@ class ArchiveMigrator:
 
         docs: list[DocumentImport] = []
         blobs: list[StorageImport] = []
+        graphs: list[GraphImport] = []
 
         # Hold both scopes' bindings across the whole walk: the source read runs under the source
         # context's identity and the target write under the target context's, and each binds on its
@@ -128,13 +132,22 @@ class ArchiveMigrator:
             for entry in plan.storage:
                 blobs.append(await self._migrate_storage(source, target, entry))
 
+            for entry in plan.graph:
+                graphs.append(await self._migrate_graph(source, target, entry))
+
         logger.info(
             "Migration complete",
             imported=sum(d.imported for d in docs),
             blobs=sum(b.uploaded for b in blobs),
+            graph=sum(g.vertices + g.edges for g in graphs),
         )
 
-        return MigrateReport(documents=tuple(docs), storage=tuple(blobs), rebuild=plan.rebuild)
+        return MigrateReport(
+            documents=tuple(docs),
+            storage=tuple(blobs),
+            graph=tuple(graphs),
+            rebuild=plan.rebuild,
+        )
 
     # ....................... #
 
@@ -206,6 +219,59 @@ class ArchiveMigrator:
             uploaded += 1
 
         return StorageImport(name=entry.name, uploaded=uploaded)
+
+    # ....................... #
+
+    async def _migrate_graph(
+        self,
+        source: ExecutionContext,
+        target: ExecutionContext,
+        entry: SpecRegistryEntry,
+    ) -> GraphImport:
+        """Fuse one graph module's export and import — vertices then edges, no row on disk.
+
+        Routes through the *same* ``portable_row`` → create-model decode a file export/import uses
+        for vertices, and the same ``exported_edge_row`` → ``edge_create_from_row`` for edges, so a
+        migration and a file round-trip converge on the target by construction here too. Refuses up
+        front if the source cannot surface edge endpoints, before any vertex is written.
+        """
+
+        spec = cast("GraphModuleSpec", entry.spec)
+        module = entry.name
+        src_query = source.graph.query(spec)
+        command = target.graph.command(spec)
+
+        if spec.edges and not isinstance(src_query, GraphEdgeExportAware):
+            raise exc.precondition(
+                f"Cannot migrate graph {module!r}: the source's query backend cannot surface edge "
+                f"endpoints (no GraphEdgeExportAware), so its edges could not be re-created."
+            )
+
+        vertices = 0
+        for node in spec.nodes:
+            create_codec = default_model_codec(cast("type[BaseModel]", node.create))
+
+            async for batch in src_query.find_vertices_stream(
+                str(node.name), chunk_size=self.chunk_size
+            ):
+                for vertex in batch:
+                    create = create_codec.decode_mapping(portable_row(vertex))
+                    await command.ensure_vertex(str(node.name), create, return_new=False)
+                    vertices += 1
+
+        export_query = cast("GraphEdgeExportAware", src_query)
+        edges = 0
+
+        for edge in spec.edges:
+            async for edge_batch in export_query.find_edges_export_stream(
+                str(edge.name), chunk_size=self.chunk_size
+            ):
+                for exported in edge_batch:
+                    create = edge_create_from_row(exported_edge_row(exported))
+                    await command.ensure_edge(str(edge.name), create, return_new=False)
+                    edges += 1
+
+        return GraphImport(name=module, vertices=vertices, edges=edges)
 
 
 # ....................... #

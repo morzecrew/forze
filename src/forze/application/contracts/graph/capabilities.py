@@ -11,9 +11,12 @@ closed here is a partial scan that looks like a complete one, and an export buil
 carries a subset of the graph and says it carried the graph.
 """
 
+from collections.abc import AsyncGenerator, Sequence
 from typing import Protocol, runtime_checkable
 
 import attrs
+
+from .value_objects import ExportedEdge
 
 # ----------------------- #
 
@@ -52,4 +55,35 @@ class GraphStreamingAware(Protocol):
 
     def read_capabilities(self) -> GraphReadCapabilities:
         """Report the read features this backend supports."""
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@runtime_checkable
+class GraphEdgeExportAware(Protocol):
+    """Opt-in extension for graph query ports that can stream edges **with their endpoints**.
+
+    :meth:`~forze.application.contracts.graph.GraphQueryPort.find_edges_stream` yields read models
+    only — an edge's own properties — which is enough to display an edge but not to re-create one,
+    because an edge's identity is its ``(from, to)`` endpoints and those are not stored properties.
+    A backend that can keyset-walk edges already reads their endpoints for the cursor, so surfacing
+    them costs nothing. Kept off :class:`GraphQueryPort` (a sibling of :class:`GraphStreamingAware`)
+    so it stays non-breaking; a port without it simply cannot have its graph edges exported, and the
+    portability driver refuses, naming the module rather than shipping edgeless vertices.
+    """
+
+    def find_edges_export_stream(
+        self,
+        edge_kind: str,
+        *,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[ExportedEdge]]:
+        """Yield keyset batches of every edge of *edge_kind* as :class:`ExportedEdge`\\ s.
+
+        The walk :meth:`~forze.application.contracts.graph.GraphQueryPort.find_edges_stream` does —
+        same cursor, same completeness, same duplicate-pair handling — but each row carries its
+        endpoints and read model, the two halves an import needs to ``ensure_edge`` it back.
+        """
         ...  # pragma: no cover

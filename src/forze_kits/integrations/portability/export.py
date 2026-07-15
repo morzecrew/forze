@@ -11,6 +11,7 @@ import orjson
 
 from forze._version import __version__
 from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.graph import GraphEdgeExportAware, GraphModuleSpec
 from forze.application.contracts.inventory import (
     FrozenSpecRegistry,
     SpecRegistryEntry,
@@ -19,6 +20,7 @@ from forze.application.contracts.inventory import (
 from forze.application.contracts.storage import StorageSpec
 from forze.application.execution import ExecutionRuntime
 from forze.application.execution.context import ExecutionContext
+from forze.base.exceptions import exc
 from forze_kits.integrations._logger import logger
 from forze_kits.integrations.quiesce import QuiesceReport
 
@@ -30,10 +32,11 @@ from ._core import (
     require_registry,
     scope_binding,
 )
-from .format import JsonlGzipWriter, write_blob
+from ._graph import edge_file, exported_edge_row, node_file
+from .format import Compression, JsonlWriter, data_suffix, write_blob
 from .manifest import ArchiveFile, Consistency, Manifest, ScopeManifest
 from .planes import ExportPlan, plan_export
-from .report import DocumentExport, ExportReport, StorageExport
+from .report import DocumentExport, ExportReport, GraphExport, StorageExport
 from .scope import ExportScope, TenantScope
 
 # ----------------------- #
@@ -77,6 +80,11 @@ class ArchiveExporter:
     is stamped ``consistency: fuzzy`` (importable, but not point-consistent), and producing one at
     all is a deliberate choice, not a silent fallback (RFC 0017 §4)."""
 
+    compression: Compression = "gzip"
+    """Codec for the JSONL data files (RFC §5). ``gzip`` needs no extra; ``zstd`` needs the
+    ``forze[zstd]`` extra and fails closed without it; ``none`` stores rows uncompressed. Recorded
+    in the manifest so import decodes with the same one. Blobs stay raw regardless."""
+
     # ....................... #
 
     async def __call__(
@@ -109,6 +117,7 @@ class ArchiveExporter:
         files: list[ArchiveFile] = []
         docs: list[DocumentExport] = []
         blobs: list[StorageExport] = []
+        graphs: list[GraphExport] = []
 
         with resolved.binding:
             for entry in plan.documents:
@@ -123,13 +132,27 @@ class ArchiveExporter:
                 blobs.append(blob_outcome)
                 _write_spec_shape(dest, entry)
 
-        _write_manifest(dest, registry.fingerprint(), resolved, plan, files)
+            for entry in plan.graph:
+                graph_files, graph_outcome = await self._export_graph(ctx, dest, entry)
+                files.extend(graph_files)
+                graphs.append(graph_outcome)
+                _write_spec_shape(dest, entry)
+
+        _write_manifest(dest, registry.fingerprint(), resolved, plan, files, self.compression)
 
         logger.info(
-            "Export complete", rows=sum(o.rows for o in docs), blobs=sum(b.blobs for b in blobs)
+            "Export complete",
+            rows=sum(o.rows for o in docs),
+            blobs=sum(b.blobs for b in blobs),
+            graph=sum(g.vertices + g.edges for g in graphs),
         )
 
-        return ExportReport(documents=tuple(docs), storage=tuple(blobs), rebuild=plan.rebuild)
+        return ExportReport(
+            documents=tuple(docs),
+            storage=tuple(blobs),
+            graph=tuple(graphs),
+            rebuild=plan.rebuild,
+        )
 
     # ....................... #
 
@@ -175,10 +198,10 @@ class ArchiveExporter:
         # without re-checking (an ``assert`` would be stripped under ``-O``, invariant is upstream).
         spec = cast("DocumentSpec[Any, Any, Any, Any]", entry.spec)
 
-        rel = f"documents/{entry.name}.jsonl.gz"
+        rel = f"documents/{entry.name}{data_suffix(self.compression)}"
         query = ctx.document.query(spec)
 
-        with JsonlGzipWriter(dest / rel) as sink:
+        with JsonlWriter(dest / rel, compression=self.compression) as sink:
             async for batch in query.find_stream(chunk_size=self.chunk_size):
                 for doc in batch:
                     sink.write(portable_row(doc))
@@ -211,11 +234,11 @@ class ArchiveExporter:
         query = ctx.storage.query(spec)
 
         objects_dir = dest / "blobs" / route / "objects"
-        index_rel = f"blobs/{route}/index.jsonl.gz"
+        index_rel = f"blobs/{route}/index{data_suffix(self.compression)}"
 
         keys = await list_keys(query)
 
-        with JsonlGzipWriter(dest / index_rel) as index:
+        with JsonlWriter(dest / index_rel, compression=self.compression) as index:
             for key in keys:
                 head = await query.head(key, include_tags=True)
                 streamed = await query.download_stream(key)
@@ -236,6 +259,70 @@ class ArchiveExporter:
             StorageExport(name=route, blobs=index.rows),
         )
 
+    # ....................... #
+
+    async def _export_graph(
+        self,
+        ctx: ExecutionContext,
+        dest: Path,
+        entry: SpecRegistryEntry,
+    ) -> tuple[list[ArchiveFile], GraphExport]:
+        """Stream one graph module — one file per node and edge kind, vertices then edges.
+
+        Vertices walk via ``find_vertices_stream`` (their key field is in the read model, so a
+        vertex re-creates itself). Edges walk via ``find_edges_export_stream``, which carries the
+        endpoints ``find_edges_stream`` drops — an edge cannot be re-created without them. The
+        export refuses **up front** if the wired adapter cannot surface edge endpoints, before a
+        single vertex file is written: the plane-completeness rule, checked at the one point the
+        capability is knowable (it is the adapter's, not the spec's, so ``plan_export`` cannot see
+        it), so a graph is never written half-way.
+        """
+
+        spec = cast("GraphModuleSpec", entry.spec)
+        module = entry.name
+        query = ctx.graph.query(spec)
+
+        if spec.edges and not isinstance(query, GraphEdgeExportAware):
+            raise exc.precondition(
+                f"Cannot export graph {module!r}: its query backend streams edges for reading but "
+                f"cannot surface their endpoints (no GraphEdgeExportAware), so the edges could not "
+                f"be re-created on import. This backend does not support the graph export plane."
+            )
+
+        files: list[ArchiveFile] = []
+        vertices = 0
+        edges = 0
+
+        for node in spec.nodes:
+            rel = node_file(module, str(node.name), self.compression)
+
+            with JsonlWriter(dest / rel, compression=self.compression) as sink:
+                async for batch in query.find_vertices_stream(
+                    str(node.name), chunk_size=self.chunk_size
+                ):
+                    for vertex in batch:
+                        sink.write(portable_row(vertex))
+
+            files.append(ArchiveFile(path=rel, sha256=sink.sha256, rows=sink.rows))
+            vertices += sink.rows
+
+        export_query = cast("GraphEdgeExportAware", query)
+
+        for edge in spec.edges:
+            rel = edge_file(module, str(edge.name), self.compression)
+
+            with JsonlWriter(dest / rel, compression=self.compression) as sink:
+                async for edge_batch in export_query.find_edges_export_stream(
+                    str(edge.name), chunk_size=self.chunk_size
+                ):
+                    for exported in edge_batch:
+                        sink.write(exported_edge_row(exported))
+
+            files.append(ArchiveFile(path=rel, sha256=sink.sha256, rows=sink.rows))
+            edges += sink.rows
+
+        return files, GraphExport(name=module, vertices=vertices, edges=edges)
+
 
 # ....................... #
 
@@ -247,6 +334,7 @@ async def export_archive(
     scope: ExportScope,
     chunk_size: int = DEFAULT_CHUNK,
     allow_fuzzy: bool = False,
+    compression: Compression = "gzip",
 ) -> ExportReport:
     """Convenience over :class:`ArchiveExporter`: pull the registry and the active context off
     *runtime* and export.
@@ -261,9 +349,9 @@ async def export_archive(
 
     registry = require_registry(runtime)
 
-    return await ArchiveExporter(chunk_size=chunk_size, allow_fuzzy=allow_fuzzy)(
-        runtime.get_context(), registry, dest, scope=scope
-    )
+    return await ArchiveExporter(
+        chunk_size=chunk_size, allow_fuzzy=allow_fuzzy, compression=compression
+    )(runtime.get_context(), registry, dest, scope=scope)
 
 
 # ....................... #
@@ -308,6 +396,7 @@ def _write_manifest(
     resolved: _ResolvedScope,
     plan: ExportPlan,
     files: list[ArchiveFile],
+    compression: Compression,
 ) -> None:
     """Write ``manifest.json`` last — its presence is what marks the archive complete.
 
@@ -320,6 +409,7 @@ def _write_manifest(
     manifest = Manifest(
         forze_version=__version__,
         registry_fingerprint=fingerprint,
+        compression=compression,
         scope=resolved.manifest,
         consistency=resolved.consistency,
         files=files,

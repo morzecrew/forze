@@ -54,8 +54,9 @@ OnConflict = Literal["fail", "skip"]
 - ``skip`` — leave the existing row untouched (``ensure`` semantics), so a crashed run re-runs to
   convergence. The default.
 
-Blobs are not gated by this: a blob is always written to its archived key (``overwrite_stream``),
-so a re-run converges by re-writing identical bytes."""
+Blobs and the graph plane are not gated by this: a blob is always written to its archived key
+(``overwrite_stream``), and graph vertices/edges go in through the idempotent ``ensure_vertex`` /
+``ensure_edge``, so a re-run of either converges without a conflict check."""
 
 
 # ....................... #

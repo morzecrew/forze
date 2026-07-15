@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import heapq
 from collections import deque
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from typing import Any, final
 
 import attrs
@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.graph import (
     EdgeRef,
+    ExportedEdge,
     GraphDirection,
     GraphEdgeSpec,
     GraphModuleSpec,
@@ -678,6 +679,45 @@ class MockGraphAdapter(MockTenancyMixin):
         property_filter: JsonDict | None = None,
         chunk_size: int = 500,
     ) -> AsyncGenerator[Sequence[BaseModel]]:
+        fetch = self._edge_page_fetch(
+            edge_kind, property_filter, lambda rec: self._emodel(edge_kind, rec["props"])
+        )
+
+        return stream_keyset_pages(fetch, chunk_size=chunk_size)
+
+    def find_edges_export_stream(
+        self,
+        edge_kind: str,
+        *,
+        chunk_size: int = 500,
+    ) -> AsyncGenerator[Sequence[ExportedEdge]]:
+        """The edge walk :meth:`find_edges_stream` does, each row carrying its endpoints too — the
+        two halves an import needs to ``ensure_edge`` it back. The endpoints are already read for
+        the cursor, so this only surfaces what the read stream discards."""
+
+        def _build(rec: JsonDict) -> ExportedEdge:
+            return ExportedEdge(
+                from_kind=str(rec["from_kind"]),
+                from_key=str(rec["from_key"]),
+                to_kind=str(rec["to_kind"]),
+                to_key=str(rec["to_key"]),
+                model=self._emodel(edge_kind, rec["props"]),
+            )
+
+        return stream_keyset_pages(
+            self._edge_page_fetch(edge_kind, None, _build), chunk_size=chunk_size
+        )
+
+    def _edge_page_fetch[T](
+        self,
+        edge_kind: str,
+        property_filter: JsonDict | None,
+        build: Callable[[JsonDict], T],
+    ) -> Callable[[Any | None, int], Awaitable[Sequence[tuple[Any, T]]]]:
+        """The shared keyset fetch over an edge kind — cursor, admission, and duplicate-pair
+        handling identical for the read stream (yields the read model) and the export stream
+        (yields an :class:`ExportedEdge`). *build* shapes each row from its full store record."""
+
         edge = self._edge(edge_kind)
         self._validate_filter(property_filter, edge.encryption)
         cursor = assert_edge_streamable(
@@ -692,11 +732,11 @@ class MockGraphAdapter(MockTenancyMixin):
 
             return (str(rec["from_key"]), str(rec["to_key"]))
 
-        async def _fetch(after: Any | None, limit: int) -> Sequence[tuple[Any, BaseModel]]:
+        async def _fetch(after: Any | None, limit: int) -> Sequence[tuple[Any, T]]:
             with self.state.lock:
                 matches = sorted(
                     (
-                        (_cursor_key(rec), rec["props"])
+                        (_cursor_key(rec), rec)
                         for rec in self._edges_store()
                         if rec["kind"] == edge_kind and self._matches(rec["props"], property_filter)
                     ),
@@ -713,18 +753,18 @@ class MockGraphAdapter(MockTenancyMixin):
             admitted: list[Any] = []
             page: list[tuple[Any, JsonDict]] = []
 
-            for key, props in ahead:
+            for key, rec in ahead:
                 if key not in admitted:
                     if len(admitted) == limit:
                         break
 
                     admitted.append(key)
 
-                page.append((key, props))
+                page.append((key, rec))
 
-            return [(key, self._emodel(edge_kind, props)) for key, props in page]
+            return [(key, build(rec)) for key, rec in page]
 
-        return stream_keyset_pages(_fetch, chunk_size=chunk_size)
+        return _fetch
 
     async def vertex_degree(
         self,

@@ -33,7 +33,7 @@ from forze.application.execution.context import ExecutionContext
 from forze.base.primitives import JsonDict
 
 from .export import ArchiveExporter
-from .format import read_rows
+from .format import data_suffix, read_rows
 from .import_ import ArchiveImporter
 from .manifest import Manifest
 from .scope import ExportScope
@@ -150,21 +150,24 @@ async def _archive_projection(archive: Path) -> _ArchiveProjection:
     """
 
     manifest = Manifest.model_validate_json((archive / "manifest.json").read_text())
+    codec = manifest.compression
 
     documents: dict[str, dict[str, JsonDict]] = {}
     blobs: dict[str, dict[str, JsonDict]] = {}
 
     for archive_file in manifest.files:
+        path = archive / archive_file.path
+
         if archive_file.path.startswith("documents/"):
-            name = Path(archive_file.path).name.removesuffix(".jsonl.gz")
+            name = Path(archive_file.path).name.removesuffix(data_suffix(codec))
             documents[name] = {
-                str(row["id"]): row async for row in read_rows(archive / archive_file.path)
+                str(row["id"]): row async for row in read_rows(path, compression=codec)
             }
 
         elif archive_file.path.startswith("blobs/"):
             route = Path(archive_file.path).parent.name
             blobs[route] = {
-                str(row["key"]): row async for row in read_rows(archive / archive_file.path)
+                str(row["key"]): row async for row in read_rows(path, compression=codec)
             }
 
     return _ArchiveProjection(documents=documents, blobs=blobs)

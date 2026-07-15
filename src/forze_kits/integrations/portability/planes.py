@@ -16,6 +16,7 @@ from typing import Any, cast
 import attrs
 
 from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.graph import GraphModuleSpec
 from forze.application.contracts.inventory import (
     FrozenSpecRegistry,
     PlaneDisposition,
@@ -27,9 +28,9 @@ from forze.base.exceptions import exc
 
 # ----------------------- #
 
-_CARRIED_PLANES = frozenset({SpecPlane.DOCUMENT, SpecPlane.STORAGE})
+_CARRIED_PLANES = frozenset({SpecPlane.DOCUMENT, SpecPlane.STORAGE, SpecPlane.GRAPH})
 """The exportable planes this version writes into an archive. Grows with each phase: counters
-(RFC §10 P2), graph (P4)."""
+(RFC §10 P2)."""
 
 
 # ....................... #
@@ -44,6 +45,9 @@ class ExportPlan:
 
     storage: tuple[SpecRegistryEntry, ...]
     """Storage (blob) routes to enumerate and stream out."""
+
+    graph: tuple[SpecRegistryEntry, ...]
+    """Graph modules to walk — every node and edge kind streamed out (P4)."""
 
     rebuild: tuple[str, ...]
     """Rebuildable plane routes the target recomputes (search, cache, projected analytics) —
@@ -70,6 +74,7 @@ def plan_export(registry: FrozenSpecRegistry) -> ExportPlan:
 
     documents: list[SpecRegistryEntry] = []
     storage: list[SpecRegistryEntry] = []
+    graph: list[SpecRegistryEntry] = []
     rebuild: list[str] = []
     unsupported: list[str] = []
 
@@ -88,6 +93,11 @@ def plan_export(registry: FrozenSpecRegistry) -> ExportPlan:
             storage.append(entry)
             continue
 
+        if entry.plane is SpecPlane.GRAPH:
+            _assert_graph_importable(entry)
+            graph.append(entry)
+            continue
+
         if entry.plane not in _CARRIED_PLANES:
             unsupported.append(entry.ref.label())
             continue
@@ -104,9 +114,37 @@ def plan_export(registry: FrozenSpecRegistry) -> ExportPlan:
 
     if unsupported:
         raise exc.precondition(
-            "This export version carries the document and storage planes only; it cannot yet "
-            f"carry {', '.join(sorted(unsupported))}. Exporting anyway would ship an archive that "
-            f"looks complete and is not. Support arrives in a later phase (RFC 0017 §10)."
+            "This export version carries the document, storage and graph planes only; it cannot "
+            f"yet carry {', '.join(sorted(unsupported))}. Exporting anyway would ship an archive "
+            f"that looks complete and is not. Support arrives in a later phase (RFC 0017 §10)."
         )
 
-    return ExportPlan(documents=tuple(documents), storage=tuple(storage), rebuild=tuple(rebuild))
+    return ExportPlan(
+        documents=tuple(documents),
+        storage=tuple(storage),
+        graph=tuple(graph),
+        rebuild=tuple(rebuild),
+    )
+
+
+# ....................... #
+
+
+def _assert_graph_importable(entry: SpecRegistryEntry) -> None:
+    """Refuse a graph module with a read-only node kind — one no target could receive.
+
+    Edge kinds need no declared create model (import feeds the adapter a permissive command), but a
+    **node** kind without a ``create`` model cannot be re-created, so the module could be walked out
+    and never walked back in. Refuse it by name, as loudly as a read-only document, rather than ship
+    a graph that imports its edges onto vertices that were never restored.
+    """
+
+    spec = cast("GraphModuleSpec", entry.spec)
+    read_only = sorted(str(node.name) for node in spec.nodes if node.create is None)
+
+    if read_only:
+        raise exc.precondition(
+            f"Cannot export graph {entry.ref.label()!r}: node kind(s) {', '.join(read_only)} "
+            f"declare no create model, so they could not be imported. Give them a create model, "
+            f"or exclude the module."
+        )

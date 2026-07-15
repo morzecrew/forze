@@ -24,6 +24,15 @@ class StorageExport:
 
 
 @attrs.frozen(kw_only=True)
+class GraphExport:
+    """One graph module's contribution to an archive — every node and edge kind walked."""
+
+    name: str
+    vertices: int
+    edges: int
+
+
+@attrs.frozen(kw_only=True)
 class ExportReport:
     """The outcome of an :func:`export_archive` run."""
 
@@ -32,6 +41,9 @@ class ExportReport:
 
     storage: tuple[StorageExport, ...] = ()
     """Per-route blob counts."""
+
+    graph: tuple[GraphExport, ...] = ()
+    """Per-module vertex + edge counts."""
 
     rebuild: tuple[str, ...]
     """Derived planes the target will recompute rather than receive — carried into the manifest so
@@ -46,6 +58,14 @@ class ExportReport:
     @property
     def total_blobs(self) -> int:
         return sum(route.blobs for route in self.storage)
+
+    @property
+    def total_vertices(self) -> int:
+        return sum(module.vertices for module in self.graph)
+
+    @property
+    def total_edges(self) -> int:
+        return sum(module.edges for module in self.graph)
 
 
 # ....................... #
@@ -81,11 +101,21 @@ class StorageImport:
 
 
 @attrs.frozen(kw_only=True)
+class GraphImport:
+    """One graph module's outcome on import — vertices then edges, both ``ensure``-idempotent."""
+
+    name: str
+    vertices: int
+    edges: int
+
+
+@attrs.frozen(kw_only=True)
 class ImportReport:
     """The outcome of an :func:`import_archive` run."""
 
     documents: tuple[DocumentImport, ...]
     storage: tuple[StorageImport, ...] = ()
+    graph: tuple[GraphImport, ...] = ()
     rebuild: tuple[str, ...]
     """Derived planes the caller must now rebuild on the target (search indexes, projected
     analytics). Import does not rebuild them itself in P1; it reports what the manifest declared so
@@ -100,6 +130,14 @@ class ImportReport:
     @property
     def total_blobs(self) -> int:
         return sum(route.uploaded for route in self.storage)
+
+    @property
+    def total_vertices(self) -> int:
+        return sum(module.vertices for module in self.graph)
+
+    @property
+    def total_edges(self) -> int:
+        return sum(module.edges for module in self.graph)
 
 
 # ....................... #
@@ -117,6 +155,7 @@ class MigrateReport:
 
     documents: tuple[DocumentImport, ...]
     storage: tuple[StorageImport, ...] = ()
+    graph: tuple[GraphImport, ...] = ()
     rebuild: tuple[str, ...]
 
     # ....................... #
@@ -128,3 +167,11 @@ class MigrateReport:
     @property
     def total_blobs(self) -> int:
         return sum(route.uploaded for route in self.storage)
+
+    @property
+    def total_vertices(self) -> int:
+        return sum(module.vertices for module in self.graph)
+
+    @property
+    def total_edges(self) -> int:
+        return sum(module.edges for module in self.graph)

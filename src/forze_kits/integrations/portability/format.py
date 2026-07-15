@@ -1,26 +1,49 @@
-"""The archive's on-disk shape: canonical JSONL rows, gzip files, streamed checksums.
+"""The archive's on-disk shape: canonical JSONL rows, compressed files, streamed checksums.
 
 Everything here is bounded-memory and deterministic. A row is written the instant it is produced
 (one chunk in flight per plane, the ``reencrypt_objects`` discipline), the file's checksum is
-accumulated over the compressed bytes as they are written rather than by re-reading, and the gzip
-header carries no timestamp — so the same corpus exported twice yields byte-identical files, which
-is what lets an operator diff two archives and a re-export stand in as an equality observable.
+accumulated over the *compressed* bytes as they are written rather than by re-reading, and no codec
+carries a timestamp — so the same corpus exported twice yields byte-identical files, which is what
+lets an operator diff two archives and a re-export stand in as an equality observable.
+
+The codec is one of :data:`Compression`, chosen once per archive and recorded in the manifest.
+``gzip`` is stdlib and always available; ``zstd`` needs the optional ``zstandard`` extra and fails
+closed with a clear error naming it; ``none`` stores rows uncompressed (debugging, or already-tiny
+archives). Blobs are always raw regardless — they are usually already-compressed media.
 """
 
 from __future__ import annotations
 
 import gzip
 import hashlib
+import io
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from pathlib import Path
-from typing import BinaryIO, Final
+from typing import Any, BinaryIO, Final, Literal, Protocol
 
+import attrs
 import orjson
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 # ----------------------- #
+
+Compression = Literal["gzip", "zstd", "none"]
+"""Codec for the JSONL data files, declared in the manifest so an importer fails closed on one it
+lacks. ``gzip`` (stdlib, always readable), ``zstd`` (optional ``zstandard`` extra, faster + tighter),
+``none`` (uncompressed)."""
+
+_DATA_SUFFIX: Final[dict[str, str]] = {
+    "gzip": ".jsonl.gz",
+    "zstd": ".jsonl.zst",
+    "none": ".jsonl",
+}
+"""The extension a data file carries under each codec — the codec is visible in the file name, and
+an importer strips the right one to recover the spec/kind it names."""
+
+_ZSTD_LEVEL: Final = 10
+"""A middle zstd level: well past gzip on ratio, still fast. Fixed so an archive is reproducible."""
 
 _CANONICAL: Final = orjson.OPT_SORT_KEYS | orjson.OPT_APPEND_NEWLINE
 """Sorted keys + trailing newline: one canonical JSONL line per row, stable across processes.
@@ -36,6 +59,69 @@ _GZIP_MTIME: Final = 0
 # ....................... #
 
 
+def data_suffix(compression: Compression) -> str:
+    """The file extension a JSONL data file carries under *compression*."""
+
+    return _DATA_SUFFIX[compression]
+
+
+# ....................... #
+
+
+def _require_zstd() -> Any:
+    """The ``zstandard`` module, or a clear refusal naming the extra it needs.
+
+    zstd is an optional codec: an archive that declares it is unreadable — and an export that asks
+    for it unproduceable — without the ``zstandard`` wheel. Fail closed with the install line rather
+    than an opaque ``ModuleNotFoundError`` three frames down. Typed ``Any``: the module ships no
+    stubs, and it is the single deliberate escape hatch this file allows.
+    """
+
+    try:
+        import zstandard
+    except ImportError as error:  # pragma: no cover - exercised only where the extra is absent
+        raise exc.precondition(
+            "This archive is zstd-compressed, but the 'zstd' extra is not installed. Install "
+            "forze[zstd] (or `pip install zstandard`) to read or write it, or use gzip."
+        ) from error
+
+    return zstandard
+
+
+# ....................... #
+
+
+class _ByteSink(Protocol):
+    """The write side of a codec layer: canonical bytes in, closed when the file is done.
+
+    gzip's ``GzipFile``, zstd's stream writer, and the raw :class:`_HashingSink` (the ``none`` codec)
+    all satisfy it — so :func:`_open_compressor` returns one concrete type instead of ``Any``, and
+    :class:`JsonlWriter` writes through a typed handle rather than a bare object.
+    """
+
+    def write(self, data: bytes, /) -> int: ...
+
+    def close(self) -> None: ...
+
+
+# ....................... #
+
+
+class _Hasher(Protocol):
+    """The slice of a hashlib digest this file uses: feed the running hash, read it as hex.
+
+    A structural type rather than the private ``hashlib._Hash`` — ``hashlib.sha256()`` satisfies it,
+    and the sinks below carry it without reaching into a private name."""
+
+    def update(self, data: bytes, /) -> None: ...
+
+    def hexdigest(self) -> str: ...
+
+
+# ....................... #
+
+
+@attrs.define
 class _HashingSink:
     """A binary sink that mirrors every byte into a running SHA-256 as it passes through.
 
@@ -44,52 +130,76 @@ class _HashingSink:
     costs one pass, not a re-read of what was just written.
     """
 
-    def __init__(self, raw: BinaryIO) -> None:
-        self._raw = raw
-        self.digest = hashlib.sha256()
+    raw: BinaryIO
+    digest: _Hasher = attrs.field(factory=hashlib.sha256, init=False)
 
     def write(self, data: bytes) -> int:
         self.digest.update(data)
-        return self._raw.write(data)
+        return self.raw.write(data)
 
     def flush(self) -> None:
-        self._raw.flush()
+        self.raw.flush()
 
     def close(self) -> None:
-        self._raw.close()
+        self.raw.close()
 
 
 # ....................... #
 
 
-class JsonlGzipWriter:
-    """Stream canonical-JSON rows into one gzip file, tracking the row count and the file digest.
+def _open_compressor(sink: _HashingSink, compression: Compression) -> _ByteSink:
+    """The writable codec layer wrapping *sink*, or the sink itself for ``none``.
 
-    Use as a context manager; :attr:`sha256` and :attr:`rows` are final only after it closes.
+    ``closefd=False`` on the zstd writer, and gzip's own not-closing-the-fileobj behavior, both
+    leave the underlying sink for :class:`JsonlWriter` to close once — so the digest is finalized
+    exactly once, whatever the codec.
     """
 
-    def __init__(self, path: Path) -> None:
-        self._path = path
-        self.rows = 0
-        self._sink: _HashingSink | None = None
-        self._gzip: gzip.GzipFile | None = None
+    if compression == "gzip":
+        return gzip.GzipFile(fileobj=sink, mode="wb", mtime=_GZIP_MTIME)
 
-    def __enter__(self) -> JsonlGzipWriter:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._sink = _HashingSink(self._path.open("wb"))
-        self._gzip = gzip.GzipFile(fileobj=self._sink, mode="wb", mtime=_GZIP_MTIME)
+    if compression == "zstd":
+        return _require_zstd().ZstdCompressor(level=_ZSTD_LEVEL).stream_writer(sink, closefd=False)
+
+    return sink
+
+
+# ....................... #
+
+
+@attrs.define
+class JsonlWriter:
+    """Stream canonical-JSON rows into one compressed file, tracking the row count and file digest.
+
+    Use as a context manager; :attr:`sha256` and :attr:`rows` are final only after it closes. The
+    codec is fixed for the file's lifetime and shared across the whole archive.
+    """
+
+    path: Path
+    compression: Compression = attrs.field(default="gzip", kw_only=True)
+
+    rows: int = attrs.field(default=0, init=False)
+    _sink: _HashingSink | None = attrs.field(default=None, init=False)
+    _stream: _ByteSink | None = attrs.field(default=None, init=False)
+
+    def __enter__(self) -> JsonlWriter:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._sink = _HashingSink(self.path.open("wb"))
+        self._stream = _open_compressor(self._sink, self.compression)
         return self
 
     def write(self, row: JsonDict) -> None:
-        if self._gzip is None:  # pragma: no cover - misuse outside the context manager
-            raise exc.internal("JsonlGzipWriter written to before entering its context")
+        if self._stream is None:  # pragma: no cover - misuse outside the context manager
+            raise exc.internal("JsonlWriter written to before entering its context")
 
-        self._gzip.write(orjson.dumps(row, option=_CANONICAL))
+        self._stream.write(orjson.dumps(row, option=_CANONICAL))
         self.rows += 1
 
     def __exit__(self, *_: object) -> None:
-        if self._gzip is not None:
-            self._gzip.close()
+        # For gzip/zstd the codec layer wraps the sink; close it to flush the frame, then close the
+        # sink ourselves. For ``none`` the stream *is* the sink, so close it once.
+        if self._stream is not None and self._stream is not self._sink:
+            self._stream.close()
 
         if self._sink is not None:
             self._sink.close()
@@ -97,7 +207,7 @@ class JsonlGzipWriter:
     @property
     def sha256(self) -> str:
         if self._sink is None:  # pragma: no cover - misuse
-            raise exc.internal("JsonlGzipWriter digest read before any write")
+            raise exc.internal("JsonlWriter digest read before any write")
 
         return self._sink.digest.hexdigest()
 
@@ -144,48 +254,69 @@ def verify_file(path: Path, expected_sha256: str) -> None:
 # ....................... #
 
 
-def read_rows(path: Path) -> AsyncGenerator[JsonDict]:
-    """Yield each row of a ``.jsonl.gz`` file, one decoded mapping at a time.
+def read_rows(path: Path, *, compression: Compression = "gzip") -> AsyncGenerator[JsonDict]:
+    """Yield each row of a compressed JSONL file, one decoded mapping at a time.
 
     An ``async`` generator so a plane's import reads the same shape it writes — a stream, one row
-    of memory — and so the loop yields control between rows.
+    of memory — and so the loop yields control between rows. The codec must match what the archive
+    was written with (the manifest's ``compression``).
     """
 
     async def _gen() -> AsyncGenerator[JsonDict]:
-        for row in _iter_rows(path):
+        for row in _iter_rows(path, compression):
             yield row
 
     return _gen()
 
 
-def _iter_rows(path: Path) -> Iterator[JsonDict]:
-    with gzip.open(path, "rb") as handle:
-        for line in handle:
-            if line.strip():
-                yield orjson.loads(line)
+def _iter_rows(path: Path, compression: Compression) -> Iterator[JsonDict]:
+    for line in _iter_lines(path, compression):
+        if line.strip():
+            yield orjson.loads(line)
+
+
+def _iter_lines(path: Path, compression: Compression) -> Iterator[bytes]:
+    if compression == "gzip":
+        with gzip.open(path, "rb") as handle:
+            yield from handle
+
+    elif compression == "none":
+        with path.open("rb") as handle:
+            yield from handle
+
+    else:  # zstd
+        with path.open("rb") as raw:
+            reader = _require_zstd().ZstdDecompressor().stream_reader(raw)
+            yield from io.BufferedReader(reader)
 
 
 # ....................... #
 
 
+@attrs.define
 class _BlobSink:
     """A content-addressed raw-blob file: written under a temp name, renamed to its own sha256.
 
-    Sync (like :class:`JsonlGzipWriter`) so its filesystem I/O stays out of the ``async`` body that
+    Sync (like :class:`JsonlWriter`) so its filesystem I/O stays out of the ``async`` body that
     drives it — the blob writer just feeds it chunks. Content-addressed: the final name is the hash
     of the bytes, so identical objects share one file (dedup) and a storage key — which may hold a
-    ``/`` or a ``..`` — never dictates a path. Blobs are stored **raw** (already binary), no gzip.
+    ``/`` or a ``..`` — never dictates a path. Blobs are stored **raw** (already binary), no codec.
     """
 
-    def __init__(self, objects_dir: Path) -> None:
-        self._dir = objects_dir
-        self._digest = hashlib.sha256()
-        self.size = 0
-        self._tmp = objects_dir / f".partial-{id(self):x}"
-        self._handle: BinaryIO | None = None
+    objects_dir: Path
+
+    _digest: _Hasher = attrs.field(factory=hashlib.sha256, init=False)
+    size: int = attrs.field(default=0, init=False)
+    _tmp: Path = attrs.field(
+        init=False,
+        default=attrs.Factory(
+            lambda self: self.objects_dir / f".partial-{id(self):x}", takes_self=True
+        ),
+    )
+    _handle: BinaryIO | None = attrs.field(default=None, init=False)
 
     def __enter__(self) -> _BlobSink:
-        self._dir.mkdir(parents=True, exist_ok=True)
+        self.objects_dir.mkdir(parents=True, exist_ok=True)
         self._handle = self._tmp.open("wb")
         return self
 
@@ -201,7 +332,7 @@ class _BlobSink:
         if self._handle is not None:
             self._handle.close()
             # Atomic publish; a re-run or a dedup just overwrites byte-identical content.
-            self._tmp.replace(self._dir / self.sha256)
+            self._tmp.replace(self.objects_dir / self.sha256)
 
     @property
     def sha256(self) -> str:

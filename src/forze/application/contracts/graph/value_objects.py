@@ -49,6 +49,31 @@ class GraphEdgeEndpoint:
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class ExportedEdge:
+    """One edge as an export sees it: the endpoints that re-create it, plus its read model.
+
+    ``find_edges_stream`` yields an edge's read model — its own properties — which shows an edge but
+    cannot re-create one: an edge *is* a ``from → to`` link, and ``ensure_edge`` needs those
+    endpoints, which are structural and not stored as properties. This carries them beside the
+    model, so a portable export can round-trip an edge through the same ports it left by. A backend
+    that keyset-walks edges already reads their endpoints for its cursor; here they are surfaced
+    instead of discarded (see :class:`~forze.application.contracts.graph.GraphEdgeExportAware`).
+    """
+
+    from_kind: str
+    from_key: str
+    to_kind: str
+    to_key: str
+
+    model: BaseModel
+    """The edge read model — decrypted properties, including the ``key_field`` value for an
+    ``identity="key"`` kind. The endpoints above are not part of it."""
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class VertexRef:
     """Opaque pointer to a vertex within a graph module."""
 

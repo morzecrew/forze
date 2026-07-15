@@ -10,6 +10,7 @@ from typing import Any, cast
 import attrs
 
 from forze.application.contracts.document import DocumentSpec, KeyedCreate
+from forze.application.contracts.graph import GraphModuleSpec
 from forze.application.contracts.inventory import FrozenSpecRegistry, SpecPlane
 from forze.application.contracts.storage import StorageSpec
 from forze.application.contracts.tenancy import TenantIdentity
@@ -27,14 +28,16 @@ from ._core import (
     keyed_create,
     require_registry,
 )
-from .format import read_blob, read_rows, verify_file
+from ._graph import edge_create_from_row
+from .format import Compression, data_suffix, read_blob, read_rows, verify_file
 from .manifest import FORMAT_VERSION, ArchiveFile, Manifest
-from .report import DocumentImport, ImportReport, StorageImport
+from .report import DocumentImport, GraphImport, ImportReport, StorageImport
 
 # ----------------------- #
 
 _DOCUMENTS_PREFIX = "documents/"
 _BLOBS_PREFIX = "blobs/"
+_GRAPH_PREFIX = "graph/"
 
 
 # ....................... #
@@ -88,25 +91,45 @@ class ArchiveImporter:
 
         docs: list[DocumentImport] = []
         blobs: list[StorageImport] = []
+        graph_files: list[ArchiveFile] = []
 
         # A per-tenant archive restores into the tenant it names, so rows land in the right
         # partition on a tenant-aware backend (a tenant-agnostic target simply ignores the bind).
         with self._tenant_binding(ctx, manifest):
             for archive_file in manifest.files:
                 if archive_file.path.startswith(_DOCUMENTS_PREFIX):
-                    docs.append(await self._import_document(ctx, src, archive_file, registry))
+                    docs.append(
+                        await self._import_document(
+                            ctx, src, archive_file, registry, manifest.compression
+                        )
+                    )
 
                 elif archive_file.path.startswith(_BLOBS_PREFIX):
-                    blobs.append(await self._import_storage(ctx, src, archive_file, registry))
+                    blobs.append(
+                        await self._import_storage(
+                            ctx, src, archive_file, registry, manifest.compression
+                        )
+                    )
+
+                elif archive_file.path.startswith(_GRAPH_PREFIX):
+                    # Deferred: a graph is restored vertices-before-edges, which needs the whole
+                    # module's files grouped rather than replayed one at a time in manifest order.
+                    graph_files.append(archive_file)
+
+            graphs = await self._import_graph(ctx, src, graph_files, registry, manifest.compression)
 
         logger.info(
             "Import complete",
             imported=sum(o.imported for o in docs),
             blobs=sum(b.uploaded for b in blobs),
+            graph=sum(g.vertices + g.edges for g in graphs),
         )
 
         return ImportReport(
-            documents=tuple(docs), storage=tuple(blobs), rebuild=tuple(manifest.rebuild)
+            documents=tuple(docs),
+            storage=tuple(blobs),
+            graph=tuple(graphs),
+            rebuild=tuple(manifest.rebuild),
         )
 
     # ....................... #
@@ -127,10 +150,11 @@ class ArchiveImporter:
         src: Path,
         archive_file: ArchiveFile,
         registry: FrozenSpecRegistry,
+        compression: Compression,
     ) -> DocumentImport:
-        """Replay one ``documents/<name>.jsonl.gz`` file into its spec's command port."""
+        """Replay one ``documents/<name>`` data file into its spec's command port."""
 
-        name = Path(archive_file.path).name.removesuffix(".jsonl.gz")
+        name = Path(archive_file.path).name.removesuffix(data_suffix(compression))
         entry = registry.find(SpecPlane.DOCUMENT, name)
 
         if entry is None:
@@ -155,7 +179,7 @@ class ArchiveImporter:
         create_codec = default_model_codec(spec.write["create_cmd"])
 
         async def keyed_creates() -> AsyncIterator[KeyedCreate[Any]]:
-            async for row in read_rows(src / archive_file.path):
+            async for row in read_rows(src / archive_file.path, compression=compression):
                 yield keyed_create(row, create_codec)
 
         return await ingest_documents(
@@ -175,8 +199,9 @@ class ArchiveImporter:
         src: Path,
         index_file: ArchiveFile,
         registry: FrozenSpecRegistry,
+        compression: Compression,
     ) -> StorageImport:
-        """Replay one ``blobs/<route>/index.jsonl.gz`` — each blob back to its archived key.
+        """Replay one ``blobs/<route>/index`` file — each blob back to its archived key.
 
         ``overwrite_stream`` is the only write that takes a caller-supplied key, so the object
         lands under the *same* key it left with — which is what keeps a document field that
@@ -201,7 +226,7 @@ class ArchiveImporter:
 
         uploaded = 0
 
-        async for row in read_rows(src / index_file.path):
+        async for row in read_rows(src / index_file.path, compression=compression):
             key = str(row["key"])
             sha256 = str(row["sha256"])
             chunks = read_blob(
@@ -216,6 +241,99 @@ class ArchiveImporter:
             uploaded += 1
 
         return StorageImport(name=route, uploaded=uploaded)
+
+    # ....................... #
+
+    async def _import_graph(
+        self,
+        ctx: ExecutionContext,
+        src: Path,
+        files: list[ArchiveFile],
+        registry: FrozenSpecRegistry,
+        compression: Compression,
+    ) -> list[GraphImport]:
+        """Replay every graph file, grouped by module and ordered vertices-before-edges.
+
+        An edge references its endpoint vertices, so a module's node kinds must all land before any
+        of its edge kinds — which is why graph files are collected up front and grouped here rather
+        than replayed in manifest order like documents and blobs.
+        """
+
+        modules: dict[str, tuple[list[ArchiveFile], list[ArchiveFile]]] = {}
+
+        for archive_file in files:
+            parts = Path(archive_file.path).parts  # graph / <module> / nodes|edges / <kind><suffix>
+            module = parts[1]
+            node_files, edge_files = modules.setdefault(module, ([], []))
+            (node_files if parts[2] == "nodes" else edge_files).append(archive_file)
+
+        return [
+            await self._import_graph_module(ctx, src, module, nodes, edges, registry, compression)
+            for module, (nodes, edges) in modules.items()
+        ]
+
+    # ....................... #
+
+    async def _import_graph_module(
+        self,
+        ctx: ExecutionContext,
+        src: Path,
+        module: str,
+        node_files: list[ArchiveFile],
+        edge_files: list[ArchiveFile],
+        registry: FrozenSpecRegistry,
+        compression: Compression,
+    ) -> GraphImport:
+        """Restore one graph module: every vertex kind, then every edge kind.
+
+        A vertex decodes through its kind's declared create model (its key field rides along, so the
+        vertex re-creates itself); an edge is rebuilt from its endpoints plus its properties into the
+        permissive command the adapter reads. Both ``ensure`` verbs are idempotent, so a re-run
+        converges — ``on_conflict`` does not gate the graph plane (as with blobs).
+        """
+
+        entry = registry.find(SpecPlane.GRAPH, module)
+
+        if entry is None:
+            raise exc.precondition(
+                f"Archive carries graph {module!r}, which this runtime does not bind. It cannot be "
+                f"imported here."
+            )
+
+        spec = cast("GraphModuleSpec", entry.spec)
+        command = ctx.graph.command(spec)
+
+        vertices = 0
+        for archive_file in node_files:
+            kind = Path(archive_file.path).name.removesuffix(data_suffix(compression))
+            node = spec.graph_node_by_kind(kind)
+
+            if node is None or node.create is None:
+                # Unreachable for a well-formed archive (the fingerprint gate + the export's refusal
+                # of a read-only node kind); guard anyway, because decoding onto a kind the target
+                # cannot create is silent corruption.
+                raise exc.precondition(
+                    f"Archive carries graph vertex {module}.{kind!r}, which this runtime cannot "
+                    f"create. It cannot be imported here."
+                )
+
+            create_codec = default_model_codec(node.create)
+
+            async for row in read_rows(src / archive_file.path, compression=compression):
+                await command.ensure_vertex(
+                    kind, create_codec.decode_mapping(row), return_new=False
+                )
+                vertices += 1
+
+        edges = 0
+        for archive_file in edge_files:
+            kind = Path(archive_file.path).name.removesuffix(data_suffix(compression))
+
+            async for row in read_rows(src / archive_file.path, compression=compression):
+                await command.ensure_edge(kind, edge_create_from_row(row), return_new=False)
+                edges += 1
+
+        return GraphImport(name=module, vertices=vertices, edges=edges)
 
 
 # ....................... #

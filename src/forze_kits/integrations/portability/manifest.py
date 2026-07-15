@@ -14,14 +14,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from .format import Compression
+
 # ----------------------- #
 
 FORMAT_VERSION = "1"
 """The archive layout version. An importer refuses a format it does not know."""
-
-Compression = Literal["gzip"]
-"""Compression codec for the data files. ``gzip`` is stdlib and needs no extra; ``zstd`` is a
-later, manifest-declared option (RFC §5). Declared so an importer fails closed on one it lacks."""
 
 Consistency = Literal["tenant", "quiesced", "fuzzy"]
 """What the artifact claims about the moment it captured:

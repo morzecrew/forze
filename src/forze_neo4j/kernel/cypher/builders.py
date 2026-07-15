@@ -833,7 +833,18 @@ def find_edges_keyset(
     after: bool,
     tenant_field: str | None = None,
     filter_keys: Sequence[str] = (),
+    with_endpoints: bool = False,
 ) -> str:
+    """Keyset-walk a keyed edge kind, ordered/seeked on its own key.
+
+    With ``with_endpoints`` the row also carries each endpoint node's labels and property map, so
+    an export can recover the ``(from, to)`` an edge *is* — the tail/head kinds (from the labels)
+    and their key values — none of which live on the relationship. The keyed cursor is the edge
+    key, so the endpoints are surfaced for the caller, not used for ordering; a keyed kind may span
+    endpoint kinds that key on different fields, which is why the key value is read from the
+    property map against the resolved kind rather than a fixed field here.
+    """
+
     seek = f"r.{quote(key_field)} > $after" if after else ""
     where = _where(
         _tenant_pred("a", tenant_field),
@@ -841,9 +852,15 @@ def find_edges_keyset(
         property_predicate("r", filter_keys),
         seek,
     )
+    endpoints = (
+        ", labels(a) AS from_labels, labels(b) AS to_labels, "
+        "properties(a) AS from_props, properties(b) AS to_props"
+        if with_endpoints
+        else ""
+    )
     return (
         f"MATCH (a)-[r:{quote(edge_type)}]->(b)\n{where}"
-        f"RETURN properties(r) AS r\n"
+        f"RETURN properties(r) AS r{endpoints}\n"
         f"ORDER BY r.{quote(key_field)}\nLIMIT $limit"
     )
 
@@ -856,6 +873,7 @@ def find_edges_keyset_by_endpoints(
     after: bool,
     tenant_field: str | None = None,
     filter_keys: Sequence[str] = (),
+    with_endpoints: bool = False,
 ) -> str:
     """Keyset-walk an ``identity="endpoints"`` edge kind, bookmarked on its endpoint pair.
 
@@ -885,6 +903,21 @@ def find_edges_keyset_by_endpoints(
         property_predicate("r", filter_keys),
         seek,
     )
+
+    if with_endpoints:
+        # An export also needs each edge's endpoint *kinds* (from the node labels). The labels
+        # ride inside the collected map so every edge keeps its own after the ``UNWIND`` — a
+        # multi-endpoint kind's tail/head may be different node kinds sharing the pair's key
+        # values, which one set of labels for the whole group would flatten. The endpoint *key
+        # values* are already the cursor pair, so they are returned as-is.
+        return (
+            f"MATCH (a)-[r:{quote(edge_type)}]->(b)\n{where}"
+            f"WITH a.{quote(from_key_field)} AS from_key, b.{quote(to_key_field)} AS to_key, "
+            f"collect({{r: properties(r), fl: labels(a), tl: labels(b)}}) AS rels\n"
+            f"ORDER BY from_key, to_key\nLIMIT $limit\n"
+            f"UNWIND rels AS rel\n"
+            f"RETURN rel.r AS r, from_key, to_key, rel.fl AS from_labels, rel.tl AS to_labels"
+        )
 
     return (
         f"MATCH (a)-[r:{quote(edge_type)}]->(b)\n{where}"
