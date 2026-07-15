@@ -49,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**Mongo could not store a document with a `UUID` or `Decimal` field** — only the primary key was handled; any *other* `UUID` field hit pymongo's `UuidRepresentation.UNSPECIFIED` (which refuses a raw UUID) and a `Decimal` field had no BSON encoding at all, so such a document could be *updated* but never *created*. The write coercion that already stringified UUIDs for filters and `$set` updates now also applies on insert and converts `Decimal` to `Decimal128` (exact); reads convert `Decimal128` back to `Decimal`. Hidden until now because every Mongo document test used `str`/`int`-only fields.
+
 **JSON-boundary encoding** — a codec's default `mode="python"` keeps `UUID` / `datetime` / `Decimal` as Python objects, which is right for a driver that binds them natively (psycopg, PyMongo, clickhouse-connect) and impossible for anything that hands the map to a JSON serializer. Four adapters were on the wrong side and could not carry the ordinary contents of an event or a row. `ModelCodec.encode_mapping` now documents the rule at the seam; `encode_ingest_payloads` takes `mode` from its caller, and Postgres and ClickHouse keep the Python encode on purpose.
 
 - **The transactional outbox could not stage an event whose payload held a `UUID`** — the staged map binds into a `JSONB` column through stdlib `json.dumps`, so `OrderPlaced(order_id: UUID, placed_at: datetime, total: Decimal)` raised `TypeError` on `stage()`, and the accepted field types varied by backend *and* encryption setting. Staging now encodes to JSON before any backend sees it.

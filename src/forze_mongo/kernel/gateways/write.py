@@ -12,6 +12,7 @@ from typing import Any, cast, final
 from uuid import UUID
 
 import attrs
+from bson import Decimal128
 from pymongo import UpdateOne
 
 from forze.application.contracts.querying import QueryFilterExpression
@@ -51,6 +52,11 @@ def _bson_normalize_value(value: Any) -> Any:
         value = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
         return value.replace(microsecond=(value.microsecond // 1000) * 1000)
+
+    if isinstance(value, Decimal128):
+        # ``_storage_doc`` now writes a ``Decimal`` field as ``Decimal128``; the in-memory decode
+        # of an inserted doc must undo that, exactly as a read-back would (see _decode_bson_value).
+        return value.to_decimal()
 
     if isinstance(value, list):
         return [

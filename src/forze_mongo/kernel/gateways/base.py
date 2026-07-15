@@ -7,10 +7,12 @@ require_mongo()
 # ....................... #
 
 from collections.abc import Sequence
-from typing import Any
+from decimal import Decimal
+from typing import Any, cast
 from uuid import UUID
 
 import attrs
+from bson import Decimal128
 from pydantic import BaseModel
 from pymongo.asynchronous.collection import AsyncCollection
 
@@ -194,9 +196,16 @@ class MongoGateway[M: BaseModel](
     # ....................... #
 
     def _storage_doc(self, data: JsonDict) -> JsonDict:
-        """Map a domain dict to a Mongo document with ``_id`` set."""
+        """Map a domain dict to a Mongo document with ``_id`` set.
 
-        out = dict(data)
+        Runs the full payload through :meth:`_coerce_query_value` first — the same coercion an
+        update's ``$set`` and a filter already use. Without it, an insert handed BSON a raw
+        ``UUID`` field (which ``UuidRepresentation.UNSPECIFIED`` refuses) or a raw ``Decimal``
+        (which BSON cannot encode at all); the ``$set`` path coerced but the insert path did not,
+        so a document with a ``UUID``/``Decimal`` field could be *updated* but never *created*.
+        """
+
+        out = cast(JsonDict, self._coerce_query_value(dict(data)))
         out[ID_FIELD] = str(out[ID_FIELD])
         out["_id"] = out[ID_FIELD]
         return out
@@ -204,9 +213,14 @@ class MongoGateway[M: BaseModel](
     # ....................... #
 
     def _from_storage_doc(self, raw: JsonDict) -> JsonDict:
-        """Map a Mongo document back to a domain dict, restoring the ID field."""
+        """Map a Mongo document back to a domain dict, restoring the ID field.
 
-        out = dict(raw)
+        Decodes BSON scalars the read model cannot accept directly — a ``Decimal128`` back to a
+        ``Decimal`` (Pydantic will not coerce the former). A UUID stored as a string needs no
+        undoing: Pydantic coerces it back to ``UUID`` on decode.
+        """
+
+        out = cast(JsonDict, self._decode_bson_value(dict(raw)))
         storage_id = out.pop("_id", None)
 
         if ID_FIELD not in out and storage_id is not None:
@@ -220,10 +234,19 @@ class MongoGateway[M: BaseModel](
     # ....................... #
 
     def _coerce_query_value(self, value: Any) -> Any:
-        """Recursively coerce domain values (e.g. UUIDs) to Mongo-safe types."""
+        """Recursively coerce domain values to Mongo-safe types.
+
+        The write and query counterpart of :meth:`_decode_bson_value`: a ``UUID`` becomes its
+        canonical string (the representation ``_id`` already uses, and the only one BSON will take
+        under ``UuidRepresentation.UNSPECIFIED``); a ``Decimal`` becomes a ``Decimal128`` (exact,
+        and sortable/comparable as a number — a stringified decimal would sort lexically).
+        """
 
         if isinstance(value, UUID):
             return str(value)
+
+        if isinstance(value, Decimal):
+            return Decimal128(value)
 
         if isinstance(value, list):
             return [
@@ -234,6 +257,33 @@ class MongoGateway[M: BaseModel](
         if isinstance(value, dict):
             return {
                 k: self._coerce_query_value(v)
+                for k, v in value.items()  # pyright: ignore[reportUnknownVariableType]
+            }
+
+        return value
+
+    # ....................... #
+
+    def _decode_bson_value(self, value: Any) -> Any:
+        """Recursively decode BSON scalars into the Python types the read model expects.
+
+        The read counterpart of :meth:`_coerce_query_value`: a ``Decimal128`` back to a ``Decimal``
+        (Pydantic will not coerce a ``Decimal128``). UUIDs are stored as strings and Pydantic
+        coerces those back on its own, so there is nothing to undo for them.
+        """
+
+        if isinstance(value, Decimal128):
+            return value.to_decimal()
+
+        if isinstance(value, list):
+            return [
+                self._decode_bson_value(x)
+                for x in value  # pyright: ignore[reportUnknownVariableType]
+            ]
+
+        if isinstance(value, dict):
+            return {
+                k: self._decode_bson_value(v)
                 for k, v in value.items()  # pyright: ignore[reportUnknownVariableType]
             }
 
