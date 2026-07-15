@@ -49,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**Object storage `upload_stream` dropped its tags** — a streamed upload computed the tag map and never wrote it (multipart completion carries no tagging, and unlike `overwrite_stream` there was no follow-up `PutObjectTagging`), so the returned `StoredObject` reported tags the object never actually got. It now applies them after completion. Hidden because the mock stored the tags in memory; only a real S3 `head` revealed the gap. Surfaced by a real-S3 blob export/import round-trip.
+
 **Mock storage `overwrite_stream` now creates a missing object (unconditional)** — it raised `not_found` for any key that did not already exist, contradicting the port contract (an unconditional overwrite recreates a missing target) and the real S3/GCS adapters (a `PUT` creates-or-replaces). It now creates-or-replaces when `if_match` is unset, and still answers `not_found` for a *conditional* overwrite of a vanished object. Surfaced by importing a portable archive's blobs into a fresh mock, where nothing exists to overwrite yet.
 
 **Mongo could not store a document with a `UUID` or `Decimal` field** — only the primary key was handled; any *other* `UUID` field hit pymongo's `UuidRepresentation.UNSPECIFIED` (which refuses a raw UUID) and a `Decimal` field had no BSON encoding at all, so such a document could be *updated* but never *created*. The write coercion that already stringified UUIDs for filters and `$set` updates now also applies on insert and converts `Decimal` to `Decimal128` (exact); reads convert `Decimal128` back to `Decimal`. Hidden until now because every Mongo document test used `str`/`int`-only fields.

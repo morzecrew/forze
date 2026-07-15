@@ -8,7 +8,7 @@ chunks. Covers both the encrypted and plaintext routes and a genuine multi-part
 upload (MinIO enforces the 5 MiB minimum non-final part).
 """
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import pytest
 
@@ -214,3 +214,25 @@ async def test_s3_streamed_encrypted_multipart(
     # A ranged read deep into the large object returns the exact window.
     ranged = await query.download_range(stored.key, start=7 * MIB, end=7 * MIB + 99)
     assert ranged.data == data[7 * MIB : 7 * MIB + 100]
+
+
+@pytest.mark.asyncio
+async def test_upload_stream_actually_applies_tags(s3_client: S3Client, s3_bucket: str) -> None:
+    """A streamed upload must *write* its tags, not just report them on the returned object.
+
+    Multipart completion carries no tagging, so ``upload_stream`` used to compute a tag map and
+    drop it — the returned ``StoredObject`` claimed tags the object never got. The mock stored
+    them, so only a real S3 ``head`` reveals the gap.
+    """
+
+    ctx = _plaintext_ctx(s3_client, s3_bucket)
+    spec = StorageSpec(name=s3_bucket)
+    command = ctx.storage.command(spec)
+    query = ctx.storage.query(spec)
+
+    stored = await command.upload_stream(
+        _aiter(b"tagged bytes"), filename="t.bin", tags={"kind": "invoice", "team": "billing"}
+    )
+
+    head = await query.head(stored.key, include_tags=True)
+    assert dict(head.tags) == {"kind": "invoice", "team": "billing"}
