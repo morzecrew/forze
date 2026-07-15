@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, cast
@@ -34,9 +35,10 @@ from ._core import (
     require_registry,
     scope_binding,
 )
+from ._crypt import ArchiveCipher, ArchiveSealer
 from ._graph import edge_file, exported_edge_row, node_file
 from .format import Compression, JsonlWriter, data_suffix, write_blob
-from .manifest import ArchiveFile, Consistency, Manifest, ScopeManifest
+from .manifest import ArchiveEncryption, ArchiveFile, Consistency, Manifest, ScopeManifest
 from .planes import ExportPlan, plan_export
 from .report import CounterExport, DocumentExport, ExportReport, GraphExport, StorageExport
 from .scope import ExportScope, TenantScope
@@ -93,6 +95,12 @@ class ArchiveExporter:
     data, not their session tokens (RFC §9 / decision #10). Ignored under :class:`FullScope`, which
     always carries identity — moving a live system means moving its sessions."""
 
+    sealer: ArchiveSealer | None = None
+    """Seal the archive at rest (RFC §9). When set, a per-archive data key encrypts every data file
+    and blob object (``FZEc``), and the key is wrapped under the sealer's KEK — so the artifact is no
+    longer a plaintext credential store. Off by default (the artifact is plaintext, guarded by the
+    filesystem); ``migrate`` needs no sealer, being ports-to-ports with nothing at rest."""
+
     # ....................... #
 
     async def __call__(
@@ -117,6 +125,7 @@ class ArchiveExporter:
 
         plan = plan_export(registry, exclude_identity=exclude_identity)
         resolved = self._resolve_scope(ctx, scope)
+        cipher, encryption = await self._prepare_encryption()
 
         logger.info(
             "Exporting",
@@ -125,6 +134,7 @@ class ArchiveExporter:
             documents=len(plan.documents),
             rebuild=len(plan.rebuild),
             identity_included=not exclude_identity,
+            encrypted=encryption is not None,
         )
 
         files: list[ArchiveFile] = []
@@ -135,25 +145,25 @@ class ArchiveExporter:
 
         with resolved.binding:
             for entry in plan.documents:
-                archive_file, outcome = await self._export_document(ctx, dest, entry)
+                archive_file, outcome = await self._export_document(ctx, dest, entry, cipher)
                 files.append(archive_file)
                 docs.append(outcome)
                 _write_spec_shape(dest, entry)
 
             for entry in plan.storage:
-                index_file, blob_outcome = await self._export_storage(ctx, dest, entry)
+                index_file, blob_outcome = await self._export_storage(ctx, dest, entry, cipher)
                 files.append(index_file)
                 blobs.append(blob_outcome)
                 _write_spec_shape(dest, entry)
 
             for entry in plan.graph:
-                graph_files, graph_outcome = await self._export_graph(ctx, dest, entry)
+                graph_files, graph_outcome = await self._export_graph(ctx, dest, entry, cipher)
                 files.extend(graph_files)
                 graphs.append(graph_outcome)
                 _write_spec_shape(dest, entry)
 
             for entry in plan.counters:
-                counter_file, counter_outcome = await self._export_counter(ctx, dest, entry)
+                counter_file, counter_outcome = await self._export_counter(ctx, dest, entry, cipher)
                 files.append(counter_file)
                 counters.append(counter_outcome)
                 _write_spec_shape(dest, entry)
@@ -166,6 +176,7 @@ class ArchiveExporter:
             files,
             self.compression,
             identity_included=not exclude_identity,
+            encryption=encryption,
         )
 
         logger.info(
@@ -216,11 +227,38 @@ class ArchiveExporter:
 
     # ....................... #
 
+    async def _prepare_encryption(
+        self,
+    ) -> tuple[ArchiveCipher | None, ArchiveEncryption | None]:
+        """Mint the per-archive data key and its manifest record, or ``(None, None)`` for plaintext.
+
+        One KMS call (``generate_data_key``) mints and wraps the key together; the plaintext half
+        drives the cipher, the wrapped half rides in the manifest for import to unwrap.
+        """
+
+        if self.sealer is None:
+            return None, None
+
+        dek = await self.sealer.mint()
+
+        encryption = ArchiveEncryption(
+            algorithm=self.sealer.aead.algorithm,
+            key_id=dek.key_id,
+            key_version=dek.key_version,
+            wrapped_dek=base64.b64encode(dek.wrapped).decode("ascii"),
+            chunk_size=self.sealer.chunk_size,
+        )
+
+        return self.sealer.cipher(dek.plaintext), encryption
+
+    # ....................... #
+
     async def _export_document(
         self,
         ctx: ExecutionContext,
         dest: Path,
         entry: SpecRegistryEntry,
+        cipher: ArchiveCipher | None,
     ) -> tuple[ArchiveFile, DocumentExport]:
         """Stream one document spec's rows into ``documents/<name>.jsonl.gz``."""
 
@@ -231,7 +269,9 @@ class ArchiveExporter:
         rel = f"documents/{entry.name}{data_suffix(self.compression)}"
         query = ctx.document.query(spec)
 
-        with JsonlWriter(dest / rel, compression=self.compression) as sink:
+        with JsonlWriter(
+            dest / rel, compression=self.compression, cipher=cipher, base_aad=rel
+        ) as sink:
             async for batch in query.find_stream(chunk_size=self.chunk_size):
                 for doc in batch:
                     sink.write(portable_row(doc))
@@ -248,6 +288,7 @@ class ArchiveExporter:
         ctx: ExecutionContext,
         dest: Path,
         entry: SpecRegistryEntry,
+        cipher: ArchiveCipher | None,
     ) -> tuple[ArchiveFile, StorageExport]:
         """Stream one storage route's objects — raw bytes under ``objects/``, one index row each.
 
@@ -256,7 +297,9 @@ class ArchiveExporter:
         skip an object), then each object is ``head``-ed for its metadata and streamed down —
         decrypting on read — straight to a content-addressed file, one chunk in memory. The index
         is the integrity anchor: it carries every object's sha256, and the manifest checksums the
-        index, so a corrupt blob is caught on import before it is re-uploaded.
+        index, so a corrupt blob is caught on import before it is re-uploaded. Under a sealer, each
+        object is re-sealed (bound to its ``blobs/<route>|<key>`` identity) and the index is sealed
+        too — the key and tags it carries are not left in the clear.
         """
 
         spec = cast("StorageSpec", entry.spec)
@@ -268,11 +311,15 @@ class ArchiveExporter:
 
         keys = await list_keys(query)
 
-        with JsonlWriter(dest / index_rel, compression=self.compression) as index:
+        with JsonlWriter(
+            dest / index_rel, compression=self.compression, cipher=cipher, base_aad=index_rel
+        ) as index:
             for key in keys:
                 head = await query.head(key, include_tags=True)
                 streamed = await query.download_stream(key)
-                sha256, size = await write_blob(streamed.chunks, objects_dir)
+                sha256, size = await write_blob(
+                    streamed.chunks, objects_dir, cipher=cipher, base_aad=f"blobs/{route}|{key}"
+                )
 
                 index.write(
                     {
@@ -296,6 +343,7 @@ class ArchiveExporter:
         ctx: ExecutionContext,
         dest: Path,
         entry: SpecRegistryEntry,
+        cipher: ArchiveCipher | None,
     ) -> tuple[list[ArchiveFile], GraphExport]:
         """Stream one graph module — one file per node and edge kind, vertices then edges.
 
@@ -326,7 +374,9 @@ class ArchiveExporter:
         for node in spec.nodes:
             rel = node_file(module, str(node.name), self.compression)
 
-            with JsonlWriter(dest / rel, compression=self.compression) as sink:
+            with JsonlWriter(
+                dest / rel, compression=self.compression, cipher=cipher, base_aad=rel
+            ) as sink:
                 async for batch in query.find_vertices_stream(
                     str(node.name), chunk_size=self.chunk_size
                 ):
@@ -341,7 +391,9 @@ class ArchiveExporter:
         for edge in spec.edges:
             rel = edge_file(module, str(edge.name), self.compression)
 
-            with JsonlWriter(dest / rel, compression=self.compression) as sink:
+            with JsonlWriter(
+                dest / rel, compression=self.compression, cipher=cipher, base_aad=rel
+            ) as sink:
                 async for edge_batch in export_query.find_edges_export_stream(
                     str(edge.name), chunk_size=self.chunk_size
                 ):
@@ -360,6 +412,7 @@ class ArchiveExporter:
         ctx: ExecutionContext,
         dest: Path,
         entry: SpecRegistryEntry,
+        cipher: ArchiveCipher | None,
     ) -> tuple[ArchiveFile, CounterExport]:
         """Enumerate one counter spec's partitions into ``counters/<name>`` — one row per suffix.
 
@@ -375,7 +428,9 @@ class ArchiveExporter:
 
         entries = await ctx.counter.admin(spec).list_counters()
 
-        with JsonlWriter(dest / rel, compression=self.compression) as sink:
+        with JsonlWriter(
+            dest / rel, compression=self.compression, cipher=cipher, base_aad=rel
+        ) as sink:
             for counter in entries:
                 sink.write(counter_row(counter))
 
@@ -397,6 +452,7 @@ async def export_archive(
     allow_fuzzy: bool = False,
     compression: Compression = "gzip",
     include_identity: bool = False,
+    sealer: ArchiveSealer | None = None,
 ) -> ExportReport:
     """Convenience over :class:`ArchiveExporter`: pull the registry and the active context off
     *runtime* and export.
@@ -407,6 +463,9 @@ async def export_archive(
     decision #2) — and the context of the **already-open scope**. Call it inside
     ``async with runtime.scope():``. For finer control (a re-used exporter config, a caller that
     already holds a context), use :class:`ArchiveExporter` directly.
+
+    Pass a *sealer* to encrypt the archive at rest (RFC §9): the artifact is otherwise plaintext,
+    so a full-system one is a credential store.
     """
 
     registry = require_registry(runtime)
@@ -416,6 +475,7 @@ async def export_archive(
         allow_fuzzy=allow_fuzzy,
         compression=compression,
         include_identity=include_identity,
+        sealer=sealer,
     )(runtime.get_context(), registry, dest, scope=scope)
 
 
@@ -464,6 +524,7 @@ def _write_manifest(
     compression: Compression,
     *,
     identity_included: bool,
+    encryption: ArchiveEncryption | None,
 ) -> None:
     """Write ``manifest.json`` last — its presence is what marks the archive complete.
 
@@ -479,6 +540,7 @@ def _write_manifest(
         compression=compression,
         scope=resolved.manifest,
         consistency=resolved.consistency,
+        encryption=encryption,
         identity_included=identity_included,
         files=files,
         rebuild=list(plan.rebuild),

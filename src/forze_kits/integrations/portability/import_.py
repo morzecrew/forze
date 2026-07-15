@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import AsyncIterator
 from contextlib import nullcontext
 from pathlib import Path
@@ -30,6 +31,7 @@ from ._core import (
     keyed_create,
     require_registry,
 )
+from ._crypt import ArchiveCipher, ArchiveSealer
 from ._graph import edge_create_from_row
 from .format import Compression, data_suffix, read_blob, read_rows, verify_file
 from .manifest import FORMAT_VERSION, ArchiveFile, Manifest
@@ -60,6 +62,13 @@ class ArchiveImporter:
     on_conflict: OnConflict = "skip"
     batch_size: int = DEFAULT_BATCH
 
+    sealer: ArchiveSealer | None = None
+    """Unwrap a sealed archive's data key (RFC §9). Required to read an encrypted archive — one whose
+    manifest carries an ``encryption`` record — and import **fails closed** without it: an encrypted
+    archive is unreadable, and reading it must never fall through to raw ciphertext. Its KMS must
+    resolve the manifest's ``key_id``; the wrapping KEK never has to leave that KMS. Ignored (harmless)
+    for a plaintext archive. The importer needs no ``key_ref`` — the archive names its own KEK."""
+
     # ....................... #
 
     async def __call__(
@@ -84,12 +93,14 @@ class ArchiveImporter:
         manifest = _load_manifest(src)
         _assert_compatible(manifest, registry)
         _verify_files(src, manifest)
+        cipher = await self._prepare_cipher(manifest)
 
         logger.info(
             "Importing archive",
             files=len(manifest.files),
             fingerprint=manifest.registry_fingerprint[:16],
             on_conflict=self.on_conflict,
+            encrypted=cipher is not None,
         )
 
         docs: list[DocumentImport] = []
@@ -104,21 +115,21 @@ class ArchiveImporter:
                 if archive_file.path.startswith(_DOCUMENTS_PREFIX):
                     docs.append(
                         await self._import_document(
-                            ctx, src, archive_file, registry, manifest.compression
+                            ctx, src, archive_file, registry, manifest.compression, cipher
                         )
                     )
 
                 elif archive_file.path.startswith(_BLOBS_PREFIX):
                     blobs.append(
                         await self._import_storage(
-                            ctx, src, archive_file, registry, manifest.compression
+                            ctx, src, archive_file, registry, manifest.compression, cipher
                         )
                     )
 
                 elif archive_file.path.startswith(_COUNTERS_PREFIX):
                     counters.append(
                         await self._import_counter(
-                            ctx, src, archive_file, registry, manifest.compression
+                            ctx, src, archive_file, registry, manifest.compression, cipher
                         )
                     )
 
@@ -127,7 +138,9 @@ class ArchiveImporter:
                     # module's files grouped rather than replayed one at a time in manifest order.
                     graph_files.append(archive_file)
 
-            graphs = await self._import_graph(ctx, src, graph_files, registry, manifest.compression)
+            graphs = await self._import_graph(
+                ctx, src, graph_files, registry, manifest.compression, cipher
+            )
 
         logger.info(
             "Import complete",
@@ -157,6 +170,44 @@ class ArchiveImporter:
 
     # ....................... #
 
+    async def _prepare_cipher(self, manifest: Manifest) -> ArchiveCipher | None:
+        """Unwrap the per-archive data key, or ``None`` for a plaintext archive — fail-closed.
+
+        An encrypted archive (its manifest carries an ``encryption`` record) is unreadable without
+        its KEK, so import **refuses** rather than falls through to raw ciphertext when no sealer is
+        provided. One KMS call unwraps the data key the whole archive was sealed under; the AEAD the
+        sealer carries must be the one the archive names, or the refusal is up front rather than an
+        opaque authentication failure on the first frame.
+        """
+
+        enc = manifest.encryption
+
+        if enc is None:
+            return None
+
+        if self.sealer is None:
+            raise exc.precondition(
+                "Archive is encrypted (its manifest carries an encryption record) but no sealer was "
+                "provided to unwrap its data key. Pass ArchiveImporter(sealer=...) with a KMS that "
+                f"resolves key {enc.key_id!r}."
+            )
+
+        if enc.algorithm != self.sealer.aead.algorithm:
+            raise exc.precondition(
+                f"Archive was sealed with {enc.algorithm!r}, but the provided sealer uses "
+                f"{self.sealer.aead.algorithm!r}. Import needs the AEAD the archive was written with."
+            )
+
+        dek = await self.sealer.unwrap(
+            wrapped=base64.b64decode(enc.wrapped_dek),
+            key_id=enc.key_id,
+            key_version=enc.key_version,
+        )
+
+        return self.sealer.cipher(dek)
+
+    # ....................... #
+
     async def _import_document(
         self,
         ctx: ExecutionContext,
@@ -164,6 +215,7 @@ class ArchiveImporter:
         archive_file: ArchiveFile,
         registry: FrozenSpecRegistry,
         compression: Compression,
+        cipher: ArchiveCipher | None,
     ) -> DocumentImport:
         """Replay one ``documents/<name>`` data file into its spec's command port."""
 
@@ -192,7 +244,12 @@ class ArchiveImporter:
         create_codec = default_model_codec(spec.write["create_cmd"])
 
         async def keyed_creates() -> AsyncIterator[KeyedCreate[Any]]:
-            async for row in read_rows(src / archive_file.path, compression=compression):
+            async for row in read_rows(
+                src / archive_file.path,
+                compression=compression,
+                cipher=cipher,
+                base_aad=archive_file.path,
+            ):
                 yield keyed_create(row, create_codec)
 
         return await ingest_documents(
@@ -213,6 +270,7 @@ class ArchiveImporter:
         index_file: ArchiveFile,
         registry: FrozenSpecRegistry,
         compression: Compression,
+        cipher: ArchiveCipher | None,
     ) -> StorageImport:
         """Replay one ``blobs/<route>/index`` file — each blob back to its archived key.
 
@@ -239,11 +297,20 @@ class ArchiveImporter:
 
         uploaded = 0
 
-        async for row in read_rows(src / index_file.path, compression=compression):
+        async for row in read_rows(
+            src / index_file.path,
+            compression=compression,
+            cipher=cipher,
+            base_aad=index_file.path,
+        ):
             key = str(row["key"])
             sha256 = str(row["sha256"])
             chunks = read_blob(
-                objects_dir / sha256, expected_sha256=sha256, chunk_size=DEFAULT_CHUNK_SIZE
+                objects_dir / sha256,
+                expected_sha256=sha256,
+                chunk_size=DEFAULT_CHUNK_SIZE,
+                cipher=cipher,
+                base_aad=f"blobs/{route}|{key}",
             )
             await command.overwrite_stream(
                 key,
@@ -264,6 +331,7 @@ class ArchiveImporter:
         archive_file: ArchiveFile,
         registry: FrozenSpecRegistry,
         compression: Compression,
+        cipher: ArchiveCipher | None,
     ) -> CounterImport:
         """Replay one ``counters/<name>`` file — each partition ``reset`` to its archived value.
 
@@ -285,7 +353,12 @@ class ArchiveImporter:
         port = ctx.counter(spec)
 
         restored = 0
-        async for row in read_rows(src / archive_file.path, compression=compression):
+        async for row in read_rows(
+            src / archive_file.path,
+            compression=compression,
+            cipher=cipher,
+            base_aad=archive_file.path,
+        ):
             value, suffix = counter_reset_args(row)
             await port.reset(value, suffix=suffix)
             restored += 1
@@ -301,6 +374,7 @@ class ArchiveImporter:
         files: list[ArchiveFile],
         registry: FrozenSpecRegistry,
         compression: Compression,
+        cipher: ArchiveCipher | None,
     ) -> list[GraphImport]:
         """Replay every graph file, grouped by module and ordered vertices-before-edges.
 
@@ -318,7 +392,9 @@ class ArchiveImporter:
             (node_files if parts[2] == "nodes" else edge_files).append(archive_file)
 
         return [
-            await self._import_graph_module(ctx, src, module, nodes, edges, registry, compression)
+            await self._import_graph_module(
+                ctx, src, module, nodes, edges, registry, compression, cipher
+            )
             for module, (nodes, edges) in modules.items()
         ]
 
@@ -333,6 +409,7 @@ class ArchiveImporter:
         edge_files: list[ArchiveFile],
         registry: FrozenSpecRegistry,
         compression: Compression,
+        cipher: ArchiveCipher | None,
     ) -> GraphImport:
         """Restore one graph module: every vertex kind, then every edge kind.
 
@@ -369,7 +446,12 @@ class ArchiveImporter:
 
             create_codec = default_model_codec(node.create)
 
-            async for row in read_rows(src / archive_file.path, compression=compression):
+            async for row in read_rows(
+                src / archive_file.path,
+                compression=compression,
+                cipher=cipher,
+                base_aad=archive_file.path,
+            ):
                 await command.ensure_vertex(
                     kind, create_codec.decode_mapping(row), return_new=False
                 )
@@ -379,7 +461,12 @@ class ArchiveImporter:
         for archive_file in edge_files:
             kind = Path(archive_file.path).name.removesuffix(data_suffix(compression))
 
-            async for row in read_rows(src / archive_file.path, compression=compression):
+            async for row in read_rows(
+                src / archive_file.path,
+                compression=compression,
+                cipher=cipher,
+                base_aad=archive_file.path,
+            ):
                 await command.ensure_edge(kind, edge_create_from_row(row), return_new=False)
                 edges += 1
 
@@ -394,6 +481,7 @@ async def import_archive(
     src: Path,
     *,
     on_conflict: OnConflict = "skip",
+    sealer: ArchiveSealer | None = None,
 ) -> ImportReport:
     """Convenience over :class:`ArchiveImporter`: pull the registry and the active context off
     *runtime* and import.
@@ -402,11 +490,16 @@ async def import_archive(
     (`runtime.spec_registry`, refusing to run without one) and the context of the **already-open
     scope**. Call it inside ``async with runtime.scope():``. For finer control, use
     :class:`ArchiveImporter` directly.
+
+    Pass a *sealer* to read an encrypted archive (RFC §9); import fails closed without one when the
+    manifest says the archive is sealed.
     """
 
     registry = require_registry(runtime)
 
-    return await ArchiveImporter(on_conflict=on_conflict)(runtime.get_context(), registry, src)
+    return await ArchiveImporter(on_conflict=on_conflict, sealer=sealer)(
+        runtime.get_context(), registry, src
+    )
 
 
 # ....................... #

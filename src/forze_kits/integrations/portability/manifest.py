@@ -57,6 +57,32 @@ class ScopeManifest(BaseModel):
 # ....................... #
 
 
+class ArchiveEncryption(BaseModel):
+    """Envelope-encryption record — present only for a sealed archive (RFC §9).
+
+    Every data file and blob object is an ``FZEc`` chunked-AEAD stream sealed under one per-archive
+    data key; that key is itself wrapped under a key-encryption key (a KMS/CMK) whose plaintext never
+    left the KMS. An importer resolves :attr:`key_id` through its own KMS, unwraps the data key once,
+    and decrypts. This record is plaintext — it is what *bootstraps* decryption — but it reveals only
+    which key sealed the archive, never a byte of its contents."""
+
+    algorithm: str
+    """The AEAD that sealed each chunk (e.g. ``"AES-256-GCM"``)."""
+
+    key_id: str
+    """The key-encryption key the data key is wrapped under — resolved by the importer's KMS."""
+
+    key_version: str | None = None
+    wrapped_dek: str
+    """The KEK-wrapped data key, base64-encoded (bytes do not live in JSON)."""
+
+    chunk_size: int
+    """The plaintext chunk size the writer used — informational; the frames carry their own sizes."""
+
+
+# ....................... #
+
+
 class Manifest(BaseModel):
     """The archive's table of contents, integrity record, and compatibility gate."""
 
@@ -71,6 +97,11 @@ class Manifest(BaseModel):
     compression: Compression = "gzip"
     scope: ScopeManifest
     consistency: Consistency
+
+    encryption: ArchiveEncryption | None = None
+    """Envelope-encryption metadata when the archive is sealed at rest; ``None`` for a plaintext
+    archive. Import fails closed if this is set and no sealer is provided — an encrypted archive is
+    unreadable without its KEK, and reading it must not silently fall through to raw bytes."""
 
     identity_included: bool = True
     """Whether the archive carries identity/credential specs (sessions, API keys, invite/reset

@@ -138,10 +138,10 @@ async def test_export_crash_leaves_no_manifest_and_reruns_to_a_valid_archive(
     # Crash while walking the beta spec — alpha's file is written, the manifest never is.
     real_export = ArchiveExporter._export_document
 
-    async def crash_on_beta(self, ctx, dest, entry):  # type: ignore[no-untyped-def]
+    async def crash_on_beta(self, ctx, dest, entry, cipher):  # type: ignore[no-untyped-def]
         if entry.name == "beta":
             raise RuntimeError("simulated crash mid-export")
-        return await real_export(self, ctx, dest, entry)
+        return await real_export(self, ctx, dest, entry, cipher)
 
     with (
         mock.patch.object(ArchiveExporter, "_export_document", crash_on_beta),
@@ -178,10 +178,10 @@ async def test_import_crash_resumes_to_convergence(tmp_path: Path) -> None:
     # Crash after alpha imports, before beta — a partial target the re-run must converge.
     real_import = ArchiveImporter._import_document
 
-    async def crash_on_beta(self, ctx, src, archive_file, registry, compression):  # type: ignore[no-untyped-def]
+    async def crash_on_beta(self, ctx, src, archive_file, registry, compression, cipher):  # type: ignore[no-untyped-def]
         if "beta" in archive_file.path:
             raise RuntimeError("simulated crash mid-import")
-        return await real_import(self, ctx, src, archive_file, registry, compression)
+        return await real_import(self, ctx, src, archive_file, registry, compression, cipher)
 
     with (
         mock.patch.object(ArchiveImporter, "_import_document", crash_on_beta),

@@ -19,13 +19,15 @@ import hashlib
 import io
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from pathlib import Path
-from typing import Any, BinaryIO, Final, Literal, Protocol
+from typing import Any, BinaryIO, Final, Literal, Protocol, cast
 
 import attrs
 import orjson
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+
+from ._crypt import ArchiveCipher
 
 # ----------------------- #
 
@@ -92,14 +94,16 @@ def _require_zstd() -> Any:
 
 
 class _ByteSink(Protocol):
-    """The write side of a codec layer: canonical bytes in, closed when the file is done.
+    """The write side of a codec layer: canonical bytes in, flushed and closed when the file is done.
 
-    gzip's ``GzipFile``, zstd's stream writer, and the raw :class:`_HashingSink` (the ``none`` codec)
-    all satisfy it — so :func:`_open_compressor` returns one concrete type instead of ``Any``, and
-    :class:`JsonlWriter` writes through a typed handle rather than a bare object.
+    gzip's ``GzipFile``, zstd's stream writer, the raw :class:`_HashingSink` (the ``none`` codec), and
+    the ``FZEc`` sealing sink all satisfy it — so :func:`_open_compressor` returns one concrete type
+    instead of ``Any``, and a compressor can be handed one as its fileobj.
     """
 
     def write(self, data: bytes, /) -> int: ...
+
+    def flush(self) -> None: ...
 
     def close(self) -> None: ...
 
@@ -147,12 +151,13 @@ class _HashingSink:
 # ....................... #
 
 
-def _open_compressor(sink: _HashingSink, compression: Compression) -> _ByteSink:
+def _open_compressor(sink: _ByteSink, compression: Compression) -> _ByteSink:
     """The writable codec layer wrapping *sink*, or the sink itself for ``none``.
 
-    ``closefd=False`` on the zstd writer, and gzip's own not-closing-the-fileobj behavior, both
-    leave the underlying sink for :class:`JsonlWriter` to close once — so the digest is finalized
-    exactly once, whatever the codec.
+    *sink* is the hashing sink, or — when the archive is encrypted — the sealing sink that wraps it,
+    so the compressed bytes are sealed before they are hashed and land on disk. ``closefd=False`` on
+    the zstd writer, and gzip's own not-closing-the-fileobj behavior, both leave the underlying sink
+    for :class:`JsonlWriter` to close once.
     """
 
     if compression == "gzip":
@@ -172,20 +177,33 @@ class JsonlWriter:
     """Stream canonical-JSON rows into one compressed file, tracking the row count and file digest.
 
     Use as a context manager; :attr:`sha256` and :attr:`rows` are final only after it closes. The
-    codec is fixed for the file's lifetime and shared across the whole archive.
+    codec is fixed for the file's lifetime and shared across the whole archive. When *cipher* is set
+    the compressed bytes are sealed (``FZEc``) before the digest and disk, and the digest is over the
+    *ciphertext* — what actually lands on disk and what import verifies before decrypting.
     """
 
     path: Path
     compression: Compression = attrs.field(default="gzip", kw_only=True)
+    cipher: ArchiveCipher | None = attrs.field(default=None, kw_only=True)
+    base_aad: str = attrs.field(default="", kw_only=True)
+    """The archive-relative path, bound into every sealed frame so a frame cannot be moved to
+    another file. Required (and matched on read) whenever *cipher* is set."""
 
     rows: int = attrs.field(default=0, init=False)
     _sink: _HashingSink | None = attrs.field(default=None, init=False)
+    _sealing: Any = attrs.field(default=None, init=False)
     _stream: _ByteSink | None = attrs.field(default=None, init=False)
 
     def __enter__(self) -> JsonlWriter:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._sink = _HashingSink(self.path.open("wb"))
-        self._stream = _open_compressor(self._sink, self.compression)
+
+        inner: _ByteSink = self._sink
+        if self.cipher is not None:
+            self._sealing = self.cipher.sealing_sink(self._sink, base_aad=self.base_aad)
+            inner = self._sealing
+
+        self._stream = _open_compressor(inner, self.compression)
         return self
 
     def write(self, row: JsonDict) -> None:
@@ -196,10 +214,19 @@ class JsonlWriter:
         self.rows += 1
 
     def __exit__(self, *_: object) -> None:
-        # For gzip/zstd the codec layer wraps the sink; close it to flush the frame, then close the
-        # sink ourselves. For ``none`` the stream *is* the sink, so close it once.
-        if self._stream is not None and self._stream is not self._sink:
+        # Close in stack order: the compressor flushes its trailer into the sealing sink (or the
+        # hashing sink), the sealing sink then seals its final ``FZEc`` frame into the hashing sink,
+        # and the hashing sink writes it to disk. A layer is the same object as the one below it only
+        # for the ``none`` codec / no-cipher, so guard each close against a double.
+        if (
+            self._stream is not None
+            and self._stream is not self._sealing
+            and self._stream is not self._sink
+        ):
             self._stream.close()
+
+        if self._sealing is not None:
+            self._sealing.close()
 
         if self._sink is not None:
             self._sink.close()
@@ -254,40 +281,91 @@ def verify_file(path: Path, expected_sha256: str) -> None:
 # ....................... #
 
 
-def read_rows(path: Path, *, compression: Compression = "gzip") -> AsyncGenerator[JsonDict]:
+def read_rows(
+    path: Path,
+    *,
+    compression: Compression = "gzip",
+    cipher: ArchiveCipher | None = None,
+    base_aad: str = "",
+) -> AsyncGenerator[JsonDict]:
     """Yield each row of a compressed JSONL file, one decoded mapping at a time.
 
     An ``async`` generator so a plane's import reads the same shape it writes — a stream, one row
     of memory — and so the loop yields control between rows. The codec must match what the archive
-    was written with (the manifest's ``compression``).
+    was written with (the manifest's ``compression``); when *cipher* is set the bytes are decrypted
+    (verifying each ``FZEc`` frame) before decompression, with *base_aad* the file's archive path.
     """
 
     async def _gen() -> AsyncGenerator[JsonDict]:
-        for row in _iter_rows(path, compression):
+        for row in _iter_rows(path, compression, cipher, base_aad):
             yield row
 
     return _gen()
 
 
-def _iter_rows(path: Path, compression: Compression) -> Iterator[JsonDict]:
-    for line in _iter_lines(path, compression):
+def _iter_rows(
+    path: Path, compression: Compression, cipher: ArchiveCipher | None, base_aad: str
+) -> Iterator[JsonDict]:
+    for line in _iter_lines(path, compression, cipher, base_aad):
         if line.strip():
             yield orjson.loads(line)
 
 
-def _iter_lines(path: Path, compression: Compression) -> Iterator[bytes]:
-    if compression == "gzip":
-        with gzip.open(path, "rb") as handle:
-            yield from handle
+def _iter_lines(
+    path: Path, compression: Compression, cipher: ArchiveCipher | None, base_aad: str
+) -> Iterator[bytes]:
+    with _open_source(path, cipher, base_aad) as source:
+        if compression == "gzip":
+            with gzip.GzipFile(fileobj=source, mode="rb") as handle:
+                yield from handle
 
-    elif compression == "none":
-        with path.open("rb") as handle:
-            yield from handle
+        elif compression == "none":
+            yield from source
 
-    else:  # zstd
-        with path.open("rb") as raw:
-            reader = _require_zstd().ZstdDecompressor().stream_reader(raw)
-            yield from io.BufferedReader(reader)
+        else:  # zstd
+            yield from io.BufferedReader(_require_zstd().ZstdDecompressor().stream_reader(source))
+
+
+def _open_source(path: Path, cipher: ArchiveCipher | None, base_aad: str) -> BinaryIO:
+    """The byte source a decompressor reads: the raw file, or a decrypting reader over it."""
+
+    if cipher is None:
+        return path.open("rb")
+
+    reader = cast("io.RawIOBase", _IteratorReader(cipher.open(path, base_aad=base_aad)))
+    return io.BufferedReader(reader)
+
+
+class _IteratorReader(io.RawIOBase):
+    """A read-only file-like over an iterator of byte chunks — bridges the decrypt stream to a
+    decompressor. Closing it closes the underlying generator (so the sealed file's handle closes),
+    even if the decompressor stopped early."""
+
+    def __init__(self, chunks: Iterator[bytes]) -> None:
+        super().__init__()
+        self._chunks = chunks
+        self._buf = b""
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, target: bytearray) -> int:  # type: ignore[override]
+        while not self._buf:
+            try:
+                self._buf = next(self._chunks)
+            except StopIteration:
+                return 0
+
+        take = min(len(target), len(self._buf))
+        target[:take] = self._buf[:take]
+        self._buf = self._buf[take:]
+        return take
+
+    def close(self) -> None:
+        closer = getattr(self._chunks, "close", None)
+        if closer is not None:
+            closer()
+        super().close()
 
 
 # ....................... #
@@ -320,13 +398,13 @@ class _BlobSink:
         self._handle = self._tmp.open("wb")
         return self
 
-    def write(self, chunk: bytes) -> None:
+    def write(self, chunk: bytes) -> int:
         if self._handle is None:  # pragma: no cover - misuse outside the context manager
             raise exc.internal("_BlobSink written to before entering its context")
 
         self._digest.update(chunk)
         self.size += len(chunk)
-        self._handle.write(chunk)
+        return self._handle.write(chunk)
 
     def __exit__(self, *_: object) -> None:
         if self._handle is not None:
@@ -342,12 +420,31 @@ class _BlobSink:
 # ....................... #
 
 
-async def write_blob(chunks: AsyncIterator[bytes], objects_dir: Path) -> tuple[str, int]:
-    """Stream a blob to ``objects_dir/<sha256>`` in bounded memory, returning ``(sha256, bytes)``."""
+async def write_blob(
+    chunks: AsyncIterator[bytes],
+    objects_dir: Path,
+    *,
+    cipher: ArchiveCipher | None = None,
+    base_aad: str = "",
+) -> tuple[str, int]:
+    """Stream a blob to ``objects_dir/<sha256>`` in bounded memory, returning ``(sha256, bytes)``.
+
+    When *cipher* is set the object is sealed (``FZEc``) as it is written, so the file is ciphertext,
+    the returned sha256 is over that ciphertext, and *base_aad* (the blob's identity) binds its
+    frames. Encryption forgoes plaintext dedup — the random per-chunk nonces make two copies of one
+    blob distinct files — which is the accepted cost of sealing.
+    """
 
     with _BlobSink(objects_dir) as sink:
-        async for chunk in chunks:
-            sink.write(chunk)
+        if cipher is None:
+            async for chunk in chunks:
+                sink.write(chunk)
+        else:
+            sealing = cipher.sealing_sink(sink, base_aad=base_aad)
+            async for chunk in chunks:
+                sealing.write(chunk)
+            # Seal the final frame into the sink before the context manager renames it into place.
+            sealing.close()
 
     return sink.sha256, sink.size
 
@@ -355,18 +452,32 @@ async def write_blob(chunks: AsyncIterator[bytes], objects_dir: Path) -> tuple[s
 # ....................... #
 
 
-def read_blob(path: Path, *, expected_sha256: str, chunk_size: int) -> AsyncGenerator[bytes]:
+def read_blob(
+    path: Path,
+    *,
+    expected_sha256: str,
+    chunk_size: int,
+    cipher: ArchiveCipher | None = None,
+    base_aad: str = "",
+) -> AsyncGenerator[bytes]:
     """Stream a stored blob back out in bounded chunks, after verifying its hash.
 
     A content file whose bytes do not match the sha256 the index recorded raises **before the
     stream is consumed for upload** — the object is hashed first (bounded memory), so a corrupt
-    blob cannot be re-uploaded under a key that still looks intact.
+    blob cannot be re-uploaded under a key that still looks intact. The checksum is over the file as
+    stored (ciphertext when *cipher* is set); the plaintext's own integrity is the AEAD's.
     """
 
     verify_file(path, expected_sha256)
 
     async def _gen() -> AsyncGenerator[bytes]:
-        for chunk in _iter_file_chunks(path, chunk_size):
+        source = (
+            _iter_file_chunks(path, chunk_size)
+            if cipher is None
+            else cipher.open(path, base_aad=base_aad)
+        )
+
+        for chunk in source:
             yield chunk
 
     return _gen()
