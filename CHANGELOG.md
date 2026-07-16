@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**Portability** — `forze_kits.integrations.portability`: carry an application's system-of-record state to another wired backend.
+**Portability** — `forze_kits.integrations.portability`: carry an application's system-of-record state to any other wired backend.
 
 - `export_archive(runtime, dest, *, scope=…)` / `import_archive(runtime, src, *, on_conflict="skip"|"fail")` — a backend-agnostic archive (JSONL + plain `manifest.json`) covering the **document, blob, graph and counter** planes. Ids and — when the aggregate's `create_cmd` subclasses `ImportTimestamps` — timestamps are preserved; `rev` resets to 1; blobs land back at their original key. Import is fail-closed: format version, registry fingerprint and every checksum are verified before a row is decoded.
 - `migrate(source_runtime, target_runtime, *, scope=…)` — the same pipelines fused ports-to-ports: **no artifact and no plaintext at rest**. The recommended path for a backend migration, and the escape from a bricked KEK (the target re-seals every field under its own keys).

@@ -111,6 +111,15 @@ class ArchiveMigrator:
         before a row moves — and the scope gate is the export's too: a :class:`FullScope` whose
         quiesce did not attest is refused unless :attr:`allow_fuzzy`. A :class:`TenantScope` binds
         the tenant on *both* sides, so reads and writes stay in the same partition.
+
+        **The registry is trusted here, not verified — :func:`migrate` is the gated front door.**
+        One inventory resolves against both contexts (the spec is the logical key; each context
+        binds it to its own backend), so there is no second fingerprint at this layer to compare
+        against — a context does not expose its runtime's registry, which is why the registry is
+        passed at all. ``migrate`` holds both *runtimes*, so it reads both registries and refuses a
+        mismatch before a row moves; prefer it unless you already hold both contexts. Passing a
+        registry that does not describe *target* is silent corruption: the source's spec resolves
+        against a target that shapes it differently.
         """
 
         exclude_identity = isinstance(scope, TenantScope) and not self.include_identity
