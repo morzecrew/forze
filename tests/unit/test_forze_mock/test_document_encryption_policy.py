@@ -113,6 +113,48 @@ async def test_plaintext_fields_on_an_encrypting_spec_stay_filterable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sorting_on_a_sealed_field_is_refused() -> None:
+    """The mock sorts plaintext, so it would return a *correctly ordered* page for a query that
+    orders by ciphertext on a real backend — hiding the bug twice over. Same policy, same code."""
+
+    spec = _spec(encrypted=True)
+    runtime = _runtime(spec)
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await ctx.document.command(spec).ensure(uuid4(), _VaultCreate(holder="ada", secret="zzz"))
+        await ctx.document.command(spec).ensure(uuid4(), _VaultCreate(holder="bob", secret="aaa"))
+
+        with pytest.raises(CoreException, match="no order at rest") as excinfo:
+            await ctx.document.query(spec).find_many(sorts={"secret": "asc"})
+
+        assert excinfo.value.code == "core.crypto.encrypted_sort_field"
+
+        # Plaintext sort keys on the same spec are unaffected.
+        page = await ctx.document.query(spec).find_many(sorts={"holder": "asc"})
+
+    assert [hit.holder for hit in page.hits] == ["ada", "bob"]
+
+
+@pytest.mark.asyncio
+async def test_a_default_sort_on_a_sealed_field_is_refused_at_spec_construction() -> None:
+    """The author's error, caught at the earliest point — the same guard ``SearchSpec`` already
+    applies to its own ``default_sort``. A spec is not a valid object if its default ordering can
+    never work."""
+
+    with pytest.raises(CoreException, match="no order at rest"):
+        DocumentSpec(
+            name="vault_bad_default",
+            read=_VaultRead,
+            write=DocumentWriteTypes(
+                domain=_VaultDoc, create_cmd=_VaultCreate, update_cmd=_VaultUpdate
+            ),
+            encryption=FieldEncryption(encrypted=frozenset({"secret"})),
+            default_sort={"secret": "asc"},
+        )
+
+
+@pytest.mark.asyncio
 async def test_a_spec_without_encryption_filters_the_field_normally() -> None:
     """No declaration, no guard: the rule reads the spec's policy, not the field's name."""
 

@@ -433,6 +433,38 @@ async def test_a_target_keyed_reader_cannot_open_source_sealed_rows(
 
 
 @pytest.mark.asyncio
+async def test_sorting_on_a_sealed_field_is_refused(pg_client: PostgresClient) -> None:
+    """Regression: ``ORDER BY`` on a sealed column sorted by **ciphertext**, silently.
+
+    A randomized ciphertext has no order at all, so this returned rows in an arbitrary,
+    nonce-dependent order and raised nothing — and a keyset cursor would additionally carry the
+    field's raw value in its token. The search plane already refused this
+    (``core.search.encrypted_sort_field``); the document plane never wired the same rule, so the
+    helper that expresses it (``FieldEncryption.forbidden_sort_fields``) had no document caller.
+    """
+
+    tenant = uuid4()
+    table = f"vault_{uuid4().hex[:8]}"
+    await _create_table(pg_client, table)
+
+    ctx = _pg_ctx(pg_client, table, key_id=SOURCE_CMK)
+    await _seed(ctx, tenant, _ROWS)
+
+    with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+        query = ctx.document.query(VAULT_SPEC)
+
+        with pytest.raises(CoreException, match="no order at rest") as excinfo:
+            await query.find_many(sorts={"secret": "asc"})
+
+        assert excinfo.value.code == "core.crypto.encrypted_sort_field"
+
+        # A plaintext column on the same encrypting spec still sorts normally — the guard is
+        # scoped to the declared fields, not to the spec.
+        page = await query.find_many(sorts={"holder": "asc"})
+        assert [row.holder for row in page.hits] == sorted(h for _, h, _ in _ROWS)
+
+
+@pytest.mark.asyncio
 async def test_migrate_reseals_under_the_targets_cmk(
     pg_client: PostgresClient,
 ) -> None:

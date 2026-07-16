@@ -28,6 +28,7 @@ def resolve_sort_keys(
     spec_name: str = "<sort>",
     model: type[BaseModel] | None = None,
     client_facing: bool = True,
+    sealed: frozenset[str] = frozenset(),
 ) -> list[tuple[str, str, str]]:
     """Resolve a sort map to ``(field, direction, nulls)`` triples (no tie-breaker).
 
@@ -35,6 +36,10 @@ def resolve_sort_keys(
     field membership when *read_fields* is given; pass *model* to allow nested/dotted sort
     paths (validated the same way filters are — see :func:`field_path_resolves`). An unknown
     field raises a precondition (caller-supplied sort, HTTP 400) by default.
+
+    *sealed* names fields whose stored value is ciphertext; ordering by one is meaningless
+    (see :func:`validate_sort_fields`). Unlike *read_fields* this is checked unconditionally
+    — a caller that knows a field is sealed always knows enough to refuse it.
     """
 
     if not sorts:
@@ -50,6 +55,15 @@ def resolve_sort_keys(
                 f"Sort field {field!r} is not on read model for spec {spec_name!r}.",
                 client_facing=client_facing,
                 code="field_not_on_read_model",
+            )
+
+        if field.split(".", 1)[0] in sealed:
+            _raise_invalid_sort(
+                f"Sorting on field-encrypted field {field!r} is not allowed for "
+                f"{spec_name!r}: encrypted (randomized) and searchable (deterministic) "
+                "fields have no order at rest and cannot be used as sort keys.",
+                client_facing=client_facing,
+                code="core.crypto.encrypted_sort_field",
             )
 
         direction, nulls = parse_sort_value(
@@ -155,6 +169,7 @@ def normalize_sorts_for_keyset(
     read_fields: frozenset[str],
     tiebreaker: str = ID_FIELD,
     model: type[BaseModel] | None = None,
+    sealed: frozenset[str] = frozenset(),
 ) -> list[tuple[str, str, str]]:
     """Resolve sorts into ``(field, direction, nulls)`` keys with a final tie-breaker.
 
@@ -165,6 +180,10 @@ def normalize_sorts_for_keyset(
     ``nulls`` override): ``asc`` → nulls first, ``desc`` → nulls last unless overridden,
     so a null sorts as the smallest value, matching the in-memory oracle. Backends emit
     explicit ``NULLS FIRST``/``LAST`` from this to conform.
+
+    *sealed* is refused (see :func:`validate_sort_fields`). This path is where it matters
+    most: a keyset cursor carries the last row's **raw** sort value in its token, so a sealed
+    sort key would put a confidential field's value in front of whoever holds the cursor.
     """
 
     s = dict(sorts) if sorts else {}
@@ -174,7 +193,9 @@ def normalize_sorts_for_keyset(
             "Keyset pagination requires non-empty sorts; resolve effective sorts first.",
         )
 
-    validate_sort_fields(s, read_fields=read_fields, spec_name="<keyset>", model=model)
+    validate_sort_fields(
+        s, read_fields=read_fields, spec_name="<keyset>", model=model, sealed=sealed
+    )
 
     return _with_tiebreaker(
         s,

@@ -53,6 +53,23 @@ def _cache_cipher(
     return ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
 
 
+def _sealed_fields(spec: "DocumentSpec[Any, Any, Any, Any]") -> frozenset[str]:
+    """The spec's ciphertext-at-rest fields — refused as sort keys by the read gateway.
+
+    Both halves of the policy: a randomized ``encrypted`` value has no order at all, and a
+    deterministic ``searchable`` one preserves equality but *not* order. ``ORDER BY`` on either
+    silently returns ciphertext order.
+    """
+
+    if spec.encryption is None:
+        return frozenset()
+
+    return spec.encryption.encrypted | spec.encryption.searchable
+
+
+# ....................... #
+
+
 def _resolve_codecs(
     ctx: "ExecutionContext",
     spec: "DocumentSpec[Any, Any, Any, Any]",
@@ -121,6 +138,7 @@ class ConfigurablePostgresReadOnlyDocument(DocumentQueryDepPort[R]):
             param_namespace=self.config.param_namespace,
             params_required=spec.query_params is not None,
             lenient_read_fields=spec.resolved_lenient_read_fields,
+            sealed_fields=_sealed_fields(spec),
         )
 
         after_commit = ctx.tx_ctx.run_or_defer if cache is not None else None
@@ -193,6 +211,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             param_namespace=self.config.param_namespace,
             params_required=spec.query_params is not None,
             lenient_read_fields=spec.resolved_lenient_read_fields,
+            sealed_fields=_sealed_fields(spec),
         )
 
         history_relation = self.config.history
