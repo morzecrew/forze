@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date, datetime
+from decimal import Decimal
 from enum import Enum
 from types import UnionType
 from typing import Any, Union, get_args, get_origin
@@ -282,6 +283,9 @@ def python_type_to_postgres_scalar(py_t: Any) -> PostgresType | None:
 
         if issubclass(py_t, float):
             return PostgresType(base="float8", is_array=False, not_null=True)
+
+        if issubclass(py_t, Decimal):
+            return PostgresType(base="numeric", is_array=False, not_null=True)
 
         if issubclass(py_t, datetime):
             return PostgresType(base="timestamptz", is_array=False, not_null=True)

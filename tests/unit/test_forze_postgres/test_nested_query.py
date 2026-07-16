@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Any, Mapping, Union
 from uuid import UUID
@@ -288,6 +289,7 @@ def test_python_type_scalars() -> None:
     assert python_type_to_postgres_scalar(bool).base == "bool"
     assert python_type_to_postgres_scalar(int).base == "int8"
     assert python_type_to_postgres_scalar(float).base == "float8"
+    assert python_type_to_postgres_scalar(Decimal).base == "numeric"
     assert python_type_to_postgres_scalar(datetime).base == "timestamptz"
     assert python_type_to_postgres_scalar(date).base == "date"
     assert python_type_to_postgres_scalar(str).base == "text"

@@ -1,5 +1,6 @@
 """Integration tests for Firestore query filters and sorts."""
 
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -20,10 +21,12 @@ from tests.support.execution_context import context_from_deps
 
 class FilterDoc(Document):
     sku: str
+    price: Decimal = Decimal("0")
 
 
 class FilterCreate(CreateDocumentCmd):
     sku: str
+    price: Decimal = Decimal("0")
 
 
 class FilterUpdate(BaseDTO):
@@ -32,6 +35,7 @@ class FilterUpdate(BaseDTO):
 
 class FilterRead(ReadDocument):
     sku: str
+    price: Decimal = Decimal("0")
 
 
 @pytest.mark.asyncio
@@ -79,6 +83,58 @@ async def test_find_many_with_and_filter(
     )
     assert page.count == 2
     assert [r.sku for r in page.hits] == ["keep-a", "keep-b"]
+
+
+@pytest.mark.asyncio
+async def test_decimal_write_and_filter_round_trip(
+    firestore_client: FirestoreClient,
+) -> None:
+    """Decimal fields persist as doubles and Decimal filter values compare numerically."""
+
+    collection = f"filters_dec_{uuid4().hex[:8]}"
+    spec = DocumentSpec(
+        name="filters",
+        read=FilterRead,
+        write={
+            "domain": FilterDoc,
+            "create_cmd": FilterCreate,
+            "update_cmd": FilterUpdate,
+        },
+    )
+    fac = ConfigurableFirestoreDocument(
+        config=FirestoreDocumentConfig(
+            read=("(default)", collection),
+            write=("(default)", collection),
+        ),
+    )
+    ctx = context_from_deps(Deps.plain(
+            {
+                FirestoreClientDepKey: firestore_client,
+                DocumentQueryDepKey: fac,
+                DocumentCommandDepKey: fac,
+            })
+    )
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
+
+    await cmd.create(FilterCreate(sku="cheap", price=Decimal("9.5")))
+    await cmd.create(FilterCreate(sku="mid", price=Decimal("10.5")))
+    await cmd.create(FilterCreate(sku="dear", price=Decimal("100.25")))
+
+    page = await query.find_page(
+        filters={"$values": {"price": {"$lt": Decimal("10.5")}}},
+        pagination={"limit": 10, "offset": 0},
+    )
+    assert page.count == 1
+    assert page.hits[0].sku == "cheap"
+    assert page.hits[0].price == Decimal("9.5")
+
+    page = await query.find_page(
+        filters=None,
+        sorts={"price": "asc"},
+        pagination={"limit": 10, "offset": 0},
+    )
+    assert [r.sku for r in page.hits] == ["cheap", "mid", "dear"]
 
 
 @pytest.mark.integration

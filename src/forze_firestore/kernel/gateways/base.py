@@ -36,7 +36,7 @@ from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD
 
 from ..client import FirestoreClientPort
-from ..query import FirestoreQueryRenderer
+from ..query import FirestoreQueryRenderer, coerce_firestore_value
 from ..relation import RelationSpec, is_static_relation, resolve_firestore_collection
 
 # ----------------------- #
@@ -172,22 +172,13 @@ class FirestoreGateway[M: BaseModel](
     # ....................... #
 
     def _coerce_query_value(self, value: Any) -> Any:
-        if isinstance(value, UUID):
-            return str(value)
+        """Coerce domain values to Firestore-encodable types (UUID→str, Decimal→float).
 
-        if isinstance(value, list):
-            return [
-                self._coerce_query_value(x)
-                for x in value  # pyright: ignore[reportUnknownVariableType]
-            ]
+        Shared with the query renderer (see ``coerce_firestore_value``) so writes and
+        filter values persist and compare in the same representation.
+        """
 
-        if isinstance(value, dict):
-            return {
-                k: self._coerce_query_value(v)
-                for k, v in value.items()  # pyright: ignore[reportUnknownVariableType]
-            }
-
-        return value
+        return coerce_firestore_value(value)
 
     # ....................... #
 

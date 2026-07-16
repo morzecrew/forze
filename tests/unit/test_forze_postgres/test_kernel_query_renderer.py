@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -447,6 +448,19 @@ class TestPsycopgQueryRenderer:
         _sql, params = r.render(QueryField("meta.score", "$gte", 1))
         assert params == [1]
         assert b"v" in _sql.as_bytes()  # qualified root column
+
+    def test_nested_json_decimal_leaf_casts_to_numeric(self) -> None:
+        class _Inner(BaseModel):
+            price: Decimal
+
+        class _Outer(BaseModel):
+            meta: _Inner
+
+        types: PostgresColumnTypes = {"meta": _t("jsonb")}
+        r = PsycopgQueryRenderer(types=types, model_type=_Outer)
+        sql_out, params = r.render(QueryField("meta.price", "$gt", Decimal("10.50")))
+        assert b"numeric" in sql_out.as_bytes()
+        assert params == [Decimal("10.50")]
 
     def test_nested_field_hints_for_dict_leaf(self) -> None:
         class _Blob(BaseModel):

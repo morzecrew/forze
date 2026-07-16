@@ -492,6 +492,13 @@ def test_require_numeric_rejects_non_numeric() -> None:
         _require_numeric(True, function="$sum", field="x")  # bool excluded
 
 
+def test_require_numeric_folds_decimal_as_float() -> None:
+    from decimal import Decimal
+
+    out = _require_numeric(Decimal("10.5"), function="$sum", field="x")
+    assert isinstance(out, float) and out == 10.5
+
+
 def test_percentile_cont_edges() -> None:
     assert _percentile_cont([], 0.5) is None
     assert _percentile_cont([7], 0.5) == 7.0  # single value

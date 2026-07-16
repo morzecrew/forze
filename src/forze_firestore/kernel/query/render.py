@@ -25,6 +25,8 @@ from forze.application.contracts.querying import (
 )
 from forze.base.exceptions import exc
 
+from .values import coerce_firestore_value
+
 # ----------------------- #
 
 _OP_MAP: dict[str, str] = {
@@ -157,7 +159,7 @@ class FirestoreQueryRenderer:
     ) -> BaseFilter:
         match op:
             case "$eq":
-                return FieldFilter(field, "==", self.caster.pass_through(value))
+                return FieldFilter(field, "==", self._filter_value(value))
 
             case "$neq" | "$nin" | "$null":
                 # Not advertised in FIRESTORE_QUERY_CAPABILITIES: Firestore's
@@ -171,7 +173,7 @@ class FirestoreQueryRenderer:
                 )
 
             case "$gt" | "$gte" | "$lt" | "$lte":
-                return FieldFilter(field, _OP_MAP[op], self.caster.pass_through(value))
+                return FieldFilter(field, _OP_MAP[op], self._filter_value(value))
 
             case "$empty":
                 if self.caster.as_bool(value):
@@ -184,7 +186,7 @@ class FirestoreQueryRenderer:
                 return FieldFilter(
                     field,
                     "in",
-                    [self.caster.pass_through(v) for v in value],
+                    [self._filter_value(v) for v in value],
                 )
 
             case "$superset" | "$subset" | "$overlaps" | "$disjoint":
@@ -197,3 +199,10 @@ class FirestoreQueryRenderer:
 
             case _:  # pyright: ignore[reportUnnecessaryComparison]
                 raise exc.internal(f"Unknown operator: {op!r}")
+
+    # ....................... #
+
+    def _filter_value(self, value: Any) -> Any:
+        """Pass the value through, then coerce to what writes persist (UUID→str, Decimal→float)."""
+
+        return coerce_firestore_value(self.caster.pass_through(value))

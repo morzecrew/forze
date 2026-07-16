@@ -108,6 +108,34 @@ class QueryValueCaster:
     # ....................... #
 
     @staticmethod
+    def as_decimal(v: Any) -> Decimal:
+        """Cast a value to Decimal without going through binary float; rejects bool."""
+        if isinstance(v, bool):
+            raise exc.precondition("Expected numeric, got bool")
+
+        if isinstance(v, Decimal):
+            return v
+
+        if isinstance(v, int):
+            return Decimal(v)
+
+        if isinstance(v, float):
+            return Decimal(str(v))
+
+        if isinstance(v, str):
+            s = v.strip().replace(",", ".")
+
+            try:
+                return Decimal(s)
+
+            except Exception as e:
+                raise exc.precondition(f"Invalid numeric: {v!r}") from e
+
+        raise exc.precondition(f"Invalid numeric: {v!r}")
+
+    # ....................... #
+
+    @staticmethod
     def _to_seconds(v: Any) -> float:
         """Normalize a numeric timestamp to seconds, handling ms/µs/ns magnitudes."""
 

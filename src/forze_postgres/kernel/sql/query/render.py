@@ -8,6 +8,7 @@ require_psycopg()
 
 from collections.abc import Mapping
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -129,8 +130,11 @@ class PsycopgValueCoercer:
             case "int2" | "int4" | "int8":
                 return self.caster.as_int(v)
 
-            case "float4" | "float8" | "numeric":
+            case "float4" | "float8":
                 return self.caster.as_float(v)
+
+            case "numeric":
+                return self.caster.as_decimal(v)
 
             case "date":
                 return self.caster.as_date(v)
@@ -1407,6 +1411,9 @@ class PsycopgQueryRenderer:
         elif isinstance(value, float):
             cast = "double precision"
 
+        elif isinstance(value, Decimal):
+            cast = "numeric"
+
         else:
             cast = "text"
 
@@ -1433,6 +1440,9 @@ class PsycopgQueryRenderer:
 
         if ann is float:
             return PostgresType(base="float8", is_array=False, not_null=False)
+
+        if ann is Decimal:
+            return PostgresType(base="numeric", is_array=False, not_null=False)
 
         if ann is datetime:
             return PostgresType(base="timestamptz", is_array=False, not_null=False)

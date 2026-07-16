@@ -7,6 +7,7 @@ require_psycopg()
 # ....................... #
 
 from collections.abc import Mapping, Sequence
+from decimal import Decimal
 from typing import Any, final
 from uuid import UUID
 
@@ -52,6 +53,26 @@ from forze_postgres.kernel.sql.query.render import PsycopgValueCoercer
 # ----------------------- #
 
 _WRITE_VALUE_COERCER = PsycopgValueCoercer()
+
+
+def _json_write_default(obj: Any) -> Any:
+    """``orjson`` fallback for JSON column payloads.
+
+    A ``Decimal`` is stored as its exact string form — a float would round it, and the
+    nested-filter path extracts JSON leaves as text and casts (``::numeric``) anyway, so
+    string storage compares numerically in filters and round-trips exactly through
+    Pydantic. Everything else stays a hard error rather than being silently stringified.
+    """
+
+    if isinstance(obj, Decimal):
+        return str(obj)
+
+    raise TypeError(f"Type is not JSON serializable: {type(obj).__name__}")
+
+
+def _json_write_dumps(v: Any) -> bytes:
+    return orjson.dumps(v, default=_json_write_default)
+
 
 # ....................... #
 
@@ -458,9 +479,9 @@ class PostgresGateway[M: BaseModel](
             wrapper = Jsonb if t.base == "jsonb" else Json
 
             if not t.is_array:
-                return wrapper(v, dumps=orjson.dumps)
+                return wrapper(v, dumps=_json_write_dumps)
 
-            return [wrapper(x, dumps=orjson.dumps) for x in v]
+            return [wrapper(x, dumps=_json_write_dumps) for x in v]
 
         return _WRITE_VALUE_COERCER.scalar(v, t=t)
 

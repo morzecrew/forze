@@ -55,6 +55,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**`Decimal` is now a first-class filter and sort value across the query DSL** — the scalar union omitted it, so the parser rejected an explicit `Decimal` operand and a bare `{"field": Decimal(…)}` shortcut misrouted to `$in`.
+
+- **Postgres** — nested JSON `Decimal` leaves filtered and sorted **as text** (no `::numeric` cast), `numeric` columns coerced filter values through `float`, and a `Decimal` in a `jsonb` write payload raised `TypeError`; all fixed, stored as its exact string form.
+- **Mongo** — a `Decimal` *filter* value was stringified before the `Decimal128` coercion, matching nothing (read-side sibling of the 0.5.0 write fix).
+- **Firestore** — a `Decimal` field could not be written and `UUID`/`Decimal` filter values reached the driver raw; writes and filters now share one coercion (`UUID`→string, `Decimal`→double).
+- **Mock** — aggregates (`$sum`/`$avg`/percentiles) refused `Decimal` fields; they now fold in float space.
+- **Meilisearch** — a `Decimal` filter value **fails closed** (`query_feature_unsupported`): decimals index as JSON strings, so numeric comparison is impossible.
+
 **Object storage `upload_stream` dropped its tags** — a streamed upload computed the tag map and never wrote it (multipart completion carries no tagging, and unlike `overwrite_stream` there was no follow-up `PutObjectTagging`), so the returned `StoredObject` reported tags the object never actually got. It now applies them after completion. Hidden because the mock stored the tags in memory; only a real S3 `head` revealed the gap. Surfaced by a real-S3 blob export/import round-trip.
 
 **Sealed fields are refused as filter and sort keys on every backend, including the mock** — a field-encrypted column has no usable equality or order at rest, and the rules are now enforced from the spec's *declaration* rather than only where a keyring happens to be wired.

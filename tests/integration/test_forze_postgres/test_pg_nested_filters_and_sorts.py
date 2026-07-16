@@ -131,6 +131,52 @@ async def test_filter_on_nested_jsonb_scalar(pg_client: PostgresClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_filter_and_sort_nested_decimal_compares_numerically(
+    pg_client: PostgresClient,
+) -> None:
+    """A nested Decimal leaf gets a ::numeric cast — 9.5 < 10.5 (text compare would flip it)."""
+
+    from decimal import Decimal
+
+    t = f"nest_dec_{uuid4().hex[:12]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            title text NOT NULL,
+            meta jsonb NOT NULL
+        );
+        """
+    )
+    ctx = _ctx(pg_client, t)
+    spec = _spec()
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
+
+    await cmd.create(RowCreate(title="cheap", meta=Meta(score=1, price=Decimal("9.5"))))
+    await cmd.create(RowCreate(title="mid", meta=Meta(score=2, price=Decimal("10.5"))))
+    await cmd.create(RowCreate(title="dear", meta=Meta(score=3, price=Decimal("100.25"))))
+
+    __p = await query.find_page(
+        {"$values": {"meta.price": {"$lt": Decimal("10.5")}}},
+        pagination={"limit": 10, "offset": 0},
+    )
+    assert __p.count == 1
+    assert __p.hits[0].title == "cheap"
+    assert __p.hits[0].meta.price == Decimal("9.5")
+
+    __p = await query.find_page(
+        None,
+        pagination={"limit": 10, "offset": 0},
+        sorts={"meta.price": "asc"},
+    )
+    assert [r.title for r in __p.hits] == ["cheap", "mid", "dear"]
+
+
+@pytest.mark.asyncio
 async def test_logical_and_across_top_level_and_nested_paths(
     pg_client: PostgresClient,
 ) -> None:
