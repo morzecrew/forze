@@ -500,6 +500,57 @@ class TestPsycopgQueryRenderer:
         assert "#>>" in s and "::numeric" in s
         assert params == [Decimal("1.5"), Decimal("2")]
 
+    def test_scalar_elem_decimal_typed_int_operand_compares_numerically(self) -> None:
+        """An int operand against a Decimal-annotated jsonb array must also take the
+        numeric path — stored decimals are JSON strings, so jsonb type ordering would
+        rank them above every number regardless of value."""
+
+        class _Doc(BaseModel):
+            prices: list[Decimal | int]
+
+        r = PsycopgQueryRenderer(types={"prices": _t("jsonb")}, model_type=_Doc)
+        sql_out, params = r.render(
+            QueryElem("prices", "$any", QueryField(ELEM_SCALAR_FIELD, "$gte", 5)),
+        )
+        s = sql_out.as_string(None)
+        assert "#>>" in s and "::numeric" in s
+        assert "to_jsonb" not in s
+        assert params == [Decimal("5")]
+
+    def test_scalar_elem_int_typed_int_operand_stays_in_jsonb_space(self) -> None:
+        class _Doc(BaseModel):
+            counts: list[int]
+
+        r = PsycopgQueryRenderer(types={"counts": _t("jsonb")}, model_type=_Doc)
+        sql_out, _params = r.render(
+            QueryElem("counts", "$any", QueryField(ELEM_SCALAR_FIELD, "$gte", 5)),
+        )
+        assert "::numeric" not in sql_out.as_string(None)
+
+    def test_nested_scalar_subarray_decimal_typed_int_operand_compares_numerically(
+        self,
+    ) -> None:
+        """The same type-aware routing applies one level down: a scalar sub-array
+        annotated with Decimal elements compares numerically for an int operand."""
+
+        class _Item(BaseModel):
+            prices: list[Decimal | int]
+
+        class _Doc(BaseModel):
+            items: list[_Item]
+
+        r = PsycopgQueryRenderer(types={"items": _t("jsonb")}, model_type=_Doc)
+        sql_out, params = r.render(
+            QueryElem(
+                "items",
+                "$any",
+                QueryElem("prices", "$any", QueryField(ELEM_SCALAR_FIELD, "$gte", 5)),
+            ),
+        )
+        s = sql_out.as_string(None)
+        assert "#>>" in s and "::numeric" in s
+        assert params == [Decimal("5")]
+
     def test_nested_field_hints_for_dict_leaf(self) -> None:
         class _Blob(BaseModel):
             data: dict[str, Any]
