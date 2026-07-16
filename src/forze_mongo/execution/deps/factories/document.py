@@ -118,6 +118,7 @@ class ConfigurableMongoReadOnlyDocument(DocumentQueryDepPort[R]):
             read_validation=self.config.read_validation,
             computed_null_ordering=self.config.computed_null_ordering,
             lenient_read_fields=spec.resolved_lenient_read_fields,
+            sealed_fields=spec.encryption.sealed if spec.encryption else frozenset(),
         )
 
         after_commit: AfterCommitPort | None = None
@@ -192,6 +193,7 @@ class ConfigurableMongoDocument(DocumentCommandDepPort[R, D, C, U]):
             read_validation=config.read_validation,
             computed_null_ordering=config.computed_null_ordering,
             lenient_read_fields=spec.resolved_lenient_read_fields,
+            sealed_fields=spec.encryption.sealed if spec.encryption else frozenset(),
         )
 
         write_relation = config.write

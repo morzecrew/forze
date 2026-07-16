@@ -123,10 +123,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         into the shared validators keeps the *policy* identical on both.
         """
 
-        if self.spec.encryption is None:
-            return frozenset()
-
-        return self.spec.encryption.encrypted | self.spec.encryption.searchable
+        return self.spec.encryption.sealed if self.spec.encryption else frozenset()
 
     # ....................... #
 

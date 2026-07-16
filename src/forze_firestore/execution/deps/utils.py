@@ -30,6 +30,7 @@ def read_gw(
     codec: ModelCodec[Any, Any] | None = None,
     read_validation: Literal["strict", "trusted"] = "strict",
     lenient_read_fields: frozenset[str] = frozenset(),
+    sealed_fields: frozenset[str] = frozenset(),
 ) -> FirestoreReadGateway[Any]:
     client = ctx.deps.provide(FirestoreClientDepKey)
 
@@ -44,6 +45,7 @@ def read_gw(
         tenant_aware=tenant_aware,
         read_validation=read_validation,
         lenient_read_fields=lenient_read_fields,
+        sealed_fields=sealed_fields,
     )
 
 

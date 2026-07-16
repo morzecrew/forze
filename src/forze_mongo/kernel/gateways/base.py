@@ -75,6 +75,11 @@ class MongoGateway[M: BaseModel](
     bounds (see ``DocumentSpec.lenient_read_fields``). Decode hydrates them from the
     model default."""
 
+    sealed_fields: frozenset[str] = attrs.field(factory=frozenset)
+    """Fields stored as ciphertext (``FieldEncryption.encrypted | .searchable``). They have
+    no usable order at rest, so they are refused as sort keys — sorting on one orders by the
+    stored envelope, and a keyset cursor would carry the raw value in its token."""
+
     write_omit_fields: frozenset[str] = attrs.field(factory=frozenset)
     """Domain fields not stored on this collection; stripped from every write payload
     (see ``DocumentSpec.write_omit_fields``). A write gateway also sets these as
@@ -370,8 +375,9 @@ class MongoGateway[M: BaseModel](
             backend="mongo",
             materialized=self.read_codec.materialized,
             lenient=self.lenient_read_fields,
+            sealed=self.sealed_fields,
         )
-        resolved = resolve_sort_keys(sorts)
+        resolved = resolve_sort_keys(sorts, sealed=self.sealed_fields)
 
         if not self.computed_null_ordering:
             assert_default_null_ordering(resolved, backend="mongo")
@@ -412,8 +418,9 @@ class MongoGateway[M: BaseModel](
             backend="mongo",
             materialized=self.read_codec.materialized,
             lenient=self.lenient_read_fields,
+            sealed=self.sealed_fields,
         )
-        resolved = resolve_sort_keys(sorts)
+        resolved = resolve_sort_keys(sorts, sealed=self.sealed_fields)
 
         if not any(nulls != default_nulls(d) for _, d, nulls in resolved):
             return None

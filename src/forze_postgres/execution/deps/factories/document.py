@@ -54,17 +54,9 @@ def _cache_cipher(
 
 
 def _sealed_fields(spec: "DocumentSpec[Any, Any, Any, Any]") -> frozenset[str]:
-    """The spec's ciphertext-at-rest fields — refused as sort keys by the read gateway.
+    """The spec's ciphertext-at-rest fields — refused as sort keys by the read gateway."""
 
-    Both halves of the policy: a randomized ``encrypted`` value has no order at all, and a
-    deterministic ``searchable`` one preserves equality but *not* order. ``ORDER BY`` on either
-    silently returns ciphertext order.
-    """
-
-    if spec.encryption is None:
-        return frozenset()
-
-    return spec.encryption.encrypted | spec.encryption.searchable
+    return spec.encryption.sealed if spec.encryption else frozenset()
 
 
 # ....................... #

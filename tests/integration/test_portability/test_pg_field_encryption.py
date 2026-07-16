@@ -68,6 +68,9 @@ from forze_kits.integrations.portability import (
 )
 from forze_kits.integrations.portability.format import read_rows
 from forze_mock import MockKeyManagement
+from forze_mongo.execution.deps import ConfigurableMongoDocument, MongoDocumentConfig
+from forze_mongo.execution.deps.keys import MongoClientDepKey
+from forze_mongo.kernel.client import MongoClient
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import (
@@ -460,6 +463,54 @@ async def test_sorting_on_a_sealed_field_is_refused(pg_client: PostgresClient) -
 
         # A plaintext column on the same encrypting spec still sorts normally — the guard is
         # scoped to the declared fields, not to the spec.
+        page = await query.find_many(sorts={"holder": "asc"})
+        assert [row.holder for row in page.hits] == sorted(h for _, h, _ in _ROWS)
+
+
+@pytest.mark.asyncio
+async def test_sorting_on_a_sealed_field_is_refused_on_mongo_too(
+    mongo_client: MongoClient,
+) -> None:
+    """The same rule on a second real backend — because the first cut of this guard **missed
+    Mongo**.
+
+    The sealed set is threaded per backend (gateways hold derived frozensets, not the spec), so
+    "the shared validator refuses it" is only true for a backend someone remembered to thread.
+    Postgres and the mock were done and tested; Mongo and Firestore silently kept sorting by
+    ciphertext, and the Postgres test happily passed the whole time. This test exists so that
+    class of hole fails out loud instead of being asserted away.
+    """
+
+    db_name = (await mongo_client.db()).name
+    configurable = ConfigurableMongoDocument(
+        config=MongoDocumentConfig(read=(db_name, "vault"), write=(db_name, "vault"))
+    )
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MongoClientDepKey: mongo_client,
+                DocumentQueryDepKey: configurable,
+                DocumentCommandDepKey: configurable,
+                KeyringDepKey: _keyring(SOURCE_CMK),
+            }
+        )
+    )
+
+    tenant = uuid4()
+
+    with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+        for doc_id, holder, secret in _ROWS:
+            await ctx.document.command(VAULT_SPEC).ensure(
+                doc_id, _SecretCreate(holder=holder, secret=secret)
+            )
+
+        query = ctx.document.query(VAULT_SPEC)
+
+        with pytest.raises(CoreException, match="no order at rest") as excinfo:
+            await query.find_many(sorts={"secret": "asc"})
+
+        assert excinfo.value.code == "core.crypto.encrypted_sort_field"
+
         page = await query.find_many(sorts={"holder": "asc"})
         assert [row.holder for row in page.hits] == sorted(h for _, h, _ in _ROWS)
 
