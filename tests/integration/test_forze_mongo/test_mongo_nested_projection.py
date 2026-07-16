@@ -7,6 +7,7 @@ the mock oracle and Postgres.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -101,7 +102,9 @@ async def test_project_root_subsumes_leaf(mongo_client: MongoClient) -> None:
 
     out = await query.project({"$values": {"title": "a"}}, ["meta", "meta.score"])
 
-    assert out == {"meta": {"score": 10, "tag": "x"}}
+    # Root projection returns the whole stored subdocument, including the Decimal
+    # default (stored as Decimal128, decoded back to Decimal on read).
+    assert out == {"meta": {"score": 10, "tag": "x", "price": Decimal("0")}}
 
 
 @pytest.mark.asyncio
