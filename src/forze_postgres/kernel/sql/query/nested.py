@@ -257,6 +257,13 @@ def resolve_leaf_python_type(
 # ....................... #
 
 
+def _is_plain_numeric_type(t: Any) -> bool:
+    return isinstance(t, type) and not issubclass(t, bool) and issubclass(t, (int, float, Decimal))
+
+
+# ....................... #
+
+
 def python_type_to_postgres_scalar(py_t: Any) -> PostgresType | None:
     """Map a Python type to a :class:`PostgresType` for JSON text extraction casts."""
 
@@ -269,6 +276,11 @@ def python_type_to_postgres_scalar(py_t: Any) -> PostgresType | None:
         non_none = [a for a in args if a is not type(None)]
         if len(non_none) == 1:
             return python_type_to_postgres_scalar(non_none[0])
+        if non_none and all(_is_plain_numeric_type(a) for a in non_none):
+            # A mixed numeric union (``Decimal | int``, ``int | float``) still orders
+            # numerically; ``numeric`` covers every member. Falling back to text would
+            # compare "9.5" > "10.5" lexically.
+            return PostgresType(base="numeric", is_array=False, not_null=True)
         return None
 
     if isinstance(py_t, type):

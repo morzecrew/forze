@@ -48,6 +48,7 @@ from ...catalog.introspect import PostgresColumnTypes, PostgresType
 from ..type_cast import cast_sql_for_column_type
 from .nested import (
     build_nested_json_scalar_expr,
+    python_type_to_postgres_scalar,
     resolve_leaf_python_type,
     sort_key_expr,
     walk_pydantic_path,
@@ -87,6 +88,16 @@ _COMPARE_COMPAT_BASE_GROUPS: tuple[frozenset[str], ...] = (
     frozenset({"float4", "float8", "numeric"}),
     frozenset({"timestamp", "timestamptz"}),
 )
+
+
+def _has_decimal_operand(op: str, value: Any) -> bool:
+    """Whether a scalar-element predicate carries a ``Decimal`` (directly or in its list)."""
+
+    if op in ("$in", "$nin") and isinstance(value, (list, tuple, set)):
+        return any(isinstance(v, Decimal) for v in value)  # pyright: ignore[reportUnknownVariableType]
+
+    return isinstance(value, Decimal)
+
 
 # ....................... #
 
@@ -1113,8 +1124,14 @@ class PsycopgQueryRenderer:
         elem_t = PostgresType(base=t.base, is_array=False, not_null=True) if t and t.is_array else t
 
         elem = sql.Identifier(self._elem_alias(depth))
+        # Anything not a native Postgres array iterates via ``jsonb_array_elements``, so
+        # the element is a jsonb value; a Decimal operand must extract-and-cast to
+        # compare numerically (stored decimals are JSON strings).
+        jsonb_elem = not (t is not None and t.is_array)
         parts = [
-            self._render_field(elem, f.op, f.value, t=elem_t)  # type: ignore[arg-type]
+            self._render_jsonb_scalar_numeric(elem, f.op, f.value)
+            if jsonb_elem and _has_decimal_operand(f.op, f.value)
+            else self._render_field(elem, f.op, f.value, t=elem_t)  # type: ignore[arg-type]
             for f in fields
         ]
 
@@ -1355,6 +1372,9 @@ class PsycopgQueryRenderer:
         element text with ``#>> '{}'`` first.
         """
 
+        if _has_decimal_operand(op, value):
+            return self._render_jsonb_scalar_numeric(elem, op, value)
+
         if op in ("$eq", "$neq"):
             sql_op = sql.SQL("=") if op == "$eq" else sql.SQL("IS DISTINCT FROM")
 
@@ -1394,6 +1414,59 @@ class PsycopgQueryRenderer:
 
     # ....................... #
 
+    def _render_jsonb_scalar_numeric(
+        self,
+        elem: sql.Composable,
+        op: str,
+        value: Any,
+    ) -> sql.Composable:
+        """Compare a ``jsonb`` scalar element to a ``Decimal`` operand numerically.
+
+        Stored decimals are JSON *strings* (see the jsonb write default) while other
+        writers may store JSON numbers; extracting the element text and casting
+        ``::numeric`` compares both exactly, where a jsonb-space ``to_jsonb`` comparison
+        would treat ``"10.5"`` and ``10.5`` as different JSON types and never match.
+        """
+
+        num_elem = sql.SQL("(({} #>> '{{}}')::numeric)").format(elem)
+        caster = self.coercer.caster
+
+        if op in ("$eq", "$neq"):
+            sql_op = sql.SQL("=") if op == "$eq" else sql.SQL("IS DISTINCT FROM")
+
+            return sql.SQL("{} {} {}").format(
+                num_elem,
+                sql_op,
+                self.binder.add(caster.as_decimal(value)),
+            )
+
+        if op in ("$gt", "$gte", "$lt", "$lte"):
+            ord_map = {"$gt": ">", "$gte": ">=", "$lt": "<", "$lte": "<="}
+
+            return sql.SQL("{} {} {}").format(
+                num_elem,
+                sql.SQL(ord_map[op]),  # pyright: ignore[reportArgumentType]
+                self.binder.add(caster.as_decimal(value)),
+            )
+
+        if op in ("$in", "$nin"):
+            values = list(value) if isinstance(value, (list, tuple, set)) else [value]  # type: ignore[arg-type]
+
+            if not values:
+                return sql.SQL("FALSE") if op == "$in" else sql.SQL("TRUE")
+
+            members = sql.SQL(", ").join(
+                self.binder.add(caster.as_decimal(v))
+                for v in values  # type: ignore[arg-type]
+            )
+            in_expr = sql.SQL("{} IN ({})").format(num_elem, members)
+
+            return in_expr if op == "$in" else sql.SQL("NOT ({})").format(in_expr)
+
+        raise exc.internal(f"Unsupported nested scalar element operator: {op!r}")
+
+    # ....................... #
+
     def _jsonb_bound(self, value: Any) -> sql.Composable:
         """Bind *value* and wrap as ``jsonb`` for element-space comparison.
 
@@ -1411,10 +1484,10 @@ class PsycopgQueryRenderer:
         elif isinstance(value, float):
             cast = "double precision"
 
-        elif isinstance(value, Decimal):
-            cast = "numeric"
-
         else:
+            # Decimal never lands here: stored decimals are JSON strings, so a
+            # ``to_jsonb`` comparison cannot represent them — those operands are
+            # routed through :meth:`_render_jsonb_scalar_numeric` instead.
             cast = "text"
 
         return sql.SQL("to_jsonb({}::{})").format(
@@ -1452,5 +1525,13 @@ class PsycopgQueryRenderer:
 
         if ann is str:
             return PostgresType(base="text", is_array=False, not_null=False)
+
+        pg = python_type_to_postgres_scalar(ann)
+
+        if pg is not None:
+            # Covers what the identity checks above cannot: subclasses and unions —
+            # notably ``Decimal`` and mixed numeric unions like ``Decimal | int``,
+            # which would otherwise fall back to lexical text comparison.
+            return PostgresType(base=pg.base, is_array=False, not_null=False)
 
         return None

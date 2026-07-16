@@ -284,6 +284,15 @@ def test_python_type_union_multi_returns_none() -> None:
     assert python_type_to_postgres_scalar(Union[int, str]) is None
 
 
+def test_python_type_mixed_numeric_union_maps_to_numeric() -> None:
+    assert python_type_to_postgres_scalar(Decimal | int).base == "numeric"
+    assert python_type_to_postgres_scalar(int | float).base == "numeric"
+    dec_float = python_type_to_postgres_scalar(Decimal | float | None)
+    assert dec_float is not None and dec_float.base == "numeric"
+    # bool is not a numeric member; a bool-bearing union keeps the text fallback.
+    assert python_type_to_postgres_scalar(bool | int) is None
+
+
 def test_python_type_scalars() -> None:
     assert python_type_to_postgres_scalar(UUID).base == "uuid"
     assert python_type_to_postgres_scalar(bool).base == "bool"

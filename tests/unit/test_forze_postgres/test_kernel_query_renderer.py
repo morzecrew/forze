@@ -462,6 +462,44 @@ class TestPsycopgQueryRenderer:
         assert b"numeric" in sql_out.as_bytes()
         assert params == [Decimal("10.50")]
 
+    def test_nested_json_mixed_numeric_union_leaf_casts_to_numeric(self) -> None:
+        class _Inner(BaseModel):
+            amount: Decimal | int
+
+        class _Outer(BaseModel):
+            meta: _Inner
+
+        types: PostgresColumnTypes = {"meta": _t("jsonb")}
+        r = PsycopgQueryRenderer(types=types, model_type=_Outer)
+        sql_out, params = r.render(QueryField("meta.amount", "$gt", Decimal("9.5")))
+        assert b"numeric" in sql_out.as_bytes()
+        assert params == [Decimal("9.5")]
+
+    def test_scalar_elem_decimal_compares_numerically_not_in_jsonb_space(self) -> None:
+        """A Decimal element operand extracts text and casts ::numeric — stored decimals
+        are JSON strings, so a ``to_jsonb`` comparison would never match them."""
+
+        r = PsycopgQueryRenderer(types={"prices": _t("jsonb")})
+        sql_out, params = r.render(
+            QueryElem("prices", "$any", QueryField(ELEM_SCALAR_FIELD, "$gte", Decimal("10.5"))),
+        )
+        s = sql_out.as_string(None)
+        assert "#>>" in s and "::numeric" in s
+        assert "to_jsonb" not in s
+        assert params == [Decimal("10.5")]
+
+        r2 = PsycopgQueryRenderer(types={"prices": _t("jsonb")})
+        sql_out, params = r2.render(
+            QueryElem(
+                "prices",
+                "$any",
+                QueryField(ELEM_SCALAR_FIELD, "$in", [Decimal("1.5"), 2]),
+            ),
+        )
+        s = sql_out.as_string(None)
+        assert "#>>" in s and "::numeric" in s
+        assert params == [Decimal("1.5"), Decimal("2")]
+
     def test_nested_field_hints_for_dict_leaf(self) -> None:
         class _Blob(BaseModel):
             data: dict[str, Any]
