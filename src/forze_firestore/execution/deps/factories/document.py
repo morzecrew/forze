@@ -117,6 +117,7 @@ class ConfigurableFirestoreReadOnlyDocument(DocumentQueryDepPort[R]):
             codec=codecs.read,
             read_validation=self.config.read_validation,
             lenient_read_fields=spec.resolved_lenient_read_fields,
+            sealed_fields=spec.encryption.sealed if spec.encryption else frozenset(),
         )
 
         after_commit: AfterCommitPort | None = None
@@ -190,6 +191,7 @@ class ConfigurableFirestoreDocument(DocumentCommandDepPort[R, D, C, U]):
             codec=codecs.read,
             read_validation=config.read_validation,
             lenient_read_fields=spec.resolved_lenient_read_fields,
+            sealed_fields=spec.encryption.sealed if spec.encryption else frozenset(),
         )
 
         history_relation = config.history

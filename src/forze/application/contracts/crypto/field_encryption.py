@@ -101,6 +101,19 @@ class FieldEncryption:
 
     # ....................... #
 
+    @property
+    def sealed(self) -> frozenset[str]:
+        """Every field whose stored value is ciphertext — both halves of the policy.
+
+        The set a backend hands to the query seam so sealed fields are refused as sort keys
+        (see :meth:`forbidden_sort_fields` for the why). Both halves, because a *randomized*
+        value has no order at all and a *deterministic* one preserves equality but not order.
+        """
+
+        return self.encrypted | self.searchable
+
+    # ....................... #
+
     def validate_fields_exist(self, stored_fields: frozenset[str], *, spec_name: object) -> None:
         """Reject a sealed field name absent from *stored_fields* (a typo footgun).
 

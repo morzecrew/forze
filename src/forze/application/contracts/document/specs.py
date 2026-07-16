@@ -208,6 +208,11 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                 spec_name=str(self.name),
                 model=self.read,
                 client_facing=False,
+                # A default_sort naming a sealed field is the author's error, catchable at the
+                # earliest point — the same guard SearchSpec already applies to its own.
+                sealed=frozenset(
+                    self.encryption.sealed_fields_in(self.default_sort) if self.encryption else ()
+                ),
             )
 
         if self.query_policy is not None:

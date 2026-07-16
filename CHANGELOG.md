@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Portability** — `forze_kits.integrations.portability`: carry an application's system-of-record state to any other wired backend.
+
+- `export_archive(runtime, dest, *, scope=…)` / `import_archive(runtime, src, *, on_conflict="skip"|"fail")` — a backend-agnostic archive (JSONL + plain `manifest.json`) covering the **document, blob, graph and counter** planes. Ids and — when the aggregate's `create_cmd` subclasses `ImportTimestamps` — timestamps are preserved; `rev` resets to 1; blobs land back at their original key. Import is fail-closed: format version, registry fingerprint and every checksum are verified before a row is decoded.
+- `migrate(source_runtime, target_runtime, *, scope=…)` — the same pipelines fused ports-to-ports: **no artifact and no plaintext at rest**. The recommended path for a backend migration, and the escape from a bricked KEK (the target re-seals every field under its own keys).
+- **Scopes:** `TenantScope(tenant_id)` and `FullScope(quiesce=report)`; a full export embeds its quiesce attestation and refuses to stamp `consistency: "quiesced"` from an unattested report (`allow_fuzzy=True` opts into a `fuzzy` artifact). A **per-tenant export excludes identity/credential specs by default** — `include_identity=True` opts in, a full-system export always carries them, and the manifest records `identity_included`.
+- **At rest:** the artifact is plaintext by construction — treat the directory as credential-adjacent, or pass `sealer=ArchiveSealer(kms=…, key_ref=…)` to seal it (one KMS-wrapped per-archive data key over every file and blob; import fails closed without it). `compression=` takes `gzip` (default) | `zstd` (needs the `forze[zstd]` extra, fails closed without it) | `none`.
+- **New public:** `ArchiveExporter` / `ArchiveImporter` / `ArchiveMigrator`, `ExportReport` / `ImportReport` / `MigrateReport`, `Document` / `Storage` / `Graph` / `Counter` `Export`+`Import`, `TenantScope` / `FullScope`, `ArchiveSealer` / `ArchiveEncryption`, `Manifest` / `ArchiveFile` / `ScopeManifest` / `FORMAT_VERSION`, `OnConflict`, `run_export_import_roundtrip` + `PORTABILITY_DIVERGENCES` (the trust harness); and a non-breaking `ExportedEdge` / `GraphEdgeExportAware` on the graph contract, since `find_edges_stream` drops the endpoints an edge needs to be re-created.
+
 **Export foundations** — make an application's state surface enumerable, quiescible and streamable, so a portable export can refuse rather than ship an artifact that looks complete and is not. Each piece is independently useful.
 
 - **Spec inventory** — `forze.application.contracts.inventory` catalogs every spec an app binds: `SpecRegistry.register(*specs)` infers each one's plane and disposition (`exportable` / `rebuildable` / `drained` / `refused`) from its type, and `build_runtime(specs=…)` reconciles it against the wired dependencies at construction — a spec catalogued but never bound, or a route bound but never catalogued, fails assembly (`allow_unregistered=True` downgrades the latter to a warning). Fed by `forze_identity.spec_contributions()` (the 19 document specs the identity plane binds on an app's behalf) and `AggregateKit.spec_contributions()` (including the outbox, queue and inbox a `search_delivery` mints, and the search→document `REBUILDS_FROM` edge).
@@ -46,6 +54,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`OutboxEmit` rejects a relay with no destination** — a `RelayBinding` whose `transport` names a spec it was never given raises `precondition` at construction instead of quietly dropping that route from the inventory.
 
 ### Fixed
+
+**Object storage `upload_stream` dropped its tags** — a streamed upload computed the tag map and never wrote it (multipart completion carries no tagging, and unlike `overwrite_stream` there was no follow-up `PutObjectTagging`), so the returned `StoredObject` reported tags the object never actually got. It now applies them after completion. Hidden because the mock stored the tags in memory; only a real S3 `head` revealed the gap. Surfaced by a real-S3 blob export/import round-trip.
+
+**Sealed fields are refused as filter and sort keys on every backend, including the mock** — a field-encrypted column has no usable equality or order at rest, and the rules are now enforced from the spec's *declaration* rather than only where a keyring happens to be wired.
+
+- **Filter** on a randomized (`encrypted`) field raises `core.crypto.encrypted_field_not_filterable`; deterministic (`searchable`) fields keep equality, still rewritten to match the value at rest.
+- **Sort** on any sealed field (`encrypted` *or* `searchable` — deterministic encryption preserves equality, never order) raises `core.crypto.encrypted_sort_field`, at every sort seam and at spec construction for a `default_sort`. It previously ordered by **ciphertext, silently**, and a keyset cursor carried the field's raw sort value in its token.
+
+New public: `FieldEncryption.sealed`. **Breaking:** such filters and sorts now raise instead of silently matching nothing, mis-ordering, or (against the mock) appearing to work.
+
+**Mock storage `overwrite_stream` now creates a missing object (unconditional)** — it raised `not_found` for any key that did not already exist, contradicting the port contract (an unconditional overwrite recreates a missing target) and the real S3/GCS adapters (a `PUT` creates-or-replaces). It now creates-or-replaces when `if_match` is unset, and still answers `not_found` for a *conditional* overwrite of a vanished object. Surfaced by importing a portable archive's blobs into a fresh mock, where nothing exists to overwrite yet.
+
+**Mongo could not store a document with a `UUID` or `Decimal` field** — only the primary key was handled; any *other* `UUID` field hit pymongo's `UuidRepresentation.UNSPECIFIED` (which refuses a raw UUID) and a `Decimal` field had no BSON encoding at all, so such a document could be *updated* but never *created*. The write coercion that already stringified UUIDs for filters and `$set` updates now also applies on insert and converts `Decimal` to `Decimal128` (exact); reads convert `Decimal128` back to `Decimal`. Hidden until now because every Mongo document test used `str`/`int`-only fields.
 
 **JSON-boundary encoding** — a codec's default `mode="python"` keeps `UUID` / `datetime` / `Decimal` as Python objects, which is right for a driver that binds them natively (psycopg, PyMongo, clickhouse-connect) and impossible for anything that hands the map to a JSON serializer. Four adapters were on the wrong side and could not carry the ordinary contents of an event or a row. `ModelCodec.encode_mapping` now documents the rule at the seam; `encode_ingest_payloads` takes `mode` from its caller, and Postgres and ClickHouse keep the Python encode on purpose.
 

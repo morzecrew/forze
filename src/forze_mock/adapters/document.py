@@ -115,6 +115,18 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     # ....................... #
 
+    def _sealed_fields(self) -> frozenset[str]:
+        """Fields the spec declares as ciphertext at rest.
+
+        The mock stores plaintext, so it could happily sort/filter these — while the same query
+        against a real backend orders by ciphertext or matches nothing. Threading the declaration
+        into the shared validators keeps the *policy* identical on both.
+        """
+
+        return self.spec.encryption.sealed if self.spec.encryption else frozenset()
+
+    # ....................... #
+
     def _require_params_bound(self) -> None:
         """Fail closed when the spec needs query parameters but none were bound."""
 
@@ -450,6 +462,11 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             model=self.read_model,
             materialized=self.spec.materialized,
             lenient=self.spec.resolved_lenient_read_fields,
+            # The mock stores plaintext (it is a dict, not a disk), so nothing here would stop a
+            # filter on a sealed field from matching — while the same query against a real backend
+            # cannot match its ciphertext. Passing the declaration keeps the *policy* identical on
+            # both, so a query that fails in production fails in the test suite too.
+            encrypted=self.spec.encryption.encrypted if self.spec.encryption else frozenset(),
         )
         expr = QueryFilterExpressionParser.parse(filters)
         validate_query_field_types(expr, self.read_model)
@@ -710,6 +727,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 backend="mock",
                 materialized=self.spec.materialized,
                 lenient=self.spec.resolved_lenient_read_fields,
+                sealed=self._sealed_fields(),
             )
             total = len(filtered)
             page_docs = _page_window(_sort_docs(filtered, sorts))
@@ -1149,7 +1167,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             model=self.read_model,
         )
         normalized = normalize_sorts_for_keyset(
-            effective, read_fields=read_fields, model=self.read_model
+            effective, read_fields=read_fields, model=self.read_model, sealed=self._sealed_fields()
         )
         sort_keys = [k for k, _, _ in normalized]
         directions = [d for _, d, _ in normalized]

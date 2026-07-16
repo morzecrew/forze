@@ -126,6 +126,11 @@ class PostgresGateway[M: BaseModel](
     """Read-model fields not stored on this relation; excluded from the read
     projection and decode bounds (see ``DocumentSpec.lenient_read_fields``)."""
 
+    sealed_fields: frozenset[str] = attrs.field(factory=frozenset)
+    """Fields stored as ciphertext (``FieldEncryption.encrypted | .searchable``). They have
+    no usable order at rest, so they are refused as sort keys — ``ORDER BY`` on one silently
+    returns ciphertext order, and a keyset cursor would carry the raw value in its token."""
+
     write_omit_fields: frozenset[str] = attrs.field(factory=frozenset)
     """Domain fields not stored on this relation; stripped from every write payload
     (see ``DocumentSpec.write_omit_fields``). A write gateway also sets these as
@@ -328,7 +333,7 @@ class PostgresGateway[M: BaseModel](
         alias = self.filter_table_alias if table_alias is None else table_alias
         parts: list[sql.Composable] = []
 
-        for field, direction, nulls in resolve_sort_keys(sorts):
+        for field, direction, nulls in resolve_sort_keys(sorts, sealed=self.sealed_fields):
             if field.split(".", 1)[0] in self.lenient_read_fields:
                 raise exc.precondition(
                     f"Sort field {field!r} is a lenient (non-stored) read field; "

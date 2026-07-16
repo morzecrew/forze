@@ -757,6 +757,12 @@ class ObjectStorageAdapter(
                     )
                 raise
 
+            # Multipart completion carries no tagging, so — like ``overwrite_stream`` — the tags
+            # are applied in a follow-up call, or a streamed upload would silently drop them (the
+            # returned StoredObject would claim tags the object never actually got).
+            if tag_map:
+                await self.client.put_object_tags(bucket, key, tag_map)
+
         return StoredObject(
             key=key,
             filename=filename,

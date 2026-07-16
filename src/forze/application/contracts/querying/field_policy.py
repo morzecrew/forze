@@ -110,6 +110,7 @@ def validate_runtime_filter_fields(
     model: type[BaseModel],
     materialized: frozenset[str] = frozenset(),
     lenient: frozenset[str] = frozenset(),
+    encrypted: frozenset[str] = frozenset(),
 ) -> None:
     """Raise when a runtime filter references a top-level field absent from *model*.
 
@@ -124,18 +125,41 @@ def validate_runtime_filter_fields(
     fields that are declared on the model but **not** stored (see
     ``DocumentSpec.lenient_read_fields``); they have no column/key and are rejected
     before reaching the backend.
+
+    *encrypted* names the spec's **randomized**-encrypted fields
+    (``FieldEncryption.encrypted``); a predicate on one could never match its
+    non-deterministic ciphertext, so it is refused here. This is a *policy* check —
+    it reads the declaration, not the data — which is what lets it fire on a backend
+    that stores plaintext (the mock) exactly as it fires on one that stores
+    ciphertext. An encrypting codec raises the same code from its filter-rewrite
+    path; this catches it earlier and on every backend, so a query that cannot work
+    in production cannot pass against a mock either. Deterministic
+    (``searchable``) fields are *not* included: equality on them is rewritten to
+    match the value at rest, and remains supported.
     """
 
     if filters is None:
         return
 
     fields = (frozenset(model.model_fields) | materialized) - lenient
-    unknown = sorted(root for root in collect_filter_field_roots(filters) if root not in fields)
+    roots = collect_filter_field_roots(filters)
+    unknown = sorted(root for root in roots if root not in fields)
 
     if unknown:
         raise exc.precondition(
             f"Filter field(s) {unknown} are not on the read model ({model.__name__}).",
             code="field_not_on_read_model",
+        )
+
+    sealed = sorted(roots & encrypted)
+
+    if sealed:
+        raise exc.precondition(
+            f"Cannot filter on randomized-encrypted field(s) {sealed}: the stored "
+            "ciphertext is non-deterministic, so the predicate would never match. "
+            "Mark the field searchable (deterministic) to query it by equality, or "
+            "filter on a plaintext field.",
+            code="core.crypto.encrypted_field_not_filterable",
         )
 
 

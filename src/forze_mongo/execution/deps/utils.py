@@ -31,6 +31,7 @@ def read_gw(
     read_validation: Literal["strict", "trusted"] = "strict",
     computed_null_ordering: bool = False,
     lenient_read_fields: frozenset[str] = frozenset(),
+    sealed_fields: frozenset[str] = frozenset(),
 ) -> MongoReadGateway[Any]:
     """Build a read gateway for a source and model."""
     client = ctx.deps.provide(MongoClientDepKey)
@@ -47,6 +48,7 @@ def read_gw(
         read_validation=read_validation,
         computed_null_ordering=computed_null_ordering,
         lenient_read_fields=lenient_read_fields,
+        sealed_fields=sealed_fields,
     )
 
 

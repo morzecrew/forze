@@ -664,6 +664,7 @@ class MongoReadGateway[M: BaseModel](
             sorts,
             read_fields=self.read_fields,
             model=self.model_type,
+            sealed=self.sealed_fields,
         )
 
         if [k for k, _, _ in normalized] != [ID_FIELD] or len(normalized) != 1:

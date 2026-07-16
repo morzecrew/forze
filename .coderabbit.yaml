@@ -8,3 +8,6 @@ reviews:
   slop_detection:
     enabled: true
     label: slop
+
+  path_filters:
+    - "src/**"

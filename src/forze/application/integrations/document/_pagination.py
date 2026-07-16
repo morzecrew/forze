@@ -84,6 +84,20 @@ class DocumentPaginationMixin(Generic[R]):
         sorts: QuerySortExpression | None,
     ) -> QuerySortExpression: ...
 
+    # ....................... #
+
+    @property
+    def _sealed_fields(self) -> frozenset[str]:
+        """The read gateway's ciphertext-at-rest fields, refused as cursor sort keys.
+
+        Read off the gateway rather than declared on the port: ``DocumentReadGatewayPort`` is a
+        published protocol, and a third-party gateway that predates the field would otherwise stop
+        satisfying it. Same duck-typed shape the persistence gateway mixins use for
+        ``lenient_read_fields``; a gateway without one simply seals nothing.
+        """
+
+        return getattr(self.read_gw, "sealed_fields", frozenset())
+
     async def _offset_page(
         self,
         query: OffsetQuery,
@@ -206,6 +220,7 @@ class DocumentPaginationMixin(Generic[R]):
             effective,
             read_fields=self._read_fields,
             model=self.read_gw.model_type,
+            sealed=self._sealed_fields,
         )
 
         sort_keys = [k for k, _, _ in normalized]
