@@ -261,3 +261,55 @@ class TestValidateRuntimeFilterFields:
 
         # without the lenient marker the same filter passes (field is on the model)
         validate_runtime_filter_fields({"$values": {"nickname": "x"}}, model=_Doc)
+
+    def test_randomized_encrypted_field_is_rejected(self) -> None:
+        """A predicate on a randomized-encrypted field can never match its non-deterministic
+        ciphertext. Refusing it here — from the *declaration*, before any cipher is involved —
+        is what makes a backend that stores plaintext (the mock) answer exactly as one that
+        stores ciphertext, instead of green-lighting a query that fails in production."""
+
+        from pydantic import BaseModel
+
+        from forze.application.contracts.querying import validate_runtime_filter_fields
+
+        class _Doc(BaseModel):
+            id: str
+            email: str
+            secret: str
+
+        with pytest.raises(CoreException, match="randomized-encrypted") as ei:
+            validate_runtime_filter_fields(
+                {"$values": {"secret": "x"}},
+                model=_Doc,
+                encrypted=frozenset({"secret"}),
+            )
+        # The same code an EncryptingModelCodec raises from its rewrite path: one rule, one code,
+        # whichever layer catches it first.
+        assert ei.value.code == "core.crypto.encrypted_field_not_filterable"
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+
+        # A plaintext field on the same spec stays filterable.
+        validate_runtime_filter_fields(
+            {"$values": {"email": "x"}}, model=_Doc, encrypted=frozenset({"secret"})
+        )
+
+        # Without the declaration the field is just a field — the guard reads policy, not data.
+        validate_runtime_filter_fields({"$values": {"secret": "x"}}, model=_Doc)
+
+    def test_searchable_deterministic_field_stays_filterable(self) -> None:
+        """Only ``encrypted`` (randomized) is refused. Deterministic ``searchable`` fields keep
+        equality — the codec rewrites the literal to match the value at rest — so they must not
+        be swept up by the guard."""
+
+        from pydantic import BaseModel
+
+        from forze.application.contracts.querying import validate_runtime_filter_fields
+
+        class _Doc(BaseModel):
+            id: str
+            email: str
+
+        # ``email`` is searchable, not randomized: it is never passed in ``encrypted``.
+        validate_runtime_filter_fields(
+            {"$values": {"email": "x"}}, model=_Doc, encrypted=frozenset()
+        )

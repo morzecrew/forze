@@ -450,6 +450,11 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             model=self.read_model,
             materialized=self.spec.materialized,
             lenient=self.spec.resolved_lenient_read_fields,
+            # The mock stores plaintext (it is a dict, not a disk), so nothing here would stop a
+            # filter on a sealed field from matching — while the same query against a real backend
+            # cannot match its ciphertext. Passing the declaration keeps the *policy* identical on
+            # both, so a query that fails in production fails in the test suite too.
+            encrypted=self.spec.encryption.encrypted if self.spec.encryption else frozenset(),
         )
         expr = QueryFilterExpressionParser.parse(filters)
         validate_query_field_types(expr, self.read_model)
