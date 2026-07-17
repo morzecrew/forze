@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from decimal import Decimal
+
 import pytest
 from pydantic import BaseModel
 
@@ -202,6 +205,157 @@ async def test_filter_comparison_and_null(meilisearch_client) -> None:
         pagination={"offset": 0, "limit": 10},
     )
     assert page.count >= 1
+
+
+class PricedProduct(BaseModel):
+    id: str
+    title: str
+    price: Decimal = Decimal("0")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_decimal_field_filters_and_sorts_numerically(meilisearch_client) -> None:
+    """Decimal fields index as JSON numbers — Decimal filter values range/equal correctly
+    and sort numerically (9.5 < 10.5 < 100.25; a string index would sort lexically and
+    range-filter to nothing), then round-trip back into the Decimal read field."""
+
+    index_uid = "products_decimal_it"
+    spec = SearchSpec(
+        name="products",
+        model_type=PricedProduct,
+        fields=["title"],
+    )
+    cfg = MeilisearchSearchConfig(
+        index_uid=index_uid,
+        filterable_attributes=["price"],
+        sortable_attributes=["price"],
+    )
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MeilisearchClientDepKey: meilisearch_client,
+                SearchQueryDepKey: ConfigurableMeilisearchSearch(config=cfg),
+                SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(config=cfg),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(
+                    config=cfg,
+                ),
+            },
+        ),
+    )
+
+    cmd = ctx.search.command(spec)
+    mgmt = ctx.search.management(spec)
+    await mgmt.ensure_index()
+    await mgmt.delete_all()
+    await cmd.upsert(
+        [
+            PricedProduct(id="1", title="Apple cheap", price=Decimal("9.5")),
+            PricedProduct(id="2", title="Apple mid", price=Decimal("10.5")),
+            PricedProduct(id="3", title="Apple dear", price=Decimal("100.25")),
+        ],
+    )
+
+    query = ctx.search.query(spec)
+
+    page = await query.search_page(
+        "apple",
+        filters={"$values": {"price": {"$lt": Decimal("10.5")}}},
+        pagination={"offset": 0, "limit": 10},
+    )
+    assert page.count == 1
+    assert page.hits[0].id == "1"
+    assert page.hits[0].price == Decimal("9.5")
+
+    page = await query.search_page(
+        "apple",
+        filters={"$values": {"price": {"$eq": Decimal("10.5")}}},
+        pagination={"offset": 0, "limit": 10},
+    )
+    assert page.count == 1 and page.hits[0].id == "2"
+
+    page = await query.search_page(
+        "apple",
+        sorts={"price": "asc"},
+        pagination={"offset": 0, "limit": 10},
+    )
+    assert [h.id for h in page.hits] == ["1", "2", "3"]
+
+
+class StampedNote(BaseModel):
+    id: str
+    title: str
+    created_at: datetime
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_datetime_filter_matches_indexed_utc_representation(
+    meilisearch_client,
+) -> None:
+    """A UTC datetime indexes as ``…Z`` (json-mode dump); the filter literal renders the
+    same form, so ``$eq`` matches and range boundaries compare consistently — the
+    ``isoformat`` ``+00:00`` form was a different string and silently matched nothing."""
+
+    index_uid = "notes_datetime_it"
+    spec = SearchSpec(
+        name="notes",
+        model_type=StampedNote,
+        fields=["title"],
+    )
+    cfg = MeilisearchSearchConfig(
+        index_uid=index_uid,
+        filterable_attributes=["created_at"],
+    )
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MeilisearchClientDepKey: meilisearch_client,
+                SearchQueryDepKey: ConfigurableMeilisearchSearch(config=cfg),
+                SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(config=cfg),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(
+                    config=cfg,
+                ),
+            },
+        ),
+    )
+
+    cmd = ctx.search.command(spec)
+    mgmt = ctx.search.management(spec)
+    await mgmt.ensure_index()
+    await mgmt.delete_all()
+
+    from datetime import timedelta, timezone
+
+    early = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
+    late = datetime(2024, 6, 2, 3, 4, 5, tzinfo=UTC)
+    # Same instant as ``early`` expressed at +03:00 — indexing normalizes it to UTC-Z,
+    # so a UTC operand still finds it.
+    offset_stamp = datetime(2024, 1, 2, 6, 4, 5, tzinfo=timezone(timedelta(hours=3)))
+    await cmd.upsert(
+        [
+            StampedNote(id="1", title="Apple early", created_at=early),
+            StampedNote(id="2", title="Apple late", created_at=late),
+            StampedNote(id="3", title="Apple offset", created_at=offset_stamp),
+        ],
+    )
+
+    query = ctx.search.query(spec)
+
+    page = await query.search_page(
+        "apple",
+        filters={"$values": {"created_at": {"$eq": early}}},
+        pagination={"offset": 0, "limit": 10},
+    )
+    assert page.count == 2
+    assert {h.id for h in page.hits} == {"1", "3"}
+
+    page = await query.search_page(
+        "apple",
+        filters={"$values": {"created_at": {"$gte": datetime(2024, 3, 1, tzinfo=UTC)}}},
+        pagination={"offset": 0, "limit": 10},
+    )
+    assert page.count == 1 and page.hits[0].id == "2"
 
 
 class Note(BaseModel):
