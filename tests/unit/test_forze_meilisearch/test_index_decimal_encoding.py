@@ -232,7 +232,8 @@ def test_set_members_convert_by_value_not_position() -> None:
 
     twin: set[Any] = {Decimal("9.5"), "9.5"}
     out = _canonicalize_leaves(twin, ["9.5", "9.5"])
-    assert sorted(out, key=str) == sorted([9.5, "9.5"], key=str)
+    # Exactly one element converts (the Decimal's claim); which slot is arbitrary.
+    assert sorted(map(repr, out)) == sorted(map(repr, [9.5, "9.5"]))
 
     stamps = {datetime(2024, 1, 2, 6, 4, 5, tzinfo=timezone(timedelta(hours=3)))}
     out = _canonicalize_leaves(stamps, ["2024-01-02T06:04:05+03:00"])
@@ -242,3 +243,87 @@ def test_set_members_convert_by_value_not_position() -> None:
 def test_structural_mismatch_keeps_dumped_value() -> None:
     assert _canonicalize_leaves([Decimal("1.5")], ["1.5", "2.5"]) == ["1.5", "2.5"]
     assert _canonicalize_leaves(None, "x") == "x"
+
+
+def test_compound_set_members_convert_inner_leaves() -> None:
+    """A tuple (or nested frozenset) inside a set pairs by its json twin and recurses,
+    so its Decimal leaves index as numbers too; unmirrorable members stay as dumped."""
+
+    class _Pair(BaseModel):
+        id: str
+        pairs: set[tuple[str, Decimal]] = set()
+
+    gw = _gateway(_Pair)
+    doc = gw.to_index_document(
+        _Pair(id="a", pairs={("x", Decimal("9.5")), ("y", Decimal("10.5"))}),
+    )
+    assert sorted(doc["pairs"]) == [["x", 9.5], ["y", 10.5]]
+
+    nested = _canonicalize_leaves(
+        {frozenset({Decimal("1.5")})},
+        [["1.5"]],
+    )
+    assert nested == [[1.5]]
+
+    class _FrozenMember(BaseModel):
+        model_config = {"frozen": True}
+        v: Decimal
+
+    unmirrorable = _canonicalize_leaves({_FrozenMember(v=Decimal("1.5"))}, [{"v": "1.5"}])
+    assert unmirrorable == [{"v": "1.5"}]
+
+
+def test_int_keyed_mapping_decimals_convert() -> None:
+    """json-mode stringifies mapping keys; entries pair positionally by insertion
+    order, so ``dict[int, Decimal]`` leaves still index as numbers."""
+
+    class _ByLevel(BaseModel):
+        id: str
+        by_level: dict[int, Decimal] = {}
+
+    gw = _gateway(_ByLevel)
+    doc = gw.to_index_document(
+        _ByLevel(id="a", by_level={1: Decimal("9.5"), 2: Decimal("10.5")}),
+    )
+    assert doc["by_level"] == {"1": 9.5, "2": 10.5}
+
+
+def test_colliding_mapping_keys_keep_dumped_values() -> None:
+    """A source mapping whose keys collide under stringification (1 alongside "1")
+    cannot be paired safely — the dumped values are kept untouched."""
+
+    out = _canonicalize_leaves(
+        {1: Decimal("1.5"), "1": Decimal("2.5")},
+        {"1": "2.5"},
+    )
+    assert out == {"1": "2.5"}
+
+
+def test_decimal_valued_plain_enum_indexes_as_number() -> None:
+    """A non-mixin enum dumps as its value; a Decimal-valued one must index numerically
+    to match the numeric literal ``format_literal`` renders for it."""
+
+    from enum import Enum
+
+    class _Tier(Enum):
+        basic = Decimal("9.5")
+        pro = Decimal("99.5")
+
+    class _Plan(BaseModel):
+        id: str
+        tier: _Tier
+
+    assert _model_may_hold_canonical_leaf(_Plan) is True
+
+    gw = _gateway(_Plan)
+    doc = gw.to_index_document(_Plan(id="a", tier=_Tier.basic))
+    assert doc["tier"] == 9.5 and isinstance(doc["tier"], float)
+
+    class _Color(Enum):
+        red = "red"
+
+    class _Tag(BaseModel):
+        id: str
+        color: _Color
+
+    assert _model_may_hold_canonical_leaf(_Tag) is False

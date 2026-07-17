@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 from functools import cache
 from types import UnionType
 from typing import TYPE_CHECKING, Annotated, Any, Union, cast, get_args, get_origin
+from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
@@ -80,6 +83,11 @@ def _ann_may_hold_canonical_leaf(ann: Any, seen: set[type]) -> bool:
     if issubclass(ann, _CANONICAL_LEAF_TYPES):
         return True
 
+    if issubclass(ann, Enum):
+        # A plain (non-mixin) enum dumps as its *value* — canonical only when a member
+        # holds a canonical leaf (e.g. a Decimal-valued enum).
+        return any(isinstance(m.value, _CANONICAL_LEAF_TYPES) for m in ann)
+
     if issubclass(ann, BaseModel):
         if ann in seen:
             return False
@@ -124,35 +132,82 @@ def _pydantic_json_datetime(value: datetime) -> str:
     return value.isoformat().replace("+00:00", "Z")
 
 
+_UNMATCHABLE = object()
+
+
+def _pydantic_json_twin(value: Any) -> Any:
+    """Best-effort mirror of the json-mode dump of a hashable set member.
+
+    Used only to *pair* a set member with the dumped element it serialized to;
+    ``_UNMATCHABLE`` marks types the mirror cannot reproduce (model instances, custom
+    scalars) — those members keep their dumped form.
+    """
+
+    if value is None or isinstance(value, bool):
+        return value
+
+    if isinstance(value, Enum):
+        return _pydantic_json_twin(value.value)
+
+    if isinstance(value, Decimal):
+        return str(value)
+
+    if isinstance(value, datetime):
+        return _pydantic_json_datetime(value)
+
+    if isinstance(value, date):
+        return value.isoformat()
+
+    if isinstance(value, UUID):
+        return str(value)
+
+    if isinstance(value, (int, float, str)):
+        return value
+
+    if isinstance(value, (tuple, frozenset, set)):
+        twins = [_pydantic_json_twin(x) for x in value]  # pyright: ignore[reportUnknownVariableType]
+
+        return _UNMATCHABLE if any(t is _UNMATCHABLE for t in twins) else twins
+
+    return _UNMATCHABLE
+
+
+def _match_key(twin: Any) -> str | None:
+    """Hashable pairing key for a json-form value, or ``None`` when it has none."""
+
+    if twin is _UNMATCHABLE:
+        return None
+
+    try:
+        return json.dumps(twin, sort_keys=True)
+    except (TypeError, ValueError):
+        return None
+
+
 def _canonicalize_unordered(source: set[Any] | frozenset[Any], dumped: list[Any]) -> list[Any]:
     """Canonicalize a set's dump by *value* — set iteration order cannot pair positionally.
 
-    Each Decimal / datetime member claims (at most once) the dumped string it serialized
-    to; everything else, including any member the budget already spent, stays as dumped —
-    so a plain-``str`` member equal to a Decimal's text is never converted twice.
+    Each member claims (at most once) the dumped element it serialized to, keyed by its
+    json-form twin, and the matched pair recurses through the ordinary walk — so compound
+    members (a tuple holding a Decimal, a nested frozenset) canonicalize their inner
+    leaves too. Unmatched elements, and members the twin cannot mirror, stay as dumped.
     """
 
-    replacements: dict[str, list[Any]] = {}
+    buckets: dict[str, list[Any]] = {}
 
     for member in source:
-        if isinstance(member, Decimal):
-            number = _decimal_number(member)
+        key = _match_key(_pydantic_json_twin(member))
 
-            if number is not None:
-                replacements.setdefault(str(member), []).append(number)
-
-        elif isinstance(member, datetime):
-            replacements.setdefault(
-                _pydantic_json_datetime(member),
-                [],
-            ).append(_datetime_text(member))
+        if key is not None:
+            buckets.setdefault(key, []).append(member)
 
     out: list[Any] = []
 
     for item in dumped:
-        pending = replacements.get(item) if isinstance(item, str) else None
+        key = _match_key(item)
+        queue = buckets.get(key) if key is not None else None
 
-        out.append(pending.pop() if pending else item)
+        out.append(_canonicalize_leaves(queue.pop(), item) if queue else item)
 
     return out
 
@@ -169,6 +224,11 @@ def _canonicalize_leaves(source: Any, dumped: Any) -> Any:
     Any structural mismatch keeps the json-mode value as-is.
     """
 
+    if isinstance(source, Enum):
+        # A plain Enum's json form is its *value* (a Decimal-valued enum dumps as the
+        # decimal's string); canonicalize through the value, mirroring format_literal.
+        return _canonicalize_leaves(source.value, dumped)
+
     if isinstance(source, Decimal):
         number = _decimal_number(source)
 
@@ -178,10 +238,24 @@ def _canonicalize_leaves(source: Any, dumped: Any) -> Any:
         return _datetime_text(source)
 
     if isinstance(source, dict) and isinstance(dumped, dict):
-        return {
-            k: _canonicalize_leaves(source[k], v) if k in source else v
-            for k, v in dumped.items()  # pyright: ignore[reportUnknownVariableType]
-        }
+        source_map = cast(dict[Any, Any], source)  # type: ignore[redundant-cast]
+        dumped_map = cast(dict[Any, Any], dumped)  # type: ignore[redundant-cast]
+
+        if len(source_map) != len(dumped_map):
+            # Keys collided under json stringification (e.g. 1 alongside "1") —
+            # pairing would be a guess, so keep the dumped values.
+            return dumped  # pyright: ignore[reportUnknownVariableType]
+
+        # The json-mode dump stringifies mapping keys (``1`` → ``"1"``) but preserves
+        # the same insertion order as the python-mode dump of the same mapping, so pair
+        # entries positionally, guarded per-entry by key correspondence.
+        out: dict[Any, Any] = {}
+
+        for (sk, sv), (dk, dv) in zip(source_map.items(), dumped_map.items(), strict=True):
+            corresponds = sk == dk or (isinstance(dk, str) and str(sk) == dk)
+            out[dk] = _canonicalize_leaves(sv, dv) if corresponds else dv
+
+        return out
 
     if isinstance(source, (set, frozenset)) and isinstance(dumped, list):
         return _canonicalize_unordered(source, dumped)  # pyright: ignore[reportUnknownArgumentType]
