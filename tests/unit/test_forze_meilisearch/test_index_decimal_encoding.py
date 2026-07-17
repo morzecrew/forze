@@ -14,8 +14,12 @@ from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.search import SearchSpec
 from forze_meilisearch.adapters.search.base import (
     MeilisearchSearchGateway,
+    _UNMATCHABLE,
+    _ann_may_hold_canonical_leaf,
     _canonicalize_leaves,
+    _match_key,
     _model_may_hold_canonical_leaf,
+    _pydantic_json_twin,
 )
 from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
 
@@ -132,6 +136,43 @@ def test_may_hold_leaf_scan_is_conservative_for_unknowable_annotations() -> None
     doc = gw.to_index_document(_AnyPayload(id="a", payload={"amount": Decimal("2.5")}))
 
     assert doc["payload"] == {"amount": 2.5}
+
+
+def test_ann_scan_branches_direct() -> None:
+    """The branches a model-level scan short-circuits past: pydantic strips
+    ``Annotated`` from field annotations and ``any()`` stops at the first hit."""
+
+    from uuid import UUID
+
+    assert _ann_may_hold_canonical_leaf(Annotated[Decimal, "meta"], set()) is True
+    assert _ann_may_hold_canonical_leaf(Annotated[int, "meta"], set()) is False
+    assert _ann_may_hold_canonical_leaf(Decimal | None, set()) is True
+    assert _ann_may_hold_canonical_leaf(int | str, set()) is False
+    assert _ann_may_hold_canonical_leaf("not-a-type", set()) is True  # unknowable
+    assert _ann_may_hold_canonical_leaf(UUID, set()) is False
+
+
+def test_json_twin_scalar_forms() -> None:
+    from datetime import date
+    from enum import Enum
+    from uuid import UUID
+
+    class _Tier(Enum):
+        basic = Decimal("9.5")
+
+    assert _pydantic_json_twin(None) is None
+    assert _pydantic_json_twin(True) is True
+    assert _pydantic_json_twin(date(2024, 1, 2)) == "2024-01-02"
+    uid = UUID("00000000-0000-0000-0000-000000000001")
+    assert _pydantic_json_twin(uid) == str(uid)
+    assert _pydantic_json_twin(_Tier.basic) == "9.5"
+    assert _pydantic_json_twin(object()) is _UNMATCHABLE
+    assert _pydantic_json_twin((1, object())) is _UNMATCHABLE
+
+
+def test_match_key_unserializable_returns_none() -> None:
+    assert _match_key(_UNMATCHABLE) is None
+    assert _match_key({1: object()}) is None  # json.dumps TypeError → no pairing
 
 
 def test_may_hold_leaf_scan_annotation_shapes() -> None:
