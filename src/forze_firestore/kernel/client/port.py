@@ -37,6 +37,8 @@ class FirestoreClientPort(Protocol):
 
     def transaction(self) -> AbstractAsyncContextManager[Any]: ...  # pragma: no cover
 
+    def detached(self) -> AbstractAsyncContextManager[None]: ...  # pragma: no cover
+
     def get_document(
         self,
         coll: AsyncCollectionReference,

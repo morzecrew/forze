@@ -40,7 +40,7 @@ async def test_redis_counter_adapter_operations(redis_client: RedisClient) -> No
     assert await counter.incr() == 1
     assert await counter.incr_batch(size=3) == [2, 3, 4]
     assert await counter.decr(by=2) == 2
-    assert await counter.reset(value=10) == 2
+    assert await counter.reset(value=10) == 10
     assert await counter.incr() == 11
 
 @pytest.mark.asyncio

@@ -27,8 +27,21 @@ from ._logger import logger
 _UNSUFFIXED: Final[str] = ""
 """Stored form of the unsuffixed counter — the primary key column cannot hold ``NULL``."""
 
+_SUFFIX_PREFIX: Final[str] = "s:"
+"""Prefix for suffixed rows, so no suffix (including ``""``) can collide with the
+unsuffixed sentinel."""
+
 _NO_TENANT: Final[str] = ""
 """Stored ``tenant_id`` when no tenant is bound — the primary key column cannot hold ``NULL``."""
+
+
+def _encode_suffix(suffix: str | None) -> str:
+    return f"{_SUFFIX_PREFIX}{suffix}" if suffix is not None else _UNSUFFIXED
+
+
+def _decode_suffix(stored: str) -> str | None:
+    return None if stored == _UNSUFFIXED else stored.removeprefix(_SUFFIX_PREFIX)
+
 
 # ....................... #
 
@@ -65,14 +78,16 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
 
     Every operation is a single ``INSERT ... ON CONFLICT DO UPDATE ... RETURNING``
     statement, so allocation is atomic without an explicit transaction: concurrent callers
-    serialize on the counter's row lock and each sees a distinct value. Out of a
-    transaction the statement auto-commits; inside one it rides the caller's connection.
+    serialize on the counter's row lock and each sees a distinct value. Operations run on
+    a **detached** connection — never on the caller's transaction — so an allocation
+    survives the caller's rollback; otherwise the same value could be handed out twice
+    (Redis parity: a counter value is burned the moment it is returned).
 
     The table is provided by the application; expected schema::
 
         CREATE TABLE <relation> (
             tenant_id text   NOT NULL,   -- '' = no tenant bound
-            suffix    text   NOT NULL,   -- '' = the unsuffixed counter
+            suffix    text   NOT NULL,   -- '' = the unsuffixed counter; else 's:<suffix>'
             value     bigint NOT NULL,
             PRIMARY KEY (tenant_id, suffix)
         );
@@ -94,11 +109,12 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
             by=sql.Placeholder(),
         )
 
-        row = await self.client.fetch_one(
-            stmt,
-            [self._tenant_value(), suffix if suffix is not None else _UNSUFFIXED, by],
-            row_factory="tuple",
-        )
+        async with self.client.detached():
+            row = await self.client.fetch_one(
+                stmt,
+                [self._tenant_value(), _encode_suffix(suffix), by],
+                row_factory="tuple",
+            )
 
         if row is None:  # pragma: no cover - RETURNING always yields the upserted row
             raise exc.internal("Counter upsert returned no row")
@@ -159,11 +175,12 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
             value=sql.Placeholder(),
         )
 
-        await self.client.fetch_one(
-            stmt,
-            [self._tenant_value(), suffix if suffix is not None else _UNSUFFIXED, value],
-            row_factory="tuple",
-        )
+        async with self.client.detached():
+            await self.client.fetch_one(
+                stmt,
+                [self._tenant_value(), _encode_suffix(suffix), value],
+                row_factory="tuple",
+            )
 
         return value
 
@@ -180,17 +197,15 @@ class PostgresCounterAdminAdapter(_PostgresCounterBase, CounterAdminPort):
         table = await self._table()
 
         # Filtered on the stored tenant key, so a shared tagged-tier table only ever
-        # reports the bound tenant's counters.
-        stmt = sql.SQL("SELECT suffix, value FROM {table} WHERE tenant_id = {tenant}").format(
-            table=table.ident(), tenant=sql.Placeholder()
-        )
+        # reports the bound tenant's counters. Ordered so enumeration is deterministic.
+        stmt = sql.SQL(
+            "SELECT suffix, value FROM {table} WHERE tenant_id = {tenant} ORDER BY suffix"
+        ).format(table=table.ident(), tenant=sql.Placeholder())
 
-        rows = await self.client.fetch_all(stmt, [self._tenant_value()], row_factory="tuple")
+        async with self.client.detached():
+            rows = await self.client.fetch_all(stmt, [self._tenant_value()], row_factory="tuple")
 
         return [
-            CounterEntry(
-                suffix=(str(suffix) if suffix != _UNSUFFIXED else None),
-                value=int(value),
-            )
+            CounterEntry(suffix=_decode_suffix(str(suffix)), value=int(value))
             for suffix, value in rows
         ]

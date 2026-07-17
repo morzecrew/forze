@@ -43,6 +43,8 @@ class MongoClientPort(Protocol):
 
     def require_transaction(self) -> None: ...  # pragma: no cover
 
+    def detached(self) -> AbstractAsyncContextManager[None]: ...  # pragma: no cover
+
     def transaction(
         self,
         *,

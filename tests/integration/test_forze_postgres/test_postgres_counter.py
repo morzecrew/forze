@@ -125,12 +125,39 @@ async def test_counter_suffix_partitions(pg_counter: PostgresCounterAdapter) -> 
 
 
 @pytest.mark.asyncio
+async def test_counter_empty_suffix_distinct_from_none(
+    pg_counter: PostgresCounterAdapter,
+    pg_counter_admin: PostgresCounterAdminAdapter,
+) -> None:
+    """suffix="" is a real partition, not an alias of the unsuffixed counter."""
+    assert await pg_counter.incr(by=2) == 2
+    assert await pg_counter.incr(suffix="") == 1
+
+    entries = {e.suffix: e.value for e in await pg_counter_admin.list_counters()}
+    assert entries == {None: 2, "": 1}
+
+
+@pytest.mark.asyncio
 async def test_counter_concurrent_incr_distinct(
     pg_counter: PostgresCounterAdapter,
 ) -> None:
     """Concurrent incr() calls each allocate a distinct value."""
     values = await asyncio.gather(*(pg_counter.incr() for _ in range(20)))
     assert sorted(values) == list(range(1, 21))
+
+
+@pytest.mark.asyncio
+async def test_counter_allocation_survives_caller_rollback(
+    pg_client: PostgresClient,
+    pg_counter: PostgresCounterAdapter,
+) -> None:
+    """An allocation inside a rolled-back transaction is burned, not reused."""
+    with pytest.raises(RuntimeError, match="rollback"):
+        async with pg_client.transaction():
+            assert await pg_counter.incr() == 1
+            raise RuntimeError("rollback")
+
+    assert await pg_counter.incr() == 2
 
 
 @pytest.mark.asyncio

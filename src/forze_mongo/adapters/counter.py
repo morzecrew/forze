@@ -34,6 +34,10 @@ from ._logger import logger
 _UNSUFFIXED: Final[str] = ""
 """``_id`` form of the unsuffixed counter — the primary key cannot hold ``None``."""
 
+_SUFFIX_PREFIX: Final[str] = "s:"
+"""Prefix for suffixed ``_id``s, so no suffix (including ``""``) can collide with the
+unsuffixed sentinel."""
+
 # ....................... #
 
 
@@ -59,10 +63,11 @@ class _MongoCounterBase(TenancyMixin):
     def _doc_id(self, suffix: str | None, tenant_id: UUID | None) -> str:
         # The ``_id`` is the atomicity anchor: a concurrent upsert of the same counter
         # collides on it instead of inserting a duplicate row (a filter over plain fields
-        # would need a unique index the application never migrated). The tenant prefix
-        # keeps tagged-tier tenants apart in a shared collection; the fixed-length UUID
-        # makes the composition unambiguous for any suffix.
-        key = suffix if suffix is not None else _UNSUFFIXED
+        # would need a unique index the application never migrated). The suffix prefix
+        # keeps any suffix (including ``""``) apart from the unsuffixed sentinel; the
+        # tenant prefix keeps tagged-tier tenants apart in a shared collection, and the
+        # fixed-length UUID makes the composition unambiguous for any suffix.
+        key = f"{_SUFFIX_PREFIX}{suffix}" if suffix is not None else _UNSUFFIXED
 
         if tenant_id is not None:
             return f"tenant:{tenant_id}:{key}"
@@ -90,7 +95,10 @@ class MongoCounterAdapter(_MongoCounterBase, CounterPort):
 
     Every operation is a single ``find_one_and_update`` with ``upsert`` returning the
     post-update document, so allocation is atomic without a session: concurrent callers
-    serialize on the ``_id`` and each sees a distinct value.
+    serialize on the ``_id`` and each sees a distinct value. Operations run **detached**
+    — never on the caller's transaction/session — so an allocation survives the caller's
+    rollback; otherwise the same value could be handed out twice (Redis parity: a counter
+    value is burned the moment it is returned).
 
     Documents look like ``{_id, suffix, tenant_id, value}``; ``suffix``/``tenant_id`` are
     carried as plain fields so enumeration never has to parse the ``_id`` composition.
@@ -100,20 +108,22 @@ class MongoCounterAdapter(_MongoCounterBase, CounterPort):
         coll = await self._collection()
         tenant_id = self.require_tenant_if_aware()
 
-        doc = await self.client.find_one_and_update(
-            coll,
-            {"_id": self._doc_id(suffix, tenant_id)},
-            {
-                **update,
-                # Idempotent bookkeeping so the admin enumeration reads fields, not ids.
-                "$set": {
-                    **update.get("$set", {}),
-                    "suffix": suffix,
-                    "tenant_id": (str(tenant_id) if tenant_id is not None else None),
+        async with self.client.detached():
+            doc = await self.client.find_one_and_update(
+                coll,
+                {"_id": self._doc_id(suffix, tenant_id)},
+                {
+                    **update,
+                    # Idempotent bookkeeping so the admin enumeration reads fields,
+                    # not ids.
+                    "$set": {
+                        **update.get("$set", {}),
+                        "suffix": suffix,
+                        "tenant_id": (str(tenant_id) if tenant_id is not None else None),
+                    },
                 },
-            },
-            upsert=True,
-        )
+                upsert=True,
+            )
 
         if doc is None:  # pragma: no cover - upsert + AFTER always yields the document
             raise exc.internal("Counter upsert returned no document")
@@ -177,7 +187,8 @@ class MongoCounterAdminAdapter(_MongoCounterBase, CounterAdminPort):
         # The tenant filter matches on the stored field (exactly like the outbox route
         # filter), so a shared tagged-tier collection only ever reports the bound
         # tenant's counters.
-        docs = await self.client.find_many(coll, self._tenant_filter())
+        async with self.client.detached():
+            docs = await self.client.find_many(coll, self._tenant_filter())
 
         return [
             CounterEntry(

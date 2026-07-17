@@ -521,6 +521,30 @@ class PostgresClient(PostgresClientPort):
 
     # ....................... #
 
+    @asynccontextmanager
+    async def detached(self) -> AsyncGenerator[None]:
+        """Scope whose statements never join the ambient transaction.
+
+        Statements inside run out of transaction (pooled autocommit connections) even
+        when the calling context has a transaction open or pending — for writes that
+        must survive the caller's rollback, such as counter allocation. A
+        :meth:`transaction` opened inside the scope starts a fresh root on its own
+        connection.
+        """
+
+        token_conn = self.__ctx_conn.set(None)
+        token_depth = self.__ctx_depth.set(0)
+        token_pending = self.__ctx_pending.set(None)
+
+        try:
+            yield
+        finally:
+            self.__ctx_conn.reset(token_conn)
+            self.__ctx_depth.reset(token_depth)
+            self.__ctx_pending.reset(token_pending)
+
+    # ....................... #
+
     def query_concurrency_limit(self) -> int:
         """Maximum parallel operations that should each acquire a pool connection.
 

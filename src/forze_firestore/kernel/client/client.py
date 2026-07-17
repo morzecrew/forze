@@ -308,6 +308,29 @@ class FirestoreClient(FirestoreClientPort):
 
     # ....................... #
 
+    @asynccontextmanager
+    async def detached(self) -> AsyncGenerator[None]:
+        """Scope whose operations never join the ambient transaction.
+
+        Reads and writes inside run direct (or in a transaction of their own) even
+        when the calling context has a transaction open or pending — for writes that
+        must survive the caller's rollback, such as counter allocation. A
+        :meth:`transaction` opened inside the scope starts a fresh root.
+        """
+
+        token_tx = self.__ctx_transaction.set(None)
+        token_depth = self.__ctx_depth.set(0)
+        token_pending = self.__ctx_pending.set(None)
+
+        try:
+            yield
+        finally:
+            self.__ctx_transaction.reset(token_tx)
+            self.__ctx_depth.reset(token_depth)
+            self.__ctx_pending.reset(token_pending)
+
+    # ....................... #
+
     @exc_interceptor.asynccontextmanager("firestore.transaction")  # type: ignore[untyped-decorator]
     @asynccontextmanager
     async def transaction(self) -> AsyncGenerator[AsyncTransaction | None]:

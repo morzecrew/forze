@@ -362,6 +362,29 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
 
+    @asynccontextmanager
+    async def detached(self) -> AsyncGenerator[None]:
+        """Scope whose operations never join the ambient transaction/session.
+
+        Operations inside run without a session even when the calling context has a
+        transaction open or pending — for writes that must survive the caller's
+        rollback, such as counter allocation. A :meth:`transaction` opened inside the
+        scope starts a fresh root on its own session.
+        """
+
+        token_session = self.__ctx_session.set(None)
+        token_depth = self.__ctx_depth.set(0)
+        token_pending = self.__ctx_pending.set(None)
+
+        try:
+            yield
+        finally:
+            self.__ctx_session.reset(token_session)
+            self.__ctx_depth.reset(token_depth)
+            self.__ctx_pending.reset(token_pending)
+
+    # ....................... #
+
     def require_transaction(self) -> None:
         """Raise :exc:`InfrastructureError` if not inside a transaction scope."""
 

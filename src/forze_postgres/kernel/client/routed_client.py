@@ -229,6 +229,13 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
 
     # ....................... #
 
+    @asynccontextmanager
+    async def detached(self) -> AsyncGenerator[None]:
+        async with self._client_scope() as inner, inner.detached():
+            yield
+
+    # ....................... #
+
     @overload
     async def execute(
         self,

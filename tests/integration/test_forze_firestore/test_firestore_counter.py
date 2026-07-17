@@ -109,6 +109,19 @@ async def test_counter_suffix_cannot_collide_with_unsuffixed(
 
 
 @pytest.mark.asyncio
+async def test_counter_empty_suffix_distinct_from_none(
+    fs_counter: FirestoreCounterAdapter,
+    fs_counter_admin: FirestoreCounterAdminAdapter,
+) -> None:
+    """suffix="" is a real partition, not an alias of the unsuffixed counter."""
+    assert await fs_counter.incr(by=2) == 2
+    assert await fs_counter.incr(suffix="") == 1
+
+    entries = {e.suffix: e.value for e in await fs_counter_admin.list_counters()}
+    assert entries == {None: 2, "": 1}
+
+
+@pytest.mark.asyncio
 async def test_counter_concurrent_incr_distinct(
     fs_counter: FirestoreCounterAdapter,
 ) -> None:
@@ -116,6 +129,20 @@ async def test_counter_concurrent_incr_distinct(
     transaction-abort retry path; small N — one write/s per document sustained)."""
     values = await asyncio.gather(*(fs_counter.incr() for _ in range(5)))
     assert sorted(values) == list(range(1, 6))
+
+
+@pytest.mark.asyncio
+async def test_counter_allocation_survives_caller_rollback(
+    firestore_client: FirestoreClient,
+    fs_counter: FirestoreCounterAdapter,
+) -> None:
+    """An allocation inside a rolled-back transaction is burned, not reused."""
+    with pytest.raises(RuntimeError, match="rollback"):
+        async with firestore_client.transaction():
+            assert await fs_counter.incr() == 1
+            raise RuntimeError("rollback")
+
+    assert await fs_counter.incr() == 2
 
 
 @pytest.mark.asyncio

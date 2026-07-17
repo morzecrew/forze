@@ -93,7 +93,10 @@ class FirestoreCounterAdapter(_FirestoreCounterBase, CounterPort):
 
     Allocation is a serializable read-modify-write transaction on the counter's document:
     a concurrent writer aborts the commit and the operation retries under the ``occ``
-    policy, so every caller still sees a distinct value.
+    policy, so every caller still sees a distinct value. Operations run **detached** —
+    the allocation transaction is always the counter's own, never the caller's — so an
+    allocation survives the caller's rollback; otherwise the same value could be handed
+    out twice (Redis parity: a counter value is burned the moment it is returned).
 
     **Throughput caveat**: Firestore sustains roughly one write per second per document,
     so a hot counter contends and retries. Allocate blocks with :meth:`incr_batch` to
@@ -110,7 +113,7 @@ class FirestoreCounterAdapter(_FirestoreCounterBase, CounterPort):
         tenant_id = self.require_tenant_if_aware()
         doc_id = self._doc_id(suffix, tenant_id)
 
-        async with self.client.transaction():
+        async with self.client.detached(), self.client.transaction():
             current = await self.client.get_document(coll, doc_id)
             new_value = (int(current["value"]) if current else 0) + by
             await self.client.set_document(
@@ -165,11 +168,12 @@ class FirestoreCounterAdapter(_FirestoreCounterBase, CounterPort):
         logger.debug("Resetting counter suffix '%s' to %s", suffix, value)
 
         # A blind absolute set is atomic on its own — no transaction needed.
-        await self.client.set_document(
-            coll,
-            self._doc_id(suffix, tenant_id),
-            self._doc_body(value, suffix, tenant_id),
-        )
+        async with self.client.detached():
+            await self.client.set_document(
+                coll,
+                self._doc_id(suffix, tenant_id),
+                self._doc_body(value, suffix, tenant_id),
+            )
 
         return value
 
@@ -187,15 +191,18 @@ class FirestoreCounterAdminAdapter(_FirestoreCounterBase, CounterAdminPort):
         tenant_id = self.require_tenant_if_aware()
 
         # Server-side tenant filter on the stored field, so a shared tagged-tier
-        # collection only ever reports the bound tenant's counters.
-        docs = await self.client.query_stream(
-            coll,
-            filters=FieldFilter(
-                "tenant_id",
-                "==",
-                (str(tenant_id) if tenant_id is not None else None),
-            ),
-        )
+        # collection only ever reports the bound tenant's counters. Detached, so the
+        # read neither joins a caller's transaction nor trips its read-before-write
+        # ordering rule.
+        async with self.client.detached():
+            docs = await self.client.query_stream(
+                coll,
+                filters=FieldFilter(
+                    "tenant_id",
+                    "==",
+                    (str(tenant_id) if tenant_id is not None else None),
+                ),
+            )
 
         return [
             CounterEntry(

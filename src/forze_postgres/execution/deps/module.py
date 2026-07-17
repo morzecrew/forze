@@ -434,6 +434,23 @@ class PostgresDepsModule(DepsModule):
                     ),
                 )
 
+        if self.counters:
+            for name, counter_cfg in self.counters.items():
+                routes.append(
+                    PostgresTenancyRouteSpec(
+                        name=str(name),
+                        tenant_aware=counter_cfg.tenant_aware,
+                        kind="counter",
+                        has_namespace_routing=callable(counter_cfg.relation),
+                    ),
+                )
+                warn_dynamic_relation_with_tenant_aware(
+                    route_name=str(name),
+                    kind="counter",
+                    tenant_aware=counter_cfg.tenant_aware,
+                    fields=[("relation", counter_cfg.relation)],
+                )
+
         # Namespace tier is now tracked per route (a DYNAMIC per-tenant relation /
         # query_schema resolver on that route) so a declared floor is enforced route by route.
         validate_postgres_tenancy_wiring(

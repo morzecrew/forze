@@ -80,6 +80,8 @@ class PostgresClientPort(Protocol):
         options: PostgresTransactionOptions | None = None,
     ) -> AbstractAsyncContextManager[AsyncConnection | None]: ...  # pragma: no cover
 
+    def detached(self) -> AbstractAsyncContextManager[None]: ...  # pragma: no cover
+
     @overload
     def execute(
         self,

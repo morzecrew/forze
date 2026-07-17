@@ -101,12 +101,44 @@ async def test_counter_suffix_partitions(mongo_counter: MongoCounterAdapter) -> 
 
 
 @pytest.mark.asyncio
+async def test_counter_empty_suffix_distinct_from_none(
+    mongo_counter: MongoCounterAdapter,
+    mongo_counter_admin: MongoCounterAdminAdapter,
+) -> None:
+    """suffix="" is a real partition, not an alias of the unsuffixed counter."""
+    assert await mongo_counter.incr(by=2) == 2
+    assert await mongo_counter.incr(suffix="") == 1
+
+    entries = {e.suffix: e.value for e in await mongo_counter_admin.list_counters()}
+    assert entries == {None: 2, "": 1}
+
+
+@pytest.mark.asyncio
 async def test_counter_concurrent_incr_distinct(
     mongo_counter: MongoCounterAdapter,
 ) -> None:
     """Concurrent incr() calls each allocate a distinct value."""
     values = await asyncio.gather(*(mongo_counter.incr() for _ in range(20)))
     assert sorted(values) == list(range(1, 21))
+
+
+@pytest.mark.asyncio
+async def test_counter_allocation_survives_caller_rollback(
+    mongo_client_replica: MongoClient,
+) -> None:
+    """An allocation inside a rolled-back transaction is burned, not reused."""
+    db_name = (await mongo_client_replica.db()).name
+    counter = MongoCounterAdapter(
+        client=mongo_client_replica,
+        config=MongoCounterConfig(collection=(db_name, f"counters_{uuid4().hex[:8]}")),
+    )
+
+    with pytest.raises(RuntimeError, match="rollback"):
+        async with mongo_client_replica.transaction():
+            assert await counter.incr() == 1
+            raise RuntimeError("rollback")
+
+    assert await counter.incr() == 2
 
 
 @pytest.mark.asyncio

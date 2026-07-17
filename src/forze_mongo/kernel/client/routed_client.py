@@ -144,6 +144,18 @@ class RoutedMongoClient(DsnRoutedTenantClientBase[MongoClient], MongoClientPort)
 
     # ....................... #
 
+    def detached(self) -> AbstractAsyncContextManager[None]:
+        @asynccontextmanager
+        async def _cm() -> AsyncGenerator[None]:
+            inner = await self._get_client()
+
+            async with inner.detached():
+                yield
+
+        return _cm()
+
+    # ....................... #
+
     async def find_one(
         self,
         coll: AsyncCollection[JsonDict],
