@@ -55,8 +55,8 @@ class MockCounterAdapter(_MockCounterBase, CounterPort):
         *,
         suffix: str | None = None,
     ) -> list[int]:
-        if size <= 1:
-            raise exc.internal("Size must be greater than 1")
+        if size < 1:
+            raise exc.precondition("Batch size must be at least 1")
         with self.state.lock:
             key = self._key(suffix)
             prev = self.state.counters.get(key, 0)

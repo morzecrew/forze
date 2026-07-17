@@ -11,6 +11,7 @@ from forze.application.contracts.analytics import (
     AnalyticsIngestDepKey,
     AnalyticsQueryDepKey,
 )
+from forze.application.contracts.counter import CounterAdminDepKey, CounterDepKey
 from forze.application.contracts.crypto import EncryptionTier
 from forze.application.contracts.deps import (
     DepKey,
@@ -59,6 +60,7 @@ from ...kernel.catalog.validation.validate_tenancy import (
 from ...kernel.client import PostgresClientPort, RoutedPostgresClient
 from .configs import (
     PostgresAnalyticsConfig,
+    PostgresCounterConfig,
     PostgresDocumentConfig,
     PostgresDurableRunConfig,
     PostgresDurableScheduleConfig,
@@ -76,6 +78,8 @@ from .configs import (
 )
 from .factories import (
     ConfigurablePostgresAnalytics,
+    ConfigurablePostgresCounter,
+    ConfigurablePostgresCounterAdmin,
     ConfigurablePostgresDocument,
     ConfigurablePostgresDurableRun,
     ConfigurablePostgresDurableSchedule,
@@ -202,6 +206,16 @@ class PostgresDepsModule(DepsModule):
 
     Co-located store: the result record commits inside the business transaction, so a
     duplicate cannot re-execute after a crash between the business commit and the record."""
+
+    counters: StrKeyMapping[PostgresCounterConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """Mapping from counter route names to their Postgres-specific configurations.
+
+    Monotonic sequence allocation over an application-provided counters table; every
+    operation is one atomic upsert-increment statement. The admin (enumeration) port is
+    registered from the same config, so a wired counter is always exportable."""
 
     hlc_checkpoint: PostgresHlcCheckpointConfig | None = attrs.field(default=None)
     """Optional Postgres HLC high-water-mark store (node-global; default unwired).
@@ -420,6 +434,23 @@ class PostgresDepsModule(DepsModule):
                     ),
                 )
 
+        if self.counters:
+            for name, counter_cfg in self.counters.items():
+                routes.append(
+                    PostgresTenancyRouteSpec(
+                        name=str(name),
+                        tenant_aware=counter_cfg.tenant_aware,
+                        kind="counter",
+                        has_namespace_routing=callable(counter_cfg.relation),
+                    ),
+                )
+                warn_dynamic_relation_with_tenant_aware(
+                    route_name=str(name),
+                    kind="counter",
+                    tenant_aware=counter_cfg.tenant_aware,
+                    fields=[("relation", counter_cfg.relation)],
+                )
+
         # Namespace tier is now tracked per route (a DYNAMIC per-tenant relation /
         # query_schema resolver on that route) so a declared floor is enforced route by route.
         validate_postgres_tenancy_wiring(
@@ -603,6 +634,24 @@ class PostgresDepsModule(DepsModule):
                 }
             )
 
+        counter_deps = Deps()
+
+        if self.counters:
+            counter_deps = Deps.routed(
+                {
+                    CounterDepKey: {
+                        name: ConfigurablePostgresCounter(config=config)
+                        for name, config in self.counters.items()
+                    },
+                    # Always registered alongside the allocation port (read-only): an
+                    # export needs the enumeration exactly where counters are wired.
+                    CounterAdminDepKey: {
+                        name: ConfigurablePostgresCounterAdmin(config=config)
+                        for name, config in self.counters.items()
+                    },
+                }
+            )
+
         hlc_checkpoint_deps = Deps()
 
         if self.hlc_checkpoint is not None:
@@ -663,6 +712,7 @@ class PostgresDepsModule(DepsModule):
             outbox_deps,
             inbox_deps,
             idempotency_deps,
+            counter_deps,
             hlc_checkpoint_deps,
             durable_step_deps,
             durable_run_deps,

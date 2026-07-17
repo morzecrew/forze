@@ -26,6 +26,7 @@ PostgresTenancyRouteKind = Literal[
     "procedures",
     "outbox",
     "inbox",
+    "counter",
 ]
 
 # ....................... #

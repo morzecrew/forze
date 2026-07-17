@@ -33,3 +33,14 @@ class FirestoreDocumentConfig(FirestoreReadOnlyDocumentConfig):  # type: ignore[
         default=None,
         converter=lambda v: coerce_relation_spec(v) if v is not None else None,
     )
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class FirestoreCounterConfig(TenantAwareIntegrationConfig):
+    """Firestore configuration for :class:`~forze_firestore.adapters.counter.FirestoreCounterAdapter`."""
+
+    collection: RelationSpec = attrs.field(converter=coerce_relation_spec)
+    """Database and collection for counter documents."""

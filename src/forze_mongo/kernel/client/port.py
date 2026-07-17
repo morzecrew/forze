@@ -43,6 +43,8 @@ class MongoClientPort(Protocol):
 
     def require_transaction(self) -> None: ...  # pragma: no cover
 
+    def detached(self) -> AbstractAsyncContextManager[None]: ...  # pragma: no cover
+
     def transaction(
         self,
         *,
@@ -65,6 +67,7 @@ class MongoClientPort(Protocol):
         update: Mapping[str, Any],
         *,
         sort: Sequence[tuple[str, int]] | None = None,
+        upsert: bool = False,
     ) -> Awaitable[JsonDict | None]: ...  # pragma: no cover
 
     def find_many(

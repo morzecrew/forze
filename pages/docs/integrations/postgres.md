@@ -67,6 +67,7 @@ lifecycle = LifecyclePlan.from_modules(
 | Analytics | `AnalyticsSpec.name` (`analytics`) | named, parameterized warehouse SQL — optional |
 | Outbox / inbox | `OutboxSpec.name` (`outboxes`), `InboxSpec.name` (`inboxes`) | transactional outbox + consumer-side dedup inbox |
 | Idempotency | `IdempotencySpec.name` (`idempotencies`) | co-located store — the record commits inside the business transaction |
+| Counter | `CounterSpec.name` (`counters`) | atomic upsert-increment over an app-provided table (admin enumeration included) |
 | Procedures | `ProcedureSpec.name` (`procedures`) | named, governed SQL command / compute |
 | Durable execution | `durable_step` / `durable_run` / `durable_schedule` | step memo, run store, and cron schedules — optional |
 

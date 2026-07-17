@@ -1,6 +1,7 @@
 """Postgres execution configs (frozen attrs)."""
 
 from .analytics import PostgresAnalyticsConfig, PostgresQueryConfig
+from .counter import PostgresCounterConfig
 from .document import PostgresDocumentConfig, PostgresReadOnlyDocumentConfig
 from .durable import (
     PostgresDurableRunConfig,
@@ -53,6 +54,7 @@ __all__ = [
     "PostgresHlcCheckpointConfig",
     "PostgresHubSearchConfig",
     "PostgresHubSearchMemberConfig",
+    "PostgresCounterConfig",
     "PostgresIdempotencyConfig",
     "PostgresInboxConfig",
     "PostgresOutboxConfig",

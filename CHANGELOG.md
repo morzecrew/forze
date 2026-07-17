@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Counter enumeration** — `ctx.counter.admin(spec)` (`CounterAdminPort.list_counters()`, dep key `counter_admin`; Redis, mock) returns a `CounterEntry(suffix, value)` per partition, so counters can be carried to another deployment instead of restarting at zero. Handlers still cannot read a counter; import reuses the existing `CounterPort.reset(value, suffix=)`. `RedisClientPort` gains `scan(cursor, *, match, count)`.
 
+- **Counter backends** — Postgres, Mongo and Firestore adapters for `CounterPort` + `CounterAdminPort` (`counters={route: …Config}` on each deps module); counters no longer require Redis. Postgres needs an app-migrated `(tenant_id, suffix, value)` table (schema in the adapter docstring); Firestore is bounded by ~1 write/s per counter doc — use `incr_batch` for hot counters. Counter ops never join a caller's transaction (an allocation survives its rollback), via a new `detached()` scope on the three client ports — **breaking** for custom client-port implementations. Mongo `find_one_and_update` gains `upsert=`.
+
 - **Graph streaming reads** — `find_vertices_stream` / `find_edges_stream` on `GraphQueryPort` (Neo4j, mock) yield keyset batches of a whole kind, memory bounded by `chunk_size`, behind `GraphReadCapabilities` / `GraphStreamingAware`. Offset paging cannot promise completeness on a graph being written; a key bookmark can. An `identity="endpoints"` edge bookmarks on its `(tail, head)` node-key pair, and for those kinds `chunk_size` bounds **pairs, not edges**. Fails closed (`graph_streaming_unsupported`) on a backend that cannot seek and on a multi-endpoint kind whose endpoint kinds key on different properties. **Breaking** for custom `GraphQueryPort` implementations: the protocol gained two methods.
 
 - **Tenant enumeration** — `TenantManagementPort.list_tenants(limit, offset, *, active_only=False)` pages every tenant with the total; not membership-scoped, unlike `list_principal_tenants`, so a per-tenant sweep no longer skips a tenant nobody belongs to. `active_only` defaults to `False`: deactivation is a flag, not a delete, and that tenant's data is still there.
@@ -54,6 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`OutboxEmit` rejects a relay with no destination** — a `RelayBinding` whose `transport` names a spec it was never given raises `precondition` at construction instead of quietly dropping that route from the inventory.
 
 ### Fixed
+
+- **`CounterPort.reset` now returns the new value on Redis** — the contract, docs and mock said "return the value it was reset to"; the Redis adapter returned the *previous* value (`GETSET`). **Behavior change** for callers that relied on the old return. `incr_batch` also now uniformly accepts `size=1` and rejects `size < 1` as `precondition` on every backend (the mock previously raised `internal` for `size <= 1`).
 
 **`Decimal` is now a first-class filter and sort value across the query DSL** — the scalar union omitted it, so the parser rejected an explicit `Decimal` operand and a bare `{"field": Decimal(…)}` shortcut misrouted to `$in`.
 

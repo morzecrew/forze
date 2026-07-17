@@ -14,6 +14,7 @@ from forze.application.contracts.counter import (
     CounterEntry,
     CounterPort,
 )
+from forze.base.exceptions import exc
 
 from ._logger import logger
 from .base import RedisBaseAdapter
@@ -80,6 +81,9 @@ class RedisCounterAdapter(CounterPort, RedisBaseAdapter):
         *,
         suffix: str | None = None,
     ) -> list[int]:
+        if size < 1:
+            raise exc.precondition("Batch size must be at least 1")
+
         await self._prepare_keys()
         key = self.__key(suffix)
 
@@ -111,7 +115,10 @@ class RedisCounterAdapter(CounterPort, RedisBaseAdapter):
 
         logger.debug("Resetting counter '%s' to %s", key, value)
 
-        return await self.client.reset(key, value)
+        # ``GETSET`` swaps atomically but hands back the *previous* value; the port
+        # contract returns the value the counter now holds.
+        await self.client.reset(key, value)
+        return value
 
 
 # ....................... #

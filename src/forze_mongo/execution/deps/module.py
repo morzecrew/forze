@@ -6,6 +6,7 @@ from typing import Any, cast, final
 
 import attrs
 
+from forze.application.contracts.counter import CounterAdminDepKey, CounterDepKey
 from forze.application.contracts.crypto import EncryptionTier
 from forze.application.contracts.deps import (
     Deps,
@@ -37,18 +38,22 @@ from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from ...kernel._logger import logger
 from ...kernel.client import MongoClientPort, RoutedMongoClient
 from ._warnings import (
+    MONGO_COUNTER_WARNING,
     MONGO_DOCUMENT_RO_WARNING,
     MONGO_DOCUMENT_RW_WARNING,
     MONGO_OUTBOX_WARNING,
     MONGO_SEARCH_WARNING,
 )
 from .configs import (
+    MongoCounterConfig,
     MongoDocumentConfig,
     MongoOutboxConfig,
     MongoReadOnlyDocumentConfig,
     MongoSearchConfig,
 )
 from .factories import (
+    ConfigurableMongoCounter,
+    ConfigurableMongoCounterAdmin,
     ConfigurableMongoDocument,
     ConfigurableMongoOutboxAdmin,
     ConfigurableMongoOutboxCommand,
@@ -114,6 +119,16 @@ class MongoDepsModule(DepsModule):
     )
     """Mapping from outbox route names to Mongo-specific configurations."""
 
+    counters: StrKeyMapping[MongoCounterConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """Mapping from counter route names to Mongo-specific configurations.
+
+    Monotonic sequence allocation as one atomic ``$inc`` upsert per operation. The admin
+    (enumeration) port is registered from the same config, so a wired counter is always
+    exportable."""
+
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
 
@@ -155,6 +170,12 @@ class MongoDepsModule(DepsModule):
             warning=MONGO_OUTBOX_WARNING,
             log_warning=logger.warning,
         )
+        warn_integration_routes(
+            integration="Mongo",
+            routes=self.counters,
+            warning=MONGO_COUNTER_WARNING,
+            log_warning=logger.warning,
+        )
         validate_module_tenancy(
             integration="Mongo",
             client_is_routed=isinstance(self.client, RoutedMongoClient),
@@ -180,6 +201,11 @@ class MongoDepsModule(DepsModule):
                 TenancyRouteGroup(
                     kind="outbox",
                     configs=self.outboxes,
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                ),
+                TenancyRouteGroup(
+                    kind="counter",
+                    configs=self.counters,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
                 ),
             ],
@@ -244,6 +270,15 @@ class MongoDepsModule(DepsModule):
                     (OutboxQueryDepKey, ConfigurableMongoOutboxQuery),
                     # Always registered: quiesce depends on it and it is read-only.
                     (OutboxAdminDepKey, ConfigurableMongoOutboxAdmin),
+                ],
+            ),
+            routed_from_mapping(
+                self.counters,
+                bindings=[
+                    (CounterDepKey, ConfigurableMongoCounter),
+                    # Always registered alongside the allocation port (read-only): an
+                    # export needs the enumeration exactly where counters are wired.
+                    (CounterAdminDepKey, ConfigurableMongoCounterAdmin),
                 ],
             ),
             plain={MongoClientDepKey: self.client},

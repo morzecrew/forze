@@ -132,6 +132,16 @@ class RoutedFirestoreClient(
 
         return _cm()
 
+    def detached(self) -> AbstractAsyncContextManager[None]:
+        @asynccontextmanager
+        async def _cm() -> AsyncGenerator[None]:
+            inner = await self._get_client()
+
+            async with inner.detached():
+                yield
+
+        return _cm()
+
     async def get_document(
         self,
         coll: AsyncCollectionReference,

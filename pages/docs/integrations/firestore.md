@@ -50,6 +50,7 @@ lifecycle = LifecyclePlan.from_steps(
 |----------|----------|------------|
 | Document query / command | `DocumentSpec.name` | `rw_documents` / `ro_documents` |
 | Transactions | route in `tx` | `tx` |
+| Counter | `CounterSpec.name` | `counters` |
 
 ## Notes
 
@@ -59,6 +60,10 @@ lifecycle = LifecyclePlan.from_steps(
   `FIRESTORE_EMULATOR_HOST` env var.
 - Routed clients vary the project/database per tenant (using Application Default
   Credentials).
+- **Counters are transactional read-modify-write**, and Firestore sustains roughly
+  one write per second per document — a hot counter contends and retries. Allocate
+  blocks with `incr_batch` to amortize the ceiling, or route high-rate counters to
+  a Redis-backed adapter.
 - No graph support — Firestore is documents only.
 - No aggregations in the MVP adapter — an `aggregate_*` query (grouped or aggregate
   rows) is rejected up front with a clean `precondition` naming the backend, not a
