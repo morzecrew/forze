@@ -325,12 +325,18 @@ async def test_datetime_filter_matches_indexed_utc_representation(
     await mgmt.ensure_index()
     await mgmt.delete_all()
 
+    from datetime import timedelta, timezone
+
     early = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
     late = datetime(2024, 6, 2, 3, 4, 5, tzinfo=UTC)
+    # Same instant as ``early`` expressed at +03:00 — indexing normalizes it to UTC-Z,
+    # so a UTC operand still finds it.
+    offset_stamp = datetime(2024, 1, 2, 6, 4, 5, tzinfo=timezone(timedelta(hours=3)))
     await cmd.upsert(
         [
             StampedNote(id="1", title="Apple early", created_at=early),
             StampedNote(id="2", title="Apple late", created_at=late),
+            StampedNote(id="3", title="Apple offset", created_at=offset_stamp),
         ],
     )
 
@@ -341,7 +347,8 @@ async def test_datetime_filter_matches_indexed_utc_representation(
         filters={"$values": {"created_at": {"$eq": early}}},
         pagination={"offset": 0, "limit": 10},
     )
-    assert page.count == 1 and page.hits[0].id == "1"
+    assert page.count == 2
+    assert {h.id for h in page.hits} == {"1", "3"}
 
     page = await query.search_page(
         "apple",

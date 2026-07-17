@@ -4,8 +4,9 @@ A ``mode="json"`` dump stringifies a ``Decimal``; the gateway re-numbers those l
 (guided by the live model's values), leaving genuine string fields and sealed roots alone.
 """
 
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel
 
@@ -13,7 +14,8 @@ from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.search import SearchSpec
 from forze_meilisearch.adapters.search.base import (
     MeilisearchSearchGateway,
-    _model_may_hold_decimal,
+    _canonicalize_leaves,
+    _model_may_hold_canonical_leaf,
 )
 from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
 
@@ -109,9 +111,9 @@ def test_sealed_root_is_left_untouched() -> None:
     assert doc["price"] == "10.50" and isinstance(doc["price"], str)
 
 
-def test_model_without_decimal_skips_conversion_entirely() -> None:
-    assert _model_may_hold_decimal(_Item) is True
-    assert _model_may_hold_decimal(_PlainItem) is False
+def test_model_without_canonical_leaves_skips_conversion_entirely() -> None:
+    assert _model_may_hold_canonical_leaf(_Item) is True
+    assert _model_may_hold_canonical_leaf(_PlainItem) is False
 
     gw = _gateway(_PlainItem)
     doc = gw.to_index_document(_PlainItem(id="a", title="t", count=3))
@@ -119,14 +121,124 @@ def test_model_without_decimal_skips_conversion_entirely() -> None:
     assert doc == {"id": "a", "title": "t", "count": 3}
 
 
-def test_may_hold_decimal_is_conservative_for_unknowable_annotations() -> None:
+def test_may_hold_leaf_scan_is_conservative_for_unknowable_annotations() -> None:
     class _AnyPayload(BaseModel):
         id: str
         payload: dict[str, Any] = {}
 
-    assert _model_may_hold_decimal(_AnyPayload) is True
+    assert _model_may_hold_canonical_leaf(_AnyPayload) is True
 
     gw = _gateway(_AnyPayload)
     doc = gw.to_index_document(_AnyPayload(id="a", payload={"amount": Decimal("2.5")}))
 
     assert doc["payload"] == {"amount": 2.5}
+
+
+def test_may_hold_leaf_scan_annotation_shapes() -> None:
+    """The scanner sees through Annotated / unions / containers, terminates on
+    recursive models, and stays conservative on unknown generics."""
+
+    from collections.abc import Sequence
+
+    class _AnnotatedDec(BaseModel):
+        v: Annotated[Decimal, "meta"]
+
+    class _TupleInts(BaseModel):
+        v: tuple[int, ...] = ()
+
+    class _Recursive(BaseModel):
+        children: list["_Recursive"] = []
+
+    class _UnknownGeneric(BaseModel):
+        v: Sequence[int] = ()
+
+    class _Stamped(BaseModel):
+        at: datetime
+
+    assert _model_may_hold_canonical_leaf(_AnnotatedDec) is True
+    assert _model_may_hold_canonical_leaf(_TupleInts) is False
+    assert _model_may_hold_canonical_leaf(_Recursive) is False
+    assert _model_may_hold_canonical_leaf(_UnknownGeneric) is True
+    assert _model_may_hold_canonical_leaf(_Stamped) is True
+
+
+def test_unrepresentable_decimal_keeps_string_form() -> None:
+    """A finite Decimal whose magnitude overflows f64 must not poison the upsert with an
+    ``inf`` JSON number — it stays a string. (Explicit NaN/Infinity never get this far:
+    pydantic validation rejects them as non-finite; the walk guards them anyway.)"""
+
+    class _Wide(BaseModel):
+        id: str
+        huge: Decimal
+
+    gw = _gateway(_Wide)
+    doc = gw.to_index_document(_Wide(id="a", huge=Decimal("1e1000")))
+
+    assert doc["huge"] == "1E+1000" and isinstance(doc["huge"], str)
+
+    # Defense-in-depth on the walk itself for values that bypass validation.
+    assert _canonicalize_leaves(Decimal("NaN"), "NaN") == "NaN"
+    assert _canonicalize_leaves(Decimal("Infinity"), "Infinity") == "Infinity"
+
+
+def test_aware_datetime_normalizes_to_utc_z() -> None:
+    """A non-UTC offset indexes as the UTC-``Z`` text filter literals render, so an
+    ``$eq`` operand for the same instant matches; naive timestamps stay as dumped."""
+
+    class _Stamped(BaseModel):
+        id: str
+        at: datetime
+        naive: datetime
+
+    gw = _gateway(_Stamped)
+    doc = gw.to_index_document(
+        _Stamped(
+            id="a",
+            at=datetime(2024, 1, 2, 6, 4, 5, tzinfo=timezone(timedelta(hours=3))),
+            naive=datetime(2024, 1, 2, 3, 4, 5),
+        ),
+    )
+
+    assert doc["at"] == "2024-01-02T03:04:05Z"
+    assert doc["naive"] == "2024-01-02T03:04:05"
+
+
+def test_utc_datetime_representation_is_unchanged() -> None:
+    class _Stamped(BaseModel):
+        id: str
+        at: datetime
+
+    gw = _gateway(_Stamped)
+    doc = gw.to_index_document(
+        _Stamped(id="a", at=datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)),
+    )
+
+    assert doc["at"] == "2024-01-02T03:04:05Z"
+
+
+def test_set_members_convert_by_value_not_position() -> None:
+    """Set iteration order cannot pair positionally against the dumped list — each
+    Decimal claims exactly the string it serialized to, and a plain-``str`` member
+    that *equals* a Decimal's text is not converted twice."""
+
+    prices = {Decimal("9.5"), Decimal("10.5")}
+    dumped = ["10.5", "9.5"]  # deliberately reversed vs any particular iteration
+    out = _canonicalize_leaves(prices, dumped)
+    assert out == [10.5, 9.5]
+
+    mixed: set[Any] = {Decimal("9.5"), "hello"}
+    out = _canonicalize_leaves(mixed, ["hello", "9.5"])
+    assert out == ["hello", 9.5]
+
+    twin: set[Any] = {Decimal("9.5"), "9.5"}
+    out = _canonicalize_leaves(twin, ["9.5", "9.5"])
+    assert sorted(out, key=str) == sorted([9.5, "9.5"], key=str)
+
+    stamps = {datetime(2024, 1, 2, 6, 4, 5, tzinfo=timezone(timedelta(hours=3)))}
+    out = _canonicalize_leaves(stamps, ["2024-01-02T06:04:05+03:00"])
+    assert out == ["2024-01-02T03:04:05Z"]
+
+
+def test_structural_mismatch_keeps_dumped_value() -> None:
+    assert _canonicalize_leaves([Decimal("1.5")], ["1.5", "2.5"]) == ["1.5", "2.5"]
+    assert _canonicalize_leaves(None, "x") == "x"

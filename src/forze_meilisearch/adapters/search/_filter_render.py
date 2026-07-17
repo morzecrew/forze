@@ -1,5 +1,6 @@
 """Render :class:`QueryExpr` trees into Meilisearch filter strings."""
 
+import math
 import re
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -119,13 +120,18 @@ def _decimal_literal(value: Decimal) -> str:
     ranges then agree exactly, bounded only by f64 like everything numeric in Meilisearch.
     """
 
-    if not value.is_finite():
+    # Two ways to be unrepresentable: an explicitly non-finite Decimal, and a finite one
+    # whose magnitude overflows f64 (``float(Decimal("1e1000"))`` is ``inf`` — emitting a
+    # bare ``inf`` would be an invalid Meilisearch literal, failing the whole query).
+    converted = float(value) if value.is_finite() else None
+
+    if converted is None or not math.isfinite(converted):
         raise exc.precondition(
-            f"Non-finite Decimal filter value {value} is not representable "
-            "on the 'meilisearch' backend.",
+            f"Decimal filter value {value} is not representable as a Meilisearch "
+            "number (non-finite or outside the f64 range).",
         )
 
-    text = repr(float(value))
+    text = repr(converted)
 
     if "e" in text or "E" in text:
         # Meilisearch's filter grammar takes plain decimal notation; expand the

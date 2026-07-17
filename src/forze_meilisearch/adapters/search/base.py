@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from decimal import Decimal
 from functools import cache
 from types import UnionType
-from typing import Annotated, Any, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, Any, Union, cast, get_args, get_origin
 
 import attrs
 from pydantic import BaseModel
@@ -26,23 +28,32 @@ from forze.application.contracts.tenancy.mixins import TenancyMixin
 from forze.base.exceptions import exc
 from forze.base.primitives import OnceCell
 from forze.domain.constants import ID_FIELD
-from forze_meilisearch.adapters.search._filter_render import (
+from forze_meilisearch.kernel.relation import resolve_meilisearch_index_uid
+
+from ._filter_render import (
     MeilisearchFilterRenderer,
+    _datetime_text,  # pyright: ignore[reportPrivateUsage]
     format_literal,
     safe_attribute,
 )
-from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
-from forze_meilisearch.kernel.relation import resolve_meilisearch_index_uid
+
+if TYPE_CHECKING:
+    from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
 
 # ----------------------- #
 
 _CONTAINER_ORIGINS = (list, set, frozenset, tuple, dict, Mapping)
 
+# Leaf types whose json-mode dump representation is rewritten before indexing: a Decimal
+# becomes a JSON number, an aware datetime normalizes to the UTC-``Z`` form the filter
+# literals render (see ``_canonicalize_leaves``).
+_CANONICAL_LEAF_TYPES = (Decimal, datetime)
+
 # ....................... #
 
 
-def _ann_may_hold_decimal(ann: Any, seen: set[type]) -> bool:
-    """Whether *ann* can reach a ``Decimal`` value (conservative: unknowable → ``True``)."""
+def _ann_may_hold_canonical_leaf(ann: Any, seen: set[type]) -> bool:
+    """Whether *ann* can reach a canonicalized leaf (conservative: unknowable → ``True``)."""
 
     if ann is Any or ann is None:
         return True
@@ -50,15 +61,15 @@ def _ann_may_hold_decimal(ann: Any, seen: set[type]) -> bool:
     origin = get_origin(ann)
 
     if origin is Annotated:
-        return _ann_may_hold_decimal(get_args(ann)[0], seen)
+        return _ann_may_hold_canonical_leaf(get_args(ann)[0], seen)
 
     if origin is Union or origin is UnionType:
-        return any(_ann_may_hold_decimal(a, seen) for a in get_args(ann))
+        return any(_ann_may_hold_canonical_leaf(a, seen) for a in get_args(ann))
 
     if origin in _CONTAINER_ORIGINS:
         args = [a for a in get_args(ann) if a is not Ellipsis]
 
-        return any(_ann_may_hold_decimal(a, seen) for a in args) if args else True
+        return any(_ann_may_hold_canonical_leaf(a, seen) for a in args) if args else True
 
     if origin is not None:
         return True
@@ -66,7 +77,7 @@ def _ann_may_hold_decimal(ann: Any, seen: set[type]) -> bool:
     if not isinstance(ann, type):
         return True
 
-    if issubclass(ann, Decimal):
+    if issubclass(ann, _CANONICAL_LEAF_TYPES):
         return True
 
     if issubclass(ann, BaseModel):
@@ -75,7 +86,7 @@ def _ann_may_hold_decimal(ann: Any, seen: set[type]) -> bool:
         seen.add(ann)
         field_anns = [f.annotation for f in ann.model_fields.values()]
         field_anns += [c.return_type for c in ann.model_computed_fields.values()]
-        return any(_ann_may_hold_decimal(a, seen) for a in field_anns)
+        return any(_ann_may_hold_canonical_leaf(a, seen) for a in field_anns)
 
     return False
 
@@ -84,41 +95,105 @@ def _ann_may_hold_decimal(ann: Any, seen: set[type]) -> bool:
 
 
 @cache
-def _model_may_hold_decimal(model_cls: type[BaseModel]) -> bool:
-    return _ann_may_hold_decimal(model_cls, set())
+def _model_may_hold_canonical_leaf(model_cls: type[BaseModel]) -> bool:
+    return _ann_may_hold_canonical_leaf(model_cls, set())
 
 
 # ....................... #
 
 
-def _decimals_to_numbers(source: Any, dumped: Any) -> Any:
-    """Mirror-walk a python-mode dump against its json-mode twin, numbering the decimals.
+def _decimal_number(value: Decimal) -> float | None:
+    """The Decimal as a finite JSON number, or ``None`` when f64 cannot represent it.
 
-    Wherever the python-mode value is a ``Decimal``, the json-mode dump stringified it —
-    replace with ``float`` so Meilisearch indexes a number (numeric filters and sorts;
-    a string would range-filter to nothing and sort lexically). Driven by the live values,
-    so a ``str`` field that merely *looks* numeric is never touched. Any structural
-    mismatch keeps the json-mode value as-is.
+    An explicit ``NaN``/``Infinity`` and a finite value whose magnitude overflows f64
+    (``float(Decimal("1e1000"))`` is ``inf``) are not valid JSON numbers — indexing one
+    would fail the whole upsert, so such a value keeps its string form instead.
+    """
+
+    if not value.is_finite():
+        return None
+
+    converted = float(value)
+
+    return converted if math.isfinite(converted) else None
+
+
+def _pydantic_json_datetime(value: datetime) -> str:
+    """The string a json-mode pydantic dump emits for *value* (``Z`` for UTC offsets)."""
+
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _canonicalize_unordered(source: set[Any] | frozenset[Any], dumped: list[Any]) -> list[Any]:
+    """Canonicalize a set's dump by *value* — set iteration order cannot pair positionally.
+
+    Each Decimal / datetime member claims (at most once) the dumped string it serialized
+    to; everything else, including any member the budget already spent, stays as dumped —
+    so a plain-``str`` member equal to a Decimal's text is never converted twice.
+    """
+
+    replacements: dict[str, list[Any]] = {}
+
+    for member in source:
+        if isinstance(member, Decimal):
+            number = _decimal_number(member)
+
+            if number is not None:
+                replacements.setdefault(str(member), []).append(number)
+
+        elif isinstance(member, datetime):
+            replacements.setdefault(
+                _pydantic_json_datetime(member),
+                [],
+            ).append(_datetime_text(member))
+
+    out: list[Any] = []
+
+    for item in dumped:
+        pending = replacements.get(item) if isinstance(item, str) else None
+
+        out.append(pending.pop() if pending else item)
+
+    return out
+
+
+def _canonicalize_leaves(source: Any, dumped: Any) -> Any:
+    """Mirror-walk a python-mode dump against its json-mode twin, rewriting the leaves
+    whose stringified form Meilisearch cannot compare.
+
+    A ``Decimal`` becomes a JSON number (numeric filters and sorts; a string would
+    range-filter to nothing and sort lexically) unless f64 cannot represent it; an aware
+    ``datetime`` normalizes to the UTC-``Z`` text the filter literals render, so a
+    non-UTC-offset timestamp still matches its ``$eq``/range operand. Driven by the live
+    values, so a ``str`` field that merely *looks* numeric or temporal is never touched.
+    Any structural mismatch keeps the json-mode value as-is.
     """
 
     if isinstance(source, Decimal):
-        return float(source)
+        number = _decimal_number(source)
+
+        return dumped if number is None else number
+
+    if isinstance(source, datetime):
+        return _datetime_text(source)
 
     if isinstance(source, dict) and isinstance(dumped, dict):
         return {
-            k: _decimals_to_numbers(source[k], v) if k in source else v
+            k: _canonicalize_leaves(source[k], v) if k in source else v
             for k, v in dumped.items()  # pyright: ignore[reportUnknownVariableType]
         }
 
-    if isinstance(source, (list, tuple, set, frozenset)) and isinstance(dumped, list):
+    if isinstance(source, (set, frozenset)) and isinstance(dumped, list):
+        return _canonicalize_unordered(source, dumped)  # pyright: ignore[reportUnknownArgumentType]
+
+    if isinstance(source, (list, tuple)) and isinstance(dumped, list):
         items = cast(list[Any], list(source))  # type: ignore[redundant-cast]
-        dumped = cast(list[Any], dumped)  # type: ignore[redundant-cast]
-        dumped_items = dumped
+        dumped_items = cast(list[Any], dumped)  # type: ignore[redundant-cast]
 
         if len(items) != len(dumped_items):
-            return dumped
+            return dumped  # pyright: ignore[reportUnknownVariableType]
 
-        return [_decimals_to_numbers(s, d) for s, d in zip(items, dumped_items, strict=True)]
+        return [_canonicalize_leaves(s, d) for s, d in zip(items, dumped_items, strict=True)]
 
     return dumped
 
@@ -291,7 +366,7 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
             if self._encrypts
             else codec.encode_mapping(model, mode="json")
         )
-        data = self._number_decimal_fields(model, data)
+        data = self._canonicalize_index_values(model, data)
         out: dict[str, Any] = {}
 
         for key, value in data.items():
@@ -315,18 +390,16 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
 
     # ....................... #
 
-    def _number_decimal_fields(self, model: M, data: dict[str, Any]) -> dict[str, Any]:
-        """Re-index the json-mode dump's Decimal leaves as JSON numbers.
+    def _canonicalize_index_values(self, model: M, data: dict[str, Any]) -> dict[str, Any]:
+        """Rewrite dump leaves the filter literals must be able to match (see
+        ``_canonicalize_leaves``): Decimal → JSON number, aware datetime → UTC-``Z``.
 
-        ``mode="json"`` stringifies a ``Decimal``, and Meilisearch cannot range-filter or
-        numerically sort a string — so Decimal-valued fields index as floats (bounded by
-        f64 like every Meilisearch number; the document plane keeps the exact value).
         Guided by the live model's values via a second, python-mode dump, skipped entirely
-        for models that cannot hold a Decimal. Sealed (field-encrypted) roots are left
+        for models that cannot hold such a leaf. Sealed (field-encrypted) roots are left
         untouched — their dumped value is a ciphertext envelope, not the plaintext scalar.
         """
 
-        if not _model_may_hold_decimal(type(model)):
+        if not _model_may_hold_canonical_leaf(type(model)):
             return data
 
         codec = self.spec.resolved_read_codec
@@ -346,7 +419,7 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
         )
 
         return {
-            k: v if k in sealed_roots else _decimals_to_numbers(plain.get(k), v)
+            k: v if k in sealed_roots else _canonicalize_leaves(plain.get(k), v)
             for k, v in data.items()
         }
 

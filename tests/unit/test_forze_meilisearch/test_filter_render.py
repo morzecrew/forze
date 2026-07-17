@@ -154,11 +154,16 @@ def test_format_literal_decimal_renders_bare_number() -> None:
     # repr() would produce exponent notation for huge magnitudes; the literal expands it.
     assert format_literal(Decimal("1E+25")) == "10000000000000000000000000"
 
-    with pytest.raises(CoreException, match="Non-finite"):
+    with pytest.raises(CoreException, match="not representable"):
         format_literal(Decimal("NaN"))
 
-    with pytest.raises(CoreException, match="Non-finite"):
+    with pytest.raises(CoreException, match="not representable"):
         format_literal(Decimal("Infinity"))
+
+    # Finite at the Decimal level but overflows f64 — a bare ``inf`` literal would
+    # make the whole query fail instead of raising a clean precondition.
+    with pytest.raises(CoreException, match="not representable"):
+        format_literal(Decimal("1e1000"))
 
 
 def test_format_array_requires_sequence() -> None:
