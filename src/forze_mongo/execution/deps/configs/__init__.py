@@ -1,5 +1,6 @@
 """Mongo execution configs (frozen attrs)."""
 
+from .counter import MongoCounterConfig
 from .document import MongoDocumentConfig, MongoReadOnlyDocumentConfig
 from .outbox import MongoOutboxConfig
 from .search import (
@@ -15,6 +16,7 @@ from .search import (
 
 __all__ = [
     "MongoAtlasEngine",
+    "MongoCounterConfig",
     "MongoDocumentConfig",
     "MongoOutboxConfig",
     "MongoReadOnlyDocumentConfig",

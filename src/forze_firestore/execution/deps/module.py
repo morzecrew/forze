@@ -6,6 +6,7 @@ from typing import Any, cast, final
 
 import attrs
 
+from forze.application.contracts.counter import CounterAdminDepKey, CounterDepKey
 from forze.application.contracts.crypto import EncryptionTier
 from forze.application.contracts.deps import (
     Deps,
@@ -30,9 +31,19 @@ from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ...kernel._logger import logger
 from ...kernel.client import FirestoreClientPort, RoutedFirestoreClient
-from ._warnings import FIRESTORE_DOCUMENT_RO_WARNING, FIRESTORE_DOCUMENT_RW_WARNING
-from .configs import FirestoreDocumentConfig, FirestoreReadOnlyDocumentConfig
+from ._warnings import (
+    FIRESTORE_COUNTER_WARNING,
+    FIRESTORE_DOCUMENT_RO_WARNING,
+    FIRESTORE_DOCUMENT_RW_WARNING,
+)
+from .configs import (
+    FirestoreCounterConfig,
+    FirestoreDocumentConfig,
+    FirestoreReadOnlyDocumentConfig,
+)
 from .factories import (
+    ConfigurableFirestoreCounter,
+    ConfigurableFirestoreCounterAdmin,
     ConfigurableFirestoreDocument,
     ConfigurableFirestoreReadOnlyDocument,
     firestore_txmanager,
@@ -82,6 +93,18 @@ class FirestoreDepsModule(DepsModule):
     tx: set[StrKey] | None = attrs.field(default=None)
     """Set of transaction routes to register."""
 
+    counters: StrKeyMapping[FirestoreCounterConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """Mapping from counter route names to Firestore-specific configurations.
+
+    Monotonic sequence allocation as a transactional read-modify-write per operation.
+    Firestore sustains roughly one write per second per document, so hot counters should
+    allocate blocks via ``incr_batch`` (or live on a Redis-backed route). The admin
+    (enumeration) port is registered from the same config, so a wired counter is always
+    exportable."""
+
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
 
@@ -111,6 +134,12 @@ class FirestoreDepsModule(DepsModule):
             warning=FIRESTORE_DOCUMENT_RW_WARNING,
             log_warning=logger.warning,
         )
+        warn_integration_routes(
+            integration="Firestore",
+            routes=self.counters,
+            warning=FIRESTORE_COUNTER_WARNING,
+            log_warning=logger.warning,
+        )
         validate_module_tenancy(
             integration="Firestore",
             client_is_routed=isinstance(self.client, RoutedFirestoreClient),
@@ -126,6 +155,11 @@ class FirestoreDepsModule(DepsModule):
                     configs=self.rw_documents,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
                     namespace_resolver=lambda cfg: cfg.read,
+                ),
+                TenancyRouteGroup(
+                    kind="counter",
+                    configs=self.counters,
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
                 ),
             ],
             required_isolation=self.required_tenant_isolation,
@@ -175,6 +209,15 @@ class FirestoreDepsModule(DepsModule):
             routed_constant(
                 self.tx,
                 bindings=[(TransactionManagerDepKey, firestore_txmanager)],
+            ),
+            routed_from_mapping(
+                self.counters,
+                bindings=[
+                    (CounterDepKey, ConfigurableFirestoreCounter),
+                    # Always registered alongside the allocation port (read-only): an
+                    # export needs the enumeration exactly where counters are wired.
+                    (CounterAdminDepKey, ConfigurableFirestoreCounterAdmin),
+                ],
             ),
             plain={FirestoreClientDepKey: self.client},
         )

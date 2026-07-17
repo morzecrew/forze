@@ -507,14 +507,20 @@ class MongoClient(MongoClientPort):
         update: Mapping[str, Any],
         *,
         sort: Sequence[tuple[str, int]] | None = None,
+        upsert: bool = False,
     ) -> JsonDict | None:
-        """Atomically update and return the document after modification."""
+        """Atomically update and return the document after modification.
+
+        With ``upsert`` a missing document is created from the filter's equality fields
+        plus the update, in the same atomic step.
+        """
 
         session = await self._session_for_op()
         doc = await coll.find_one_and_update(
             filter,
             update,
             sort=sort,
+            upsert=upsert,
             return_document=ReturnDocument.AFTER,
             session=session,
         )

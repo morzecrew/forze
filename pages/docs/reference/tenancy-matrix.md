@@ -27,9 +27,9 @@ A store read under the bound tenant scopes itself — adapters call
 
 | Integration | Port(s) | `tenant_aware` | Resolver (`namespace`) | Routed client (`dedicated`) | Ceiling |
 |-------------|---------|----------------|------------------------|-----------------------------|---------|
-| Postgres | document, search, analytics | `tagged` (`tenant_id` column) | schema | `RoutedPostgresClient` | `dedicated` |
-| Mongo | document, search | `tagged` (column) | collection | `RoutedMongoClient` | `dedicated` |
-| Firestore | document | `tagged` (column) | collection | `RoutedFirestoreClient` | `dedicated` |
+| Postgres | document, search, analytics, counter | `tagged` (`tenant_id` column) | schema | `RoutedPostgresClient` | `dedicated` |
+| Mongo | document, search, counter | `tagged` (column) | collection | `RoutedMongoClient` | `dedicated` |
+| Firestore | document, counter | `tagged` (column) | collection | `RoutedFirestoreClient` | `dedicated` |
 | DuckDB | analytics (query-only) | `tagged` (column) | — | — | **`tagged`** (in-process) |
 | ClickHouse | analytics | `tagged` (column) | database | `RoutedClickHouseClient` | `dedicated` |
 | BigQuery | analytics | `tagged` (column) | dataset | `RoutedBigQueryClient` | `dedicated` |

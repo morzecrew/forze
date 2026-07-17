@@ -162,9 +162,10 @@ class RoutedMongoClient(DsnRoutedTenantClientBase[MongoClient], MongoClientPort)
         update: Mapping[str, Any],
         *,
         sort: Sequence[tuple[str, int]] | None = None,
+        upsert: bool = False,
     ) -> JsonDict | None:
         inner = await self._get_client()
-        return await inner.find_one_and_update(coll, filter, update, sort=sort)
+        return await inner.find_one_and_update(coll, filter, update, sort=sort, upsert=upsert)
 
     async def find_many(
         self,

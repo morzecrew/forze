@@ -65,6 +65,7 @@ class MongoClientPort(Protocol):
         update: Mapping[str, Any],
         *,
         sort: Sequence[tuple[str, int]] | None = None,
+        upsert: bool = False,
     ) -> Awaitable[JsonDict | None]: ...  # pragma: no cover
 
     def find_many(

@@ -54,6 +54,7 @@ lifecycle = LifecyclePlan.from_steps(
 | Transactions | route in `tx` | `tx` |
 | Search | `SearchSpec.name` | `searches` |
 | Outbox | `OutboxSpec.name` | `outboxes` |
+| Counter | `CounterSpec.name` | `counters` |
 
 ## Notes
 

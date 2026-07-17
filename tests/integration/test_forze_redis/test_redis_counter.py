@@ -2,6 +2,7 @@
 
 import pytest
 
+from forze.base.exceptions import CoreException
 from forze_redis.adapters import RedisCounterAdapter
 
 
@@ -24,12 +25,21 @@ async def test_counter_decr(redis_counter: RedisCounterAdapter) -> None:
 
 @pytest.mark.asyncio
 async def test_counter_reset(redis_counter: RedisCounterAdapter) -> None:
-    """reset sets value and returns previous."""
+    """reset sets value and returns the new value."""
     await redis_counter.incr(by=5)
-    prev = await redis_counter.reset(value=100)
-    assert prev == 5
+    new = await redis_counter.reset(value=100)
+    assert new == 100
     v = await redis_counter.incr()
     assert v == 101
+
+
+@pytest.mark.asyncio
+async def test_counter_incr_batch_size_zero_rejected(
+    redis_counter: RedisCounterAdapter,
+) -> None:
+    """incr_batch with size < 1 is a caller error."""
+    with pytest.raises(CoreException, match="at least 1"):
+        await redis_counter.incr_batch(size=0)
 
 
 @pytest.mark.asyncio

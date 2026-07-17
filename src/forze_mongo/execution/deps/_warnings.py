@@ -3,6 +3,7 @@
 from forze.application.contracts.tenancy import IntegrationRouteWarning
 
 from .configs import (
+    MongoCounterConfig,
     MongoDocumentConfig,
     MongoOutboxConfig,
     MongoReadOnlyDocumentConfig,
@@ -36,6 +37,12 @@ MONGO_SEARCH_WARNING = IntegrationRouteWarning[MongoSearchConfig](
 
 MONGO_OUTBOX_WARNING = IntegrationRouteWarning[MongoOutboxConfig](
     kind="outbox",
+    tenant_aware=lambda config: config.tenant_aware,
+    relation_fields=lambda config: [("collection", config.collection)],
+)
+
+MONGO_COUNTER_WARNING = IntegrationRouteWarning[MongoCounterConfig](
+    kind="counter",
     tenant_aware=lambda config: config.tenant_aware,
     relation_fields=lambda config: [("collection", config.collection)],
 )
