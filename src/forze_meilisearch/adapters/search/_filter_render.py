@@ -1,8 +1,9 @@
 """Render :class:`QueryExpr` trees into Meilisearch filter strings."""
 
 import re
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Any
 from uuid import UUID
 
@@ -11,7 +12,6 @@ import attrs
 from forze.application.contracts.querying import (
     ALL_VALUE_OPS,
     ELEM_SCALAR_FIELD,
-    UNSUPPORTED_QUERY_FEATURE_CODE,
     QueryAnd,
     QueryCapabilities,
     QueryCompare,
@@ -81,6 +81,11 @@ def format_literal(value: Any) -> str:
     if value is None:
         return "NULL"
 
+    if isinstance(value, Enum):
+        # Documents index an enum's *value* (that is what a json-mode dump emits);
+        # ``str(member)`` would render ``"Color.red"`` and silently match nothing.
+        return format_literal(value.value)
+
     if isinstance(value, bool):
         return "true" if value else "false"
 
@@ -88,17 +93,12 @@ def format_literal(value: Any) -> str:
         return str(value)
 
     if isinstance(value, Decimal):
-        # Documents are indexed via ``mode="json"`` dumps, which store a Decimal as a
-        # JSON *string* — a numeric literal would never match it and a quoted literal
-        # would compare lexically in range filters. Fail closed rather than return
-        # silently wrong rows; filter with float/int (and a float-typed field) instead.
-        raise exc.precondition(
-            "Decimal filter values are not supported on the 'meilisearch' backend: "
-            "decimals are indexed as JSON strings, so numeric comparison is not possible.",
-            code=UNSUPPORTED_QUERY_FEATURE_CODE,
-        )
+        return _decimal_literal(value)
 
-    if isinstance(value, (datetime, date)):
+    if isinstance(value, datetime):
+        return f'"{_datetime_text(value)}"'
+
+    if isinstance(value, date):
         return f'"{value.isoformat()}"'
 
     if isinstance(value, UUID):
@@ -106,6 +106,52 @@ def format_literal(value: Any) -> str:
 
     s = str(value).replace("\\", "\\\\").replace('"', '\\"')
     return f'"{s}"'
+
+
+# ....................... #
+
+
+def _decimal_literal(value: Decimal) -> str:
+    """Bare numeric literal for a ``Decimal`` operand.
+
+    Decimal fields index as JSON numbers (see the gateway's decimal-to-float encode), so
+    the literal goes through the same float conversion as the stored value — equality and
+    ranges then agree exactly, bounded only by f64 like everything numeric in Meilisearch.
+    """
+
+    if not value.is_finite():
+        raise exc.precondition(
+            f"Non-finite Decimal filter value {value} is not representable "
+            "on the 'meilisearch' backend.",
+        )
+
+    text = repr(float(value))
+
+    if "e" in text or "E" in text:
+        # Meilisearch's filter grammar takes plain decimal notation; expand the
+        # exponent form ``repr`` produces for very large / small magnitudes.
+        return format(Decimal(text), "f")
+
+    return text
+
+
+# ....................... #
+
+
+def _datetime_text(value: datetime) -> str:
+    """Datetime in the representation the index stores (a json-mode pydantic dump).
+
+    Pydantic emits RFC 3339 with a ``Z`` suffix for UTC; ``datetime.isoformat`` emits
+    ``+00:00``, which is a *different string* — equality on a UTC timestamp would silently
+    never match, and range boundaries would compare lexically across the two forms.
+    Aware values normalize to UTC-``Z``; naive values render as-is (matching how a naive
+    model timestamp is dumped).
+    """
+
+    if value.tzinfo is None:
+        return value.isoformat()
+
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 # ....................... #

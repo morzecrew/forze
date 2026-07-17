@@ -61,7 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mongo** — a `Decimal` *filter* value was stringified before the `Decimal128` coercion, matching nothing (read-side sibling of the 0.5.0 write fix).
 - **Firestore** — a `Decimal` field could not be written and `UUID`/`Decimal` filter values reached the driver raw; writes and filters now share one coercion (`UUID`→string, `Decimal`→double).
 - **Mock** — aggregates (`$sum`/`$avg`/percentiles) refused `Decimal` fields; they now fold in float space.
-- **Meilisearch** — a `Decimal` filter value **fails closed** (`query_feature_unsupported`): decimals index as JSON strings, so numeric comparison is impossible.
+- **Meilisearch** — `Decimal` fields index as JSON **numbers** (f64-bounded; the document plane keeps the exact value), so `Decimal` filters and sorts are numeric instead of string-indexed (lexical sort, empty range filters). Sealed roots are never converted; `rebuild_search_index()` if `Decimal` fields were indexed from an unreleased build.
+- **Meilisearch filter literals now match the indexed representation** — a UTC `datetime` `$eq` silently never matched (`…+00:00` literal vs indexed `…Z`; aware values normalize to UTC-`Z`), and an `Enum` operand rendered `str(member)` instead of its indexed value.
 
 **Object storage `upload_stream` dropped its tags** — a streamed upload computed the tag map and never wrote it (multipart completion carries no tagging, and unlike `overwrite_stream` there was no follow-up `PutObjectTagging`), so the returned `StoredObject` reported tags the object never actually got. It now applies them after completion. Hidden because the mock stored the tags in memory; only a real S3 `head` revealed the gap. Surfaced by a real-S3 blob export/import round-trip.
 

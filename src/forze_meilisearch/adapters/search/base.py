@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from typing import Any
+from collections.abc import Mapping, Sequence
+from decimal import Decimal
+from functools import cache
+from types import UnionType
+from typing import Annotated, Any, Union, cast, get_args, get_origin
 
 import attrs
 from pydantic import BaseModel
@@ -33,6 +36,95 @@ from forze_meilisearch.kernel.relation import resolve_meilisearch_index_uid
 
 # ----------------------- #
 
+_CONTAINER_ORIGINS = (list, set, frozenset, tuple, dict, Mapping)
+
+# ....................... #
+
+
+def _ann_may_hold_decimal(ann: Any, seen: set[type]) -> bool:
+    """Whether *ann* can reach a ``Decimal`` value (conservative: unknowable → ``True``)."""
+
+    if ann is Any or ann is None:
+        return True
+
+    origin = get_origin(ann)
+
+    if origin is Annotated:
+        return _ann_may_hold_decimal(get_args(ann)[0], seen)
+
+    if origin is Union or origin is UnionType:
+        return any(_ann_may_hold_decimal(a, seen) for a in get_args(ann))
+
+    if origin in _CONTAINER_ORIGINS:
+        args = [a for a in get_args(ann) if a is not Ellipsis]
+
+        return any(_ann_may_hold_decimal(a, seen) for a in args) if args else True
+
+    if origin is not None:
+        return True
+
+    if not isinstance(ann, type):
+        return True
+
+    if issubclass(ann, Decimal):
+        return True
+
+    if issubclass(ann, BaseModel):
+        if ann in seen:
+            return False
+        seen.add(ann)
+        field_anns = [f.annotation for f in ann.model_fields.values()]
+        field_anns += [c.return_type for c in ann.model_computed_fields.values()]
+        return any(_ann_may_hold_decimal(a, seen) for a in field_anns)
+
+    return False
+
+
+# ....................... #
+
+
+@cache
+def _model_may_hold_decimal(model_cls: type[BaseModel]) -> bool:
+    return _ann_may_hold_decimal(model_cls, set())
+
+
+# ....................... #
+
+
+def _decimals_to_numbers(source: Any, dumped: Any) -> Any:
+    """Mirror-walk a python-mode dump against its json-mode twin, numbering the decimals.
+
+    Wherever the python-mode value is a ``Decimal``, the json-mode dump stringified it —
+    replace with ``float`` so Meilisearch indexes a number (numeric filters and sorts;
+    a string would range-filter to nothing and sort lexically). Driven by the live values,
+    so a ``str`` field that merely *looks* numeric is never touched. Any structural
+    mismatch keeps the json-mode value as-is.
+    """
+
+    if isinstance(source, Decimal):
+        return float(source)
+
+    if isinstance(source, dict) and isinstance(dumped, dict):
+        return {
+            k: _decimals_to_numbers(source[k], v) if k in source else v
+            for k, v in dumped.items()  # pyright: ignore[reportUnknownVariableType]
+        }
+
+    if isinstance(source, (list, tuple, set, frozenset)) and isinstance(dumped, list):
+        items = cast(list[Any], list(source))  # type: ignore[redundant-cast]
+        dumped = cast(list[Any], dumped)  # type: ignore[redundant-cast]
+        dumped_items = dumped
+
+        if len(items) != len(dumped_items):
+            return dumped
+
+        return [_decimals_to_numbers(s, d) for s, d in zip(items, dumped_items, strict=True)]
+
+    return dumped
+
+
+# ....................... #
+
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
@@ -44,8 +136,7 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
     config: MeilisearchSearchConfig
     """Physical Meilisearch mapping."""
 
-    tenant_provider: Callable[[], Any] | None = attrs.field(default=None)
-    tenant_aware: bool = attrs.field(default=False)
+    # ....................... #
 
     filter_parser: QueryFilterExpressionParser = attrs.field(
         factory=lambda: QueryFilterExpressionParser(limits=QueryFilterLimits()),
@@ -200,6 +291,7 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
             if self._encrypts
             else codec.encode_mapping(model, mode="json")
         )
+        data = self._number_decimal_fields(model, data)
         out: dict[str, Any] = {}
 
         for key, value in data.items():
@@ -220,6 +312,45 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
             out[self.physical_path(TENANT_ID_FIELD)] = str(tenant_id)
 
         return out
+
+    # ....................... #
+
+    def _number_decimal_fields(self, model: M, data: dict[str, Any]) -> dict[str, Any]:
+        """Re-index the json-mode dump's Decimal leaves as JSON numbers.
+
+        ``mode="json"`` stringifies a ``Decimal``, and Meilisearch cannot range-filter or
+        numerically sort a string — so Decimal-valued fields index as floats (bounded by
+        f64 like every Meilisearch number; the document plane keeps the exact value).
+        Guided by the live model's values via a second, python-mode dump, skipped entirely
+        for models that cannot hold a Decimal. Sealed (field-encrypted) roots are left
+        untouched — their dumped value is a ciphertext envelope, not the plaintext scalar.
+        """
+
+        if not _model_may_hold_decimal(type(model)):
+            return data
+
+        codec = self.spec.resolved_read_codec
+        plain = codec.encode_mapping(
+            model,
+            mode="python",
+            exclude={"computed_fields": False} if self._encrypts else None,
+        )
+
+        encryption = self.spec.encryption
+        sealed_roots: frozenset[str] = (
+            frozenset()
+            if encryption is None
+            else frozenset(
+                f.split(".", 1)[0] for f in (encryption.encrypted | encryption.searchable)
+            )
+        )
+
+        return {
+            k: v if k in sealed_roots else _decimals_to_numbers(plain.get(k), v)
+            for k, v in data.items()
+        }
+
+    # ....................... #
 
     def from_hit(self, hit: dict[str, Any]) -> dict[str, Any]:
         inv = self._inv_field_map_cache

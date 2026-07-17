@@ -120,17 +120,45 @@ def test_format_literals() -> None:
     uid = UUID("00000000-0000-0000-0000-000000000001")
     assert format_literal(uid) == '"00000000-0000-0000-0000-000000000001"'
     assert format_literal('say "hi"') == r'"say \"hi\""'
-    assert format_literal(datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)) == '"2024-01-02T03:04:05+00:00"'
     assert format_literal(date(2024, 1, 2)) == '"2024-01-02"'
 
 
-def test_format_literal_decimal_fails_closed() -> None:
+def test_format_literal_datetime_matches_indexed_representation() -> None:
+    """The literal must equal what a json-mode dump indexed: UTC renders as ``Z``,
+    other offsets normalize to the same UTC instant, naive stays offset-free."""
+
+    from datetime import timedelta, timezone
+
+    assert format_literal(datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)) == '"2024-01-02T03:04:05Z"'
+    assert format_literal(datetime(2024, 1, 2, 3, 4, 5)) == '"2024-01-02T03:04:05"'
+    assert (
+        format_literal(datetime(2024, 1, 2, 6, 4, 5, tzinfo=timezone(timedelta(hours=3))))
+        == '"2024-01-02T03:04:05Z"'
+    )
+
+
+def test_format_literal_enum_renders_value() -> None:
+    from enum import Enum
+
+    class _Color(str, Enum):
+        red = "red"
+
+    assert format_literal(_Color.red) == '"red"'
+
+
+def test_format_literal_decimal_renders_bare_number() -> None:
     from decimal import Decimal
 
-    with pytest.raises(CoreException) as e:
-        format_literal(Decimal("10.5"))
+    assert format_literal(Decimal("10.50")) == "10.5"
+    assert format_literal(Decimal("0")) == "0.0"
+    # repr() would produce exponent notation for huge magnitudes; the literal expands it.
+    assert format_literal(Decimal("1E+25")) == "10000000000000000000000000"
 
-    assert e.value.code == "query_feature_unsupported"
+    with pytest.raises(CoreException, match="Non-finite"):
+        format_literal(Decimal("NaN"))
+
+    with pytest.raises(CoreException, match="Non-finite"):
+        format_literal(Decimal("Infinity"))
 
 
 def test_format_array_requires_sequence() -> None:
