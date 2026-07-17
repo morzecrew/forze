@@ -5707,6 +5707,11 @@ environment variable).</p>
 <td>route in <code>tx</code></td>
 <td><code>tx</code></td>
 </tr>
+<tr>
+<td>Counter</td>
+<td><code>CounterSpec.name</code></td>
+<td><code>counters</code></td>
+</tr>
 </tbody>
 </table>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
@@ -5717,6 +5722,10 @@ environment variable).</p>
   <code>FIRESTORE_EMULATOR_HOST</code> env var.</li>
 <li>Routed clients vary the project/database per tenant (using Application Default
   Credentials).</li>
+<li><strong>Counters are transactional read-modify-write</strong>, and Firestore sustains roughly
+  one write per second per document — a hot counter contends and retries. Allocate
+  blocks with <code>incr_batch</code> to amortize the ceiling, or route high-rate counters to
+  a Redis-backed adapter.</li>
 <li>No graph support — Firestore is documents only.</li>
 <li>No aggregations in the MVP adapter — an <code>aggregate_*</code> query (grouped or aggregate
   rows) is rejected up front with a clean <code>precondition</code> naming the backend, not a
