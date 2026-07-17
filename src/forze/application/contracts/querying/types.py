@@ -2,12 +2,13 @@
 
 from collections.abc import Sequence
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
 # ----------------------- #
 
-Numeric = int | float | datetime | date | UUID
+Numeric = int | float | Decimal | datetime | date | UUID
 """Numeric types for ordering operators (includes :class:`~uuid.UUID` for keyset paging)."""
 
 Scalar = Numeric | bool | str

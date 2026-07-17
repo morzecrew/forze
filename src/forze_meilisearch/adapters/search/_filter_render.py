@@ -2,6 +2,7 @@
 
 import re
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -10,6 +11,7 @@ import attrs
 from forze.application.contracts.querying import (
     ALL_VALUE_OPS,
     ELEM_SCALAR_FIELD,
+    UNSUPPORTED_QUERY_FEATURE_CODE,
     QueryAnd,
     QueryCapabilities,
     QueryCompare,
@@ -84,6 +86,17 @@ def format_literal(value: Any) -> str:
 
     if isinstance(value, (int, float)):
         return str(value)
+
+    if isinstance(value, Decimal):
+        # Documents are indexed via ``mode="json"`` dumps, which store a Decimal as a
+        # JSON *string* — a numeric literal would never match it and a quoted literal
+        # would compare lexically in range filters. Fail closed rather than return
+        # silently wrong rows; filter with float/int (and a float-typed field) instead.
+        raise exc.precondition(
+            "Decimal filter values are not supported on the 'meilisearch' backend: "
+            "decimals are indexed as JSON strings, so numeric comparison is not possible.",
+            code=UNSUPPORTED_QUERY_FEATURE_CODE,
+        )
 
     if isinstance(value, (datetime, date)):
         return f'"{value.isoformat()}"'

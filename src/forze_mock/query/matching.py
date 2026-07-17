@@ -14,6 +14,7 @@ import math
 import statistics
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from decimal import Decimal
 from functools import cmp_to_key
 from typing import (
     Any,
@@ -142,6 +143,11 @@ def _sort_docs(  # pyright: ignore[reportPrivateUsage]
 
 
 def _require_numeric(value: Any, *, function: str, field: str) -> int | float:
+    if isinstance(value, Decimal):
+        # Aggregate folds interpolate against floats (percentiles, averages), and
+        # Decimal arithmetic with float operands raises — fold in float space.
+        return float(value)
+
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise exc.internal(
             f"Aggregate {function} expects numeric values for field {field!r}",

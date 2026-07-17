@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time
+from decimal import Decimal
 from typing import Any, Union, get_args, get_origin
 from uuid import UUID
 
@@ -23,6 +24,7 @@ _SCALAR_PG_BASES: dict[type[Any], frozenset[str]] = {
     str: frozenset({"text", "varchar", "char", "citext", "name"}),
     int: frozenset({"int2", "int4", "int8"}),
     float: frozenset({"float4", "float8", "numeric"}),
+    Decimal: frozenset({"numeric", "float4", "float8"}),
     bool: frozenset({"bool"}),
     datetime: frozenset({"timestamp", "timestamptz"}),
     date: frozenset({"date"}),

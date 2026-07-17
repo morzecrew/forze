@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from pydantic import BaseModel
 
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -14,6 +16,7 @@ class NestedFilterMeta(BaseModel):
 
     score: int
     tag: str = ""
+    price: Decimal = Decimal("0")
 
 
 class NestedFilterRowDoc(Document):

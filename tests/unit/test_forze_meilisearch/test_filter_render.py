@@ -124,6 +124,15 @@ def test_format_literals() -> None:
     assert format_literal(date(2024, 1, 2)) == '"2024-01-02"'
 
 
+def test_format_literal_decimal_fails_closed() -> None:
+    from decimal import Decimal
+
+    with pytest.raises(CoreException) as e:
+        format_literal(Decimal("10.5"))
+
+    assert e.value.code == "query_feature_unsupported"
+
+
 def test_format_array_requires_sequence() -> None:
     with pytest.raises(CoreException):
         _format_array("nope")

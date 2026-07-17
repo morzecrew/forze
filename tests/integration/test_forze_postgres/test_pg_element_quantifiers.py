@@ -278,6 +278,131 @@ async def test_element_any_scalar_ordering(pg_client: PostgresClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_element_any_decimal_on_jsonb_scalar_array(pg_client: PostgresClient) -> None:
+    """Decimal elements live in jsonb as strings; a Decimal operand still compares
+    numerically (9.5 < 10.5 < 100.25 — lexically "100.25" sorts before "9.5")."""
+
+    from decimal import Decimal
+
+    t = f"elem_dec_{uuid4().hex[:12]}"
+
+    class _Doc(Document):
+        title: str
+        prices: list[Decimal]
+
+    class _Create(CreateDocumentCmd):
+        title: str
+        prices: list[Decimal]
+
+    class _Update(BaseDTO):
+        title: str | None = None
+        prices: list[Decimal] | None = None
+
+    class _Read(ReadDocument):
+        title: str
+        prices: list[Decimal]
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            title text NOT NULL,
+            prices jsonb NOT NULL
+        );
+        """
+    )
+    spec = DocumentSpec(
+        name="elem_dec_ns",
+        read=_Read,
+        write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
+    )
+    ctx = _ctx(pg_client, t)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
+
+    await cmd.create(_Create(title="high", prices=[Decimal("9.5"), Decimal("100.25")]))
+    await cmd.create(_Create(title="low", prices=[Decimal("1.5"), Decimal("9.5")]))
+
+    filt = {"$values": {"prices": {"$any": {"$gte": Decimal("10.5")}}}}
+    assert await query.count(filt) == 1
+    row = await query.find(filt)
+    assert row is not None and row.title == "high"
+
+    eq_filt = {"$values": {"prices": {"$any": {"$eq": Decimal("1.5")}}}}
+    assert await query.count(eq_filt) == 1
+
+    in_filt = {"$values": {"prices": {"$any": {"$in": [Decimal("100.25")]}}}}
+    assert await query.count(in_filt) == 1
+
+
+@pytest.mark.asyncio
+async def test_element_any_int_operand_on_decimal_typed_jsonb_array(
+    pg_client: PostgresClient,
+) -> None:
+    """An int operand against a Decimal-annotated jsonb array compares numerically too —
+    jsonb type ordering ranks the stored decimal strings above every number, so
+    ``$gte: 5`` would otherwise match rows whose only decimal is 1.5."""
+
+    from decimal import Decimal
+
+    t = f"elem_dec_int_{uuid4().hex[:12]}"
+
+    class _Doc(Document):
+        title: str
+        amounts: list[Decimal | int]
+
+    class _Create(CreateDocumentCmd):
+        title: str
+        amounts: list[Decimal | int]
+
+    class _Update(BaseDTO):
+        title: str | None = None
+        amounts: list[Decimal | int] | None = None
+
+    class _Read(ReadDocument):
+        title: str
+        amounts: list[Decimal | int]
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            title text NOT NULL,
+            amounts jsonb NOT NULL
+        );
+        """
+    )
+    spec = DocumentSpec(
+        name="elem_dec_int_ns",
+        read=_Read,
+        write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
+    )
+    ctx = _ctx(pg_client, t)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
+
+    await cmd.create(_Create(title="high", amounts=[Decimal("10.5"), 2]))
+    await cmd.create(_Create(title="low", amounts=[Decimal("1.5"), 3]))
+
+    filt = {"$values": {"amounts": {"$any": {"$gte": 5}}}}
+    assert await query.count(filt) == 1
+    row = await query.find(filt)
+    assert row is not None and row.title == "high"
+
+    lte_filt = {"$values": {"amounts": {"$any": {"$lte": 2}}}}
+    assert await query.count(lte_filt) == 2
+
+    eq_filt = {"$values": {"amounts": {"$any": {"$eq": 3}}}}
+    assert await query.count(eq_filt) == 1
+
+
+@pytest.mark.asyncio
 async def test_not_with_nested_or(pg_client: PostgresClient) -> None:
     t = f"elem_not_or_{uuid4().hex[:12]}"
 

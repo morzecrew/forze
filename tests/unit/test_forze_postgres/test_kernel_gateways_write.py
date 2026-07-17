@@ -86,6 +86,19 @@ def test_adapt_value_for_write_coerces_numeric_and_preserves_null() -> None:
     assert gw.adapt_value_for_write("12.5", t=numeric_t) == 12.5
     assert gw.adapt_value_for_write(None, t=numeric_t) is None
 
+def test_json_write_dumps_stores_decimal_exact_and_rejects_unknown_types() -> None:
+    """The jsonb write encoder stores a Decimal as its exact string form; anything
+    else orjson cannot encode stays a hard error, never a silent stringification."""
+
+    from decimal import Decimal
+
+    from forze_postgres.kernel.gateways.base import _json_write_dumps
+
+    assert _json_write_dumps({"amount": Decimal("10.50")}) == b'{"amount":"10.50"}'
+
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        _json_write_dumps({"bad": object()})
+
 @pytest.mark.asyncio
 async def test_patch_group_sql_includes_column_casts() -> None:
     gw, client = _build_gateway()

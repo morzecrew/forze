@@ -49,6 +49,27 @@ class TestFirestoreQueryRenderer:
         assert isinstance(out, FieldFilter)
         assert out.field_path == "status"
 
+    def test_filter_values_coerced_like_writes(self) -> None:
+        """UUID and Decimal filter values match the representation writes persist."""
+
+        from decimal import Decimal
+        from uuid import UUID
+
+        r = FirestoreQueryRenderer()
+        uid = UUID("00000000-0000-0000-0000-000000000001")
+
+        out = r.render(QueryField("owner", "$eq", uid))
+        assert isinstance(out, FieldFilter)
+        assert out.value == str(uid)
+
+        out = r.render(QueryField("price", "$gt", Decimal("10.5")))
+        assert isinstance(out, FieldFilter)
+        assert out.value == 10.5
+
+        out = r.render(QueryField("price", "$in", [Decimal("1.5"), uid]))
+        assert isinstance(out, FieldFilter)
+        assert out.value == [1.5, str(uid)]
+
     def test_compare_raises(self) -> None:
         r = FirestoreQueryRenderer()
         with pytest.raises(CoreException, match="field-to-field"):

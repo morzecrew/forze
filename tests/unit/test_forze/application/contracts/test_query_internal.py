@@ -1,6 +1,7 @@
 """Unit tests for forze.application.contracts.querying.internal."""
 
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
@@ -644,6 +645,33 @@ class TestQueryValueCaster:
         with pytest.raises(CoreException, match="Invalid float"):
             QueryValueCaster.as_float([1.0])
 
+    # as_decimal
+    def test_as_decimal_from_decimal_is_identity(self) -> None:
+        d = Decimal("10.50")
+        assert QueryValueCaster.as_decimal(d) is d
+
+    def test_as_decimal_from_int(self) -> None:
+        assert QueryValueCaster.as_decimal(42) == Decimal("42")
+
+    def test_as_decimal_from_float_uses_shortest_repr(self) -> None:
+        assert QueryValueCaster.as_decimal(0.1) == Decimal("0.1")
+
+    def test_as_decimal_from_string(self) -> None:
+        assert QueryValueCaster.as_decimal(" 3.14 ") == Decimal("3.14")
+        assert QueryValueCaster.as_decimal("3,14") == Decimal("3.14")
+
+    def test_as_decimal_bool_raises(self) -> None:
+        with pytest.raises(CoreException, match="got bool"):
+            QueryValueCaster.as_decimal(True)
+
+    def test_as_decimal_invalid_string_raises(self) -> None:
+        with pytest.raises(CoreException, match="Invalid numeric"):
+            QueryValueCaster.as_decimal("abc")
+
+    def test_as_decimal_invalid_type_raises(self) -> None:
+        with pytest.raises(CoreException, match="Invalid numeric"):
+            QueryValueCaster.as_decimal([Decimal("1")])
+
     # _to_seconds
     def test_to_seconds_seconds(self) -> None:
         assert QueryValueCaster._to_seconds(1000) == 1000.0
@@ -778,6 +806,20 @@ class TestQueryFilterExpressionParser:
         f = result.items[0]
         assert isinstance(f, QueryField)
         assert f.op == "$in" and f.value == ["a", "b"]
+
+    def test_parse_decimal_shortcut_routes_to_eq(self) -> None:
+        expr = {"$values": {"price": Decimal("10.50")}}
+        result = QueryFilterExpressionParser.parse(expr)
+        f = result.items[0]
+        assert isinstance(f, QueryField)
+        assert f.op == "$eq" and f.value == Decimal("10.50")
+
+    def test_parse_decimal_ord_value_accepted(self) -> None:
+        expr = {"$values": {"price": {"$gt": Decimal("10.5")}}}
+        result = QueryFilterExpressionParser.parse(expr)
+        f = result.items[0]
+        assert isinstance(f, QueryField)
+        assert f.op == "$gt" and f.value == Decimal("10.5")
 
     # Operator-based predicates
     def test_parse_eq_operator(self) -> None:
