@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Live-path observability** — `RealtimeGatewayStats` + `instrument_realtime_gateway` (delivery counters); the gateway bridges under the producer's `traceparent` with a CONSUMER span; `BackplaneHealth` + `realtime_backplane_heartbeat_lifecycle_step` + `instrument_realtime_backplane` probe the Socket.IO fan-out path.
 - **Inventory** — `RealtimeTransport.spec_contributions()` catalogs the stream/outbox/inbox legs.
 - **Connection hygiene** — built-in `realtime.reauth` refreshes a rotating token in place (same principal only); `InMemoryRealtimeMailbox` enforces a per-principal cap (1000).
+- **Gateway crash conformance** — `forze_dst.conformance.run_gateway_crash_delivery` (+ `GatewayCrashPoint`, `GatewayDeliveryOutcome`, `RealtimeBridge`): the ack-stream twin of `run_crash_recovery_delivery`; the injected bridge takes the real gateway core, and the scenario runs against the mock or a real Redis stream.
 
 ### Changed
 
