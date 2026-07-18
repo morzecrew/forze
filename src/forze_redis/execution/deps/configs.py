@@ -7,6 +7,7 @@ from forze.application.contracts.resolution import (
     coerce_named_resource_spec,
 )
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -76,7 +77,7 @@ class RedisStreamConfig(TenantAwareIntegrationConfig):
     ``tenant_aware``, isolated by the ``tenant:{id}:stream:`` key prefix — there is no
     per-route key namespace to declare."""
 
-    retention_max_entries: int | None = attrs.field(default=None)
+    retention_max_entries: int | None = None
     """Approximate cap on the stream's length, applied at every append (``XADD MAXLEN ~``).
 
     Without a cap a stream grows in Redis memory until an operator intervenes or
@@ -90,10 +91,9 @@ class RedisStreamConfig(TenantAwareIntegrationConfig):
     group's reclaim window and your recovery SLO. Delivery-side lag is the thing to alarm
     on before a cap ever becomes the failure."""
 
-    @retention_max_entries.validator
-    def _check_retention(self, _attribute: object, value: int | None) -> None:
-        if value is not None and value <= 0:
-            raise ValueError("retention_max_entries must be positive when set")
+    def __attrs_post_init__(self) -> None:
+        if self.retention_max_entries is not None and self.retention_max_entries <= 0:
+            raise exc.configuration("retention_max_entries must be positive when set")
 
 
 # ....................... #
