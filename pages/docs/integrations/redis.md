@@ -104,6 +104,14 @@ outage. Alarm on the ack admin port's `depth()` (undelivered backlog, pending co
 oldest pending age) long before a cap becomes the failure; the same surface feeds
 `quiesce(ack_streams=...)`.
 
+The precise companion is `AckStreamGroupAdminPort.trim_acknowledged(stream)` — a sweep
+(`XTRIM MINID` at the floor computed from `XINFO GROUPS` + `XPENDING`) that removes only
+entries **every** consumer group has been delivered *and* acked, so it can never outrun
+a slow or crashed consumer, and a group-less stream is never trimmed. Run it on an
+interval (`realtime_stream_trim_lifecycle_step` for the realtime stream) to keep
+steady-state memory near the groups' real horizon; keep the cap as the backstop for a
+group nobody drains.
+
 **Pub-sub reconnect.** Long-running subscribers reconnect automatically after a
 transport error (`pubsub_auto_reconnect` now defaults to `True` — the previous opt-in
 default meant a subscriber silently stopped on the first Redis blip). Opt out per

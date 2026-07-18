@@ -216,6 +216,26 @@ class AckStreamGroupAdminPort(Protocol):
         """
         ...  # pragma: no cover
 
+    # ....................... #
+
+    def trim_acknowledged(self, stream: str) -> Awaitable[int]:
+        """Trim entries that **every** consumer group on *stream* has delivered and acked.
+
+        Retention maintenance for the ack family: an approximate length cap bounds a
+        stream bluntly, this trims *precisely* — the floor is computed from group state
+        (each group's lowest pending entry, or its delivered horizon when nothing is
+        pending), so an entry a group has not yet been delivered, or has been delivered
+        but not acknowledged, is never removed. Always safe to run, on any interval, on
+        any number of nodes concurrently (idempotent, monotonic).
+
+        Fail-safe by construction: a stream with **no** groups trims nothing (there is no
+        horizon to trust), and a group added later starts from wherever its ``start_id``
+        put it, unaffected by earlier trims below that point.
+
+        :returns: the number of entries removed.
+        """
+        ...  # pragma: no cover
+
 
 # ....................... #
 

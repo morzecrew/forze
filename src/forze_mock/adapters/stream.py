@@ -499,6 +499,45 @@ class MockAckStreamGroupAdminAdapter[M: BaseModel](AckStreamGroupAdminPort):
                 oldest_pending_idle=oldest,
             )
 
+    # ....................... #
+
+    async def trim_acknowledged(self, stream: str) -> int:
+        with self.state.lock:
+            store = cast(dict[str, Any], self.stream._stream_store())  # pyright: ignore[reportPrivateUsage]
+            groups = cast(
+                dict[tuple[str, str], _MockGroupState],
+                store.setdefault(_GROUPS_KEY, [{}])[0],
+            )
+            states = [gs for (_, on), gs in groups.items() if on == stream]
+
+            if not states:
+                return 0  # no horizon to trust — a group-less stream is never trimmed
+
+            # Per group: everything below its lowest pending entry is acked; with nothing
+            # pending, everything it has been delivered is. The stream floor is the
+            # strictest group's — an entry survives until every group is past it.
+            floor = min(
+                min(
+                    (
+                        self.stream._id_to_int(one)  # pyright: ignore[reportPrivateUsage]
+                        for one in gs.pending
+                    ),
+                    default=gs.last_delivered + 1,
+                )
+                for gs in states
+            )
+
+            entries = cast(list[Any], store.get(stream, []))
+            kept = [
+                m
+                for m in entries
+                if self.stream._id_to_int(m.id) >= floor  # pyright: ignore[reportPrivateUsage]
+            ]
+            trimmed = len(entries) - len(kept)
+            store[stream] = kept
+
+            return trimmed
+
 
 # ....................... #
 

@@ -11,6 +11,7 @@ from forze.application.contracts.realtime import RealtimeShard
 from .lifecycle import (
     realtime_group_ensure_lifecycle_step,
     realtime_relay_lifecycle_step,
+    realtime_stream_trim_lifecycle_step,
     realtime_tenant_group_ensure_lifecycle_step,
     realtime_tenant_relay_lifecycle_step,
 )
@@ -56,6 +57,7 @@ __all__ = [
     "realtime_outbox_spec",
     "realtime_inbox_spec",
     "realtime_relay_lifecycle_step",
+    "realtime_stream_trim_lifecycle_step",
     "realtime_group_ensure_lifecycle_step",
     "realtime_tenant_group_ensure_lifecycle_step",
     "realtime_tenant_relay_lifecycle_step",

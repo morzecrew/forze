@@ -74,6 +74,15 @@ def _stream_physical(mixin: TenancyMixin, stream: str) -> str:
     return stream
 
 
+def _entry_id_parts(entry_id: str) -> tuple[int, int]:
+    """A stream entry id's ``(ms, seq)`` pair — ids order numerically, not lexically
+    (``"100-0"`` > ``"99-1"``, which a string comparison gets backwards)."""
+
+    ms, _, seq = entry_id.partition("-")
+
+    return int(ms), int(seq or 0)
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisStreamAdapter[M: BaseModel](
@@ -419,3 +428,41 @@ class RedisStreamGroupAdminAdapter(AckStreamGroupAdminPort, TenancyMixin):
             pending=pending_count,
             oldest_pending_idle=oldest,
         )
+
+    # ....................... #
+
+    async def trim_acknowledged(self, stream: str) -> int:
+        physical = _stream_physical(self, stream)
+        rows = await self.client.xinfo_groups(physical)
+
+        if not rows:
+            return 0  # no horizon to trust — a group-less stream is never trimmed
+
+        # Per group: with entries pending, the floor is the lowest pending id (kept — XTRIM
+        # MINID removes strictly below its argument); with none, everything delivered is
+        # acked, so the floor is the successor of the last-delivered id. The stream trims
+        # to the strictest group's floor.
+        floors: list[tuple[int, int]] = []
+
+        for row in rows:
+            name = row.get("name")
+            group = name.decode() if isinstance(name, bytes) else str(name)
+
+            if int(cast(int, row.get("pending", 0))):
+                oldest = await self.client.xpending(physical, group, count=1)
+
+                if oldest:
+                    floors.append(_entry_id_parts(oldest[0][0]))
+                    continue
+                # the pending list emptied between the two reads — fall through to the
+                # delivered horizon, which is now the honest floor
+
+            last = row.get("last-delivered-id", "0-0")
+            ms, seq = _entry_id_parts(last.decode() if isinstance(last, bytes) else str(last))
+            floors.append((ms, seq + 1))
+
+        ms, seq = min(floors)
+
+        # Exact (non-approximate) trim: a periodic sweep amortizes the O(trimmed) cost, and
+        # an exact floor keeps the observable length deterministic.
+        return await self.client.xtrim_minid(physical, f"{ms}-{seq}", approx=False)

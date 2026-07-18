@@ -197,6 +197,10 @@ Operational hardening around the loop:
   (`DEFAULT_REALTIME_STREAM_MAX_ENTRIES` is the recommended starting point) so it cannot
   grow into a Redis-memory incident. Size the cap so its horizon at peak emit rate far
   exceeds the reclaim window; alarm on `depth()`'s pending age long before the cap matters.
+  Add `realtime_stream_trim_lifecycle_step` to keep steady-state memory near the gateway
+  group's **acknowledged** horizon instead of the cap — the sweep only removes entries
+  every group has delivered and acked, so it can never outrun a slow or crashed gateway
+  (pass `tenants=lambda: shard.tenants` on a tenant-sharded stream).
 
 ### Deployment
 

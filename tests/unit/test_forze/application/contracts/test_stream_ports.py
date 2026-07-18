@@ -120,6 +120,9 @@ class _StubStreamGroupAdmin:
     async def depth(self, group: str, stream: str) -> AckGroupDepth:
         return AckGroupDepth(backlog=0, pending=0, oldest_pending_idle=None)
 
+    async def trim_acknowledged(self, stream: str) -> int:
+        return 0
+
 
 class _StubStreamCommand:
     async def append(

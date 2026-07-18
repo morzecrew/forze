@@ -117,3 +117,73 @@ async def test_depth_on_missing_group_raises_not_found(redis_client: RedisClient
         await admin.depth("never-created", "it-depth-missing")
 
     assert caught.value.code == "stream_group_not_found"
+
+
+# ----------------------- #
+# trim_acknowledged — the group-floor sweep over real XINFO/XPENDING/XTRIM MINID
+
+
+async def test_trim_acknowledged_removes_only_the_acked_prefix(
+    redis_client: RedisClient,
+) -> None:
+    stream = "it-trim-floor"
+    codec = _codec()
+    adapter = RedisStreamAdapter(client=redis_client, codec=codec)
+    reader = RedisStreamGroupAdapter(client=redis_client, codec=codec)
+    admin = RedisStreamGroupAdminAdapter(client=redis_client)
+
+    await admin.ensure_group("gw", stream, start_id="0")
+    for i in range(5):
+        await adapter.append(stream, _Payload(value=str(i)))
+
+    delivered = await reader.read("gw", "c1", {stream: ">"})
+    assert len(delivered) == 5
+    await reader.ack(group="gw", stream=stream, ids=[m.id for m in delivered[:2]])
+
+    # the two acked entries go; the three pending ones hold the floor
+    assert await admin.trim_acknowledged(stream) == 2
+    assert await redis_client.xlen(stream) == 3
+
+    # acking the rest moves the floor past everything delivered
+    await reader.ack(group="gw", stream=stream, ids=[m.id for m in delivered[2:]])
+    assert await admin.trim_acknowledged(stream) == 3
+    assert await redis_client.xlen(stream) == 0
+
+    # and the pending list survived intact through both trims
+    assert await reader.pending("gw", stream) == []
+
+
+async def test_trim_acknowledged_is_held_by_the_slowest_group(
+    redis_client: RedisClient,
+) -> None:
+    stream = "it-trim-slowest"
+    codec = _codec()
+    adapter = RedisStreamAdapter(client=redis_client, codec=codec)
+    reader = RedisStreamGroupAdapter(client=redis_client, codec=codec)
+    admin = RedisStreamGroupAdminAdapter(client=redis_client)
+
+    await admin.ensure_group("fast", stream, start_id="0")
+    await admin.ensure_group("slow", stream, start_id="0")
+    for i in range(4):
+        await adapter.append(stream, _Payload(value=str(i)))
+
+    delivered = await reader.read("fast", "c1", {stream: ">"})
+    await reader.ack(group="fast", stream=stream, ids=[m.id for m in delivered])
+
+    # the idle group's undelivered backlog holds the floor at zero
+    assert await admin.trim_acknowledged(stream) == 0
+    assert await redis_client.xlen(stream) == 4
+
+
+async def test_trim_acknowledged_without_groups_trims_nothing(
+    redis_client: RedisClient,
+) -> None:
+    stream = "it-trim-groupless"
+    adapter = RedisStreamAdapter(client=redis_client, codec=_codec())
+
+    for i in range(3):
+        await adapter.append(stream, _Payload(value=str(i)))
+
+    admin = RedisStreamGroupAdminAdapter(client=redis_client)
+    assert await admin.trim_acknowledged(stream) == 0
+    assert await redis_client.xlen(stream) == 3
