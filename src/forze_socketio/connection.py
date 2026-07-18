@@ -305,14 +305,11 @@ class _ConnectionLifecycle:
             refreshed = await _resolve(self.resolve, connect)
 
         except CoreException as error:
-            if is_server_error_kind(error.kind):
-                log_server_error(error, core=error)
-
+            # the ack builder logs server-side kinds itself — no second log here
             return build_core_exception_ack(error)
 
         except Exception as error:
-            log_server_error(error)
-
+            # the ack builder logs the traceback itself — no second log here
             return build_unhandled_exception_ack(error)
 
         if (

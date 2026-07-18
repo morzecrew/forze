@@ -31,6 +31,7 @@ from forze.application.execution.background import (
     BackgroundLoopControl,
     run_supervised,
 )
+from forze.base.exceptions import exc
 from forze.base.logging import Logger
 from forze.base.primitives import StrKey
 
@@ -56,6 +57,18 @@ class _RealtimeGatewayStartup(LifecycleHook):
         init=False,
     )
     """Stop signal and bounded teardown, shared with every other background loop."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # Validate here, synchronously — run_supervised re-checks, but inside a detached
+        # task, where the raise would only surface as a dead loop instead of failing the
+        # wiring at construction.
+        if self.restart_backoff.total_seconds() <= 0:
+            raise exc.configuration("Restart backoff must be positive")
+
+        if self.max_consecutive_crashes is not None and self.max_consecutive_crashes <= 0:
+            raise exc.configuration("Crash ceiling must be positive")
 
     # ....................... #
 

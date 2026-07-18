@@ -223,6 +223,7 @@ async def _ack_stream_plane(
     spec: StreamSpec[Any],
     group: str,
     *,
+    tenants: Sequence[UUID] | None,
     deadline: float,
     poll: float,
 ) -> QuiescePlane:
@@ -232,6 +233,10 @@ async def _ack_stream_plane(
     backlog *and* an empty pending-entries list, read from
     :meth:`~forze.application.contracts.stream.AckStreamGroupAdminPort.depth`. An unknown
     backlog (Redis after a trim) is reported residual, never treated as empty.
+
+    *tenants* mirrors the outbox plane: on a ``tenant_aware`` (namespace-tier) stream
+    route each assigned tenant's per-tenant stream key holds its own group — every one is
+    probed under its bound identity, and any one still moving keeps the plane busy.
     """
 
     name = f"ack-stream:{spec.name}/{group}"
@@ -239,22 +244,41 @@ async def _ack_stream_plane(
     if not _wired(ctx, _ACK_STREAM_ADMIN_KEY, str(spec.name)):
         return QuiescePlane(name=name, state="not_wired")
 
-    admin = ctx.deps.resolve_configurable(ctx, AckStreamGroupAdminDepKey, spec, route=spec.name)
+    async def _depth() -> Any:
+        # resolved under the current (possibly tenant-bound) identity, so a tenant-aware
+        # route reads that tenant's stream key — the same discipline as the ensure step
+        admin = ctx.deps.resolve_configurable(ctx, AckStreamGroupAdminDepKey, spec, route=spec.name)
+
+        return await admin.depth(group, str(spec.name))
 
     async def _busy() -> str | None:
-        depth = await admin.depth(group, str(spec.name))
+        holding: list[str] = []
 
-        if depth.at_rest:
-            return None
+        for tenant, identity in _tenant_scopes(ctx, tenants):
+            if identity is None:
+                depth = await _depth()
 
-        if depth.backlog is None:
-            return f"backlog unknown (trimmed?), {depth.pending} pending"
+            else:
+                with ctx.inv_ctx.bind_identity(tenant=identity):
+                    depth = await _depth()
 
-        oldest = depth.oldest_pending_idle
+            if depth.at_rest:
+                continue
 
-        return f"{depth.backlog} undelivered, {depth.pending} pending" + (
-            f" (oldest idle {oldest.total_seconds():.1f}s)" if oldest is not None else ""
-        )
+            where = "" if tenant is None else f" (tenant {tenant})"
+
+            if depth.backlog is None:
+                holding.append(f"backlog unknown (trimmed?), {depth.pending} pending{where}")
+                continue
+
+            oldest = depth.oldest_pending_idle
+            holding.append(
+                f"{depth.backlog} undelivered, {depth.pending} pending"
+                + (f" (oldest idle {oldest.total_seconds():.1f}s)" if oldest is not None else "")
+                + where
+            )
+
+        return "; ".join(holding) if holding else None
 
     residual = await _settle(_busy, deadline=deadline, poll=poll)
 
@@ -393,7 +417,8 @@ async def quiesce(
     trim) reports ``residual``, never empty.
 
     *tenants* mirrors the relay's shard: on a tenant-partitioned outbox, each partition is
-    probed under its own bound tenant.
+    probed under its own bound tenant — and each *ack_streams* group likewise, so a
+    tenant-aware realtime stream's per-tenant groups are all attested, not just a global key.
 
     Planes the runtime does not wire are reported ``not_wired`` and do not count against
     attestation. Two things are outside what this can speak for, in either mode: a
@@ -445,7 +470,14 @@ async def quiesce(
         planes.append(
             await _guarded(
                 f"ack-stream:{stream_spec.name}/{group}",
-                _ack_stream_plane(ctx, stream_spec, group, deadline=deadline, poll=poll_seconds),
+                _ack_stream_plane(
+                    ctx,
+                    stream_spec,
+                    group,
+                    tenants=tenants,
+                    deadline=deadline,
+                    poll=poll_seconds,
+                ),
             )
         )
 

@@ -31,6 +31,7 @@ from typing import Protocol, final, runtime_checkable
 import attrs
 
 from forze.application.contracts.realtime import MailboxEntry, RealtimeSignal
+from forze.base.exceptions import exc
 from forze.base.primitives import HlcTimestamp
 
 # ----------------------- #
@@ -133,6 +134,11 @@ class InMemoryRealtimeMailbox(RealtimeMailbox):
     """
 
     _logs: dict[str, list[MailboxEntry]] = attrs.field(factory=dict, init=False)
+
+    def __attrs_post_init__(self) -> None:
+        if self.cap <= 0:
+            # cap=0 would evict every entry on the store that added it — fail the wiring
+            raise exc.configuration("Mailbox cap must be positive")
 
     async def store(
         self, *, principal: str, event_id: str, hlc: HlcTimestamp, signal: RealtimeSignal

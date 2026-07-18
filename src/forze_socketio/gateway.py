@@ -82,6 +82,9 @@ _logger = Logger(ForzeSocketIOLogger.ERRORS)
 _IDLE_FLOOR = 0.05
 """Seconds: a small idle pause floor so a non-blocking backend can't hot-loop."""
 
+_POISON_SCAN_FLOOR = 256
+"""Minimum pending-entries scanned per reclaim tick for poison delivery counts."""
+
 SignalHandler = Callable[[RealtimeSignal, UUID | None, str | None, HlcTimestamp], Awaitable[None]]
 """A per-signal bridge: a decoded signal, its tenant, a dedup id, and its HLC position.
 
@@ -326,6 +329,8 @@ async def _process_messages(
         durable = HEADER_EVENT_ID in message.headers
         dedup_id = message.headers.get(HEADER_EVENT_ID)
         ack = True
+        poisoned = False
+        deliveries: int | None = None
 
         try:
             with _trace_context(message.headers, stream=stream):
@@ -352,29 +357,32 @@ async def _process_messages(
                 and deliveries >= max_deliveries
             )
 
+            if not poisoned and stats is not None:
+                stats.bridge_failed += 1
+
+            _logger.critical_exception(
+                "Realtime bridge failed", stream=stream, message_id=message.id
+            )
+
+            ack = poisoned or not durable
+
+        if ack:
+            await group.ack(group=group_name, stream=stream, ids=[message.id])
+
             if poisoned:
+                # The drop is only a fact once the ack lands — an ack that failed would
+                # leave the entry pending (redelivered), and a "dropped" log or counter
+                # written before it would have been a lie.
                 if stats is not None:
                     stats.poisoned += 1
 
-                _logger.critical_exception(
+                _logger.critical(
                     "Realtime signal poisoned: dropped after repeated delivery failures",
                     stream=stream,
                     message_id=message.id,
                     event_id=dedup_id,
                     deliveries=deliveries,
                 )
-            else:
-                if stats is not None:
-                    stats.bridge_failed += 1
-
-                _logger.critical_exception(
-                    "Realtime bridge failed", stream=stream, message_id=message.id
-                )
-
-            ack = poisoned or not durable
-
-        if ack:
-            await group.ack(group=group_name, stream=stream, ids=[message.id])
 
 
 # ....................... #
@@ -435,9 +443,17 @@ async def _consume_group_stream(
                     # The claim itself counted as a delivery, so the snapshot taken here
                     # includes the attempt about to run — a poison entry is dropped on
                     # the attempt that reaches the ceiling, not one redelivery later.
+                    # Bounded scan: the PEL can be large, and this runs every reclaim
+                    # tick. Reclaim takes the oldest idle entries, which cluster at the
+                    # front of the id-ordered PEL, so a scan a few times the batch deep
+                    # covers them; an entry past the bound simply is not counted this
+                    # round (the safe direction — it survives and is re-examined as it
+                    # ages toward the front, never dropped on an unknown count).
                     delivery_counts = {
                         entry.id: entry.delivery_count
-                        for entry in await group.pending(group_name, stream)
+                        for entry in await group.pending(
+                            group_name, stream, limit=max(4 * batch, _POISON_SCAN_FLOOR)
+                        )
                         if entry.delivery_count is not None
                     }
 
@@ -527,6 +543,14 @@ class StreamGroupSignalSource(RealtimeSignalSource):
     stats: RealtimeGatewayStats | None = None
     """Delivery counters (bridge failures, poison drops). Share the **same** instance
     with :attr:`RealtimeGateway.stats` and hand it to ``instrument_realtime_gateway``."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.max_deliveries is not None and self.max_deliveries <= 0:
+            # a non-positive ceiling would drop every reclaimed durable signal as
+            # poison on its first recovery — fail the wiring, not the deliveries
+            raise exc.configuration("max_deliveries must be positive when set (None = unbounded)")
 
     # ....................... #
 
@@ -622,6 +646,17 @@ class TenantShardedSignalSource(RealtimeSignalSource):
     restarts that loop only; a configuration error stops that tenant's supervision
     (wiring does not fix itself) while the sibling tenants keep consuming.
     """
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # Validated here, synchronously — run_supervised re-checks inside the per-tenant
+        # tasks, where a raise would surface as N dead loops instead of a wiring failure.
+        if self.restart_backoff.total_seconds() <= 0:
+            raise exc.configuration("Restart backoff must be positive")
+
+        if self.max_deliveries is not None and self.max_deliveries <= 0:
+            raise exc.configuration("max_deliveries must be positive when set (None = unbounded)")
 
     # ....................... #
 
@@ -1037,7 +1072,9 @@ class RealtimeGateway:
             else:
                 await asyncio.wait_for(emit, timeout=self.emit_timeout.total_seconds())
 
-        except BaseException:
+        except Exception:
+            # Exception, not BaseException: a shutdown's CancelledError is not an emit
+            # failure and must not inflate the counter on its way out.
             if self.stats is not None:
                 self.stats.emit_failed += 1
             raise

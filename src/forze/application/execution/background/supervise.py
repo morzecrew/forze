@@ -113,7 +113,17 @@ async def run_supervised(
                 return
 
             if on_crash is not None:
-                on_crash(error)
+                try:
+                    on_crash(error)
+
+                except Exception as observer_error:
+                    # An observation hook must never take supervision down with it —
+                    # the original crash still gets logged and the loop still restarts.
+                    logger.error(
+                        "Background loop %s crash observer failed",
+                        name,
+                        exc_info=observer_error,
+                    )
 
             logger.error(
                 "Background loop %s crashed; restarting after backoff", name, exc_info=error

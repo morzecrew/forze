@@ -221,12 +221,28 @@ def realtime_backplane_heartbeat_lifecycle_step(
     keep "succeeding" into a void. The probe emits to a room nobody joins: with a Redis
     manager that is a real publish through the backplane (failure = Redis/manager down),
     with the default single-process manager it is a no-op success (nothing to monitor).
+    The manager's listener task is checked too, when it exposes one — the delivery leg
+    can die while publishes keep succeeding, and that is equally a dead backplane.
     Feed *health* to ``instrument_realtime_backplane`` and alarm on staleness.
     """
 
     async def _tick() -> None:
         try:
             await sio.emit("forze.backplane.probe", data={}, room=probe_room, namespace=namespace)
+
+            # The emit only proves the *publish* leg. The other half of a dead backplane
+            # is this node's listener — the task delivering other nodes' emits INTO this
+            # process — which can die while publishes keep "succeeding". python-socketio's
+            # pub/sub managers hold it as ``manager.thread``; when present and finished,
+            # the backplane is down for delivery no matter what the probe publish said.
+            listener = getattr(sio.manager, "thread", None)
+            done = getattr(listener, "done", None)
+
+            if listener is not None and callable(done) and done():
+                raise RuntimeError(
+                    "Socket.IO backplane listener task has exited — cross-node emits "
+                    "are no longer delivered to this node"
+                )
 
         except Exception:
             health.failed()

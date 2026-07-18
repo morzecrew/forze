@@ -24,7 +24,7 @@ from forze.application.execution.background import (
     DEFAULT_STOP_GRACE_SECONDS,
     BackgroundLoopControl,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
 from forze_kits.integrations.outbox import outbox_relay_background_lifecycle_step
@@ -287,6 +287,15 @@ class _StreamTrimStartup(LifecycleHook):
             except asyncio.CancelledError:
                 raise
 
+            except CoreException as error:
+                # A wiring error (misconfigured route, missing dep) does not fix itself
+                # by moving to the next tenant or the next tick — let it terminate the
+                # loop loudly. Operational failures stay isolated per tenant.
+                if error.kind is ExceptionKind.CONFIGURATION:
+                    raise
+
+                logger.exception("Realtime stream trim failed for tenant", tenant=str(tenant))
+
             except Exception:
                 logger.exception("Realtime stream trim failed for tenant", tenant=str(tenant))
 
@@ -309,6 +318,17 @@ class _StreamTrimStartup(LifecycleHook):
                     await self._trim_tick(ctx, tenants)
                 except asyncio.CancelledError:
                     raise
+                except CoreException as error:
+                    if error.kind is ExceptionKind.CONFIGURATION:
+                        # wiring does not fix itself — terminal, loudly, like every
+                        # other supervised loop's configuration posture
+                        logger.exception(
+                            "Realtime stream trim hit a configuration error; "
+                            "loop stopped — fix the wiring and restart"
+                        )
+                        return
+
+                    logger.exception("Realtime stream trim sweep failed")
                 except Exception:
                     logger.exception("Realtime stream trim sweep failed")
 
