@@ -11,7 +11,12 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.envelope import HEADER_EVENT_ID
-from forze.application.contracts.realtime import Audience, RealtimeEvent, RealtimeSignal
+from forze.application.contracts.realtime import (
+    Audience,
+    RealtimeEvent,
+    RealtimeEventCatalog,
+    RealtimeSignal,
+)
 from forze.application.contracts.stream import AckStreamGroupQueryDepKey, StreamCommandDepKey
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionRuntime
@@ -380,3 +385,82 @@ async def test_encrypted_realtime_stream_is_refused_at_run() -> None:
         await source.run(cast(ExecutionContext, None), _handler)
 
     assert caught.value.code == "realtime_stream_encryption_unsupported"
+
+
+async def test_stats_count_mailboxed_emit_failed_and_poisoned() -> None:
+    """The stat lines on the failure/store paths — mailboxed, emit_failed, poisoned."""
+
+    from forze_kits.integrations.realtime import build_realtime_mailbox
+    from forze_socketio import RealtimeGatewayStats
+
+    spec = realtime_stream_spec()
+    sio = _StubSio()
+    sio.fail = True  # every emit fails
+    stats = RealtimeGatewayStats()
+    source = StreamGroupSignalSource(
+        stream_spec=spec,
+        poll_interval=_FAST,
+        reclaim_idle=timedelta(0),
+        max_deliveries=3,
+        stats=stats,
+    )
+    gw = RealtimeGateway(
+        sio=sio,  # pyright: ignore[reportArgumentType]
+        source=source,
+        dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock"),
+        mailbox_factory=build_realtime_mailbox,
+        stats=stats,
+    )
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        # A principal signal is mailboxed (mark+store commit), then its live emit fails —
+        # best-effort, swallowed: emitted 0, emit_failed 1, mailboxed 1, nothing poisoned.
+        principal = RealtimeSignal.of(Audience.principal("u1"), "order.shipped", {"text": "p"})
+        await _append(ctx, spec, principal, event_id="00000000-0000-0000-0000-0000000000aa")
+        await _run_settle(gw, ctx, lambda: stats.mailboxed >= 1, settle=0.1)
+
+        assert stats.mailboxed == 1
+        assert stats.emit_failed >= 1
+        assert stats.emitted == 0
+        assert stats.poisoned == 0  # recoverable via mailbox — never dropped
+
+        # A topic-durable signal (emit inside the tx) fails every delivery and is dropped
+        # at the ceiling: poisoned counted exactly once, only after the ack landed.
+        topic = RealtimeSignal.of(Audience.topic("orders"), "order.shipped", {"text": "t"})
+        await _append(ctx, spec, topic, event_id="00000000-0000-0000-0000-0000000000bb")
+        await _run_settle(gw, ctx, lambda: stats.poisoned >= 1, settle=0.2)
+
+        assert stats.poisoned == 1
+        assert stats.bridge_failed >= 2  # the pre-ceiling failures counted as bridge failures
+
+
+async def test_stats_count_admission_rejections() -> None:
+    from forze_socketio import RealtimeGatewayStats
+
+    spec = realtime_stream_spec()
+    sio = _StubSio()
+    stats = RealtimeGatewayStats()
+    catalog = RealtimeEventCatalog.of(
+        RealtimeEvent(name="order.shipped", payload_type=_MsgView)
+    )
+    gw = RealtimeGateway(
+        sio=sio,  # pyright: ignore[reportArgumentType]
+        source=StreamGroupSignalSource(stream_spec=spec, poll_interval=_FAST, stats=stats),
+        event_catalog=catalog,
+        stats=stats,
+    )
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        undeclared = RealtimeSignal.of(Audience.topic("t"), "not.in.catalog", {"x": 1})
+        malformed = RealtimeSignal.of(Audience.topic("t"), "order.shipped", {"bogus": True})
+        await _append(ctx, spec, undeclared, event_id=None)
+        await _append(ctx, spec, malformed, event_id=None)
+        await _run_settle(gw, ctx, lambda: stats.admission_rejected >= 2, settle=0.1)
+
+    assert stats.admission_rejected == 2
+    assert sio.emits == []  # rejected at the gate, never emitted

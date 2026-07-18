@@ -242,3 +242,17 @@ async def test_group_ensure_step_honours_an_explicit_start_id() -> None:
 
     # the explicit cursor is respected: A is skipped, B (after it) is delivered
     assert [m.payload.audience for m in delivered] == [Audience.topic("b")]
+
+
+def test_transport_contributes_its_three_operational_specs() -> None:
+    from forze.application.contracts.inventory import SpecPlane
+    from forze_kits.integrations.realtime import build_realtime_transport
+
+    frozen = build_realtime_transport().spec_contributions().freeze()
+    planes = {(entry.name, entry.plane) for entry in frozen.entries}
+
+    assert planes == {
+        ("realtime", SpecPlane.STREAM),
+        ("realtime", SpecPlane.OUTBOX),
+        ("realtime-inbox", SpecPlane.INBOX),
+    }

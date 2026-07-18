@@ -190,3 +190,46 @@ class TestMockGatewayCrashDelivery:
         assert outcome.distinct_emitted == _N  # none lost (at-least-once held)...
         assert outcome.emitted == _N  # ...and none double-emitted (dedup held)
         assert outcome.pending_after == 0  # nothing left stranded
+
+
+async def test_bridge_fails_once_refuses_a_bridge_that_did_not_fail() -> None:
+    """A mis-primed transport must not silently degenerate into the no-crash baseline."""
+
+    from forze.base.exceptions import CoreException
+
+    ctx = _context()
+    spec = realtime_stream_spec()
+    sio = _RecordingSio()  # healthy — but the crash point promised round-one failures
+    gateway = RealtimeGateway(sio=sio, source=_NullSource())  # pyright: ignore[reportArgumentType]
+
+    with pytest.raises(CoreException) as caught:
+        await run_gateway_crash_delivery(
+            ctx,
+            stream_spec=spec,
+            bridge=_bridge(gateway, ctx, None),
+            crash=GatewayCrashPoint.BRIDGE_FAILS_ONCE,
+            emitted_ids=lambda: sio.ids,
+        )
+
+    assert "expected" in str(caught.value).lower() or caught.value.kind is not None
+
+
+async def test_unexpected_recovery_failure_propagates() -> None:
+    """A bridge that fails in the RECOVERY round is a scenario failure, not a swallow."""
+
+    ctx = _context()
+    spec = realtime_stream_spec()
+
+    async def _always_broken(
+        signal: RealtimeSignal, tenant: UUID | None, dedup_id: str | None, hlc: HlcTimestamp
+    ) -> None:
+        raise RuntimeError("still broken in recovery")
+
+    with pytest.raises(RuntimeError):
+        await run_gateway_crash_delivery(
+            ctx,
+            stream_spec=spec,
+            bridge=_always_broken,
+            crash=GatewayCrashPoint.BEFORE_BRIDGE,
+            emitted_ids=lambda: [],
+        )

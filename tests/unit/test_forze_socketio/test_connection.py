@@ -229,3 +229,23 @@ async def test_reauth_refuses_a_tenant_change() -> None:
     # deliver the old tenant's events under the new tenant's authority
     assert "error" in ack
     assert sio.sessions["sid-1"][CONNECTION_SESSION_KEY] is first
+
+
+async def test_reauth_survives_a_crashing_resolver_with_a_generic_ack() -> None:
+    sio = _StubSio()
+    first = RealtimeConnection(authn=AuthnIdentity(principal_id=_PRINCIPAL), tenant=_TENANT)
+    calls = {"n": 0}
+
+    async def resolve(_c: SocketIOConnect) -> RealtimeConnection | None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return first
+        raise RuntimeError("verifier exploded")
+
+    attach_realtime_connection(sio, resolve=resolve)  # pyright: ignore[reportArgumentType]
+    await sio.handlers["connect"](*_connect_args())
+
+    ack = await sio.handlers["realtime.reauth"]("sid-1", {"token": "t"})
+
+    assert ack["error"]["kind"] == "internal"  # generic — internals never leak
+    assert sio.sessions["sid-1"][CONNECTION_SESSION_KEY] is first

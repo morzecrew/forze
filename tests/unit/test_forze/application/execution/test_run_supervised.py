@@ -231,3 +231,29 @@ async def test_invalid_settings_are_refused() -> None:
 
     with pytest.raises(CoreException):
         await _supervise(_run, stop, max_consecutive_crashes=0)
+
+
+async def test_failing_on_crash_observer_does_not_kill_supervision() -> None:
+    stop = asyncio.Event()
+    runs = 0
+
+    async def _run() -> None:
+        nonlocal runs
+        runs += 1
+
+        if runs >= 3:
+            stop.set()
+            return
+
+        raise RuntimeError("boom")
+
+    def _broken_observer(_error: BaseException) -> None:
+        raise ValueError("the metrics hook itself is broken")
+
+    logger_mock = MagicMock()
+
+    with patch("forze.application.execution.background.supervise.logger", logger_mock):
+        await asyncio.wait_for(_supervise(_run, stop, on_crash=_broken_observer), timeout=5)
+
+    assert runs == 3  # both crashes restarted despite the observer failing every time
+    assert logger_mock.error.call_count == 4  # 2 observer failures + 2 crash logs

@@ -413,3 +413,115 @@ async def test_ack_stream_plane_reports_undelivered_backlog_as_residual() -> Non
     plane = next(p for p in report.planes if p.name == f"ack-stream:{spec.name}/gw")
     assert plane.state == "residual"
     assert "1 undelivered" in (plane.detail or "")
+
+
+async def test_ack_stream_plane_probes_each_tenant() -> None:
+    from uuid import UUID
+
+    from forze.application.contracts.realtime import Audience, RealtimeSignal
+    from forze.application.contracts.stream import (
+        AckStreamGroupAdminDepKey,
+        StreamCommandDepKey,
+    )
+    from forze.application.contracts.tenancy import TenantIdentity
+    from forze_kits.integrations.realtime import realtime_stream_spec
+    from forze_mock import MockRouteConfig
+
+    spec = realtime_stream_spec()
+    idle, busy = UUID(int=1), UUID(int=2)
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(
+            MockDepsModule(routes={str(spec.name): MockRouteConfig(tenant_aware=True)})
+        ).freeze()
+    )
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        for tenant in (idle, busy):
+            with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+                admin = ctx.deps.resolve_configurable(
+                    ctx, AckStreamGroupAdminDepKey, spec, route=spec.name
+                )
+                await admin.ensure_group("gw", str(spec.name), start_id="0")
+
+        # only the busy tenant's per-tenant stream key holds an undelivered signal
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=busy)):
+            command = ctx.deps.resolve_configurable(
+                ctx, StreamCommandDepKey, spec, route=spec.name
+            )
+            await command.append(
+                str(spec.name), RealtimeSignal.of(Audience.topic("t"), "e", {})
+            )
+
+        report = await quiesce(
+            runtime,
+            outboxes=(),
+            ack_streams=[(spec, "gw")],
+            tenants=[idle, busy],
+            timeout=timedelta(milliseconds=120),
+            poll=timedelta(milliseconds=20),
+            close_gate=False,
+        )
+
+    plane = next(p for p in report.planes if p.name == f"ack-stream:{spec.name}/gw")
+    # the busy tenant keeps the plane residual, and the detail names it — the idle one passed
+    assert plane.state == "residual"
+    assert f"(tenant {busy})" in (plane.detail or "")
+    assert f"(tenant {idle})" not in (plane.detail or "")
+
+
+async def test_ack_stream_plane_not_wired_and_trimmed_unknown_details() -> None:
+    from forze.application.contracts.deps import Deps
+    from forze.application.contracts.realtime import Audience, RealtimeSignal
+    from forze.application.contracts.stream import (
+        AckStreamGroupAdminDepKey,
+        StreamCommandDepKey,
+    )
+    from forze_kits.integrations.realtime import realtime_stream_spec
+    from forze_mock import MockRouteConfig
+
+    spec = realtime_stream_spec()
+
+    # a runtime with no ack admin registration at all → the plane reports not_wired
+    bare = ExecutionRuntime(deps=DepsRegistry.from_modules(lambda: Deps.plain({})).freeze())
+    async with bare.scope():
+        report = await quiesce(
+            bare,
+            outboxes=(),
+            ack_streams=[(spec, "gw")],
+            timeout=timedelta(milliseconds=50),
+            close_gate=False,
+        )
+    plane = next(p for p in report.planes if p.name.startswith("ack-stream"))
+    assert plane.state == "not_wired"
+
+    # a capped route that evicted undelivered entries → residual with the unknown marker
+    capped = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(
+            MockDepsModule(
+                routes={str(spec.name): MockRouteConfig(stream_retention_max_entries=1)}
+            )
+        ).freeze()
+    )
+    async with capped.scope():
+        ctx = capped.get_context()
+        admin = ctx.deps.resolve_configurable(ctx, AckStreamGroupAdminDepKey, spec, route=spec.name)
+        await admin.ensure_group("gw", str(spec.name), start_id="0")
+
+        command = ctx.deps.resolve_configurable(ctx, StreamCommandDepKey, spec, route=spec.name)
+        for _ in range(3):  # cap 1 → two undelivered entries evicted past the idle group
+            await command.append(str(spec.name), RealtimeSignal.of(Audience.topic("t"), "e", {}))
+
+        report = await quiesce(
+            capped,
+            outboxes=(),
+            ack_streams=[(spec, "gw")],
+            timeout=timedelta(milliseconds=80),
+            poll=timedelta(milliseconds=20),
+            close_gate=False,
+        )
+
+    plane = next(p for p in report.planes if p.name.startswith("ack-stream"))
+    assert plane.state == "residual"
+    assert "backlog unknown" in (plane.detail or "")  # never attested as empty
