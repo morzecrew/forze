@@ -906,6 +906,35 @@ class RedisClient(RedisClientPort):
 
     # ....................... #
 
+    @exc_interceptor.coroutine("redis.xlen")  # type: ignore[untyped-decorator]
+    async def xlen(self, stream: str) -> int:
+        """``XLEN`` — the stream's current entry count (0 for a missing stream)."""
+
+        self.__require_no_pipeline("xlen")
+
+        res = await self.__executor().xlen(stream)
+
+        return int(res)
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("redis.xinfo_groups")  # type: ignore[untyped-decorator]
+    async def xinfo_groups(self, stream: str) -> list[dict[str, object]]:
+        """``XINFO GROUPS`` — one dict per consumer group on *stream*.
+
+        Read-only observability: each entry carries the group ``name``, ``pending``
+        count, ``last-delivered-id`` and (Redis ≥ 7) ``lag`` — ``lag`` is ``None`` when
+        the server cannot compute it exactly (after trims or interior deletions).
+        """
+
+        self.__require_no_pipeline("xinfo_groups")
+
+        res = await self.__executor().xinfo_groups(stream)
+
+        return [dict(entry) for entry in res]
+
+    # ....................... #
+
     @exc_interceptor.coroutine("redis.xgroup_read")  # type: ignore[untyped-decorator]
     async def xgroup_read(
         self,

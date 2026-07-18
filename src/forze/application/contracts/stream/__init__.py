@@ -18,6 +18,7 @@ from .ports import (
 )
 from .specs import StreamSpec
 from .value_objects import (
+    AckGroupDepth,
     ConsumerLag,
     OffsetReset,
     OffsetResetKind,
@@ -30,6 +31,7 @@ from .value_objects import (
 # ----------------------- #
 
 __all__ = [
+    "AckGroupDepth",
     "PendingEntry",
     "StreamMessage",
     "StreamPosition",

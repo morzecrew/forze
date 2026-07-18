@@ -16,6 +16,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.stream import (
+    AckGroupDepth,
     AckStreamGroupAdminPort,
     AckStreamGroupQueryPort,
     CommitStreamGroupAdminPort,
@@ -51,6 +52,13 @@ class MockStreamAdapter(MockTenancyMixin, StreamQueryPort[M], StreamCommandPort[
     state: MockState
     namespace: str
     codec: ModelCodec[M, Any]
+
+    max_entries: int | None = None
+    """Retention cap applied at every append (oldest entries evicted); ``None`` = no cap.
+
+    Mirrors the Redis adapter's ``XADD MAXLEN ~`` so retention behavior is testable
+    offline. Trimmed entries also vanish from a consumer group's history/claim view —
+    the same loss surface Redis ≥7 has, deliberately not softened here."""
 
     # ....................... #
 
@@ -95,7 +103,12 @@ class MockStreamAdapter(MockTenancyMixin, StreamQueryPort[M], StreamCommandPort[
             headers=dict(headers) if headers else {},
         )
         with self.state.lock:
-            self._stream_store().setdefault(stream, []).append(message)
+            entries = self._stream_store().setdefault(stream, [])
+            entries.append(message)
+
+            if self.max_entries is not None and len(entries) > self.max_entries:
+                del entries[: len(entries) - self.max_entries]
+
         return message_id
 
     # ....................... #
@@ -445,6 +458,46 @@ class MockAckStreamGroupAdminAdapter[M: BaseModel](AckStreamGroupAdminPort):
                 gs.last_delivered = self.stream._id_to_int(start_id)  # pyright: ignore[reportPrivateUsage]
 
             groups[(group, stream)] = gs
+
+    # ....................... #
+
+    async def depth(self, group: str, stream: str) -> AckGroupDepth:
+        with self.state.lock:
+            store = cast(dict[str, Any], self.stream._stream_store())  # pyright: ignore[reportPrivateUsage]
+            groups = cast(
+                dict[tuple[str, str], _MockGroupState],
+                store.setdefault(_GROUPS_KEY, [{}])[0],
+            )
+            gs = groups.get((group, stream))
+
+            if gs is None:
+                raise exc.not_found(
+                    f"Stream group {group!r} does not exist on {stream!r} — run the "
+                    "ensure-group step before observing depth",
+                    code="stream_group_not_found",
+                )
+
+            entries = cast(list[Any], store.get(stream, []))
+            backlog = sum(
+                1
+                for m in entries
+                if self.stream._id_to_int(m.id) > gs.last_delivered  # pyright: ignore[reportPrivateUsage]
+            )
+
+            oldest: timedelta | None = None
+            if gs.pending:
+                # oldest by stream position, mirroring the Redis XPENDING '-' page
+                first_id = min(
+                    gs.pending,
+                    key=self.stream._id_to_int,  # pyright: ignore[reportPrivateUsage]
+                )
+                oldest = max(timedelta(0), utcnow() - gs.pending[first_id].delivered_at)
+
+            return AckGroupDepth(
+                backlog=backlog,
+                pending=len(gs.pending),
+                oldest_pending_idle=oldest,
+            )
 
 
 # ....................... #

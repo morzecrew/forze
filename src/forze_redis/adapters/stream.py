@@ -9,7 +9,7 @@ require_redis()
 import asyncio
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import final
+from typing import cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -17,6 +17,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from forze.application.contracts.stream import (
+    AckGroupDepth,
     AckStreamGroupAdminPort,
     AckStreamGroupQueryPort,
     PendingEntry,
@@ -25,6 +26,7 @@ from forze.application.contracts.stream import (
     StreamQueryPort,
 )
 from forze.application.contracts.tenancy import TenancyMixin
+from forze.base.exceptions import exc
 
 from ..kernel.client import RedisClientPort
 from .codecs import RedisStreamCodec
@@ -89,6 +91,10 @@ class RedisStreamAdapter[M: BaseModel](
 
     client: RedisClientPort
     codec: RedisStreamCodec[M]
+
+    max_entries: int | None = None
+    """Approximate retention cap applied at every append (``XADD MAXLEN ~``); ``None`` = no
+    cap. See ``RedisStreamConfig.retention_max_entries`` for sizing guidance."""
 
     # ....................... #
 
@@ -166,7 +172,7 @@ class RedisStreamAdapter[M: BaseModel](
             headers=headers,
         )
 
-        return await self.client.xadd(_stream_physical(self, stream), data)
+        return await self.client.xadd(_stream_physical(self, stream), data, maxlen=self.max_entries)
 
 
 # ....................... #
@@ -374,3 +380,42 @@ class RedisStreamGroupAdminAdapter(AckStreamGroupAdminPort, TenancyMixin):
         except Exception as error:
             if "BUSYGROUP" not in str(error):
                 raise
+
+    # ....................... #
+
+    async def depth(self, group: str, stream: str) -> AckGroupDepth:
+        physical = _stream_physical(self, stream)
+
+        entry: dict[str, object] | None = None
+        for row in await self.client.xinfo_groups(physical):
+            name = row.get("name")
+            name = name.decode() if isinstance(name, bytes) else name
+            if name == group:
+                entry = row
+                break
+
+        if entry is None:
+            raise exc.not_found(
+                f"Stream group {group!r} does not exist on {stream!r} — run the "
+                "ensure-group step before observing depth",
+                code="stream_group_not_found",
+            )
+
+        # Redis ≥7 reports lag directly; None after trims/interior deletions (kept as
+        # unknown — AckGroupDepth treats an unknown backlog as not-at-rest).
+        raw_lag = entry.get("lag")
+        backlog = int(raw_lag) if isinstance(raw_lag, int) else None
+        pending_count = int(cast(int, entry.get("pending", 0)))
+
+        oldest: timedelta | None = None
+        if pending_count:
+            oldest_rows = await self.client.xpending(physical, group, count=1)
+            if oldest_rows:
+                _msg_id, _owner, idle_ms, _delivered = oldest_rows[0]
+                oldest = timedelta(milliseconds=idle_ms)
+
+        return AckGroupDepth(
+            backlog=backlog,
+            pending=pending_count,
+            oldest_pending_idle=oldest,
+        )

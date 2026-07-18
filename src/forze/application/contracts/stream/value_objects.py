@@ -293,3 +293,50 @@ class ConsumerLag:
         """
 
         return max(0, self.end_offset - self.committed_offset)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class AckGroupDepth:
+    """One ack-stream consumer group's outstanding work, as a point-in-time snapshot.
+
+    The ack sub-model's answer to :class:`ConsumerLag`: an ack group has no committed
+    offset, so its depth is two numbers — entries the group has **never been delivered**
+    (the backlog behind its cursor) and entries **delivered but unacknowledged** (the
+    pending-entries list). Returned by
+    :meth:`~forze.application.contracts.stream.AckStreamGroupAdminPort.depth`; a quiesce
+    sweep or a depth gauge polls it — read-only, never changes ownership or idle clocks.
+    """
+
+    backlog: int | None
+    """Entries appended to the stream but never delivered to this group.
+
+    ``None`` when the backend cannot compute it exactly (Redis reports a null lag after
+    trims or interior deletions) — treat unknown as *not* at rest, never as zero.
+    """
+
+    pending: int
+    """Entries delivered to a consumer and not yet acknowledged."""
+
+    oldest_pending_idle: timedelta | None
+    """Idle time of the oldest pending entry (by stream position); ``None`` when
+    nothing is pending.
+
+    The alarm signal: a pending age that keeps growing is a consumer that stopped
+    draining — page on this long before any retention cap becomes the failure. Idle
+    resets on redelivery (a recently-reclaimed entry is being worked on), so this
+    measures abandonment, not total time-in-queue.
+    """
+
+    @property
+    def at_rest(self) -> bool:
+        """Whether the group has provably nothing outstanding.
+
+        Requires a **known-zero** backlog and an empty pending list; an unknown backlog
+        is not at rest (fail closed, same posture as everything quiesce attests).
+        """
+
+        return self.backlog == 0 and self.pending == 0

@@ -16,7 +16,13 @@ from forze_socketio import RealtimeGateway, RealtimeSignalSource, SignalHandler
 
 
 class _NullSource(RealtimeSignalSource):
-    async def run(self, ctx: ExecutionContext, handler: SignalHandler) -> None:  # pragma: no cover
+    async def run(
+        self,
+        ctx: ExecutionContext,
+        handler: SignalHandler,
+        *,
+        stop: asyncio.Event | None = None,
+    ) -> None:  # pragma: no cover
         await asyncio.Event().wait()
 
 

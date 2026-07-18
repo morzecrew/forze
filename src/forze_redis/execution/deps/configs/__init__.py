@@ -76,6 +76,25 @@ class RedisStreamConfig(TenantAwareIntegrationConfig):
     ``tenant_aware``, isolated by the ``tenant:{id}:stream:`` key prefix — there is no
     per-route key namespace to declare."""
 
+    retention_max_entries: int | None = attrs.field(default=None)
+    """Approximate cap on the stream's length, applied at every append (``XADD MAXLEN ~``).
+
+    Without a cap a stream grows in Redis memory until an operator intervenes or
+    ``maxmemory`` eviction takes the keyspace — set one on any stream with an unbounded
+    producer (the realtime egress stream above all). Approximate (``~``) so Redis trims
+    whole macro nodes, which is O(1) amortized; the observed length can exceed the cap by
+    a node's worth of entries.
+
+    The cap bounds how long an **undelivered** entry survives a total consumer outage:
+    size it so the horizon at your peak append rate comfortably exceeds both the consumer
+    group's reclaim window and your recovery SLO. Delivery-side lag is the thing to alarm
+    on before a cap ever becomes the failure."""
+
+    @retention_max_entries.validator
+    def _check_retention(self, _attribute: object, value: int | None) -> None:
+        if value is not None and value <= 0:
+            raise ValueError("retention_max_entries must be positive when set")
+
 
 # ....................... #
 

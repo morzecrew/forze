@@ -12,11 +12,15 @@ import attrs
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.queue import QueueMessage, QueueSpec
+from forze.application.execution.background import (
+    DEFAULT_STOP_GRACE_SECONDS,
+    BackgroundLoopControl,
+    run_supervised,
+)
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey, current_entropy_source
+from forze.base.primitives import StrKey
 from forze_kits.integrations._logger import logger
-from forze_kits.lifecycle import DEFAULT_STOP_GRACE_SECONDS, BackgroundLoopControl
 
 from .runner import QueueConsumer
 
@@ -93,42 +97,6 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
         # factory fails startup loudly instead of spawning a task that dies.
         consumer = self.consumer_factory(ctx)
 
-        async def _loop() -> None:
-            while True:
-                try:
-                    # timeout=None: consume forever. Per-message failures are
-                    # absorbed inside the consumer's decision ladder; only a
-                    # consume-generator crash (broker connection loss, ...)
-                    # escapes to here. The stop signal ends the run at a message
-                    # boundary, so shutdown never cancels a handler mid-flight.
-                    await consumer.run(ctx, timeout=None, stop=self.control.event)
-
-                except asyncio.CancelledError:
-                    raise
-
-                except Exception:
-                    logger.exception(
-                        "Queue consumer for %s crashed; restarting after backoff",
-                        self.queue,
-                    )
-
-                if self.control.stopping:
-                    # The run ended because we asked it to, not because it broke.
-                    return
-
-                # Reached on crash — or if the consume generator ever ends
-                # despite timeout=None: restart either way after the backoff
-                # so a flapping broker cannot hot-loop the consumer.
-                # Jittered restart: a downstream outage crashes every
-                # replica's consumer at once; without jitter they all restart
-                # (and re-crash) in lockstep.
-                if await self.control.sleep_or_stop(
-                    # Desynchronization jitter, not security randomness.
-                    self.restart_backoff.total_seconds()
-                    * current_entropy_source().as_random().uniform(1.0, 1.5)
-                ):
-                    return
-
         if self.control.running:
             # The runtime invokes startup once per scope; a direct double call
             # must not leak (and orphan) the previous consumer task.
@@ -138,8 +106,24 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
             )
             return
 
-        self.control.arm()
-        self.control.task = asyncio.create_task(_loop(), name=self.control.loop_name)
+        stop = self.control.arm()
+
+        async def _run_once() -> None:
+            # timeout=None: consume forever. Per-message failures are absorbed inside the
+            # consumer's decision ladder; only a consume-generator crash (broker connection
+            # loss, ...) escapes to the supervisor. The stop signal ends the run at a
+            # message boundary, so shutdown never cancels a handler mid-flight.
+            await consumer.run(ctx, timeout=None, stop=stop)
+
+        self.control.task = asyncio.create_task(
+            run_supervised(
+                _run_once,
+                stop=stop,
+                name=self.control.loop_name,
+                restart_backoff=self.restart_backoff,
+            ),
+            name=self.control.loop_name,
+        )
         ctx.drainables.register(self)
 
 

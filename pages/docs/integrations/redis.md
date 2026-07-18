@@ -93,6 +93,22 @@ name is supplied per call, and `tenant_aware=True` isolates it with a
 `CryptoDepsModule` is required, and a deployment `required_reach` floor is
 enforced here. Pub-sub is at-most-once past the broker.
 
+**Retention.** A stream without a cap grows in Redis memory until `maxmemory`
+eviction takes the keyspace. `RedisStreamConfig(retention_max_entries=...)` applies an
+approximate cap at every append (`XADD MAXLEN ~`, O(1) amortized). Cap any stream with
+an unbounded producer — the realtime egress stream above all
+(`DEFAULT_REALTIME_STREAM_MAX_ENTRIES` is the recommended starting point) — and size it
+so the horizon at peak append rate comfortably exceeds the consumer group's reclaim
+window: retention bounds how long an *undelivered* entry survives a total consumer
+outage. Alarm on the ack admin port's `depth()` (undelivered backlog, pending count,
+oldest pending age) long before a cap becomes the failure; the same surface feeds
+`quiesce(ack_streams=...)`.
+
+**Pub-sub reconnect.** Long-running subscribers reconnect automatically after a
+transport error (`pubsub_auto_reconnect` now defaults to `True` — the previous opt-in
+default meant a subscriber silently stopped on the first Redis blip). Opt out per
+client config to fail loudly and own the reconnect yourself.
+
 ## L1 push invalidation
 
 `RedisCacheConfig(invalidation_push=True)` enables Redis 6+ **client-side

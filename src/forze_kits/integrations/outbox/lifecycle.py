@@ -20,11 +20,11 @@ from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.stream import StreamSpec
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.execution.background import BackgroundLoopControl
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
-from forze_kits.lifecycle import BackgroundLoopControl
 
 from ._relay_core import validate_retry_options
 from .relay import OutboxRelay

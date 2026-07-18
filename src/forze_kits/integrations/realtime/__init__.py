@@ -27,6 +27,7 @@ from .observability import instrument_realtime_mailbox
 from .publisher import RealtimePublisher, build_realtime_publisher
 from .specs import (
     DEFAULT_REALTIME_CHANNEL,
+    DEFAULT_REALTIME_STREAM_MAX_ENTRIES,
     RealtimeTransport,
     build_realtime_transport,
     realtime_inbox_spec,
@@ -50,6 +51,7 @@ __all__ = [
     "RealtimeTransport",
     "build_realtime_transport",
     "DEFAULT_REALTIME_CHANNEL",
+    "DEFAULT_REALTIME_STREAM_MAX_ENTRIES",
     "realtime_stream_spec",
     "realtime_outbox_spec",
     "realtime_inbox_spec",

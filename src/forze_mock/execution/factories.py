@@ -624,6 +624,7 @@ class ConfigurableMockStream(_MockFactoryBase):
             codec=spec.codec,
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
+            max_entries=cfg.stream_retention_max_entries if cfg else None,
         )
 
     def __call__(

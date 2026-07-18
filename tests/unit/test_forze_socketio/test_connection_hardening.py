@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID
 
@@ -130,7 +131,11 @@ async def test_periodic_startup_ticks_and_survives_errors() -> None:
     startup = _PeriodicStartup(
         tick=_tick, interval=timedelta(seconds=0.01), label="test"
     )
-    ctx = cast(ExecutionContext, None)
+    registered: list[object] = []
+    ctx = cast(
+        ExecutionContext,
+        SimpleNamespace(drainables=SimpleNamespace(register=registered.append)),
+    )
 
     await startup(ctx)
     for _ in range(200):
@@ -141,4 +146,7 @@ async def test_periodic_startup_ticks_and_survives_errors() -> None:
     await _PeriodicShutdown(startup=startup)(ctx)
 
     assert calls["n"] >= 3  # survived the first failing tick and kept going
-    assert startup.task is not None and startup.task.cancelled()
+    # Drain-registered and stopped between ticks — cleanly, not cancelled mid-work.
+    assert registered == [startup]
+    task = startup.task
+    assert task is not None and task.done() and not task.cancelled()

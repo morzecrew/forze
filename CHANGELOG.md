@@ -41,6 +41,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Tenant enumeration** — `TenantManagementPort.list_tenants(limit, offset, *, active_only=False)` pages every tenant with the total; not membership-scoped, unlike `list_principal_tenants`, so a per-tenant sweep no longer skips a tenant nobody belongs to. `active_only` defaults to `False`: deactivation is a flag, not a delete, and that tenant's data is still there.
 
+**Realtime operational hardening** — the realtime egress plane (stream → gateway → Socket.IO) reaches the durable plane's operational bar.
+
+- **Core loop runner** — `BackgroundLoopControl` moves to `forze.application.execution.background`, joined by `run_supervised(run, stop=…, restart_backoff=…, max_consecutive_crashes=…)` (jittered crash-restart; terminal on configuration errors); `arm()` returns the armed event. **Breaking** for imports of `forze_kits.lifecycle.BackgroundLoopControl` (unreleased).
+- **Stream retention** — `RedisStreamConfig(retention_max_entries=…)` caps a stream at every append (`XADD MAXLEN ~`); `MockRouteConfig(stream_retention_max_entries=…)` mirrors it offline. `DEFAULT_REALTIME_STREAM_MAX_ENTRIES` is the recommended cap for the realtime route.
+- **Poison ceiling** — `StreamGroupSignalSource.max_deliveries` (default 5) drops a durable signal that fails every delivery (acked + critical log + counter); `None` restores unbounded redelivery.
+- **Ack-group depth** — `AckStreamGroupAdminPort.depth(group, stream) -> AckGroupDepth` (Redis, mock); `quiesce(ack_streams=[(stream_spec, group)])` attests the realtime consumer group. `RedisClientPort` gains `xlen` and `xinfo_groups`.
+- **Live-path observability** — `RealtimeGatewayStats` + `instrument_realtime_gateway` (delivery counters); the gateway bridges under the producer's `traceparent` with a CONSUMER span; `BackplaneHealth` + `realtime_backplane_heartbeat_lifecycle_step` + `instrument_realtime_backplane` probe the Socket.IO fan-out path.
+- **Inventory** — `RealtimeTransport.spec_contributions()` catalogs the stream/outbox/inbox legs.
+- **Connection hygiene** — built-in `realtime.reauth` refreshes a rotating token in place (same principal only); `InMemoryRealtimeMailbox` enforces a per-principal cap (1000).
+
 ### Changed
 
 **Breaking — graph**
@@ -52,6 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Behavior**
 
 - **Background loops stop gracefully instead of being cancelled** — all five (outbox relay, queue consumer, commit-stream consumer, durable recovery, durable scheduler) register with a new per-scope `ctx.drainables`, and `runtime.shutdown()` asks each to stop between units of work, before lifecycle teardown; consumers take a `stop` signal on `run()`. A commit-stream consumer stops between **messages** and commits the offsets of everything it processed — including when a handler outlasts the grace and it is cancelled mid-batch. A loop that overruns is still cancelled, and now reports that it was rather than counting as a clean stop. `drain_on_shutdown=True` no longer needs an ordering edge to the database client.
+
+- **The realtime loops join them, supervised** — the gateway (`realtime_gateway_lifecycle_step(restart_backoff=…, max_consecutive_crashes=…)`), the presence heartbeat and the identity-expiry sweep restart on crash with jittered backoff, stop at their unit boundary, and register in `ctx.drainables`; `RealtimeGateway.run` / `RealtimeSignalSource.run` take `stop=` (**breaking** for custom source implementations). `TenantShardedSignalSource` supervises each tenant loop independently — one tenant's failure no longer cancels its siblings (`restart_backoff=` per source).
+
+- **Realtime gateway defaults harden** — `emit_timeout` defaults to 5 s (was unbounded; `None` opts back in); a realtime stream route declaring an encryption tier is refused at run start (`realtime_stream_encryption_unsupported`).
+
+- **`pubsub_auto_reconnect` defaults to `True`** — a Redis pub/sub subscriber reconnects after transport errors instead of silently stopping; opt out per client config.
+
+- **`python-socketio` capped `<6`** — the gateway and server builder depend on 5.x constructor surfaces.
 
 - **`OutboxEmit` rejects a relay with no destination** — a `RelayBinding` whose `transport` names a spec it was never given raises `precondition` at construction instead of quietly dropping that route from the inventory.
 

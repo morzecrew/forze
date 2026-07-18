@@ -12,6 +12,7 @@ from typing import Final, final
 import attrs
 
 from forze.application.contracts.inbox import InboxSpec
+from forze.application.contracts.inventory import SpecRegistry, SpecSource
 from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
 from forze.application.contracts.realtime import RealtimeSignal
 from forze.application.contracts.stream import StreamSpec
@@ -21,6 +22,18 @@ from forze.base.serialization import PydanticModelCodec
 
 DEFAULT_REALTIME_CHANNEL: Final[str] = "realtime"
 """Default stream name / outbox route for realtime signals."""
+
+DEFAULT_REALTIME_STREAM_MAX_ENTRIES: Final[int] = 100_000
+"""Recommended retention cap for the realtime stream route.
+
+Set it on the stream route's backend config (``RedisStreamConfig(retention_max_entries=...)``,
+``MockRouteConfig(stream_retention_max_entries=...)``) — retention is a route concern the
+specs cannot carry. The realtime stream is the one stream with an unbounded, framework-driven
+producer (every ephemeral publish appends), so an uncapped route grows in Redis memory until
+``maxmemory`` eviction takes the keyspace. 100k entries keeps the cap horizon at any plausible
+emit rate far beyond the gateway's reclaim window; a total consumer outage longer than the
+horizon loses the oldest undelivered signals — size to your recovery SLO, and alarm on
+delivery lag long before the cap is the failure."""
 
 _REALTIME_CODEC: Final = PydanticModelCodec(model_type=RealtimeSignal)
 """Shared, stateless codec for the realtime signal — reused by every spec."""
@@ -96,6 +109,26 @@ class RealtimeTransport:
 
     inbox_spec: InboxSpec
     """The dedup inbox for exactly-once durable delivery at the gateway."""
+
+    # ....................... #
+
+    def spec_contributions(self) -> SpecRegistry:
+        """Every spec this transport binds, for the application's inventory.
+
+        Merge it at assembly (the same contract as ``AggregateKit.spec_contributions`` and
+        ``forze_identity.spec_contributions``) — without it, reconciliation trips on the
+        realtime routes as bound-but-never-catalogued. All three legs are operational
+        planes (drained, not exported); the offline mailbox and cursor collections are
+        ordinary ``DocumentSpec``s the app already declares via
+        ``realtime_mailbox_spec``/``realtime_cursor_spec`` and registers itself.
+        """
+
+        return SpecRegistry().register(
+            self.stream_spec,
+            self.outbox_spec,
+            self.inbox_spec,
+            source=SpecSource.KIT,
+        )
 
 
 # ....................... #

@@ -348,3 +348,68 @@ async def test_quiesce_settles_the_durable_plane_when_no_runs_are_outstanding() 
     durable = next(plane for plane in report.planes if plane.name == "durable")
 
     assert durable.state == "settled"
+
+
+# ----------------------- #
+# ack-stream plane (the realtime gateway's consumer-group model)
+
+
+async def test_ack_stream_plane_settles_when_group_is_at_rest() -> None:
+    from forze.application.contracts.stream import (
+        AckStreamGroupAdminDepKey,
+    )
+    from forze_kits.integrations.realtime import realtime_stream_spec
+
+    spec = realtime_stream_spec()
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        admin = ctx.deps.resolve_configurable(ctx, AckStreamGroupAdminDepKey, spec, route=spec.name)
+        await admin.ensure_group("gw", str(spec.name), start_id="0")
+
+        report = await quiesce(
+            runtime,
+            outboxes=(),
+            ack_streams=[(spec, "gw")],
+            timeout=timedelta(milliseconds=150),
+            poll=timedelta(milliseconds=10),
+            close_gate=False,
+        )
+
+    plane = next(p for p in report.planes if p.name == f"ack-stream:{spec.name}/gw")
+    assert plane.state == "settled"
+
+
+async def test_ack_stream_plane_reports_undelivered_backlog_as_residual() -> None:
+    from forze.application.contracts.realtime import Audience, RealtimeSignal
+    from forze.application.contracts.stream import (
+        AckStreamGroupAdminDepKey,
+        StreamCommandDepKey,
+    )
+    from forze_kits.integrations.realtime import realtime_stream_spec
+
+    spec = realtime_stream_spec()
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        admin = ctx.deps.resolve_configurable(ctx, AckStreamGroupAdminDepKey, spec, route=spec.name)
+        await admin.ensure_group("gw", str(spec.name), start_id="0")
+
+        command = ctx.deps.resolve_configurable(ctx, StreamCommandDepKey, spec, route=spec.name)
+        signal = RealtimeSignal.of(Audience.topic("t"), "e", {})
+        await command.append(str(spec.name), signal)  # appended, never consumed
+
+        report = await quiesce(
+            runtime,
+            outboxes=(),
+            ack_streams=[(spec, "gw")],
+            timeout=timedelta(milliseconds=120),
+            poll=timedelta(milliseconds=20),
+            close_gate=False,
+        )
+
+    plane = next(p for p in report.planes if p.name == f"ack-stream:{spec.name}/gw")
+    assert plane.state == "residual"
+    assert "1 undelivered" in (plane.detail or "")

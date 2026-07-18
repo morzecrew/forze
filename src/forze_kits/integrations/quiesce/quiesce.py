@@ -11,7 +11,7 @@ from uuid import UUID
 from forze.application.contracts.durable.function import DurableRunStatus
 from forze.application.contracts.inventory import SpecPlane
 from forze.application.contracts.outbox import OutboxSpec
-from forze.application.contracts.stream import StreamSpec
+from forze.application.contracts.stream import AckStreamGroupAdminDepKey, StreamSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionRuntime
 from forze.application.execution.context import ExecutionContext
@@ -24,6 +24,7 @@ from .report import QuiescePlane, QuiesceReport
 
 _DURABLE_ADMIN_KEY = "durable_function_run_admin"
 _COMMIT_STREAM_ADMIN_KEY = "commit_stream_group_admin"
+_ACK_STREAM_ADMIN_KEY = "stream_group_admin"
 
 _UNFINISHED_RUNS = (DurableRunStatus.PENDING, DurableRunStatus.RUNNING)
 """Durable runs that still owe work. Both block: a ``PENDING`` run is enqueued (or parked on
@@ -217,6 +218,55 @@ async def _stream_plane(
 # ....................... #
 
 
+async def _ack_stream_plane(
+    ctx: ExecutionContext,
+    spec: StreamSpec[Any],
+    group: str,
+    *,
+    deadline: float,
+    poll: float,
+) -> QuiescePlane:
+    """Settle one **ack-family** consumer group (the realtime gateway's model).
+
+    An ack group has no committed offset to lag behind — its rest state is a known-zero
+    backlog *and* an empty pending-entries list, read from
+    :meth:`~forze.application.contracts.stream.AckStreamGroupAdminPort.depth`. An unknown
+    backlog (Redis after a trim) is reported residual, never treated as empty.
+    """
+
+    name = f"ack-stream:{spec.name}/{group}"
+
+    if not _wired(ctx, _ACK_STREAM_ADMIN_KEY, str(spec.name)):
+        return QuiescePlane(name=name, state="not_wired")
+
+    admin = ctx.deps.resolve_configurable(ctx, AckStreamGroupAdminDepKey, spec, route=spec.name)
+
+    async def _busy() -> str | None:
+        depth = await admin.depth(group, str(spec.name))
+
+        if depth.at_rest:
+            return None
+
+        if depth.backlog is None:
+            return f"backlog unknown (trimmed?), {depth.pending} pending"
+
+        oldest = depth.oldest_pending_idle
+
+        return f"{depth.backlog} undelivered, {depth.pending} pending" + (
+            f" (oldest idle {oldest.total_seconds():.1f}s)" if oldest is not None else ""
+        )
+
+    residual = await _settle(_busy, deadline=deadline, poll=poll)
+
+    if residual is None:
+        return QuiescePlane(name=name, state="settled")
+
+    return QuiescePlane(name=name, state="residual", detail=residual)
+
+
+# ....................... #
+
+
 async def _stop_in_process_loops(ctx: ExecutionContext, *, deadline: float) -> int:
     """Stop the background loops this process owns, so the planes they feed stop moving.
 
@@ -295,6 +345,7 @@ async def quiesce(
     timeout: timedelta = timedelta(seconds=30),
     outboxes: Sequence[OutboxSpec[Any]] | None = None,
     streams: Sequence[tuple[StreamSpec[Any], str]] = (),
+    ack_streams: Sequence[tuple[StreamSpec[Any], str]] = (),
     tenants: Sequence[UUID] | None = None,
     close_gate: bool = True,
     poll: timedelta = timedelta(milliseconds=200),
@@ -336,6 +387,10 @@ async def quiesce(
 
     *streams* stays explicit, and always will: a consumer **group** is not a property of a
     stream spec — it is the identity of whoever is reading — so no inventory can supply it.
+    *ack_streams* is the same contract for **ack-family** groups (the realtime gateway's
+    model): rest means known-zero backlog **and** an empty pending-entries list, read from
+    the ack admin port's ``depth()``; a backlog the backend cannot compute (Redis after a
+    trim) reports ``residual``, never empty.
 
     *tenants* mirrors the relay's shard: on a tenant-partitioned outbox, each partition is
     probed under its own bound tenant.
@@ -383,6 +438,14 @@ async def quiesce(
             await _guarded(
                 f"stream:{stream_spec.name}/{group}",
                 _stream_plane(ctx, stream_spec, group, deadline=deadline, poll=poll_seconds),
+            )
+        )
+
+    for stream_spec, group in ack_streams:
+        planes.append(
+            await _guarded(
+                f"ack-stream:{stream_spec.name}/{group}",
+                _ack_stream_plane(ctx, stream_spec, group, deadline=deadline, poll=poll_seconds),
             )
         )
 

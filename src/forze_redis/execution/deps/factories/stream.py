@@ -47,6 +47,7 @@ def _stream_adapter(
         codec=RedisStreamCodec(payload_codec=spec.codec),
         tenant_aware=config.tenant_aware,
         tenant_provider=ctx.inv_ctx.get_tenant,
+        max_entries=config.retention_max_entries,
     )
 
 

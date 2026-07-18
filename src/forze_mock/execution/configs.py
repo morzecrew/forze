@@ -21,3 +21,10 @@ class MockRouteConfig:
 
     relation: RelationSpec | None = None
     """Optional relation override (schema/table style)."""
+
+    stream_retention_max_entries: int | None = None
+    """Stream routes only: retention cap applied at every append (oldest evicted).
+
+    Mirrors ``RedisStreamConfig.retention_max_entries`` so retention behavior — including
+    the loss of trimmed-but-undelivered entries — is testable offline. Ignored by
+    non-stream routes."""

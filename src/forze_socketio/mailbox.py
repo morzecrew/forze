@@ -125,6 +125,13 @@ class MailboxCursors(Protocol):
 class InMemoryRealtimeMailbox(RealtimeMailbox):
     """Single-node, in-memory mailbox keyed by principal. For multi-node use a durable store."""
 
+    cap: int = 1000
+    """Per-principal retention cap (oldest evicted), matching the durable store's default.
+
+    A dev/test aid must not grow without bound either — an uncapped in-memory mailbox
+    wired into a long-lived process is a slow leak per never-acking principal.
+    """
+
     _logs: dict[str, list[MailboxEntry]] = attrs.field(factory=dict, init=False)
 
     async def store(
@@ -141,6 +148,9 @@ class InMemoryRealtimeMailbox(RealtimeMailbox):
             )
         )
         log.sort(key=lambda entry: entry.hlc)
+
+        if len(log) > self.cap:
+            del log[: len(log) - self.cap]
 
     async def read_since(self, *, principal: str, since: HlcTimestamp | None) -> list[MailboxEntry]:
         log = self._logs.get(principal, [])
