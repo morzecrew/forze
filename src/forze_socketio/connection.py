@@ -284,9 +284,11 @@ class _ConnectionLifecycle:
         resolver with the fresh auth payload and swaps the stored identity (including a
         new ``expires_at``, so the expiry sweep keeps its hands off).
 
-        **Same principal only.** Rooms, presence, replay cursors — everything keys off
-        the principal, so a payload resolving to a different principal (or to anonymous)
-        is refused: that is a re-login, and a re-login reconnects.
+        **Same principal, same tenant.** Rooms, presence, replay cursors — everything
+        keys off the (tenant, principal) pair, so a payload resolving to a different
+        principal, a different tenant, or to anonymous is refused: the socket would stay
+        in its old tenant-scoped rooms while everything else used the new identity. That
+        is a re-login, and a re-login reconnects.
         """
 
         session = await self.sio.get_session(sid, namespace=self.namespace)
@@ -313,11 +315,17 @@ class _ConnectionLifecycle:
 
             return build_unhandled_exception_ack(error)
 
-        if refreshed is None or refreshed.principal != current.principal:
+        if (
+            refreshed is None
+            or refreshed.principal != current.principal
+            or refreshed.tenant != current.tenant
+        ):
             return build_core_exception_ack(
                 exc.authentication(
-                    "Reauth must resolve the same principal — a different principal "
-                    "is a re-login, which reconnects"
+                    "Reauth must resolve the same principal and tenant — anything else "
+                    "is a re-login, which reconnects. Rooms, replay cursors, and presence "
+                    "are all scoped by both; swapping identity in place would leave the "
+                    "socket in the old identity's rooms."
                 )
             )
 
@@ -529,12 +537,20 @@ async def sweep_expired_connections(
     dropped = 0
 
     for sid in _local_connections(sio, namespace):
-        session = await sio.get_session(sid, namespace=namespace)
-        connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
+        # Per-connection isolation: one socket that fails to read or disconnect (already
+        # gone, transport hiccup) must not shield every later socket from the sweep —
+        # that would extend expired credentials past their lifetime for as long as the
+        # early failure persists. CancelledError is a BaseException and still propagates.
+        try:
+            session = await sio.get_session(sid, namespace=namespace)
+            connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
 
-        if connection is not None and connection.is_expired(moment):
-            await sio.disconnect(sid, namespace=namespace)
-            dropped += 1
+            if connection is not None and connection.is_expired(moment):
+                await sio.disconnect(sid, namespace=namespace)
+                dropped += 1
+
+        except Exception as error:
+            log_server_error(error)
 
     return dropped
 
@@ -556,11 +572,19 @@ async def refresh_presence(
     refreshed = 0
 
     for sid in _local_connections(sio, namespace):
-        session = await sio.get_session(sid, namespace=namespace)
-        connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
+        # Per-connection isolation: one failed heartbeat must not starve every later
+        # connection's — under a TTL store, a persistently-failing early entry would
+        # otherwise expire healthy connections and the gateway would skip their live
+        # deliveries. CancelledError is a BaseException and still propagates.
+        try:
+            session = await sio.get_session(sid, namespace=namespace)
+            connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
 
-        if connection is not None:
-            await presence.joined(connection.principal_room, sid)
-            refreshed += 1
+            if connection is not None:
+                await presence.joined(connection.principal_room, sid)
+                refreshed += 1
+
+        except Exception as error:
+            log_server_error(error)
 
     return refreshed

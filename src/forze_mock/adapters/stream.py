@@ -103,11 +103,14 @@ class MockStreamAdapter(MockTenancyMixin, StreamQueryPort[M], StreamCommandPort[
             headers=dict(headers) if headers else {},
         )
         with self.state.lock:
-            entries = self._stream_store().setdefault(stream, [])
+            store = self._stream_store()
+            entries = store.setdefault(stream, [])
             entries.append(message)
 
             if self.max_entries is not None and len(entries) > self.max_entries:
+                evicted = entries[: len(entries) - self.max_entries]
                 del entries[: len(entries) - self.max_entries]
+                _note_evicted(cast(dict[str, Any], store), stream, self._id_to_int(evicted[-1].id))
 
         return message_id
 
@@ -158,6 +161,21 @@ The ``\\x00`` prefix cannot collide with a real stream name and the plain
 adapter never iterates store keys, so the entry stays invisible to
 :class:`MockStreamAdapter`.
 """
+
+_TRIM_HORIZON_KEY = "\x00__trim_horizon__"
+"""Reserved stream-store key: per stream, the highest entry id ever evicted.
+
+What makes :meth:`MockAckStreamGroupAdminAdapter.depth` honest after a trim — Redis
+reports a *null* lag once entries a group never saw are gone, and the mock must not
+instead count the survivors and attest an empty backlog Redis would refuse to attest.
+"""
+
+
+def _note_evicted(store: dict[str, Any], stream: str, highest: int) -> None:
+    """Record that entries up to *highest* were evicted from *stream*."""
+
+    horizons = cast(dict[str, int], store.setdefault(_TRIM_HORIZON_KEY, [{}])[0])
+    horizons[stream] = max(horizons.get(stream, 0), highest)
 
 
 @final
@@ -477,12 +495,21 @@ class MockAckStreamGroupAdminAdapter[M: BaseModel](AckStreamGroupAdminPort):
                     code="stream_group_not_found",
                 )
 
+            # A trim that evicted entries this group was never delivered makes the true
+            # backlog uncomputable — count the survivors and the group would attest an
+            # emptiness that is really loss. Redis reports a null lag here; mirror it.
+            horizons = cast(dict[str, int], store.setdefault(_TRIM_HORIZON_KEY, [{}])[0])
             entries = cast(list[Any], store.get(stream, []))
-            backlog = sum(
-                1
-                for m in entries
-                if self.stream._id_to_int(m.id) > gs.last_delivered  # pyright: ignore[reportPrivateUsage]
-            )
+
+            backlog: int | None
+            if horizons.get(stream, 0) > gs.last_delivered:
+                backlog = None
+            else:
+                backlog = sum(
+                    1
+                    for m in entries
+                    if self.stream._id_to_int(m.id) > gs.last_delivered  # pyright: ignore[reportPrivateUsage]
+                )
 
             oldest: timedelta | None = None
             if gs.pending:
@@ -535,6 +562,20 @@ class MockAckStreamGroupAdminAdapter[M: BaseModel](AckStreamGroupAdminPort):
             ]
             trimmed = len(entries) - len(kept)
             store[stream] = kept
+
+            if trimmed:
+                # By construction the floor never passes a *current* group's horizon, so
+                # this only turns depth() unknown for a group ensured later below it —
+                # the same honesty Redis shows a late group after a MINID trim.
+                _note_evicted(
+                    store,
+                    stream,
+                    max(
+                        self.stream._id_to_int(m.id)  # pyright: ignore[reportPrivateUsage]
+                        for m in entries
+                        if self.stream._id_to_int(m.id) < floor  # pyright: ignore[reportPrivateUsage]
+                    ),
+                )
 
             return trimmed
 

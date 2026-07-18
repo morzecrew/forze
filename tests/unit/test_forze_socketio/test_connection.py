@@ -206,3 +206,26 @@ async def test_reauth_on_unauthenticated_connection_is_refused() -> None:
     ack = await sio.handlers["realtime.reauth"]("sid-1", {"token": "t"})
 
     assert "error" in ack
+
+
+async def test_reauth_refuses_a_tenant_change() -> None:
+    sio = _StubSio()
+    first = RealtimeConnection(authn=AuthnIdentity(principal_id=_PRINCIPAL), tenant=_TENANT)
+    moved = RealtimeConnection(
+        authn=AuthnIdentity(principal_id=_PRINCIPAL),  # same principal...
+        tenant=UUID("99999999-9999-9999-9999-999999999999"),  # ...new tenant
+    )
+    outcomes = iter([first, moved])
+
+    async def resolve(_c: SocketIOConnect) -> RealtimeConnection | None:
+        return next(outcomes)
+
+    attach_realtime_connection(sio, resolve=resolve)  # pyright: ignore[reportArgumentType]
+    await sio.handlers["connect"](*_connect_args())
+
+    ack = await sio.handlers["realtime.reauth"]("sid-1", {"token": "other-tenant"})
+
+    # the socket is still in the OLD tenant's rooms — swapping identity in place would
+    # deliver the old tenant's events under the new tenant's authority
+    assert "error" in ack
+    assert sio.sessions["sid-1"][CONNECTION_SESSION_KEY] is first

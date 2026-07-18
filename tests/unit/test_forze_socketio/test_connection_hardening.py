@@ -150,3 +150,71 @@ async def test_periodic_startup_ticks_and_survives_errors() -> None:
     assert registered == [startup]
     task = startup.task
     assert task is not None and task.done() and not task.cancelled()
+
+
+# ----------------------- #
+# per-connection fault isolation — one bad socket must not shield the rest of a tick
+
+
+class _FlakyDisconnectSio(_StubSio):
+    """Disconnecting the named sid always raises (already gone, transport hiccup)."""
+
+    def __init__(self, sessions: dict[str, dict[str, Any]], *, broken: str) -> None:
+        super().__init__(sessions)
+        self.broken = broken
+
+    async def disconnect(self, sid: str, namespace: str | None = None) -> None:
+        if sid == self.broken:
+            raise RuntimeError("transport hiccup")
+
+        await super().disconnect(sid, namespace=namespace)
+
+
+class _FlakyPresence(_RecordingPresence):
+    """Heartbeating the named room always raises (store blip for one key)."""
+
+    def __init__(self, *, broken_sid: str) -> None:
+        super().__init__()
+        self.broken_sid = broken_sid
+
+    async def joined(self, room: str, sid: str) -> None:
+        if sid == self.broken_sid:
+            raise RuntimeError("store blip")
+
+        await super().joined(room, sid)
+
+
+async def test_sweep_continues_past_a_failing_disconnect() -> None:
+    expired = _conn(expires_at=datetime(2020, 1, 1, tzinfo=UTC))
+    sio = _FlakyDisconnectSio(
+        {
+            "sid-broken": {CONNECTION_SESSION_KEY: expired},
+            "sid-later": {CONNECTION_SESSION_KEY: expired},
+        },
+        broken="sid-broken",
+    )
+
+    dropped = await sweep_expired_connections(cast(Any, sio))
+
+    # the later expired socket was still dropped — one failure must not extend
+    # everyone else's expired credentials to the next successful sweep
+    assert sio.disconnected == ["sid-later"]
+    assert dropped == 1
+
+
+async def test_refresh_presence_continues_past_a_failing_heartbeat() -> None:
+    live = _conn(expires_at=None)
+    sio = _StubSio(
+        {
+            "sid-broken": {CONNECTION_SESSION_KEY: live},
+            "sid-later": {CONNECTION_SESSION_KEY: live},
+        }
+    )
+    presence = _FlakyPresence(broken_sid="sid-broken")
+
+    refreshed = await refresh_presence(cast(Any, sio), presence)
+
+    # the later connection still heartbeated — under a TTL store a persistently
+    # failing early entry must not expire healthy connections behind it
+    assert [sid for _room, sid in presence.joins] == ["sid-later"]
+    assert refreshed == 1

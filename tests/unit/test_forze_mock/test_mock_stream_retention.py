@@ -188,3 +188,58 @@ async def test_slowest_group_holds_the_floor() -> None:
 
         assert await admin.trim_acknowledged("floor") == 0  # slow's backlog holds the floor
         assert len(await query.read({"floor": "0"})) == 4
+
+
+async def test_cap_eviction_past_a_group_makes_backlog_unknown() -> None:
+    """Entries a group never saw were evicted → depth() must refuse to attest emptiness."""
+
+    runtime = _runtime()  # the capped route (max 3)
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        command = ctx.deps.resolve_configurable(ctx, StreamCommandDepKey, _SPEC, route="capped")
+        admin = ctx.deps.resolve_configurable(
+            ctx, AckStreamGroupAdminDepKey, _SPEC, route="capped"
+        )
+        group = ctx.deps.resolve_configurable(
+            ctx, AckStreamGroupQueryDepKey, _SPEC, route="capped"
+        )
+
+        await admin.ensure_group("g", "capped", start_id="0")
+
+        for seq in range(5):  # cap 3 → entries 0 and 1 evicted, never delivered to "g"
+            await command.append("capped", _Event(seq=seq))
+
+        depth = await admin.depth("g", "capped")
+        assert depth.backlog is None  # unknown, like Redis's null lag — never zero
+        assert not depth.at_rest
+
+        # once the group consumes past the loss, the backlog is computable again
+        delivered = await group.read("g", "c1", {"capped": ">"})
+        await group.ack(group="g", stream="capped", ids=[m.id for m in delivered])
+
+        settled = await admin.depth("g", "capped")
+        assert settled.backlog == 0
+        assert settled.at_rest
+
+
+async def test_acknowledged_trim_keeps_depth_exact() -> None:
+    """The group-floor sweep never passes a current group's horizon → honesty survives it."""
+
+    runtime = _floor_runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        command, _query, group, admin = await _floor_ports(ctx)
+
+        await admin.ensure_group("g", "floor", start_id="0")
+        for seq in range(4):
+            await command.append("floor", _Event(seq=seq))
+
+        delivered = await group.read("g", "c1", {"floor": ">"})
+        await group.ack(group="g", stream="floor", ids=[m.id for m in delivered])
+        assert await admin.trim_acknowledged("floor") == 4
+
+        depth = await admin.depth("g", "floor")
+        assert depth.backlog == 0  # exact, not unknown — the sweep stayed below the horizon
+        assert depth.at_rest
