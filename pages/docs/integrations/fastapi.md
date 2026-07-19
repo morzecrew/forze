@@ -177,7 +177,13 @@ semantics, so every node sees every signal, with zero consumer-group lifecycle �
 and is at-most-once by contract: the mailbox carries the durable guarantee, and the
 Socket.IO gateway remains its sole writer. Without a hub the endpoint is
 catch-up-only (the browser's auto-reconnect gives long-poll-style delivery). Topics
-are subscribed per connection with `?topics=a,b` (live-only, like Socket.IO rooms).
+are subscribed per connection with `?topics=a,b` (live-only, like Socket.IO rooms)
+and are **fail-closed**: they require an `authorize_topics` resolver — `(ctx,
+principal, tenant, requested) -> granted` — and the connection is refused
+(`realtime_topics_unauthorized`) unless every requested topic is granted. Topic
+membership is the app's authorization decision, exactly as Socket.IO topic rooms
+are joined by app code; the requested set is also bounded (`max_topics`, default
+32).
 
 On the [tenancy ladder](../identity-tenancy-enc/multi-tenancy.md)'s namespace tier —
 the realtime stream route wired `tenant_aware` — use

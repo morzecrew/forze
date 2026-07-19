@@ -31,6 +31,10 @@ Rules:
 - A `device_id` is the stable cursor key for offline replay; without one the
   framework falls back to the authenticated session id (Socket.IO) or a shared
   per-principal cursor (SSE).
+- Topic subscriptions are **server-granted**, never client-asserted: on Socket.IO
+  the app joins the room after its own checks; on SSE the `?topics=a,b` parameter
+  is authorized by the app's resolver and the connection is refused with
+  `realtime_topics_unauthorized` if any requested topic is not granted.
 
 ## The delivery envelope
 

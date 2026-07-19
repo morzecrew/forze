@@ -18,6 +18,7 @@ from .sse import (
     LAST_EVENT_ID_HEADER,
     RealtimeAckBody,
     RealtimeAckResult,
+    TopicAuthorizer,
     attach_realtime_sse_route,
 )
 
@@ -32,6 +33,7 @@ __all__ = [
     "realtime_sse_presence_heartbeat_lifecycle_step",
     "refresh_sse_presence",
     "attach_realtime_sse_route",
+    "TopicAuthorizer",
     "RealtimeAckBody",
     "RealtimeAckResult",
     "LAST_EVENT_ID_HEADER",

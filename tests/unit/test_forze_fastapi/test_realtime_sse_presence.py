@@ -88,6 +88,12 @@ class _Bind:
             await self.app(scope, receive, send)
 
 
+async def _allow_all(
+    _ctx: ExecutionContext, _principal: str, _tenant: object, requested: frozenset[str]
+) -> frozenset[str]:
+    return requested
+
+
 def _client(presence: _RecordingPresence) -> TestClient:
     ctx = context_from_deps(MockDepsModule(state=MockState())())
     router = APIRouter()
@@ -97,6 +103,7 @@ def _client(presence: _RecordingPresence) -> TestClient:
         mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
         cursors_factory=lambda _ctx: InMemoryMailboxCursors(),
         presence=presence,  # type: ignore[arg-type]
+        authorize_topics=_allow_all,  # type: ignore[arg-type]
     )
 
     app = FastAPI()

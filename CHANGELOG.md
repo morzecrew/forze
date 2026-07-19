@@ -63,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pubsub live lane** — `PubSubSignalSource` (broadcast, at-most-once alternative behind the same source seam) + `realtime_pubsub_spec` and `build_realtime_pubsub_publisher` (live-only, no `stage`); durable delivery keeps riding outbox → stream → mailbox.
 - **Transport-agnostic presence** — open SSE streams join the same presence rooms as Socket.IO connections (`attach_realtime_sse_route(presence=…)` + `realtime_sse_presence_heartbeat_lifecycle_step`); `RealtimePresence` / `InMemoryRealtimePresence` / `room_for` move to the kernel (`forze_socketio` re-exports unchanged); `periodic_lifecycle_step` joins `forze.application.execution.background`.
 - **Tenant-sharded SSE tail** — `realtime_sse_sharded_tail_lifecycle_step(hub, shard=…)`: per-tenant tail loops for a `tenant_aware` realtime stream route, tenant trusted from the stream identity (no header trust) — the SSE analog of `TenantShardedSignalSource`.
+- **Fail-closed SSE topics** — `?topics=` requires an `authorize_topics` resolver (`TopicAuthorizer`; refused with `realtime_topics_unauthorized` unless every topic is granted) and is bounded by `max_topics` (default 32, `realtime_topics_limit`).
 
 ### Changed
 

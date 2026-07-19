@@ -31,9 +31,10 @@ require_fastapi()
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
 from typing import Annotated, Any
+from uuid import UUID
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
@@ -66,10 +67,22 @@ __all__ = [
     "attach_realtime_sse_route",
     "RealtimeAckBody",
     "RealtimeAckResult",
+    "TopicAuthorizer",
 ]
 
 LAST_EVENT_ID_HEADER = "Last-Event-ID"
 """The browser-native SSE resume header, sent automatically on reconnect."""
+
+TopicAuthorizer = Callable[
+    [ExecutionContext, str, UUID | None, frozenset[str]], Awaitable[frozenset[str]]
+]
+"""Authorize a connection's requested topic subscriptions: return the granted subset.
+
+``(ctx, principal, tenant, requested) -> granted``. The SSE analog of the app-side
+``enter_room`` decision on Socket.IO: topic membership is an authorization the app
+owns, never a client-asserted fact. The route refuses the connection unless every
+requested topic is granted — a silently-narrowed subscription would read as
+"subscribed" while delivering nothing."""
 
 _SSE_HEADERS = {
     "Cache-Control": "no-store",
@@ -133,6 +146,42 @@ def _parse_topics(raw: str | None) -> frozenset[str]:
     return frozenset(topic.strip() for topic in raw.split(",") if topic.strip())
 
 
+async def _require_topic_grant(
+    ctx: ExecutionContext,
+    authorizer: TopicAuthorizer | None,
+    *,
+    principal: str,
+    tenant: UUID | None,
+    requested: frozenset[str],
+    max_topics: int,
+) -> None:
+    """Fail closed on topic subscriptions: bounded, and granted by the app or refused."""
+
+    if len(requested) > max_topics:
+        # client-controlled fan-out state (hub matching + presence rooms) must be bounded
+        raise exc.validation(
+            f"Too many topic subscriptions ({len(requested)}; the limit is {max_topics})",
+            code="realtime_topics_limit",
+        )
+
+    if authorizer is None:
+        raise exc.authorization(
+            "Topic subscriptions are refused: no authorize_topics resolver is wired, "
+            "and topic membership is the app's authorization decision",
+            code="realtime_topics_unauthorized",
+        )
+
+    granted = await authorizer(ctx, principal, tenant, requested)
+    denied = requested - granted
+
+    if denied:
+        raise exc.authorization(
+            f"Topic subscription denied: {sorted(denied)}",
+            code="realtime_topics_unauthorized",
+            details={"denied": sorted(denied)},
+        )
+
+
 # ....................... #
 
 
@@ -185,6 +234,8 @@ def attach_realtime_sse_route(
     cursors_factory: Callable[[ExecutionContext], MailboxCursors],
     hub: RealtimeSseHub | None = None,
     presence: RealtimePresence | None = None,
+    authorize_topics: TopicAuthorizer | None = None,
+    max_topics: int = 32,
     path: str = "/realtime/sse",
     keepalive_interval: timedelta = timedelta(seconds=15),
 ) -> APIRouter:
@@ -202,10 +253,19 @@ def attach_realtime_sse_route(
     decisions count SSE-connected users as online. With a TTL-backed store also
     register :func:`~forze_fastapi.realtime.realtime_sse_presence_heartbeat_lifecycle_step`
     (sharing the hub) so live streams re-assert within the TTL.
+
+    Topic subscriptions (``?topics=a,b``) are **fail-closed**: they require an
+    *authorize_topics* resolver, and the connection is refused unless every requested
+    topic is granted — topic membership is the app's authorization decision (the
+    Socket.IO analog is app code calling ``enter_room``), never a client-asserted
+    fact. Principal-addressed delivery needs no authorizer.
     """
 
     if keepalive_interval.total_seconds() <= 0:
         raise exc.configuration("SSE keepalive interval must be positive")
+
+    if max_topics <= 0:
+        raise exc.configuration("max_topics must be positive")
 
     ack_path = f"{path}/ack"
 
@@ -239,6 +299,17 @@ def attach_realtime_sse_route(
             since = await cursors.get(principal=principal, client_key=client_key)
 
         topic_set = _parse_topics(topics)
+
+        if topic_set:
+            await _require_topic_grant(
+                ctx,
+                authorize_topics,
+                principal=principal,
+                tenant=tenant,
+                requested=topic_set,
+                max_topics=max_topics,
+            )
+
         subscription: SseSubscription | None = (
             hub.subscribe(principal=principal, tenant=tenant, topics=topic_set)
             if hub is not None
