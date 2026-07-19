@@ -193,6 +193,7 @@ runs them. The surface, at a glance:
 | `attach_readiness_route` | a drain-aware `GET /readyz` probe |
 | `attach_document_routes` / `attach_search_routes` / `attach_storage_routes` / `attach_authn_routes` | project a frozen registry's operations onto a router |
 | `attach_realtime_sse_route` / `realtime_sse_tail_lifecycle_step` | realtime egress over SSE: mailbox replay + per-node live tail |
+| `attach_asyncapi_route` | serve the app-built AsyncAPI document, `/openapi.json`-style |
 | `apply_openapi_security` | declare the auth scheme in the generated OpenAPI |
 
 ## Notes

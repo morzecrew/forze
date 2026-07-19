@@ -58,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Versioned wire protocol** — normative docs page for the `{id, data}` envelope, cumulative ack, and handshake; `protocol: 1` negotiated at connect on Socket.IO and SSE (missing = 1, unsupported refused with `realtime_protocol_unsupported`).
 - **Fail-closed websocket scopes** — `SecurityContextMiddleware` and `InvocationMetadataMiddleware` refuse raw `websocket` scopes; opt out per middleware with `allow_raw_websockets=True`. **Breaking** for apps mounting raw websocket routes behind the middlewares.
 - **SSE egress** — `forze_fastapi.realtime`: `attach_realtime_sse_route` (`text/event-stream` with mailbox replay, `Last-Event-ID` precedence, live tail, and `POST …/ack`) + `RealtimeSseHub` / `realtime_sse_tail_lifecycle_step` (supervised per-node broadcast tail).
-- **AsyncAPI export** — `asyncapi_document(catalog, router)`: AsyncAPI 3 from the typed event catalog + command router, with `x-forze-audience-kinds` / `x-forze-offline-delivery` extensions and the built-in `realtime.ack`.
+- **AsyncAPI export** — `asyncapi_document(catalog, router)`: AsyncAPI 3 from the typed event catalog + command router, with `x-forze-audience-kinds` / `x-forze-offline-delivery` extensions and the built-in `realtime.ack`; `attach_asyncapi_route(router, document=…)` serves it `/openapi.json`-style for client codegen.
 - **Transport-neutral kernel** — mailbox/cursor seams, in-memory impls, client-key ladder, replay/ack helpers, and protocol negotiation move to `forze.application.integrations.realtime`; `forze_socketio` re-exports unchanged.
 
 ### Changed

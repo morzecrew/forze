@@ -106,9 +106,28 @@ channel and `send` operation per egress event (payload schema from the pydantic
 model, wrapped in the envelope above), one channel and `receive` operation per
 command plus the built-in `realtime.ack`, with audience/offline metadata as
 `x-forze-audience-kinds` / `x-forze-offline-delivery` extensions and the protocol
-version in `info.x-forze-realtime-protocol`. Serve it or dump it to disk;
-TypeScript types come from standard AsyncAPI tooling applied to the output. The
-document is generated and parity-tested against the catalog — never hand-edited.
+version in `info.x-forze-realtime-protocol`. The document is generated and
+parity-tested against the catalog — never hand-edited.
+
+Serve it like the OpenAPI schema with `attach_asyncapi_route` (from
+`forze_fastapi.routes`) — the app composes the two, since the integration
+packages never import each other:
+
+```python
+from forze_fastapi.routes import attach_asyncapi_route
+from forze_socketio import asyncapi_document
+
+attach_asyncapi_route(router, document=asyncapi_document(catalog, sio_router))
+```
+
+Client types then come from standard AsyncAPI tooling pointed at the endpoint —
+the same workflow as OpenAPI codegen, which is why no maintained client SDK
+ships:
+
+```sh
+npx @asyncapi/cli generate models typescript http://localhost:8000/asyncapi.json \
+  --output src/generated/realtime
+```
 
 ## Version history
 

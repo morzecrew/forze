@@ -2,6 +2,7 @@
 
 from ._attach import RouteStyle
 from .aggregate import attach_aggregate_routes
+from .asyncapi import attach_asyncapi_route
 from .authn import attach_authn_routes
 from .document import attach_document_routes
 from .health import attach_readiness_route
@@ -17,6 +18,7 @@ __all__ = [
     "DEFAULT_MAX_UPLOAD_SIZE",
     "RouteStyle",
     "attach_aggregate_routes",
+    "attach_asyncapi_route",
     "attach_authn_routes",
     "attach_readiness_route",
     "attach_jwks_route",
