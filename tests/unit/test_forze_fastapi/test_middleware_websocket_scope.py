@@ -217,6 +217,56 @@ class TestAllowlistCheck:
         # the corrected full path verifies
         check_websocket_allowlist(self._governed_app(prefix="/api", allow="/api/realtime/ws"))
 
+    def test_allowlists_differing_between_gates_fail_the_boot(self) -> None:
+        from forze.base.exceptions import CoreException
+        from forze_fastapi.middlewares import check_websocket_allowlist
+
+        # invocation allows the path; security (added with NO websocket kwargs)
+        # still gates and would 1008 every connection the other middleware admits
+        app = self._governed_app(allow="/realtime/ws")
+        app.add_middleware(
+            SecurityContextMiddleware,  # type: ignore[arg-type]
+            authn=_AUTHN,
+            when_multiple_credentials="first_in_order",
+            ctx_dep=_execution_ctx,
+        )
+
+        with pytest.raises(CoreException) as caught:
+            check_websocket_allowlist(app)
+
+        assert "SecurityContextMiddleware" in str(caught.value)
+        assert "differ between the gating middlewares" in str(caught.value)
+
+    def test_matching_allowlists_on_both_gates_pass(self) -> None:
+        from forze_fastapi.middlewares import check_websocket_allowlist
+
+        app = self._governed_app(allow="/realtime/ws")
+        app.add_middleware(
+            SecurityContextMiddleware,  # type: ignore[arg-type]
+            authn=_AUTHN,
+            when_multiple_credentials="first_in_order",
+            ctx_dep=_execution_ctx,
+            allowed_websocket_paths={"/realtime/ws"},
+        )
+
+        check_websocket_allowlist(app)
+
+    def test_allow_raw_gate_never_causes_a_mismatch(self) -> None:
+        from forze_fastapi.middlewares import check_websocket_allowlist
+
+        # a gate with the app-wide hatch passes every websocket scope — it cannot
+        # reject, so it is exempt from the same-allowlist requirement
+        app = self._governed_app(allow="/realtime/ws")
+        app.add_middleware(
+            SecurityContextMiddleware,  # type: ignore[arg-type]
+            authn=_AUTHN,
+            when_multiple_credentials="first_in_order",
+            ctx_dep=_execution_ctx,
+            allow_raw_websockets=True,
+        )
+
+        check_websocket_allowlist(app)
+
     def test_foreign_route_at_an_allowlisted_path_fails_the_boot(self) -> None:
         from forze.base.exceptions import CoreException
         from forze_fastapi.middlewares import check_websocket_allowlist

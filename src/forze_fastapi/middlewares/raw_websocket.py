@@ -61,19 +61,56 @@ def check_websocket_allowlist(app: Any) -> None:
     (``configuration``) on a path with no websocket route (the usual cause: the
     allowlist carries the route-local path while the router is mounted under a
     prefix — allowlist the full mounted path), on a non-governed route at an
-    allowlisted path (it would receive unauthenticated, tenant-free traffic), and on
-    duplicate websocket routes at one allowlisted path. A no-op when no allowlists
-    are configured.
+    allowlisted path (it would receive unauthenticated, tenant-free traffic), on
+    duplicate websocket routes at one allowlisted path, and on an allowlist that
+    differs **between** the gating middlewares — each gate enforces its own set at
+    runtime, so a path one middleware allows and another does not would pass this
+    check while the stricter gate refuses every connection (1008). A no-op when no
+    allowlists are configured.
     """
+
+    # A gating middleware is detected structurally (it declares the gate fields) —
+    # one added without any websocket kwargs still refuses every websocket scope,
+    # so presence of the kwargs alone would miss it.
+    gates: list[tuple[str, bool, frozenset[str]]] = []
+
+    for middleware in getattr(app, "user_middleware", ()):
+        cls = getattr(middleware, "cls", None)
+        fields = getattr(cls, "__attrs_attrs__", ())
+
+        if not any(getattr(field, "name", "") == "allowed_websocket_paths" for field in fields):
+            continue
+
+        kwargs = cast("Mapping[str, Any]", getattr(middleware, "kwargs", None) or {})
+        gates.append(
+            (
+                getattr(cls, "__name__", str(cls)),
+                bool(kwargs.get("allow_raw_websockets", False)),
+                frozenset(cast("Iterable[str]", kwargs.get("allowed_websocket_paths") or ())),
+            )
+        )
 
     allowlisted: set[str] = set()
 
-    for middleware in getattr(app, "user_middleware", ()):
-        kwargs = cast("Mapping[str, Any]", getattr(middleware, "kwargs", None) or {})
-        allowlisted.update(cast("Iterable[str]", kwargs.get("allowed_websocket_paths") or ()))
+    for _, _, paths in gates:
+        allowlisted.update(paths)
 
     if not allowlisted:
         return
+
+    for name, allow_raw, paths in gates:
+        if allow_raw:
+            continue  # this gate passes every websocket scope; it cannot reject
+
+        missing = allowlisted - paths
+
+        if missing:
+            raise exc.configuration(
+                f"allowed_websocket_paths differ between the gating middlewares: "
+                f"{sorted(missing)} allowlisted elsewhere but not on {name} — that "
+                "middleware would refuse every such connection (1008). List the same "
+                "allowed_websocket_paths on every governed middleware."
+            )
 
     websocket_routes: dict[str, list[Any]] = {}
 
