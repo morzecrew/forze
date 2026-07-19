@@ -31,6 +31,7 @@ require_fastapi()
 
 import asyncio
 import json
+import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from inspect import isawaitable
 from typing import Any, cast, final
@@ -405,14 +406,22 @@ def attach_realtime_ws_route(
         # ....................... #
 
         async def _handle_ack(event_id: str) -> None:
-            with _bind(ctx, session.connection):
-                await acknowledge_up_to(
-                    mailbox_factory(ctx),
-                    cursors_factory(ctx),
-                    principal=session.connection.principal,
-                    client_key=_client_key(),
-                    event_id=event_id,
-                )
+            # Contained like reauth and dispatch: a flaky cursor store must cost one
+            # ack (surfaced as an error frame), never the whole connection.
+            async def _unit() -> None:
+                with _bind(ctx, session.connection):
+                    await acknowledge_up_to(
+                        mailbox_factory(ctx),
+                        cursors_factory(ctx),
+                        principal=session.connection.principal,
+                        client_key=_client_key(),
+                        event_id=event_id,
+                    )
+
+            outcome = await guard_frame(_unit, on_server_error=_log_server_error)
+
+            if isinstance(outcome, FrameErr):
+                await _send_json({"type": "error", "error": _render_error(outcome.envelope)})
 
         async def _handle_reauth(frame: Mapping[str, Any], cid: Any) -> None:
             async def _unit() -> dict[str, Any]:
@@ -477,7 +486,7 @@ def attach_realtime_ws_route(
 
                     budget = float(budget)
 
-                    if budget != budget or budget <= 0 or budget == float("inf"):
+                    if math.isnan(budget) or budget <= 0 or math.isinf(budget):
                         raise exc.validation(
                             "deadline_budget must be a positive, finite number of seconds",
                             code="realtime_invalid_frame",
@@ -525,7 +534,10 @@ def attach_realtime_ws_route(
                 raw = await websocket.receive_text()  # WebSocketDisconnect unwinds all
 
                 if len(raw.encode()) > max_frame_bytes:
-                    await websocket.close(code=WS_TOO_BIG_CLOSE, reason="frame too large")
+                    # the close is a socket write too — serialize it with the sender
+                    async with send_lock:
+                        await websocket.close(code=WS_TOO_BIG_CLOSE, reason="frame too large")
+
                     raise WebSocketDisconnect(WS_TOO_BIG_CLOSE)
 
                 try:

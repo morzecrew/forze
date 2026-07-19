@@ -270,6 +270,23 @@ class TestReplayAndAck:
         assert d2_cursor is not None  # the ack landed on the refreshed identity...
         assert d1_cursor is None  # ...never on the connect-time device
 
+    def test_failing_ack_store_costs_one_error_frame_not_the_connection(self) -> None:
+        class _FlakyMailbox(InMemoryRealtimeMailbox):
+            async def position_of(self, *, principal: str, event_id: str) -> Any:
+                raise RuntimeError("cursor store down")
+
+        client, _ = _build(mailbox=_FlakyMailbox())
+
+        with client.websocket_connect("/realtime/ws") as ws:
+            ws.send_json({"type": "realtime.ack", "up_to": "evt-1"})
+            frame = ws.receive_json()
+            assert frame["type"] == "error"
+            assert frame["error"]["kind"] == "internal"  # masked server-side failure
+
+            # the connection survived — the next frame is still served
+            ws.send_json({"type": "mystery"})
+            assert ws.receive_json()["error"]["code"] == "realtime_invalid_frame"
+
     def test_last_event_id_query_param_resumes(self) -> None:
         mailbox = InMemoryRealtimeMailbox()
         client, _ = _build(mailbox=mailbox)

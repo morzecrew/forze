@@ -7,6 +7,7 @@ require_fastapi()
 from collections.abc import Iterable, Mapping
 from typing import Any, Final, cast
 
+from fastapi.routing import iter_route_contexts
 from starlette.routing import WebSocketRoute
 from starlette.types import Receive, Scope, Send
 
@@ -114,48 +115,46 @@ def check_websocket_allowlist(app: Any) -> None:
 
     websocket_routes: dict[str, list[Any]] = {}
 
-    def _collect(route: Any) -> None:
+    # iter_route_contexts flattens nested router includes. The public path accessors
+    # are empty for websocket routes, so the effective (all-prefixes-applied) route
+    # is taken from the include context when present; a flat top-level route has no
+    # include context and its own path is already the full one.
+    for context in iter_route_contexts(list(getattr(app, "routes", ()))):
+        effective = getattr(getattr(context, "_route_context", None), "starlette_route", None)
+        route = effective if effective is not None else context.route
+
         if isinstance(route, WebSocketRoute):
             websocket_routes.setdefault(route.path, []).append(route.endpoint)
-            return
-
-        # FastAPI keeps included routers nested; their effective contexts carry the
-        # resolved route with its full (all prefixes applied) path, nested includes
-        # flattened. Older versions flatten into app.routes and hit the branch above.
-        contexts = getattr(route, "effective_route_contexts", None)
-
-        if contexts is not None:
-            for context in contexts():
-                _collect(getattr(context, "starlette_route", None))
-
-    for route in getattr(app, "routes", ()):
-        _collect(route)
 
     for path in sorted(allowlisted):
-        endpoints = websocket_routes.get(path, [])
+        _validate_allowlisted_path(path, websocket_routes.get(path, []))
 
-        if not endpoints:
-            raise exc.configuration(
-                f"allowed_websocket_paths lists {path!r}, but no websocket route is "
-                "registered at that exact path. If the governed route sits under a "
-                "router prefix, allowlist the full mounted path; a path inside a "
-                "mounted sub-application cannot be verified and must not be allowlisted."
-            )
 
-        if len(endpoints) > 1:
-            raise exc.configuration(
-                f"allowed_websocket_paths lists {path!r}, but {len(endpoints)} websocket "
-                "routes are registered there — one allowlisted path must serve exactly "
-                "one governed endpoint."
-            )
+def _validate_allowlisted_path(path: str, endpoints: list[Any]) -> None:
+    """One allowlisted path must serve exactly one governed websocket endpoint."""
 
-        if not getattr(endpoints[0], GOVERNED_WEBSOCKET_ATTR, False):
-            raise exc.configuration(
-                f"allowed_websocket_paths lists {path!r}, but the websocket route there "
-                "is not a governed realtime route — allowlisting it would serve "
-                "unauthenticated, tenant-free websocket traffic. Attach it with "
-                "attach_realtime_ws_route, or self-manage it under allow_raw_websockets."
-            )
+    if not endpoints:
+        raise exc.configuration(
+            f"allowed_websocket_paths lists {path!r}, but no websocket route is "
+            "registered at that exact path. If the governed route sits under a "
+            "router prefix, allowlist the full mounted path; a path inside a "
+            "mounted sub-application cannot be verified and must not be allowlisted."
+        )
+
+    if len(endpoints) > 1:
+        raise exc.configuration(
+            f"allowed_websocket_paths lists {path!r}, but {len(endpoints)} websocket "
+            "routes are registered there — one allowlisted path must serve exactly "
+            "one governed endpoint."
+        )
+
+    if not getattr(endpoints[0], GOVERNED_WEBSOCKET_ATTR, False):
+        raise exc.configuration(
+            f"allowed_websocket_paths lists {path!r}, but the websocket route there "
+            "is not a governed realtime route — allowlisting it would serve "
+            "unauthenticated, tenant-free websocket traffic. Attach it with "
+            "attach_realtime_ws_route, or self-manage it under allow_raw_websockets."
+        )
 
 
 async def refuse_raw_websocket(scope: Scope, receive: Receive, send: Send) -> None:
