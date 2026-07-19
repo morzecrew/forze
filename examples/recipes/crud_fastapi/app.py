@@ -45,6 +45,7 @@ from forze_postgres import (
     PostgresLifecycleModule,
 )
 
+
 # --8<-- [start:domain]
 class Product(Document):
     name: str

@@ -16,15 +16,13 @@ require_socketio()
 
 # ....................... #
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager
 from datetime import datetime
 from inspect import isawaitable
 from typing import (
     Any,
-    Protocol,
     final,
-    runtime_checkable,
 )
 from uuid import UUID
 
@@ -36,8 +34,20 @@ from forze.application.contracts.authn import AuthnIdentity, ClientIdentity
 from forze.application.contracts.realtime import Audience
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, ExecutionRuntime
+from forze.application.integrations.realtime import (
+    InMemoryRealtimePresence as InMemoryRealtimePresence,  # re-export: established home
+)
+from forze.application.integrations.realtime import (
+    RealtimePresence as RealtimePresence,  # re-export: established home
+)
+from forze.application.integrations.realtime import (
+    acknowledge_up_to,
+    iter_replay,
+    negotiate_realtime_protocol,
+    resolve_client_key,
+)
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import HlcTimestamp, utcnow
+from forze.base.primitives import utcnow
 
 from .exceptions import (
     GENERIC_INTERNAL_DETAIL,
@@ -47,34 +57,8 @@ from .exceptions import (
     log_server_error,
 )
 from .gateway import room_for
-from .mailbox import MailboxCursors, MailboxEntry, RealtimeMailbox
+from .mailbox import MailboxCursors, RealtimeMailbox
 from .routing import IDENTITY_SESSION_KEY, SocketIOConnect
-
-
-async def _iter_replay(
-    mailbox: RealtimeMailbox,
-    *,
-    principal: str,
-    since: HlcTimestamp | None,
-) -> AsyncIterator[MailboxEntry]:
-    """Stream a mailbox's backlog, preferring the paged ``replay_since`` when present.
-
-    ``replay_since`` is optional on the :class:`RealtimeMailbox` protocol, so a mailbox
-    that only implements the buffered :meth:`~RealtimeMailbox.read_since` still works —
-    it just materializes the page at once instead of streaming.
-    """
-
-    stream = getattr(mailbox, "replay_since", None)
-
-    if stream is not None:
-        async for entry in stream(principal=principal, since=since):
-            yield entry
-
-        return
-
-    for entry in await mailbox.read_since(principal=principal, since=since):
-        yield entry
-
 
 # ----------------------- #
 
@@ -125,9 +109,7 @@ class RealtimeConnection:
     def client_key(self, sid: str) -> str:
         """The stable cursor key: the client's ``device_id``/``session_id``, else *sid*."""
 
-        key = self.client.key if self.client is not None else None
-
-        return key or sid
+        return resolve_client_key(self.client, fallback=sid)
 
     # ....................... #
 
@@ -148,59 +130,30 @@ ConnectionResolver = Callable[
 (e.g. ``exc.authentication``) to refuse the connection."""
 
 
-# ----------------------- #
-
-
-@runtime_checkable
-class RealtimePresence(Protocol):
-    """Tracks how many connections occupy a room (e.g. is a principal online)."""
-
-    def joined(self, room: str, sid: str) -> Awaitable[None]: ...  # pragma: no cover
-
-    def left(self, room: str, sid: str) -> Awaitable[None]: ...  # pragma: no cover
-
-    def count(self, room: str) -> Awaitable[int]: ...  # pragma: no cover
-
-
 # ....................... #
 
-
-@final
-@attrs.define(slots=True)
-class InMemoryRealtimePresence(RealtimePresence):
-    """Single-node, in-memory presence. For multi-node use a TTL-backed store."""
-
-    _rooms: dict[str, set[str]] = attrs.field(factory=dict, init=False)
-
-    async def joined(self, room: str, sid: str) -> None:
-        self._rooms.setdefault(room, set()).add(sid)
-
-    async def left(self, room: str, sid: str) -> None:
-        members = self._rooms.get(room)
-
-        if members is not None:
-            members.discard(sid)
-
-            if not members:  # drop the empty bucket so churn doesn't leak room keys
-                del self._rooms[room]
-
-    async def count(self, room: str) -> int:
-        return len(self._rooms.get(room, ()))
-
+# RealtimePresence / InMemoryRealtimePresence live in the transport-neutral kernel
+# (forze.application.integrations.realtime), imported above and re-exported here —
+# presence is only honest if every transport reports into the same store.
 
 # ----------------------- #
 
 
 async def _resolve(
-    resolver: ConnectionResolver, connect: SocketIOConnect
+    resolver: ConnectionResolver,
+    connect: SocketIOConnect,
 ) -> RealtimeConnection | None:
     result = resolver(connect)
 
     return await result if isawaitable(result) else result
 
 
+# ....................... #
+
+
 def _bind_connection(
-    ctx: ExecutionContext, connection: RealtimeConnection
+    ctx: ExecutionContext,
+    connection: RealtimeConnection,
 ) -> AbstractContextManager[None]:
     """Bind the connection's authenticated identity **and** tenant for a fresh scope.
 
@@ -258,12 +211,13 @@ class _ConnectionLifecycle:
         # query ports do not pin a connection between paged reads.
         async with self.runtime.scope():
             ctx = self.runtime.get_context()
+
             with _bind_connection(ctx, connection):  # connection identity — fresh scope is empty
                 mailbox = self.mailbox_factory(ctx)  # ports resolved for this unit of work
                 cursors = self.cursors_factory(ctx)
                 since = await cursors.get(principal=connection.principal, client_key=client_key)
 
-                async for entry in _iter_replay(
+                async for entry in iter_replay(
                     mailbox, principal=connection.principal, since=since
                 ):
                     await self.sio.emit(
@@ -342,6 +296,7 @@ class _ConnectionLifecycle:
 
         session = await self.sio.get_session(sid, namespace=self.namespace)
         connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
+
         raw = (  # pyright: ignore[reportUnknownVariableType]
             data.get("up_to")  # pyright: ignore[reportUnknownMemberType]
             if isinstance(data, Mapping)
@@ -357,33 +312,26 @@ class _ConnectionLifecycle:
         async with self.runtime.scope():
             ctx = self.runtime.get_context()
             with _bind_connection(ctx, connection):
-                mailbox = self.mailbox_factory(ctx)
-                cursors = self.cursors_factory(ctx)
-                position = await mailbox.position_of(
-                    principal=connection.principal, event_id=event_id
+                await acknowledge_up_to(
+                    self.mailbox_factory(ctx),
+                    self.cursors_factory(ctx),
+                    principal=connection.principal,
+                    client_key=connection.client_key(sid),
+                    event_id=event_id,
                 )
-
-                if position is not None:
-                    await cursors.advance(
-                        principal=connection.principal,
-                        client_key=connection.client_key(sid),
-                        up_to=position,
-                    )
-
-                    # trim what every known device has now acked (TTL/cap is the backstop)
-                    floor = await cursors.min_cursor(principal=connection.principal)
-
-                    if floor is not None:
-                        await mailbox.trim(principal=connection.principal, before=floor)
 
     # ....................... #
 
     async def on_connect(self, sid: str, environ: Mapping[str, Any], auth: Any = None) -> None:
-        """Authenticate (store the identity), auto-join the principal room, replay."""
+        """Negotiate the protocol, authenticate, auto-join the principal room, replay."""
 
         connect = SocketIOConnect(sid=sid, namespace=self.namespace, environ=environ, auth=auth)
 
         try:
+            # Handshake first: the connection speaks exactly one protocol version for its
+            # lifetime (missing = 1); an unsupported one is refused before any auth work.
+            negotiate_realtime_protocol(auth.get("protocol") if isinstance(auth, Mapping) else None)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+
             connection = await _resolve(self.resolve, connect)
 
         except SocketIOConnectionRefusedError:
@@ -483,6 +431,7 @@ def attach_realtime_connection(
     # Offline replay needs all three of mailbox_factory / cursors_factory / runtime. Partial
     # wiring would silently disable replay (broken offline delivery, no warning) — fail closed.
     replay_parts = (mailbox_factory, cursors_factory, runtime)
+
     if sum(p is not None for p in replay_parts) not in (0, len(replay_parts)):
         raise exc.configuration(
             "Offline replay needs all of mailbox_factory, cursors_factory, and runtime "
@@ -510,7 +459,7 @@ def attach_realtime_connection(
 # ----------------------- #
 
 
-def _local_connections(sio: AsyncServer, namespace: str) -> "list[str]":
+def _local_connections(sio: AsyncServer, namespace: str) -> list[str]:
     """The sids connected to *namespace* on this node (room ``None`` = all)."""
 
     return [sid for sid, _eio in sio.manager.get_participants(namespace, None)]
@@ -520,7 +469,10 @@ def _local_connections(sio: AsyncServer, namespace: str) -> "list[str]":
 
 
 async def sweep_expired_connections(
-    sio: AsyncServer, *, namespace: str = "/", now: datetime | None = None
+    sio: AsyncServer,
+    *,
+    namespace: str = "/",
+    now: datetime | None = None,
 ) -> int:
     """Disconnect connections whose credential has expired; return how many.
 

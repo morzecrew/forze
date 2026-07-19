@@ -64,6 +64,14 @@ honoring it with `InvocationMetadataMiddleware(...,
 bind_deadline_from_header=True)` — binding is tighten-only, so a forged value
 can only shorten the sender's own request.
 
+Both middlewares **refuse raw websocket scopes** (the upgrade handshake is closed
+with a policy violation): identity, tenancy, and the envelope are resolved for HTTP
+only, so a raw `@app.websocket` route would otherwise run with none of them —
+silently. If you deliberately self-manage websocket routes, opt out per middleware
+with `allow_raw_websockets=True`; you then own identity, tenancy, and error shaping
+on every websocket route yourself. For governed duplex realtime, use the
+[Socket.IO integration](socketio.md); for server-push, the SSE route below.
+
 ## Map errors to HTTP
 
 `register_exception_handlers` turns a `CoreException` into a response — the kind
@@ -133,6 +141,66 @@ declares the auth scheme in the generated OpenAPI. The full catalog — `rest` v
 knobs, and the upload flow — is in
 [FastAPI route generators](../reference/fastapi-routes.md).
 
+## Realtime egress over SSE
+
+`attach_realtime_sse_route` serves the [realtime egress
+plane](../data-events/realtime.md) as an authenticated `text/event-stream`
+endpoint — the browser-native transport when a duplex socket is more than you
+need. On connect it replays the offline mailbox past the device's cursor (a
+browser-supplied `Last-Event-ID` beats the stored cursor), then tails live
+signals from a per-node hub; a `POST …/ack` endpoint alongside carries the
+cumulative ack. Frames use the same versioned `{id, data}` envelope as the
+Socket.IO gateway — one [wire protocol](../reference/realtime-protocol.md),
+two transports:
+
+```python
+from forze_fastapi.realtime import (
+    RealtimeSseHub,
+    attach_realtime_sse_route,
+    realtime_sse_tail_lifecycle_step,
+)
+
+hub = RealtimeSseHub()
+attach_realtime_sse_route(
+    router,
+    ctx_dep=runtime.get_context,
+    mailbox_factory=build_realtime_mailbox,  # the same stores the gateway fills
+    cursors_factory=build_realtime_cursors,
+    hub=hub,
+)
+# register alongside the app's lifecycle steps: one supervised tail loop per node
+step = realtime_sse_tail_lifecycle_step(hub, stream_spec=realtime_stream_spec())
+```
+
+The live leg reads the realtime stream with a plain (non-group) tail — broadcast
+semantics, so every node sees every signal, with zero consumer-group lifecycle —
+and is at-most-once by contract: the mailbox carries the durable guarantee, and the
+Socket.IO gateway remains its sole writer. Without a hub the endpoint is
+catch-up-only (the browser's auto-reconnect gives long-poll-style delivery). Topics
+are subscribed per connection with `?topics=a,b` (live-only, like Socket.IO rooms)
+and are **fail-closed**: they require an `authorize_topics` resolver — `(ctx,
+principal, tenant, requested) -> granted` — and the connection is refused
+(`realtime_topics_unauthorized`) unless every requested topic is granted. Topic
+membership is the app's authorization decision, exactly as Socket.IO topic rooms
+are joined by app code; the requested set is also bounded (`max_topics`, default
+32).
+
+On the [tenancy ladder](../identity-tenancy-enc/multi-tenancy.md)'s namespace tier —
+the realtime stream route wired `tenant_aware` — use
+`realtime_sse_sharded_tail_lifecycle_step(hub, shard=shard)` instead: one supervised
+tail loop per shard tenant, each bound to its tenant, so signals fan out under the
+**stream's** trusted identity rather than an untrusted header (the SSE analog of
+`TenantShardedSignalSource`). Hand it the same `RealtimeShard` the publish-side
+steps use.
+
+Pass the **same** presence store the Socket.IO side uses
+(`attach_realtime_sse_route(..., presence=...)`) and open SSE streams join their
+principal/topic rooms for the connection's lifetime — so "is this user online"
+counts an SSE stream and a socket identically. With a TTL-backed store (e.g.
+`RedisRealtimePresence`) also register
+`realtime_sse_presence_heartbeat_lifecycle_step(hub, presence)` so live streams
+re-assert within the TTL.
+
 ## What it provides
 
 Unlike a backend, FastAPI doesn't implement Forze contracts — it's the edge that
@@ -146,6 +214,10 @@ runs them. The surface, at a glance:
 | `register_exception_handlers` | map a `CoreException` to an HTTP response by kind |
 | `attach_readiness_route` | a drain-aware `GET /readyz` probe |
 | `attach_document_routes` / `attach_search_routes` / `attach_storage_routes` / `attach_authn_routes` | project a frozen registry's operations onto a router |
+| `attach_realtime_sse_route` / `realtime_sse_tail_lifecycle_step` | realtime egress over SSE: mailbox replay + per-node live tail |
+| `realtime_sse_sharded_tail_lifecycle_step` | namespace-tier SSE: per-tenant tail loops, tenant trusted from the stream |
+| `realtime_sse_presence_heartbeat_lifecycle_step` | SSE streams report into the shared presence store (TTL heartbeat) |
+| `attach_asyncapi_route` | serve the app-built AsyncAPI document, `/openapi.json`-style |
 | `apply_openapi_security` | declare the auth scheme in the generated OpenAPI |
 
 ## Notes

@@ -52,6 +52,7 @@ from forze.application.contracts.envelope import (
     HEADER_TRACEPARENT,
 )
 from forze.application.contracts.inbox import InboxSpec
+from forze.application.contracts.pubsub import PubSubQueryDepKey, PubSubSpec
 from forze.application.contracts.realtime import (
     DEFAULT_REALTIME_GROUP,
     Audience,
@@ -64,6 +65,9 @@ from forze.application.contracts.stream import AckStreamGroupQueryDepKey, Stream
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.application.execution.background import run_supervised
+from forze.application.integrations.realtime import (
+    room_for as room_for,  # re-export: established home
+)
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.logging import Logger
 from forze.base.primitives import HlcTimestamp, JsonDict, StrKey, utcnow
@@ -109,18 +113,9 @@ def _default_consumer() -> str:
 # ....................... #
 
 
-def room_for(audience: Audience, tenant: UUID | None) -> str:
-    """Resolve a logical *audience* to a tenant-scoped Socket.IO room name.
-
-    The only place audience→room naming exists; the gateway emits to it and the
-    membership helpers join it, so they always agree. When a tenant is bound the
-    room is prefixed ``t:<tenant>:`` so tenants cannot share a room.
-    """
-
-    base = f"{audience.kind.value}:{audience.name}"
-
-    return f"t:{tenant}:{base}" if tenant is not None else base
-
+# room_for lives in the transport-neutral kernel (imported above, re-exported here):
+# the gateway emits to it, the membership helpers join it, and SSE presence reports
+# under it — one naming scheme, so publish, membership, and presence always agree.
 
 # ....................... #
 
@@ -203,22 +198,24 @@ def _bind_tenant(
     )
 
 
-def _refuse_encrypted_realtime_stream(spec: StreamSpec[RealtimeSignal]) -> None:
+def _refuse_encrypted_realtime_stream(
+    spec: StreamSpec[RealtimeSignal] | PubSubSpec[RealtimeSignal],
+) -> None:
     """Fail closed on an encryption tier the gateway cannot honor.
 
-    Whole-payload stream encryption is consumer-decrypted everywhere in the framework —
+    Whole-payload messaging encryption is consumer-decrypted everywhere in the framework —
     and the gateway has no decrypt seam, so an encrypted realtime route would emit
     ciphertext envelopes to browsers and call it delivery. Refusing at run start (the
     resolve seam every source passes through) beats defining a decrypt path nobody has
-    asked for; the realtime stream is plaintext by design, isolation comes from room
+    asked for; the realtime channel is plaintext by design, isolation comes from room
     membership and tenancy tiers.
     """
 
     if spec.encrypts:
         raise exc.configuration(
-            f"Realtime stream {spec.name!r} declares encryption "
+            f"Realtime route {spec.name!r} declares encryption "
             f"{spec.encryption!r}, but the gateway has no decrypt seam — it would "
-            "emit ciphertext to clients. Keep the realtime stream route plaintext "
+            "emit ciphertext to clients. Keep the realtime route plaintext "
             "(encryption='none'); confidentiality on the wire is the transport's "
             "TLS, isolation is room membership / tenancy tier.",
             code="realtime_stream_encryption_unsupported",
@@ -584,6 +581,172 @@ class StreamGroupSignalSource(RealtimeSignalSource):
             max_deliveries=self.max_deliveries,
             stats=self.stats,
         )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PubSubSignalSource(RealtimeSignalSource):
+    """A signal source backed by a pubsub channel (broadcast, at-most-once).
+
+    The alternative live lane behind the same seam: native broadcast fan-out with no
+    consumer-group lifecycle, for deployments that prefer pubsub over the stream for
+    ephemerals. Every subscribed gateway node receives **every** signal, so on a
+    multi-node fleet a purely ephemeral signal is emitted once *per node* — durable
+    signals (a producer that sets the ``forze_event_id`` header) still collapse to one
+    emit through the shared dedup mark. Nothing is retained or redelivered: a signal
+    published while no node is subscribed is gone (durables still reach offline
+    recipients via the outbox → stream → mailbox path, which this source does not
+    replace). Publish with ``build_realtime_pubsub_publisher`` over the same
+    ``realtime_pubsub_spec``.
+
+    Composable beyond the gateway: any consumer of the source seam (e.g. an SSE hub
+    bridged as ``async def handler(signal, tenant, event_id, hlc): hub.publish(...)``)
+    can run it — the app composes the two packages.
+    """
+
+    pubsub_spec: PubSubSpec[RealtimeSignal]
+    """The realtime pubsub channel to subscribe (same spec the publisher uses)."""
+
+    poll_interval: timedelta = timedelta(seconds=1)
+    """Subscription read pacing passed to the backend's ``subscribe`` timeout."""
+
+    resubscribe_backoff: timedelta = timedelta(seconds=1)
+    """Pause before re-subscribing after a transport error ends the subscription."""
+
+    stats: RealtimeGatewayStats | None = None
+    """Delivery counters (bridge failures). Share with :attr:`RealtimeGateway.stats`."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.poll_interval.total_seconds() <= 0:
+            raise exc.configuration("poll_interval must be positive")
+
+        if self.resubscribe_backoff.total_seconds() <= 0:
+            raise exc.configuration("resubscribe_backoff must be positive")
+
+    # ....................... #
+
+    async def run(
+        self,
+        ctx: ExecutionContext,
+        handler: SignalHandler,
+        *,
+        stop: asyncio.Event | None = None,
+    ) -> None:
+        _refuse_encrypted_realtime_stream(self.pubsub_spec)
+
+        port = ctx.deps.resolve_configurable(
+            ctx, PubSubQueryDepKey, self.pubsub_spec, route=self.pubsub_spec.name
+        )
+        channel = str(self.pubsub_spec.name)
+
+        while stop is None or not stop.is_set():
+            try:
+                await self._consume(port, channel, handler, stop=stop)
+
+                if stop is not None and stop.is_set():
+                    return
+
+                # the subscription generator ended (backend read timeout) — resubscribe
+                continue
+
+            except asyncio.CancelledError:
+                raise
+
+            except CoreException as error:
+                if error.kind is ExceptionKind.CONFIGURATION:
+                    raise  # a wiring error won't fix itself by retrying
+
+                _logger.critical_exception("Realtime pubsub source error", channel=channel)
+
+            except Exception:
+                _logger.critical_exception("Realtime pubsub source error", channel=channel)
+
+            await asyncio.sleep(self.resubscribe_backoff.total_seconds())
+
+    # ....................... #
+
+    async def _consume(
+        self,
+        port: Any,
+        channel: str,
+        handler: SignalHandler,
+        *,
+        stop: asyncio.Event | None,
+    ) -> None:
+        """Drain one subscription until it ends or *stop* is set.
+
+        The subscribe generator can idle indefinitely between yields, so the stop
+        signal is raced against ``anext`` instead of being checked between messages —
+        cancelling the pending read at stop is fine here (at-most-once by contract).
+        """
+
+        messages = port.subscribe([channel], timeout=self.poll_interval)
+        stop_waiter = asyncio.ensure_future(stop.wait()) if stop is not None else None
+        pending: asyncio.Task[Any] | None = None
+
+        try:
+            while True:
+                if pending is None:
+                    pending = asyncio.ensure_future(anext(messages))
+
+                waiters = {pending} if stop_waiter is None else {pending, stop_waiter}
+                done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+
+                if stop_waiter is not None and stop_waiter in done:
+                    return
+
+                try:
+                    message = pending.result()
+
+                except StopAsyncIteration:
+                    return  # subscription ended — the run loop resubscribes
+
+                pending = None
+
+                try:
+                    with _trace_context(message.headers, stream=channel):
+                        await handler(
+                            message.payload,
+                            _tenant_from_headers(message.headers),
+                            message.headers.get(HEADER_EVENT_ID),
+                            _hlc_from_headers(message.headers),
+                        )
+
+                except CoreException as error:
+                    if error.kind is ExceptionKind.CONFIGURATION:
+                        raise
+
+                    # at-most-once: one bad signal must not wedge the live channel
+                    if self.stats is not None:
+                        self.stats.bridge_failed += 1
+                    _logger.critical_exception("Realtime pubsub bridge failed", channel=channel)
+
+                except Exception:
+                    if self.stats is not None:
+                        self.stats.bridge_failed += 1
+                    _logger.critical_exception("Realtime pubsub bridge failed", channel=channel)
+
+        finally:
+            if pending is not None:
+                # Await the cancellation out: aclose() on a generator whose anext is
+                # still running raises RuntimeError ("already running") — the close
+                # must only start once the read has actually unwound. A read that
+                # instead finished with a transport error is swallowed here too (we
+                # are exiting; the run loop's taxonomy already handled the real path).
+                pending.cancel()
+
+                with suppress(Exception, asyncio.CancelledError):
+                    await pending
+
+            if stop_waiter is not None:
+                stop_waiter.cancel()
+
+            await messages.aclose()
 
 
 # ....................... #

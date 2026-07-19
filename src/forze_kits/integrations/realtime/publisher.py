@@ -26,6 +26,11 @@ from pydantic import BaseModel
 
 from forze.application.contracts.envelope import HEADER_TENANT_ID
 from forze.application.contracts.outbox import OutboxCommandPort, OutboxSpec
+from forze.application.contracts.pubsub import (
+    PubSubCommandDepKey,
+    PubSubCommandPort,
+    PubSubSpec,
+)
 from forze.application.contracts.realtime import Audience, RealtimeEvent, RealtimeSignal
 from forze.application.contracts.stream import (
     StreamCommandDepKey,
@@ -157,4 +162,85 @@ def build_realtime_publisher(
         stream_name=str(stream_spec.name),
         tenant_provider=ctx.inv_ctx.get_tenant,
         outbox=outbox,
+    )
+
+
+# ----------------------- #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class RealtimePubSubPublisher:
+    """Publish realtime signals onto a broadcast pubsub channel — live-only.
+
+    The pubsub lane is at-most-once by the port contract (no history, no replay),
+    so this publisher has **no** ``stage``: durable delivery keeps riding the
+    outbox → stream → mailbox path. Use it where a deployment prefers native
+    broadcast fan-out for the ephemeral lane (paired with ``PubSubSignalSource``).
+    """
+
+    pubsub: PubSubCommandPort[RealtimeSignal]
+    """The resolved realtime pubsub command port."""
+
+    channel: str
+    """The channel signals are published to."""
+
+    tenant_provider: TenantProviderPort
+    """Reads the ambient tenant at emit time (carried in the message headers)."""
+
+    # ....................... #
+
+    async def publish[Payload: BaseModel](
+        self,
+        audience: Audience,
+        event: RealtimeEvent[Payload],
+        payload: Payload,
+    ) -> None:
+        """Ephemeral (at-most-once): publish the signal to the channel, fire-and-forget."""
+
+        signal = RealtimeSignal.for_event(audience, event, payload)
+
+        await self.pubsub.publish(
+            self.channel,
+            signal,
+            type=event.name,
+            key=_partition_key(audience),
+            headers=self._tenant_headers(),
+        )
+
+    # ....................... #
+
+    def _tenant_headers(self) -> dict[str, str]:
+        tenant = self.tenant_provider()
+
+        return {HEADER_TENANT_ID: str(tenant.tenant_id)} if tenant is not None else {}
+
+
+# ....................... #
+
+
+def build_realtime_pubsub_publisher(
+    ctx: ExecutionContext,
+    *,
+    pubsub_spec: PubSubSpec[RealtimeSignal],
+) -> RealtimePubSubPublisher:
+    """Resolve the pubsub port and build the broadcast-lane publisher.
+
+    Same discipline as :func:`build_realtime_publisher`: ports materialize at build
+    time and a read-only (``QUERY``) operation refuses to build.
+    """
+
+    if ctx.inv_ctx.is_read_only():
+        raise exc.precondition(
+            "Cannot build a RealtimePubSubPublisher in a read-only (QUERY) operation"
+        )
+
+    pubsub = ctx.deps.resolve_configurable(
+        ctx, PubSubCommandDepKey, pubsub_spec, route=pubsub_spec.name
+    )
+
+    return RealtimePubSubPublisher(
+        pubsub=pubsub,
+        channel=str(pubsub_spec.name),
+        tenant_provider=ctx.inv_ctx.get_tenant,
     )

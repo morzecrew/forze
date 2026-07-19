@@ -18,6 +18,8 @@ from forze.application.execution.context import (
 )
 from forze.base.primitives import uuid7
 
+from .raw_websocket import refuse_raw_websocket
+
 # ----------------------- #
 
 IDEMPOTENCY_KEY_HEADER: Final[str] = "Idempotency-Key"
@@ -62,6 +64,14 @@ class InvocationMetadataMiddleware:
 
     idem_header: str = attrs.field(default=IDEMPOTENCY_KEY_HEADER, kw_only=True)
     """Header name for the idempotency key (canonical, per the IETF httpapi draft)."""
+
+    allow_raw_websockets: bool = attrs.field(default=False, kw_only=True)
+    """Let raw ``websocket`` scopes bypass this middleware (default ``False``: refuse).
+
+    The invocation envelope (execution/correlation ids, idempotency, deadline) is
+    bound for HTTP scopes only, so a websocket route would run without it. Enabling
+    this is a declared decision that the app owns the envelope on websocket routes.
+    """
 
     # ....................... #
 
@@ -132,6 +142,10 @@ class InvocationMetadataMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
+            if scope["type"] == "websocket" and not self.allow_raw_websockets:
+                await refuse_raw_websocket(scope, receive, send)
+                return
+
             await self.app(scope, receive, send)
             return
 

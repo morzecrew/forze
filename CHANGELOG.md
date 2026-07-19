@@ -53,6 +53,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Connection hygiene** — built-in `realtime.reauth` refreshes a rotating token in place (same principal only); `InMemoryRealtimeMailbox` enforces a per-principal cap (1000).
 - **Gateway crash conformance** — `forze_dst.conformance.run_gateway_crash_delivery` (+ `GatewayCrashPoint`, `GatewayDeliveryOutcome`, `RealtimeBridge`): the ack-stream twin of `run_crash_recovery_delivery`; the injected bridge takes the real gateway core, and the scenario runs against the mock or a real Redis stream.
 
+**Realtime transport seams & client contract** — the egress plane's second transport and a machine-readable client contract.
+
+- **Versioned wire protocol** — normative docs page for the `{id, data}` envelope, cumulative ack, and handshake; `protocol: 1` negotiated at connect on Socket.IO and SSE (missing = 1, unsupported refused with `realtime_protocol_unsupported`).
+- **Fail-closed websocket scopes** — `SecurityContextMiddleware` and `InvocationMetadataMiddleware` refuse raw `websocket` scopes; opt out per middleware with `allow_raw_websockets=True`. **Breaking** for apps mounting raw websocket routes behind the middlewares.
+- **SSE egress** — `forze_fastapi.realtime`: `attach_realtime_sse_route` (`text/event-stream` with mailbox replay, `Last-Event-ID` precedence, live tail, and `POST …/ack`) + `RealtimeSseHub` / `realtime_sse_tail_lifecycle_step` (supervised per-node broadcast tail).
+- **AsyncAPI export** — `asyncapi_document(catalog, router)`: AsyncAPI 3 from the typed event catalog + command router, with `x-forze-audience-kinds` / `x-forze-offline-delivery` extensions and the built-in `realtime.ack`; `attach_asyncapi_route(router, document=…)` serves it `/openapi.json`-style for client codegen.
+- **Transport-neutral kernel** — mailbox/cursor seams, in-memory impls, client-key ladder, replay/ack helpers, and protocol negotiation move to `forze.application.integrations.realtime`; `forze_socketio` re-exports unchanged.
+- **Pubsub live lane** — `PubSubSignalSource` (broadcast, at-most-once alternative behind the same source seam) + `realtime_pubsub_spec` and `build_realtime_pubsub_publisher` (live-only, no `stage`); durable delivery keeps riding outbox → stream → mailbox.
+- **Transport-agnostic presence** — open SSE streams join the same presence rooms as Socket.IO connections (`attach_realtime_sse_route(presence=…)` + `realtime_sse_presence_heartbeat_lifecycle_step`); `RealtimePresence` / `InMemoryRealtimePresence` / `room_for` move to the kernel (`forze_socketio` re-exports unchanged); `periodic_lifecycle_step` joins `forze.application.execution.background`.
+- **Tenant-sharded SSE tail** — `realtime_sse_sharded_tail_lifecycle_step(hub, shard=…)`: per-tenant tail loops for a `tenant_aware` realtime stream route, tenant trusted from the stream identity (no header trust) — the SSE analog of `TenantShardedSignalSource`.
+- **Fail-closed SSE topics** — `?topics=` requires an `authorize_topics` resolver (`TopicAuthorizer`; refused with `realtime_topics_unauthorized` unless every topic is granted) and is bounded by `max_topics` (default 32, `realtime_topics_limit`).
+
 ### Changed
 
 **Breaking — graph**

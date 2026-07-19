@@ -41,6 +41,7 @@ from forze_postgres import (
     PostgresReadOnlyDocumentConfig,
 )
 
+
 # --8<-- [start:spec]
 class ArticleRead(ReadDocument):  # inherits id, rev, created_at, last_update_at
     title: str

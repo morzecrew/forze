@@ -125,15 +125,26 @@ use the same id the gateway joins with (`str(authn.principal_id)`).
 ### The delivery envelope (client contract)
 
 Every frame is a uniform envelope — `{ "id": <id|null>, "data": <payload> }`. Durable
-frames carry the stable event id (dedup on it); ephemeral frames carry `null`:
+frames carry the stable event id (dedup on it); ephemeral frames carry `null`. The
+contract is versioned: send `protocol: 1` in the connect `auth` (missing means 1; an
+unsupported version is refused with `realtime_protocol_unsupported`), and ignore
+unknown envelope fields — additive changes never bump the version:
 
 ```js
+const socket = io(url, { auth: { token, device_id, protocol: 1 } });
+
 socket.on("order.shipped", ({ id, data }) => {
   if (id && seen.has(id)) return;
   if (id) { seen.add(id); socket.emit("realtime.ack", { up_to: id }); }
   render(data);
 });
 ```
+
+The full normative contract (handshake, envelope, ack, replay, errors — for this
+transport and the SSE route) is the
+[realtime wire protocol](../reference/realtime-protocol.md); its machine-readable twin
+is `asyncapi_document(catalog, router)` — an AsyncAPI 3 document generated from the
+typed event catalog and command router, ready for review or client-type generation.
 
 ### Tenancy and addressing
 
@@ -220,6 +231,7 @@ Operational hardening around the loop:
 | `RealtimePublisher.publish` / `.stage` | egress: publish a signal to messaging (ephemeral / durable) |
 | `RealtimeGateway` + `realtime_gateway_lifecycle_step` | egress: consume the stream, bridge to rooms — supervised (restart + backoff), drainable, bounded `emit_timeout`, poison ceiling |
 | `TenantShardedSignalSource` + `realtime_tenant_group_ensure_lifecycle_step` | egress: namespace-tier per-tenant streams; binds tenant from the stream (trusted), no header trust; per-tenant fault isolation |
+| `PubSubSignalSource` + `realtime_pubsub_spec` + `RealtimePubSubPublisher` | egress: broadcast pubsub live lane (at-most-once, every node sees every signal); durables keep riding outbox → stream → mailbox |
 | `realtime_tenant_relay_lifecycle_step` | egress: per-tenant durable relay for a partitioned (tenant-aware) outbox |
 | `attach_realtime_connection` | auto-join principal rooms + presence on connect; offline replay + ack |
 | `DocumentRealtimeMailbox` + `DocumentMailboxCursors` | offline store-and-forward: per-principal mailbox + per-device cursor |

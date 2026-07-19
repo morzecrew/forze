@@ -20,6 +20,7 @@ from forze.base.exceptions import CoreException, exc
 
 from ..exceptions import build_core_exception_response
 from ..security import AuthnRequirement, resolve_authn_ingress, resolve_tenant_identity
+from .raw_websocket import refuse_raw_websocket
 
 # ----------------------- #
 
@@ -43,6 +44,14 @@ class SecurityContextMiddleware:
 
     Default ``False`` (deny): an unvalidated header tenant is unauthenticated input.
     Enable only behind a trusted gateway that sets the header authoritatively.
+    """
+
+    allow_raw_websockets: bool = attrs.field(default=False, kw_only=True)
+    """Let raw ``websocket`` scopes bypass this middleware (default ``False``: refuse).
+
+    Identity and tenancy are resolved for HTTP scopes only, so a websocket route
+    would run without either. Enabling this is a declared decision that the app
+    owns identity, tenancy, and error shaping on every websocket route itself.
     """
 
     # ....................... #
@@ -80,6 +89,10 @@ class SecurityContextMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
+            if scope["type"] == "websocket" and not self.allow_raw_websockets:
+                await refuse_raw_websocket(scope, receive, send)
+                return
+
             await self.app(scope, receive, send)
             return
 

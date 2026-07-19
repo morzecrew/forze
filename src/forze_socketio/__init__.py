@@ -76,6 +76,7 @@ require_socketio()
 
 from forze.application.contracts.realtime import RealtimeShard
 
+from .asyncapi import ACK_EVENT, asyncapi_document
 from .connection import (
     CONNECTION_SESSION_KEY,
     InMemoryRealtimePresence,
@@ -102,6 +103,7 @@ from .exceptions import (
 )
 from .gateway import (
     GatewayDedup,
+    PubSubSignalSource,
     RealtimeGateway,
     RealtimeSignalSource,
     SignalHandler,
@@ -139,6 +141,8 @@ from .server import build_socketio_asgi_app, build_socketio_server
 # ----------------------- #
 
 __all__ = [
+    "ACK_EVENT",
+    "asyncapi_document",
     "GENERIC_INTERNAL_DETAIL",
     "IDENTITY_SESSION_KEY",
     "ExecutionContextFactoryPort",
@@ -159,6 +163,7 @@ __all__ = [
     "instrument_realtime_gateway",
     "RealtimeSignalSource",
     "SignalHandler",
+    "PubSubSignalSource",
     "StreamGroupSignalSource",
     "TenantShardedSignalSource",
     "RealtimeShard",
