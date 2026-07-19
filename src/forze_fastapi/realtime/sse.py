@@ -45,6 +45,7 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.integrations.realtime import (
     MailboxCursors,
+    RealtimeAck,
     RealtimeMailbox,
     RealtimePresence,
     acknowledge_up_to,
@@ -90,10 +91,8 @@ _SSE_HEADERS = {
 }
 
 
-class RealtimeAckBody(BaseModel):
-    """``POST .../ack`` body: cumulative ack up to (and including) an event id."""
-
-    up_to: str
+class RealtimeAckBody(RealtimeAck):
+    """``POST .../ack`` body — the kernel's shared ack shape, one wire contract."""
 
 
 class RealtimeAckResult(BaseModel):

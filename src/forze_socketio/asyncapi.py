@@ -34,7 +34,7 @@ from forze.application.contracts.realtime import (
     RealtimeEvent,
     RealtimeEventCatalog,
 )
-from forze.application.integrations.realtime import REALTIME_PROTOCOL_VERSION
+from forze.application.integrations.realtime import REALTIME_PROTOCOL_VERSION, RealtimeAck
 from forze.base.exceptions import exc
 
 from .routing import SocketIONamespaceRouter
@@ -50,13 +50,35 @@ ACK_EVENT = "realtime.ack"
 """The cumulative-ack event every replay-enabled connection layer registers."""
 
 
-def _payload_schema(payload_type: Any) -> dict[str, Any]:
-    """The JSON Schema of a payload model, self-contained (``$defs`` stay inline)."""
+def _payload_schema(payload_type: Any, schemas: dict[str, Any]) -> dict[str, Any]:
+    """The JSON Schema of a payload model, with nested models hoisted into *schemas*.
 
-    return TypeAdapter[Any](payload_type).json_schema()
+    Message payloads are embedded deep inside the document
+    (``components.messages.<name>.payload…``), where pydantic's default local
+    ``#/$defs/...`` references would not resolve — ``#`` is the document root. So
+    every nested model definition goes into the shared ``components.schemas``
+    bucket instead, and references point there from the root.
+    """
+
+    schema = TypeAdapter[Any](payload_type).json_schema(ref_template="#/components/schemas/{model}")
+
+    for name, definition in schema.pop("$defs", {}).items():
+        existing = schemas.get(name)
+
+        if existing is not None and existing != definition:
+            # two distinct models sharing one schema name would silently document
+            # the wrong shape for one of them — refuse at generation
+            raise exc.configuration(
+                f"AsyncAPI schema name collision on {name!r}: two different models "
+                "resolve to the same components.schemas entry — rename one model"
+            )
+
+        schemas[name] = definition
+
+    return schema
 
 
-def _envelope_message(event: RealtimeEvent[Any]) -> dict[str, Any]:
+def _envelope_message(event: RealtimeEvent[Any], schemas: dict[str, Any]) -> dict[str, Any]:
     """An egress message: the shared ``{id, data}`` delivery envelope around the model."""
 
     kinds = event.audience_kinds if event.audience_kinds is not None else frozenset(AudienceKind)
@@ -77,7 +99,7 @@ def _envelope_message(event: RealtimeEvent[Any]) -> dict[str, Any]:
                         "Durable event id (dedup + ack anchor); null for ephemeral signals."
                     ),
                 },
-                "data": _payload_schema(event.payload_type),
+                "data": _payload_schema(event.payload_type, schemas),
             },
         },
         "x-forze-audience-kinds": sorted(kind.value for kind in kinds),
@@ -112,6 +134,7 @@ def asyncapi_document(
     channels: dict[str, Any] = {}
     operations: dict[str, Any] = {}
     messages: dict[str, Any] = {}
+    schemas: dict[str, Any] = {}
 
     def _add_channel(event_name: str, message: dict[str, Any], *, extras: dict[str, Any]) -> None:
         if event_name in channels:
@@ -129,7 +152,7 @@ def asyncapi_document(
 
     # egress: one channel + send operation per declared catalog event
     for event in catalog:
-        message = _envelope_message(event)
+        message = _envelope_message(event, schemas)
         _add_channel(
             event.name,
             message,
@@ -144,23 +167,15 @@ def asyncapi_document(
             "summary": f"Deliver {event.name!r} to its audience",
         }
 
-    # ingress: the built-in cumulative ack, plus every registered command
+    # ingress: the built-in cumulative ack (the kernel's canonical wire shape,
+    # never a hand-written literal), plus every registered command
     _add_channel(
         ACK_EVENT,
         {
             "name": ACK_EVENT,
             "title": ACK_EVENT,
             "contentType": "application/json",
-            "payload": {
-                "type": "object",
-                "required": ["up_to"],
-                "properties": {
-                    "up_to": {
-                        "type": "string",
-                        "description": "Cumulative: the last delivered durable event id.",
-                    }
-                },
-            },
+            "payload": _payload_schema(RealtimeAck, schemas),
         },
         extras={},
     )
@@ -177,7 +192,7 @@ def asyncapi_document(
                 "name": route.event,
                 "title": route.event,
                 "contentType": "application/json",
-                "payload": _payload_schema(route.payload_type),
+                "payload": _payload_schema(route.payload_type, schemas),
             },
             extras={"x-forze-operation": str(route.operation)},
         )
@@ -190,7 +205,7 @@ def asyncapi_document(
         if route.ack_type is not None:
             # Socket.IO acks are RPC-style callbacks without a channel of their own —
             # an honest extension beats a fabricated reply channel.
-            operation["x-forze-ack-schema"] = _payload_schema(route.ack_type)
+            operation["x-forze-ack-schema"] = _payload_schema(route.ack_type, schemas)
 
         operations[f"receive.{route.event}"] = operation
 
@@ -204,7 +219,9 @@ def asyncapi_document(
         "defaultContentType": "application/json",
         "channels": channels,
         "operations": operations,
-        "components": {"messages": messages},
+        "components": (
+            {"messages": messages, "schemas": schemas} if schemas else {"messages": messages}
+        ),
     }
 
     if description is not None:

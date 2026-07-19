@@ -145,7 +145,11 @@ class TestProtocolNegotiation:
     def test_supported_forms_accepted(self, raw: object) -> None:
         assert negotiate_realtime_protocol(raw) == 1
 
-    @pytest.mark.parametrize("raw", [2, "2", "x", "", True, False, 1.5, {"v": 1}, [1]])
+    @pytest.mark.parametrize(
+        # "²"/"①" pass str.isdigit but int() rejects them — must refuse, not crash
+        "raw",
+        [2, "2", "x", "", True, False, 1.5, {"v": 1}, [1], "²", "①"],
+    )
     def test_unsupported_or_garbage_refused(self, raw: object) -> None:
         with pytest.raises(CoreException) as caught:
             negotiate_realtime_protocol(raw)

@@ -14,6 +14,8 @@ the version; clients must ignore unknown envelope fields.
 
 from typing import Final
 
+from pydantic import BaseModel, Field
+
 from forze.base.exceptions import exc
 
 # ----------------------- #
@@ -21,6 +23,7 @@ from forze.base.exceptions import exc
 __all__ = [
     "REALTIME_PROTOCOL_VERSION",
     "SUPPORTED_REALTIME_PROTOCOLS",
+    "RealtimeAck",
     "negotiate_realtime_protocol",
 ]
 
@@ -29,6 +32,17 @@ REALTIME_PROTOCOL_VERSION: Final[int] = 1
 
 SUPPORTED_REALTIME_PROTOCOLS: Final[frozenset[int]] = frozenset({REALTIME_PROTOCOL_VERSION})
 """Every protocol version this server accepts at connect."""
+
+
+class RealtimeAck(BaseModel):
+    """The cumulative-ack payload — one wire shape on every transport.
+
+    ``realtime.ack`` over Socket.IO, ``POST …/ack`` over SSE, and the AsyncAPI
+    export all derive from this model, so the ack contract cannot drift between
+    transports and their documentation.
+    """
+
+    up_to: str = Field(description="Cumulative: the last delivered durable event id.")
 
 
 def negotiate_realtime_protocol(raw: object) -> int:
@@ -53,7 +67,9 @@ def negotiate_realtime_protocol(raw: object) -> int:
         case int():
             version = raw
 
-        case str() if raw.strip().isdigit():
+        # isdecimal, not isdigit: superscripts/circled digits ("²", "①") pass
+        # isdigit but int() rejects them — that must be a clean refusal, not a crash
+        case str() if raw.strip().isdecimal():
             version = int(raw)
 
         case _:

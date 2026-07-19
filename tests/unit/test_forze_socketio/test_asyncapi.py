@@ -157,3 +157,76 @@ class TestShapes:
 
         with pytest.raises(CoreException):
             asyncapi_document(_CATALOG, router)
+
+
+class TestNestedSchemas:
+    def test_nested_models_hoist_into_components_schemas(self) -> None:
+        class _Line(BaseModel):
+            sku: str
+
+        class _OrderDetail(BaseModel):
+            order_id: str
+            lines: list[_Line]
+
+        catalog = RealtimeEventCatalog.of(
+            RealtimeEvent(name="order.detailed", payload_type=_OrderDetail)
+        )
+        document = asyncapi_document(catalog)
+
+        # the nested model resolves from the document root, not a local $defs
+        assert "_Line" in document["components"]["schemas"]
+        data = document["components"]["messages"]["order.detailed"]["payload"]["properties"][
+            "data"
+        ]
+        assert "$defs" not in data
+        assert data["properties"]["lines"]["items"]["$ref"] == "#/components/schemas/_Line"
+
+    def test_every_reference_resolves_from_the_document_root(self) -> None:
+        import json
+        import re
+
+        class _Line(BaseModel):
+            sku: str
+
+        class _OrderDetail(BaseModel):
+            lines: list[_Line]
+
+        catalog = RealtimeEventCatalog.of(
+            RealtimeEvent(name="order.detailed", payload_type=_OrderDetail),
+            *_CATALOG,
+        )
+        document = asyncapi_document(catalog, _router())
+        serialized = json.dumps(document)
+
+        assert "#/$defs/" not in serialized  # no unresolvable local references anywhere
+
+        schemas = document["components"].get("schemas", {})
+        for ref in re.findall(r'"\$ref": "([^"]+)"', serialized):
+            if ref.startswith("#/components/schemas/"):
+                assert ref.removeprefix("#/components/schemas/") in schemas
+
+    def test_schema_name_collision_across_models_is_refused(self) -> None:
+        def _make(payload_value: type) -> type[BaseModel]:
+            class _Clash(BaseModel):
+                value: payload_value  # type: ignore[valid-type]
+
+            class _Wrapper(BaseModel):
+                inner: _Clash
+
+            return _Wrapper
+
+        catalog = RealtimeEventCatalog.of(
+            RealtimeEvent(name="a", payload_type=_make(int)),
+            RealtimeEvent(name="b", payload_type=_make(str)),
+        )
+
+        with pytest.raises(CoreException):
+            asyncapi_document(catalog)
+
+    def test_ack_payload_derives_from_the_kernel_model(self) -> None:
+        document = asyncapi_document(_CATALOG)
+        payload = document["components"]["messages"][ACK_EVENT]["payload"]
+
+        assert payload["required"] == ["up_to"]
+        assert payload["properties"]["up_to"]["type"] == "string"
+        assert "Cumulative" in payload["properties"]["up_to"]["description"]

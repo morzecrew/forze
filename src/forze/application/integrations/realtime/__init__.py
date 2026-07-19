@@ -19,6 +19,7 @@ from .presence import InMemoryRealtimePresence, RealtimePresence
 from .protocol import (
     REALTIME_PROTOCOL_VERSION,
     SUPPORTED_REALTIME_PROTOCOLS,
+    RealtimeAck,
     negotiate_realtime_protocol,
 )
 from .replay import acknowledge_up_to, iter_replay, resolve_client_key
@@ -36,6 +37,7 @@ __all__ = [
     "InMemoryRealtimePresence",
     "REALTIME_PROTOCOL_VERSION",
     "SUPPORTED_REALTIME_PROTOCOLS",
+    "RealtimeAck",
     "negotiate_realtime_protocol",
     "acknowledge_up_to",
     "iter_replay",

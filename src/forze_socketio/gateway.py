@@ -733,7 +733,15 @@ class PubSubSignalSource(RealtimeSignalSource):
 
         finally:
             if pending is not None:
+                # Await the cancellation out: aclose() on a generator whose anext is
+                # still running raises RuntimeError ("already running") — the close
+                # must only start once the read has actually unwound. A read that
+                # instead finished with a transport error is swallowed here too (we
+                # are exiting; the run loop's taxonomy already handled the real path).
                 pending.cancel()
+
+                with suppress(Exception, asyncio.CancelledError):
+                    await pending
 
             if stop_waiter is not None:
                 stop_waiter.cancel()
