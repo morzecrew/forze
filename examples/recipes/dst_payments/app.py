@@ -47,8 +47,8 @@ from forze.domain.models import (
     ReadDocument,
 )
 from forze_dst import Simulation
-from forze_dst.markers import record_event
 from forze_dst.invariants import expect
+from forze_dst.markers import record_event
 from forze_mock import MockDepsModule
 
 # ----------------------- #
@@ -189,7 +189,7 @@ registry = OperationRegistry(
         "pay_order": lambda ctx: _PayOrder(ctx=ctx),
         "notify": lambda ctx: _Notify(ctx=ctx),
     },
-    plans={op: _TX_PLAN for op in ("create_order", "pay_order", "notify")},
+    plans=dict.fromkeys(("create_order", "pay_order", "notify"), _TX_PLAN),
     descriptors={
         "create_order": OperationDescriptor(
             input_type=None, output_type=None, description="Create an order."

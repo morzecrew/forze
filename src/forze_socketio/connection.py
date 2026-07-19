@@ -16,7 +16,7 @@ require_socketio()
 
 # ....................... #
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager
 from datetime import datetime
 from inspect import isawaitable
@@ -36,8 +36,14 @@ from forze.application.contracts.authn import AuthnIdentity, ClientIdentity
 from forze.application.contracts.realtime import Audience
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, ExecutionRuntime
+from forze.application.integrations.realtime import (
+    acknowledge_up_to,
+    iter_replay,
+    negotiate_realtime_protocol,
+    resolve_client_key,
+)
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import HlcTimestamp, utcnow
+from forze.base.primitives import utcnow
 
 from .exceptions import (
     GENERIC_INTERNAL_DETAIL,
@@ -47,34 +53,8 @@ from .exceptions import (
     log_server_error,
 )
 from .gateway import room_for
-from .mailbox import MailboxCursors, MailboxEntry, RealtimeMailbox
+from .mailbox import MailboxCursors, RealtimeMailbox
 from .routing import IDENTITY_SESSION_KEY, SocketIOConnect
-
-
-async def _iter_replay(
-    mailbox: RealtimeMailbox,
-    *,
-    principal: str,
-    since: HlcTimestamp | None,
-) -> AsyncIterator[MailboxEntry]:
-    """Stream a mailbox's backlog, preferring the paged ``replay_since`` when present.
-
-    ``replay_since`` is optional on the :class:`RealtimeMailbox` protocol, so a mailbox
-    that only implements the buffered :meth:`~RealtimeMailbox.read_since` still works —
-    it just materializes the page at once instead of streaming.
-    """
-
-    stream = getattr(mailbox, "replay_since", None)
-
-    if stream is not None:
-        async for entry in stream(principal=principal, since=since):
-            yield entry
-
-        return
-
-    for entry in await mailbox.read_since(principal=principal, since=since):
-        yield entry
-
 
 # ----------------------- #
 
@@ -125,9 +105,7 @@ class RealtimeConnection:
     def client_key(self, sid: str) -> str:
         """The stable cursor key: the client's ``device_id``/``session_id``, else *sid*."""
 
-        key = self.client.key if self.client is not None else None
-
-        return key or sid
+        return resolve_client_key(self.client, fallback=sid)
 
     # ....................... #
 
@@ -263,7 +241,7 @@ class _ConnectionLifecycle:
                 cursors = self.cursors_factory(ctx)
                 since = await cursors.get(principal=connection.principal, client_key=client_key)
 
-                async for entry in _iter_replay(
+                async for entry in iter_replay(
                     mailbox, principal=connection.principal, since=since
                 ):
                     await self.sio.emit(
@@ -357,33 +335,26 @@ class _ConnectionLifecycle:
         async with self.runtime.scope():
             ctx = self.runtime.get_context()
             with _bind_connection(ctx, connection):
-                mailbox = self.mailbox_factory(ctx)
-                cursors = self.cursors_factory(ctx)
-                position = await mailbox.position_of(
-                    principal=connection.principal, event_id=event_id
+                await acknowledge_up_to(
+                    self.mailbox_factory(ctx),
+                    self.cursors_factory(ctx),
+                    principal=connection.principal,
+                    client_key=connection.client_key(sid),
+                    event_id=event_id,
                 )
-
-                if position is not None:
-                    await cursors.advance(
-                        principal=connection.principal,
-                        client_key=connection.client_key(sid),
-                        up_to=position,
-                    )
-
-                    # trim what every known device has now acked (TTL/cap is the backstop)
-                    floor = await cursors.min_cursor(principal=connection.principal)
-
-                    if floor is not None:
-                        await mailbox.trim(principal=connection.principal, before=floor)
 
     # ....................... #
 
     async def on_connect(self, sid: str, environ: Mapping[str, Any], auth: Any = None) -> None:
-        """Authenticate (store the identity), auto-join the principal room, replay."""
+        """Negotiate the protocol, authenticate, auto-join the principal room, replay."""
 
         connect = SocketIOConnect(sid=sid, namespace=self.namespace, environ=environ, auth=auth)
 
         try:
+            # Handshake first: the connection speaks exactly one protocol version for its
+            # lifetime (missing = 1); an unsupported one is refused before any auth work.
+            negotiate_realtime_protocol(auth.get("protocol") if isinstance(auth, Mapping) else None)
+
             connection = await _resolve(self.resolve, connect)
 
         except SocketIOConnectionRefusedError:

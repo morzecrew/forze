@@ -1,0 +1,99 @@
+"""Replay and cumulative-ack discipline over the mailbox seam — shared by every transport.
+
+These helpers are the transport-neutral half of a realtime connection: given an
+already-resolved mailbox + cursors pair and an already-authenticated principal,
+they implement the client-key ladder, the backlog drain, and the cumulative ack.
+The transport edge (Socket.IO connection layer, SSE route) owns only what is
+genuinely transport-specific — sessions, framing, and how the handshake arrives.
+"""
+
+from collections.abc import AsyncIterator
+
+from forze.application.contracts.authn import ClientIdentity
+from forze.application.contracts.realtime import MailboxEntry
+from forze.base.primitives import HlcTimestamp
+
+from .mailbox import MailboxCursors, RealtimeMailbox
+
+# ----------------------- #
+
+__all__ = [
+    "resolve_client_key",
+    "iter_replay",
+    "acknowledge_up_to",
+]
+
+
+def resolve_client_key(client: ClientIdentity | None, *, fallback: str) -> str:
+    """The stable cursor key ladder: ``device_id`` → ``session_id`` → *fallback*.
+
+    The fallback is the transport's per-connection identifier (the Socket.IO ``sid``,
+    an SSE per-principal default) — always namespaced under the principal downstream,
+    so a spoofed value can only ever address that principal's own cursor.
+    """
+
+    key = client.key if client is not None else None
+
+    return key or fallback
+
+
+# ....................... #
+
+
+async def iter_replay(
+    mailbox: RealtimeMailbox,
+    *,
+    principal: str,
+    since: HlcTimestamp | None,
+) -> AsyncIterator[MailboxEntry]:
+    """Stream a mailbox's backlog, preferring the paged ``replay_since`` when present.
+
+    ``replay_since`` is optional on the :class:`RealtimeMailbox` protocol, so a mailbox
+    that only implements the buffered :meth:`~RealtimeMailbox.read_since` still works —
+    it just materializes the page at once instead of streaming.
+    """
+
+    stream = getattr(mailbox, "replay_since", None)
+
+    if stream is not None:
+        async for entry in stream(principal=principal, since=since):
+            yield entry
+
+        return
+
+    for entry in await mailbox.read_since(principal=principal, since=since):
+        yield entry
+
+
+# ....................... #
+
+
+async def acknowledge_up_to(
+    mailbox: RealtimeMailbox,
+    cursors: MailboxCursors,
+    *,
+    principal: str,
+    client_key: str,
+    event_id: str,
+) -> HlcTimestamp | None:
+    """Cumulative ack: advance the device cursor to *event_id*, trim the all-device floor.
+
+    Returns the acked position, or ``None`` when the event id is no longer retained
+    (already trimmed, or never durable) — a no-op then, since the cursor only ever
+    moves forward past entries that still exist.
+    """
+
+    position = await mailbox.position_of(principal=principal, event_id=event_id)
+
+    if position is None:
+        return None
+
+    await cursors.advance(principal=principal, client_key=client_key, up_to=position)
+
+    # trim what every known device has now acked (TTL/cap is the backstop)
+    floor = await cursors.min_cursor(principal=principal)
+
+    if floor is not None:
+        await mailbox.trim(principal=principal, before=floor)
+
+    return position

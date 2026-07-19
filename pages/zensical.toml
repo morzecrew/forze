@@ -192,6 +192,7 @@ nav = [
             "reference/mapping.md",
             "reference/outbox-schema.md",
             "reference/fastapi-routes.md",
+            "reference/realtime-protocol.md",
         ] },
         { "Operations" = [
             "reference/errors.md",
