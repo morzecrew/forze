@@ -25,7 +25,12 @@ from .mailbox import (
     realtime_mailbox_spec,
 )
 from .observability import instrument_realtime_mailbox
-from .publisher import RealtimePublisher, build_realtime_publisher
+from .publisher import (
+    RealtimePublisher,
+    RealtimePubSubPublisher,
+    build_realtime_publisher,
+    build_realtime_pubsub_publisher,
+)
 from .specs import (
     DEFAULT_REALTIME_CHANNEL,
     DEFAULT_REALTIME_STREAM_MAX_ENTRIES,
@@ -33,6 +38,7 @@ from .specs import (
     build_realtime_transport,
     realtime_inbox_spec,
     realtime_outbox_spec,
+    realtime_pubsub_spec,
     realtime_stream_spec,
 )
 
@@ -40,7 +46,10 @@ from .specs import (
 
 __all__ = [
     "RealtimePublisher",
+    "RealtimePubSubPublisher",
     "build_realtime_publisher",
+    "build_realtime_pubsub_publisher",
+    "realtime_pubsub_spec",
     "DocumentRealtimeMailbox",
     "DocumentMailboxCursors",
     "build_realtime_mailbox",

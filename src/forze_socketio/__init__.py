@@ -103,6 +103,7 @@ from .exceptions import (
 )
 from .gateway import (
     GatewayDedup,
+    PubSubSignalSource,
     RealtimeGateway,
     RealtimeSignalSource,
     SignalHandler,
@@ -162,6 +163,7 @@ __all__ = [
     "instrument_realtime_gateway",
     "RealtimeSignalSource",
     "SignalHandler",
+    "PubSubSignalSource",
     "StreamGroupSignalSource",
     "TenantShardedSignalSource",
     "RealtimeShard",

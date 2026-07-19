@@ -231,6 +231,7 @@ Operational hardening around the loop:
 | `RealtimePublisher.publish` / `.stage` | egress: publish a signal to messaging (ephemeral / durable) |
 | `RealtimeGateway` + `realtime_gateway_lifecycle_step` | egress: consume the stream, bridge to rooms — supervised (restart + backoff), drainable, bounded `emit_timeout`, poison ceiling |
 | `TenantShardedSignalSource` + `realtime_tenant_group_ensure_lifecycle_step` | egress: namespace-tier per-tenant streams; binds tenant from the stream (trusted), no header trust; per-tenant fault isolation |
+| `PubSubSignalSource` + `realtime_pubsub_spec` + `RealtimePubSubPublisher` | egress: broadcast pubsub live lane (at-most-once, every node sees every signal); durables keep riding outbox → stream → mailbox |
 | `realtime_tenant_relay_lifecycle_step` | egress: per-tenant durable relay for a partitioned (tenant-aware) outbox |
 | `attach_realtime_connection` | auto-join principal rooms + presence on connect; offline replay + ack |
 | `DocumentRealtimeMailbox` + `DocumentMailboxCursors` | offline store-and-forward: per-principal mailbox + per-device cursor |

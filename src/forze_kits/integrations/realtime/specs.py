@@ -14,6 +14,7 @@ import attrs
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.inventory import SpecRegistry, SpecSource
 from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
+from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.contracts.realtime import RealtimeSignal
 from forze.application.contracts.stream import StreamSpec
 from forze.base.serialization import PydanticModelCodec
@@ -52,6 +53,22 @@ def realtime_stream_spec(name: str = DEFAULT_REALTIME_CHANNEL) -> StreamSpec[Rea
     """
 
     return StreamSpec(name=name, codec=_REALTIME_CODEC)
+
+
+# ....................... #
+
+
+def realtime_pubsub_spec(name: str = DEFAULT_REALTIME_CHANNEL) -> PubSubSpec[RealtimeSignal]:
+    """Build the pubsub channel spec for the broadcast realtime lane.
+
+    The pubsub lane is **live-only and at-most-once** by the port contract — no
+    history, no replay — so it carries only what the ephemeral stream lane carries;
+    durable delivery keeps riding the outbox → stream → mailbox path. Wire the same
+    spec into :func:`build_realtime_pubsub_publisher` and the consuming
+    ``PubSubSignalSource`` so they share the channel and codec.
+    """
+
+    return PubSubSpec(name=name, codec=_REALTIME_CODEC)
 
 
 # ....................... #
