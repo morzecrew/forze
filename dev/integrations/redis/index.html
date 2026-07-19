@@ -5849,6 +5849,27 @@ name is supplied per call, and <code>tenant_aware=True</code> isolates it with a
 <code>PubSubSpec</code> to seal payloads through the broker (the consumer decrypts); a wired
 <code>CryptoDepsModule</code> is required, and a deployment <code>required_reach</code> floor is
 enforced here. Pub-sub is at-most-once past the broker.</p>
+<p><strong>Retention.</strong> A stream without a cap grows in Redis memory until <code>maxmemory</code>
+eviction takes the keyspace. <code>RedisStreamConfig(retention_max_entries=...)</code> applies an
+approximate cap at every append (<code>XADD MAXLEN ~</code>, O(1) amortized). Cap any stream with
+an unbounded producer — the realtime egress stream above all
+(<code>DEFAULT_REALTIME_STREAM_MAX_ENTRIES</code> is the recommended starting point) — and size it
+so the horizon at peak append rate comfortably exceeds the consumer group's reclaim
+window: retention bounds how long an <em>undelivered</em> entry survives a total consumer
+outage. Alarm on the ack admin port's <code>depth()</code> (undelivered backlog, pending count,
+oldest pending age) long before a cap becomes the failure; the same surface feeds
+<code>quiesce(ack_streams=...)</code>.</p>
+<p>The precise companion is <code>AckStreamGroupAdminPort.trim_acknowledged(stream)</code> — a sweep
+(<code>XTRIM MINID</code> at the floor computed from <code>XINFO GROUPS</code> + <code>XPENDING</code>) that removes only
+entries <strong>every</strong> consumer group has been delivered <em>and</em> acked, so it can never outrun
+a slow or crashed consumer, and a group-less stream is never trimmed. Run it on an
+interval (<code>realtime_stream_trim_lifecycle_step</code> for the realtime stream) to keep
+steady-state memory near the groups' real horizon; keep the cap as the backstop for a
+group nobody drains.</p>
+<p><strong>Pub-sub reconnect.</strong> Long-running subscribers reconnect automatically after a
+transport error (<code>pubsub_auto_reconnect</code> now defaults to <code>True</code> — the previous opt-in
+default meant a subscriber silently stopped on the first Redis blip). Opt out per
+client config to fail loudly and own the reconnect yourself.</p>
 <h2 id="l1-push-invalidation">L1 push invalidation<a class="headerlink" href="#l1-push-invalidation" title="Permanent link">&para;</a></h2>
 <p><code>RedisCacheConfig(invalidation_push=True)</code> enables Redis 6+ <strong>client-side
 caching</strong> (<code>CLIENT TRACKING</code>, RESP3 push) for caches backing the

@@ -5861,10 +5861,15 @@ never touches a socket. The concept (audiences, ephemeral vs durable) is
 <span class="k">await</span> <span class="n">rt</span><span class="o">.</span><span class="n">publish</span><span class="p">(</span><span class="n">Audience</span><span class="o">.</span><span class="n">topic</span><span class="p">(</span><span class="s2">&quot;chat:42&quot;</span><span class="p">),</span> <span class="n">MESSAGE_NEW</span><span class="p">,</span> <span class="n">view</span><span class="p">)</span>   <span class="c1"># ephemeral, at-most-once</span>
 <span class="k">await</span> <span class="n">rt</span><span class="o">.</span><span class="n">stage</span><span class="p">(</span><span class="n">Audience</span><span class="o">.</span><span class="n">principal</span><span class="p">(</span><span class="n">user_id</span><span class="p">),</span> <span class="n">ORDER_SHIPPED</span><span class="p">,</span> <span class="n">dto</span><span class="p">)</span>  <span class="c1"># durable, at-least-once</span>
 </code></pre></div>
-<p>The <strong>gateway</strong> runs as a background lifecycle step, consuming the stream via a consumer
-group and emitting to a tenant-scoped room (fanned out cluster-wide by the Redis
-manager). Durable signals also need the <strong>relay</strong> to move staged rows from the outbox to
-the stream after commit, plus the gateway's <code>dedup</code> for exactly-once delivery:</p>
+<p>The <strong>gateway</strong> runs as a supervised background lifecycle step, consuming the stream via
+a consumer group and emitting to a tenant-scoped room (fanned out cluster-wide by the
+Redis manager). Supervision is the same machinery every other background loop uses: a
+crash restarts the loop after a jittered backoff (a configuration error is terminal —
+wiring doesn't fix itself), and the loop registers as a <strong>drainable</strong>, so
+<code>runtime.shutdown()</code> asks it to finish its in-flight batch before teardown instead of
+cancelling it mid-emit. Durable signals also need the <strong>relay</strong> to move staged rows from
+the outbox to the stream after commit, plus the gateway's <code>dedup</code> for exactly-once
+delivery:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_socketio</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
@@ -5879,7 +5884,6 @@ the stream after commit, plus the gateway's <code>dedup</code> for exactly-once 
     <span class="n">sio</span><span class="o">=</span><span class="n">sio</span><span class="p">,</span>
     <span class="n">source</span><span class="o">=</span><span class="n">StreamGroupSignalSource</span><span class="p">(</span><span class="n">stream_spec</span><span class="o">=</span><span class="n">rt_transport</span><span class="o">.</span><span class="n">stream_spec</span><span class="p">),</span>
     <span class="n">dedup</span><span class="o">=</span><span class="n">GatewayDedup</span><span class="p">(</span><span class="n">inbox_spec</span><span class="o">=</span><span class="n">rt_transport</span><span class="o">.</span><span class="n">inbox_spec</span><span class="p">,</span> <span class="n">tx_route</span><span class="o">=</span><span class="s2">&quot;...&quot;</span><span class="p">),</span>  <span class="c1"># exactly-once for durable</span>
-    <span class="n">emit_timeout</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>  <span class="c1"># a stuck delivery can&#39;t wedge the loop</span>
 <span class="p">)</span>
 <span class="n">lifecycle</span> <span class="o">=</span> <span class="p">[</span>
     <span class="n">realtime_group_ensure_lifecycle_step</span><span class="p">(</span><span class="n">stream_spec</span><span class="o">=</span><span class="n">rt_transport</span><span class="o">.</span><span class="n">stream_spec</span><span class="p">),</span>  <span class="c1"># before serving</span>
@@ -5930,6 +5934,41 @@ re-receives what it acked). For multi-node, use
 lapsed with <code>realtime_identity_expiry_lifecycle_step</code>. The full store-and-forward flow —
 per-device cursors, trimming, and opting an event out (<code>offline_delivery=False</code>) — is the
 <a href="../../recipes/realtime-offline-delivery/">offline-delivery recipe</a>.</p>
+<p>Operational hardening around the loop:</p>
+<ul>
+<li><strong>Token rotation without a reconnect</strong> — a client sends <code>realtime.reauth</code> with its
+  fresh auth payload; the same connection resolver re-verifies it in place (same
+  principal only) and swaps the stored identity + <code>expires_at</code>. No reconnect, no replay.</li>
+<li><strong>Poison ceiling</strong> — a durable signal whose bridge fails on every delivery is dropped
+  (acked, logged critical, counted) after <code>max_deliveries</code> (default 5) instead of
+  reclaim-looping forever. Mailboxed principal signals are unaffected: their store
+  commits with the first successful mark, so the client recovers them on reconnect.</li>
+<li><strong>A single emit is bounded by default</strong> — <code>emit_timeout</code> defaults to 5 s, so a dead
+  backplane can't freeze the consume loop; the failure falls into the normal per-lane
+  ack policy.</li>
+<li><strong>Delivery counters</strong> — hand one <code>RealtimeGatewayStats</code> to the gateway <em>and</em> its
+  source, then call <code>instrument_realtime_gateway(stats)</code> once at assembly; alarm on
+  <code>forze.realtime.gateway.poisoned</code> and on <code>emit_failed</code> climbing while <code>emitted</code> is
+  flat. Backlog is a property of the consumer group, not the process: poll
+  <code>AckStreamGroupAdminPort.depth(group, stream)</code> for undelivered/pending/oldest-idle —
+  the same surface <code>quiesce(ack_streams=[(stream_spec, group)])</code> attests at standstill.</li>
+<li><strong>Backplane heartbeat</strong> — <code>realtime_backplane_heartbeat_lifecycle_step(sio, health)</code>
+  pushes a probe frame through the Redis manager on an interval and
+  <code>instrument_realtime_backplane(health)</code> exports its freshness; a dead manager listener
+  otherwise stops every cross-node emit silently.</li>
+<li><strong>The realtime stream route must stay plaintext</strong> — the gateway has no decrypt seam,
+  so a stream route declaring an encryption tier is refused at run start
+  (<code>realtime_stream_encryption_unsupported</code>) rather than emitting ciphertext to clients.</li>
+<li><strong>Cap the stream</strong> — the realtime stream has an unbounded producer; set
+  <code>RedisStreamConfig(retention_max_entries=...)</code> on its route
+  (<code>DEFAULT_REALTIME_STREAM_MAX_ENTRIES</code> is the recommended starting point) so it cannot
+  grow into a Redis-memory incident. Size the cap so its horizon at peak emit rate far
+  exceeds the reclaim window; alarm on <code>depth()</code>'s pending age long before the cap matters.
+  Add <code>realtime_stream_trim_lifecycle_step</code> to keep steady-state memory near the gateway
+  group's <strong>acknowledged</strong> horizon instead of the cap — the sweep only removes entries
+  every group has delivered and acked, so it can never outrun a slow or crashed gateway
+  (pass <code>tenants=lambda: shard.tenants</code> on a tenant-sharded stream).</li>
+</ul>
 <h3 id="deployment">Deployment<a class="headerlink" href="#deployment" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>In-process</strong> — run the gateway lifecycle step inside the socket-holding workers
@@ -5959,11 +5998,11 @@ per-device cursors, trimming, and opting an event out (<code>offline_delivery=Fa
 </tr>
 <tr>
 <td><code>RealtimeGateway</code> + <code>realtime_gateway_lifecycle_step</code></td>
-<td>egress: consume the stream, bridge to rooms (optional <code>emit_timeout</code>)</td>
+<td>egress: consume the stream, bridge to rooms — supervised (restart + backoff), drainable, bounded <code>emit_timeout</code>, poison ceiling</td>
 </tr>
 <tr>
 <td><code>TenantShardedSignalSource</code> + <code>realtime_tenant_group_ensure_lifecycle_step</code></td>
-<td>egress: namespace-tier per-tenant streams; binds tenant from the stream (trusted), no header trust</td>
+<td>egress: namespace-tier per-tenant streams; binds tenant from the stream (trusted), no header trust; per-tenant fault isolation</td>
 </tr>
 <tr>
 <td><code>realtime_tenant_relay_lifecycle_step</code></td>
@@ -5984,6 +6023,18 @@ per-device cursors, trimming, and opting an event out (<code>offline_delivery=Fa
 <tr>
 <td><code>realtime_identity_expiry_lifecycle_step</code></td>
 <td>drop connections whose credential (<code>expires_at</code>) has lapsed</td>
+</tr>
+<tr>
+<td><code>realtime.reauth</code> (built-in event)</td>
+<td>refresh a rotating token in place — same principal, no reconnect</td>
+</tr>
+<tr>
+<td><code>RealtimeGatewayStats</code> + <code>instrument_realtime_gateway</code></td>
+<td>delivery counters for the live path (emitted / failed / skipped / poisoned)</td>
+</tr>
+<tr>
+<td><code>BackplaneHealth</code> + <code>realtime_backplane_heartbeat_lifecycle_step</code> + <code>instrument_realtime_backplane</code></td>
+<td>probe the Redis fan-out path; alarm on staleness</td>
 </tr>
 </tbody>
 </table>

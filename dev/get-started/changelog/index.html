@@ -7562,6 +7562,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Tenant enumeration</strong> — <code>TenantManagementPort.list_tenants(limit, offset, *, active_only=False)</code> pages every tenant with the total; not membership-scoped, unlike <code>list_principal_tenants</code>, so a per-tenant sweep no longer skips a tenant nobody belongs to. <code>active_only</code> defaults to <code>False</code>: deactivation is a flag, not a delete, and that tenant's data is still there.</p>
 </li>
 </ul>
+<p><strong>Realtime operational hardening</strong> — the realtime egress plane (stream → gateway → Socket.IO) reaches the durable plane's operational bar.</p>
+<ul>
+<li><strong>Core loop runner</strong> — <code>BackgroundLoopControl</code> moves to <code>forze.application.execution.background</code>, joined by <code>run_supervised(run, stop=…, restart_backoff=…, max_consecutive_crashes=…)</code> (jittered crash-restart; terminal on configuration errors); <code>arm()</code> returns the armed event. <strong>Breaking</strong> for imports of <code>forze_kits.lifecycle.BackgroundLoopControl</code> (unreleased).</li>
+<li><strong>Stream retention</strong> — <code>RedisStreamConfig(retention_max_entries=…)</code> caps a stream at every append (<code>XADD MAXLEN ~</code>); <code>MockRouteConfig(stream_retention_max_entries=…)</code> mirrors it offline. <code>DEFAULT_REALTIME_STREAM_MAX_ENTRIES</code> is the recommended cap for the realtime route.</li>
+<li><strong>Group-floor trim sweep</strong> — <code>AckStreamGroupAdminPort.trim_acknowledged(stream)</code> (Redis <code>XTRIM MINID</code>, mock) removes only entries every consumer group has delivered <strong>and</strong> acked (group-less streams are never trimmed); <code>realtime_stream_trim_lifecycle_step(stream_spec=…, interval=…, tenants=…)</code> runs it on a supervised, drainable interval.</li>
+<li><strong>Poison ceiling</strong> — <code>StreamGroupSignalSource.max_deliveries</code> (default 5) drops a durable signal that fails every delivery (acked + critical log + counter); <code>None</code> restores unbounded redelivery.</li>
+<li><strong>Ack-group depth</strong> — <code>AckStreamGroupAdminPort.depth(group, stream) -&gt; AckGroupDepth</code> (Redis, mock); <code>quiesce(ack_streams=[(stream_spec, group)])</code> attests the realtime consumer group. <code>RedisClientPort</code> gains <code>xlen</code> and <code>xinfo_groups</code>.</li>
+<li><strong>Live-path observability</strong> — <code>RealtimeGatewayStats</code> + <code>instrument_realtime_gateway</code> (delivery counters); the gateway bridges under the producer's <code>traceparent</code> with a CONSUMER span; <code>BackplaneHealth</code> + <code>realtime_backplane_heartbeat_lifecycle_step</code> + <code>instrument_realtime_backplane</code> probe the Socket.IO fan-out path.</li>
+<li><strong>Inventory</strong> — <code>RealtimeTransport.spec_contributions()</code> catalogs the stream/outbox/inbox legs.</li>
+<li><strong>Connection hygiene</strong> — built-in <code>realtime.reauth</code> refreshes a rotating token in place (same principal only); <code>InMemoryRealtimeMailbox</code> enforces a per-principal cap (1000).</li>
+<li><strong>Gateway crash conformance</strong> — <code>forze_dst.conformance.run_gateway_crash_delivery</code> (+ <code>GatewayCrashPoint</code>, <code>GatewayDeliveryOutcome</code>, <code>RealtimeBridge</code>): the ack-stream twin of <code>run_crash_recovery_delivery</code>; the injected bridge takes the real gateway core, and the scenario runs against the mock or a real Redis stream.</li>
+</ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <p><strong>Breaking — graph</strong></p>
 <ul>
@@ -7576,6 +7588,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>
 <p><strong>Background loops stop gracefully instead of being cancelled</strong> — all five (outbox relay, queue consumer, commit-stream consumer, durable recovery, durable scheduler) register with a new per-scope <code>ctx.drainables</code>, and <code>runtime.shutdown()</code> asks each to stop between units of work, before lifecycle teardown; consumers take a <code>stop</code> signal on <code>run()</code>. A commit-stream consumer stops between <strong>messages</strong> and commits the offsets of everything it processed — including when a handler outlasts the grace and it is cancelled mid-batch. A loop that overruns is still cancelled, and now reports that it was rather than counting as a clean stop. <code>drain_on_shutdown=True</code> no longer needs an ordering edge to the database client.</p>
+</li>
+<li>
+<p><strong>The realtime loops join them, supervised</strong> — the gateway (<code>realtime_gateway_lifecycle_step(restart_backoff=…, max_consecutive_crashes=…)</code>), the presence heartbeat and the identity-expiry sweep restart on crash with jittered backoff, stop at their unit boundary, and register in <code>ctx.drainables</code>; <code>RealtimeGateway.run</code> / <code>RealtimeSignalSource.run</code> take <code>stop=</code> (<strong>breaking</strong> for custom source implementations). <code>TenantShardedSignalSource</code> supervises each tenant loop independently — one tenant's failure no longer cancels its siblings (<code>restart_backoff=</code> per source).</p>
+</li>
+<li>
+<p><strong>Realtime gateway defaults harden</strong> — <code>emit_timeout</code> defaults to 5 s (was unbounded; <code>None</code> opts back in); a realtime stream route declaring an encryption tier is refused at run start (<code>realtime_stream_encryption_unsupported</code>).</p>
+</li>
+<li>
+<p><strong><code>pubsub_auto_reconnect</code> defaults to <code>True</code></strong> — a Redis pub/sub subscriber reconnects after transport errors instead of silently stopping; opt out per client config.</p>
+</li>
+<li>
+<p><strong><code>python-socketio</code> capped <code>&lt;6</code></strong> — the gateway and server builder depend on 5.x constructor surfaces.</p>
 </li>
 <li>
 <p><strong><code>OutboxEmit</code> rejects a relay with no destination</strong> — a <code>RelayBinding</code> whose <code>transport</code> names a spec it was never given raises <code>precondition</code> at construction instead of quietly dropping that route from the inventory.</p>
