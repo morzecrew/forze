@@ -82,11 +82,14 @@ async def test_subscribe_retries_the_subscribe_leg_and_survives_cleanup_errors()
 
     received = []
 
-    async for message in client.subscribe(["chan"], timeout=timedelta(milliseconds=5)):
-        received.append(message)
-        break  # one message proves the retried subscribe delivered
+    stream = client.subscribe(["chan"], timeout=timedelta(milliseconds=5))
+    received.append(await anext(stream))  # one message proves the retried subscribe delivered
+    await stream.aclose()  # drive finalization now — a bare `break` would defer the finally
 
     assert shared["subscribes"] == 2  # first failed, retry succeeded
     assert hooks["n"] == 1  # the reconnect hook observed the subscribe failure
     assert received == [("chan", b"payload")]
-    assert shared["closed"] >= 1  # cleanup ran; its unsubscribe failure was suppressed
+    # Two closes: the failed-subscribe pubsub AND the final one — the final cleanup's
+    # unsubscribe failure was suppressed *independently*, so aclose still ran (a shared
+    # suppress block would have skipped it and leaked the connection).
+    assert shared["closed"] == 2

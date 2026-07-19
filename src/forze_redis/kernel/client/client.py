@@ -788,14 +788,18 @@ class RedisClient(RedisClientPort):
                         yield parsed
 
                 finally:
-                    # Best-effort: on the reconnect path the connection is typically dead,
-                    # and a raise inside finally would kill the generator the reconnect
-                    # branch is about to save. Fail-loudly cleanup stays with the
-                    # non-auto-reconnect branch above.
+                    # Best-effort, and each step independently: on the reconnect path the
+                    # connection is typically dead, so a raise inside finally would kill
+                    # the generator the reconnect branch is about to save — and a failed
+                    # unsubscribe must not skip the close (suppress exits its block on
+                    # the first suppressed exception, which would leak the pubsub).
+                    # Fail-loudly cleanup stays with the non-auto-reconnect branch above.
                     with suppress(*_READ_RETRY_EXC):
                         await pubsub.unsubscribe(  # pyright: ignore[reportUnknownMemberType]
                             *channels
                         )
+
+                    with suppress(*_READ_RETRY_EXC):
                         await pubsub.aclose()  # type: ignore[no-untyped-call]
 
                 if not reconnect:
@@ -949,13 +953,25 @@ class RedisClient(RedisClientPort):
         Read-only observability: each entry carries the group ``name``, ``pending``
         count, ``last-delivered-id`` and (Redis ≥ 7) ``lag`` — ``lag`` is ``None`` when
         the server cannot compute it exactly (after trims or interior deletions).
+        Rows are **normalized**: a bytes-mode connection's field names and text values
+        decode to ``str`` (numeric fields and the ``None`` lag pass through), so every
+        caller gets the string-keyed shape the signature advertises.
         """
 
         self.__require_no_pipeline("xinfo_groups")
 
         res = await self.__executor().xinfo_groups(stream)
 
-        return [dict(entry) for entry in res]
+        def _text(value: object) -> object:
+            return value.decode() if isinstance(value, bytes) else value
+
+        return [
+            {
+                (key.decode() if isinstance(key, bytes) else str(key)): _text(value)
+                for key, value in dict(entry).items()
+            }
+            for entry in res
+        ]
 
     # ....................... #
 
