@@ -126,7 +126,7 @@ ConnectionResolver = Callable[
 (e.g. ``exc.authentication``) to refuse the connection."""
 
 
-# ----------------------- #
+# ....................... #
 
 
 @runtime_checkable
@@ -150,8 +150,12 @@ class InMemoryRealtimePresence(RealtimePresence):
 
     _rooms: dict[str, set[str]] = attrs.field(factory=dict, init=False)
 
+    # ....................... #
+
     async def joined(self, room: str, sid: str) -> None:
         self._rooms.setdefault(room, set()).add(sid)
+
+    # ....................... #
 
     async def left(self, room: str, sid: str) -> None:
         members = self._rooms.get(room)
@@ -162,6 +166,8 @@ class InMemoryRealtimePresence(RealtimePresence):
             if not members:  # drop the empty bucket so churn doesn't leak room keys
                 del self._rooms[room]
 
+    # ....................... #
+
     async def count(self, room: str) -> int:
         return len(self._rooms.get(room, ()))
 
@@ -170,15 +176,20 @@ class InMemoryRealtimePresence(RealtimePresence):
 
 
 async def _resolve(
-    resolver: ConnectionResolver, connect: SocketIOConnect
+    resolver: ConnectionResolver,
+    connect: SocketIOConnect,
 ) -> RealtimeConnection | None:
     result = resolver(connect)
 
     return await result if isawaitable(result) else result
 
 
+# ....................... #
+
+
 def _bind_connection(
-    ctx: ExecutionContext, connection: RealtimeConnection
+    ctx: ExecutionContext,
+    connection: RealtimeConnection,
 ) -> AbstractContextManager[None]:
     """Bind the connection's authenticated identity **and** tenant for a fresh scope.
 
@@ -236,6 +247,7 @@ class _ConnectionLifecycle:
         # query ports do not pin a connection between paged reads.
         async with self.runtime.scope():
             ctx = self.runtime.get_context()
+
             with _bind_connection(ctx, connection):  # connection identity — fresh scope is empty
                 mailbox = self.mailbox_factory(ctx)  # ports resolved for this unit of work
                 cursors = self.cursors_factory(ctx)
@@ -320,6 +332,7 @@ class _ConnectionLifecycle:
 
         session = await self.sio.get_session(sid, namespace=self.namespace)
         connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
+
         raw = (  # pyright: ignore[reportUnknownVariableType]
             data.get("up_to")  # pyright: ignore[reportUnknownMemberType]
             if isinstance(data, Mapping)
@@ -353,7 +366,7 @@ class _ConnectionLifecycle:
         try:
             # Handshake first: the connection speaks exactly one protocol version for its
             # lifetime (missing = 1); an unsupported one is refused before any auth work.
-            negotiate_realtime_protocol(auth.get("protocol") if isinstance(auth, Mapping) else None)
+            negotiate_realtime_protocol(auth.get("protocol") if isinstance(auth, Mapping) else None)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
             connection = await _resolve(self.resolve, connect)
 
@@ -454,6 +467,7 @@ def attach_realtime_connection(
     # Offline replay needs all three of mailbox_factory / cursors_factory / runtime. Partial
     # wiring would silently disable replay (broken offline delivery, no warning) — fail closed.
     replay_parts = (mailbox_factory, cursors_factory, runtime)
+
     if sum(p is not None for p in replay_parts) not in (0, len(replay_parts)):
         raise exc.configuration(
             "Offline replay needs all of mailbox_factory, cursors_factory, and runtime "
@@ -481,7 +495,7 @@ def attach_realtime_connection(
 # ----------------------- #
 
 
-def _local_connections(sio: AsyncServer, namespace: str) -> "list[str]":
+def _local_connections(sio: AsyncServer, namespace: str) -> list[str]:
     """The sids connected to *namespace* on this node (room ``None`` = all)."""
 
     return [sid for sid, _eio in sio.manager.get_participants(namespace, None)]
@@ -491,7 +505,10 @@ def _local_connections(sio: AsyncServer, namespace: str) -> "list[str]":
 
 
 async def sweep_expired_connections(
-    sio: AsyncServer, *, namespace: str = "/", now: datetime | None = None
+    sio: AsyncServer,
+    *,
+    namespace: str = "/",
+    now: datetime | None = None,
 ) -> int:
     """Disconnect connections whose credential has expired; return how many.
 
