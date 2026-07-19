@@ -22,9 +22,7 @@ from datetime import datetime
 from inspect import isawaitable
 from typing import (
     Any,
-    Protocol,
     final,
-    runtime_checkable,
 )
 from uuid import UUID
 
@@ -36,6 +34,12 @@ from forze.application.contracts.authn import AuthnIdentity, ClientIdentity
 from forze.application.contracts.realtime import Audience
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, ExecutionRuntime
+from forze.application.integrations.realtime import (
+    InMemoryRealtimePresence as InMemoryRealtimePresence,  # re-export: established home
+)
+from forze.application.integrations.realtime import (
+    RealtimePresence as RealtimePresence,  # re-export: established home
+)
 from forze.application.integrations.realtime import (
     acknowledge_up_to,
     iter_replay,
@@ -128,49 +132,9 @@ ConnectionResolver = Callable[
 
 # ....................... #
 
-
-@runtime_checkable
-class RealtimePresence(Protocol):
-    """Tracks how many connections occupy a room (e.g. is a principal online)."""
-
-    def joined(self, room: str, sid: str) -> Awaitable[None]: ...  # pragma: no cover
-
-    def left(self, room: str, sid: str) -> Awaitable[None]: ...  # pragma: no cover
-
-    def count(self, room: str) -> Awaitable[int]: ...  # pragma: no cover
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True)
-class InMemoryRealtimePresence(RealtimePresence):
-    """Single-node, in-memory presence. For multi-node use a TTL-backed store."""
-
-    _rooms: dict[str, set[str]] = attrs.field(factory=dict, init=False)
-
-    # ....................... #
-
-    async def joined(self, room: str, sid: str) -> None:
-        self._rooms.setdefault(room, set()).add(sid)
-
-    # ....................... #
-
-    async def left(self, room: str, sid: str) -> None:
-        members = self._rooms.get(room)
-
-        if members is not None:
-            members.discard(sid)
-
-            if not members:  # drop the empty bucket so churn doesn't leak room keys
-                del self._rooms[room]
-
-    # ....................... #
-
-    async def count(self, room: str) -> int:
-        return len(self._rooms.get(room, ()))
-
+# RealtimePresence / InMemoryRealtimePresence live in the transport-neutral kernel
+# (forze.application.integrations.realtime), imported above and re-exported here —
+# presence is only honest if every transport reports into the same store.
 
 # ----------------------- #
 

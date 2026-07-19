@@ -34,8 +34,10 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.background import (
     DEFAULT_STOP_GRACE_SECONDS,
     BackgroundLoopControl,
+    periodic_lifecycle_step,
     run_supervised,
 )
+from forze.application.integrations.realtime import RealtimePresence
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
@@ -45,6 +47,8 @@ from .hub import RealtimeSseHub
 
 __all__ = [
     "realtime_sse_tail_lifecycle_step",
+    "realtime_sse_presence_heartbeat_lifecycle_step",
+    "refresh_sse_presence",
 ]
 
 _IDLE_FLOOR = 0.05
@@ -279,4 +283,53 @@ def realtime_sse_tail_lifecycle_step(
         startup=startup,
         shutdown=_SseTailShutdown(startup=startup),
         requires_long_running=True,
+    )
+
+
+# ----------------------- #
+
+
+async def refresh_sse_presence(hub: RealtimeSseHub, presence: RealtimePresence) -> int:
+    """Re-assert presence for every live SSE subscription on this node; return how many.
+
+    A TTL-backed presence store expires entries so a crashed node's rows don't leak —
+    which means open streams must re-assert (heartbeat) or they'd wrongly expire too.
+    The hub's subscription set *is* this node's SSE connection registry, so no extra
+    bookkeeping exists to drift from it.
+    """
+
+    refreshed = 0
+
+    for subscription in hub.subscriptions:
+        for room in subscription.rooms():
+            await presence.joined(room, subscription.key)
+
+        refreshed += 1
+
+    return refreshed
+
+
+# ....................... #
+
+
+def realtime_sse_presence_heartbeat_lifecycle_step(
+    hub: RealtimeSseHub,
+    presence: RealtimePresence,
+    *,
+    interval: timedelta = timedelta(seconds=30),
+    step_id: StrKey = "realtime_sse_presence_heartbeat",
+) -> LifecycleStep:
+    """Periodically re-assert presence for this node's open SSE streams.
+
+    The SSE twin of the Socket.IO presence heartbeat: required by a TTL-backed store
+    (use an *interval* comfortably shorter than the store's TTL), harmless with the
+    in-memory tracker. Share the same *hub* the route and the tail step use, and the
+    same *presence* store the Socket.IO side reports into.
+    """
+
+    async def _tick() -> None:
+        await refresh_sse_presence(hub, presence)
+
+    return periodic_lifecycle_step(
+        tick=_tick, interval=interval, name="realtime_sse_presence_heartbeat", step_id=step_id
     )

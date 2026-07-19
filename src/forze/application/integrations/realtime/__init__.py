@@ -15,12 +15,14 @@ from .mailbox import (
     MailboxEntry,
     RealtimeMailbox,
 )
+from .presence import InMemoryRealtimePresence, RealtimePresence
 from .protocol import (
     REALTIME_PROTOCOL_VERSION,
     SUPPORTED_REALTIME_PROTOCOLS,
     negotiate_realtime_protocol,
 )
 from .replay import acknowledge_up_to, iter_replay, resolve_client_key
+from .rooms import room_for
 
 # ----------------------- #
 
@@ -30,10 +32,13 @@ __all__ = [
     "MailboxCursors",
     "InMemoryRealtimeMailbox",
     "InMemoryMailboxCursors",
+    "RealtimePresence",
+    "InMemoryRealtimePresence",
     "REALTIME_PROTOCOL_VERSION",
     "SUPPORTED_REALTIME_PROTOCOLS",
     "negotiate_realtime_protocol",
     "acknowledge_up_to",
     "iter_replay",
     "resolve_client_key",
+    "room_for",
 ]

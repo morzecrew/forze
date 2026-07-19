@@ -45,17 +45,22 @@ from forze.application.execution.context import ExecutionContextFactory
 from forze.application.integrations.realtime import (
     MailboxCursors,
     RealtimeMailbox,
+    RealtimePresence,
     acknowledge_up_to,
     iter_replay,
     negotiate_realtime_protocol,
     resolve_client_key,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import HlcTimestamp
+from forze.base.logging import Logger
+from forze.base.primitives import HlcTimestamp, uuid7
 
-from .hub import RealtimeSseHub, SseSubscription
+from .._logging import ForzeFastAPILogger
+from .hub import RealtimeSseHub, SseSubscription, presence_rooms
 
 # ----------------------- #
+
+_logger = Logger(ForzeFastAPILogger.ERRORS)
 
 __all__ = [
     "attach_realtime_sse_route",
@@ -179,6 +184,7 @@ def attach_realtime_sse_route(
     mailbox_factory: Callable[[ExecutionContext], RealtimeMailbox],
     cursors_factory: Callable[[ExecutionContext], MailboxCursors],
     hub: RealtimeSseHub | None = None,
+    presence: RealtimePresence | None = None,
     path: str = "/realtime/sse",
     keepalive_interval: timedelta = timedelta(seconds=15),
 ) -> APIRouter:
@@ -190,6 +196,12 @@ def attach_realtime_sse_route(
     signals after the replay; without one the endpoint is catch-up-only. The ack
     endpoint is attached at ``{path}/ack`` and shares the handshake parameters, so
     both derive the same client key.
+
+    Pass the **same** *presence* store the Socket.IO side uses and open SSE streams
+    join their principal/topic rooms for the connection's lifetime, so presence-based
+    decisions count SSE-connected users as online. With a TTL-backed store also
+    register :func:`~forze_fastapi.realtime.realtime_sse_presence_heartbeat_lifecycle_step`
+    (sharing the hub) so live streams re-assert within the TTL.
     """
 
     if keepalive_interval.total_seconds() <= 0:
@@ -226,10 +238,21 @@ def attach_realtime_sse_route(
         if since is None:
             since = await cursors.get(principal=principal, client_key=client_key)
 
+        topic_set = _parse_topics(topics)
         subscription: SseSubscription | None = (
-            hub.subscribe(principal=principal, tenant=tenant, topics=_parse_topics(topics))
+            hub.subscribe(principal=principal, tenant=tenant, topics=topic_set)
             if hub is not None
             else None
+        )
+
+        # Presence: an open SSE stream occupies the same rooms a Socket.IO connection
+        # would, under a per-response member key (the sid analog) — one store, one
+        # naming scheme, so "is this principal online" is transport-agnostic.
+        member_key = subscription.key if subscription is not None else f"sse:{uuid7()}"
+        rooms = (
+            presence_rooms(principal=principal, tenant=tenant, topics=topic_set)
+            if presence is not None
+            else ()
         )
 
         async def stream() -> AsyncIterator[str]:
@@ -237,6 +260,9 @@ def attach_realtime_sse_route(
             # queued rather than lost; a durable one may then arrive twice (mailbox +
             # live), which the client's id-dedup collapses.
             try:
+                for room in rooms:
+                    await presence.joined(room, member_key)  # type: ignore[union-attr]
+
                 async for frame in _replay_frames(mailbox, principal=principal, since=since):
                     yield frame
 
@@ -251,6 +277,15 @@ def attach_realtime_sse_route(
             finally:
                 if subscription is not None:
                     hub.unsubscribe(subscription)  # type: ignore[union-attr]
+
+                for room in rooms:
+                    # best-effort: a failed leave must not mask the stream's own exit
+                    # (the TTL store expires the row; the in-memory one leaks one key)
+                    try:
+                        await presence.left(room, member_key)  # type: ignore[union-attr]
+
+                    except Exception:
+                        _logger.exception("SSE presence leave failed", room=room)
 
         return StreamingResponse(stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
 

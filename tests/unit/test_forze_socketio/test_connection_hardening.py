@@ -16,7 +16,10 @@ from forze_socketio import (
     sweep_expired_connections,
 )
 from forze_socketio.connection import CONNECTION_SESSION_KEY
-from forze_socketio.connection_lifecycle import _PeriodicShutdown, _PeriodicStartup
+from forze.application.execution.background.periodic import (  # pyright: ignore[reportPrivateUsage]
+    _PeriodicShutdown,
+    _PeriodicStartup,
+)
 
 # ----------------------- #
 
@@ -128,9 +131,7 @@ async def test_periodic_startup_ticks_and_survives_errors() -> None:
         if calls["n"] == 1:
             raise RuntimeError("boom")  # a bad tick must not stop the loop
 
-    startup = _PeriodicStartup(
-        tick=_tick, interval=timedelta(seconds=0.01), label="test"
-    )
+    startup = _PeriodicStartup(tick=_tick, interval=timedelta(seconds=0.01), name="test")
     registered: list[object] = []
     ctx = cast(
         ExecutionContext,

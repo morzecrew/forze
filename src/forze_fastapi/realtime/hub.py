@@ -23,15 +23,34 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.realtime import AudienceKind, RealtimeSignal
+from forze.application.contracts.realtime import Audience, AudienceKind, RealtimeSignal
+from forze.application.integrations.realtime import room_for
 from forze.base.exceptions import exc
+from forze.base.primitives import uuid7
 
 # ----------------------- #
 
 __all__ = [
     "RealtimeSseHub",
     "SseSubscription",
+    "presence_rooms",
 ]
+
+
+def presence_rooms(
+    *, principal: str, tenant: UUID | None, topics: frozenset[str]
+) -> tuple[str, ...]:
+    """The presence rooms an SSE connection occupies — the same names Socket.IO uses.
+
+    One naming scheme (:func:`~forze.application.integrations.realtime.room_for`)
+    across transports, so "is this principal online" counts a Socket.IO connection
+    and an open SSE stream identically.
+    """
+
+    return (
+        room_for(Audience.principal(principal), tenant),
+        *(room_for(Audience.topic(topic), tenant) for topic in sorted(topics)),
+    )
 
 
 @final
@@ -51,10 +70,21 @@ class SseSubscription:
     queue: asyncio.Queue[tuple[RealtimeSignal, str | None]] = attrs.field(init=False)
     """Matched signals with their durable event id (``None`` for ephemeral)."""
 
+    key: str = attrs.field(init=False)
+    """This connection's presence member key (the SSE analog of the Socket.IO sid)."""
+
     maxsize: int = 256
 
     def __attrs_post_init__(self) -> None:
         self.queue = asyncio.Queue(maxsize=self.maxsize)
+        self.key = f"sse:{uuid7()}"
+
+    # ....................... #
+
+    def rooms(self) -> tuple[str, ...]:
+        """The presence rooms this subscription occupies (principal + topics)."""
+
+        return presence_rooms(principal=self.principal, tenant=self.tenant, topics=self.topics)
 
     # ....................... #
 
@@ -102,6 +132,14 @@ class RealtimeSseHub:
         """How many SSE responses are currently subscribed on this node."""
 
         return len(self._subscriptions)
+
+    # ....................... #
+
+    @property
+    def subscriptions(self) -> tuple[SseSubscription, ...]:
+        """A snapshot of the live subscriptions (for the presence heartbeat)."""
+
+        return tuple(self._subscriptions)
 
     # ....................... #
 

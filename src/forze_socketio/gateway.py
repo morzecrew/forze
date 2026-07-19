@@ -65,6 +65,9 @@ from forze.application.contracts.stream import AckStreamGroupQueryDepKey, Stream
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.application.execution.background import run_supervised
+from forze.application.integrations.realtime import (
+    room_for as room_for,  # re-export: established home
+)
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.logging import Logger
 from forze.base.primitives import HlcTimestamp, JsonDict, StrKey, utcnow
@@ -110,18 +113,9 @@ def _default_consumer() -> str:
 # ....................... #
 
 
-def room_for(audience: Audience, tenant: UUID | None) -> str:
-    """Resolve a logical *audience* to a tenant-scoped Socket.IO room name.
-
-    The only place audience→room naming exists; the gateway emits to it and the
-    membership helpers join it, so they always agree. When a tenant is bound the
-    room is prefixed ``t:<tenant>:`` so tenants cannot share a room.
-    """
-
-    base = f"{audience.kind.value}:{audience.name}"
-
-    return f"t:{tenant}:{base}" if tenant is not None else base
-
+# room_for lives in the transport-neutral kernel (imported above, re-exported here):
+# the gateway emits to it, the membership helpers join it, and SSE presence reports
+# under it — one naming scheme, so publish, membership, and presence always agree.
 
 # ....................... #
 

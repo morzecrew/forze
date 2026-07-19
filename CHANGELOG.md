@@ -61,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AsyncAPI export** — `asyncapi_document(catalog, router)`: AsyncAPI 3 from the typed event catalog + command router, with `x-forze-audience-kinds` / `x-forze-offline-delivery` extensions and the built-in `realtime.ack`; `attach_asyncapi_route(router, document=…)` serves it `/openapi.json`-style for client codegen.
 - **Transport-neutral kernel** — mailbox/cursor seams, in-memory impls, client-key ladder, replay/ack helpers, and protocol negotiation move to `forze.application.integrations.realtime`; `forze_socketio` re-exports unchanged.
 - **Pubsub live lane** — `PubSubSignalSource` (broadcast, at-most-once alternative behind the same source seam) + `realtime_pubsub_spec` and `build_realtime_pubsub_publisher` (live-only, no `stage`); durable delivery keeps riding outbox → stream → mailbox.
+- **Transport-agnostic presence** — open SSE streams join the same presence rooms as Socket.IO connections (`attach_realtime_sse_route(presence=…)` + `realtime_sse_presence_heartbeat_lifecycle_step`); `RealtimePresence` / `InMemoryRealtimePresence` / `room_for` move to the kernel (`forze_socketio` re-exports unchanged); `periodic_lifecycle_step` joins `forze.application.execution.background`.
 
 ### Changed
 

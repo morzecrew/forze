@@ -14,21 +14,13 @@ require_socketio()
 
 # ....................... #
 
-import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from typing import final
 
-import attrs
 from socketio.async_server import AsyncServer
 
-from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.execution import ExecutionContext
-from forze.application.execution.background import (
-    DEFAULT_STOP_GRACE_SECONDS,
-    BackgroundLoopControl,
-)
-from forze.base.exceptions import exc
+from forze.application.contracts.execution import LifecycleStep
+from forze.application.execution.background import periodic_lifecycle_step
 from forze.base.logging import Logger
 from forze.base.primitives import StrKey
 
@@ -41,114 +33,12 @@ from .observability import BackplaneHealth
 _logger = Logger(ForzeSocketIOLogger.ERRORS)
 
 
-@final
-@attrs.define(slots=True, kw_only=True)
-class _PeriodicStartup(LifecycleHook):
-    """Run *tick* every *interval* until stopped; one bad tick can't kill the loop."""
-
-    tick: Callable[[], Awaitable[None]]
-    interval: timedelta
-    label: str
-
-    control: BackgroundLoopControl = attrs.field(
-        default=attrs.Factory(
-            lambda self: BackgroundLoopControl(name=f"realtime_{self.label}"),
-            takes_self=True,
-        ),
-        init=False,
-    )
-    """Stop signal and bounded teardown, shared with every other background loop."""
-
-    # ....................... #
-
-    @property
-    def task(self) -> asyncio.Task[None] | None:
-        """The running loop, if any."""
-
-        return self.control.task
-
-    # ....................... #
-
-    @property
-    def loop_name(self) -> str:
-        """Satisfies ``DrainableLoop``."""
-
-        return self.control.loop_name
-
-    # ....................... #
-
-    async def stop(self, *, deadline: float) -> bool:
-        """Stop the loop between ticks. Idempotent — a tick is short and idempotent too."""
-
-        return await self.control.stop(deadline=deadline)
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        if self.control.running:
-            return
-
-        self.control.arm()
-        self.control.task = asyncio.create_task(self._loop(), name=self.control.loop_name)
-        ctx.drainables.register(self)
-
-    # ....................... #
-
-    async def _loop(self) -> None:
-        delay = self.interval.total_seconds()
-
-        while True:
-            try:
-                await self.tick()
-
-            except asyncio.CancelledError:
-                raise
-
-            except Exception:
-                _logger.critical_exception(f"Realtime {self.label} tick failed")
-
-            if await self.control.sleep_or_stop(delay):
-                return
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, kw_only=True)
-class _PeriodicShutdown(LifecycleHook):
-    """Stop the periodic loop.
-
-    Normally a no-op — the runtime stops every registered loop before teardown begins. This
-    is the fallback for a hand-driven lifecycle; ``stop`` is idempotent.
-    """
-
-    startup: _PeriodicStartup
-
-    # ....................... #
-
-    async def __call__(self, ctx: ExecutionContext) -> None:
-        clock = asyncio.get_running_loop()
-        await self.startup.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
-
-
-# ....................... #
-
-
 def _periodic_step(
     *, tick: Callable[[], Awaitable[None]], interval: timedelta, label: str, step_id: StrKey
 ) -> LifecycleStep:
-    if interval.total_seconds() <= 0:
-        # A non-positive interval would spin the worker (sleep(0) hot-loop) — fail at wiring.
-        raise exc.configuration(f"{label} interval must be positive")
-
-    startup = _PeriodicStartup(tick=tick, interval=interval, label=label)
-
-    return LifecycleStep(
-        id=step_id,
-        startup=startup,
-        shutdown=_PeriodicShutdown(startup=startup),
-        requires_long_running=True,
+    # The tick machinery is the shared core periodic step; only the naming stays here.
+    return periodic_lifecycle_step(
+        tick=tick, interval=interval, name=f"realtime_{label}", step_id=step_id
     )
 
 
