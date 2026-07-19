@@ -3244,6 +3244,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#realtime-over-raw-websocket" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Realtime over raw WebSocket
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5681,6 +5692,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#realtime-over-raw-websocket" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Realtime over raw WebSocket
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5844,10 +5866,16 @@ can only shorten the sender's own request.</p>
 <p>Both middlewares <strong>refuse raw websocket scopes</strong> (the upgrade handshake is closed
 with a policy violation): identity, tenancy, and the envelope are resolved for HTTP
 only, so a raw <code>@app.websocket</code> route would otherwise run with none of them —
-silently. If you deliberately self-manage websocket routes, opt out per middleware
-with <code>allow_raw_websockets=True</code>; you then own identity, tenancy, and error shaping
-on every websocket route yourself. For governed duplex realtime, use the
-<a href="../socketio/">Socket.IO integration</a>; for server-push, the <abbr title="Server-Side Encryption">SSE</abbr> route below.</p>
+silently. Framework-attached websocket routes (<code>attach_realtime_ws_route</code>) are
+allowlisted by <strong>exact full mounted path</strong> (router prefixes included) with
+<code>allowed_websocket_paths={"/realtime/ws"}</code> — they resolve identity at connect
+themselves, and <code>check_websocket_allowlist</code> (run automatically by
+<code>runtime_lifespan</code>) fails the boot if an allowlisted path doesn't serve exactly
+one governed route. Only if you deliberately self-manage
+your own websocket routes, opt out app-wide with <code>allow_raw_websockets=True</code>; you
+then own identity, tenancy, and error shaping on every websocket route yourself.
+For governed duplex realtime, use the <a href="../socketio/">Socket.IO integration</a> or the
+WebSocket route below; for server-push, the <abbr title="Server-Side Encryption">SSE</abbr> route below.</p>
 <h2 id="map-errors-to-http">Map errors to HTTP<a class="headerlink" href="#map-errors-to-http" title="Permanent link">&para;</a></h2>
 <p><code>register_exception_handlers</code> turns a <code>CoreException</code> into a response — the kind
 decides the status, the <code>code</code> rides an error-code header, and details are
@@ -5955,6 +5983,20 @@ counts an <abbr title="Server-Side Encryption">SSE</abbr> stream and a socket id
 <code>RedisRealtimePresence</code>) also register
 <code>realtime_sse_presence_heartbeat_lifecycle_step(hub, presence)</code> so live streams
 re-assert within the TTL.</p>
+<h2 id="realtime-over-raw-websocket">Realtime over raw WebSocket<a class="headerlink" href="#realtime-over-raw-websocket" title="Permanent link">&para;</a></h2>
+<p><code>attach_realtime_ws_route</code> is the duplex sibling for clients that cannot run
+Socket.IO (strict-protocol peers, non-JS embedded clients): the same replay + live
+egress as <abbr title="Server-Side Encryption">SSE</abbr> — sharing the hub, presence store, and topic authorization — plus a
+typed ingress. Identity is resolved by an app-supplied resolver from the upgrade
+request (add the path to the middlewares' <code>allowed_websocket_paths</code>); the ack rides
+inline (<code>{"type": "realtime.ack", "up_to"}</code>), a rotating token refreshes in place
+(<code>realtime.reauth</code>, same principal and tenant only), and — given a frozen registry
+plus <code>RealtimeCommandRoute</code> declarations (the same ones a Socket.IO namespace
+router registers) — <code>{"type": "cmd", …}</code> frames dispatch through the identical
+governed operation path as HTTP, error-acked with the shared envelope and bounded
+by in-flight and frame-size limits. The full framing is normative in the
+<a href="../../reference/realtime-protocol/">realtime wire protocol</a>; <code>asyncapi_document</code>
+documents WS commands via its <code>commands=</code> parameter.</p>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <p>Unlike a backend, FastAPI doesn't implement Forze contracts — it's the edge that
 runs them. The surface, at a glance:</p>
@@ -6001,6 +6043,10 @@ runs them. The surface, at a glance:</p>
 <tr>
 <td><code>realtime_sse_presence_heartbeat_lifecycle_step</code></td>
 <td><abbr title="Server-Side Encryption">SSE</abbr> streams report into the shared presence store (TTL heartbeat)</td>
+</tr>
+<tr>
+<td><code>attach_realtime_ws_route</code></td>
+<td>duplex realtime over raw WebSocket: replay + live egress, inline ack/reauth, governed <code>cmd</code> dispatch</td>
 </tr>
 <tr>
 <td><code>attach_asyncapi_route</code></td>

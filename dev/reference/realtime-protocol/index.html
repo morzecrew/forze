@@ -5341,6 +5341,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#duplex-commands-websocket-framing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Duplex commands (WebSocket framing)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#errors" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5352,10 +5363,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#re-authentication-socketio" class="md-nav__link">
+  <a href="#re-authentication" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Re-authentication (Socket.IO)
+        Re-authentication
       </span>
     </span>
   </a>
@@ -5612,6 +5623,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#duplex-commands-websocket-framing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Duplex commands (WebSocket framing)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#errors" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5623,10 +5645,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#re-authentication-socketio" class="md-nav__link">
+  <a href="#re-authentication" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Re-authentication (Socket.IO)
+        Re-authentication
       </span>
     </span>
   </a>
@@ -5750,8 +5772,9 @@
 
 <h1 id="realtime-wire-protocol">Realtime wire protocol<a class="headerlink" href="#realtime-wire-protocol" title="Permanent link">&para;</a></h1>
 <p>The client contract for the realtime egress plane, normative for every transport.
-One protocol, currently <strong>version 1</strong>, served over two transports: the Socket.IO
-gateway and the <abbr title="Server-Side Encryption">SSE</abbr> route. A client written against this page works against either.</p>
+One protocol, currently <strong>version 1</strong>, served over three transports: the Socket.IO
+gateway, the <abbr title="Server-Side Encryption">SSE</abbr> route, and the raw-WebSocket route. A client written against this
+page works against any of them.</p>
 <p>The machine-readable twin of this page is the <a href="#asyncapi-export">AsyncAPI export</a> —
 generated from the same typed catalog the server validates against, so it cannot
 drift from the code.</p>
@@ -5764,6 +5787,7 @@ carry a version, and a connection speaks exactly one version for its lifetime.</
 <th>Field</th>
 <th>Socket.IO (<code>auth</code> payload)</th>
 <th><abbr title="Server-Side Encryption">SSE</abbr> (query parameter)</th>
+<th>WebSocket (query parameter)</th>
 </tr>
 </thead>
 <tbody>
@@ -5771,16 +5795,19 @@ carry a version, and a connection speaks exactly one version for its lifetime.</
 <td><code>protocol</code></td>
 <td><code>io(url, { auth: { protocol: 1 } })</code></td>
 <td><code>GET /realtime/sse?protocol=1</code></td>
+<td><code>wss://…/realtime/ws?protocol=1</code></td>
 </tr>
 <tr>
 <td><code>device_id</code></td>
 <td><code>auth.device_id</code> (optional)</td>
+<td><code>?device_id=</code> (optional)</td>
 <td><code>?device_id=</code> (optional)</td>
 </tr>
 <tr>
 <td>credentials</td>
 <td><code>auth.token</code> (resolver-defined)</td>
 <td>HTTP credentials (middleware-resolved)</td>
+<td>upgrade-request headers/query (resolver-defined)</td>
 </tr>
 </tbody>
 </table>
@@ -5821,6 +5848,9 @@ carry a version, and a connection speaks exactly one version for its lifetime.</
   catalog event name, the <abbr title="Server-Side Encryption">SSE</abbr> <code>id:</code> field is set for durable signals (so the
   browser's automatic <code>Last-Event-ID</code> names a durable event), and <code>data:</code> is the
   JSON envelope above. Comment lines (<code>: keepalive</code>) are heartbeats — ignore them.</li>
+<li><strong>WebSocket</strong>: one JSON text frame per signal with the event name in-band —
+  <code>{"event": &lt;name&gt;, "id": &lt;id|null&gt;, "data": &lt;payload&gt;}</code>. Keepalive is WS
+  protocol-level ping/pong (the server's; no application frames).</li>
 </ul>
 <h2 id="acknowledgement">Acknowledgement<a class="headerlink" href="#acknowledgement" title="Permanent link">&para;</a></h2>
 <p>The ack is <strong>cumulative</strong>: acknowledging an event id acknowledges everything up to
@@ -5829,6 +5859,7 @@ and including it for this device, advancing the device's replay cursor.</p>
 <li><strong>Socket.IO</strong>: <code>socket.emit("realtime.ack", { up_to: "&lt;event id&gt;" })</code>.</li>
 <li><strong><abbr title="Server-Side Encryption">SSE</abbr></strong>: <code>POST &lt;sse path&gt;/ack</code> with body <code>{ "up_to": "&lt;event id&gt;" }</code> (same
   <code>device_id</code> query parameter as the stream, so both derive the same cursor).</li>
+<li><strong>WebSocket</strong>: send <code>{"type": "realtime.ack", "up_to": "&lt;event id&gt;"}</code> inline.</li>
 </ul>
 <p>A client that never acks still converges: replay is idempotent client-side (dedup
 by <code>id</code>) and bounded server-side by mailbox retention.</p>
@@ -5841,23 +5872,52 @@ by <code>id</code>) and bounded server-side by mailbox retention.</p>
   native resume beats a stale server cursor. Without a live tail configured the
   stream ends after replay and the browser's auto-reconnect (with <code>Last-Event-ID</code>)
   gives long-poll-style delivery.</li>
+<li><strong>WebSocket</strong> replays immediately after accept; a <code>?last_event_id=</code> query
+  parameter resumes precisely, beating the stored cursor. Without a live hub the
+  socket stays open for acks and commands after the replay.</li>
 </ul>
 <p>Only <strong>principal-addressed durable</strong> signals are replayed (they are mailboxed);
 topic signals are live-only, at-most-once.</p>
+<h2 id="duplex-commands-websocket-framing">Duplex commands (WebSocket framing)<a class="headerlink" href="#duplex-commands-websocket-framing" title="Permanent link">&para;</a></h2>
+<p>The raw-WebSocket transport frames its ingress as JSON objects with a <code>type</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="w"> </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cmd&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;event&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;note.create&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cid&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;correlation id&gt;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;payload&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="err">…</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><code>event</code> names a server-declared command route; <code>payload</code> is exactly the route's
+  declared model. <code>cid</code> is client-chosen and echoed verbatim on the ack.</li>
+<li>Optional per-frame governance: <code>idempotency_key</code> (string) and <code>deadline_budget</code>
+  (positive number of seconds) bind onto the invocation exactly as the HTTP
+  headers do — but typed strictly: a wrong-typed value is refused
+  (<code>realtime_invalid_frame</code>), never coerced or silently dropped. The same goes
+  for <code>realtime.ack</code>: <code>up_to</code> must be a non-empty string.</li>
+<li>Every command is acknowledged: <code>{ "type": "ack", "cid", "data": &lt;result&gt; }</code> on
+  success, <code>{ "type": "ack", "cid", "error": &lt;error envelope&gt; }</code> on failure.</li>
+<li>Limits are fail-loud: an unparseable or unknown-<code>type</code> frame gets a
+  <code>{ "type": "error", "error": … }</code> frame (<code>realtime_invalid_frame</code>); a command
+  past the server's in-flight bound is error-acked (<code>realtime_commands_limit</code>)
+  without running; an oversized frame closes the socket (code 1009).</li>
+</ul>
+<p>Commands are unordered with respect to each other (they dispatch concurrently up
+to the in-flight bound) — sequence-dependent commands must wait for their acks.</p>
 <h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Connect refusal</strong> (bad credentials, unsupported protocol): Socket.IO refuses
-  the connection with a client-safe message; <abbr title="Server-Side Encryption">SSE</abbr> responds with the standard error
-  envelope and the <code>X-Error-Code</code> header.</li>
-<li><strong>Command errors</strong> (Socket.IO inbound): the ack callback receives
-  <code>{ "error": { "detail", "code", "kind", "context" } }</code> — the same error envelope
-  shape the HTTP routes render.</li>
+<li><strong>Connect refusal</strong> (bad credentials, unsupported protocol, ungranted topics):
+  Socket.IO refuses the connection with a client-safe message; <abbr title="Server-Side Encryption">SSE</abbr> responds with
+  the standard error envelope and the <code>X-Error-Code</code> header; WebSocket accepts and
+  immediately closes with code 1008, the client-safe summary in the close reason.</li>
+<li><strong>Command errors</strong> (Socket.IO ack callbacks, WebSocket <code>ack</code> frames): the error
+  is <code>{ "detail", "code", "kind", "context" }</code> — the same envelope shape the HTTP
+  routes render.</li>
 </ul>
-<h2 id="re-authentication-socketio">Re-authentication (Socket.IO)<a class="headerlink" href="#re-authentication-socketio" title="Permanent link">&para;</a></h2>
-<p>A rotating token is refreshed in place with
-<code>socket.emit("realtime.reauth", { token, … })</code> — same principal and tenant only;
-anything else is a re-login, which reconnects. The protocol version is <strong>not</strong>
-renegotiated (it is fixed per connection).</p>
+<h2 id="re-authentication">Re-authentication<a class="headerlink" href="#re-authentication" title="Permanent link">&para;</a></h2>
+<p>A rotating token is refreshed in place — same principal and tenant only; anything
+else is a re-login, which reconnects. The protocol version is <strong>not</strong> renegotiated
+(it is fixed per connection).</p>
+<ul>
+<li><strong>Socket.IO</strong>: <code>socket.emit("realtime.reauth", { token, … })</code>.</li>
+<li><strong>WebSocket</strong>: send <code>{ "type": "realtime.reauth", "cid", "auth": { token, … } }</code>;
+  acknowledged like a command (<code>{"ok": true}</code> or an error ack).</li>
+</ul>
 <h2 id="asyncapi-export">AsyncAPI export<a class="headerlink" href="#asyncapi-export" title="Permanent link">&para;</a></h2>
 <p><code>asyncapi_document(catalog, router)</code> (from <code>forze_socketio</code>) generates an AsyncAPI
 3.0 document from the typed event catalog and the inbound command router: one
@@ -5892,7 +5952,7 @@ ships:</p>
 <tbody>
 <tr>
 <td>1</td>
-<td>The <code>{id, data}</code> envelope, cumulative <code>realtime.ack</code>, <code>realtime.reauth</code>, connect-time negotiation.</td>
+<td>The <code>{id, data}</code> envelope, cumulative <code>realtime.ack</code>, <code>realtime.reauth</code>, connect-time negotiation. The WebSocket binding (in-band event name, typed ingress frames) is an additive transport binding within protocol 1.</td>
 </tr>
 </tbody>
 </table>
