@@ -20,16 +20,18 @@ require_fastapi()
 # ....................... #
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from typing import final
+from typing import Any, final
 from uuid import UUID
 
 import attrs
 
 from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_TENANT_ID
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.contracts.realtime import RealtimeSignal
+from forze.application.contracts.realtime import RealtimeShard, RealtimeSignal
 from forze.application.contracts.stream import StreamQueryDepKey, StreamSpec
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.application.execution.background import (
     DEFAULT_STOP_GRACE_SECONDS,
@@ -47,6 +49,7 @@ from .hub import RealtimeSseHub
 
 __all__ = [
     "realtime_sse_tail_lifecycle_step",
+    "realtime_sse_sharded_tail_lifecycle_step",
     "realtime_sse_presence_heartbeat_lifecycle_step",
     "refresh_sse_presence",
 ]
@@ -95,6 +98,12 @@ def _refuse_encrypted_stream(spec: StreamSpec[RealtimeSignal]) -> None:
 # ....................... #
 
 
+def _header_tenant(message: Any) -> UUID | None:
+    """The default tenant strategy: the (untrusted) ``forze_tenant_id`` header."""
+
+    return _tenant_from_headers(message.headers)
+
+
 async def _tail_to_hub(
     ctx: ExecutionContext,
     *,
@@ -103,8 +112,14 @@ async def _tail_to_hub(
     batch: int,
     poll_interval: timedelta,
     stop: asyncio.Event,
+    tenant_for: Callable[[Any], UUID | None] | None = None,
 ) -> None:
-    """Fast-forward to the stream's tail, then publish every new signal into the hub."""
+    """Fast-forward to the stream's tail, then publish every new signal into the hub.
+
+    *tenant_for* resolves the tenant a signal is published under: ``None`` (the
+    tenant-global stream) reads the untrusted ``forze_tenant_id`` header; the sharded
+    loop passes the **bound** shard tenant instead — the stream's identity, trusted.
+    """
 
     _refuse_encrypted_stream(stream_spec)
 
@@ -113,6 +128,7 @@ async def _tail_to_hub(
     )
     stream = str(stream_spec.name)
     cursor = {stream: "0"}
+    tenant_of = tenant_for if tenant_for is not None else _header_tenant
 
     # Start at *now*: page through the retained backlog without publishing. Backend-
     # neutral (no reliance on a "$" cursor) and bounded by the stream's retention cap.
@@ -131,7 +147,7 @@ async def _tail_to_hub(
             cursor[stream] = message.id
             hub.publish(
                 message.payload,
-                _tenant_from_headers(message.headers),
+                tenant_of(message),
                 event_id=message.headers.get(HEADER_EVENT_ID),
             )
 
@@ -141,23 +157,90 @@ async def _tail_to_hub(
             await asyncio.sleep(min(_IDLE_FLOOR, poll_interval.total_seconds()))
 
 
+# ....................... #
+
+
+async def _sharded_tail_to_hub(
+    ctx: ExecutionContext,
+    *,
+    hub: RealtimeSseHub,
+    shard: RealtimeShard,
+    batch: int,
+    poll_interval: timedelta,
+    restart_backoff: timedelta,
+    max_consecutive_crashes: int | None,
+    stop: asyncio.Event,
+) -> None:
+    """One tail loop per assigned tenant, each bound to it — the namespace-tier twin.
+
+    The tenant-global loop trusts a header; here the realtime stream route is wired
+    ``tenant_aware``, so each loop binds its shard tenant, resolves the port to that
+    tenant's key/partition, and publishes under the **stream's** identity — no header
+    trust. Each tenant loop is individually supervised (``run_supervised`` absorbs a
+    terminal error by logging it), so one tenant's fault degrades that tenant's live
+    fan-out only — the siblings keep tailing.
+    """
+
+    _refuse_encrypted_stream(shard.stream_spec)
+
+    tenants = list(shard.tenants)
+
+    if not tenants:
+        # Nothing assigned: idle until stopped. Returning early would look like a
+        # crash to the outer supervision and restart-loop for no reason.
+        await stop.wait()
+        return
+
+    def _tenant_runner(tenant: UUID) -> Callable[[], Awaitable[None]]:
+        def _shard_tenant(_message: Any) -> UUID | None:
+            return tenant  # the stream's identity, not a per-message header
+
+        async def _run() -> None:
+            # Bound for the whole loop, in this task's own copied context (sibling
+            # bindings never race): the port resolves to the tenant's key/partition
+            # and every published signal carries the trusted shard tenant.
+            with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+                await _tail_to_hub(
+                    ctx,
+                    hub=hub,
+                    stream_spec=shard.stream_spec,
+                    batch=batch,
+                    poll_interval=poll_interval,
+                    stop=stop,
+                    tenant_for=_shard_tenant,
+                )
+
+        return _run
+
+    async with asyncio.TaskGroup() as tasks:
+        for tenant in tenants:
+            tasks.create_task(
+                run_supervised(
+                    _tenant_runner(tenant),
+                    stop=stop,
+                    name=f"realtime_sse_tail:{tenant}",
+                    restart_backoff=restart_backoff,
+                    max_consecutive_crashes=max_consecutive_crashes,
+                ),
+                name=f"realtime_sse_tail:{tenant}",
+            )
+
+
 # ----------------------- #
 
 
 @final
 @attrs.define(slots=True, kw_only=True)
 class _SseTailStartup(LifecycleHook):
-    """Spawn the supervised per-node tail loop as a background task."""
+    """Spawn a supervised per-node loop (plain or sharded tail) as a background task."""
 
-    hub: RealtimeSseHub
-    stream_spec: StreamSpec[RealtimeSignal]
-    batch: int
-    poll_interval: timedelta
+    runner: Callable[[ExecutionContext, asyncio.Event], Awaitable[None]]
+    name: str
     restart_backoff: timedelta
     max_consecutive_crashes: int | None
 
     control: BackgroundLoopControl = attrs.field(
-        default=attrs.Factory(lambda: BackgroundLoopControl(name="realtime_sse_tail")),
+        default=attrs.Factory(lambda self: BackgroundLoopControl(name=self.name), takes_self=True),
         init=False,
     )
     """Stop signal and bounded teardown, shared with every other background loop."""
@@ -167,12 +250,6 @@ class _SseTailStartup(LifecycleHook):
     def __attrs_post_init__(self) -> None:
         # Validate synchronously — inside the detached task a raise would only surface
         # as a dead loop instead of failing the wiring at construction.
-        if self.batch <= 0:
-            raise exc.configuration("SSE tail batch must be positive")
-
-        if self.poll_interval.total_seconds() <= 0:
-            raise exc.configuration("SSE tail poll interval must be positive")
-
         if self.restart_backoff.total_seconds() <= 0:
             raise exc.configuration("Restart backoff must be positive")
 
@@ -211,14 +288,7 @@ class _SseTailStartup(LifecycleHook):
         stop = self.control.arm()
 
         async def _run_once() -> None:
-            await _tail_to_hub(
-                ctx,
-                hub=self.hub,
-                stream_spec=self.stream_spec,
-                batch=self.batch,
-                poll_interval=self.poll_interval,
-                stop=stop,
-            )
+            await self.runner(ctx, stop)
 
         self.control.task = asyncio.create_task(
             run_supervised(
@@ -269,11 +339,88 @@ def realtime_sse_tail_lifecycle_step(
     and at-most-once by design: the mailbox carries the durable guarantee.
     """
 
+    _validate_tail_settings(batch=batch, poll_interval=poll_interval)
+
+    async def _run(ctx: ExecutionContext, stop: asyncio.Event) -> None:
+        await _tail_to_hub(
+            ctx,
+            hub=hub,
+            stream_spec=stream_spec,
+            batch=batch,
+            poll_interval=poll_interval,
+            stop=stop,
+        )
+
     startup = _SseTailStartup(
-        hub=hub,
-        stream_spec=stream_spec,
-        batch=batch,
-        poll_interval=poll_interval,
+        runner=_run,
+        name="realtime_sse_tail",
+        restart_backoff=restart_backoff,
+        max_consecutive_crashes=max_consecutive_crashes,
+    )
+
+    return LifecycleStep(
+        id=step_id,
+        startup=startup,
+        shutdown=_SseTailShutdown(startup=startup),
+        requires_long_running=True,
+    )
+
+
+# ....................... #
+
+
+def _validate_tail_settings(*, batch: int, poll_interval: timedelta) -> None:
+    # Validated at the builder, synchronously — inside the detached task a raise would
+    # only surface as a dead loop instead of failing the wiring at construction.
+    if batch <= 0:
+        raise exc.configuration("SSE tail batch must be positive")
+
+    if poll_interval.total_seconds() <= 0:
+        raise exc.configuration("SSE tail poll interval must be positive")
+
+
+# ....................... #
+
+
+def realtime_sse_sharded_tail_lifecycle_step(
+    hub: RealtimeSseHub,
+    *,
+    shard: RealtimeShard,
+    batch: int = 64,
+    poll_interval: timedelta = timedelta(seconds=1),
+    restart_backoff: timedelta = timedelta(seconds=5),
+    max_consecutive_crashes: int | None = None,
+    step_id: StrKey = "realtime_sse_sharded_tail",
+) -> LifecycleStep:
+    """The namespace-tier twin of :func:`realtime_sse_tail_lifecycle_step`.
+
+    For a realtime stream route wired ``tenant_aware``: one supervised tail loop per
+    tenant in *shard*, each bound to its tenant, so signals fan out under the
+    **stream's** trusted identity instead of an untrusted header — the SSE analog of
+    ``TenantShardedSignalSource``. Hand the same :class:`RealtimeShard` to the
+    publish-side per-tenant steps so the components cannot drift; assign disjoint
+    shards across nodes' *serving* processes only if each tenant's SSE clients are
+    routed to the node holding that tenant — otherwise give every SSE-serving node
+    the full tenant set (broadcast reads don't contend, unlike consumer groups).
+    """
+
+    _validate_tail_settings(batch=batch, poll_interval=poll_interval)
+
+    async def _run(ctx: ExecutionContext, stop: asyncio.Event) -> None:
+        await _sharded_tail_to_hub(
+            ctx,
+            hub=hub,
+            shard=shard,
+            batch=batch,
+            poll_interval=poll_interval,
+            restart_backoff=restart_backoff,
+            max_consecutive_crashes=max_consecutive_crashes,
+            stop=stop,
+        )
+
+    startup = _SseTailStartup(
+        runner=_run,
+        name="realtime_sse_sharded_tail",
         restart_backoff=restart_backoff,
         max_consecutive_crashes=max_consecutive_crashes,
     )

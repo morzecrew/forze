@@ -10,6 +10,7 @@ with the same versioned ``{id, data}`` envelope.
 from .hub import RealtimeSseHub, SseSubscription, presence_rooms
 from .lifecycle import (
     realtime_sse_presence_heartbeat_lifecycle_step,
+    realtime_sse_sharded_tail_lifecycle_step,
     realtime_sse_tail_lifecycle_step,
     refresh_sse_presence,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "SseSubscription",
     "presence_rooms",
     "realtime_sse_tail_lifecycle_step",
+    "realtime_sse_sharded_tail_lifecycle_step",
     "realtime_sse_presence_heartbeat_lifecycle_step",
     "refresh_sse_presence",
     "attach_realtime_sse_route",

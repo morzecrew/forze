@@ -179,6 +179,14 @@ Socket.IO gateway remains its sole writer. Without a hub the endpoint is
 catch-up-only (the browser's auto-reconnect gives long-poll-style delivery). Topics
 are subscribed per connection with `?topics=a,b` (live-only, like Socket.IO rooms).
 
+On the [tenancy ladder](../identity-tenancy-enc/multi-tenancy.md)'s namespace tier —
+the realtime stream route wired `tenant_aware` — use
+`realtime_sse_sharded_tail_lifecycle_step(hub, shard=shard)` instead: one supervised
+tail loop per shard tenant, each bound to its tenant, so signals fan out under the
+**stream's** trusted identity rather than an untrusted header (the SSE analog of
+`TenantShardedSignalSource`). Hand it the same `RealtimeShard` the publish-side
+steps use.
+
 Pass the **same** presence store the Socket.IO side uses
 (`attach_realtime_sse_route(..., presence=...)`) and open SSE streams join their
 principal/topic rooms for the connection's lifetime — so "is this user online"
@@ -201,6 +209,7 @@ runs them. The surface, at a glance:
 | `attach_readiness_route` | a drain-aware `GET /readyz` probe |
 | `attach_document_routes` / `attach_search_routes` / `attach_storage_routes` / `attach_authn_routes` | project a frozen registry's operations onto a router |
 | `attach_realtime_sse_route` / `realtime_sse_tail_lifecycle_step` | realtime egress over SSE: mailbox replay + per-node live tail |
+| `realtime_sse_sharded_tail_lifecycle_step` | namespace-tier SSE: per-tenant tail loops, tenant trusted from the stream |
 | `realtime_sse_presence_heartbeat_lifecycle_step` | SSE streams report into the shared presence store (TTL heartbeat) |
 | `attach_asyncapi_route` | serve the app-built AsyncAPI document, `/openapi.json`-style |
 | `apply_openapi_security` | declare the auth scheme in the generated OpenAPI |
