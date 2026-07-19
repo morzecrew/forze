@@ -27,8 +27,14 @@ class RedisConfig:
     read_retry_base_delay: timedelta = timedelta(milliseconds=50)
     """Base delay before the first read retry; grows exponentially with the attempt index."""
 
-    pubsub_auto_reconnect: bool = False
-    """When ``True``, :meth:`RedisClient.subscribe` reconnects the pub/sub connection after transport errors (long-running consumers; opt-in)."""
+    pubsub_auto_reconnect: bool = True
+    """When ``True`` (the default), :meth:`RedisClient.subscribe` reconnects the pub/sub
+    connection after transport errors.
+
+    On by default because the alternative is a long-running subscriber whose consume
+    generator ends **silently and permanently** on the first Redis blip — never the
+    behavior a wirer meant to pick implicitly. Opt out for a subscriber that prefers to
+    fail loudly and own its reconnect."""
 
     pubsub_reconnect_max_delay: timedelta = timedelta(seconds=30)
     """Upper bound for exponential backoff between pub/sub reconnect attempts."""

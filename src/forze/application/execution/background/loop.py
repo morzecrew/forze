@@ -1,11 +1,15 @@
 """Stop signal and bounded teardown for a background poll/consume loop.
 
-Every background step in kits owns one of these. It is what turns *"cancel the task"* into
-*"ask the loop to stop between units of work, then wait for it"* — the difference between a
-consumer that acks the message it was handling and one that leaves it to be redelivered.
+Every background lifecycle step — kits or edge — owns one of these. It is what turns *"cancel
+the task"* into *"ask the loop to stop between units of work, then wait for it"* — the
+difference between a consumer that acks the message it was handling and one that leaves it to
+be redelivered.
 
 The loop still decides *where* its unit boundaries are (after a tick, after an ack, after a
-commit); this only supplies the signal, the interruptible sleep, and the bounded stop.
+commit); this only supplies the signal, the interruptible sleep, and the bounded stop. The
+control's ``loop_name``/``stop`` surface satisfies
+:class:`~forze.application.execution.context.drainable.DrainableLoop`, so a step that owns one
+can register it (or itself, delegating) in ``ctx.drainables`` directly.
 """
 
 from __future__ import annotations
@@ -17,8 +21,8 @@ from typing import Final, final
 
 import attrs
 
+from forze.application._logger import logger
 from forze.base.exceptions import exc
-from forze_kits.lifecycle._logger import logger
 
 # ----------------------- #
 
@@ -85,10 +89,16 @@ class BackgroundLoopControl:
 
     # ....................... #
 
-    def arm(self) -> None:
-        """Arm a fresh stop signal. Call at startup, *after* the duplicate-startup guard."""
+    def arm(self) -> asyncio.Event:
+        """Arm a fresh stop signal. Call at startup, *after* the duplicate-startup guard.
+
+        :returns: the armed event, so the startup hook can close its loop over a
+            non-optional handle instead of re-reading the optional field.
+        """
 
         self.event = asyncio.Event()
+
+        return self.event
 
     # ....................... #
 

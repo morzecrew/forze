@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator, Sequence
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Sequence
 
 from pydantic import BaseModel
 
 from forze.application.contracts.stream import (
-    PendingEntry,
-    StreamCommandPort,
+    AckGroupDepth,
     AckStreamGroupAdminPort,
     AckStreamGroupQueryPort,
+    PendingEntry,
+    StreamCommandPort,
     StreamMessage,
     StreamQueryPort,
 )
@@ -116,6 +117,12 @@ class _StubStreamGroupAdmin:
     async def ensure_group(self, group: str, stream: str, *, start_id: str = "$") -> None:
         return None
 
+    async def depth(self, group: str, stream: str) -> AckGroupDepth:
+        return AckGroupDepth(backlog=0, pending=0, oldest_pending_idle=None)
+
+    async def trim_acknowledged(self, stream: str) -> int:
+        return 0
+
 
 class _StubStreamCommand:
     async def append(
@@ -160,6 +167,14 @@ class TestAckStreamGroupAdminPort:
 
     async def test_ensure_group(self) -> None:
         assert await _StubStreamGroupAdmin().ensure_group("g", "s") is None
+
+    async def test_depth_at_rest_semantics(self) -> None:
+        assert (await _StubStreamGroupAdmin().depth("g", "s")).at_rest
+        # an unknown backlog is never at rest — quiesce must fail closed on it
+        assert not AckGroupDepth(backlog=None, pending=0, oldest_pending_idle=None).at_rest
+        assert not AckGroupDepth(
+            backlog=0, pending=1, oldest_pending_idle=timedelta(seconds=1)
+        ).at_rest
 
     async def test_read_and_ack(self) -> None:
         stub = _StubStreamGroupQuery()

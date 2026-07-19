@@ -31,6 +31,7 @@ from typing import Protocol, final, runtime_checkable
 import attrs
 
 from forze.application.contracts.realtime import MailboxEntry, RealtimeSignal
+from forze.base.exceptions import exc
 from forze.base.primitives import HlcTimestamp
 
 # ----------------------- #
@@ -125,7 +126,19 @@ class MailboxCursors(Protocol):
 class InMemoryRealtimeMailbox(RealtimeMailbox):
     """Single-node, in-memory mailbox keyed by principal. For multi-node use a durable store."""
 
+    cap: int = 1000
+    """Per-principal retention cap (oldest evicted), matching the durable store's default.
+
+    A dev/test aid must not grow without bound either — an uncapped in-memory mailbox
+    wired into a long-lived process is a slow leak per never-acking principal.
+    """
+
     _logs: dict[str, list[MailboxEntry]] = attrs.field(factory=dict, init=False)
+
+    def __attrs_post_init__(self) -> None:
+        if self.cap <= 0:
+            # cap=0 would evict every entry on the store that added it — fail the wiring
+            raise exc.configuration("Mailbox cap must be positive")
 
     async def store(
         self, *, principal: str, event_id: str, hlc: HlcTimestamp, signal: RealtimeSignal
@@ -141,6 +154,9 @@ class InMemoryRealtimeMailbox(RealtimeMailbox):
             )
         )
         log.sort(key=lambda entry: entry.hlc)
+
+        if len(log) > self.cap:
+            del log[: len(log) - self.cap]
 
     async def read_since(self, *, principal: str, since: HlcTimestamp | None) -> list[MailboxEntry]:
         log = self._logs.get(principal, [])

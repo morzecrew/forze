@@ -129,3 +129,12 @@ async def test_cursors_are_per_device_and_min_cursor() -> None:
 
     assert await cursors.get(principal="u1", client_key="d2") == _hlc(3)
     assert await cursors.min_cursor(principal="u1") == _hlc(3)  # slowest of u1's devices
+
+
+def test_in_memory_mailbox_refuses_a_non_positive_cap() -> None:
+    import pytest
+
+    from forze.base.exceptions import CoreException
+
+    with pytest.raises(CoreException):
+        InMemoryRealtimeMailbox(cap=0)

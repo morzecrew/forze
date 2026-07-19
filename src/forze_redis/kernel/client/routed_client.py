@@ -262,6 +262,14 @@ class RoutedRedisClient(DsnRoutedTenantClientBase[RedisClient], RedisClientPort)
         inner = await self._get_client()
         return await inner.xgroup_create(stream, group, id=id, mkstream=mkstream)
 
+    async def xlen(self, stream: str) -> int:
+        inner = await self._get_client()
+        return await inner.xlen(stream)
+
+    async def xinfo_groups(self, stream: str) -> list[dict[str, object]]:
+        inner = await self._get_client()
+        return await inner.xinfo_groups(stream)
+
     async def xgroup_read(
         self,
         group: str,

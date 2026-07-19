@@ -22,11 +22,14 @@ import attrs
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.stream import StreamMessage, StreamSpec
+from forze.application.execution.background import (
+    DEFAULT_STOP_GRACE_SECONDS,
+    BackgroundLoopControl,
+)
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
-from forze_kits.lifecycle import DEFAULT_STOP_GRACE_SECONDS, BackgroundLoopControl
 
 from .commit_stream_runner import CommitStreamGroupConsumer
 

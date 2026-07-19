@@ -213,6 +213,14 @@ class RedisClientPort(Protocol):
         mkstream: bool = True,
     ) -> Awaitable[bool]: ...  # pragma: no cover
 
+    def xlen(self, stream: str) -> Awaitable[int]:
+        """``XLEN`` — the stream's entry count (read-only observability)."""
+        ...  # pragma: no cover
+
+    def xinfo_groups(self, stream: str) -> Awaitable[list[dict[str, object]]]:
+        """``XINFO GROUPS`` rows for *stream* (read-only observability)."""
+        ...  # pragma: no cover
+
     def xgroup_read(
         self,
         group: str,

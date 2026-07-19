@@ -44,7 +44,13 @@ def _dsn(redis_container: RedisContainer) -> str:
 class _NullSource(RealtimeSignalSource):
     """A source that never produces — the gateway is driven via ``_emit`` directly."""
 
-    async def run(self, ctx: ExecutionContext, handler: SignalHandler) -> None:  # pragma: no cover
+    async def run(
+        self,
+        ctx: ExecutionContext,
+        handler: SignalHandler,
+        *,
+        stop: asyncio.Event | None = None,
+    ) -> None:  # pragma: no cover
         await asyncio.Event().wait()
 
 

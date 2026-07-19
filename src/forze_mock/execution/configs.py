@@ -5,6 +5,7 @@ from __future__ import annotations
 import attrs
 
 from forze.application.contracts.resolution import NamedResourceSpec, RelationSpec
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -21,3 +22,14 @@ class MockRouteConfig:
 
     relation: RelationSpec | None = None
     """Optional relation override (schema/table style)."""
+
+    stream_retention_max_entries: int | None = None
+    """Stream routes only: retention cap applied at every append (oldest evicted).
+
+    Mirrors ``RedisStreamConfig.retention_max_entries`` so retention behavior — including
+    the loss of trimmed-but-undelivered entries — is testable offline. Ignored by
+    non-stream routes."""
+
+    def __attrs_post_init__(self) -> None:
+        if self.stream_retention_max_entries is not None and self.stream_retention_max_entries <= 0:
+            raise exc.configuration("stream_retention_max_entries must be positive when set")

@@ -8,7 +8,7 @@ require_redis()
 
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import timedelta
 from typing import (
@@ -726,9 +726,28 @@ class RedisClient(RedisClientPort):
                 pubsub = (
                     self.__require_client().pubsub()  # pyright: ignore[reportUnknownMemberType]
                 )
-                await pubsub.subscribe(  # pyright: ignore[reportUnknownMemberType]
-                    *channels
-                )
+
+                # The (re)subscribe leg needs the same retry as the read leg: after a
+                # broker blip the loop lands right back here while the broker may still
+                # be down — a raise now would kill the generator at the exact moment
+                # auto-reconnect exists to survive.
+                try:
+                    await pubsub.subscribe(  # pyright: ignore[reportUnknownMemberType]
+                        *channels
+                    )
+
+                except _READ_RETRY_EXC:
+                    with suppress(*_READ_RETRY_EXC):
+                        await pubsub.aclose()  # type: ignore[no-untyped-call]
+
+                    hook = cfg.on_pubsub_reconnect
+
+                    if hook is not None:
+                        hook()
+
+                    await asyncio.sleep(min(max_delay, backoff))
+                    backoff = min(max_delay, backoff * 2)
+                    continue
 
                 reconnect = False
 
@@ -769,10 +788,19 @@ class RedisClient(RedisClientPort):
                         yield parsed
 
                 finally:
-                    await pubsub.unsubscribe(  # pyright: ignore[reportUnknownMemberType]
-                        *channels
-                    )
-                    await pubsub.aclose()  # type: ignore[no-untyped-call]
+                    # Best-effort, and each step independently: on the reconnect path the
+                    # connection is typically dead, so a raise inside finally would kill
+                    # the generator the reconnect branch is about to save — and a failed
+                    # unsubscribe must not skip the close (suppress exits its block on
+                    # the first suppressed exception, which would leak the pubsub).
+                    # Fail-loudly cleanup stays with the non-auto-reconnect branch above.
+                    with suppress(*_READ_RETRY_EXC):
+                        await pubsub.unsubscribe(  # pyright: ignore[reportUnknownMemberType]
+                            *channels
+                        )
+
+                    with suppress(*_READ_RETRY_EXC):
+                        await pubsub.aclose()  # type: ignore[no-untyped-call]
 
                 if not reconnect:
                     return
@@ -903,6 +931,47 @@ class RedisClient(RedisClientPort):
         )
 
         return bool(res)
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("redis.xlen")  # type: ignore[untyped-decorator]
+    async def xlen(self, stream: str) -> int:
+        """``XLEN`` — the stream's current entry count (0 for a missing stream)."""
+
+        self.__require_no_pipeline("xlen")
+
+        res = await self.__executor().xlen(stream)
+
+        return int(res)
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("redis.xinfo_groups")  # type: ignore[untyped-decorator]
+    async def xinfo_groups(self, stream: str) -> list[dict[str, object]]:
+        """``XINFO GROUPS`` — one dict per consumer group on *stream*.
+
+        Read-only observability: each entry carries the group ``name``, ``pending``
+        count, ``last-delivered-id`` and (Redis ≥ 7) ``lag`` — ``lag`` is ``None`` when
+        the server cannot compute it exactly (after trims or interior deletions).
+        Rows are **normalized**: a bytes-mode connection's field names and text values
+        decode to ``str`` (numeric fields and the ``None`` lag pass through), so every
+        caller gets the string-keyed shape the signature advertises.
+        """
+
+        self.__require_no_pipeline("xinfo_groups")
+
+        res = await self.__executor().xinfo_groups(stream)
+
+        def _text(value: object) -> object:
+            return value.decode() if isinstance(value, bytes) else value
+
+        return [
+            {
+                (key.decode() if isinstance(key, bytes) else str(key)): _text(value)
+                for key, value in dict(entry).items()
+            }
+            for entry in res
+        ]
 
     # ....................... #
 

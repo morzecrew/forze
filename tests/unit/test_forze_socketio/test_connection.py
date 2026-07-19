@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -120,3 +121,131 @@ async def test_presence_counts_multiple_connections() -> None:
     await presence.left(_ROOM, "sid-a")
     assert await presence.count(_ROOM) == 1
     assert await presence.count("t:x:principal:nobody") == 0
+
+
+# ----------------------- #
+# realtime.reauth — refresh credentials in place
+
+
+async def test_reauth_swaps_identity_and_expiry_in_place() -> None:
+    sio = _StubSio()
+    first = RealtimeConnection(
+        authn=AuthnIdentity(principal_id=_PRINCIPAL),
+        tenant=_TENANT,
+        expires_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    refreshed = RealtimeConnection(
+        authn=AuthnIdentity(principal_id=_PRINCIPAL),
+        tenant=_TENANT,
+        expires_at=datetime(2027, 1, 1, tzinfo=UTC),
+    )
+    outcomes = iter([first, refreshed])
+
+    async def resolve(_c: SocketIOConnect) -> RealtimeConnection | None:
+        return next(outcomes)
+
+    attach_realtime_connection(sio, resolve=resolve)  # pyright: ignore[reportArgumentType]
+    await sio.handlers["connect"](*_connect_args())
+
+    ack = await sio.handlers["realtime.reauth"]("sid-1", {"token": "fresh"})
+
+    assert ack == {"ok": True}
+    stored: RealtimeConnection = sio.sessions["sid-1"][CONNECTION_SESSION_KEY]
+    assert stored is refreshed  # identity + expires_at swapped without a reconnect
+    assert sio.entered == [("sid-1", _ROOM)]  # no re-join — same principal, same room
+
+
+async def test_reauth_refuses_a_different_principal() -> None:
+    sio = _StubSio()
+    first = RealtimeConnection(authn=AuthnIdentity(principal_id=_PRINCIPAL), tenant=_TENANT)
+    other = RealtimeConnection(
+        authn=AuthnIdentity(principal_id=UUID("33333333-3333-3333-3333-333333333333")),
+        tenant=_TENANT,
+    )
+    outcomes = iter([first, other])
+
+    async def resolve(_c: SocketIOConnect) -> RealtimeConnection | None:
+        return next(outcomes)
+
+    attach_realtime_connection(sio, resolve=resolve)  # pyright: ignore[reportArgumentType]
+    await sio.handlers["connect"](*_connect_args())
+
+    ack = await sio.handlers["realtime.reauth"]("sid-1", {"token": "other-user"})
+
+    assert "error" in ack  # a different principal is a re-login → reconnect
+    stored: RealtimeConnection = sio.sessions["sid-1"][CONNECTION_SESSION_KEY]
+    assert stored is first  # nothing swapped
+
+
+async def test_reauth_with_bad_token_returns_error_ack_and_keeps_identity() -> None:
+    sio = _StubSio()
+    first = RealtimeConnection(authn=AuthnIdentity(principal_id=_PRINCIPAL), tenant=_TENANT)
+    calls = {"n": 0}
+
+    async def resolve(_c: SocketIOConnect) -> RealtimeConnection | None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return first
+        raise exc.authentication("bad token")
+
+    attach_realtime_connection(sio, resolve=resolve)  # pyright: ignore[reportArgumentType]
+    await sio.handlers["connect"](*_connect_args())
+
+    ack = await sio.handlers["realtime.reauth"]("sid-1", {"token": "expired"})
+
+    assert ack["error"]["kind"] == "authentication"
+    assert sio.sessions["sid-1"][CONNECTION_SESSION_KEY] is first
+
+
+async def test_reauth_on_unauthenticated_connection_is_refused() -> None:
+    sio = _StubSio()
+
+    attach_realtime_connection(sio, resolve=_resolver(None))  # pyright: ignore[reportArgumentType]
+    await sio.handlers["connect"](*_connect_args())  # anonymous — nothing stored
+
+    ack = await sio.handlers["realtime.reauth"]("sid-1", {"token": "t"})
+
+    assert "error" in ack
+
+
+async def test_reauth_refuses_a_tenant_change() -> None:
+    sio = _StubSio()
+    first = RealtimeConnection(authn=AuthnIdentity(principal_id=_PRINCIPAL), tenant=_TENANT)
+    moved = RealtimeConnection(
+        authn=AuthnIdentity(principal_id=_PRINCIPAL),  # same principal...
+        tenant=UUID("99999999-9999-9999-9999-999999999999"),  # ...new tenant
+    )
+    outcomes = iter([first, moved])
+
+    async def resolve(_c: SocketIOConnect) -> RealtimeConnection | None:
+        return next(outcomes)
+
+    attach_realtime_connection(sio, resolve=resolve)  # pyright: ignore[reportArgumentType]
+    await sio.handlers["connect"](*_connect_args())
+
+    ack = await sio.handlers["realtime.reauth"]("sid-1", {"token": "other-tenant"})
+
+    # the socket is still in the OLD tenant's rooms — swapping identity in place would
+    # deliver the old tenant's events under the new tenant's authority
+    assert "error" in ack
+    assert sio.sessions["sid-1"][CONNECTION_SESSION_KEY] is first
+
+
+async def test_reauth_survives_a_crashing_resolver_with_a_generic_ack() -> None:
+    sio = _StubSio()
+    first = RealtimeConnection(authn=AuthnIdentity(principal_id=_PRINCIPAL), tenant=_TENANT)
+    calls = {"n": 0}
+
+    async def resolve(_c: SocketIOConnect) -> RealtimeConnection | None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return first
+        raise RuntimeError("verifier exploded")
+
+    attach_realtime_connection(sio, resolve=resolve)  # pyright: ignore[reportArgumentType]
+    await sio.handlers["connect"](*_connect_args())
+
+    ack = await sio.handlers["realtime.reauth"]("sid-1", {"token": "t"})
+
+    assert ack["error"]["kind"] == "internal"  # generic — internals never leak
+    assert sio.sessions["sid-1"][CONNECTION_SESSION_KEY] is first

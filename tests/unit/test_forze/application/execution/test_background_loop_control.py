@@ -1,6 +1,6 @@
-"""Unit tests for the shared stop machinery behind every background loop in kits.
+"""Unit tests for the shared stop machinery behind every background loop.
 
-# covers: forze_kits.lifecycle.BackgroundLoopControl
+# covers: forze.application.execution.background.BackgroundLoopControl
 
 The contract is two-sided and both sides matter: a loop that reaches its unit boundary in time
 stops *on its own* and says so, and one that does not is cancelled — loudly, and reported as the
@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from forze.base.exceptions import CoreException
-from forze_kits.lifecycle import BackgroundLoopControl
+from forze.application.execution.background import BackgroundLoopControl
 
 # ----------------------- #
 
@@ -99,7 +99,7 @@ async def test_a_loop_that_overruns_is_cancelled_and_reported_as_cancelled() -> 
 
     logger_mock = MagicMock()
 
-    with patch("forze_kits.lifecycle.loop.logger", logger_mock):
+    with patch("forze.application.execution.background.loop.logger", logger_mock):
         graceful = await control.stop(deadline=_now() + 0.05)
 
     assert graceful is False, "a loop killed mid-work must not be reported as a graceful stop"

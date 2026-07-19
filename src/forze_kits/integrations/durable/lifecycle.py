@@ -13,11 +13,14 @@ import attrs
 from forze.application.contracts.durable.function import DurableFunctionSpec
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.execution.background import (
+    DEFAULT_STOP_GRACE_SECONDS,
+    BackgroundLoopControl,
+)
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
-from forze_kits.lifecycle import DEFAULT_STOP_GRACE_SECONDS, BackgroundLoopControl
 
 from .runner import DurableFunctionRunner
 from .scheduler import DurableScheduler

@@ -9,7 +9,7 @@ require_redis()
 import asyncio
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import final
+from typing import cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -17,6 +17,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from forze.application.contracts.stream import (
+    AckGroupDepth,
     AckStreamGroupAdminPort,
     AckStreamGroupQueryPort,
     PendingEntry,
@@ -25,6 +26,7 @@ from forze.application.contracts.stream import (
     StreamQueryPort,
 )
 from forze.application.contracts.tenancy import TenancyMixin
+from forze.base.exceptions import exc
 
 from ..kernel.client import RedisClientPort
 from .codecs import RedisStreamCodec
@@ -72,6 +74,15 @@ def _stream_physical(mixin: TenancyMixin, stream: str) -> str:
     return stream
 
 
+def _entry_id_parts(entry_id: str) -> tuple[int, int]:
+    """A stream entry id's ``(ms, seq)`` pair — ids order numerically, not lexically
+    (``"100-0"`` > ``"99-1"``, which a string comparison gets backwards)."""
+
+    ms, _, seq = entry_id.partition("-")
+
+    return int(ms), int(seq or 0)
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisStreamAdapter[M: BaseModel](
@@ -89,6 +100,10 @@ class RedisStreamAdapter[M: BaseModel](
 
     client: RedisClientPort
     codec: RedisStreamCodec[M]
+
+    max_entries: int | None = None
+    """Approximate retention cap applied at every append (``XADD MAXLEN ~``); ``None`` = no
+    cap. See ``RedisStreamConfig.retention_max_entries`` for sizing guidance."""
 
     # ....................... #
 
@@ -166,7 +181,7 @@ class RedisStreamAdapter[M: BaseModel](
             headers=headers,
         )
 
-        return await self.client.xadd(_stream_physical(self, stream), data)
+        return await self.client.xadd(_stream_physical(self, stream), data, maxlen=self.max_entries)
 
 
 # ....................... #
@@ -374,3 +389,80 @@ class RedisStreamGroupAdminAdapter(AckStreamGroupAdminPort, TenancyMixin):
         except Exception as error:
             if "BUSYGROUP" not in str(error):
                 raise
+
+    # ....................... #
+
+    async def depth(self, group: str, stream: str) -> AckGroupDepth:
+        physical = _stream_physical(self, stream)
+
+        entry: dict[str, object] | None = None
+        for row in await self.client.xinfo_groups(physical):
+            name = row.get("name")
+            name = name.decode() if isinstance(name, bytes) else name
+            if name == group:
+                entry = row
+                break
+
+        if entry is None:
+            raise exc.not_found(
+                f"Stream group {group!r} does not exist on {stream!r} — run the "
+                "ensure-group step before observing depth",
+                code="stream_group_not_found",
+            )
+
+        # Redis ≥7 reports lag directly; None after trims/interior deletions (kept as
+        # unknown — AckGroupDepth treats an unknown backlog as not-at-rest).
+        raw_lag = entry.get("lag")
+        backlog = int(raw_lag) if isinstance(raw_lag, int) else None
+        pending_count = int(cast(int, entry.get("pending", 0)))
+
+        oldest: timedelta | None = None
+        if pending_count:
+            oldest_rows = await self.client.xpending(physical, group, count=1)
+            if oldest_rows:
+                _msg_id, _owner, idle_ms, _delivered = oldest_rows[0]
+                oldest = timedelta(milliseconds=idle_ms)
+
+        return AckGroupDepth(
+            backlog=backlog,
+            pending=pending_count,
+            oldest_pending_idle=oldest,
+        )
+
+    # ....................... #
+
+    async def trim_acknowledged(self, stream: str) -> int:
+        physical = _stream_physical(self, stream)
+        rows = await self.client.xinfo_groups(physical)
+
+        if not rows:
+            return 0  # no horizon to trust — a group-less stream is never trimmed
+
+        # Per group: with entries pending, the floor is the lowest pending id (kept — XTRIM
+        # MINID removes strictly below its argument); with none, everything delivered is
+        # acked, so the floor is the successor of the last-delivered id. The stream trims
+        # to the strictest group's floor.
+        floors: list[tuple[int, int]] = []
+
+        for row in rows:
+            name = row.get("name")
+            group = name.decode() if isinstance(name, bytes) else str(name)
+
+            if int(cast(int, row.get("pending", 0))):
+                oldest = await self.client.xpending(physical, group, count=1)
+
+                if oldest:
+                    floors.append(_entry_id_parts(oldest[0][0]))
+                    continue
+                # the pending list emptied between the two reads — fall through to the
+                # delivered horizon, which is now the honest floor
+
+            last = row.get("last-delivered-id", "0-0")
+            ms, seq = _entry_id_parts(last.decode() if isinstance(last, bytes) else str(last))
+            floors.append((ms, seq + 1))
+
+        ms, seq = min(floors)
+
+        # Exact (non-approximate) trim: a periodic sweep amortizes the O(trimmed) cost, and
+        # an exact floor keeps the observable length deterministic.
+        return await self.client.xtrim_minid(physical, f"{ms}-{seq}", approx=False)

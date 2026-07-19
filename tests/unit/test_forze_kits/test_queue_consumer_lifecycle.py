@@ -116,7 +116,7 @@ async def test_consume_crash_is_logged_and_restarts_after_backoff() -> None:
 
     with (
         patch.object(QueueConsumer, "run", AsyncMock(side_effect=_crashy)),
-        patch("forze_kits.integrations.consumer.lifecycle.logger", logger_mock),
+        patch("forze.application.execution.background.supervise.logger", logger_mock),
     ):
         async with runtime.scope():
             ctx = runtime.get_context()
@@ -128,7 +128,7 @@ async def test_consume_crash_is_logged_and_restarts_after_backoff() -> None:
 
             await step.shutdown(ctx)
 
-    logger_mock.exception.assert_called_once()
+    logger_mock.error.assert_called_once()
 
     startup = step.startup
     assert isinstance(startup, _QueueConsumerBackgroundStartup)

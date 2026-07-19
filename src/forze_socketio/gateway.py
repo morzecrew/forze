@@ -9,9 +9,10 @@ Three separate seams:
 - **source** — where signals come from (a stream consumer group here); swappable.
 - **bridge** — :meth:`RealtimeGateway._emit`: ``signal → room → sio.emit``. The
   Socket.IO Redis manager fans the emit to whichever node holds the room.
-- **supervision** — a *minimal* :class:`~forze.application.contracts.execution.LifecycleStep`
-  (see :mod:`forze_socketio.gateway_lifecycle`) that owns the ``run`` task; it
-  does **not** carry restart/backoff (a future unified runner does that).
+- **supervision** — the lifecycle step (see :mod:`forze_socketio.gateway_lifecycle`) runs
+  the gateway under the shared core runner
+  (:func:`~forze.application.execution.background.run_supervised`): restart on crash with
+  jittered backoff, graceful stop at a batch boundary, registered in ``ctx.drainables``.
 
 Room membership (auto-join, topic subscription) is a transport-edge concern too;
 the helpers here build the same tenant-scoped room names the gateway emits to, so
@@ -27,8 +28,8 @@ require_socketio()
 import asyncio
 import os
 import socket
-from collections.abc import Awaitable, Callable
-from contextlib import AbstractContextManager, nullcontext, suppress
+from collections.abc import Awaitable, Callable, Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
 from datetime import timedelta
 from typing import (
     TYPE_CHECKING,
@@ -48,6 +49,7 @@ from forze.application.contracts.envelope import (
     HEADER_EVENT_ID,
     HEADER_HLC,
     HEADER_TENANT_ID,
+    HEADER_TRACEPARENT,
 )
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.realtime import (
@@ -61,12 +63,14 @@ from forze.application.contracts.realtime import (
 from forze.application.contracts.stream import AckStreamGroupQueryDepKey, StreamSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
+from forze.application.execution.background import run_supervised
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.logging import Logger
 from forze.base.primitives import HlcTimestamp, JsonDict, StrKey, utcnow
 
 from ._logging import ForzeSocketIOLogger
 from .mailbox import RealtimeMailbox
+from .observability import RealtimeGatewayStats
 
 if TYPE_CHECKING:
     from .connection import RealtimePresence
@@ -77,6 +81,9 @@ _logger = Logger(ForzeSocketIOLogger.ERRORS)
 
 _IDLE_FLOOR = 0.05
 """Seconds: a small idle pause floor so a non-blocking backend can't hot-loop."""
+
+_POISON_SCAN_FLOOR = 256
+"""Minimum pending-entries scanned per reclaim tick for poison delivery counts."""
 
 SignalHandler = Callable[[RealtimeSignal, UUID | None, str | None, HlcTimestamp], Awaitable[None]]
 """A per-signal bridge: a decoded signal, its tenant, a dedup id, and its HLC position.
@@ -196,6 +203,73 @@ def _bind_tenant(
     )
 
 
+def _refuse_encrypted_realtime_stream(spec: StreamSpec[RealtimeSignal]) -> None:
+    """Fail closed on an encryption tier the gateway cannot honor.
+
+    Whole-payload stream encryption is consumer-decrypted everywhere in the framework —
+    and the gateway has no decrypt seam, so an encrypted realtime route would emit
+    ciphertext envelopes to browsers and call it delivery. Refusing at run start (the
+    resolve seam every source passes through) beats defining a decrypt path nobody has
+    asked for; the realtime stream is plaintext by design, isolation comes from room
+    membership and tenancy tiers.
+    """
+
+    if spec.encrypts:
+        raise exc.configuration(
+            f"Realtime stream {spec.name!r} declares encryption "
+            f"{spec.encryption!r}, but the gateway has no decrypt seam — it would "
+            "emit ciphertext to clients. Keep the realtime stream route plaintext "
+            "(encryption='none'); confidentiality on the wire is the transport's "
+            "TLS, isolation is room membership / tenancy tier.",
+            code="realtime_stream_encryption_unsupported",
+        )
+
+
+# ....................... #
+
+
+@contextmanager
+def _trace_context(headers: object, *, stream: str) -> Iterator[None]:
+    """Bridge under the producer's W3C trace context, when the signal carries one.
+
+    Completes the outbox→relay→stream propagation chain: the relay forwards
+    ``traceparent`` onto the stream row, and this attaches it around the bridge so the
+    dedup mark, the mailbox store, and the emit all land in the producing operation's
+    distributed trace — plus one explicit CONSUMER span for the bridge itself, so the
+    emit leg is visible even without port spans. Naturally gated: a signal with no
+    traceparent (untraced producer, tracing off) pays nothing but a dict lookup.
+    """
+
+    raw = (  # pyright: ignore[reportUnknownVariableType]
+        headers.get(  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            HEADER_TRACEPARENT
+        )
+        if hasattr(headers, "get")
+        else None
+    )
+
+    if not isinstance(raw, str) or not raw:
+        yield
+        return
+
+    from opentelemetry import context as otel_context
+    from opentelemetry import trace
+
+    from forze.application.execution.tracing.propagation import context_from_traceparent
+
+    token = otel_context.attach(context_from_traceparent(raw))
+
+    try:
+        with trace.get_tracer("forze").start_as_current_span(
+            "realtime.gateway.bridge",
+            kind=trace.SpanKind.CONSUMER,
+            attributes={"forze.realtime.stream": stream},
+        ):
+            yield
+    finally:
+        otel_context.detach(token)
+
+
 # ----------------------- #
 
 
@@ -207,8 +281,14 @@ class RealtimeSignalSource(Protocol):
     the handler returns, so each signal is delivered to exactly one gateway.
     """
 
-    def run(self, ctx: ExecutionContext, handler: SignalHandler) -> Awaitable[None]:
-        """Consume signals forever, invoking *handler* per signal."""
+    def run(
+        self,
+        ctx: ExecutionContext,
+        handler: SignalHandler,
+        *,
+        stop: asyncio.Event | None = None,
+    ) -> Awaitable[None]:
+        """Consume signals until *stop* is set (forever when ``None``)."""
 
         ...  # pragma: no cover
 
@@ -224,6 +304,9 @@ async def _process_messages(
     messages: list[Any],
     handler: SignalHandler,
     tenant_for: Callable[[Any], UUID | None],
+    delivery_counts: Mapping[str, int] | None = None,
+    max_deliveries: int | None = None,
+    stats: RealtimeGatewayStats | None = None,
 ) -> None:
     """Bridge each message to *handler*, acking per the durable/ephemeral policy.
 
@@ -232,20 +315,31 @@ async def _process_messages(
     A durable signal (carries an event id) is acked only on success, so a transient
     failure stays pending and is recovered (at-least-once); an ephemeral signal is
     acked regardless, so one bad signal can never wedge the live stream (at-most-once).
+
+    The at-least-once lane needs a ceiling: a durable signal whose bridge fails on
+    *every* delivery would otherwise be reclaimed and retried forever. On the reclaim
+    pass the caller supplies each entry's *delivery count*; a durable failure at or past
+    *max_deliveries* is acked and **dropped** — loudly — instead of redelivered. Dropping
+    is the honest bound: a mailboxed principal signal was already stored on its first
+    successful mark (the client recovers it on reconnect), and for the rest an unbounded
+    silent retry loop is strictly worse than a bounded, observable loss.
     """
 
     for message in messages:
         durable = HEADER_EVENT_ID in message.headers
         dedup_id = message.headers.get(HEADER_EVENT_ID)
         ack = True
+        poisoned = False
+        deliveries: int | None = None
 
         try:
-            await handler(
-                message.payload,
-                tenant_for(message),
-                dedup_id,
-                _hlc_from_headers(message.headers),
-            )
+            with _trace_context(message.headers, stream=stream):
+                await handler(
+                    message.payload,
+                    tenant_for(message),
+                    dedup_id,
+                    _hlc_from_headers(message.headers),
+                )
 
         except Exception as error:
             # A deterministic wiring error (e.g. a tenant-aware mailbox with no bound tenant)
@@ -255,13 +349,40 @@ async def _process_messages(
             if isinstance(error, CoreException) and error.kind is ExceptionKind.CONFIGURATION:
                 raise
 
+            deliveries = (delivery_counts or {}).get(message.id)
+            poisoned = (
+                durable
+                and max_deliveries is not None
+                and deliveries is not None
+                and deliveries >= max_deliveries
+            )
+
+            if not poisoned and stats is not None:
+                stats.bridge_failed += 1
+
             _logger.critical_exception(
                 "Realtime bridge failed", stream=stream, message_id=message.id
             )
-            ack = not durable
+
+            ack = poisoned or not durable
 
         if ack:
             await group.ack(group=group_name, stream=stream, ids=[message.id])
+
+            if poisoned:
+                # The drop is only a fact once the ack lands — an ack that failed would
+                # leave the entry pending (redelivered), and a "dropped" log or counter
+                # written before it would have been a lie.
+                if stats is not None:
+                    stats.poisoned += 1
+
+                _logger.critical(
+                    "Realtime signal poisoned: dropped after repeated delivery failures",
+                    stream=stream,
+                    message_id=message.id,
+                    event_id=dedup_id,
+                    deliveries=deliveries,
+                )
 
 
 # ....................... #
@@ -278,17 +399,25 @@ async def _consume_group_stream(
     reclaim_idle: timedelta | None,
     handler: SignalHandler,
     tenant_for: Callable[[Any], UUID | None],
+    stop: asyncio.Event | None = None,
+    max_deliveries: int | None = None,
+    stats: RealtimeGatewayStats | None = None,
 ) -> None:
-    """Consume one stream's consumer group forever: read, reclaim, bridge, ack.
+    """Consume one stream's consumer group: read, reclaim, bridge, ack — until *stop*.
 
     The loop body shared by every source (tenant-global and per-tenant): the sources
     differ only in how the *group* port is resolved and how *tenant_for* derives the
-    tenant. A transient broker error is logged and retried, never fatal.
+    tenant. A transient broker error is logged and retried, never fatal. The batch is
+    the unit boundary: a stop request is honored between cycles, so an in-flight batch
+    finishes (and acks) before the loop returns — never mid-signal.
     """
 
     mapping = {stream: ">"}
 
     while True:
+        if stop is not None and stop.is_set():
+            return
+
         try:
             fresh = await group.read(
                 group_name, consumer, mapping, limit=batch, timeout=poll_interval
@@ -300,6 +429,7 @@ async def _consume_group_stream(
                 messages=fresh,
                 handler=handler,
                 tenant_for=tenant_for,
+                stats=stats,
             )
 
             reclaimed: list[Any] = []
@@ -307,6 +437,26 @@ async def _consume_group_stream(
                 reclaimed = await group.claim(
                     group_name, consumer, stream, idle=reclaim_idle, limit=batch
                 )
+
+                delivery_counts: dict[str, int] = {}
+                if reclaimed and max_deliveries is not None:
+                    # The claim itself counted as a delivery, so the snapshot taken here
+                    # includes the attempt about to run — a poison entry is dropped on
+                    # the attempt that reaches the ceiling, not one redelivery later.
+                    # Bounded scan: the PEL can be large, and this runs every reclaim
+                    # tick. Reclaim takes the oldest idle entries, which cluster at the
+                    # front of the id-ordered PEL, so a scan a few times the batch deep
+                    # covers them; an entry past the bound simply is not counted this
+                    # round (the safe direction — it survives and is re-examined as it
+                    # ages toward the front, never dropped on an unknown count).
+                    delivery_counts = {
+                        entry.id: entry.delivery_count
+                        for entry in await group.pending(
+                            group_name, stream, limit=max(4 * batch, _POISON_SCAN_FLOOR)
+                        )
+                        if entry.delivery_count is not None
+                    }
+
                 await _process_messages(
                     group=group,
                     group_name=group_name,
@@ -314,6 +464,9 @@ async def _consume_group_stream(
                     messages=reclaimed,
                     handler=handler,
                     tenant_for=tenant_for,
+                    delivery_counts=delivery_counts,
+                    max_deliveries=max_deliveries,
+                    stats=stats,
                 )
 
             if not fresh and not reclaimed:
@@ -375,9 +528,41 @@ class StreamGroupSignalSource(RealtimeSignalSource):
     most once. ``None`` disables recovery (e.g. a single ephemeral-only node).
     """
 
+    max_deliveries: int | None = 5
+    """Ceiling on deliveries of one durable signal before it is dropped as poison.
+
+    A durable signal whose bridge fails on every delivery would otherwise be reclaimed
+    and retried forever; at the ceiling it is acked and dropped, with a critical log.
+    A mailboxed principal signal is never affected (its store commits with the first
+    successful mark, so the client recovers it on reconnect) — this bounds the
+    at-least-once lane (topic durable, ``offline_delivery=False``), where an unbounded
+    silent retry loop is strictly worse than a bounded, observable loss. ``None``
+    restores unbounded redelivery.
+    """
+
+    stats: RealtimeGatewayStats | None = None
+    """Delivery counters (bridge failures, poison drops). Share the **same** instance
+    with :attr:`RealtimeGateway.stats` and hand it to ``instrument_realtime_gateway``."""
+
     # ....................... #
 
-    async def run(self, ctx: ExecutionContext, handler: SignalHandler) -> None:
+    def __attrs_post_init__(self) -> None:
+        if self.max_deliveries is not None and self.max_deliveries <= 0:
+            # a non-positive ceiling would drop every reclaimed durable signal as
+            # poison on its first recovery — fail the wiring, not the deliveries
+            raise exc.configuration("max_deliveries must be positive when set (None = unbounded)")
+
+    # ....................... #
+
+    async def run(
+        self,
+        ctx: ExecutionContext,
+        handler: SignalHandler,
+        *,
+        stop: asyncio.Event | None = None,
+    ) -> None:
+        _refuse_encrypted_realtime_stream(self.stream_spec)
+
         group = ctx.deps.resolve_configurable(
             ctx,
             AckStreamGroupQueryDepKey,
@@ -395,6 +580,9 @@ class StreamGroupSignalSource(RealtimeSignalSource):
             handler=handler,
             # tenant-global: the tenant rides each message's (untrusted) header.
             tenant_for=lambda message: _tenant_from_headers(message.headers),
+            stop=stop,
+            max_deliveries=self.max_deliveries,
+            stats=self.stats,
         )
 
 
@@ -419,8 +607,10 @@ class TenantShardedSignalSource(RealtimeSignalSource):
 
     Per-tenant loops run as sibling tasks; each binds its tenant in its own task-copied
     context (``asyncio`` snapshots ContextVars at task creation), so the bindings never race.
-    Assign **disjoint** tenant shards across gateway instances; rebalancing a running fleet
-    is out of scope — repartition by restart.
+    Each tenant loop is **individually supervised** (restart on crash with jittered backoff),
+    so one tenant's broker fault or configuration error degrades that tenant's delivery only —
+    the siblings keep consuming. Assign **disjoint** tenant shards across gateway instances;
+    rebalancing a running fleet is out of scope — repartition by restart.
     """
 
     shard: RealtimeShard
@@ -442,28 +632,80 @@ class TenantShardedSignalSource(RealtimeSignalSource):
     reclaim_idle: timedelta | None = timedelta(seconds=60)
     """Reclaim entries stranded (delivered, unacked) at least this long; ``None`` disables."""
 
+    max_deliveries: int | None = 5
+    """Ceiling on deliveries of one durable signal before it is dropped as poison
+    (see :attr:`StreamGroupSignalSource.max_deliveries`); ``None`` = unbounded."""
+
+    stats: RealtimeGatewayStats | None = None
+    """Delivery counters, shared across every tenant loop (and with the gateway)."""
+
+    restart_backoff: timedelta = timedelta(seconds=5)
+    """Base backoff between per-tenant loop restarts (jittered ×[1.0, 1.5)).
+
+    Each tenant's loop is supervised on its own, so a crash in one tenant's consume loop
+    restarts that loop only; a configuration error stops that tenant's supervision
+    (wiring does not fix itself) while the sibling tenants keep consuming.
+    """
+
     # ....................... #
 
-    async def run(self, ctx: ExecutionContext, handler: SignalHandler) -> None:
+    def __attrs_post_init__(self) -> None:
+        # Validated here, synchronously — run_supervised re-checks inside the per-tenant
+        # tasks, where a raise would surface as N dead loops instead of a wiring failure.
+        if self.restart_backoff.total_seconds() <= 0:
+            raise exc.configuration("Restart backoff must be positive")
+
+        if self.max_deliveries is not None and self.max_deliveries <= 0:
+            raise exc.configuration("max_deliveries must be positive when set (None = unbounded)")
+
+    # ....................... #
+
+    async def run(
+        self,
+        ctx: ExecutionContext,
+        handler: SignalHandler,
+        *,
+        stop: asyncio.Event | None = None,
+    ) -> None:
+        _refuse_encrypted_realtime_stream(self.shard.stream_spec)
+
         tenants = list(self.shard.tenants)
+        # Per-tenant supervision wants a real event to honor; an unstoppable local one
+        # preserves the "consume forever" contract for callers that pass none.
+        stop_event = stop if stop is not None else asyncio.Event()
 
         if not tenants:
-            # Nothing assigned: idle until cancelled. Returning would look like a crash
-            # to supervision (which expects the run task to end only via cancellation).
-            await asyncio.Event().wait()
+            # Nothing assigned: idle until stopped or cancelled. Returning early would
+            # look like a crash to supervision, which restarts an unexpectedly-ended run.
+            await stop_event.wait()
             return
+
+        def _tenant_runner(tenant: UUID) -> Callable[[], Awaitable[None]]:
+            async def _run() -> None:
+                await self._run_tenant(ctx, tenant, handler, stop_event)
+
+            return _run
 
         async with asyncio.TaskGroup() as tasks:
             for tenant in tenants:
                 tasks.create_task(
-                    self._run_tenant(ctx, tenant, handler),
+                    run_supervised(
+                        _tenant_runner(tenant),
+                        stop=stop_event,
+                        name=f"realtime_gateway:{tenant}",
+                        restart_backoff=self.restart_backoff,
+                    ),
                     name=f"realtime_gateway_t:{tenant}",
                 )
 
     # ....................... #
 
     async def _run_tenant(
-        self, ctx: ExecutionContext, tenant: UUID, handler: SignalHandler
+        self,
+        ctx: ExecutionContext,
+        tenant: UUID,
+        handler: SignalHandler,
+        stop: asyncio.Event,
     ) -> None:
         # Bind the shard tenant for the whole loop so the per-tenant group port resolves
         # to this tenant's key/partition and every handler call scopes under it. The
@@ -487,6 +729,9 @@ class TenantShardedSignalSource(RealtimeSignalSource):
                 reclaim_idle=self.reclaim_idle,
                 handler=handler,
                 tenant_for=lambda _message: tenant,
+                stop=stop,
+                max_deliveries=self.max_deliveries,
+                stats=self.stats,
             )
 
 
@@ -553,19 +798,30 @@ class RealtimeGateway:
     scopes by it. Off by default because the header is untrusted/forgeable — enable only
     on brokers where every producer is trusted to assert tenancy (see :func:`_bind_tenant`)."""
 
-    emit_timeout: timedelta | None = None
-    """Bound on a single ``sio.emit``; ``None`` waits indefinitely.
+    emit_timeout: timedelta | None = timedelta(seconds=5)
+    """Bound on a single ``sio.emit`` — **bounded by default**; ``None`` opts into
+    waiting indefinitely.
 
     Transport-level flow control (a slow consumer) is engine.io's; this only stops
-    one stuck delivery from wedging the whole consume loop. On timeout the emit
+    one stuck delivery (a dead backplane, a wedged manager) from freezing the whole
+    consume loop, which an unbounded default silently allowed. On timeout the emit
     raises, so the source's per-signal error policy applies — an ephemeral signal is
     acked (at-most-once) and a durable one is left pending to be redelivered.
     """
 
+    stats: RealtimeGatewayStats | None = None
+    """Delivery counters for the live path (emit outcomes, dedup/presence skips,
+    admission rejects, mailbox stores). Share the **same** instance with the source's
+    ``stats`` and hand it to ``instrument_realtime_gateway`` at assembly."""
+
     # ....................... #
 
-    async def run(self, ctx: ExecutionContext) -> None:
-        """Consume signals forever and emit each to its room. Cancel to stop."""
+    async def run(self, ctx: ExecutionContext, *, stop: asyncio.Event | None = None) -> None:
+        """Consume signals and emit each to its room, until *stop* (forever when ``None``).
+
+        A stop request is honored at the source's unit boundary (an in-flight batch
+        finishes and acks first), so a graceful shutdown never abandons a signal mid-bridge.
+        """
 
         # resolve the mailbox's ports once, against the run ctx (worker-resolved-once)
         mailbox = self.mailbox_factory(ctx) if self.mailbox_factory is not None else None
@@ -578,7 +834,7 @@ class RealtimeGateway:
         ) -> None:
             await self._handle(ctx, mailbox, signal, tenant, dedup_id, hlc)
 
-        await self.source.run(ctx, handle)
+        await self.source.run(ctx, handle, stop=stop)
 
     # ....................... #
 
@@ -624,6 +880,8 @@ class RealtimeGateway:
                 inbox = ctx.inbox(self.dedup.inbox_spec)
 
                 if not await inbox.mark_if_unseen(str(self.dedup.inbox_spec.name), dedup_id):
+                    if self.stats is not None:
+                        self.stats.dedup_skipped += 1
                     return
 
                 store = mailbox if (mailbox is not None and self._should_mailbox(signal)) else None
@@ -636,6 +894,9 @@ class RealtimeGateway:
                             hlc=hlc,
                             signal=signal,
                         )
+
+                        if self.stats is not None:
+                            self.stats.mailboxed += 1
                     except CoreException as error:
                         # A tenant-aware mailbox fails closed with an opaque
                         # ``tenant_required`` when nothing is bound; the gateway is the
@@ -718,6 +979,7 @@ class RealtimeGateway:
                 "Realtime signal rejected: event not in catalog",
                 realtime_event=signal.event,
             )
+            self._count_rejection()
             return None
 
         if not event.accepts(signal.audience):
@@ -726,6 +988,7 @@ class RealtimeGateway:
                 realtime_event=signal.event,
                 audience_kind=signal.audience.kind.value,
             )
+            self._count_rejection()
             return None
 
         try:
@@ -735,9 +998,18 @@ class RealtimeGateway:
                 "Realtime signal rejected: payload does not match catalog",
                 realtime_event=signal.event,
             )
+            self._count_rejection()
             return None
 
         return signal.model_copy(update={"payload": normalized})
+
+    # ....................... #
+
+    def _count_rejection(self) -> None:
+        """Count an admission rejection on the delivery stats, when wired."""
+
+        if self.stats is not None:
+            self.stats.admission_rejected += 1
 
     # ....................... #
 
@@ -769,6 +1041,8 @@ class RealtimeGateway:
             and self.presence is not None
             and await self.presence.count(room_for(signal.audience, tenant)) == 0
         ):
+            if self.stats is not None:
+                self.stats.presence_skipped += 1
             return
 
         await self._emit(signal, tenant, event_id=event_id)
@@ -792,11 +1066,21 @@ class RealtimeGateway:
             namespace=self.namespace,
         )
 
-        if self.emit_timeout is None:
-            await emit
-            return
+        try:
+            if self.emit_timeout is None:
+                await emit
+            else:
+                await asyncio.wait_for(emit, timeout=self.emit_timeout.total_seconds())
 
-        await asyncio.wait_for(emit, timeout=self.emit_timeout.total_seconds())
+        except Exception:
+            # Exception, not BaseException: a shutdown's CancelledError is not an emit
+            # failure and must not inflate the counter on its way out.
+            if self.stats is not None:
+                self.stats.emit_failed += 1
+            raise
+
+        if self.stats is not None:
+            self.stats.emitted += 1
 
     # ....................... #
 

@@ -39,7 +39,13 @@ from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import HlcTimestamp, utcnow
 
-from .exceptions import GENERIC_INTERNAL_DETAIL, is_server_error_kind, log_server_error
+from .exceptions import (
+    GENERIC_INTERNAL_DETAIL,
+    build_core_exception_ack,
+    build_unhandled_exception_ack,
+    is_server_error_kind,
+    log_server_error,
+)
 from .gateway import room_for
 from .mailbox import MailboxCursors, MailboxEntry, RealtimeMailbox
 from .routing import IDENTITY_SESSION_KEY, SocketIOConnect
@@ -269,6 +275,65 @@ class _ConnectionLifecycle:
 
     # ....................... #
 
+    async def on_reauth(self, sid: str, data: Any = None) -> dict[str, Any]:
+        """``realtime.reauth {token, ...}``: re-verify credentials in place.
+
+        A rotating access token otherwise forces the client to disconnect and reconnect —
+        a reconnect storm at scale, and a mailbox replay per device — just to stay
+        authenticated past the old token's expiry. This re-runs the **same** connection
+        resolver with the fresh auth payload and swaps the stored identity (including a
+        new ``expires_at``, so the expiry sweep keeps its hands off).
+
+        **Same principal, same tenant.** Rooms, presence, replay cursors — everything
+        keys off the (tenant, principal) pair, so a payload resolving to a different
+        principal, a different tenant, or to anonymous is refused: the socket would stay
+        in its old tenant-scoped rooms while everything else used the new identity. That
+        is a re-login, and a re-login reconnects.
+        """
+
+        session = await self.sio.get_session(sid, namespace=self.namespace)
+        current: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
+
+        if current is None:
+            return build_core_exception_ack(
+                exc.authentication("Reauth on an unauthenticated connection — reconnect")
+            )
+
+        connect = SocketIOConnect(sid=sid, namespace=self.namespace, environ={}, auth=data)
+
+        try:
+            refreshed = await _resolve(self.resolve, connect)
+
+        except CoreException as error:
+            # the ack builder logs server-side kinds itself — no second log here
+            return build_core_exception_ack(error)
+
+        except Exception as error:
+            # the ack builder logs the traceback itself — no second log here
+            return build_unhandled_exception_ack(error)
+
+        if (
+            refreshed is None
+            or refreshed.principal != current.principal
+            or refreshed.tenant != current.tenant
+        ):
+            return build_core_exception_ack(
+                exc.authentication(
+                    "Reauth must resolve the same principal and tenant — anything else "
+                    "is a re-login, which reconnects. Rooms, replay cursors, and presence "
+                    "are all scoped by both; swapping identity in place would leave the "
+                    "socket in the old identity's rooms."
+                )
+            )
+
+        session[IDENTITY_SESSION_KEY] = refreshed.authn
+        session[CONNECTION_SESSION_KEY] = refreshed
+        await self.sio.save_session(sid, session, namespace=self.namespace)
+
+        return {"ok": True}
+
+    # ....................... #
+
     async def on_ack(self, sid: str, data: Any = None) -> None:
         """``realtime.ack {up_to}``: advance the device cursor, trim the all-device floor."""
 
@@ -401,6 +466,12 @@ def attach_realtime_connection(
     :meth:`RealtimeConnection.client_key` (its ``device_id``/``session_id``, else
     the per-connection sid).
 
+    A ``realtime.reauth`` event is always registered: a client whose token rotates sends
+    the fresh auth payload and the **same** resolver re-verifies it in place — same
+    principal only — swapping the stored identity and ``expires_at`` without a reconnect
+    (and without the replay a reconnect costs). Set ``expires_at`` when resolving so the
+    expiry sweep has something to enforce between reauths.
+
     .. important::
         Socket.IO keeps **one** ``connect`` handler per namespace, so this is the
         *single* connect path: it both authenticates (stores the ``AuthnIdentity``)
@@ -430,6 +501,7 @@ def attach_realtime_connection(
 
     sio.on("connect", handler=lifecycle.on_connect, namespace=namespace)
     sio.on("disconnect", handler=lifecycle.on_disconnect, namespace=namespace)
+    sio.on("realtime.reauth", handler=lifecycle.on_reauth, namespace=namespace)
 
     if lifecycle.replay_enabled:
         sio.on("realtime.ack", handler=lifecycle.on_ack, namespace=namespace)
@@ -462,12 +534,20 @@ async def sweep_expired_connections(
     dropped = 0
 
     for sid in _local_connections(sio, namespace):
-        session = await sio.get_session(sid, namespace=namespace)
-        connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
+        # Per-connection isolation: one socket that fails to read or disconnect (already
+        # gone, transport hiccup) must not shield every later socket from the sweep —
+        # that would extend expired credentials past their lifetime for as long as the
+        # early failure persists. CancelledError is a BaseException and still propagates.
+        try:
+            session = await sio.get_session(sid, namespace=namespace)
+            connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
 
-        if connection is not None and connection.is_expired(moment):
-            await sio.disconnect(sid, namespace=namespace)
-            dropped += 1
+            if connection is not None and connection.is_expired(moment):
+                await sio.disconnect(sid, namespace=namespace)
+                dropped += 1
+
+        except Exception as error:
+            log_server_error(error)
 
     return dropped
 
@@ -489,11 +569,19 @@ async def refresh_presence(
     refreshed = 0
 
     for sid in _local_connections(sio, namespace):
-        session = await sio.get_session(sid, namespace=namespace)
-        connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
+        # Per-connection isolation: one failed heartbeat must not starve every later
+        # connection's — under a TTL store, a persistently-failing early entry would
+        # otherwise expire healthy connections and the gateway would skip their live
+        # deliveries. CancelledError is a BaseException and still propagates.
+        try:
+            session = await sio.get_session(sid, namespace=namespace)
+            connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
 
-        if connection is not None:
-            await presence.joined(connection.principal_room, sid)
-            refreshed += 1
+            if connection is not None:
+                await presence.joined(connection.principal_room, sid)
+                refreshed += 1
+
+        except Exception as error:
+            log_server_error(error)
 
     return refreshed

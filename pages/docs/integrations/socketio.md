@@ -81,10 +81,15 @@ await rt.publish(Audience.topic("chat:42"), MESSAGE_NEW, view)   # ephemeral, at
 await rt.stage(Audience.principal(user_id), ORDER_SHIPPED, dto)  # durable, at-least-once
 ```
 
-The **gateway** runs as a background lifecycle step, consuming the stream via a consumer
-group and emitting to a tenant-scoped room (fanned out cluster-wide by the Redis
-manager). Durable signals also need the **relay** to move staged rows from the outbox to
-the stream after commit, plus the gateway's `dedup` for exactly-once delivery:
+The **gateway** runs as a supervised background lifecycle step, consuming the stream via
+a consumer group and emitting to a tenant-scoped room (fanned out cluster-wide by the
+Redis manager). Supervision is the same machinery every other background loop uses: a
+crash restarts the loop after a jittered backoff (a configuration error is terminal —
+wiring doesn't fix itself), and the loop registers as a **drainable**, so
+`runtime.shutdown()` asks it to finish its in-flight batch before teardown instead of
+cancelling it mid-emit. Durable signals also need the **relay** to move staged rows from
+the outbox to the stream after commit, plus the gateway's `dedup` for exactly-once
+delivery:
 
 ```python
 from datetime import timedelta
@@ -101,7 +106,6 @@ gateway = RealtimeGateway(
     sio=sio,
     source=StreamGroupSignalSource(stream_spec=rt_transport.stream_spec),
     dedup=GatewayDedup(inbox_spec=rt_transport.inbox_spec, tx_route="..."),  # exactly-once for durable
-    emit_timeout=timedelta(seconds=5),  # a stuck delivery can't wedge the loop
 )
 lifecycle = [
     realtime_group_ensure_lifecycle_step(stream_spec=rt_transport.stream_spec),  # before serving
@@ -163,6 +167,41 @@ lapsed with `realtime_identity_expiry_lifecycle_step`. The full store-and-forwar
 per-device cursors, trimming, and opting an event out (`offline_delivery=False`) — is the
 [offline-delivery recipe](../recipes/realtime-offline-delivery.md).
 
+Operational hardening around the loop:
+
+- **Token rotation without a reconnect** — a client sends `realtime.reauth` with its
+  fresh auth payload; the same connection resolver re-verifies it in place (same
+  principal only) and swaps the stored identity + `expires_at`. No reconnect, no replay.
+- **Poison ceiling** — a durable signal whose bridge fails on every delivery is dropped
+  (acked, logged critical, counted) after `max_deliveries` (default 5) instead of
+  reclaim-looping forever. Mailboxed principal signals are unaffected: their store
+  commits with the first successful mark, so the client recovers them on reconnect.
+- **A single emit is bounded by default** — `emit_timeout` defaults to 5 s, so a dead
+  backplane can't freeze the consume loop; the failure falls into the normal per-lane
+  ack policy.
+- **Delivery counters** — hand one `RealtimeGatewayStats` to the gateway *and* its
+  source, then call `instrument_realtime_gateway(stats)` once at assembly; alarm on
+  `forze.realtime.gateway.poisoned` and on `emit_failed` climbing while `emitted` is
+  flat. Backlog is a property of the consumer group, not the process: poll
+  `AckStreamGroupAdminPort.depth(group, stream)` for undelivered/pending/oldest-idle —
+  the same surface `quiesce(ack_streams=[(stream_spec, group)])` attests at standstill.
+- **Backplane heartbeat** — `realtime_backplane_heartbeat_lifecycle_step(sio, health)`
+  pushes a probe frame through the Redis manager on an interval and
+  `instrument_realtime_backplane(health)` exports its freshness; a dead manager listener
+  otherwise stops every cross-node emit silently.
+- **The realtime stream route must stay plaintext** — the gateway has no decrypt seam,
+  so a stream route declaring an encryption tier is refused at run start
+  (`realtime_stream_encryption_unsupported`) rather than emitting ciphertext to clients.
+- **Cap the stream** — the realtime stream has an unbounded producer; set
+  `RedisStreamConfig(retention_max_entries=...)` on its route
+  (`DEFAULT_REALTIME_STREAM_MAX_ENTRIES` is the recommended starting point) so it cannot
+  grow into a Redis-memory incident. Size the cap so its horizon at peak emit rate far
+  exceeds the reclaim window; alarm on `depth()`'s pending age long before the cap matters.
+  Add `realtime_stream_trim_lifecycle_step` to keep steady-state memory near the gateway
+  group's **acknowledged** horizon instead of the cap — the sweep only removes entries
+  every group has delivered and acked, so it can never outrun a slow or crashed gateway
+  (pass `tenants=lambda: shard.tenants` on a tenant-sharded stream).
+
 ### Deployment
 
 - **In-process** — run the gateway lifecycle step inside the socket-holding workers
@@ -179,13 +218,16 @@ per-device cursors, trimming, and opting an event out (`offline_delivery=False`)
 |---------|--------------|
 | `SocketIONamespaceRouter.command(...)` | inbound: event → operation, with typed payload/ack |
 | `RealtimePublisher.publish` / `.stage` | egress: publish a signal to messaging (ephemeral / durable) |
-| `RealtimeGateway` + `realtime_gateway_lifecycle_step` | egress: consume the stream, bridge to rooms (optional `emit_timeout`) |
-| `TenantShardedSignalSource` + `realtime_tenant_group_ensure_lifecycle_step` | egress: namespace-tier per-tenant streams; binds tenant from the stream (trusted), no header trust |
+| `RealtimeGateway` + `realtime_gateway_lifecycle_step` | egress: consume the stream, bridge to rooms — supervised (restart + backoff), drainable, bounded `emit_timeout`, poison ceiling |
+| `TenantShardedSignalSource` + `realtime_tenant_group_ensure_lifecycle_step` | egress: namespace-tier per-tenant streams; binds tenant from the stream (trusted), no header trust; per-tenant fault isolation |
 | `realtime_tenant_relay_lifecycle_step` | egress: per-tenant durable relay for a partitioned (tenant-aware) outbox |
 | `attach_realtime_connection` | auto-join principal rooms + presence on connect; offline replay + ack |
 | `DocumentRealtimeMailbox` + `DocumentMailboxCursors` | offline store-and-forward: per-principal mailbox + per-device cursor |
 | `RedisRealtimePresence` + `realtime_presence_heartbeat_lifecycle_step` | crash-safe multi-node presence (TTL + heartbeat) |
 | `realtime_identity_expiry_lifecycle_step` | drop connections whose credential (`expires_at`) has lapsed |
+| `realtime.reauth` (built-in event) | refresh a rotating token in place — same principal, no reconnect |
+| `RealtimeGatewayStats` + `instrument_realtime_gateway` | delivery counters for the live path (emitted / failed / skipped / poisoned) |
+| `BackplaneHealth` + `realtime_backplane_heartbeat_lifecycle_step` + `instrument_realtime_backplane` | probe the Redis fan-out path; alarm on staleness |
 
 ## Notes
 

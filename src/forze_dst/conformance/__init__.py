@@ -14,11 +14,14 @@ anomaly OUTCOME at the declared level, never the mechanism, error code, or victi
 differences that are expected and must not be flagged — the firewall that keeps the differential from
 dying of false positives.
 
-Scope: two families where the mock is a stand-in for a real engine and the equivalence relation is
-sharp — the **transactional-isolation** anomalies (verdict per level) and the **outbox→inbox delivery
+Scope: three families where the mock is a stand-in for a real engine and the equivalence relation is
+sharp — the **transactional-isolation** anomalies (verdict per level), the **outbox→inbox delivery
 semantics under a crash** (:func:`run_crash_recovery_delivery`: at-least-once + exactly-once effect
-across the publish-then-crash window). A general "mock ≡ real for every port" matrix stays out — it has
-no shared equivalence relation and would drown in false positives.
+across the publish-then-crash window), and the **realtime gateway's ack-stream delivery under a
+crash** (:func:`run_gateway_crash_delivery`: exactly-once emit + store-then-forward atomicity across
+the bridge-then-crash windows, with the real gateway bridge injected by the test). A general
+"mock ≡ real for every port" matrix stays out — it has no shared equivalence relation and would
+drown in false positives.
 """
 
 from __future__ import annotations
@@ -45,6 +48,15 @@ from .harness import (
     is_serialization_conflict,
     record_outcome,
 )
+from .realtime import (
+    REALTIME_DELIVERY_GROUP,
+    REALTIME_DELIVERY_PRINCIPAL,
+    REALTIME_DELIVERY_SIGNALS,
+    GatewayCrashPoint,
+    GatewayDeliveryOutcome,
+    RealtimeBridge,
+    run_gateway_crash_delivery,
+)
 
 # ----------------------- #
 
@@ -62,6 +74,13 @@ __all__ = [
     "MECHANISM_DIVERGENCES",
     "run_crash_recovery_delivery",
     "observe_uncommitted_outbox_visibility",
+    "run_gateway_crash_delivery",
+    "GatewayCrashPoint",
+    "GatewayDeliveryOutcome",
+    "RealtimeBridge",
+    "REALTIME_DELIVERY_GROUP",
+    "REALTIME_DELIVERY_PRINCIPAL",
+    "REALTIME_DELIVERY_SIGNALS",
     "DeliveryOutcome",
     "DeliveryPayload",
     "DELIVERY_OUTBOX",

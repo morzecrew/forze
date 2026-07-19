@@ -6,6 +6,7 @@ from typing import (
 )
 
 from .value_objects import (
+    AckGroupDepth,
     ConsumerLag,
     OffsetReset,
     PendingEntry,
@@ -194,6 +195,44 @@ class AckStreamGroupAdminPort(Protocol):
         :param group: Consumer group name.
         :param stream: Stream the group consumes.
         :param start_id: Where a freshly-created group starts.
+        """
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    def depth(self, group: str, stream: str) -> Awaitable[AckGroupDepth]:
+        """Snapshot *group*'s outstanding work on *stream* — backlog + pending.
+
+        The ack family's observability verb, and the reason it lives on the **admin**
+        port: it observes the group as a whole (control-plane), while the query port's
+        :meth:`~AckStreamGroupQueryPort.pending` enumerates entries for a consumer doing
+        recovery (data-plane). Read-only — never changes ownership, idle clocks, or
+        delivery counts. A quiesce sweep polls it until
+        :attr:`~forze.application.contracts.stream.value_objects.AckGroupDepth.at_rest`;
+        a depth gauge exports it.
+
+        Raises ``not_found`` when the group does not exist on *stream* — an absent group
+        is a wiring gap (the ensure-group step did not run), not an empty one.
+        """
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    def trim_acknowledged(self, stream: str) -> Awaitable[int]:
+        """Trim entries that **every** consumer group on *stream* has delivered and acked.
+
+        Retention maintenance for the ack family: an approximate length cap bounds a
+        stream bluntly, this trims *precisely* — the floor is computed from group state
+        (each group's lowest pending entry, or its delivered horizon when nothing is
+        pending), so an entry a group has not yet been delivered, or has been delivered
+        but not acknowledged, is never removed. Always safe to run, on any interval, on
+        any number of nodes concurrently (idempotent, monotonic).
+
+        Fail-safe by construction: a stream with **no** groups trims nothing (there is no
+        horizon to trust), and a group added later starts from wherever its ``start_id``
+        put it, unaffected by earlier trims below that point.
+
+        :returns: the number of entries removed.
         """
         ...  # pragma: no cover
 

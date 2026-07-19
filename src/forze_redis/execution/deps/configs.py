@@ -7,6 +7,7 @@ from forze.application.contracts.resolution import (
     coerce_named_resource_spec,
 )
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -75,6 +76,24 @@ class RedisStreamConfig(TenantAwareIntegrationConfig):
     No namespace: the stream name is supplied per call (``append`` / ``read``) and, when
     ``tenant_aware``, isolated by the ``tenant:{id}:stream:`` key prefix — there is no
     per-route key namespace to declare."""
+
+    retention_max_entries: int | None = None
+    """Approximate cap on the stream's length, applied at every append (``XADD MAXLEN ~``).
+
+    Without a cap a stream grows in Redis memory until an operator intervenes or
+    ``maxmemory`` eviction takes the keyspace — set one on any stream with an unbounded
+    producer (the realtime egress stream above all). Approximate (``~``) so Redis trims
+    whole macro nodes, which is O(1) amortized; the observed length can exceed the cap by
+    a node's worth of entries.
+
+    The cap bounds how long an **undelivered** entry survives a total consumer outage:
+    size it so the horizon at your peak append rate comfortably exceeds both the consumer
+    group's reclaim window and your recovery SLO. Delivery-side lag is the thing to alarm
+    on before a cap ever becomes the failure."""
+
+    def __attrs_post_init__(self) -> None:
+        if self.retention_max_entries is not None and self.retention_max_entries <= 0:
+            raise exc.configuration("retention_max_entries must be positive when set")
 
 
 # ....................... #

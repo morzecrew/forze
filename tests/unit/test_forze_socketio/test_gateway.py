@@ -15,13 +15,13 @@ from forze.application.contracts.stream import AckStreamGroupQueryDepKey
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze_kits.integrations.realtime import build_realtime_publisher, realtime_stream_spec
+from forze_mock import MockDepsModule
 from forze_socketio import (
     RealtimeGateway,
     StreamGroupSignalSource,
     realtime_gateway_lifecycle_step,
     room_for,
 )
-from forze_mock import MockDepsModule
 
 # ----------------------- #
 
@@ -219,4 +219,8 @@ async def test_lifecycle_step_runs_and_stops() -> None:
         await step.shutdown(ctx)
 
     assert len(sio.emits) == 1
-    assert step.startup.task is not None and step.startup.task.cancelled()
+    # Supervised loop: shutdown asks the gateway to stop at its batch boundary, so the
+    # task ends cleanly (a cancelled task would mean the graceful stop regressed to the
+    # blunt cancel this step was built to replace).
+    task = step.startup.task
+    assert task is not None and task.done() and not task.cancelled()

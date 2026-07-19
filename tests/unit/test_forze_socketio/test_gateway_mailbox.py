@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from uuid import UUID
 
@@ -19,6 +20,7 @@ from forze.application.execution import DepsRegistry, ExecutionContext, Executio
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import HlcTimestamp
 from forze_kits.integrations.realtime import realtime_inbox_spec
+from forze_mock import MockDepsModule
 from forze_socketio import (
     GatewayDedup,
     InMemoryRealtimeMailbox,
@@ -28,7 +30,6 @@ from forze_socketio import (
     RealtimeSignalSource,
     SignalHandler,
 )
-from forze_mock import MockDepsModule
 
 # ----------------------- #
 
@@ -53,7 +54,13 @@ class _StubSio:
 
 
 class _NullSource(RealtimeSignalSource):
-    async def run(self, ctx: ExecutionContext, handler: SignalHandler) -> None:  # pragma: no cover
+    async def run(
+        self,
+        ctx: ExecutionContext,
+        handler: SignalHandler,
+        *,
+        stop: asyncio.Event | None = None,
+    ) -> None:  # pragma: no cover
         raise NotImplementedError
 
 

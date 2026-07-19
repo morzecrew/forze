@@ -1413,7 +1413,7 @@ requires-dist = [
     { name = "python-magic", marker = "extra == 'gcs'", specifier = ">=0.4.27" },
     { name = "python-magic", marker = "extra == 's3'", specifier = ">=0.4.27" },
     { name = "python-multipart", marker = "extra == 'fastapi'", specifier = ">=0.0.22" },
-    { name = "python-socketio", marker = "extra == 'socketio'", specifier = ">=5.16.1" },
+    { name = "python-socketio", marker = "extra == 'socketio'", specifier = ">=5.16.1,<6" },
     { name = "python-socketio-stubs", marker = "extra == 'socketio'", specifier = ">=5.16.1.0.20260211" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "redis", marker = "extra == 'redis'", specifier = ">=7.3.0" },

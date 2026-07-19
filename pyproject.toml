@@ -136,7 +136,7 @@ duckdb = ["duckdb>=1.1.0", "pyarrow>=17.0.0"]
 rabbitmq = ["aio-pika>=9.6.1"]
 kafka = ["aiokafka>=0.14.0"]
 socketio = [
-    "python-socketio>=5.16.1",
+    "python-socketio>=5.16.1,<6",
     "python-socketio-stubs>=5.16.1.0.20260211",
 ]
 neo4j = ["neo4j>=6.1.0"]

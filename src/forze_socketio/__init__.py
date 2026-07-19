@@ -86,6 +86,7 @@ from .connection import (
     sweep_expired_connections,
 )
 from .connection_lifecycle import (
+    realtime_backplane_heartbeat_lifecycle_step,
     realtime_identity_expiry_lifecycle_step,
     realtime_presence_heartbeat_lifecycle_step,
 )
@@ -115,6 +116,12 @@ from .mailbox import (
     MailboxCursors,
     MailboxEntry,
     RealtimeMailbox,
+)
+from .observability import (
+    BackplaneHealth,
+    RealtimeGatewayStats,
+    instrument_realtime_backplane,
+    instrument_realtime_gateway,
 )
 from .routing import (
     IDENTITY_SESSION_KEY,
@@ -146,6 +153,10 @@ __all__ = [
     "SocketIOEventEmitter",
     "SocketIONamespaceEmitter",
     "RealtimeGateway",
+    "RealtimeGatewayStats",
+    "BackplaneHealth",
+    "instrument_realtime_backplane",
+    "instrument_realtime_gateway",
     "RealtimeSignalSource",
     "SignalHandler",
     "StreamGroupSignalSource",
@@ -163,6 +174,7 @@ __all__ = [
     "sweep_expired_connections",
     "refresh_presence",
     "realtime_identity_expiry_lifecycle_step",
+    "realtime_backplane_heartbeat_lifecycle_step",
     "realtime_presence_heartbeat_lifecycle_step",
     "RealtimeConnection",
     "RealtimePresence",
