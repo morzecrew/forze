@@ -13,6 +13,7 @@ from forze.application.contracts.crypto import (
     AesGcmAead,
     KeyRef,
     StaticKeyDirectory,
+    TenantTemplateKeyDirectory,
 )
 from forze.application.integrations.crypto import EncryptingModelCodec, Keyring
 from forze.base.crypto import is_envelope
@@ -30,9 +31,26 @@ class _Profile(BaseModel):
     prefs: dict[str, str] = {}
 
 
+class _AsyncOnlyKms:
+    """The mock key manager behind its async port only — models a real (I/O) KMS,
+    so codecs built on it keep the mandatory async pre-pass discipline."""
+
+    def __init__(self) -> None:
+        self._inner = MockKeyManagement()
+
+    async def generate_data_key(self, key_ref: KeyRef):  # type: ignore[no-untyped-def]
+        return await self._inner.generate_data_key(key_ref)
+
+    async def unwrap_data_key(self, *, wrapped: bytes, key_ref: KeyRef) -> bytes:
+        return await self._inner.unwrap_data_key(wrapped=wrapped, key_ref=key_ref)
+
+
 def _keyring() -> Keyring:
+    # Async-only on purpose: these tests exercise the production (pre-pass) shape.
+    # The synchronous-fill path has its own tests in ``test_keyring.py`` and the
+    # mock document suite.
     return Keyring(
-        kms=MockKeyManagement(),
+        kms=_AsyncOnlyKms(),
         aead=AesGcmAead(),
         directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
     )
@@ -372,3 +390,70 @@ async def test_strict_mode_tolerates_absent_encrypted_field() -> None:
     restored = codec.decode_mapping(mapping)
     assert restored.email == "alice@example.com"
     assert restored.prefs == {}  # model default, not a rejected plaintext
+
+
+# ....................... #
+# synchronous pre-pass — the computation-only key backend path (mock wiring)
+
+
+def _sync_keyring(
+    directory: StaticKeyDirectory | TenantTemplateKeyDirectory | None = None,
+) -> Keyring:
+    return Keyring(
+        kms=MockKeyManagement(),
+        aead=AesGcmAead(),
+        directory=directory or StaticKeyDirectory(KeyRef(key_id="cmk")),
+    )
+
+
+def test_sync_keyring_codec_needs_no_pre_pass() -> None:
+    """Under a computation-only key backend the codec encodes and decodes with no
+    ``prepare_*`` at all — the mock adapters call neither, and must not have to."""
+
+    writer = _codec_for(_sync_keyring())
+    mapping = writer.encode_persistence_mapping(_PROFILE)
+
+    assert mapping["email"] != "alice@example.com"
+    assert is_envelope(base64.b64decode(mapping["email"]))
+
+    reader = _codec_for(_sync_keyring())  # cold keyring, like another process
+    assert reader.decode_mapping(mapping) == _PROFILE
+
+
+def test_sync_pre_pass_enforces_key_ownership_through_the_codec() -> None:
+    """The decode-side sync pre-pass authorizes each envelope against the *active*
+    tenant, so a cross-tenant read fails with the same code the async path raises."""
+
+    from uuid import uuid4
+
+    from forze.application.contracts.tenancy import TenantIdentity
+
+    directory = TenantTemplateKeyDirectory(
+        template="tenant/{tenant_id}/cmk", default_key_id="default"
+    )
+    tenant_a = TenantIdentity(tenant_id=uuid4())
+    tenant_b = TenantIdentity(tenant_id=uuid4())
+
+    ring = _sync_keyring(directory)
+    writer = _codec_for(ring, tenant=lambda: tenant_a)
+    mapping = writer.encode_persistence_mapping(_PROFILE)
+
+    intruder = _codec_for(_sync_keyring(directory), tenant=lambda: tenant_b)
+
+    with pytest.raises(CoreException) as excinfo:
+        intruder.decode_mapping(mapping)
+
+    assert excinfo.value.code == "core.crypto.key_id_unauthorized"
+
+    # The rightful tenant reads it back (fresh keyring: a true cross-process read).
+    owner = _codec_for(_sync_keyring(directory), tenant=lambda: tenant_a)
+    assert owner.decode_mapping(mapping) == _PROFILE
+
+
+def _codec_for(cipher: Keyring, *, tenant=None):  # type: ignore[no-untyped-def]
+    return EncryptingModelCodec(
+        inner=default_model_codec(_Profile),
+        cipher=cipher,
+        fields=frozenset({"email", "prefs"}),
+        tenant_provider=tenant or (lambda: None),
+    )

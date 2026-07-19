@@ -48,8 +48,12 @@ class MockKeyManagement:
         return hashlib.sha256(material).digest()
 
     # ....................... #
+    # The synchronous surface (SyncKeyManagementPort) is the real implementation:
+    # key derivation here is pure computation, which is exactly what lets the
+    # keyring fill its cache inline for mock-backed field encryption. The async
+    # port methods delegate.
 
-    async def generate_data_key(self, key_ref: KeyRef) -> DataKey:
+    def generate_data_key_sync(self, key_ref: KeyRef) -> DataKey:
         version = key_ref.version or "v1"
         plaintext = secure_random_bytes(_DEK_SIZE)
         kek = self._kek(key_ref)
@@ -63,7 +67,7 @@ class MockKeyManagement:
 
     # ....................... #
 
-    async def unwrap_data_key(
+    def unwrap_data_key_sync(
         self,
         *,
         wrapped: bytes,
@@ -78,3 +82,18 @@ class MockKeyManagement:
 
         kek = self._kek(key_ref)
         return bytes(w ^ k for w, k in zip(wrapped, kek, strict=False))
+
+    # ....................... #
+
+    async def generate_data_key(self, key_ref: KeyRef) -> DataKey:
+        return self.generate_data_key_sync(key_ref)
+
+    # ....................... #
+
+    async def unwrap_data_key(
+        self,
+        *,
+        wrapped: bytes,
+        key_ref: KeyRef,
+    ) -> bytes:
+        return self.unwrap_data_key_sync(wrapped=wrapped, key_ref=key_ref)

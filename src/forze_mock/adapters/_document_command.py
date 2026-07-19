@@ -21,7 +21,6 @@ from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import AggregateRoot
 from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.query._types import C, D, R, U
-from forze_mock.query.matching import _match_filters  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
     from forze.application.contracts.base import CountlessPage
@@ -64,6 +63,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         def _create_codec(self) -> ModelCodec[D, Any]: ...
         def _domain_codec(self) -> ModelCodec[D, Any]: ...
         def _patch_codec(self) -> ModelCodec[Any, Any]: ...
+        def _matcher(self, filters: QueryFilterExpression | None) -> Callable[[JsonDict], bool]: ...
         def _require_domain_model(self) -> type[D]: ...
         def project_many(
             self,
@@ -650,11 +650,13 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         mutated: list[D | None] = []
         n = 0
 
+        match = self._matcher(filters)
+
         with self.state.lock:
             store = self._store()
 
             for pk, raw in list(store.items()):
-                if not _match_filters(raw, filters):
+                if not match(raw):
                     continue
 
                 current = self._to_domain(dict(raw))

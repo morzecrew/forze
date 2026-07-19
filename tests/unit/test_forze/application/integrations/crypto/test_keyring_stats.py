@@ -35,6 +35,28 @@ class _BoomKms:
         raise RuntimeError("kms down")
 
 
+class _AsyncOnlyKms:
+    """The mock key manager behind its async port only — models a real (I/O) KMS,
+    so the keyring's synchronous inline fill is unavailable."""
+
+    def __init__(self) -> None:
+        self._inner = MockKeyManagement()
+
+    async def generate_data_key(self, key_ref: KeyRef) -> DataKey:
+        return await self._inner.generate_data_key(key_ref)
+
+    async def unwrap_data_key(self, *, wrapped: bytes, key_ref: KeyRef) -> bytes:
+        return await self._inner.unwrap_data_key(wrapped=wrapped, key_ref=key_ref)
+
+
+def _async_only_ring() -> Keyring:
+    return Keyring(
+        kms=_AsyncOnlyKms(),
+        aead=AesGcmAead(),
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+    )
+
+
 def _boom_ring() -> Keyring:
     return Keyring(
         kms=_BoomKms(),
@@ -120,7 +142,8 @@ async def test_cold_sync_calls_count_cold_misses() -> None:
     await producer.warm(None)
     blob = producer.encrypt_sync(b"secret", tenant=None)
 
-    cold = _ring()  # never warmed
+    # Async-only KMS: a cold sync call cannot fill inline, so it raises and counts.
+    cold = _async_only_ring()  # never warmed
 
     with pytest.raises(CoreException):
         cold.decrypt_sync(blob)

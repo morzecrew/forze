@@ -1,17 +1,16 @@
-"""The mock enforces a document's encryption *policy* even though it stores plaintext.
+"""The mock enforces a document's encryption *policy* at the declaration level.
 
 # covers: forze_mock.adapters.document
 
-The mock is an in-memory dict, not a disk: it does no field encryption, and that is defensible —
-encryption is a persistence concern and the mock is not persistence. What is *not* defensible is
-the mock answering a query that a real backend cannot. A filter on a randomized-encrypted field
-matches nothing on Postgres/Mongo (the stored value is non-deterministic ciphertext) and is refused
-there with ``core.crypto.encrypted_field_not_filterable``; against plaintext-in-a-dict the same
-filter would happily match, so the query would pass every test and fail in production.
-
-The rule is *policy* — it reads ``FieldEncryption.encrypted`` off the spec, never the data — so the
-shared validator can enforce it on a backend that seals nothing, and the mock answers exactly as
-the real one does. Proven against real Postgres in
+A filter on a randomized-encrypted field matches nothing on Postgres/Mongo (the stored
+value is non-deterministic ciphertext) and is refused there with
+``core.crypto.encrypted_field_not_filterable``; a sort on any sealed field would order by
+ciphertext. The rule is *policy* — it reads ``FieldEncryption`` off the spec, never the
+data — so the shared validator enforces it identically on every backend. The mock now
+also seals declared fields for real (see ``test_document_encryption.py``), but these
+guards deliberately stay declaration-level: a policy that reads the spec fires on
+backends that seal nothing and on ones not yet built, and does not depend on a cipher
+being wired. Proven against real Postgres in
 ``tests/integration/test_portability/test_pg_field_encryption.py``.
 """
 
@@ -77,8 +76,9 @@ def _runtime(spec: DocumentSpec[_VaultRead, _VaultDoc, _VaultCreate, _VaultUpdat
 
 @pytest.mark.asyncio
 async def test_filter_on_a_randomized_encrypted_field_is_refused() -> None:
-    """The divergence this closes: the mock stores ``secret`` in the clear, so without the policy
-    guard this filter would match and the test suite would bless a query that raises on Postgres."""
+    """A predicate on non-deterministic ciphertext can never match; without the policy guard
+    the query would silently return nothing (or, pre-sealing, wrongly match) instead of raising
+    the same code Postgres raises."""
 
     spec = _spec(encrypted=True)
     runtime = _runtime(spec)
@@ -109,13 +109,13 @@ async def test_plaintext_fields_on_an_encrypting_spec_stay_filterable() -> None:
         page = await ctx.document.query(spec).find_many({"$values": {"holder": "ada"}})
 
     assert len(page.hits) == 1
-    assert page.hits[0].secret == "s3cret"  # readable — the mock seals nothing
+    assert page.hits[0].secret == "s3cret"  # sealed at rest, decrypted by the read codec
 
 
 @pytest.mark.asyncio
 async def test_sorting_on_a_sealed_field_is_refused() -> None:
-    """The mock sorts plaintext, so it would return a *correctly ordered* page for a query that
-    orders by ciphertext on a real backend — hiding the bug twice over. Same policy, same code."""
+    """Ciphertext has no meaningful order at rest on any backend, so the sort is refused from
+    the declaration — same policy, same code, whether or not the store seals."""
 
     spec = _spec(encrypted=True)
     runtime = _runtime(spec)

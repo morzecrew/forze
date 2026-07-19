@@ -28,6 +28,8 @@ from .directory import (
     KeyDirectoryPort,
     KeyDirectoryWithPrevious,
     StaticKeyDirectory,
+    SyncKeyDirectoryPort,
+    SyncKeyDirectoryWithPrevious,
     TenantTemplateKeyDirectory,
 )
 from .field_encryption import FieldEncryption
@@ -46,6 +48,7 @@ from .ports import (
     KeyManagementPort,
     KeyringPort,
     StreamingBytesCipherPort,
+    SyncKeyManagementPort,
 )
 from .value_objects import CryptoKeyringStats, DataKey, KeyRef
 from .wiring import (
@@ -68,6 +71,7 @@ __all__ = [
     "unpack_envelope",
     # key management + cipher
     "KeyManagementPort",
+    "SyncKeyManagementPort",
     "KeyRef",
     "DataKey",
     "CryptoKeyringStats",
@@ -81,6 +85,8 @@ __all__ = [
     # key directory (tenant → key)
     "KeyDirectoryPort",
     "KeyDirectoryWithPrevious",
+    "SyncKeyDirectoryPort",
+    "SyncKeyDirectoryWithPrevious",
     "StaticKeyDirectory",
     "TenantTemplateKeyDirectory",
     # field-encryption policy

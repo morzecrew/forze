@@ -61,7 +61,12 @@ directory (see [Per-tenant keys](#per-tenant-keys-byok) below).
 
     The in-memory `MockKeyManagement` from `forze_mock` derives keys locally —
     it is for tests and local runs, never production. It exists so the encryption
-    paths exercise end-to-end without a real KMS; it protects nothing.
+    paths exercise end-to-end without a real KMS; it protects nothing. Because its
+    key derivation is pure computation (`SyncKeyManagementPort`), the mock adapters
+    run the full field-encryption path — declared fields are sealed in `MockState`
+    and every read decrypts, with the real `Keyring` enforcing the same key-ownership
+    policy as production. That makes the mock's *policy* conformant; it does not make
+    a mock-backed deployment secure.
 
 ## Where data gets encrypted
 

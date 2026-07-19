@@ -29,6 +29,7 @@ from typing import (
     Any,
     Literal,
     Protocol,
+    cast,
     final,
     runtime_checkable,
 )
@@ -101,6 +102,26 @@ class _SupportsFieldDecryptSnapshot(Protocol):
 
 
 @runtime_checkable
+class _SupportsSyncPrepass(Protocol):
+    """A field cipher that can run the decrypt pre-pass synchronously.
+
+    The keyring implements it; whether the sync path is actually *available* depends on
+    the wired KMS (``sync_fill_available`` — ``True`` only for a computation-only key
+    backend, i.e. the mock wiring). Decided once at codec construction so the per-row
+    decode pays nothing on a real backend.
+    """
+
+    def sync_fill_available(self) -> bool: ...
+
+    def ensure_unwrapped_sync(
+        self,
+        envelopes: Iterable[EncryptedEnvelope],
+        *,
+        tenant: TenantIdentity | None = None,
+    ) -> None: ...
+
+
+@runtime_checkable
 class _SupportsDetDecryptSnapshot(Protocol):
     """A deterministic cipher that can snapshot resolved keys for offloaded decrypt."""
 
@@ -163,6 +184,22 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
       id-less AAD, so a pre-binding (id-less) ciphertext is no longer accepted.
 
     Default ``False`` preserves the migration-tolerant behavior."""
+
+    _sync_prepass: bool = attrs.field(
+        init=False,
+        repr=False,
+        default=attrs.Factory(
+            lambda self: (
+                isinstance(self.cipher, _SupportsSyncPrepass) and self.cipher.sync_fill_available()
+            ),
+            takes_self=True,
+        ),
+    )
+    """Whether decodes run the decrypt pre-pass synchronously through the cipher.
+
+    ``True`` only when the cipher's key backend is computation-only (the mock wiring),
+    where no gateway ever awaits :meth:`prepare_decrypt`; a real backend decides this
+    to ``False`` once, at construction, so its per-row decode pays nothing."""
 
     # ....................... #
 
@@ -376,9 +413,33 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
             code="core.crypto.plaintext_rejected",
         )
 
+    def _sync_fill_for(self, mapping: JsonDict) -> None:
+        """Run the decrypt pre-pass synchronously for *mapping*'s envelopes.
+
+        The synchronous twin of :meth:`prepare_decrypt`, taken only when the cipher
+        advertises a computation-only key backend: the same per-envelope tenant
+        (key-ownership) authorization runs, so the policy holds on a backend that
+        never awaits the async pre-pass.
+        """
+
+        envelopes = [
+            unpack_envelope(blob)
+            for field in self.fields
+            if isinstance((value := mapping.get(field)), str)
+            and (blob := _maybe_envelope(value)) is not None
+        ]
+
+        if envelopes:
+            cast("_SupportsSyncPrepass", self.cipher).ensure_unwrapped_sync(
+                envelopes, tenant=self.tenant_provider()
+            )
+
     def _decrypt_fields(self, mapping: JsonDict) -> JsonDict:
         if not self.fields and not self.searchable_fields:
             return mapping
+
+        if self._sync_prepass:
+            self._sync_fill_for(mapping)
 
         out: JsonDict | None = None
         tenant: Any = _UNSET

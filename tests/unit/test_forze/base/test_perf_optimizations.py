@@ -193,13 +193,16 @@ class TestSQSRegexPerf:
         """Measure SQS queue name sanitization with pre-compiled patterns."""
         from forze_sqs.kernel.client import SQSClient
 
+        # Longest legal names only — the sanitizer fails closed (raises) past 80 chars
+        # (75 + ".fifo"), so an over-length input would benchmark exception raising.
         names = [
             "my.queue.name",
             "queue-with-dashes",
             "queue_with_underscores",
             "queue with spaces!@#$%",
             "production.events.fifo",
-            "a" * 100,
+            "a" * 80,
+            "b" * 75 + ".fifo",
         ]
 
         iterations = 10_000

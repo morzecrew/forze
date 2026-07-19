@@ -32,6 +32,9 @@ from forze.application.contracts.crypto import (
     KeyDirectoryWithPrevious,
     KeyManagementPort,
     KeyRef,
+    SyncKeyDirectoryPort,
+    SyncKeyDirectoryWithPrevious,
+    SyncKeyManagementPort,
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.crypto import (
@@ -719,20 +722,34 @@ class Keyring:
         tenant: TenantIdentity | None,
         aad: bytes = b"",
     ) -> bytes:
-        """Encrypt against the warmed cache (no awaits); requires a prior :meth:`warm`."""
+        """Encrypt against the warmed cache (no awaits); requires a prior :meth:`warm`.
+
+        Under a fully synchronous key backend (a :class:`SyncKeyManagementPort` KMS
+        *and* a :class:`SyncKeyDirectoryPort` directory — the mock wiring), a cache
+        miss is filled inline instead of raising, since generating the data key is
+        pure computation. A real KMS never qualifies, so the pre-pass discipline is
+        unchanged in production.
+        """
 
         key_id = _lru_get(self._tenant_key, _tenant_cache_key(tenant))
         active = _lru_get(self._enc_cache, key_id) if key_id is not None else None
+        filled = False
 
         if (
             active is None
             or active.uses >= self.max_dek_messages
             or self._is_expired(active.expires_at)
         ):
+            active = self._fill_active_sync(tenant)
+            filled = True
+
+        if active is None:
             self._n_cold += 1
             raise _not_warm("encrypt")
 
-        self._n_enc_hits += 1
+        if not filled:
+            self._n_enc_hits += 1
+
         active.uses += 1
         nonce, ciphertext = self.aead.seal(
             key=active.plaintext,
@@ -776,6 +793,162 @@ class Keyring:
             ciphertext=envelope.ciphertext,
             aad=aad,
         )
+
+    # ....................... #
+    # synchronous fill — only under a computation-only key backend (the mock wiring)
+
+    def sync_fill_available(self) -> bool:
+        """Whether the sync methods can fill a cache miss inline (the KMS computes, not calls).
+
+        Discovered by the encrypting codec to decide whether a synchronous decode may
+        run its pre-pass synchronously; ``False`` for every real KMS, keeping the async
+        pre-pass mandatory in production.
+        """
+
+        return isinstance(self.kms, SyncKeyManagementPort)
+
+    # ....................... #
+
+    def ensure_unwrapped_sync(
+        self,
+        envelopes: Iterable[EncryptedEnvelope],
+        *,
+        tenant: TenantIdentity | None = None,
+    ) -> None:
+        """Synchronous twin of :meth:`ensure_unwrapped` for a computation-only KMS.
+
+        Runs the same per-envelope key-ownership authorization — a warm cache never
+        bypasses it — then unwraps misses inline through the sync KMS. A no-op when
+        the KMS is I/O-bound (the sync decrypt then hits the warmed cache or raises
+        ``cipher_not_warm`` exactly as before), so only the mock-style wiring ever
+        takes this path.
+        """
+
+        kms = self.kms
+
+        if not isinstance(kms, SyncKeyManagementPort):
+            return
+
+        for envelope in envelopes:
+            self._authorize_key_id_sync(envelope.key_id, tenant)
+
+            if self._cached_dek(envelope.wrapped_dek) is None:
+                dek = kms.unwrap_data_key_sync(
+                    wrapped=envelope.wrapped_dek,
+                    key_ref=KeyRef(key_id=envelope.key_id, version=envelope.key_version),
+                )
+                self._n_unwrapped += 1
+                self._store_dek(envelope.wrapped_dek, dek)
+
+    # ....................... #
+
+    def _fill_active_sync(self, tenant: TenantIdentity | None) -> _ActiveDataKey | None:
+        """Generate and cache an active data key inline, or ``None`` when not possible.
+
+        Requires both halves of the synchronous opt-in — a :class:`SyncKeyManagementPort`
+        KMS *and* a :class:`SyncKeyDirectoryPort` directory — since a sync encrypt needs
+        the tenant's key reference before it can generate. No fill lock: the sync path
+        runs on one thread with no suspension point, so there is nothing to race.
+        """
+
+        kms = self.kms
+        directory = self.directory
+
+        if not isinstance(kms, SyncKeyManagementPort) or not isinstance(
+            directory, SyncKeyDirectoryPort
+        ):
+            return None
+
+        key_ref = directory.resolve_sync(tenant)
+        _lru_put(
+            self._tenant_key,
+            _tenant_cache_key(tenant),
+            key_ref.key_id,
+            cap=self.enc_cache_max,
+        )
+
+        data_key = kms.generate_data_key_sync(key_ref)
+        self._n_generated += 1
+
+        active = _ActiveDataKey(
+            plaintext=data_key.plaintext,
+            wrapped=data_key.wrapped,
+            key_id=data_key.key_id,
+            key_version=data_key.key_version,
+            uses=0,
+            expires_at=self._expiry(),
+        )
+        _lru_put(self._enc_cache, key_ref.key_id, active, cap=self.enc_cache_max)
+
+        # Seed the decrypt cache so a read-after-write is a hit.
+        self._store_dek(data_key.wrapped, data_key.plaintext)
+
+        return active
+
+    # ....................... #
+
+    def _authorize_key_id_sync(self, key_id: str, tenant: TenantIdentity | None) -> None:
+        """The key-id/tenant confused-deputy guard on the synchronous fill path.
+
+        Mirrors :meth:`_authorize_key_id_value`, resolving through the directory's
+        synchronous surface. Fails **closed** with ``cipher_not_warm`` — demanding the
+        async pre-pass — whenever the directory cannot answer without awaiting (an
+        async-only ``resolve``, or an async-only migration overlap), so the guard is
+        never skipped and never wrongly refuses a mid-migration envelope.
+        """
+
+        if tenant is None:
+            return
+
+        expected = _lru_get(self._tenant_key, _tenant_cache_key(tenant))
+
+        if expected is None:
+            directory = self.directory
+
+            if not isinstance(directory, SyncKeyDirectoryPort):
+                raise _not_warm("decrypt")
+
+            key_ref = directory.resolve_sync(tenant)
+            _lru_put(
+                self._tenant_key,
+                _tenant_cache_key(tenant),
+                key_ref.key_id,
+                cap=self.enc_cache_max,
+            )
+            expected = key_ref.key_id
+
+        if key_id == expected:
+            return
+
+        if key_id == self._previous_key_id_sync(tenant):
+            return
+
+        raise exc.validation(
+            "Envelope key id does not belong to the active tenant; refusing to "
+            "unwrap under a key the caller does not own.",
+            code="core.crypto.key_id_unauthorized",
+        )
+
+    # ....................... #
+
+    def _previous_key_id_sync(self, tenant: TenantIdentity | None) -> str | None:
+        """*tenant*'s previous key id, resolved synchronously, else ``None``.
+
+        A directory with an async-only overlap answer forces the async pre-pass
+        (``cipher_not_warm``) rather than deciding the guard on a half-known state.
+        """
+
+        directory = self.directory
+
+        if isinstance(directory, SyncKeyDirectoryWithPrevious):
+            previous = directory.resolve_previous_sync(tenant)
+
+            return None if previous is None else previous.key_id
+
+        if isinstance(directory, KeyDirectoryWithPrevious):
+            raise _not_warm("decrypt")
+
+        return None
 
     # ....................... #
 

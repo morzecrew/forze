@@ -9,11 +9,12 @@ Until now this was asserted in docstrings and never exercised: no portability te
 encrypting codec, and the shared corpus declares no encrypted field. It is also the claim that
 justifies `migrate` as the recommended migration path, so it is the one most worth checking.
 
-**Real Postgres on both sides, because that is the only place field encryption happens.** The mock
-document adapter never resolves an encrypting codec — it stores what it is handed — so a mock-backed
-version of this test would be a tautology: nothing sealed on either side, "re-sealed under the
-target's key" trivially true. Only `resolve_document_codecs` (Postgres, Mongo) wraps the spec's
-codecs, so only a real backend puts a ciphertext at rest at all.
+**Real Postgres on both sides, as the differential leg.** The mock now resolves the same
+encrypting codecs (its module factory runs `resolve_document_codecs` too), and the mock-hosted
+twin of this claim lives in `tests/unit/test_forze_kits/test_portability_field_encryption.py`.
+This file stays on a real backend so the claim is never proven only against the mock — the
+mock's own crypto conformance is checked separately by the mock≡Postgres parity case
+(`tests/integration/test_forze_postgres/test_pg_mock_encryption_parity.py`).
 
 **The observable is the envelope's own `key_id`.** A Forze envelope is self-describing — it carries
 the CMK id and the wrapped DEK — so "re-sealed under the target's CMK" is a fact readable straight

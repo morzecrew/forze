@@ -22,9 +22,9 @@ can't drift.
 | Surface | Backends | `searchable` | `binds_record_id` | Fail-closed code |
 |---------|----------|--------------|-------------------|------------------|
 | Document fields | Postgres, Mongo, Firestore, mock | yes | yes (randomized fields only) | `core.document.encryption_wiring` |
-| Search | Postgres, Mongo, Meilisearch | yes (rewrites equality filters) | inherited | `core.search.encryption_wiring` |
+| Search | Postgres, Mongo, Meilisearch, mock | yes (rewrites equality filters) | inherited | `core.search.encryption_wiring` |
 | Analytics / warehouse | Postgres, ClickHouse, BigQuery, DuckDB, mock | yes (equality only) | **rejected** — warehouse rows have no id | `core.analytics.encryption_wiring` |
-| Graph | Neo4j | yes | nodes + key-addressed edges; **rejected** for endpoint-identity edges | `core.graph.encryption_wiring` |
+| Graph | Neo4j, mock | yes | nodes + key-addressed edges; **rejected** for endpoint-identity edges | `core.graph.encryption_wiring` |
 
 - **Reach:** at rest. Fields are sealed on write and decrypted out of *every* read path
   — search results, warehouse offset/cursor/chunked/projection reads, graph

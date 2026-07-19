@@ -1,6 +1,11 @@
 """Shared graph integration helpers."""
 
-from .encryption import GraphCodecs, GraphKindCipher, resolve_graph_codecs
+from .encryption import (
+    GraphCodecs,
+    GraphKindCipher,
+    plaintext_graph_codecs,
+    resolve_graph_codecs,
+)
 from .endpoints import (
     ENDPOINTS_CONFLICT_CODE,
     endpoints_conflict,
@@ -16,6 +21,7 @@ from .streaming import (
 __all__ = [
     "GraphCodecs",
     "GraphKindCipher",
+    "plaintext_graph_codecs",
     "resolve_graph_codecs",
     "ENDPOINTS_CONFLICT_CODE",
     "endpoints_conflict",
