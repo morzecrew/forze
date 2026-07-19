@@ -73,6 +73,16 @@ class InvocationMetadataMiddleware:
     this is a declared decision that the app owns the envelope on websocket routes.
     """
 
+    allowed_websocket_paths: frozenset[str] = attrs.field(
+        default=frozenset(), kw_only=True, converter=frozenset
+    )
+    """Exact paths whose websocket scopes pass through (governed routes only).
+
+    The narrow alternative to the app-wide ``allow_raw_websockets`` hatch: list the
+    framework-attached websocket routes, which bind their own per-frame envelope.
+    Exact paths, never prefixes.
+    """
+
     # ....................... #
 
     @staticmethod
@@ -142,7 +152,11 @@ class InvocationMetadataMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
-            if scope["type"] == "websocket" and not self.allow_raw_websockets:
+            if (
+                scope["type"] == "websocket"
+                and not self.allow_raw_websockets
+                and scope.get("path") not in self.allowed_websocket_paths
+            ):
                 await refuse_raw_websocket(scope, receive, send)
                 return
 

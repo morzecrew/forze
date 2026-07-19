@@ -223,6 +223,28 @@ class TestNestedSchemas:
         with pytest.raises(CoreException):
             asyncapi_document(catalog)
 
+    def test_standalone_ws_command_routes_document_like_router_commands(self) -> None:
+        from typing import Any
+
+        from forze.application.integrations.realtime import RealtimeCommandRoute
+
+        ws_commands = (
+            RealtimeCommandRoute[Any, Any](
+                event="note.create",
+                operation="note_create",
+                payload_type=_CreateNote,
+                ack_type=_NoteAck,
+            ),
+        )
+        document = asyncapi_document(_CATALOG, commands=ws_commands)
+
+        assert document["operations"]["receive.note.create"]["action"] == "receive"
+        assert document["channels"]["note.create"]["x-forze-operation"] == "note_create"
+
+        # a router command colliding with a standalone route is refused like any dup
+        with pytest.raises(CoreException):
+            asyncapi_document(_CATALOG, _router(), commands=ws_commands)
+
     def test_ack_payload_derives_from_the_kernel_model(self) -> None:
         document = asyncapi_document(_CATALOG)
         payload = document["components"]["messages"][ACK_EVENT]["payload"]

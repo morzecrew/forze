@@ -54,6 +54,17 @@ class SecurityContextMiddleware:
     owns identity, tenancy, and error shaping on every websocket route itself.
     """
 
+    allowed_websocket_paths: frozenset[str] = attrs.field(
+        default=frozenset(), kw_only=True, converter=frozenset
+    )
+    """Exact paths whose websocket scopes pass through (governed routes only).
+
+    The narrow alternative to the app-wide ``allow_raw_websockets`` hatch: list the
+    framework-attached websocket routes (e.g. ``attach_realtime_ws_route``'s path),
+    which resolve identity at connect themselves. Exact paths, never prefixes — a
+    prefix is one refactor away from an ungoverned hole.
+    """
+
     # ....................... #
 
     async def _resolve_authn(
@@ -89,7 +100,11 @@ class SecurityContextMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
-            if scope["type"] == "websocket" and not self.allow_raw_websockets:
+            if (
+                scope["type"] == "websocket"
+                and not self.allow_raw_websockets
+                and scope.get("path") not in self.allowed_websocket_paths
+            ):
                 await refuse_raw_websocket(scope, receive, send)
                 return
 

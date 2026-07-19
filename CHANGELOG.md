@@ -64,6 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Transport-agnostic presence** — open SSE streams join the same presence rooms as Socket.IO connections (`attach_realtime_sse_route(presence=…)` + `realtime_sse_presence_heartbeat_lifecycle_step`); `RealtimePresence` / `InMemoryRealtimePresence` / `room_for` move to the kernel (`forze_socketio` re-exports unchanged); `periodic_lifecycle_step` joins `forze.application.execution.background`.
 - **Tenant-sharded SSE tail** — `realtime_sse_sharded_tail_lifecycle_step(hub, shard=…)`: per-tenant tail loops for a `tenant_aware` realtime stream route, tenant trusted from the stream identity (no header trust) — the SSE analog of `TenantShardedSignalSource`.
 - **Fail-closed SSE topics** — `?topics=` requires an `authorize_topics` resolver (`TopicAuthorizer`; refused with `realtime_topics_unauthorized` unless every topic is granted) and is bounded by `max_topics` (default 32, `realtime_topics_limit`).
+- **Raw WebSocket transport** — `attach_realtime_ws_route` (`forze_fastapi.realtime`): mailbox replay + live hub egress, inline `realtime.ack` / `realtime.reauth`, and governed `{"type": "cmd"}` dispatch through a frozen registry with `RealtimeCommandRoute` declarations, per-frame `idempotency_key`/`deadline_budget`, in-flight and frame-size bounds; the middlewares gain `allowed_websocket_paths` (exact-path allowlist for governed WS routes).
+- **Shared command routes** — `RealtimeCommandRoute` moves to `forze.application.integrations.realtime` (`SocketIOCommandRoute` re-exported unchanged); `asyncapi_document(commands=…)` documents standalone WS command routes.
 
 ### Changed
 

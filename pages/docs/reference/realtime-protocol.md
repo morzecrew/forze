@@ -1,8 +1,9 @@
 # Realtime wire protocol
 
 The client contract for the realtime egress plane, normative for every transport.
-One protocol, currently **version 1**, served over two transports: the Socket.IO
-gateway and the SSE route. A client written against this page works against either.
+One protocol, currently **version 1**, served over three transports: the Socket.IO
+gateway, the SSE route, and the raw-WebSocket route. A client written against this
+page works against any of them.
 
 The machine-readable twin of this page is the [AsyncAPI export](#asyncapi-export) —
 generated from the same typed catalog the server validates against, so it cannot
@@ -13,11 +14,11 @@ drift from the code.
 A connection negotiates its protocol version **once, at connect** — frames never
 carry a version, and a connection speaks exactly one version for its lifetime.
 
-| Field | Socket.IO (`auth` payload) | SSE (query parameter) |
-|---|---|---|
-| `protocol` | `io(url, { auth: { protocol: 1 } })` | `GET /realtime/sse?protocol=1` |
-| `device_id` | `auth.device_id` (optional) | `?device_id=` (optional) |
-| credentials | `auth.token` (resolver-defined) | HTTP credentials (middleware-resolved) |
+| Field | Socket.IO (`auth` payload) | SSE (query parameter) | WebSocket (query parameter) |
+|---|---|---|---|
+| `protocol` | `io(url, { auth: { protocol: 1 } })` | `GET /realtime/sse?protocol=1` | `wss://…/realtime/ws?protocol=1` |
+| `device_id` | `auth.device_id` (optional) | `?device_id=` (optional) | `?device_id=` (optional) |
+| credentials | `auth.token` (resolver-defined) | HTTP credentials (middleware-resolved) | upgrade-request headers/query (resolver-defined) |
 
 Rules:
 
@@ -59,6 +60,9 @@ Transport binding:
   catalog event name, the SSE `id:` field is set for durable signals (so the
   browser's automatic `Last-Event-ID` names a durable event), and `data:` is the
   JSON envelope above. Comment lines (`: keepalive`) are heartbeats — ignore them.
+- **WebSocket**: one JSON text frame per signal with the event name in-band —
+  `{"event": <name>, "id": <id|null>, "data": <payload>}`. Keepalive is WS
+  protocol-level ping/pong (the server's; no application frames).
 
 ## Acknowledgement
 
@@ -68,6 +72,7 @@ and including it for this device, advancing the device's replay cursor.
 - **Socket.IO**: `socket.emit("realtime.ack", { up_to: "<event id>" })`.
 - **SSE**: `POST <sse path>/ack` with body `{ "up_to": "<event id>" }` (same
   `device_id` query parameter as the stream, so both derive the same cursor).
+- **WebSocket**: send `{"type": "realtime.ack", "up_to": "<event id>"}` inline.
 
 A client that never acks still converges: replay is idempotent client-side (dedup
 by `id`) and bounded server-side by mailbox retention.
@@ -82,25 +87,54 @@ On connect, everything past the device's cursor is redelivered, oldest first:
   native resume beats a stale server cursor. Without a live tail configured the
   stream ends after replay and the browser's auto-reconnect (with `Last-Event-ID`)
   gives long-poll-style delivery.
+- **WebSocket** replays immediately after accept; a `?last_event_id=` query
+  parameter resumes precisely, beating the stored cursor. Without a live hub the
+  socket stays open for acks and commands after the replay.
 
 Only **principal-addressed durable** signals are replayed (they are mailboxed);
 topic signals are live-only, at-most-once.
 
+## Duplex commands (WebSocket framing)
+
+The raw-WebSocket transport frames its ingress as JSON objects with a `type`:
+
+```json
+{ "type": "cmd", "event": "note.create", "cid": "<correlation id>", "payload": { … } }
+```
+
+- `event` names a server-declared command route; `payload` is exactly the route's
+  declared model. `cid` is client-chosen and echoed verbatim on the ack.
+- Optional per-frame governance: `idempotency_key` (string) and `deadline_budget`
+  (seconds) bind onto the invocation exactly as the HTTP headers do.
+- Every command is acknowledged: `{ "type": "ack", "cid", "data": <result> }` on
+  success, `{ "type": "ack", "cid", "error": <error envelope> }` on failure.
+- Limits are fail-loud: an unparseable or unknown-`type` frame gets a
+  `{ "type": "error", "error": … }` frame (`realtime_invalid_frame`); a command
+  past the server's in-flight bound is error-acked (`realtime_commands_limit`)
+  without running; an oversized frame closes the socket (code 1009).
+
+Commands are unordered with respect to each other (they dispatch concurrently up
+to the in-flight bound) — sequence-dependent commands must wait for their acks.
+
 ## Errors
 
-- **Connect refusal** (bad credentials, unsupported protocol): Socket.IO refuses
-  the connection with a client-safe message; SSE responds with the standard error
-  envelope and the `X-Error-Code` header.
-- **Command errors** (Socket.IO inbound): the ack callback receives
-  `{ "error": { "detail", "code", "kind", "context" } }` — the same error envelope
-  shape the HTTP routes render.
+- **Connect refusal** (bad credentials, unsupported protocol, ungranted topics):
+  Socket.IO refuses the connection with a client-safe message; SSE responds with
+  the standard error envelope and the `X-Error-Code` header; WebSocket accepts and
+  immediately closes with code 1008, the client-safe summary in the close reason.
+- **Command errors** (Socket.IO ack callbacks, WebSocket `ack` frames): the error
+  is `{ "detail", "code", "kind", "context" }` — the same envelope shape the HTTP
+  routes render.
 
-## Re-authentication (Socket.IO)
+## Re-authentication
 
-A rotating token is refreshed in place with
-`socket.emit("realtime.reauth", { token, … })` — same principal and tenant only;
-anything else is a re-login, which reconnects. The protocol version is **not**
-renegotiated (it is fixed per connection).
+A rotating token is refreshed in place — same principal and tenant only; anything
+else is a re-login, which reconnects. The protocol version is **not** renegotiated
+(it is fixed per connection).
+
+- **Socket.IO**: `socket.emit("realtime.reauth", { token, … })`.
+- **WebSocket**: send `{ "type": "realtime.reauth", "cid", "auth": { token, … } }`;
+  acknowledged like a command (`{"ok": true}` or an error ack).
 
 ## AsyncAPI export
 
@@ -137,4 +171,4 @@ npx @asyncapi/cli generate models typescript http://localhost:8000/asyncapi.json
 
 | Protocol | Changes |
 |---|---|
-| 1 | The `{id, data}` envelope, cumulative `realtime.ack`, `realtime.reauth`, connect-time negotiation. |
+| 1 | The `{id, data}` envelope, cumulative `realtime.ack`, `realtime.reauth`, connect-time negotiation. The WebSocket binding (in-band event name, typed ingress frames) is an additive transport binding within protocol 1. |

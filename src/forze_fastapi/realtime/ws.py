@@ -1,0 +1,568 @@
+"""The raw-WebSocket realtime transport — egress twin of SSE, duplex twin of Socket.IO.
+
+One governed route carries both halves of the wire protocol:
+
+- **Egress** (always): on connect — identity resolved by the app's resolver from the
+  upgrade request, protocol negotiated, topics authorized fail-closed — the socket
+  replays the offline mailbox past the device's cursor and then forwards live hub
+  signals, every frame the shared envelope with the event name in-band:
+  ``{"event": <name>, "id": <id|null>, "data": <payload>}``.
+- **Ingress** (frame-typed): ``{"type": "realtime.ack", "up_to": …}`` advances the
+  replay cursor; ``{"type": "realtime.reauth", "auth": …}`` re-verifies a rotating
+  credential in place (same principal and tenant only); and — when a registry and
+  command routes are attached — ``{"type": "cmd", "event", "cid", "payload"}``
+  dispatches through the same frozen-registry discipline as HTTP and Socket.IO,
+  acknowledged as ``{"type": "ack", "cid", "data"}`` or
+  ``{"type": "ack", "cid", "error": <shared error envelope>}``.
+
+The middlewares refuse websocket scopes, so list this route's path in their
+``allowed_websocket_paths`` — never ``allow_raw_websockets=True``, which would
+reopen the hole for every route. Keepalive is WS protocol-level ping/pong (the
+ASGI server's; e.g. uvicorn's ``ws_ping_interval``) — no application frames.
+Limits are fail-loud: an oversized frame closes the socket (1009), a command past
+the in-flight bound is error-acked without running.
+"""
+
+from forze_fastapi._compat import require_fastapi
+
+require_fastapi()
+
+# ....................... #
+
+import asyncio
+import json
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from inspect import isawaitable
+from typing import Any, cast, final
+from uuid import UUID
+
+import attrs
+from fastapi import APIRouter, WebSocket
+from pydantic import ValidationError
+from starlette.websockets import WebSocketDisconnect
+
+from forze.application.contracts.authn import AuthnIdentity, ClientIdentity
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.execution import ExecutionContext
+from forze.application.execution.context import ExecutionContextFactory
+from forze.application.execution.operations import FrozenOperationRegistry, run_operation
+from forze.application.integrations.realtime import (
+    MailboxCursors,
+    RealtimeCommandRoute,
+    RealtimeMailbox,
+    RealtimePresence,
+    acknowledge_up_to,
+    iter_replay,
+    negotiate_realtime_protocol,
+    resolve_client_key,
+)
+from forze.base.exceptions import (
+    CoreException,
+    ErrorEnvelope,
+    FrameErr,
+    error_envelope,
+    exc,
+    guard_frame,
+)
+from forze.base.logging import Logger
+from forze.base.primitives import uuid7
+from forze.base.scrubbing import sanitize_pydantic_errors
+
+from .._logging import ForzeFastAPILogger
+from .hub import RealtimeSseHub, SseSubscription, presence_rooms
+from .sse import (
+    TopicAuthorizer,
+    _await_hub_ready,  # pyright: ignore[reportPrivateUsage]
+    _parse_topics,  # pyright: ignore[reportPrivateUsage]
+    _require_topic_grant,  # pyright: ignore[reportPrivateUsage]
+    _resolve_since,  # pyright: ignore[reportPrivateUsage]
+)
+
+# ----------------------- #
+
+_logger = Logger(ForzeFastAPILogger.ERRORS)
+
+__all__ = [
+    "WsConnect",
+    "WsConnection",
+    "WsConnectionResolver",
+    "attach_realtime_ws_route",
+]
+
+WS_POLICY_CLOSE = 1008
+"""Close code for refused connects (auth, protocol, topics) — policy violation."""
+
+WS_TOO_BIG_CLOSE = 1009
+"""Close code for an oversized inbound frame."""
+
+FRAME_ACK = "realtime.ack"
+FRAME_REAUTH = "realtime.reauth"
+FRAME_CMD = "cmd"
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class WsConnect:
+    """What the connection resolver sees — the socket plus an optional auth payload.
+
+    At connect time *auth* is ``None`` (resolve from the upgrade request's headers /
+    query parameters); at ``realtime.reauth`` it carries the frame's fresh payload.
+    """
+
+    websocket: WebSocket
+    """The live socket — upgrade-request headers and query parameters included."""
+
+    auth: Mapping[str, Any] | None = None
+    """A ``realtime.reauth`` payload, or ``None`` for the initial connect."""
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class WsConnection:
+    """The resolved identity of a live WebSocket connection."""
+
+    authn: AuthnIdentity
+    """Authenticated principal."""
+
+    tenant: UUID | None = None
+    """The connection's tenant; scopes its rooms, mailbox, and live matching."""
+
+    client: ClientIdentity | None = None
+    """The device/session this connection is, keying its offline-replay cursor."""
+
+    # ....................... #
+
+    @property
+    def principal(self) -> str:
+        return str(self.authn.principal_id)
+
+    # ....................... #
+
+    def client_key(self, fallback: str) -> str:
+        """The stable cursor key: ``device_id``/``session_id``, else *fallback*."""
+
+        return resolve_client_key(self.client, fallback=fallback)
+
+
+WsConnectionResolver = Callable[[WsConnect], "WsConnection | None | Awaitable[WsConnection | None]"]
+"""Resolve a connection's identity from the upgrade request (and reauth payloads).
+
+Return ``None`` for anonymous — which this route refuses (replay, ack, and command
+dispatch all need a principal) — or raise a client-safe
+:class:`~forze.base.exceptions.CoreException` to refuse the connection.
+"""
+
+
+# ----------------------- #
+
+
+def _render_error(envelope: ErrorEnvelope) -> dict[str, Any]:
+    """The shared error envelope on the WS wire — same shape as the Socket.IO ack."""
+
+    payload: dict[str, Any] = {
+        "detail": envelope.detail,
+        "code": envelope.code,
+        "kind": envelope.kind.value,
+    }
+
+    if envelope.context is not None:
+        payload["context"] = envelope.context
+
+    return payload
+
+
+def _egress_frame(*, event: str, event_id: str | None, payload: Mapping[str, Any]) -> str:
+    """One delivery frame: the `{id, data}` envelope with the event name in-band."""
+
+    return json.dumps(
+        {"event": event, "id": event_id, "data": dict(payload)}, separators=(",", ":")
+    )
+
+
+async def _resolve(resolver: WsConnectionResolver, connect: WsConnect) -> WsConnection | None:
+    result = resolver(connect)
+
+    return await result if isawaitable(result) else result
+
+
+def _bind(ctx: ExecutionContext, connection: WsConnection) -> Any:
+    """Bind the connection's identity for a unit of work (mailbox, ack, dispatch)."""
+
+    tenant = TenantIdentity(tenant_id=connection.tenant) if connection.tenant is not None else None
+
+    return ctx.inv_ctx.bind_identity(authn=connection.authn, tenant=tenant)
+
+
+def _log_server_error(core: CoreException | None, error: BaseException) -> None:
+    del core  # the raised exception carries the full picture for the log
+    _logger.critical_exception("WebSocket realtime unit failed", exc=error)
+
+
+# ----------------------- #
+
+
+@final
+@attrs.define(slots=True)
+class _WsSession:
+    """Mutable per-connection state — reauth swaps the identity in place."""
+
+    connection: WsConnection
+
+
+# ----------------------- #
+
+
+def attach_realtime_ws_route(
+    router: APIRouter,
+    *,
+    ctx_dep: ExecutionContextFactory,
+    resolve: WsConnectionResolver,
+    mailbox_factory: Callable[[ExecutionContext], RealtimeMailbox],
+    cursors_factory: Callable[[ExecutionContext], MailboxCursors],
+    hub: RealtimeSseHub | None = None,
+    presence: RealtimePresence | None = None,
+    authorize_topics: TopicAuthorizer | None = None,
+    max_topics: int = 32,
+    registry: FrozenOperationRegistry | None = None,
+    commands: Sequence[RealtimeCommandRoute[Any, Any]] | None = None,
+    max_frame_bytes: int = 64 * 1024,
+    max_inflight_commands: int = 16,
+    path: str = "/realtime/ws",
+) -> APIRouter:
+    """Attach the governed realtime WebSocket endpoint to *router*.
+
+    Identity is resolved by *resolve* from the upgrade request — the middlewares
+    skip websocket scopes, so add *path* to their ``allowed_websocket_paths``.
+    Share *hub* (and its tail lifecycle step) with the SSE route for the live leg;
+    without one the socket serves replay + acks only. *registry* + *commands*
+    enable ``cmd`` frame dispatch — the same
+    :class:`~forze.application.integrations.realtime.RealtimeCommandRoute`
+    declarations a Socket.IO namespace router registers.
+    """
+
+    if max_topics <= 0:
+        raise exc.configuration("max_topics must be positive")
+
+    if max_frame_bytes <= 0:
+        raise exc.configuration("max_frame_bytes must be positive")
+
+    if max_inflight_commands <= 0:
+        raise exc.configuration("max_inflight_commands must be positive")
+
+    if commands and registry is None:
+        raise exc.configuration(
+            "WebSocket command routes need a registry to dispatch against — pass registry="
+        )
+
+    command_table: dict[str, RealtimeCommandRoute[Any, Any]] = {}
+
+    for route in commands or ():
+        if route.event in command_table:
+            raise exc.configuration(f"WebSocket command event {route.event!r} is declared twice")
+
+        command_table[route.event] = route
+
+    # ....................... #
+
+    async def ws_endpoint(websocket: WebSocket) -> None:
+        ctx = ctx_dep()
+
+        async def _handshake() -> tuple[WsConnection, frozenset[str]]:
+            negotiate_realtime_protocol(websocket.query_params.get("protocol"))
+            connection = await _resolve(resolve, WsConnect(websocket=websocket))
+
+            if connection is None:
+                raise exc.authentication(
+                    "The realtime WebSocket requires an authenticated principal"
+                )
+
+            topic_set = _parse_topics(websocket.query_params.get("topics"))
+
+            if topic_set:
+                await _require_topic_grant(
+                    ctx,
+                    authorize_topics,
+                    principal=connection.principal,
+                    tenant=connection.tenant,
+                    requested=topic_set,
+                    max_topics=max_topics,
+                )
+
+            return connection, topic_set
+
+        outcome = await guard_frame(_handshake, on_server_error=_log_server_error)
+
+        if isinstance(outcome, FrameErr):
+            # accepted-then-closed so the client-safe summary rides the close reason
+            # (a pre-accept close is an opaque 403 handshake rejection)
+            await websocket.accept()
+            await websocket.close(code=WS_POLICY_CLOSE, reason=outcome.envelope.detail[:120])
+            return
+
+        connection, topic_set = outcome.value
+        session = _WsSession(connection=connection)
+        await websocket.accept()
+
+        subscription: SseSubscription | None = (
+            hub.subscribe(
+                principal=connection.principal, tenant=connection.tenant, topics=topic_set
+            )
+            if hub is not None
+            else None
+        )
+        member_key = subscription.key if subscription is not None else f"ws:{uuid7()}"
+        rooms = (
+            presence_rooms(
+                principal=connection.principal, tenant=connection.tenant, topics=topic_set
+            )
+            if presence is not None
+            else ()
+        )
+        client_key = connection.client_key(member_key)
+
+        # ....................... #
+
+        async def _send(payload: str) -> None:
+            await websocket.send_text(payload)
+
+        async def _send_json(payload: dict[str, Any]) -> None:
+            await _send(json.dumps(payload, separators=(",", ":")))
+
+        async def _sender() -> None:
+            if hub is not None:
+                await _await_hub_ready(hub)  # a fast-forward-skipped durable is
+                # in the mailbox by now — this replay delivers it (same gate as SSE)
+
+            with _bind(ctx, session.connection):
+                mailbox = mailbox_factory(ctx)
+                cursors = cursors_factory(ctx)
+                since = await _resolve_since(
+                    mailbox,
+                    cursors,
+                    principal=session.connection.principal,
+                    client_key=client_key,
+                    last_event_id=websocket.query_params.get("last_event_id"),
+                )
+
+                async for entry in iter_replay(
+                    mailbox, principal=session.connection.principal, since=since
+                ):
+                    await _send(
+                        _egress_frame(
+                            event=entry.event, event_id=entry.event_id, payload=entry.payload
+                        )
+                    )
+
+            if subscription is None:
+                return  # replay + acks only; the socket stays open for the ingress half
+
+            while True:
+                signal, event_id = await subscription.queue.get()
+                await _send(
+                    _egress_frame(event=signal.event, event_id=event_id, payload=signal.payload)
+                )
+
+        # ....................... #
+
+        async def _handle_ack(frame: Mapping[str, Any]) -> None:
+            raw = frame.get("up_to")
+            event_id = str(raw) if raw else None
+
+            if event_id is None:
+                return
+
+            with _bind(ctx, session.connection):
+                await acknowledge_up_to(
+                    mailbox_factory(ctx),
+                    cursors_factory(ctx),
+                    principal=session.connection.principal,
+                    client_key=client_key,
+                    event_id=event_id,
+                )
+
+        async def _handle_reauth(frame: Mapping[str, Any], cid: Any) -> None:
+            async def _unit() -> dict[str, Any]:
+                refreshed = await _resolve(
+                    resolve, WsConnect(websocket=websocket, auth=frame.get("auth"))
+                )
+
+                if (
+                    refreshed is None
+                    or refreshed.principal != session.connection.principal
+                    or refreshed.tenant != session.connection.tenant
+                ):
+                    raise exc.authentication(
+                        "Reauth must resolve the same principal and tenant — anything else "
+                        "is a re-login, which reconnects"
+                    )
+
+                session.connection = refreshed
+
+                return {"ok": True}
+
+            await _ack_outcome(cid, await guard_frame(_unit, on_server_error=_log_server_error))
+
+        async def _dispatch(frame: Mapping[str, Any], cid: Any) -> None:
+            async def _unit() -> Any:
+                route = command_table.get(str(frame.get("event")))
+
+                if route is None:
+                    raise exc.not_found(
+                        f"Unknown realtime command {frame.get('event')!r}",
+                        code="realtime_command_unknown",
+                    )
+
+                try:
+                    args = route.parse_payload(frame.get("payload"))
+
+                except ValidationError as error:
+                    raise exc.validation(
+                        "Invalid command payload",
+                        code="realtime_invalid_payload",
+                        details={"errors": sanitize_pydantic_errors(error.errors())},
+                    ) from error
+
+                idempotency_key = frame.get("idempotency_key")
+                budget = frame.get("deadline_budget")
+
+                with (
+                    _bind(ctx, session.connection),
+                    ctx.inv_ctx.bind_idempotency(str(idempotency_key) if idempotency_key else None),
+                    # None is a no-op passthrough; a bound budget is tighten-only
+                    ctx.inv_ctx.bind_deadline(
+                        float(budget) if isinstance(budget, (int, float)) else None
+                    ),
+                ):
+                    result = await run_operation(
+                        registry,  # type: ignore[arg-type] # attach refused commands without it
+                        route.operation,
+                        args,
+                        ctx,
+                    )
+
+                return route.parse_ack(result)
+
+            await _ack_outcome(cid, await guard_frame(_unit, on_server_error=_log_server_error))
+
+        async def _ack_outcome(cid: Any, outcome: Any) -> None:
+            if isinstance(outcome, FrameErr):
+                await _send_json(
+                    {"type": "ack", "cid": cid, "error": _render_error(outcome.envelope)}
+                )
+                return
+
+            await _send_json({"type": "ack", "cid": cid, "data": outcome.value})
+
+        # ....................... #
+
+        async def _receiver(tasks: asyncio.TaskGroup) -> None:
+            inflight = asyncio.Semaphore(max_inflight_commands)
+
+            async def _bounded(coro: Awaitable[None]) -> None:
+                try:
+                    await coro
+
+                finally:
+                    inflight.release()
+
+            while True:
+                raw = await websocket.receive_text()  # WebSocketDisconnect unwinds all
+
+                if len(raw.encode()) > max_frame_bytes:
+                    await websocket.close(code=WS_TOO_BIG_CLOSE, reason="frame too large")
+                    raise WebSocketDisconnect(WS_TOO_BIG_CLOSE)
+
+                try:
+                    parsed: Any = json.loads(raw)
+
+                except ValueError:
+                    parsed = None
+
+                if not isinstance(parsed, Mapping):
+                    await _send_json(
+                        {
+                            "type": "error",
+                            "error": _render_error(
+                                error_envelope(
+                                    exc.validation(
+                                        "Frames must be JSON objects",
+                                        code="realtime_invalid_frame",
+                                    )
+                                )
+                            ),
+                        }
+                    )
+                    continue
+
+                frame = cast("Mapping[str, Any]", parsed)
+                frame_type = frame.get("type")
+                cid = frame.get("cid")
+
+                if frame_type == FRAME_ACK:
+                    await _handle_ack(frame)
+
+                elif frame_type == FRAME_REAUTH:
+                    await _handle_reauth(frame, cid)
+
+                elif frame_type == FRAME_CMD and command_table:
+                    if inflight.locked():
+                        # past the in-flight bound: refuse loudly instead of queueing
+                        await _ack_outcome(
+                            cid,
+                            FrameErr(
+                                envelope=error_envelope(
+                                    exc.validation(
+                                        "Too many in-flight commands "
+                                        f"(limit {max_inflight_commands})",
+                                        code="realtime_commands_limit",
+                                    )
+                                )
+                            ),
+                        )
+                        continue
+
+                    await inflight.acquire()
+                    tasks.create_task(_bounded(_dispatch(frame, cid)))
+
+                else:
+                    await _send_json(
+                        {
+                            "type": "error",
+                            "error": _render_error(
+                                error_envelope(
+                                    exc.validation(
+                                        f"Unknown frame type {frame_type!r}",
+                                        code="realtime_invalid_frame",
+                                    )
+                                )
+                            ),
+                        }
+                    )
+
+        # ....................... #
+
+        try:
+            for room in rooms:
+                await presence.joined(room, member_key)  # type: ignore[union-attr]
+
+            async with asyncio.TaskGroup() as tasks:
+                tasks.create_task(_sender())
+                tasks.create_task(_receiver(tasks))
+
+        except* (WebSocketDisconnect, RuntimeError):
+            pass  # client went away (or a send raced the close) — normal teardown
+
+        finally:
+            if subscription is not None:
+                hub.unsubscribe(subscription)  # type: ignore[union-attr]
+
+            for room in rooms:
+                try:
+                    await presence.left(room, member_key)  # type: ignore[union-attr]
+
+                except Exception:
+                    _logger.exception("WS presence leave failed", room=room)
+
+    router.websocket(path, name="realtime_ws")(ws_endpoint)
+
+    return router

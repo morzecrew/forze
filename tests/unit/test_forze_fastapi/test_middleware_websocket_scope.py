@@ -116,6 +116,32 @@ class TestWebsocketScopeRefusal:
             assert sent and sent[0]["type"] == "websocket.close"
             assert sent[0]["code"] == WS_POLICY_VIOLATION
 
+    async def test_allowlisted_path_passes_through_others_still_refused(self) -> None:
+        for middleware_for in (
+            lambda inner: _security(inner, allowed_websocket_paths={"/realtime/ws"}),
+            lambda inner: InvocationMetadataMiddleware(
+                inner, ctx_dep=_execution_ctx, allowed_websocket_paths={"/realtime/ws"}
+            ),
+        ):
+            inner = _Inner()
+            middleware = middleware_for(inner)
+
+            # the governed route's exact path passes through (it resolves identity itself)
+            await middleware(
+                {"type": "websocket", "path": "/realtime/ws"}, _receive, _collector([])
+            )
+            assert inner.called
+
+            # every other websocket path stays fail-closed — and so does a prefix
+            for path in ("/realtime/ws/extra", "/other"):
+                other = _Inner()
+                sent: list[dict[str, Any]] = []
+                await middleware_for(other)(
+                    {"type": "websocket", "path": path}, _receive, _collector(sent)
+                )
+                assert not other.called
+                assert sent and sent[0]["type"] == "websocket.close"
+
     async def test_lifespan_scopes_still_pass_through(self) -> None:
         for middleware_for in (
             lambda inner: _security(inner),

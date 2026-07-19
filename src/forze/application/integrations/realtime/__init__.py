@@ -8,6 +8,7 @@ consume this kernel — neither may import the other, and adding a transport mus
 never add a delivery contract.
 """
 
+from .commands import RealtimeCommandRoute
 from .mailbox import (
     InMemoryMailboxCursors,
     InMemoryRealtimeMailbox,
@@ -38,6 +39,7 @@ __all__ = [
     "REALTIME_PROTOCOL_VERSION",
     "SUPPORTED_REALTIME_PROTOCOLS",
     "RealtimeAck",
+    "RealtimeCommandRoute",
     "negotiate_realtime_protocol",
     "acknowledge_up_to",
     "iter_replay",
