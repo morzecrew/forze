@@ -6269,6 +6269,33 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/realtime-protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Realtime wire protocol
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -7573,6 +7600,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><strong>Inventory</strong> — <code>RealtimeTransport.spec_contributions()</code> catalogs the stream/outbox/inbox legs.</li>
 <li><strong>Connection hygiene</strong> — built-in <code>realtime.reauth</code> refreshes a rotating token in place (same principal only); <code>InMemoryRealtimeMailbox</code> enforces a per-principal cap (1000).</li>
 <li><strong>Gateway crash conformance</strong> — <code>forze_dst.conformance.run_gateway_crash_delivery</code> (+ <code>GatewayCrashPoint</code>, <code>GatewayDeliveryOutcome</code>, <code>RealtimeBridge</code>): the ack-stream twin of <code>run_crash_recovery_delivery</code>; the injected bridge takes the real gateway core, and the scenario runs against the mock or a real Redis stream.</li>
+</ul>
+<p><strong>Realtime transport seams &amp; client contract</strong> — the egress plane's second transport and a machine-readable client contract.</p>
+<ul>
+<li><strong>Versioned wire protocol</strong> — normative docs page for the <code>{id, data}</code> envelope, cumulative ack, and handshake; <code>protocol: 1</code> negotiated at connect on Socket.IO and <abbr title="Server-Side Encryption">SSE</abbr> (missing = 1, unsupported refused with <code>realtime_protocol_unsupported</code>).</li>
+<li><strong>Fail-closed websocket scopes</strong> — <code>SecurityContextMiddleware</code> and <code>InvocationMetadataMiddleware</code> refuse raw <code>websocket</code> scopes; opt out per middleware with <code>allow_raw_websockets=True</code>. <strong>Breaking</strong> for apps mounting raw websocket routes behind the middlewares.</li>
+<li><strong><abbr title="Server-Side Encryption">SSE</abbr> egress</strong> — <code>forze_fastapi.realtime</code>: <code>attach_realtime_sse_route</code> (<code>text/event-stream</code> with mailbox replay, <code>Last-Event-ID</code> precedence, live tail, and <code>POST …/ack</code>) + <code>RealtimeSseHub</code> / <code>realtime_sse_tail_lifecycle_step</code> (supervised per-node broadcast tail).</li>
+<li><strong>AsyncAPI export</strong> — <code>asyncapi_document(catalog, router)</code>: AsyncAPI 3 from the typed event catalog + command router, with <code>x-forze-audience-kinds</code> / <code>x-forze-offline-delivery</code> extensions and the built-in <code>realtime.ack</code>; <code>attach_asyncapi_route(router, document=…)</code> serves it <code>/openapi.json</code>-style for client codegen.</li>
+<li><strong>Transport-neutral kernel</strong> — mailbox/cursor seams, in-memory impls, client-key ladder, replay/ack helpers, and protocol negotiation move to <code>forze.application.integrations.realtime</code>; <code>forze_socketio</code> re-exports unchanged.</li>
+<li><strong>Pubsub live lane</strong> — <code>PubSubSignalSource</code> (broadcast, at-most-once alternative behind the same source seam) + <code>realtime_pubsub_spec</code> and <code>build_realtime_pubsub_publisher</code> (live-only, no <code>stage</code>); durable delivery keeps riding outbox → stream → mailbox.</li>
+<li><strong>Transport-agnostic presence</strong> — open <abbr title="Server-Side Encryption">SSE</abbr> streams join the same presence rooms as Socket.IO connections (<code>attach_realtime_sse_route(presence=…)</code> + <code>realtime_sse_presence_heartbeat_lifecycle_step</code>); <code>RealtimePresence</code> / <code>InMemoryRealtimePresence</code> / <code>room_for</code> move to the kernel (<code>forze_socketio</code> re-exports unchanged); <code>periodic_lifecycle_step</code> joins <code>forze.application.execution.background</code>.</li>
+<li><strong>Tenant-sharded <abbr title="Server-Side Encryption">SSE</abbr> tail</strong> — <code>realtime_sse_sharded_tail_lifecycle_step(hub, shard=…)</code>: per-tenant tail loops for a <code>tenant_aware</code> realtime stream route, tenant trusted from the stream identity (no header trust) — the <abbr title="Server-Side Encryption">SSE</abbr> analog of <code>TenantShardedSignalSource</code>.</li>
+<li><strong>Fail-closed <abbr title="Server-Side Encryption">SSE</abbr> topics</strong> — <code>?topics=</code> requires an <code>authorize_topics</code> resolver (<code>TopicAuthorizer</code>; refused with <code>realtime_topics_unauthorized</code> unless every topic is granted) and is bounded by <code>max_topics</code> (default 32, <code>realtime_topics_limit</code>).</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <p><strong>Breaking — graph</strong></p>

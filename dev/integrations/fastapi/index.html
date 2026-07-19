@@ -3233,6 +3233,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#realtime-egress-over-sse" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Realtime egress over SSE
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5387,6 +5398,33 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/realtime-protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Realtime wire protocol
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -5632,6 +5670,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#realtime-egress-over-sse" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Realtime egress over SSE
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5792,6 +5841,13 @@ budget</a> as <code>X-Forze-Deadline-Budget</code>, opt in to
 honoring it with <code>InvocationMetadataMiddleware(...,
 bind_deadline_from_header=True)</code> — binding is tighten-only, so a forged value
 can only shorten the sender's own request.</p>
+<p>Both middlewares <strong>refuse raw websocket scopes</strong> (the upgrade handshake is closed
+with a policy violation): identity, tenancy, and the envelope are resolved for HTTP
+only, so a raw <code>@app.websocket</code> route would otherwise run with none of them —
+silently. If you deliberately self-manage websocket routes, opt out per middleware
+with <code>allow_raw_websockets=True</code>; you then own identity, tenancy, and error shaping
+on every websocket route yourself. For governed duplex realtime, use the
+<a href="../socketio/">Socket.IO integration</a>; for server-push, the <abbr title="Server-Side Encryption">SSE</abbr> route below.</p>
 <h2 id="map-errors-to-http">Map errors to HTTP<a class="headerlink" href="#map-errors-to-http" title="Permanent link">&para;</a></h2>
 <p><code>register_exception_handlers</code> turns a <code>CoreException</code> into a response — the kind
 decides the status, the <code>code</code> rides an error-code header, and details are
@@ -5846,6 +5902,59 @@ declares the auth scheme in the generated OpenAPI. The full catalog — <code>re
 <code>rpc</code> styles, every endpoint each generator produces, the <code>include</code>/<code>path_overrides</code>
 knobs, and the upload flow — is in
 <a href="../../reference/fastapi-routes/">FastAPI route generators</a>.</p>
+<h2 id="realtime-egress-over-sse">Realtime egress over <abbr title="Server-Side Encryption">SSE</abbr><a class="headerlink" href="#realtime-egress-over-sse" title="Permanent link">&para;</a></h2>
+<p><code>attach_realtime_sse_route</code> serves the <a href="../../data-events/realtime/">realtime egress
+plane</a> as an authenticated <code>text/event-stream</code>
+endpoint — the browser-native transport when a duplex socket is more than you
+need. On connect it replays the offline mailbox past the device's cursor (a
+browser-supplied <code>Last-Event-ID</code> beats the stored cursor), then tails live
+signals from a per-node hub; a <code>POST …/ack</code> endpoint alongside carries the
+cumulative ack. Frames use the same versioned <code>{id, data}</code> envelope as the
+Socket.IO gateway — one <a href="../../reference/realtime-protocol/">wire protocol</a>,
+two transports:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.realtime</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">RealtimeSseHub</span><span class="p">,</span>
+    <span class="n">attach_realtime_sse_route</span><span class="p">,</span>
+    <span class="n">realtime_sse_tail_lifecycle_step</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">hub</span> <span class="o">=</span> <span class="n">RealtimeSseHub</span><span class="p">()</span>
+<span class="n">attach_realtime_sse_route</span><span class="p">(</span>
+    <span class="n">router</span><span class="p">,</span>
+    <span class="n">ctx_dep</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">,</span>
+    <span class="n">mailbox_factory</span><span class="o">=</span><span class="n">build_realtime_mailbox</span><span class="p">,</span>  <span class="c1"># the same stores the gateway fills</span>
+    <span class="n">cursors_factory</span><span class="o">=</span><span class="n">build_realtime_cursors</span><span class="p">,</span>
+    <span class="n">hub</span><span class="o">=</span><span class="n">hub</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="c1"># register alongside the app&#39;s lifecycle steps: one supervised tail loop per node</span>
+<span class="n">step</span> <span class="o">=</span> <span class="n">realtime_sse_tail_lifecycle_step</span><span class="p">(</span><span class="n">hub</span><span class="p">,</span> <span class="n">stream_spec</span><span class="o">=</span><span class="n">realtime_stream_spec</span><span class="p">())</span>
+</code></pre></div>
+<p>The live leg reads the realtime stream with a plain (non-group) tail — broadcast
+semantics, so every node sees every signal, with zero consumer-group lifecycle —
+and is at-most-once by contract: the mailbox carries the durable guarantee, and the
+Socket.IO gateway remains its sole writer. Without a hub the endpoint is
+catch-up-only (the browser's auto-reconnect gives long-poll-style delivery). Topics
+are subscribed per connection with <code>?topics=a,b</code> (live-only, like Socket.IO rooms)
+and are <strong>fail-closed</strong>: they require an <code>authorize_topics</code> resolver — <code>(ctx,
+principal, tenant, requested) -&gt; granted</code> — and the connection is refused
+(<code>realtime_topics_unauthorized</code>) unless every requested topic is granted. Topic
+membership is the app's authorization decision, exactly as Socket.IO topic rooms
+are joined by app code; the requested set is also bounded (<code>max_topics</code>, default
+32).</p>
+<p>On the <a href="../../identity-tenancy-enc/multi-tenancy/">tenancy ladder</a>'s namespace tier —
+the realtime stream route wired <code>tenant_aware</code> — use
+<code>realtime_sse_sharded_tail_lifecycle_step(hub, shard=shard)</code> instead: one supervised
+tail loop per shard tenant, each bound to its tenant, so signals fan out under the
+<strong>stream's</strong> trusted identity rather than an untrusted header (the <abbr title="Server-Side Encryption">SSE</abbr> analog of
+<code>TenantShardedSignalSource</code>). Hand it the same <code>RealtimeShard</code> the publish-side
+steps use.</p>
+<p>Pass the <strong>same</strong> presence store the Socket.IO side uses
+(<code>attach_realtime_sse_route(..., presence=...)</code>) and open <abbr title="Server-Side Encryption">SSE</abbr> streams join their
+principal/topic rooms for the connection's lifetime — so "is this user online"
+counts an <abbr title="Server-Side Encryption">SSE</abbr> stream and a socket identically. With a TTL-backed store (e.g.
+<code>RedisRealtimePresence</code>) also register
+<code>realtime_sse_presence_heartbeat_lifecycle_step(hub, presence)</code> so live streams
+re-assert within the TTL.</p>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <p>Unlike a backend, FastAPI doesn't implement Forze contracts — it's the edge that
 runs them. The surface, at a glance:</p>
@@ -5880,6 +5989,22 @@ runs them. The surface, at a glance:</p>
 <tr>
 <td><code>attach_document_routes</code> / <code>attach_search_routes</code> / <code>attach_storage_routes</code> / <code>attach_authn_routes</code></td>
 <td>project a frozen registry's operations onto a router</td>
+</tr>
+<tr>
+<td><code>attach_realtime_sse_route</code> / <code>realtime_sse_tail_lifecycle_step</code></td>
+<td>realtime egress over <abbr title="Server-Side Encryption">SSE</abbr>: mailbox replay + per-node live tail</td>
+</tr>
+<tr>
+<td><code>realtime_sse_sharded_tail_lifecycle_step</code></td>
+<td>namespace-tier <abbr title="Server-Side Encryption">SSE</abbr>: per-tenant tail loops, tenant trusted from the stream</td>
+</tr>
+<tr>
+<td><code>realtime_sse_presence_heartbeat_lifecycle_step</code></td>
+<td><abbr title="Server-Side Encryption">SSE</abbr> streams report into the shared presence store (TTL heartbeat)</td>
+</tr>
+<tr>
+<td><code>attach_asyncapi_route</code></td>
+<td>serve the app-built AsyncAPI document, <code>/openapi.json</code>-style</td>
 </tr>
 <tr>
 <td><code>apply_openapi_security</code></td>

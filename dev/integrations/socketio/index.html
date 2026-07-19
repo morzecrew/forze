@@ -5415,6 +5415,33 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/realtime-protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Realtime wire protocol
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -5900,13 +5927,23 @@ auto-joins the principal room, so do not also give <code>ForzeSocketIOAdapter</c
 use the same id the gateway joins with (<code>str(authn.principal_id)</code>).</p>
 <h3 id="the-delivery-envelope-client-contract">The delivery envelope (client contract)<a class="headerlink" href="#the-delivery-envelope-client-contract" title="Permanent link">&para;</a></h3>
 <p>Every frame is a uniform envelope — <code>{ "id": &lt;id|null&gt;, "data": &lt;payload&gt; }</code>. Durable
-frames carry the stable event id (dedup on it); ephemeral frames carry <code>null</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="nx">socket</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s2">&quot;order.shipped&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">({</span><span class="w"> </span><span class="nx">id</span><span class="p">,</span><span class="w"> </span><span class="nx">data</span><span class="w"> </span><span class="p">})</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
+frames carry the stable event id (dedup on it); ephemeral frames carry <code>null</code>. The
+contract is versioned: send <code>protocol: 1</code> in the connect <code>auth</code> (missing means 1; an
+unsupported version is refused with <code>realtime_protocol_unsupported</code>), and ignore
+unknown envelope fields — additive changes never bump the version:</p>
+<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">socket</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">io</span><span class="p">(</span><span class="nx">url</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">auth</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">token</span><span class="p">,</span><span class="w"> </span><span class="nx">device_id</span><span class="p">,</span><span class="w"> </span><span class="nx">protocol</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">});</span>
+
+<span class="nx">socket</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s2">&quot;order.shipped&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">({</span><span class="w"> </span><span class="nx">id</span><span class="p">,</span><span class="w"> </span><span class="nx">data</span><span class="w"> </span><span class="p">})</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">id</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nx">seen</span><span class="p">.</span><span class="nx">has</span><span class="p">(</span><span class="nx">id</span><span class="p">))</span><span class="w"> </span><span class="k">return</span><span class="p">;</span>
 <span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">id</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">seen</span><span class="p">.</span><span class="nx">add</span><span class="p">(</span><span class="nx">id</span><span class="p">);</span><span class="w"> </span><span class="nx">socket</span><span class="p">.</span><span class="nx">emit</span><span class="p">(</span><span class="s2">&quot;realtime.ack&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">up_to</span><span class="o">:</span><span class="w"> </span><span class="nx">id</span><span class="w"> </span><span class="p">});</span><span class="w"> </span><span class="p">}</span>
 <span class="w">  </span><span class="nx">render</span><span class="p">(</span><span class="nx">data</span><span class="p">);</span>
 <span class="p">});</span>
 </code></pre></div>
+<p>The full normative contract (handshake, envelope, ack, replay, errors — for this
+transport and the <abbr title="Server-Side Encryption">SSE</abbr> route) is the
+<a href="../../reference/realtime-protocol/">realtime wire protocol</a>; its machine-readable twin
+is <code>asyncapi_document(catalog, router)</code> — an AsyncAPI 3 document generated from the
+typed event catalog and command router, ready for review or client-type generation.</p>
 <h3 id="tenancy-and-addressing">Tenancy and addressing<a class="headerlink" href="#tenancy-and-addressing" title="Permanent link">&para;</a></h3>
 <p><code>Audience</code> is <code>principal(id)</code> or <code>topic(name)</code> — <strong>no tenant</strong>. The publish layer puts
 the ambient tenant in the message headers and the gateway scopes the room
@@ -6003,6 +6040,10 @@ per-device cursors, trimming, and opting an event out (<code>offline_delivery=Fa
 <tr>
 <td><code>TenantShardedSignalSource</code> + <code>realtime_tenant_group_ensure_lifecycle_step</code></td>
 <td>egress: namespace-tier per-tenant streams; binds tenant from the stream (trusted), no header trust; per-tenant fault isolation</td>
+</tr>
+<tr>
+<td><code>PubSubSignalSource</code> + <code>realtime_pubsub_spec</code> + <code>RealtimePubSubPublisher</code></td>
+<td>egress: broadcast pubsub live lane (at-most-once, every node sees every signal); durables keep riding outbox → stream → mailbox</td>
 </tr>
 <tr>
 <td><code>realtime_tenant_relay_lifecycle_step</code></td>

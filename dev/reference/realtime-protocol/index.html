@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/core-concepts/architecture/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/reference/realtime-protocol/">
       
       
-        <link rel="prev" href="../overview/">
+        <link rel="prev" href="../fastapi-routes/">
       
       
-        <link rel="next" href="../domain-layer/">
+        <link rel="next" href="../errors/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Architecture - Forze</title>
+        <title>Realtime wire protocol - Forze</title>
       
     
     
@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#the-four-layers" class="md-skip">
+        <a href="#realtime-wire-protocol" class="md-skip">
           Skip to content
         </a>
       
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Architecture
+              Realtime wire protocol
             
           </span>
         </div>
@@ -268,8 +268,6 @@
   
   
   
-    
-  
   
     
       
@@ -280,16 +278,14 @@
   
   
   
-    
-  
   
     
       
     
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../overview/" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../core-concepts/overview/" class="md-tabs__link">
           
   
   Learn
@@ -364,14 +360,16 @@
   
   
   
+    
+  
   
     
       
     
     
     
-      <li class="md-tabs__item">
-        <a href="../../reference/glossary/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../glossary/" class="md-tabs__link">
           
   
   Reference
@@ -658,31 +656,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
             
   
   
@@ -699,7 +692,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -713,31 +706,26 @@
                 
   
   
-    
   
   
-  
     
     
     
     
       
       
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
         
           
-          
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
             
   
   
@@ -754,7 +742,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_1">
             <span class="md-nav__icon md-icon"></span>
             
@@ -771,7 +759,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../overview/" class="md-nav__link">
+      <a href="../../core-concepts/overview/" class="md-nav__link">
         
   
   
@@ -797,36 +785,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-layers" viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Architecture
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../core-concepts/architecture/" class="md-nav__link">
         
   
   
@@ -843,69 +805,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#the-four-layers" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The four layers
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#why-the-direction-matters" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Why the direction matters
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#practical-impact" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Practical impact
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#where-to-go-next" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Where to go next
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -918,7 +817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../domain-layer/" class="md-nav__link">
+      <a href="../../core-concepts/domain-layer/" class="md-nav__link">
         
   
   
@@ -947,7 +846,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../why-four-models/" class="md-nav__link">
+      <a href="../../core-concepts/why-four-models/" class="md-nav__link">
         
   
   
@@ -976,7 +875,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../application-layer/" class="md-nav__link">
+      <a href="../../core-concepts/application-layer/" class="md-nav__link">
         
   
   
@@ -1005,7 +904,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contracts/" class="md-nav__link">
+      <a href="../../core-concepts/contracts/" class="md-nav__link">
         
   
   
@@ -1034,7 +933,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../runtime/" class="md-nav__link">
+      <a href="../../core-concepts/runtime/" class="md-nav__link">
         
   
   
@@ -1077,20 +976,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
         
           
-          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
             
   
   
@@ -1370,20 +1266,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
         
           
-          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
             
   
   
@@ -1692,20 +1585,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
         
           
-          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
             
   
   
@@ -1869,20 +1759,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
         
           
-          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
             
   
   
@@ -2075,20 +1962,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
         
           
-          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
             
   
   
@@ -2194,20 +2078,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
         
           
-          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
             
   
   
@@ -4571,26 +4452,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
             
   
   
@@ -4607,7 +4493,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -4624,7 +4510,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/glossary/" class="md-nav__link">
+      <a href="../glossary/" class="md-nav__link">
         
   
   
@@ -4659,17 +4545,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_2" >
         
           
-          <label class="md-nav__link" for="__nav_6_2" id="__nav_6_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_2" id="__nav_6_2_label" tabindex="">
             
   
   
@@ -4703,7 +4592,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/contracts/" class="md-nav__link">
+      <a href="../contracts/" class="md-nav__link">
         
   
   
@@ -4732,7 +4621,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/contracts/document/" class="md-nav__link">
+      <a href="../contracts/document/" class="md-nav__link">
         
   
   
@@ -4761,7 +4650,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/contracts/search/" class="md-nav__link">
+      <a href="../contracts/search/" class="md-nav__link">
         
   
   
@@ -4790,7 +4679,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/contracts/analytics/" class="md-nav__link">
+      <a href="../contracts/analytics/" class="md-nav__link">
         
   
   
@@ -4819,7 +4708,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/contracts/procedure/" class="md-nav__link">
+      <a href="../contracts/procedure/" class="md-nav__link">
         
   
   
@@ -4848,7 +4737,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/contracts/graph/" class="md-nav__link">
+      <a href="../contracts/graph/" class="md-nav__link">
         
   
   
@@ -4877,7 +4766,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/contracts/stores/" class="md-nav__link">
+      <a href="../contracts/stores/" class="md-nav__link">
         
   
   
@@ -4906,7 +4795,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/contracts/messaging/" class="md-nav__link">
+      <a href="../contracts/messaging/" class="md-nav__link">
         
   
   
@@ -4935,7 +4824,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/contracts/streaming/" class="md-nav__link">
+      <a href="../contracts/streaming/" class="md-nav__link">
         
   
   
@@ -4964,7 +4853,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/contracts/durable/" class="md-nav__link">
+      <a href="../contracts/durable/" class="md-nav__link">
         
   
   
@@ -4993,7 +4882,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/contracts/coordination/" class="md-nav__link">
+      <a href="../contracts/coordination/" class="md-nav__link">
         
   
   
@@ -5022,7 +4911,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/contracts/identity/" class="md-nav__link">
+      <a href="../contracts/identity/" class="md-nav__link">
         
   
   
@@ -5065,17 +4954,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_3" >
         
           
-          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="">
             
   
   
@@ -5109,7 +5001,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/tenancy-matrix/" class="md-nav__link">
+      <a href="../tenancy-matrix/" class="md-nav__link">
         
   
   
@@ -5138,7 +5030,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/encryption-matrix/" class="md-nav__link">
+      <a href="../encryption-matrix/" class="md-nav__link">
         
   
   
@@ -5172,26 +5064,31 @@
                 
   
   
+    
   
   
+  
     
     
     
     
       
       
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_4" >
         
           
-          <label class="md-nav__link" for="__nav_6_4" id="__nav_6_4_label" tabindex="0">
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6_4" id="__nav_6_4_label" tabindex="">
             
   
   
@@ -5208,7 +5105,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_6_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -5225,7 +5122,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/query-syntax/" class="md-nav__link">
+      <a href="../query-syntax/" class="md-nav__link">
         
   
   
@@ -5254,7 +5151,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/mapping/" class="md-nav__link">
+      <a href="../mapping/" class="md-nav__link">
         
   
   
@@ -5283,7 +5180,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/outbox-schema/" class="md-nav__link">
+      <a href="../outbox-schema/" class="md-nav__link">
         
   
   
@@ -5312,7 +5209,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/fastapi-routes/" class="md-nav__link">
+      <a href="../fastapi-routes/" class="md-nav__link">
         
   
   
@@ -5338,10 +5235,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../reference/realtime-protocol/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Realtime wire protocol
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -5356,6 +5279,115 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#connect-handshake" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Connect handshake
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-delivery-envelope" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The delivery envelope
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acknowledgement" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Acknowledgement
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reconnect-and-replay" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reconnect and replay
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Errors
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#re-authentication-socketio" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Re-authentication (Socket.IO)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#asyncapi-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        AsyncAPI export
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#version-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Version history
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -5382,17 +5414,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5" >
         
           
-          <label class="md-nav__link" for="__nav_6_5" id="__nav_6_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_5" id="__nav_6_5_label" tabindex="">
             
   
   
@@ -5426,7 +5461,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/errors/" class="md-nav__link">
+      <a href="../errors/" class="md-nav__link">
         
   
   
@@ -5455,7 +5490,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/resilience-tuning/" class="md-nav__link">
+      <a href="../resilience-tuning/" class="md-nav__link">
         
   
   
@@ -5506,6 +5541,8 @@
                     
                     
                     
+                      
+                    
                     
                       <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
                       <div class="md-sidebar-button__wrapper">
@@ -5521,6 +5558,8 @@
   
   
   
+    
+  
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
@@ -5529,10 +5568,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#the-four-layers" class="md-nav__link">
+  <a href="#connect-handshake" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The four layers
+        Connect handshake
       </span>
     </span>
   </a>
@@ -5540,10 +5579,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#why-the-direction-matters" class="md-nav__link">
+  <a href="#the-delivery-envelope" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Why the direction matters
+        The delivery envelope
       </span>
     </span>
   </a>
@@ -5551,10 +5590,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#practical-impact" class="md-nav__link">
+  <a href="#acknowledgement" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Practical impact
+        Acknowledgement
       </span>
     </span>
   </a>
@@ -5562,10 +5601,54 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#where-to-go-next" class="md-nav__link">
+  <a href="#reconnect-and-replay" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Where to go next
+        Reconnect and replay
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Errors
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#re-authentication-socketio" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Re-authentication (Socket.IO)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#asyncapi-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        AsyncAPI export
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#version-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Version history
       </span>
     </span>
   </a>
@@ -5618,27 +5701,16 @@
     
     
     
-      
-  
-  
-    
-    
-    
-    
-    
       <li class="md-path__item">
-        <a href="../overview/" class="md-path__link">
+        <a href="../glossary/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Learn
+    Reference
   </span>
 
         </a>
       </li>
-    
-  
-
     
   
 
@@ -5652,11 +5724,11 @@
     
     
       <li class="md-path__item">
-        <a href="../overview/" class="md-path__link">
+        <a href="../query-syntax/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Foundations
+    Schemas & syntax
   </span>
 
         </a>
@@ -5676,175 +5748,154 @@
   
 
 
-  <h1 id="__skip">Architecture</h1>
-
-<p>Forze organizes code into four layers. Each has one responsibility, and
-dependencies flow <strong>inward</strong> — outer layers depend on inner layers, never the
-reverse.</p>
-<div class="admonition abstract">
-<p class="admonition-title">The one rule</p>
-<p><strong>Dependencies point toward the domain.</strong> Business logic at the center
-knows nothing about the database, the web framework, or the cache. Swap
-any of those and the domain doesn't move.</p>
-</div>
-<p><a class="glightbox" data-gallery="light" data-title="Layered architecture: domain at the center, wrapped by application, then infrastructure and interface" data-type="image" href="../../_diagrams/light/layered-architecture.svg#only-light"><img alt="Layered architecture: domain at the center, wrapped by application, then infrastructure and interface" src="../../_diagrams/light/layered-architecture.svg#only-light" /></a>
-<a class="glightbox" data-gallery="dark" data-title="Layered architecture: domain at the center, wrapped by application, then infrastructure and interface" data-type="image" href="../../_diagrams/dark/layered-architecture.svg#only-dark"><img alt="Layered architecture: domain at the center, wrapped by application, then infrastructure and interface" src="../../_diagrams/dark/layered-architecture.svg#only-dark" /></a></p>
+<h1 id="realtime-wire-protocol">Realtime wire protocol<a class="headerlink" href="#realtime-wire-protocol" title="Permanent link">&para;</a></h1>
+<p>The client contract for the realtime egress plane, normative for every transport.
+One protocol, currently <strong>version 1</strong>, served over two transports: the Socket.IO
+gateway and the <abbr title="Server-Side Encryption">SSE</abbr> route. A client written against this page works against either.</p>
+<p>The machine-readable twin of this page is the <a href="#asyncapi-export">AsyncAPI export</a> —
+generated from the same typed catalog the server validates against, so it cannot
+drift from the code.</p>
+<h2 id="connect-handshake">Connect handshake<a class="headerlink" href="#connect-handshake" title="Permanent link">&para;</a></h2>
+<p>A connection negotiates its protocol version <strong>once, at connect</strong> — frames never
+carry a version, and a connection speaks exactly one version for its lifetime.</p>
 <table>
 <thead>
 <tr>
-<th>Layer</th>
-<th>Responsibility</th>
-<th>Depends on</th>
+<th>Field</th>
+<th>Socket.IO (<code>auth</code> payload)</th>
+<th><abbr title="Server-Side Encryption">SSE</abbr> (query parameter)</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>Domain</strong></td>
-<td>Business logic, invariants, validation, model behaviour</td>
-<td>—</td>
+<td><code>protocol</code></td>
+<td><code>io(url, { auth: { protocol: 1 } })</code></td>
+<td><code>GET /realtime/sse?protocol=1</code></td>
 </tr>
 <tr>
-<td><strong>Application</strong></td>
-<td>Orchestration, handlers, contracts, composition, runtime</td>
-<td>Domain</td>
+<td><code>device_id</code></td>
+<td><code>auth.device_id</code> (optional)</td>
+<td><code>?device_id=</code> (optional)</td>
 </tr>
 <tr>
-<td><strong>Infrastructure</strong></td>
-<td>Databases, caches, external services, adapter implementations</td>
-<td>Application, Domain</td>
-</tr>
-<tr>
-<td><strong>Interface</strong></td>
-<td>HTTP routes, WebSocket handlers, user-facing entry points</td>
-<td>Application, Domain, Infrastructure</td>
+<td>credentials</td>
+<td><code>auth.token</code> (resolver-defined)</td>
+<td>HTTP credentials (middleware-resolved)</td>
 </tr>
 </tbody>
 </table>
-<h2 id="the-four-layers">The four layers<a class="headerlink" href="#the-four-layers" title="Permanent link">&para;</a></h2>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:4"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><input id="__tabbed_1_4" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-box" viewBox="0 0 24 24"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></svg></span> Domain</label><label for="__tabbed_1_2"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-workflow" viewBox="0 0 24 24"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg></span> Application</label><label for="__tabbed_1_3"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-server" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><path d="M6 6h.01M6 18h.01"/></svg></span> Infrastructure</label><label for="__tabbed_1_4"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/></svg></span> Interface</label></div>
-<div class="tabbed-content">
-<div class="tabbed-block">
-<p>Pure business logic: entities, value objects, commands, and validation
-rules. Domain code imports from <strong>no other layer</strong> — only Pydantic
-models, dataclasses, and plain Python.</p>
-<p>No database drivers. No HTTP frameworks. No adapters or containers.</p>
-<p>This is the most stable part of the system. Changing a database engine or
-web framework never touches domain code.</p>
-</div>
-<div class="tabbed-block">
-<p>Defines <strong>what</strong> happens without knowing <strong>how</strong>:</p>
+<p>Rules:</p>
 <ul>
-<li><strong>Contracts (ports)</strong> — the capabilities the app needs, each described as
-  a contract: document storage, cache, transactions, search, queues.</li>
-<li><strong>Handlers</strong> — single-purpose operations that receive an execution
-  context and resolve ports from it.</li>
-<li><strong>Composition</strong> — facades, the <code>OperationRegistry</code>, and the stage hooks
-  that wrap handlers.</li>
-<li><strong>Execution runtime</strong> — the dependency registry, lifecycle hooks, and
-  transaction management.</li>
+<li>A missing <code>protocol</code> means <strong>1</strong> (pre-versioning clients keep working).</li>
+<li>An unsupported version is <strong>refused at connect</strong> with the error code
+  <code>realtime_protocol_unsupported</code>, naming the supported range. It is never silently
+  downgraded.</li>
+<li>Additive envelope changes (new optional fields) do <strong>not</strong> bump the version.
+  Consequently, clients <strong>must ignore unknown envelope fields</strong> — that rule is what
+  makes minor evolution safe.</li>
+<li>A <code>device_id</code> is the stable cursor key for offline replay; without one the
+  framework falls back to the authenticated session id (Socket.IO) or a shared
+  per-principal cursor (<abbr title="Server-Side Encryption">SSE</abbr>).</li>
+<li>Topic subscriptions are <strong>server-granted</strong>, never client-asserted: on Socket.IO
+  the app joins the room after its own checks; on <abbr title="Server-Side Encryption">SSE</abbr> the <code>?topics=a,b</code> parameter
+  is authorized by the app's resolver and the connection is refused with
+  <code>realtime_topics_unauthorized</code> if any requested topic is not granted.</li>
 </ul>
-<p>Imports from the domain, never from infrastructure or interface.</p>
-</div>
-<div class="tabbed-block">
-<p>Concrete implementations of application contracts — one optional package
-per backend:</p>
+<h2 id="the-delivery-envelope">The delivery envelope<a class="headerlink" href="#the-delivery-envelope" title="Permanent link">&para;</a></h2>
+<p>Every delivered frame is the same envelope on every transport:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="w"> </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;durable event id | null&gt;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* the event&#39;s payload model */</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
 <ul>
-<li><code>forze_postgres</code>, <code>forze_mongo</code>, <code>forze_firestore</code> — documents and transactions (Postgres and Mongo add search)</li>
-<li><code>forze_redis</code> — cache, counters, idempotency, pub/sub, streams</li>
-<li><code>forze_s3</code>, <code>forze_gcs</code> — object storage</li>
-<li><code>forze_temporal</code>, <code>forze_inngest</code> — durable workflows and functions</li>
-<li><code>forze_rabbitmq</code>, <code>forze_sqs</code> — queues</li>
+<li><code>id</code> is the <strong>durable event id</strong> — stable across redeliveries and transports.
+  Ephemeral signals carry <code>null</code>.</li>
+<li><code>data</code> is exactly the catalog-declared payload model's JSON — nothing added,
+  nothing renamed.</li>
+<li>Durable consumers <strong>must dedup by <code>id</code></strong>: at-least-once delivery, reconnect
+  replay, and the <abbr title="Server-Side Encryption">SSE</abbr> replay/live overlap all legitimately produce duplicates.</li>
 </ul>
-<p>Imports from application and domain to implement contracts and serialize
-domain models.</p>
-</div>
-<div class="tabbed-block">
-<p>The outermost, user-facing boundary — transport concerns only: receive a
-request, resolve an operation from the frozen registry, return a response.</p>
+<p>Transport binding:</p>
 <ul>
-<li><code>forze_fastapi</code> — HTTP routing, idempotency, OpenAPI</li>
-<li><code>forze_socketio</code> — real-time WebSocket events and typed dispatch</li>
+<li><strong>Socket.IO</strong>: emitted as the event named by the catalog
+  (<code>socket.on("order.shipped", ({id, data}) =&gt; …)</code>).</li>
+<li><strong><abbr title="Server-Side Encryption">SSE</abbr></strong>: one <code>text/event-stream</code> frame per signal; the <abbr title="Server-Side Encryption">SSE</abbr> <code>event:</code> field is the
+  catalog event name, the <abbr title="Server-Side Encryption">SSE</abbr> <code>id:</code> field is set for durable signals (so the
+  browser's automatic <code>Last-Event-ID</code> names a durable event), and <code>data:</code> is the
+  JSON envelope above. Comment lines (<code>: keepalive</code>) are heartbeats — ignore them.</li>
 </ul>
-<p>Depends on application and infrastructure. <strong>Never</strong> contains business
-logic.</p>
-</div>
-</div>
-</div>
-<h2 id="why-the-direction-matters">Why the direction matters<a class="headerlink" href="#why-the-direction-matters" title="Permanent link">&para;</a></h2>
-<p>Because dependencies only ever point inward, the things most expensive to
-change are the things best insulated:</p>
-<div class="admonition success">
-<p class="admonition-title">Swap infrastructure, keep everything else</p>
-<p>Trade Postgres for Mongo by changing the <strong>dependency registry</strong> — not a
-single handler. Replace FastAPI with a CLI without touching business
-logic. The import rules make this a configuration change, not a rewrite.</p>
-</div>
-<p>These rules aren't documentation — they're enforced by import-linter
-contracts in <code>pyproject.toml</code>. A pull request that makes the domain import an
-adapter fails CI.</p>
-<h2 id="practical-impact">Practical impact<a class="headerlink" href="#practical-impact" title="Permanent link">&para;</a></h2>
-<p>What actually changes when you make a common change, and what stays put:</p>
+<h2 id="acknowledgement">Acknowledgement<a class="headerlink" href="#acknowledgement" title="Permanent link">&para;</a></h2>
+<p>The ack is <strong>cumulative</strong>: acknowledging an event id acknowledges everything up to
+and including it for this device, advancing the device's replay cursor.</p>
+<ul>
+<li><strong>Socket.IO</strong>: <code>socket.emit("realtime.ack", { up_to: "&lt;event id&gt;" })</code>.</li>
+<li><strong><abbr title="Server-Side Encryption">SSE</abbr></strong>: <code>POST &lt;sse path&gt;/ack</code> with body <code>{ "up_to": "&lt;event id&gt;" }</code> (same
+  <code>device_id</code> query parameter as the stream, so both derive the same cursor).</li>
+</ul>
+<p>A client that never acks still converges: replay is idempotent client-side (dedup
+by <code>id</code>) and bounded server-side by mailbox retention.</p>
+<h2 id="reconnect-and-replay">Reconnect and replay<a class="headerlink" href="#reconnect-and-replay" title="Permanent link">&para;</a></h2>
+<p>On connect, everything past the device's cursor is redelivered, oldest first:</p>
+<ul>
+<li><strong>Socket.IO</strong> replays automatically after the connect handshake.</li>
+<li><strong><abbr title="Server-Side Encryption">SSE</abbr></strong> replays at the start of the response body. A browser-supplied
+  <code>Last-Event-ID</code> header takes precedence over the stored cursor — the browser's
+  native resume beats a stale server cursor. Without a live tail configured the
+  stream ends after replay and the browser's auto-reconnect (with <code>Last-Event-ID</code>)
+  gives long-poll-style delivery.</li>
+</ul>
+<p>Only <strong>principal-addressed durable</strong> signals are replayed (they are mailboxed);
+topic signals are live-only, at-most-once.</p>
+<h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Connect refusal</strong> (bad credentials, unsupported protocol): Socket.IO refuses
+  the connection with a client-safe message; <abbr title="Server-Side Encryption">SSE</abbr> responds with the standard error
+  envelope and the <code>X-Error-Code</code> header.</li>
+<li><strong>Command errors</strong> (Socket.IO inbound): the ack callback receives
+  <code>{ "error": { "detail", "code", "kind", "context" } }</code> — the same error envelope
+  shape the HTTP routes render.</li>
+</ul>
+<h2 id="re-authentication-socketio">Re-authentication (Socket.IO)<a class="headerlink" href="#re-authentication-socketio" title="Permanent link">&para;</a></h2>
+<p>A rotating token is refreshed in place with
+<code>socket.emit("realtime.reauth", { token, … })</code> — same principal and tenant only;
+anything else is a re-login, which reconnects. The protocol version is <strong>not</strong>
+renegotiated (it is fixed per connection).</p>
+<h2 id="asyncapi-export">AsyncAPI export<a class="headerlink" href="#asyncapi-export" title="Permanent link">&para;</a></h2>
+<p><code>asyncapi_document(catalog, router)</code> (from <code>forze_socketio</code>) generates an AsyncAPI
+3.0 document from the typed event catalog and the inbound command router: one
+channel and <code>send</code> operation per egress event (payload schema from the pydantic
+model, wrapped in the envelope above), one channel and <code>receive</code> operation per
+command plus the built-in <code>realtime.ack</code>, with audience/offline metadata as
+<code>x-forze-audience-kinds</code> / <code>x-forze-offline-delivery</code> extensions and the protocol
+version in <code>info.x-forze-realtime-protocol</code>. The document is generated and
+parity-tested against the catalog — never hand-edited.</p>
+<p>Serve it like the OpenAPI schema with <code>attach_asyncapi_route</code> (from
+<code>forze_fastapi.routes</code>) — the app composes the two, since the integration
+packages never import each other:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_asyncapi_route</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_socketio</span><span class="w"> </span><span class="kn">import</span> <span class="n">asyncapi_document</span>
+
+<span class="n">attach_asyncapi_route</span><span class="p">(</span><span class="n">router</span><span class="p">,</span> <span class="n">document</span><span class="o">=</span><span class="n">asyncapi_document</span><span class="p">(</span><span class="n">catalog</span><span class="p">,</span> <span class="n">sio_router</span><span class="p">))</span>
+</code></pre></div>
+<p>Client types then come from standard AsyncAPI tooling pointed at the endpoint —
+the same workflow as OpenAPI codegen, which is why no maintained client SDK
+ships:</p>
+<div class="highlight"><pre><span></span><code>npx<span class="w"> </span>@asyncapi/cli<span class="w"> </span>generate<span class="w"> </span>models<span class="w"> </span>typescript<span class="w"> </span>http://localhost:8000/asyncapi.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span>src/generated/realtime
+</code></pre></div>
+<h2 id="version-history">Version history<a class="headerlink" href="#version-history" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Scenario</th>
-<th>What changes</th>
-<th>What stays the same</th>
+<th>Protocol</th>
+<th>Changes</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Postgres <span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg></span> Mongo</td>
-<td>Dependency module, lifecycle step</td>
-<td>Domain models, handlers, specs</td>
-</tr>
-<tr>
-<td>Add Redis caching</td>
-<td>Dependency module, lifecycle step, cache flag on spec</td>
-<td>Domain models, handlers</td>
-</tr>
-<tr>
-<td>Replace FastAPI with gRPC</td>
-<td>Interface / transport layer</td>
-<td>Domain, handlers, specs, adapters</td>
-</tr>
-<tr>
-<td>Add a business rule</td>
-<td>Domain model validation</td>
-<td>Adapters, routing</td>
-</tr>
-<tr>
-<td>Audit-log every operation</td>
-<td>Stage hooks (<code>BeforeStep</code> / <code>OnSuccessStep</code>)</td>
-<td>Domain models, adapters</td>
+<td>1</td>
+<td>The <code>{id, data}</code> envelope, cumulative <code>realtime.ack</code>, <code>realtime.reauth</code>, connect-time negotiation.</td>
 </tr>
 </tbody>
 </table>
-<h2 id="where-to-go-next">Where to go next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
-<div class="grid cards fz-cards">
-<ul>
-<li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-box" viewBox="0 0 24 24"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></svg></span> <strong><a href="../domain-layer/">Domain</a></strong></p>
-<hr />
-<p>Models, versioning, update semantics, mixins, and validation.</p>
-</li>
-<li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-workflow" viewBox="0 0 24 24"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg></span> <strong><a href="../application-layer/">Application</a></strong></p>
-<hr />
-<p>Handlers, operations, stage hooks, and the registry.</p>
-</li>
-<li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-plug" viewBox="0 0 24 24"><path d="M12 22v-5M15 8V2M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1zM9 8V2"/></svg></span> <strong><a href="../contracts/">Contracts &amp; adapters</a></strong></p>
-<hr />
-<p>How ports describe capabilities and adapters implement them.</p>
-</li>
-<li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-cog" viewBox="0 0 24 24"><path d="M11 10.27 7 3.34M11 13.73l-4 6.93M12 22v-2M12 2v2M14 12h8M17 20.66l-1-1.73M17 3.34l-1 1.73M2 12h2M20.66 17l-1.73-1M20.66 7l-1.73 1M3.34 17l1.73-1M3.34 7l1.73 1"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="12" r="8"/></svg></span> <strong><a href="../runtime/">Runtime</a></strong></p>
-<hr />
-<p>Execution context, lifecycle, and transaction scopes.</p>
-</li>
-</ul>
-</div>
 
 
 
@@ -5853,9 +5904,6 @@ adapter fails CI.</p>
 
 
 
-
-  
-  
 
 
 
@@ -5885,7 +5933,7 @@ adapter fails CI.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../overview/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Overview">
+          <a href="../fastapi-routes/" class="md-footer__link md-footer__link--prev" aria-label="Previous: FastAPI route generators">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -5895,20 +5943,20 @@ adapter fails CI.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Overview
+                FastAPI route generators
               </div>
             </div>
           </a>
         
         
           
-          <a href="../domain-layer/" class="md-footer__link md-footer__link--next" aria-label="Next: Domain">
+          <a href="../errors/" class="md-footer__link md-footer__link--next" aria-label="Next: Errors">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Domain
+                Errors
               </div>
             </div>
             <div class="md-footer__button md-icon">
