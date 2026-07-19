@@ -5946,7 +5946,12 @@ directory (see <a href="#per-tenant-keys-byok">Per-tenant keys</a> below).</p>
 <p class="admonition-title"><code>MockKeyManagement</code> is dev/test only</p>
 <p>The in-memory <code>MockKeyManagement</code> from <code>forze_mock</code> derives keys locally —
 it is for tests and local runs, never production. It exists so the encryption
-paths exercise end-to-end without a real <abbr title="Key Management Service">KMS</abbr>; it protects nothing.</p>
+paths exercise end-to-end without a real <abbr title="Key Management Service">KMS</abbr>; it protects nothing. Because its
+key derivation is pure computation (<code>SyncKeyManagementPort</code>), the mock adapters
+run the full field-encryption path — declared fields are sealed in <code>MockState</code>
+and every read decrypts, with the real <code>Keyring</code> enforcing the same key-ownership
+policy as production. That makes the mock's <em>policy</em> conformant; it does not make
+a mock-backed deployment secure.</p>
 </div>
 <h2 id="where-data-gets-encrypted">Where data gets encrypted<a class="headerlink" href="#where-data-gets-encrypted" title="Permanent link">&para;</a></h2>
 <p>Each surface opts in independently, declaring its own coverage. You encrypt only
