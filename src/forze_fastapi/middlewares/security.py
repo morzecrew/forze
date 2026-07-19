@@ -20,7 +20,7 @@ from forze.base.exceptions import CoreException, exc
 
 from ..exceptions import build_core_exception_response
 from ..security import AuthnRequirement, resolve_authn_ingress, resolve_tenant_identity
-from .raw_websocket import refuse_raw_websocket
+from .raw_websocket import refuse_raw_websocket, websocket_scope_refused
 
 # ----------------------- #
 
@@ -52,6 +52,17 @@ class SecurityContextMiddleware:
     Identity and tenancy are resolved for HTTP scopes only, so a websocket route
     would run without either. Enabling this is a declared decision that the app
     owns identity, tenancy, and error shaping on every websocket route itself.
+    """
+
+    allowed_websocket_paths: frozenset[str] = attrs.field(
+        default=frozenset(), kw_only=True, converter=frozenset
+    )
+    """Exact paths whose websocket scopes pass through (governed routes only).
+
+    The narrow alternative to the app-wide ``allow_raw_websockets`` hatch: list the
+    framework-attached websocket routes (e.g. ``attach_realtime_ws_route``'s path),
+    which resolve identity at connect themselves. Exact paths, never prefixes — a
+    prefix is one refactor away from an ungoverned hole.
     """
 
     # ....................... #
@@ -89,7 +100,11 @@ class SecurityContextMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
-            if scope["type"] == "websocket" and not self.allow_raw_websockets:
+            if websocket_scope_refused(
+                scope,
+                allow_raw_websockets=self.allow_raw_websockets,
+                allowed_websocket_paths=self.allowed_websocket_paths,
+            ):
                 await refuse_raw_websocket(scope, receive, send)
                 return
 

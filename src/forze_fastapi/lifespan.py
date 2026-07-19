@@ -13,6 +13,8 @@ from fastapi import FastAPI
 
 from forze.application.execution import ExecutionRuntime
 
+from .middlewares.raw_websocket import check_websocket_allowlist
+
 # ----------------------- #
 
 
@@ -37,7 +39,11 @@ def runtime_lifespan(
     """
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        # Fail the boot on a websocket-allowlist/route mismatch rather than serving
+        # (or refusing) connections wrongly at runtime; a no-op without allowlists.
+        check_websocket_allowlist(app)
+
         async with runtime.scope():
             yield
 

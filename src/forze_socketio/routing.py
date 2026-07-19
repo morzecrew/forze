@@ -31,13 +31,14 @@ from inspect import isawaitable
 from typing import Any, Final, final
 
 import attrs
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 from socketio.async_server import AsyncServer
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
+from forze.application.integrations.realtime import RealtimeCommandRoute
 from forze.base.exceptions import CoreException, FrameErr, exc, guard_frame
 from forze.base.primitives import StrKey
 from forze.base.scrubbing import sanitize_pydantic_errors
@@ -115,70 +116,10 @@ class SocketIORequest:
 
 # ....................... #
 
-
-@final
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class SocketIOCommandRoute[Args, Ack]:
-    """Typed mapping between an inbound event and a registry operation."""
-
-    event: str
-    """Socket.IO event name."""
-
-    operation: StrKey
-    """Operation key resolved by :class:`~forze.application.execution.OperationRegistry`."""
-
-    payload_type: Any
-    """Validation type consumed by :class:`pydantic.TypeAdapter` for inbound payload."""
-
-    ack_type: Any = None
-    """Optional validation type for acknowledgement payload."""
-
-    _payload_adapter: TypeAdapter[Any] = attrs.field(
-        default=attrs.Factory(
-            lambda self: TypeAdapter[Any](self.payload_type),
-            takes_self=True,
-        ),
-        init=False,
-        repr=False,
-        eq=False,
-    )
-    """Cached :class:`~pydantic.TypeAdapter` for ``payload_type``."""
-
-    _ack_adapter: TypeAdapter[Any] | None = attrs.field(
-        default=attrs.Factory(
-            lambda self: TypeAdapter[Any](self.ack_type) if self.ack_type is not None else None,
-            takes_self=True,
-        ),
-        init=False,
-        repr=False,
-        eq=False,
-    )
-    """Cached adapter for ``ack_type``, or :obj:`None` when acknowledgements are untyped."""
-
-    # ....................... #
-
-    def parse_payload(self, payload: Any) -> Args:
-        """Validate and coerce the inbound payload.
-
-        :param payload: Raw event payload from Socket.IO.
-        :returns: Parsed payload value passed to the handler.
-        """
-        return self._payload_adapter.validate_python(payload)
-
-    # ....................... #
-
-    def parse_ack(self, value: Any) -> Ack | Any:
-        """Validate and normalize the handler result for Socket.IO acknowledgement.
-
-        :param value: Raw handler result.
-        :returns: JSON-compatible acknowledgement payload.
-        """
-        if self._ack_adapter is None:
-            return value
-
-        validated = self._ack_adapter.validate_python(value)
-
-        return self._ack_adapter.dump_python(validated, mode="json")
+# The typed command route lives in the transport-neutral kernel — the raw-WebSocket
+# route dispatches through the same declaration, so a command's contract cannot
+# drift between duplex transports. The established name stays.
+SocketIOCommandRoute = RealtimeCommandRoute
 
 
 # ....................... #

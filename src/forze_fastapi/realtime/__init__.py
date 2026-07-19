@@ -21,6 +21,12 @@ from .sse import (
     TopicAuthorizer,
     attach_realtime_sse_route,
 )
+from .ws import (
+    WsConnect,
+    WsConnection,
+    WsConnectionResolver,
+    attach_realtime_ws_route,
+)
 
 # ----------------------- #
 
@@ -33,6 +39,10 @@ __all__ = [
     "realtime_sse_presence_heartbeat_lifecycle_step",
     "refresh_sse_presence",
     "attach_realtime_sse_route",
+    "attach_realtime_ws_route",
+    "WsConnect",
+    "WsConnection",
+    "WsConnectionResolver",
     "TopicAuthorizer",
     "RealtimeAckBody",
     "RealtimeAckResult",

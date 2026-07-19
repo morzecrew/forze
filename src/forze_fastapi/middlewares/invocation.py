@@ -18,7 +18,7 @@ from forze.application.execution.context import (
 )
 from forze.base.primitives import uuid7
 
-from .raw_websocket import refuse_raw_websocket
+from .raw_websocket import refuse_raw_websocket, websocket_scope_refused
 
 # ----------------------- #
 
@@ -71,6 +71,16 @@ class InvocationMetadataMiddleware:
     The invocation envelope (execution/correlation ids, idempotency, deadline) is
     bound for HTTP scopes only, so a websocket route would run without it. Enabling
     this is a declared decision that the app owns the envelope on websocket routes.
+    """
+
+    allowed_websocket_paths: frozenset[str] = attrs.field(
+        default=frozenset(), kw_only=True, converter=frozenset
+    )
+    """Exact paths whose websocket scopes pass through (governed routes only).
+
+    The narrow alternative to the app-wide ``allow_raw_websockets`` hatch: list the
+    framework-attached websocket routes, which bind their own per-frame envelope.
+    Exact paths, never prefixes.
     """
 
     # ....................... #
@@ -142,7 +152,11 @@ class InvocationMetadataMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
-            if scope["type"] == "websocket" and not self.allow_raw_websockets:
+            if websocket_scope_refused(
+                scope,
+                allow_raw_websockets=self.allow_raw_websockets,
+                allowed_websocket_paths=self.allowed_websocket_paths,
+            ):
                 await refuse_raw_websocket(scope, receive, send)
                 return
 

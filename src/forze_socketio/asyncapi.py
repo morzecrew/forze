@@ -24,7 +24,7 @@ require_socketio()
 
 # ....................... #
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -34,7 +34,11 @@ from forze.application.contracts.realtime import (
     RealtimeEvent,
     RealtimeEventCatalog,
 )
-from forze.application.integrations.realtime import REALTIME_PROTOCOL_VERSION, RealtimeAck
+from forze.application.integrations.realtime import (
+    REALTIME_PROTOCOL_VERSION,
+    RealtimeAck,
+    RealtimeCommandRoute,
+)
 from forze.base.exceptions import exc
 
 from .routing import SocketIONamespaceRouter
@@ -114,18 +118,24 @@ def asyncapi_document(
     catalog: RealtimeEventCatalog,
     router: SocketIONamespaceRouter | None = None,
     *,
+    commands: Sequence[RealtimeCommandRoute[Any, Any]] | None = None,
     title: str = "Realtime API",
     version: str = "0.1.0",
     description: str | None = None,
     servers: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Project the catalog (and optionally a command router) into an AsyncAPI 3 document.
+    """Project the catalog (and optionally command routes) into an AsyncAPI 3 document.
 
     :param catalog: The frozen egress event catalog — one channel + ``send`` operation
         per event, each message wrapped in the versioned ``{id, data}`` envelope.
     :param router: Optional inbound command router — one channel + ``receive`` operation
         per registered command (raw payload schema; typed acks as ``x-forze-ack-schema``).
         The built-in ``realtime.ack`` receive operation is always included.
+    :param commands: Standalone command routes (the same declarations
+        ``attach_realtime_ws_route`` dispatches) for apps whose duplex ingress is the
+        raw-WebSocket transport rather than a Socket.IO namespace; documented
+        identically to router commands. Combine with *router* freely — duplicate
+        event names are refused either way.
     :param servers: AsyncAPI server entries, caller-supplied — e.g. the Socket.IO
         namespace endpoint and, when the SSE route is attached, the ``text/event-stream``
         endpoint (same envelope, second transport).
@@ -185,7 +195,9 @@ def asyncapi_document(
         "summary": "Advance this device's replay cursor (cumulative ack)",
     }
 
-    for route in router.commands if router is not None else ():
+    inbound = (*(router.commands if router is not None else ()), *(commands or ()))
+
+    for route in inbound:
         _add_channel(
             route.event,
             {
