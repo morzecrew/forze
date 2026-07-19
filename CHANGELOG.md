@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Inference seam** — typed model invocation behind one port; the physical model (local artifact, served, cloud) is a wiring fact.
+
+- `forze.application.contracts.inference`: `InferenceSpec[In, Out]` + `InferencePort` (`predict` / all-or-nothing `predict_many` / `predict_stream`) + `InferenceCapabilities` (fail-closed `inference_feature_unsupported`) + `InferenceRunOptions`; resolved via `ctx.inference.model(spec)` — read-plane (`QUERY`-usable). Mis-shaped backend responses raise `inference_output_mismatch` at the boundary.
+- Local adapter (`forze.application.integrations.inference`): `LocalInferenceDepsModule(models={route: LocalInferenceConfig(loader=…)})` — loader returns any object with sync `predict_batch`, run under `run_cpu`; `local_inference_lifecycle_step` warms at boot fail-closed; `serialize_calls=True` for non-thread-safe models.
+- Mock: `MockDepsModule(inference=MockInferenceRegistry().on(route, fn))`; unprogrammed routes raise `mock.inference.unprogrammed`.
+- `forze_inference.http` (extra `inference-http`): served models via `HttpInferenceDepsModule` + `HttpInferenceConfig(protocol="kserve_v2"|"mlflow", model_name=…)` (per-tenant capable) + `inference_http_lifecycle_step`; JSON-record scope — kserve_v2 requires flat scalar input fields (refused at wiring otherwise).
+- `forze_inference.sagemaker` (extra `inference-sagemaker`): realtime endpoints via `SageMakerInferenceDepsModule` + `SageMakerInferenceConfig(endpoint_name=…, target_variant=…)` + `sagemaker_inference_lifecycle_step`.
+- Remote configs require `acknowledge_data_egress=True` (fail-closed); endpoint failures map to the typed taxonomy (`inference_throttled` / `inference_route_mismatch` / `inference_output_mismatch` / `inference_endpoint_unavailable` / `inference_timeout`).
+
 **Portability** — `forze_kits.integrations.portability`: carry an application's system-of-record state to any other wired backend.
 
 - `export_archive(runtime, dest, *, scope=…)` / `import_archive(runtime, src, *, on_conflict="skip"|"fail")` — backend-agnostic archive (JSONL + `manifest.json`) over the document, blob, graph and counter planes; ids preserved (timestamps when `create_cmd` subclasses `ImportTimestamps`), `rev` resets to 1; import fail-closed on version, fingerprint and checksums.

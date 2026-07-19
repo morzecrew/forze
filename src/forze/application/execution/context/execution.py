@@ -16,6 +16,7 @@ from forze.application.contracts.graph import GraphDeps
 from forze.application.contracts.http import HttpServiceDeps
 from forze.application.contracts.idempotency import IdempotencyDeps
 from forze.application.contracts.inbox import InboxDeps
+from forze.application.contracts.inference import InferenceDeps
 from forze.application.contracts.outbox import OutboxDeps, OutboxStagingContext
 from forze.application.contracts.procedure import ProcedureDeps
 from forze.application.contracts.resilience import ResilienceDeps
@@ -221,6 +222,9 @@ class ExecutionContext:
     embeddings: EmbeddingsDeps = attrs.field(factory=EmbeddingsDeps, init=False)
     """Embeddings dependencies."""
 
+    inference: InferenceDeps = attrs.field(factory=InferenceDeps, init=False)
+    """Inference dependencies (typed model invocation; read-plane)."""
+
     dlock: DistributedLockDeps = attrs.field(factory=DistributedLockDeps, init=False)
     """Distributed lock dependencies."""
 
@@ -363,6 +367,7 @@ class ExecutionContext:
         self.storage.lock(self)
         self.graph.lock(self)
         self.embeddings.lock(self)
+        self.inference.lock(self)
         self.dlock.lock(self)
         self.stream.lock(self)
         self.tenancy.lock(self)

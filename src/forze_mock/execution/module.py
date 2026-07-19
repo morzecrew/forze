@@ -83,6 +83,7 @@ from forze.application.contracts.idempotency import (
     IdempotencyDepKey,
 )
 from forze.application.contracts.inbox import InboxDepKey
+from forze.application.contracts.inference import InferenceDepKey
 from forze.application.contracts.outbox import (
     OutboxAdminDepKey,
     OutboxCommandDepKey,
@@ -143,6 +144,7 @@ from forze.application.integrations.crypto import DeterministicFieldCipher, Keyr
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_mock.adapters import (
     MockHttpRegistry,
+    MockInferenceRegistry,
     MockKeyManagement,
     MockProcedureRegistry,
     MockQueryParamsRegistry,
@@ -197,6 +199,7 @@ from forze_mock.execution.factories import (
     ConfigurableMockHubSearch,
     ConfigurableMockIdempotency,
     ConfigurableMockInbox,
+    ConfigurableMockInference,
     ConfigurableMockOutboxCommand,
     ConfigurableMockOutboxQuery,
     ConfigurableMockPasswordLifecycle,
@@ -258,6 +261,13 @@ class MockDepsModule(DepsModule):
     ``None`` registers the port but leaves every operation unprogrammed (any call
     raises ``code="mock.http.unprogrammed"``); pass a :class:`MockHttpRegistry`
     with handlers to answer HTTP ops in-process with zero external services."""
+
+    inference: MockInferenceRegistry | None = attrs.field(default=None)
+    """Programmable pure scoring functions answering ``InferencePort`` routes.
+
+    ``None`` registers the port but leaves every route unprogrammed (any call raises
+    ``code="mock.inference.unprogrammed"``); pass a :class:`MockInferenceRegistry` with a
+    deterministic function per route — purity keeps simulation replays exact."""
 
     procedures: MockProcedureRegistry | None = attrs.field(default=None)
     """Programmable in-memory handlers for the ``ProcedurePort`` (governed parametrized
@@ -369,6 +379,7 @@ class MockDepsModule(DepsModule):
             AnalyticsQueryDepKey: ConfigurableMockAnalytics(module=self),
             AnalyticsIngestDepKey: ConfigurableMockAnalytics(module=self),
             ProcedureCommandDepKey: ConfigurableMockProcedure(module=self),
+            InferenceDepKey: ConfigurableMockInference(module=self),
             CounterDepKey: ConfigurableMockCounter(module=self),
             CounterAdminDepKey: ConfigurableMockCounterAdmin(module=self),
             CacheDepKey: ConfigurableMockCache(module=self),

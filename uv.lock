@@ -1246,6 +1246,14 @@ gcs = [
 http = [
     { name = "httpx" },
 ]
+inference-http = [
+    { name = "httpx" },
+]
+inference-sagemaker = [
+    { name = "aioboto3" },
+    { name = "aiobotocore" },
+    { name = "botocore" },
+]
 inngest = [
     { name = "inngest" },
 ]
@@ -1364,9 +1372,11 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "aio-pika", marker = "extra == 'rabbitmq'", specifier = ">=9.6.1" },
+    { name = "aioboto3", marker = "extra == 'inference-sagemaker'", specifier = ">=13.0.0" },
     { name = "aioboto3", marker = "extra == 'kms-aws'", specifier = ">=15.5.0" },
     { name = "aioboto3", marker = "extra == 's3'", specifier = ">=15.5.0" },
     { name = "aioboto3", marker = "extra == 'sqs'", specifier = ">=15.5.0" },
+    { name = "aiobotocore", marker = "extra == 'inference-sagemaker'", specifier = ">=2.13.0" },
     { name = "aiobotocore", marker = "extra == 'kms-aws'", specifier = ">=2.25.1" },
     { name = "aiobotocore", marker = "extra == 's3'", specifier = ">=2.25.1" },
     { name = "aiobotocore", marker = "extra == 'sqs'", specifier = ">=2.25.1" },
@@ -1375,6 +1385,7 @@ requires-dist = [
     { name = "aiokafka", marker = "extra == 'kafka'", specifier = ">=0.14.0" },
     { name = "argon2-cffi", marker = "extra == 'authn'", specifier = ">=25.1.0" },
     { name = "attrs", specifier = ">=25.4.0" },
+    { name = "botocore", marker = "extra == 'inference-sagemaker'", specifier = ">=1.34.0" },
     { name = "botocore", marker = "extra == 'kms-aws'", specifier = ">=1.40.61" },
     { name = "botocore", marker = "extra == 's3'", specifier = ">=1.40.61" },
     { name = "botocore", marker = "extra == 'sqs'", specifier = ">=1.40.61" },
@@ -1391,6 +1402,7 @@ requires-dist = [
     { name = "google-cloud-kms", marker = "extra == 'kms-gcp'", specifier = ">=2.24.0" },
     { name = "httpx", marker = "extra == 'fastapi'", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'http'", specifier = ">=0.28.0" },
+    { name = "httpx", marker = "extra == 'inference-http'", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'oidc'", specifier = ">=0.28.0" },
     { name = "hvac", extras = ["parser"], marker = "extra == 'vault'", specifier = ">=2.4.0" },
     { name = "hypothesis", marker = "extra == 'dst'", specifier = ">=6.153.0" },
@@ -1436,7 +1448,7 @@ requires-dist = [
     { name = "yandexcloud", marker = "extra == 'kms-yc'", specifier = ">=0.300.0" },
     { name = "zstandard", marker = "extra == 'zstd'", specifier = ">=0.23.0" },
 ]
-provides-extras = ["authn", "bigquery", "cli", "clickhouse", "dst", "duckdb", "fastapi", "firestore", "gcs", "http", "inngest", "kafka", "kms-aws", "kms-gcp", "kms-yc", "mcp", "meilisearch", "mongo", "neo4j", "oidc", "postgres", "rabbitmq", "redis", "s3", "socketio", "sqs", "temporal", "vault", "zstd"]
+provides-extras = ["authn", "bigquery", "cli", "clickhouse", "dst", "duckdb", "fastapi", "firestore", "gcs", "http", "inference-http", "inference-sagemaker", "inngest", "kafka", "kms-aws", "kms-gcp", "kms-yc", "mcp", "meilisearch", "mongo", "neo4j", "oidc", "postgres", "rabbitmq", "redis", "s3", "socketio", "sqs", "temporal", "vault", "zstd"]
 
 [package.metadata.requires-dev]
 dev = [
