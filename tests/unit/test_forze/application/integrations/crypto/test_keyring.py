@@ -264,7 +264,12 @@ async def test_sync_round_trip_after_warm() -> None:
 
 
 def test_encrypt_sync_without_warm_raises() -> None:
-    ring = _keyring()
+    # An async-only KMS (any real backend): no sync fill, so the pre-pass stays mandatory.
+    ring = Keyring(
+        kms=_CountingKms(MockKeyManagement()),
+        aead=AesGcmAead(),
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+    )
 
     with pytest.raises(CoreException) as excinfo:
         ring.encrypt_sync(b"secret", tenant=None)
@@ -348,7 +353,16 @@ def _per_tenant_keyring(**kw) -> Keyring:  # type: ignore[no-untyped-def]
 
 
 async def test_enc_cache_evicts_least_recently_used() -> None:
-    ring = _per_tenant_keyring(enc_cache_max=1)
+    # An async-only KMS so an evicted key cannot be refilled inline — the eviction
+    # itself (not the sync-fill convenience) is what this test observes.
+    ring = Keyring(
+        kms=_CountingKms(MockKeyManagement()),
+        aead=AesGcmAead(),
+        directory=TenantTemplateKeyDirectory(
+            template="tenant/{tenant_id}/cmk", default_key_id="default"
+        ),
+        enc_cache_max=1,
+    )
     a = TenantIdentity(tenant_id=uuid4())
     b = TenantIdentity(tenant_id=uuid4())
 
@@ -627,3 +641,161 @@ async def test_ensure_unwrapped_warm_hit_with_own_tenant_skips_kms() -> None:
 
     assert kms.unwrapped == unwrapped_before  # warm hit: no unwrap needed
     assert ring.decrypt_sync(blob) == b"a-secret"
+
+
+# ....................... #
+# synchronous fill — the computation-only key backend path (mock wiring)
+
+
+class _AsyncOnlyDirectory:
+    """A directory reachable only through the async port (e.g. one that fetches
+    customer-registered key references) — the sync guard must fail closed on it."""
+
+    async def resolve(self, tenant: TenantIdentity | None) -> KeyRef:
+        _ = tenant
+        return KeyRef(key_id="cmk")
+
+
+def test_encrypt_sync_fills_inline_under_a_sync_key_backend() -> None:
+    """A cold sync encrypt under sync KMS + sync directory generates inline instead of
+    raising — the whole point of the seam: the mock adapters need no async pre-pass."""
+
+    ring = _keyring()  # MockKeyManagement + StaticKeyDirectory: both halves synchronous
+
+    blob = ring.encrypt_sync(b"secret", tenant=None)
+
+    # The fill seeded the decrypt cache too, so the read-after-write decrypts sync.
+    assert ring.decrypt_sync(blob) == b"secret"
+
+    stats = ring.stats()
+    assert stats.data_keys_generated == 1
+    assert stats.cold_misses == 0
+
+    # A second encrypt reuses the filled key (a plain cache hit, no new generate).
+    ring.encrypt_sync(b"more", tenant=None)
+    assert ring.stats().data_keys_generated == 1
+    assert ring.stats().encrypt_cache_hits == 1
+
+
+def test_decrypt_sync_still_requires_a_pre_pass_even_under_a_sync_kms() -> None:
+    """The fill is deliberately asymmetric: a bare ``decrypt_sync`` has no tenant, so it
+    never fills — the key-ownership guard would be skippable otherwise. The synchronous
+    pre-pass (``ensure_unwrapped_sync``) is the sanctioned entry and runs the guard."""
+
+    writer = _keyring()
+    blob = writer.encrypt_sync(b"secret", tenant=None)
+    envelope = unpack_envelope(blob)
+
+    reader = _keyring()  # cold cache, as in another process
+
+    with pytest.raises(CoreException) as excinfo:
+        reader.decrypt_sync(blob)
+    assert excinfo.value.code == "core.crypto.cipher_not_warm"
+
+    reader.ensure_unwrapped_sync([envelope])
+    assert reader.decrypt_sync(blob) == b"secret"
+
+
+def test_ensure_unwrapped_sync_refuses_a_foreign_key_id() -> None:
+    """The confused-deputy guard holds on the synchronous path: an envelope naming
+    another tenant's key is refused before any unwrap — same code as the async twin."""
+
+    ring = _per_tenant_keyring()
+    tenant_a = TenantIdentity(tenant_id=uuid4())
+    tenant_b = TenantIdentity(tenant_id=uuid4())
+
+    blob = ring.encrypt_sync(b"a-secret", tenant=tenant_a)
+    envelope = unpack_envelope(blob)
+
+    with pytest.raises(CoreException) as excinfo:
+        ring.ensure_unwrapped_sync([envelope], tenant=tenant_b)
+
+    assert excinfo.value.code == "core.crypto.key_id_unauthorized"
+
+    # The rightful tenant passes the same guard.
+    ring.ensure_unwrapped_sync([envelope], tenant=tenant_a)
+    assert ring.decrypt_sync(blob) == b"a-secret"
+
+
+def test_ensure_unwrapped_sync_honors_a_migration_overlap() -> None:
+    """During a KEK migration the previous key stays readable — the sync guard resolves
+    the overlap through the directory's synchronous surface, mirroring the async path."""
+
+    old = Keyring(
+        kms=MockKeyManagement(),
+        aead=AesGcmAead(),
+        directory=StaticKeyDirectory(KeyRef(key_id="old-cmk")),
+    )
+    tenant = TenantIdentity(tenant_id=uuid4())
+    blob = old.encrypt_sync(b"legacy", tenant=tenant)
+    envelope = unpack_envelope(blob)
+
+    migrating = Keyring(
+        kms=MockKeyManagement(),
+        aead=AesGcmAead(),
+        directory=StaticKeyDirectory(
+            KeyRef(key_id="new-cmk"), previous_key_ref=KeyRef(key_id="old-cmk")
+        ),
+    )
+
+    migrating.ensure_unwrapped_sync([envelope], tenant=tenant)
+    assert migrating.decrypt_sync(blob) == b"legacy"
+
+    # Once the overlap is dropped, the old key id is foreign again.
+    closed = Keyring(
+        kms=MockKeyManagement(),
+        aead=AesGcmAead(),
+        directory=StaticKeyDirectory(KeyRef(key_id="new-cmk")),
+    )
+    with pytest.raises(CoreException) as excinfo:
+        closed.ensure_unwrapped_sync([envelope], tenant=tenant)
+    assert excinfo.value.code == "core.crypto.key_id_unauthorized"
+
+
+def test_ensure_unwrapped_sync_is_a_noop_for_an_async_kms() -> None:
+    """With a real (I/O) KMS the sync pre-pass does nothing: no fill, no blocking call —
+    the async pre-pass stays mandatory and a cold sync decrypt still fails closed."""
+
+    writer = _keyring()
+    blob = writer.encrypt_sync(b"secret", tenant=None)
+    envelope = unpack_envelope(blob)
+
+    kms = _CountingKms(MockKeyManagement())
+    reader = Keyring(
+        kms=kms,
+        aead=AesGcmAead(),
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+    )
+
+    reader.ensure_unwrapped_sync([envelope], tenant=None)
+
+    assert kms.unwrapped == 0
+    with pytest.raises(CoreException) as excinfo:
+        reader.decrypt_sync(blob)
+    assert excinfo.value.code == "core.crypto.cipher_not_warm"
+
+
+def test_sync_guard_fails_closed_under_an_async_only_directory() -> None:
+    """Sync KMS but async-only directory: the tenant's own key cannot be resolved
+    without awaiting, so the guard demands the async pre-pass (``cipher_not_warm``)
+    rather than skipping authorization or wrongly refusing."""
+
+    ring = Keyring(
+        kms=MockKeyManagement(),
+        aead=AesGcmAead(),
+        directory=_AsyncOnlyDirectory(),
+    )
+    tenant = TenantIdentity(tenant_id=uuid4())
+
+    producer = _keyring()  # same key id, sync directory
+    blob = producer.encrypt_sync(b"secret", tenant=None)
+    envelope = unpack_envelope(blob)
+
+    with pytest.raises(CoreException) as excinfo:
+        ring.ensure_unwrapped_sync([envelope], tenant=tenant)
+
+    assert excinfo.value.code == "core.crypto.cipher_not_warm"
+
+    # Without a tenant there is nothing to authorize — the fill itself proceeds.
+    ring.ensure_unwrapped_sync([envelope])
+    assert ring.decrypt_sync(blob) == b"secret"

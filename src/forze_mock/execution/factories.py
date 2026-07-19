@@ -23,7 +23,7 @@ from forze.application.contracts.counter import (
     CounterPort,
     CounterSpec,
 )
-from forze.application.contracts.crypto import KeyringDepKey
+from forze.application.contracts.crypto import DeterministicCipherDepKey, KeyringDepKey
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.dlock import DistributedLockSpec
 from forze.application.contracts.document import DocumentSpec
@@ -59,15 +59,24 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.crypto import enforce_required_reach
 from forze.application.execution.domain import domain_dispatcher_provider
 from forze.application.execution.outbox import build_staging_outbox_command_for_store
+from forze.application.integrations.analytics import resolve_analytics_codecs_spec
 from forze.application.integrations.authn import (
     LOCKOUT_COUNTER_ROUTE,
     AuthnOrchestrator,
     LoginLockoutGuard,
 )
+from forze.application.integrations.crypto import resolve_document_codecs
+from forze.application.integrations.graph import resolve_graph_codecs
 from forze.application.integrations.outbox import StagingOutboxCommand
+from forze.application.integrations.procedure import resolve_procedure_codecs_spec
 from forze.application.integrations.pubsub import encrypting_pubsub_command
 from forze.application.integrations.queue import encrypting_queue_command
-from forze.application.integrations.search import SearchResultSnapshot
+from forze.application.integrations.search import (
+    SearchResultSnapshot,
+    resolve_search_read_codec_spec,
+    resolve_snapshot_cipher,
+    search_spec_encrypts,
+)
 from forze.application.integrations.stream import encrypting_stream_command
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
@@ -163,6 +172,29 @@ def _tenant_provider(ctx: ExecutionContext) -> TenantProviderPort:
 # ....................... #
 
 
+def _field_ciphers(
+    context: ExecutionContext,
+) -> tuple[Any | None, Any | None]:
+    """The ``(keyring, deterministic)`` pair for field-encryption resolution.
+
+    Resolved as optionals (``None`` when unregistered) so the shared per-plane
+    resolvers can fail closed with a precise error instead of the generic
+    dependency lookup raising — the same contract every real factory uses.
+    """
+
+    return (
+        context.deps.provide(KeyringDepKey) if context.deps.exists(KeyringDepKey) else None,
+        (
+            context.deps.provide(DeterministicCipherDepKey)
+            if context.deps.exists(DeterministicCipherDepKey)
+            else None
+        ),
+    )
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True)
 class _MockFactoryBase:
     module: MockDepsModule
@@ -176,6 +208,36 @@ class _MockFactoryBase:
         routes = self.module.routes
 
         return None if routes is None else routes.get(spec_name)
+
+    def _snapshot(
+        self,
+        context: ExecutionContext,
+        snapshot_spec: SearchResultSnapshotSpec | None,
+        *,
+        encrypted: bool,
+    ) -> SearchResultSnapshot | None:
+        """Result-snapshot wrapper for a search route, sealed when the route encrypts.
+
+        A route that decrypts confidential fields into its result models must not
+        re-expose them plaintext in the snapshot store — the same fail-closed rule
+        the Meilisearch factories apply via ``resolve_snapshot_cipher``.
+        """
+
+        if snapshot_spec is None:
+            return None
+
+        port = context.deps.provide(SearchResultSnapshotDepKey)(context, snapshot_spec)
+        cipher = resolve_snapshot_cipher(
+            encrypted=encrypted,
+            keyring=(
+                context.deps.provide(KeyringDepKey) if context.deps.exists(KeyringDepKey) else None
+            ),
+        )
+        return SearchResultSnapshot(
+            store=port,
+            cipher=cipher,
+            cipher_tenant=context.inv_ctx.get_tenant,
+        )
 
     def _namespace_for(
         self,
@@ -216,11 +278,28 @@ class ConfigurableMockDocument(_MockFactoryBase):
         sources = self.module.query_param_sources
         query_params_source = sources.source_for(str(spec.name)) if sources is not None else None
 
+        # The same fail-closed encryption resolution every real document factory runs:
+        # a spec that declares encrypted fields gets its codecs wrapped (the module's
+        # keyring fills synchronously, so no adapter pre-pass is needed); one that
+        # declares nothing gets the bundle back unchanged.
+        keyring, deterministic = _field_ciphers(context)
+        codecs = resolve_document_codecs(
+            spec.resolved_codecs,
+            spec_name=str(spec.name),
+            encryption=spec.encryption,
+            keyring=keyring,
+            deterministic=deterministic,
+            tenant_provider=_tenant_provider(context),
+            integration="mock",
+            code="mock.document.encryption_wiring",
+        )
+
         return MockDocumentAdapter[Any, Any, Any, Any](
             spec=spec,
             state=state,
             namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
             read_model=spec.read,
+            codecs=codecs,
             domain_model=domain_model,
             dispatcher_provider=domain_dispatcher_provider(context),
             tenant_aware=cfg.tenant_aware if cfg else False,
@@ -255,9 +334,17 @@ class ConfigurableMockAnalytics(_MockFactoryBase):
         spec: AnalyticsSpec[Any, Any],
     ) -> MockAnalyticsAdapter[Any, Any]:
         cfg = self._route(spec.name)
+        keyring, deterministic = _field_ciphers(context)
         return MockAnalyticsAdapter(
             state=self._state(context),
-            spec=spec,
+            # Wrap read & ingest codecs for field encryption (shared, fail-closed),
+            # exactly as the ClickHouse/BigQuery/Postgres analytics factories do.
+            spec=resolve_analytics_codecs_spec(
+                spec,
+                keyring=keyring,
+                deterministic=deterministic,
+                tenant_provider=_tenant_provider(context),
+            ),
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
         )
@@ -272,9 +359,18 @@ class ConfigurableMockProcedure(_MockFactoryBase):
         spec: ProcedureSpec[Any, Any],
     ) -> MockProcedureAdapter[Any, Any]:
         cfg = self._route(spec.name)
+        keyring, deterministic = _field_ciphers(context)
         return MockProcedureAdapter(
             state=self._state(context),
-            spec=spec,
+            # The mock hands the *model* to a programmed handler and never binds encoded
+            # params, so the wrap changes no behavior here — but the fail-closed wiring
+            # check (encryption declared, no cipher) must fire like on Postgres.
+            spec=resolve_procedure_codecs_spec(
+                spec,
+                keyring=keyring,
+                deterministic=deterministic,
+                tenant_provider=_tenant_provider(context),
+            ),
             registry=self.module.procedures or MockProcedureRegistry(),
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
@@ -290,13 +386,19 @@ class ConfigurableMockSearch(_MockFactoryBase):
         spec: SearchSpec[Any],
     ) -> MockSearchAdapter[Any]:
         cfg = self._route(spec.name)
-        snap = None
-        if spec.snapshot is not None:
-            snap_port = context.deps.provide(SearchResultSnapshotDepKey)(context, spec.snapshot)
-            snap = SearchResultSnapshot(store=snap_port)
+        keyring, deterministic = _field_ciphers(context)
+        snap = self._snapshot(context, spec.snapshot, encrypted=search_spec_encrypts(spec))
         return MockSearchAdapter(
             state=self._state(context),
-            spec=spec,
+            # Wrap the read codec for field encryption (shared, fail-closed) so declared
+            # fields are sealed in the mock index and decrypted out of results — the same
+            # resolution the Meilisearch factories run.
+            spec=resolve_search_read_codec_spec(
+                spec,
+                keyring=keyring,
+                deterministic=deterministic,
+                tenant_provider=_tenant_provider(context),
+            ),
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
             result_snapshot=snap,
@@ -312,9 +414,17 @@ class ConfigurableMockSearchCommand(_MockFactoryBase):
         spec: SearchSpec[Any],
     ) -> MockSearchCommandAdapter:
         cfg = self._route(spec.name)
+        keyring, deterministic = _field_ciphers(context)
         return MockSearchCommandAdapter(
             state=self._state(context),
-            spec=spec,
+            # The command side writes through the same wrapped codec, so upserts seal
+            # declared fields in the mock index exactly as Meilisearch's do.
+            spec=resolve_search_read_codec_spec(
+                spec,
+                keyring=keyring,
+                deterministic=deterministic,
+                tenant_provider=_tenant_provider(context),
+            ),
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
         )
@@ -329,9 +439,15 @@ class ConfigurableMockSearchManagement(_MockFactoryBase):
         spec: SearchSpec[Any],
     ) -> MockSearchManagementAdapter:
         cfg = self._route(spec.name)
+        keyring, deterministic = _field_ciphers(context)
         return MockSearchManagementAdapter(
             state=self._state(context),
-            spec=spec,
+            spec=resolve_search_read_codec_spec(
+                spec,
+                keyring=keyring,
+                deterministic=deterministic,
+                tenant_provider=_tenant_provider(context),
+            ),
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
         )
@@ -365,14 +481,18 @@ class ConfigurableMockHubSearch(_MockFactoryBase):
         legs: list[tuple[str, MockSearchAdapter[Any]]] = []
         search_factory = ConfigurableMockSearch(module=self.module)
 
+        # Member legs get their own encrypting wrap through the member factory.
         legs.extend((member.name, search_factory(context, member)) for member in spec.members)
 
-        snap = None
-        if spec.snapshot is not None:
-            snap_port = context.deps.provide(SearchResultSnapshotDepKey)(context, spec.snapshot)
-            snap = SearchResultSnapshot(store=snap_port)
+        keyring, deterministic = _field_ciphers(context)
+        snap = self._snapshot(context, spec.snapshot, encrypted=search_spec_encrypts(spec))
         return MockHubSearchAdapter(
-            hub_spec=spec,
+            hub_spec=resolve_search_read_codec_spec(
+                spec,
+                keyring=keyring,
+                deterministic=deterministic,
+                tenant_provider=_tenant_provider(context),
+            ),
             legs=legs,
             result_snapshot=snap,
         )
@@ -394,10 +514,12 @@ class ConfigurableMockFederatedSearch(_MockFactoryBase):
                     "Mock federated search supports SearchSpec legs only",
                 )
             legs.append((member.name, search_factory(context, member)))
-        snap = None
-        if spec.snapshot is not None:
-            snap_port = context.deps.provide(SearchResultSnapshotDepKey)(context, spec.snapshot)
-            snap = SearchResultSnapshot(store=snap_port)
+        # A federated route seals its snapshot when ANY member decrypts into it.
+        snap = self._snapshot(
+            context,
+            spec.snapshot,
+            encrypted=any(search_spec_encrypts(member) for member in spec.members),
+        )
         return MockFederatedSearchAdapter(
             federated_spec=spec,
             legs=legs,
@@ -523,10 +645,19 @@ class ConfigurableMockStorageUploads(_MockFactoryBase):
 class ConfigurableMockGraph(_MockFactoryBase):
     def __call__(self, context: ExecutionContext, spec: GraphModuleSpec) -> MockGraphAdapter:
         cfg = self._route(spec.name)
+        # Same fail-closed per-kind cipher resolution the Neo4j factory runs.
+        keyring, deterministic = _field_ciphers(context)
+        codecs = resolve_graph_codecs(
+            spec,
+            keyring=keyring,
+            deterministic=deterministic,
+            tenant_provider=_tenant_provider(context),
+        )
         return MockGraphAdapter(
             spec=spec,
             state=self._state(context),
             namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
+            codecs=codecs,
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
         )

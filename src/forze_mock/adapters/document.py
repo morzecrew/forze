@@ -22,6 +22,7 @@ from forze.application.contracts.base import (
     page_from_limit_offset,
 )
 from forze.application.contracts.document import (
+    DocumentCodecs,
     DocumentCommandPort,
     DocumentQueryPort,
     DocumentSpec,
@@ -70,7 +71,7 @@ from forze_mock.query.cursors import (
 )
 from forze_mock.query.matching import (
     _aggregate_docs,  # pyright: ignore[reportPrivateUsage]
-    _match_filters,  # pyright: ignore[reportPrivateUsage]
+    _match_expr,  # pyright: ignore[reportPrivateUsage]
     _project,  # pyright: ignore[reportPrivateUsage]
     _sort_docs,  # pyright: ignore[reportPrivateUsage]
 )
@@ -98,6 +99,12 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     state: MockState
     namespace: str
     read_model: type[R]
+    codecs: DocumentCodecs[R, D, C, U] = attrs.field(
+        default=attrs.Factory(lambda self: self.spec.resolved_codecs, takes_self=True)
+    )
+    """Codec bundle every (de)serialization goes through — the spec's own codecs by
+    default; the module factory passes them wrapped for field encryption when the
+    spec declares it, exactly as the real document factories do."""
     domain_model: type[D] | None = None
     dispatcher_provider: Callable[[], DomainEventDispatcherPort | None] = attrs.field(
         default=lambda: None
@@ -118,9 +125,10 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     def _sealed_fields(self) -> frozenset[str]:
         """Fields the spec declares as ciphertext at rest.
 
-        The mock stores plaintext, so it could happily sort/filter these — while the same query
-        against a real backend orders by ciphertext or matches nothing. Threading the declaration
-        into the shared validators keeps the *policy* identical on both.
+        Threaded into the shared sort/keyset validators so a sealed field is refused as an
+        order key from the *declaration* — the policy fires identically on every backend,
+        independent of whether a cipher is wired (the mock module wires one, but a
+        directly-constructed adapter may not).
         """
 
         return self.spec.encryption.sealed if self.spec.encryption else frozenset()
@@ -298,7 +306,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     # ....................... #
 
     def _read_codec(self) -> ModelCodec[R, Any]:
-        return self.spec.resolved_codecs.read
+        return self.codecs.read
 
     def _to_read(self, doc: JsonDict) -> R:
         return self._read_codec().decode_mapping(dict(doc))
@@ -313,19 +321,19 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     # ....................... #
 
     def _domain_codec(self) -> ModelCodec[D, Any]:
-        domain = self.spec.resolved_codecs.domain
+        domain = self.codecs.domain
         if domain is None:
             raise exc.internal("Domain codec is required when write is enabled")
         return domain
 
     def _create_codec(self) -> ModelCodec[D, Any]:
-        create = self.spec.resolved_codecs.create
+        create = self.codecs.create
         if create is None:
             raise exc.internal("Create codec is required when write is enabled")
         return create
 
     def _patch_codec(self) -> ModelCodec[Any, Any]:
-        codecs = self.spec.resolved_codecs
+        codecs = self.codecs
         if codecs.update is not None:
             return codecs.update
         if self.spec.write is not None:
@@ -337,6 +345,29 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     def _to_domain(self, doc: JsonDict) -> D:
         return self._domain_codec().decode_mapping(dict(doc))
+
+    # ....................... #
+
+    def _matcher(self, filters: QueryFilterExpression | None) -> Callable[[JsonDict], bool]:
+        """Parse *filters* once into a reusable predicate over stored documents.
+
+        The mock twin of the read gateway's encrypted-filter seam: an encrypting read
+        codec exposes ``rewrite_filter``, which replaces the literal in an equality
+        predicate on a searchable (deterministic) field with its ciphertext — so the
+        predicate matches the value at rest, exactly as it does on a real backend.
+        Plain codecs skip the rewrite and keep the shared evaluator's semantics.
+        """
+
+        if filters is None:
+            return lambda _doc: True
+
+        expr = QueryFilterExpressionParser.parse(filters)
+        rewrite = getattr(self._read_codec(), "rewrite_filter", None)
+
+        if rewrite is not None:
+            expr = rewrite(expr)
+
+        return lambda doc: _match_expr(doc, expr)
 
     # ....................... #
 
@@ -694,7 +725,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
         docs = self._candidate_docs()
 
-        filtered = [doc for doc in docs if _match_filters(doc, filters)]
+        match = self._matcher(filters)
+        filtered = [doc for doc in docs if match(doc)]
 
         pagination = pagination or {}
         limit_raw = pagination.get("limit")
@@ -1193,7 +1225,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             else None
         )
 
-        filtered = [doc for doc in docs if _match_filters(doc, filters)]
+        match = self._matcher(filters)
+        filtered = [doc for doc in docs if match(doc)]
         page_docs, has_more, next_c, prev_c = _mock_keyset_window(
             filtered,
             cursor=cursor,
@@ -1224,4 +1257,5 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         self._validate_filter_types(filters)
 
         docs = self._candidate_docs()
-        return sum(bool(_match_filters(doc, filters)) for doc in docs)
+        match = self._matcher(filters)
+        return sum(bool(match(doc)) for doc in docs)

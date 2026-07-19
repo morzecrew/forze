@@ -75,6 +75,42 @@ class KeyManagementPort(Protocol):
 # ....................... #
 
 
+@runtime_checkable
+class SyncKeyManagementPort(Protocol):
+    """A key manager whose key derivation is pure computation, not I/O.
+
+    The opt-in seam that lets a keyring fill its data-key cache *inline* from a
+    synchronous method instead of raising ``cipher_not_warm`` — so a backend with
+    no async pre-pass seam (the in-memory mock adapters) still runs the full
+    field-encryption path. Structural and deliberate: a backend opts in by
+    implementing these two methods, never by a flag.
+
+    **No production key backend should implement this.** A real KMS / HSM / Vault
+    unwrap is a network call; exposing it synchronously would let a missing
+    pre-pass silently issue a blocking call per field on the event loop. The sync
+    methods must be pure, in-process computation (the shipped implementation is
+    ``MockKeyManagement``, whose KEK is derived, not fetched).
+    """
+
+    def generate_data_key_sync(self, key_ref: KeyRef) -> DataKey:
+        """Synchronous twin of :meth:`KeyManagementPort.generate_data_key`."""
+
+        ...  # pragma: no cover
+
+    def unwrap_data_key_sync(
+        self,
+        *,
+        wrapped: bytes,
+        key_ref: KeyRef,
+    ) -> bytes:
+        """Synchronous twin of :meth:`KeyManagementPort.unwrap_data_key`."""
+
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
 class BytesCipherPort(Protocol):
     """Encrypt/decrypt opaque byte values, resolving the tenant's key internally.
 

@@ -146,6 +146,27 @@ def _kind_cipher(
     return GraphKindCipher(read_codec=read_codec, cipher=cipher)
 
 
+def plaintext_graph_codecs(spec: GraphModuleSpec) -> GraphCodecs:
+    """One plain (cipher-less) :class:`GraphKindCipher` per kind, ignoring declarations.
+
+    The default for a **directly constructed** adapter with no crypto wiring at all —
+    behavior is identical to a spec that declares nothing. Module factories must never
+    use this: they resolve through :func:`resolve_graph_codecs`, which fails closed
+    when a declaring spec lacks its ciphers.
+    """
+
+    return GraphCodecs(
+        nodes={
+            str(n.name): GraphKindCipher(read_codec=default_model_codec(n.read), cipher=None)
+            for n in spec.nodes
+        },
+        edges={
+            str(e.name): GraphKindCipher(read_codec=default_model_codec(e.read), cipher=None)
+            for e in spec.edges
+        },
+    )
+
+
 def resolve_graph_codecs(
     spec: GraphModuleSpec,
     *,

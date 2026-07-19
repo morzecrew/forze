@@ -71,6 +71,50 @@ class KeyDirectoryWithPrevious(Protocol):
 # ....................... #
 
 
+@runtime_checkable
+class SyncKeyDirectoryPort(Protocol):
+    """A key directory that can resolve a tenant's key reference without awaiting.
+
+    The directory half of the synchronous-fill opt-in (the KMS half is
+    :class:`~forze.application.contracts.crypto.SyncKeyManagementPort`): a keyring
+    filling its cache from a synchronous method needs the tenant's key reference
+    inline, so only a directory whose answer is pure computation qualifies. The
+    shipped :class:`StaticKeyDirectory` / :class:`TenantTemplateKeyDirectory`
+    implement it (their async ``resolve`` never awaited anything); a directory that
+    fetches customer-registered references must not.
+    """
+
+    def resolve_sync(self, tenant: TenantIdentity | None) -> KeyRef:
+        """Synchronous twin of :meth:`KeyDirectoryPort.resolve`."""
+
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@runtime_checkable
+class SyncKeyDirectoryWithPrevious(Protocol):
+    """A synchronous directory that can also name the previous key without awaiting.
+
+    Lets the keyring's synchronous key-id guard honor a KEK-migration read overlap
+    (see :class:`KeyDirectoryWithPrevious`) instead of failing closed on it.
+    """
+
+    def resolve_sync(self, tenant: TenantIdentity | None) -> KeyRef:
+        """Synchronous twin of :meth:`KeyDirectoryPort.resolve`."""
+
+        ...  # pragma: no cover
+
+    def resolve_previous_sync(self, tenant: TenantIdentity | None) -> KeyRef | None:
+        """Synchronous twin of :meth:`KeyDirectoryWithPrevious.resolve_previous`."""
+
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True)
 class StaticKeyDirectory:
@@ -87,15 +131,25 @@ class StaticKeyDirectory:
 
     # ....................... #
 
-    async def resolve(self, tenant: TenantIdentity | None) -> KeyRef:
+    def resolve_sync(self, tenant: TenantIdentity | None) -> KeyRef:
         _ = tenant
         return self.key_ref
 
     # ....................... #
 
-    async def resolve_previous(self, tenant: TenantIdentity | None) -> KeyRef | None:
+    def resolve_previous_sync(self, tenant: TenantIdentity | None) -> KeyRef | None:
         _ = tenant
         return self.previous_key_ref
+
+    # ....................... #
+
+    async def resolve(self, tenant: TenantIdentity | None) -> KeyRef:
+        return self.resolve_sync(tenant)
+
+    # ....................... #
+
+    async def resolve_previous(self, tenant: TenantIdentity | None) -> KeyRef | None:
+        return self.resolve_previous_sync(tenant)
 
 
 # ....................... #
@@ -136,7 +190,7 @@ class TenantTemplateKeyDirectory:
 
     # ....................... #
 
-    async def resolve(self, tenant: TenantIdentity | None) -> KeyRef:
+    def resolve_sync(self, tenant: TenantIdentity | None) -> KeyRef:
         if tenant is None:
             return KeyRef(key_id=self.default_key_id, version=self.version)
 
@@ -147,7 +201,7 @@ class TenantTemplateKeyDirectory:
 
     # ....................... #
 
-    async def resolve_previous(self, tenant: TenantIdentity | None) -> KeyRef | None:
+    def resolve_previous_sync(self, tenant: TenantIdentity | None) -> KeyRef | None:
         if tenant is None:
             if self.previous_default_key_id is None:
                 return None
@@ -161,3 +215,13 @@ class TenantTemplateKeyDirectory:
             key_id=self.previous_template.format(tenant_id=tenant.tenant_id),
             version=self.version,
         )
+
+    # ....................... #
+
+    async def resolve(self, tenant: TenantIdentity | None) -> KeyRef:
+        return self.resolve_sync(tenant)
+
+    # ....................... #
+
+    async def resolve_previous(self, tenant: TenantIdentity | None) -> KeyRef | None:
+        return self.resolve_previous_sync(tenant)

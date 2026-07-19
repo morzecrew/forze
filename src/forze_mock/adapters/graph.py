@@ -40,15 +40,17 @@ from forze.application.contracts.graph import (
     validate_property_filter_keys,
 )
 from forze.application.integrations.graph import (
+    GraphCodecs,
+    GraphKindCipher,
     assert_edge_streamable,
     assert_vertex_streamable,
     endpoints_conflict,
+    plaintext_graph_codecs,
     resolve_write_endpoint,
     stream_keyset_pages,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import default_model_codec
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin
 
@@ -70,6 +72,12 @@ class MockGraphAdapter(MockTenancyMixin):
     spec: GraphModuleSpec
     state: MockState
     namespace: str
+    codecs: GraphCodecs = attrs.field(
+        default=attrs.Factory(lambda self: plaintext_graph_codecs(self.spec), takes_self=True)
+    )
+    """Per-kind property ciphers — plaintext by default for directly constructed
+    adapters; the module factory passes them resolved (fail-closed) from the spec's
+    declarations, exactly as the Neo4j factory does."""
 
     # ....................... #
 
@@ -105,10 +113,35 @@ class MockGraphAdapter(MockTenancyMixin):
     # ....................... #
 
     def _vmodel(self, kind: str, props: JsonDict) -> BaseModel:
-        return default_model_codec(self._node(kind).read).decode_mapping(props, trust_source=True)
+        return self._open(self.codecs.node(kind), props)
 
     def _emodel(self, kind: str, props: JsonDict) -> BaseModel:
-        return default_model_codec(self._edge(kind).read).decode_mapping(props, trust_source=True)
+        return self._open(self.codecs.edge(kind), props)
+
+    # ....................... #
+
+    @staticmethod
+    def _open(kc: GraphKindCipher, props: JsonDict) -> BaseModel:
+        """Decrypt (when the kind seals) and decode one stored property map.
+
+        Synchronous on purpose: the mock keyring's key backend is computation-only, so
+        the codec's decrypt pre-pass fills inline — no async seam needed at the mock's
+        26 decode sites. A kind without a cipher decodes exactly as before.
+        """
+
+        if kc.cipher is not None:
+            props = kc.cipher.decrypt_mapping(dict(props))
+
+        return kc.read_codec.decode_mapping(props, trust_source=True)
+
+    @staticmethod
+    def _seal(kc: GraphKindCipher, props: JsonDict, *, record_id: Any = None) -> JsonDict:
+        """Seal a property map on write (the synchronous twin of ``GraphKindCipher.seal``)."""
+
+        if kc.cipher is None:
+            return props
+
+        return kc.cipher.encrypt_mapping(props, record_id=record_id)
 
     # ....................... #
     # GraphQueryPort
@@ -352,6 +385,7 @@ class MockGraphAdapter(MockTenancyMixin):
         node = self._node(node_kind)
         props = cmd.model_dump(mode="json", exclude_none=True)
         key = str(props[node.key_field])
+        props = self._seal(self.codecs.node(node_kind), props)
 
         with self.state.lock:
             self._verts()[(node_kind, key)] = props
@@ -360,6 +394,9 @@ class MockGraphAdapter(MockTenancyMixin):
 
     async def update_vertex(self, ref: VertexRef, cmd: BaseModel) -> BaseModel:
         patch = cmd.model_dump(mode="json", exclude_none=True)
+        # Each patched sealed property gets a fresh envelope; untouched properties keep
+        # their stored ciphertext (the merge below never decrypts).
+        patch = self._seal(self.codecs.node(ref.kind), patch, record_id=ref.key)
 
         with self.state.lock:
             existing = self._verts().get((ref.kind, ref.key))
@@ -419,6 +456,9 @@ class MockGraphAdapter(MockTenancyMixin):
         # Single-endpoint kinds are implicit; multi-endpoint kinds name the pair via
         # from_kind/to_kind (popped from ``data``).
         endpoint = resolve_write_endpoint(edge, data)
+        # Key/endpoint identity fields are never sealed (refused at spec construction),
+        # so the identity comparisons below still read them from the sealed map.
+        data = self._seal(self.codecs.edge(edge_kind), data)
         rec = {
             "kind": edge_kind,
             "from_kind": endpoint.from_kind,
@@ -808,6 +848,7 @@ class MockGraphAdapter(MockTenancyMixin):
         patch = cmd.model_dump(mode="json", exclude_none=True)
         patch.pop("from_key", None)
         patch.pop("to_key", None)
+        patch = self._seal(self.codecs.edge(ref.kind), patch, record_id=ref.key)
 
         with self.state.lock:
             rec = self._find_edge_rec(ref, self._edges_store())
@@ -842,7 +883,9 @@ class MockGraphAdapter(MockTenancyMixin):
             for kind, cmd in items:
                 node = self._node(kind)
                 props = cmd.model_dump(mode="json", exclude_none=True)
-                verts[(kind, str(props[node.key_field]))] = props
+                key = str(props[node.key_field])
+                props = self._seal(self.codecs.node(kind), props)
+                verts[(kind, key)] = props
                 stored.append((kind, props))
 
         if not return_new:
@@ -871,6 +914,7 @@ class MockGraphAdapter(MockTenancyMixin):
         node = self._node(node_kind)
         props = cmd.model_dump(mode="json", exclude_none=True)
         key = str(props[node.key_field])
+        props = self._seal(self.codecs.node(node_kind), props)
 
         with self.state.lock:
             verts = self._verts()
