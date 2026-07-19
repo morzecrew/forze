@@ -18,7 +18,7 @@ from forze.application.execution.context import (
 )
 from forze.base.primitives import uuid7
 
-from .raw_websocket import refuse_raw_websocket
+from .raw_websocket import refuse_raw_websocket, websocket_scope_refused
 
 # ----------------------- #
 
@@ -152,10 +152,10 @@ class InvocationMetadataMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
-            if (
-                scope["type"] == "websocket"
-                and not self.allow_raw_websockets
-                and scope.get("path") not in self.allowed_websocket_paths
+            if websocket_scope_refused(
+                scope,
+                allow_raw_websockets=self.allow_raw_websockets,
+                allowed_websocket_paths=self.allowed_websocket_paths,
             ):
                 await refuse_raw_websocket(scope, receive, send)
                 return

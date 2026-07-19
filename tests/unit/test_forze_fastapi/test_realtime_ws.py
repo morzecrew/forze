@@ -90,7 +90,7 @@ async def _resolver(connect: WsConnect) -> WsConnection | None:
     if token == "other":
         return WsConnection(authn=AuthnIdentity(principal_id=uuid4()))
 
-    device = connect.websocket.query_params.get("device_id")
+    device = auth.get("device_id") or connect.websocket.query_params.get("device_id")
 
     return WsConnection(
         authn=AuthnIdentity(principal_id=_PRINCIPAL),
@@ -219,6 +219,57 @@ class TestReplayAndAck:
         with client.websocket_connect("/realtime/ws?device_id=d1") as ws:
             assert ws.receive_json()["id"] == ids[2]
 
+    def test_malformed_acks_error_instead_of_silently_dropping(self) -> None:
+        client, _ = _build()
+
+        with client.websocket_connect("/realtime/ws") as ws:
+            for bad_up_to in (None, "", 7, {"id": "x"}, ["x"]):
+                ws.send_json({"type": "realtime.ack", "up_to": bad_up_to})
+                frame = ws.receive_json()
+                assert frame["type"] == "error"
+                assert frame["error"]["code"] == "realtime_invalid_frame"
+
+    def test_ack_follows_a_reauth_rotated_client_identity(self) -> None:
+        import asyncio
+
+        mailbox = InMemoryRealtimeMailbox()
+        cursors = InMemoryMailboxCursors()
+        ids = asyncio.run(_seed(mailbox, count=2))
+
+        ctx = context_from_deps(MockDepsModule(state=MockState())())
+        router = APIRouter()
+        attach_realtime_ws_route(
+            router,
+            ctx_dep=lambda: ctx,
+            resolve=_resolver,
+            mailbox_factory=lambda _ctx: mailbox,
+            cursors_factory=lambda _ctx: cursors,
+        )
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        with client.websocket_connect("/realtime/ws?device_id=d1") as ws:
+            assert [ws.receive_json()["id"] for _ in range(2)] == ids
+
+            # rotate the client identity in place, then ack — the cursor must
+            # belong to the refreshed device, not the connect-time closure
+            ws.send_json(
+                {"type": "realtime.reauth", "cid": "r", "auth": {"device_id": "d2"}}
+            )
+            assert ws.receive_json()["data"] == {"ok": True}
+            ws.send_json({"type": "realtime.ack", "up_to": ids[0]})
+
+        async def _positions() -> tuple[Any, Any]:
+            return (
+                await cursors.get(principal=str(_PRINCIPAL), client_key="d2"),
+                await cursors.get(principal=str(_PRINCIPAL), client_key="d1"),
+            )
+
+        d2_cursor, d1_cursor = asyncio.run(_positions())
+        assert d2_cursor is not None  # the ack landed on the refreshed identity...
+        assert d1_cursor is None  # ...never on the connect-time device
+
     def test_last_event_id_query_param_resumes(self) -> None:
         mailbox = InMemoryRealtimeMailbox()
         client, _ = _build(mailbox=mailbox)
@@ -299,6 +350,82 @@ class TestCommands:
 
             ws.send_text("[1, 2, 3]")
             assert ws.receive_json()["error"]["code"] == "realtime_invalid_frame"
+
+    def test_malformed_governance_fields_are_refused_not_weakened(self) -> None:
+        client, _ = _build(with_commands=True)
+
+        with client.websocket_connect("/realtime/ws") as ws:
+            for field, value in (
+                ("idempotency_key", {"k": 1}),  # would dedup on a repr string
+                ("idempotency_key", 42),
+                ("deadline_budget", "5.0"),  # would silently bind no deadline
+                ("deadline_budget", True),
+                ("deadline_budget", -1),
+            ):
+                ws.send_json(
+                    {
+                        "type": "cmd",
+                        "event": "note.create",
+                        "cid": "g",
+                        "payload": {"text": "hi"},
+                        field: value,
+                    }
+                )
+                ack = ws.receive_json()
+                assert ack["cid"] == "g"
+                assert ack["error"]["code"] == "realtime_invalid_frame"
+
+            # valid governance fields still dispatch
+            ws.send_json(
+                {
+                    "type": "cmd",
+                    "event": "note.create",
+                    "cid": "ok",
+                    "payload": {"text": "hi"},
+                    "idempotency_key": "k-1",
+                    "deadline_budget": 5,
+                }
+            )
+            assert ws.receive_json()["data"] == {"note_id": "note:hi"}
+
+    def test_inflight_limit_error_acks_without_running(self) -> None:
+        import asyncio as aio
+
+        async def _slow(args: _CreateNote) -> _NoteAck:
+            await aio.sleep(30)
+            return _NoteAck(note_id="never")  # pragma: no cover - cancelled at close
+
+        registry = OperationRegistry().set_handler("slow", lambda _ctx: _slow).freeze()
+        commands = (
+            RealtimeCommandRoute[Any, Any](
+                event="slow", operation="slow", payload_type=_CreateNote
+            ),
+        )
+        ctx = context_from_deps(MockDepsModule(state=MockState())())
+        router = APIRouter()
+        attach_realtime_ws_route(
+            router,
+            ctx_dep=lambda: ctx,
+            resolve=_resolver,
+            mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
+            cursors_factory=lambda _ctx: InMemoryMailboxCursors(),
+            registry=registry,
+            commands=commands,
+            max_inflight_commands=1,
+        )
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        with client.websocket_connect("/realtime/ws") as ws:
+            # s1 occupies the single slot (its handler sleeps); s2 must be refused
+            # without running, not queued behind it
+            ws.send_json({"type": "cmd", "event": "slow", "cid": "s1", "payload": {"text": "x"}})
+            ws.send_json({"type": "cmd", "event": "slow", "cid": "s2", "payload": {"text": "x"}})
+
+            ack = ws.receive_json()
+            assert ack["cid"] == "s2"
+            assert ack["error"]["code"] == "realtime_commands_limit"
 
     def test_oversized_frame_closes_the_socket(self) -> None:
         client, _ = _build(with_commands=True, max_frame_bytes=64)

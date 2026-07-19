@@ -155,6 +155,118 @@ class TestWebsocketScopeRefusal:
 # ----------------------- #
 
 
+class TestAllowlistCheck:
+    """The startup reconciliation: an allowlisted path must serve the governed route."""
+
+    def _governed_app(self, *, prefix: str = "", allow: str | None = None) -> FastAPI:
+        from fastapi import APIRouter
+
+        from forze.application.integrations.realtime import (
+            InMemoryMailboxCursors,
+            InMemoryRealtimeMailbox,
+        )
+        from forze_fastapi.realtime import WsConnection, attach_realtime_ws_route
+
+        async def _resolve(connect: Any) -> WsConnection:  # pragma: no cover - unused
+            raise NotImplementedError
+
+        router = APIRouter(prefix=prefix)
+        attach_realtime_ws_route(
+            router,
+            ctx_dep=_execution_ctx,
+            resolve=_resolve,
+            mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
+            cursors_factory=lambda _ctx: InMemoryMailboxCursors(),
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+
+        if allow is not None:
+            app.add_middleware(
+                InvocationMetadataMiddleware,  # type: ignore[arg-type]
+                ctx_dep=_execution_ctx,
+                allowed_websocket_paths={allow},
+            )
+
+        return app
+
+    def test_matching_governed_route_passes(self) -> None:
+        from forze_fastapi.middlewares import check_websocket_allowlist
+
+        check_websocket_allowlist(self._governed_app(allow="/realtime/ws"))
+
+    def test_no_allowlist_is_a_noop(self) -> None:
+        from forze_fastapi.middlewares import check_websocket_allowlist
+
+        check_websocket_allowlist(self._governed_app())
+
+    def test_router_prefix_mismatch_fails_the_boot(self) -> None:
+        from forze.base.exceptions import CoreException
+        from forze_fastapi.middlewares import check_websocket_allowlist
+
+        # the documented route-local path does not exist once the router is
+        # mounted under /api — a silent 1008 on every connect becomes a loud boot error
+        app = self._governed_app(prefix="/api", allow="/realtime/ws")
+
+        with pytest.raises(CoreException) as caught:
+            check_websocket_allowlist(app)
+
+        assert "full mounted path" in str(caught.value)
+
+        # the corrected full path verifies
+        check_websocket_allowlist(self._governed_app(prefix="/api", allow="/api/realtime/ws"))
+
+    def test_foreign_route_at_an_allowlisted_path_fails_the_boot(self) -> None:
+        from forze.base.exceptions import CoreException
+        from forze_fastapi.middlewares import check_websocket_allowlist
+
+        app = FastAPI()
+
+        @app.websocket("/realtime/ws")
+        async def rogue(websocket: WebSocket) -> None:  # pragma: no cover - never runs
+            await websocket.accept()
+
+        app.add_middleware(
+            InvocationMetadataMiddleware,  # type: ignore[arg-type]
+            ctx_dep=_execution_ctx,
+            allowed_websocket_paths={"/realtime/ws"},
+        )
+
+        with pytest.raises(CoreException) as caught:
+            check_websocket_allowlist(app)
+
+        assert "not a governed realtime route" in str(caught.value)
+
+    def test_runtime_lifespan_runs_the_check_at_startup(self) -> None:
+        from forze.application.execution import DepsRegistry, ExecutionRuntime
+        from forze.base.exceptions import CoreException
+        from forze_fastapi import runtime_lifespan
+
+        runtime = ExecutionRuntime(
+            deps=DepsRegistry.from_modules(MockDepsModule(state=MockState())).freeze()
+        )
+        app = self._governed_app(prefix="/api", allow="/realtime/ws")
+        app.router.lifespan_context = runtime_lifespan(runtime)
+
+        with pytest.raises(CoreException):
+            with TestClient(app):  # entering runs the lifespan
+                pass  # pragma: no cover - startup refuses
+
+
+def test_socket_teardown_error_predicate() -> None:
+    from forze_fastapi.realtime.ws import _is_socket_teardown_error  # pyright: ignore[reportPrivateUsage]
+
+    assert _is_socket_teardown_error(
+        RuntimeError('Cannot call "send" once a close message has been sent.')
+    )
+    assert _is_socket_teardown_error(
+        RuntimeError('Cannot call "receive" once a disconnect message has been received.')
+    )
+    # anything else (hub, presence, app logic) must stay observable
+    assert not _is_socket_teardown_error(RuntimeError("presence store exploded"))
+
+
 def test_raw_websocket_route_handshake_is_rejected_end_to_end() -> None:
     app = FastAPI()
 

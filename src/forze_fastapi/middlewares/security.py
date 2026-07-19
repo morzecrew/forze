@@ -20,7 +20,7 @@ from forze.base.exceptions import CoreException, exc
 
 from ..exceptions import build_core_exception_response
 from ..security import AuthnRequirement, resolve_authn_ingress, resolve_tenant_identity
-from .raw_websocket import refuse_raw_websocket
+from .raw_websocket import refuse_raw_websocket, websocket_scope_refused
 
 # ----------------------- #
 
@@ -100,10 +100,10 @@ class SecurityContextMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
-            if (
-                scope["type"] == "websocket"
-                and not self.allow_raw_websockets
-                and scope.get("path") not in self.allowed_websocket_paths
+            if websocket_scope_refused(
+                scope,
+                allow_raw_websockets=self.allow_raw_websockets,
+                allowed_websocket_paths=self.allowed_websocket_paths,
             ):
                 await refuse_raw_websocket(scope, receive, send)
                 return

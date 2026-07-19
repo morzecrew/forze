@@ -105,7 +105,10 @@ The raw-WebSocket transport frames its ingress as JSON objects with a `type`:
 - `event` names a server-declared command route; `payload` is exactly the route's
   declared model. `cid` is client-chosen and echoed verbatim on the ack.
 - Optional per-frame governance: `idempotency_key` (string) and `deadline_budget`
-  (seconds) bind onto the invocation exactly as the HTTP headers do.
+  (positive number of seconds) bind onto the invocation exactly as the HTTP
+  headers do — but typed strictly: a wrong-typed value is refused
+  (`realtime_invalid_frame`), never coerced or silently dropped. The same goes
+  for `realtime.ack`: `up_to` must be a non-empty string.
 - Every command is acknowledged: `{ "type": "ack", "cid", "data": <result> }` on
   success, `{ "type": "ack", "cid", "error": <error envelope> }` on failure.
 - Limits are fail-loud: an unparseable or unknown-`type` frame gets a

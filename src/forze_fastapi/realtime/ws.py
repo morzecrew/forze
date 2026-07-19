@@ -69,6 +69,7 @@ from forze.base.primitives import uuid7
 from forze.base.scrubbing import sanitize_pydantic_errors
 
 from .._logging import ForzeFastAPILogger
+from ..middlewares.raw_websocket import GOVERNED_WEBSOCKET_ATTR
 from .hub import RealtimeSseHub, SseSubscription, presence_rooms
 from .sse import (
     TopicAuthorizer,
@@ -198,6 +199,21 @@ def _log_server_error(core: CoreException | None, error: BaseException) -> None:
     _logger.critical_exception("WebSocket realtime unit failed", exc=error)
 
 
+def _is_socket_teardown_error(error: BaseException) -> bool:
+    """Whether a ``RuntimeError`` is starlette's send/receive-after-close race.
+
+    The sender legitimately races the client's disconnect; only that race is normal
+    teardown — any other ``RuntimeError`` (hub, presence, dispatch) must propagate.
+    """
+
+    detail = str(error)
+
+    return (
+        "once a close message has been sent" in detail
+        or "once a disconnect message has been received" in detail
+    )
+
+
 # ----------------------- #
 
 
@@ -232,7 +248,10 @@ def attach_realtime_ws_route(
     """Attach the governed realtime WebSocket endpoint to *router*.
 
     Identity is resolved by *resolve* from the upgrade request — the middlewares
-    skip websocket scopes, so add *path* to their ``allowed_websocket_paths``.
+    skip websocket scopes, so add the route's **full mounted path** (router prefixes
+    included) to their ``allowed_websocket_paths`` — ``check_websocket_allowlist``
+    (run by ``runtime_lifespan`` at startup) fails the boot on a mismatch or on a
+    non-governed route at an allowlisted path.
     Share *hub* (and its tail lifecycle step) with the SSE route for the live leg;
     without one the socket serves replay + acks only. *registry* + *commands*
     enable ``cmd`` frame dispatch — the same
@@ -318,15 +337,36 @@ def attach_realtime_ws_route(
             if presence is not None
             else ()
         )
-        client_key = connection.client_key(member_key)
+
+        def _client_key() -> str:
+            # From the LIVE session identity, not a connect-time closure: a reauth may
+            # rotate the client's session id, and the ack cursor must follow the
+            # refreshed identity (Socket.IO recomputes per ack the same way).
+            return session.connection.client_key(member_key)
 
         # ....................... #
 
+        send_lock = asyncio.Lock()
+
         async def _send(payload: str) -> None:
-            await websocket.send_text(payload)
+            # One serialized writer: the live sender, command acks, and error frames
+            # all target this socket concurrently — unserialized ASGI sends can
+            # interleave frames or race the close state.
+            async with send_lock:
+                await websocket.send_text(payload)
 
         async def _send_json(payload: dict[str, Any]) -> None:
             await _send(json.dumps(payload, separators=(",", ":")))
+
+        async def _send_error(message: str) -> None:
+            await _send_json(
+                {
+                    "type": "error",
+                    "error": _render_error(
+                        error_envelope(exc.validation(message, code="realtime_invalid_frame"))
+                    ),
+                }
+            )
 
         async def _sender() -> None:
             if hub is not None:
@@ -340,7 +380,7 @@ def attach_realtime_ws_route(
                     mailbox,
                     cursors,
                     principal=session.connection.principal,
-                    client_key=client_key,
+                    client_key=_client_key(),
                     last_event_id=websocket.query_params.get("last_event_id"),
                 )
 
@@ -364,19 +404,13 @@ def attach_realtime_ws_route(
 
         # ....................... #
 
-        async def _handle_ack(frame: Mapping[str, Any]) -> None:
-            raw = frame.get("up_to")
-            event_id = str(raw) if raw else None
-
-            if event_id is None:
-                return
-
+        async def _handle_ack(event_id: str) -> None:
             with _bind(ctx, session.connection):
                 await acknowledge_up_to(
                     mailbox_factory(ctx),
                     cursors_factory(ctx),
                     principal=session.connection.principal,
-                    client_key=client_key,
+                    client_key=_client_key(),
                     event_id=event_id,
                 )
 
@@ -422,16 +456,38 @@ def attach_realtime_ws_route(
                         details={"errors": sanitize_pydantic_errors(error.errors())},
                     ) from error
 
+                # Governance fields are typed, never coerced: a silently-stringified
+                # object key or a dropped string budget would weaken dedup/timeout
+                # behavior instead of erroring — the frame is refused loudly.
                 idempotency_key = frame.get("idempotency_key")
+
+                if idempotency_key is not None and not isinstance(idempotency_key, str):
+                    raise exc.validation(
+                        "idempotency_key must be a string", code="realtime_invalid_frame"
+                    )
+
                 budget = frame.get("deadline_budget")
+
+                if budget is not None:
+                    if isinstance(budget, bool) or not isinstance(budget, (int, float)):
+                        raise exc.validation(
+                            "deadline_budget must be a number of seconds",
+                            code="realtime_invalid_frame",
+                        )
+
+                    budget = float(budget)
+
+                    if budget != budget or budget <= 0 or budget == float("inf"):
+                        raise exc.validation(
+                            "deadline_budget must be a positive, finite number of seconds",
+                            code="realtime_invalid_frame",
+                        )
 
                 with (
                     _bind(ctx, session.connection),
-                    ctx.inv_ctx.bind_idempotency(str(idempotency_key) if idempotency_key else None),
+                    ctx.inv_ctx.bind_idempotency(idempotency_key or None),
                     # None is a no-op passthrough; a bound budget is tighten-only
-                    ctx.inv_ctx.bind_deadline(
-                        float(budget) if isinstance(budget, (int, float)) else None
-                    ),
+                    ctx.inv_ctx.bind_deadline(budget),
                 ):
                     result = await run_operation(
                         registry,  # type: ignore[arg-type] # attach refused commands without it
@@ -479,19 +535,7 @@ def attach_realtime_ws_route(
                     parsed = None
 
                 if not isinstance(parsed, Mapping):
-                    await _send_json(
-                        {
-                            "type": "error",
-                            "error": _render_error(
-                                error_envelope(
-                                    exc.validation(
-                                        "Frames must be JSON objects",
-                                        code="realtime_invalid_frame",
-                                    )
-                                )
-                            ),
-                        }
-                    )
+                    await _send_error("Frames must be JSON objects")
                     continue
 
                 frame = cast("Mapping[str, Any]", parsed)
@@ -499,7 +543,15 @@ def attach_realtime_ws_route(
                 cid = frame.get("cid")
 
                 if frame_type == FRAME_ACK:
-                    await _handle_ack(frame)
+                    up_to = frame.get("up_to")
+
+                    # a malformed ack must error, not silently leave the cursor put
+                    # (the client would believe it acked and re-receive on reconnect)
+                    if not isinstance(up_to, str) or not up_to:
+                        await _send_error("realtime.ack requires a non-empty string up_to")
+                        continue
+
+                    await _handle_ack(up_to)
 
                 elif frame_type == FRAME_REAUTH:
                     await _handle_reauth(frame, cid)
@@ -525,19 +577,7 @@ def attach_realtime_ws_route(
                     tasks.create_task(_bounded(_dispatch(frame, cid)))
 
                 else:
-                    await _send_json(
-                        {
-                            "type": "error",
-                            "error": _render_error(
-                                error_envelope(
-                                    exc.validation(
-                                        f"Unknown frame type {frame_type!r}",
-                                        code="realtime_invalid_frame",
-                                    )
-                                )
-                            ),
-                        }
-                    )
+                    await _send_error(f"Unknown frame type {frame_type!r}")
 
         # ....................... #
 
@@ -549,8 +589,15 @@ def attach_realtime_ws_route(
                 tasks.create_task(_sender())
                 tasks.create_task(_receiver(tasks))
 
-        except* (WebSocketDisconnect, RuntimeError):
-            pass  # client went away (or a send raced the close) — normal teardown
+        except* WebSocketDisconnect:
+            pass  # client went away — normal teardown
+
+        except* RuntimeError as group:
+            unrelated = group.split(_is_socket_teardown_error)[1]
+
+            if unrelated is not None:
+                # not a chained failure — the surviving subgroup IS the original error
+                raise unrelated from None
 
         finally:
             if subscription is not None:
@@ -563,6 +610,9 @@ def attach_realtime_ws_route(
                 except Exception:
                     _logger.exception("WS presence leave failed", room=room)
 
+    # The governed marker check_websocket_allowlist verifies at startup: an
+    # allowlisted path must serve exactly this kind of endpoint, nothing else.
+    setattr(ws_endpoint, GOVERNED_WEBSOCKET_ATTR, True)
     router.websocket(path, name="realtime_ws")(ws_endpoint)
 
     return router

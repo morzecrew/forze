@@ -68,8 +68,11 @@ Both middlewares **refuse raw websocket scopes** (the upgrade handshake is close
 with a policy violation): identity, tenancy, and the envelope are resolved for HTTP
 only, so a raw `@app.websocket` route would otherwise run with none of them —
 silently. Framework-attached websocket routes (`attach_realtime_ws_route`) are
-allowlisted by **exact path** with `allowed_websocket_paths={"/realtime/ws"}` —
-they resolve identity at connect themselves. Only if you deliberately self-manage
+allowlisted by **exact full mounted path** (router prefixes included) with
+`allowed_websocket_paths={"/realtime/ws"}` — they resolve identity at connect
+themselves, and `check_websocket_allowlist` (run automatically by
+`runtime_lifespan`) fails the boot if an allowlisted path doesn't serve exactly
+one governed route. Only if you deliberately self-manage
 your own websocket routes, opt out app-wide with `allow_raw_websockets=True`; you
 then own identity, tenancy, and error shaping on every websocket route yourself.
 For governed duplex realtime, use the [Socket.IO integration](socketio.md) or the
