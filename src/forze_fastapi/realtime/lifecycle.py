@@ -113,12 +113,15 @@ async def _tail_to_hub(
     poll_interval: timedelta,
     stop: asyncio.Event,
     tenant_for: Callable[[Any], UUID | None] | None = None,
+    on_live: Callable[[], None] | None = None,
 ) -> None:
     """Fast-forward to the stream's tail, then publish every new signal into the hub.
 
     *tenant_for* resolves the tenant a signal is published under: ``None`` (the
     tenant-global stream) reads the untrusted ``forze_tenant_id`` header; the sharded
     loop passes the **bound** shard tenant instead — the stream's identity, trusted.
+    *on_live* fires once the fast-forward completes and live publishing begins — the
+    runners flip ``hub.ready`` through it (the sharded runner only after every tenant).
     """
 
     _refuse_encrypted_stream(stream_spec)
@@ -132,13 +135,20 @@ async def _tail_to_hub(
 
     # Start at *now*: page through the retained backlog without publishing. Backend-
     # neutral (no reliance on a "$" cursor) and bounded by the stream's retention cap.
+    # A short read means we are within one page of the tail — stop there instead of
+    # reading until empty, which on an active stream would keep chasing concurrent
+    # appends and silently classify them (and their live delivery) as backlog.
     while not stop.is_set():
         backlog = await port.read(dict(cursor), limit=_FAST_FORWARD_PAGE, timeout=None)
 
-        if not backlog:
+        if backlog:
+            cursor[stream] = backlog[-1].id
+
+        if len(backlog) < _FAST_FORWARD_PAGE:
             break
 
-        cursor[stream] = backlog[-1].id
+    if on_live is not None:
+        on_live()
 
     while not stop.is_set():
         messages = await port.read(dict(cursor), limit=batch, timeout=poll_interval)
@@ -188,8 +198,20 @@ async def _sharded_tail_to_hub(
     if not tenants:
         # Nothing assigned: idle until stopped. Returning early would look like a
         # crash to the outer supervision and restart-loop for no reason.
+        hub.ready.set()  # no tenant to fast-forward — nothing gates the connections
         await stop.wait()
         return
+
+    # Readiness counts down across the shard: the hub is live once every tenant's
+    # fast-forward has completed (a per-tenant supervised restart later re-fires the
+    # callback past zero — harmless, readiness only ever latches on).
+    pending = {"n": len(tenants)}
+
+    def _one_live() -> None:
+        pending["n"] -= 1
+
+        if pending["n"] <= 0:
+            hub.ready.set()
 
     def _tenant_runner(tenant: UUID) -> Callable[[], Awaitable[None]]:
         def _shard_tenant(_message: Any) -> UUID | None:
@@ -208,6 +230,7 @@ async def _sharded_tail_to_hub(
                     poll_interval=poll_interval,
                     stop=stop,
                     tenant_for=_shard_tenant,
+                    on_live=_one_live,
                 )
 
         return _run
@@ -342,14 +365,24 @@ def realtime_sse_tail_lifecycle_step(
     _validate_tail_settings(batch=batch, poll_interval=poll_interval)
 
     async def _run(ctx: ExecutionContext, stop: asyncio.Event) -> None:
-        await _tail_to_hub(
-            ctx,
-            hub=hub,
-            stream_spec=stream_spec,
-            batch=batch,
-            poll_interval=poll_interval,
-            stop=stop,
-        )
+        # Gate connections while the fast-forward runs (see RealtimeSseHub.ready);
+        # always restore readiness on exit so a dead tail degrades to catch-up mode
+        # instead of holding every connect at the gate.
+        hub.ready.clear()
+
+        try:
+            await _tail_to_hub(
+                ctx,
+                hub=hub,
+                stream_spec=stream_spec,
+                batch=batch,
+                poll_interval=poll_interval,
+                stop=stop,
+                on_live=hub.ready.set,
+            )
+
+        finally:
+            hub.ready.set()
 
     startup = _SseTailStartup(
         runner=_run,
@@ -407,16 +440,25 @@ def realtime_sse_sharded_tail_lifecycle_step(
     _validate_tail_settings(batch=batch, poll_interval=poll_interval)
 
     async def _run(ctx: ExecutionContext, stop: asyncio.Event) -> None:
-        await _sharded_tail_to_hub(
-            ctx,
-            hub=hub,
-            shard=shard,
-            batch=batch,
-            poll_interval=poll_interval,
-            restart_backoff=restart_backoff,
-            max_consecutive_crashes=max_consecutive_crashes,
-            stop=stop,
-        )
+        # Gate connections until every tenant's fast-forward completes; always
+        # restore readiness on exit (a dead shard degrades to catch-up, never a
+        # permanently gated connect).
+        hub.ready.clear()
+
+        try:
+            await _sharded_tail_to_hub(
+                ctx,
+                hub=hub,
+                shard=shard,
+                batch=batch,
+                poll_interval=poll_interval,
+                restart_backoff=restart_backoff,
+                max_consecutive_crashes=max_consecutive_crashes,
+                stop=stop,
+            )
+
+        finally:
+            hub.ready.set()
 
     startup = _SseTailStartup(
         runner=_run,

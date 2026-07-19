@@ -311,6 +311,40 @@ class TestHub:
 # ----------------------- #
 
 
+class TestHubReadyGate:
+    async def test_ready_hub_admits_immediately(self) -> None:
+        from forze_fastapi.realtime.sse import _await_hub_ready  # pyright: ignore[reportPrivateUsage]
+
+        hub = RealtimeSseHub()  # ready from construction (manual/test mode)
+        await asyncio.wait_for(_await_hub_ready(hub), timeout=1)
+
+    async def test_replay_waits_for_the_fast_forward_to_finish(self) -> None:
+        from forze_fastapi.realtime.sse import _await_hub_ready  # pyright: ignore[reportPrivateUsage]
+
+        hub = RealtimeSseHub()
+        hub.ready.clear()  # the tail is still fast-forwarding
+
+        gate = asyncio.ensure_future(_await_hub_ready(hub))
+        await asyncio.sleep(0.05)
+        assert not gate.done()  # the replay cursor must not resolve yet
+
+        hub.ready.set()
+        await asyncio.wait_for(gate, timeout=5)
+
+    async def test_never_ready_hub_fails_open_after_the_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import forze_fastapi.realtime.sse as sse_module
+
+        monkeypatch.setattr(sse_module, "_HUB_READY_TIMEOUT", 0.05)
+
+        hub = RealtimeSseHub()
+        hub.ready.clear()  # miswired: hub configured but no tail step feeds it
+
+        # proceeds (catch-up quality, logged) instead of hanging the connect
+        await asyncio.wait_for(sse_module._await_hub_ready(hub), timeout=5)  # pyright: ignore[reportPrivateUsage]
+
+
 class TestLiveFrames:
     async def test_matched_signal_becomes_a_frame(self) -> None:
         hub = RealtimeSseHub()

@@ -185,6 +185,52 @@ async def _require_topic_grant(
 # ....................... #
 
 
+_HUB_READY_TIMEOUT = 15.0
+"""Seconds a connection waits for the live tail's startup fast-forward.
+
+After startup the gate is a no-op (the event stays set). The timeout is the
+fail-open bound for a miswired hub (configured but never fed by a tail step):
+the connection proceeds in catch-up quality, loudly, instead of hanging.
+"""
+
+
+async def _await_hub_ready(hub: RealtimeSseHub) -> None:
+    """Wait until live signals flow into the hub; fail open (logged) on timeout."""
+
+    try:
+        await asyncio.wait_for(hub.ready.wait(), _HUB_READY_TIMEOUT)
+
+    except TimeoutError:
+        _logger.error(
+            "SSE hub not ready after %ss — serving catch-up quality; is the tail "
+            "lifecycle step registered and healthy?",
+            _HUB_READY_TIMEOUT,
+        )
+
+
+async def _resolve_since(
+    mailbox: RealtimeMailbox,
+    cursors: MailboxCursors,
+    *,
+    principal: str,
+    client_key: str,
+    last_event_id: str | None,
+) -> HlcTimestamp | None:
+    """The replay start: ``Last-Event-ID`` (browser resume) beats the stored cursor.
+
+    An id no longer retained falls back to the cursor — the client dedups by
+    envelope id either way.
+    """
+
+    if last_event_id:
+        position = await mailbox.position_of(principal=principal, event_id=last_event_id)
+
+        if position is not None:
+            return position
+
+    return await cursors.get(principal=principal, client_key=client_key)
+
+
 async def _replay_frames(
     mailbox: RealtimeMailbox, *, principal: str, since: HlcTimestamp | None
 ) -> AsyncIterator[str]:
@@ -286,18 +332,7 @@ def attach_realtime_sse_route(
         client_key = _client_key(principal, device_id)
         mailbox = mailbox_factory(ctx)
         cursors = cursors_factory(ctx)
-
-        # Last-Event-ID (browser resume) beats the stored cursor; an id no longer
-        # retained falls back to the cursor — the client dedups by envelope id.
-        since: HlcTimestamp | None = None
         last_event_id = request.headers.get(LAST_EVENT_ID_HEADER)
-
-        if last_event_id:
-            since = await mailbox.position_of(principal=principal, event_id=last_event_id)
-
-        if since is None:
-            since = await cursors.get(principal=principal, client_key=client_key)
-
         topic_set = _parse_topics(topics)
 
         if topic_set:
@@ -333,6 +368,21 @@ def attach_realtime_sse_route(
             try:
                 for room in rooms:
                     await presence.joined(room, member_key)  # type: ignore[union-attr]
+
+                if hub is not None:
+                    # The replay cursor resolves only once the hub is live: a durable
+                    # the tail's startup fast-forward skipped is in the mailbox by
+                    # then, so this replay delivers it instead of losing it until
+                    # the client's next reconnect.
+                    await _await_hub_ready(hub)
+
+                since = await _resolve_since(
+                    mailbox,
+                    cursors,
+                    principal=principal,
+                    client_key=client_key,
+                    last_event_id=last_event_id,
+                )
 
                 async for frame in _replay_frames(mailbox, principal=principal, since=since):
                     yield frame

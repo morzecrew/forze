@@ -119,11 +119,25 @@ class RealtimeSseHub:
     dropped: int = attrs.field(default=0, init=False)
     """Signals dropped on full subscriber queues since process start."""
 
+    ready: asyncio.Event = attrs.field(init=False)
+    """Set while live signals are flowing into the hub (initially set).
+
+    The tail loop clears it for the duration of its startup fast-forward and sets it
+    once live (and always on exit, so a dead tail never gates connects). The SSE
+    route waits on it before resolving a connection's replay cursor: a durable the
+    fast-forward window skipped is then already in the mailbox when the replay runs,
+    instead of being missed until the client's next reconnect. A hub that is fed
+    manually (tests, custom sources) is ready from construction.
+    """
+
     _subscriptions: set[SseSubscription] = attrs.field(factory=set, init=False)
 
     def __attrs_post_init__(self) -> None:
         if self.queue_size <= 0:
             raise exc.configuration("SSE hub queue_size must be positive")
+
+        self.ready = asyncio.Event()
+        self.ready.set()
 
     # ....................... #
 
