@@ -642,6 +642,15 @@ def attach_realtime_ws_route(
 
                 if expires_at is not None and now >= expires_at:
                     async with send_lock:
+                        # Re-read under the lock: a reauth that swapped in a fresh
+                        # credential while this task waited for the lock must win —
+                        # closing on the stale deadline would disconnect the client
+                        # right after its successful reauth ack.
+                        refreshed = session.connection.expires_at
+
+                        if refreshed is None or utcnow() < refreshed:
+                            continue
+
                         await websocket.close(code=WS_POLICY_CLOSE, reason="credential expired")
 
                     raise WebSocketDisconnect(WS_POLICY_CLOSE)

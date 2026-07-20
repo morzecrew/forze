@@ -109,3 +109,30 @@ def test_presence_without_mailbox_is_allowed_on_pubsub_manager() -> None:
     gw = _gateway(AsyncPubSubManager(), presence=InMemoryRealtimePresence())
 
     gw._refuse_node_local_presence_on_backplane()
+
+
+def test_declared_multi_node_backplane_refuses_node_local_presence() -> None:
+    # a custom multi-node manager need not inherit AsyncPubSubManager — the explicit
+    # declaration must reach the guard where the type inference cannot
+    gw = _gateway(
+        _LocalManager(),
+        presence=InMemoryRealtimePresence(),
+        mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
+        multi_node_backplane=True,
+    )
+
+    with pytest.raises(CoreException) as caught:
+        gw._refuse_node_local_presence_on_backplane()
+
+    assert caught.value.code == "realtime_presence_node_local"
+
+
+def test_declared_single_node_backplane_overrides_the_manager_inference() -> None:
+    gw = _gateway(
+        AsyncPubSubManager(),
+        presence=InMemoryRealtimePresence(),
+        mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
+        multi_node_backplane=False,
+    )
+
+    gw._refuse_node_local_presence_on_backplane()  # the declaration wins

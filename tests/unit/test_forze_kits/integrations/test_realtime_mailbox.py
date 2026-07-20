@@ -368,3 +368,22 @@ def test_mailbox_spec_refuses_sealing_the_replay_index() -> None:
             realtime_mailbox_spec(encryption=FieldEncryption(encrypted={field}))
 
         assert caught.value.code == "realtime_mailbox_sealed_index"
+
+
+async def test_replay_pages_through_an_equal_hlc_run_without_skipping() -> None:
+    # the wall-clock fallback stamps a whole burst with ONE hlc: a page boundary
+    # inside the tie run must not skip the rest (an `hlc > cursor` keyset would) —
+    # the composite (hlc, id) cursor resumes inside the run
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with _bind(ctx):
+            mb = build_realtime_mailbox(ctx, replay_page_size=2)
+            for n in range(1, 6):
+                await mb.store(
+                    principal="u1", event_id=_eid(n), hlc=_hlc(7), signal=_signal(f"s{n}")
+                )
+
+            streamed = [e.event_id async for e in mb.replay_since(principal="u1", since=None)]
+
+    assert streamed == [_eid(n) for n in range(1, 6)]  # all five, in id order

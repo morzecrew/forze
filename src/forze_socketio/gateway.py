@@ -958,6 +958,15 @@ class RealtimeGateway:
     principal room is empty (saves a cross-node fan-out; the reconnect drain delivers
     it). Never skips a signal that is not recoverable from the mailbox."""
 
+    multi_node_backplane: bool | None = None
+    """Whether the Socket.IO manager fans emits across processes — the deployment fact
+    the presence-skip guard checks. ``None`` (default) infers it from the manager type
+    (``AsyncPubSubManager`` and subclasses are multi-node). A custom multi-node manager
+    that does not inherit ``AsyncPubSubManager`` is invisible to that inference and
+    **must** declare ``True`` here, or a node-local presence tracker would silently
+    suppress every mailboxed live emit for users connected on other nodes. ``False``
+    overrides the inference for a manager that never crosses processes."""
+
     bind_tenant_from_headers: bool = False
     """Opt-in: bind each signal's ``forze_tenant_id`` header so a tenant-aware mailbox
     scopes by it. Off by default because the header is untrusted/forgeable — enable only
@@ -1027,29 +1036,37 @@ class RealtimeGateway:
         (clients receive only reconnect replays) while every metric looks healthy — a
         silent multi-node delivery outage. A cluster-wide store (e.g.
         ``RedisRealtimePresence``) marks itself ``cluster_wide = True``; anything else
-        combined with a pub/sub manager is refused at run start, the same seam that
-        refuses an encrypted realtime route.
+        combined with a multi-node backplane is refused at run start, the same seam
+        that refuses an encrypted realtime route. Whether the backplane is multi-node
+        is :attr:`multi_node_backplane` when declared; the ``AsyncPubSubManager`` type
+        check is only the fallback inference — a custom multi-node manager need not
+        inherit it, and must declare instead.
         """
 
         if self.presence is None or self.mailbox_factory is None:
             return  # the presence skip is only ever taken for mailboxed signals
 
-        from socketio.async_pubsub_manager import AsyncPubSubManager
+        if self.multi_node_backplane is not None:
+            multi_node = self.multi_node_backplane
+        else:
+            from socketio.async_pubsub_manager import AsyncPubSubManager
 
-        if not isinstance(self.sio.manager, AsyncPubSubManager):
-            return  # single-process manager: node-local presence sees every room
+            multi_node = isinstance(self.sio.manager, AsyncPubSubManager)
+
+        if not multi_node:
+            return  # single-process backplane: node-local presence sees every room
 
         if getattr(self.presence, "cluster_wide", False):
             return
 
         raise exc.configuration(
-            "RealtimeGateway.presence is a node-local tracker, but the Socket.IO server "
-            "runs a pub/sub (multi-node) manager: room members on other nodes are "
-            "invisible here, so every live emit for a mailboxed signal would be skipped "
-            "as 'nobody present' and clients would only receive signals on "
-            "reconnect-replay. Use a cluster-wide presence store (e.g. "
-            "RedisRealtimePresence, which sets cluster_wide=True) or drop presence from "
-            "the gateway.",
+            "RealtimeGateway.presence is a node-local tracker, but the Socket.IO "
+            "backplane is multi-node (declared via multi_node_backplane, or inferred "
+            "from a pub/sub manager): room members on other nodes are invisible here, "
+            "so every live emit for a mailboxed signal would be skipped as 'nobody "
+            "present' and clients would only receive signals on reconnect-replay. Use "
+            "a cluster-wide presence store (e.g. RedisRealtimePresence, which sets "
+            "cluster_wide=True) or drop presence from the gateway.",
             code="realtime_presence_node_local",
         )
 

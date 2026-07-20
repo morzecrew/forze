@@ -31,6 +31,7 @@ from forze.application.contracts.document import (
     DocumentQueryPort,
     DocumentSpec,
 )
+from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.realtime import MailboxEntry, RealtimeSignal
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind, exc
@@ -361,29 +362,29 @@ class DocumentRealtimeMailbox:
     async def replay_since(
         self, *, principal: str, since: HlcTimestamp | None
     ) -> AsyncIterator[MailboxEntry]:
-        """Stream entries after *since*, keyset-paged by HLC, bounded by :attr:`cap`.
+        """Stream entries after *since*, keyset-paged by ``(hlc, id)``, bounded by
+        :attr:`cap`.
 
-        The HLC is the monotonic per-principal position (the cursor value), so
-        ``hlc > last`` advances the keyset without an offset rescan. Only one page of
-        rows is materialized at a time, so peak memory is one page per reconnecting
-        device instead of the whole (up to :attr:`cap`) backlog. A backlog larger than
-        the cap starts at the newest-``cap`` window (see :meth:`_window_values`) — the
-        stream is always a **complete** suffix of the retained backlog, never a
-        truncated prefix.
+        The HLC is the per-principal position (the cursor value) but it is not unique —
+        the wall-clock fallback stamps a whole burst with one HLC — so the keyset pages
+        by the **composite** ``(hlc, id)``: an ``hlc > last`` keyset alone would
+        permanently skip the rest of an equal-HLC run whenever a page boundary lands
+        inside it. Only one page of rows is materialized at a time, so peak memory is
+        one page per reconnecting device instead of the whole (up to :attr:`cap`)
+        backlog. A backlog larger than the cap starts at the newest-``cap`` window
+        (see :meth:`_window_values`) — the stream is always a **complete** suffix of
+        the retained backlog, never a truncated prefix.
         """
 
-        values = await self._window_values(principal=principal, since=since)
-        cursor: HlcTimestamp | None = None
+        window = await self._window_values(principal=principal, since=since)
+        filters: QueryFilterExpression = {"$values": window}
         remaining = self.cap
 
         while remaining > 0:
-            if cursor is not None:
-                values = {"principal": principal, "hlc": {"$gt": cursor.pack()}}
-
             limit = min(self.replay_page_size, remaining)
             page = await self.query.find_many(
-                filters={"$values": values},  # pyright: ignore[reportArgumentType]
-                sorts={"hlc": "asc"},
+                filters=filters,
+                sorts={"hlc": "asc", "id": "asc"},
                 pagination={"limit": limit},
             )
 
@@ -399,7 +400,13 @@ class DocumentRealtimeMailbox:
                     payload=row.payload,
                 )
 
-            cursor = HlcTimestamp.unpack(page.hits[-1].hlc)
+            last = page.hits[-1]
+            filters = {
+                "$or": [
+                    {"$values": {"principal": principal, "hlc": {"$gt": last.hlc}}},
+                    {"$values": {"principal": principal, "hlc": last.hlc, "id": {"$gt": last.id}}},
+                ]
+            }
             remaining -= len(page.hits)
 
             # A short page means the backend has no more rows past the cursor.
