@@ -21,10 +21,10 @@ from forze.application.contracts.document import (
 )
 from forze.application.execution import Deps
 from forze.base.exceptions import CoreException
+from forze_mock.adapters import MockDocumentAdapter, MockState
 from forze_mongo.execution.deps import ConfigurableMongoDocument, MongoDocumentConfig
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.client import MongoClient
-from forze_mock.adapters import MockDocumentAdapter, MockState
 from tests.support.cursor_parity import (
     SEED,
     CursorCreate,

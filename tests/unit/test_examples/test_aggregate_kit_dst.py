@@ -9,17 +9,16 @@ DST-verifiable, and DST confirms it, not just a single-threaded check.
 
 from __future__ import annotations
 
-from forze_dst import Simulation, SimulationConfig, Strategy
-from forze_dst.oracle import compile_oracle
-from forze_kits.aggregates.document import build_document_registry
-from forze_mock import MockDepsModule
-
 from examples.recipes.aggregate_kit_dst.app import (
     SPRINT_CAPACITY,
     TICKET_SPEC,
     TICKETS,
     simulation,
 )
+from forze_dst import Simulation, SimulationConfig, Strategy
+from forze_dst.oracle import compile_oracle
+from forze_kits.aggregates.document import build_document_registry
+from forze_mock import MockDepsModule
 
 # ----------------------- #
 

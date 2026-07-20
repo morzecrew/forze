@@ -6,8 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from forze.base.exceptions import CoreException
-
-from forze_redis.adapters import RedisKeyCodec, RedisSearchResultSnapshotAdapter
+from forze_redis.adapters import RedisSearchResultSnapshotAdapter
 
 
 @pytest.mark.unit

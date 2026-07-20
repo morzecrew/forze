@@ -7,7 +7,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from forze.base.exceptions import CoreException
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 pytest.importorskip("jwt")
 pytest.importorskip("argon2")
@@ -48,7 +50,6 @@ from forze_identity.authn.adapters import (
     TokenLifecycleAdapter,
 )
 from forze_identity.authn.application.constants import AuthnResourceName
-from forze_identity.authz.application.constants import AuthzResourceName
 from forze_identity.authn.execution import (
     AuthnDepsModule,
     AuthnKernelConfig,
@@ -67,6 +68,7 @@ from forze_identity.authn.execution import (
     build_authn_shared_services,
 )
 from forze_identity.authn.services import PasswordConfig
+from forze_identity.authz.application.constants import AuthzResourceName
 
 # ----------------------- #
 

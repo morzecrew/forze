@@ -15,8 +15,7 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowSpec,
 )
 from forze.application.contracts.durable.workflow.specs import DurableWorkflowInvokeSpec
-from forze.application.execution import InvocationMetadata
-from forze.application.execution import Deps
+from forze.application.execution import Deps, InvocationMetadata
 from forze.base.primitives import uuid7
 from forze_temporal.adapters.workflow import (
     TemporalWorkflowCommandAdapter,

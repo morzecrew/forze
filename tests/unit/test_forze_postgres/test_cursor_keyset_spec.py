@@ -2,12 +2,11 @@
 
 import pytest
 
-from forze.base.exceptions import CoreException
-
 from forze.application.contracts.search import (
     cursor_return_fields_for_select,
     ranked_search_cursor_key_spec,
 )
+from forze.base.exceptions import CoreException
 from forze.domain.constants import ID_FIELD
 
 

@@ -14,6 +14,7 @@ pytest.importorskip("redis")
 from datetime import timedelta
 
 from forze.application.contracts.dlock import DistributedLockSpec
+from forze.base.serialization import PydanticModelCodec
 from forze_redis.adapters import (
     RedisCacheAdapter,
     RedisCounterAdapter,
@@ -27,7 +28,6 @@ from forze_redis.adapters import (
     RedisStreamGroupAdapter,
 )
 from forze_redis.kernel.client import RedisClient, RedisConfig
-from forze.base.serialization import PydanticModelCodec
 
 
 def _ensure_docker_available() -> None:

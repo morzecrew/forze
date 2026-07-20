@@ -1,13 +1,15 @@
 """Unit tests for :mod:`forze_redis.kernel.client.errors`."""
 
-from forze.base.exceptions import CoreException, ExceptionKind, exc
 import pytest
+
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 
 pytest.importorskip("redis")
 
 from redis import exceptions as redis_errors
 
 from forze_redis.kernel.client.errors import _redis_eh, exc_interceptor
+
 
 class TestRedisErrorHandler:
     def test_core_error_passthrough(self) -> None:

@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from forze_mongo.kernel.introspect import MongoIntrospector
 from forze_mongo.kernel.client import MongoClient
+from forze_mongo.kernel.introspect import MongoIntrospector
 
 
 @pytest.mark.asyncio

@@ -9,12 +9,12 @@ from pydantic import BaseModel
 from forze.application.contracts.search import SearchSpec
 from forze_postgres.adapters.search.hub.constants import HUB_RANK
 from forze_postgres.adapters.search.hub.merge import merge_hub_leg_rows
+from forze_postgres.adapters.search.hub.runtime import HubLegRuntime
 from forze_postgres.adapters.search.hub.semantics import (
     hub_order_key_spec,
     merge_hub_combo_rows,
     sort_hub_rows,
 )
-from forze_postgres.adapters.search.hub.runtime import HubLegRuntime
 
 
 class _HubRow(BaseModel):

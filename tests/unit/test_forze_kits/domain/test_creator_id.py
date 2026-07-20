@@ -6,8 +6,6 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from unittest.mock import MagicMock
-
 from pydantic import BaseModel
 
 from forze.application.contracts.authn import AuthnIdentity

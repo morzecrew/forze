@@ -5,7 +5,6 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-
 from pydantic import BaseModel
 
 from forze.application.contracts.crypto import AesGcmAead, KeyRef, StaticKeyDirectory

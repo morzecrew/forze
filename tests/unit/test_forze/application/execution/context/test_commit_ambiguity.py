@@ -11,8 +11,8 @@ during the body (before any commit) keeps its retryable semantics (nothing commi
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import AsyncGenerator
 
 import attrs
 import pytest
@@ -181,9 +181,8 @@ class TestCommitAmbiguousClassification:
         ).freeze()
         resolved = reg.resolve("op", ctx)
 
-        with bind_deadline(0.05):
-            with pytest.raises(CoreException) as ei:
-                await resolved("x")
+        with bind_deadline(0.05), pytest.raises(CoreException) as ei:
+            await resolved("x")
 
         assert ei.value.kind is ExceptionKind.INTERNAL
         assert ei.value.code == "commit_ambiguous"
@@ -205,9 +204,8 @@ class TestCommitAmbiguousClassification:
         reg = OperationRegistry(handlers={"op": lambda _c: StallHandler()}).freeze()
         resolved = reg.resolve("op", ctx)
 
-        with bind_deadline(0.05):
-            with pytest.raises(CoreException) as ei:
-                await resolved("x")
+        with bind_deadline(0.05), pytest.raises(CoreException) as ei:
+            await resolved("x")
 
         assert ei.value.kind is ExceptionKind.TIMEOUT
         assert ei.value.code == "deadline_exceeded"
@@ -232,9 +230,8 @@ class TestCommitAmbiguousClassification:
         reg = OperationRegistry(handlers={"op": lambda _c: StallHandler()}).freeze()
         resolved = reg.resolve("op", ctx)
 
-        with bind_deadline(0.05):
-            with pytest.raises(CoreException) as ei:
-                await resolved("x")
+        with bind_deadline(0.05), pytest.raises(CoreException) as ei:
+            await resolved("x")
 
         assert ei.value.kind is ExceptionKind.TIMEOUT
         assert ei.value.code == "deadline_exceeded"

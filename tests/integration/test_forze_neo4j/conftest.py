@@ -15,9 +15,9 @@ import pytest_asyncio
 pytest.importorskip("neo4j")
 pytest.importorskip("testcontainers.neo4j")
 
-from testcontainers.neo4j import Neo4jContainer  # noqa: E402
+from testcontainers.neo4j import Neo4jContainer
 
-from forze_neo4j.kernel.client import Neo4jClient  # noqa: E402
+from forze_neo4j.kernel.client import Neo4jClient
 
 _NEO4J_IMAGE = "neo4j:5.26"
 _GDS_VERSIONS_URL = "https://graphdatascience.ninja/versions.json"
@@ -47,7 +47,7 @@ def _resolve_gds_jar() -> Path | None:
         return cached[0]
 
     try:
-        with urllib.request.urlopen(_GDS_VERSIONS_URL, timeout=30) as resp:  # noqa: S310
+        with urllib.request.urlopen(_GDS_VERSIONS_URL, timeout=30) as resp:
             versions = json.load(resp)
         entry = next(
             e for e in versions if str(e.get("neo4j", "")).startswith("5.26")
@@ -58,7 +58,7 @@ def _resolve_gds_jar() -> Path | None:
         # truncated / HTML-error-page download never lands at the cached path and gets reused by
         # every GDS test. Prefer the source-provided checksum; fall back to structural validation.
         tmp = cache / "gds-5.26.jar.part"
-        urllib.request.urlretrieve(url, tmp)  # noqa: S310
+        urllib.request.urlretrieve(url, tmp)
         expected = entry.get("sha256") or entry.get("checksum")
         payload = tmp.read_bytes()
         checksum_ok = (

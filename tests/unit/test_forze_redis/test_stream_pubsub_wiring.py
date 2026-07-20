@@ -23,9 +23,9 @@ from forze.application.contracts.pubsub import (
     PubSubSpec,
 )
 from forze.application.contracts.stream import (
-    StreamCommandDepKey,
     AckStreamGroupAdminDepKey,
     AckStreamGroupQueryDepKey,
+    StreamCommandDepKey,
     StreamQueryDepKey,
     StreamSpec,
 )

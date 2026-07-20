@@ -3,18 +3,17 @@
 from uuid import UUID, uuid4
 
 import pytest
+from mongo_search_helpers import wait_search_ready
 from pydantic import BaseModel
 
 from forze.application.contracts.base import CursorPage
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
-from forze_mongo.execution.deps.configs import MongoAtlasEngine, MongoSearchConfig
 from forze_mongo.execution.deps import ConfigurableMongoSearch
+from forze_mongo.execution.deps.configs import MongoAtlasEngine, MongoSearchConfig
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.client import MongoClient
 from tests.support.execution_context import context_from_deps
-
-from mongo_search_helpers import wait_search_ready
 
 
 def _search_ctx(

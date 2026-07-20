@@ -19,12 +19,16 @@ from forze.application.execution.operations.descriptors import OperationDescript
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig, Strategy
-from forze_dst.artifacts import RegressionEntry, append_regression, entry_from_report, load_regressions
+from forze_dst.artifacts import (
+    RegressionEntry,
+    append_regression,
+    entry_from_report,
+    load_regressions,
+)
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.invariants import operation_succeeds
-from forze_dst.oracle import behavioral_fingerprint
+from forze_dst.oracle import ViolationReport, behavioral_fingerprint
 from forze_dst.oracle.invariants import Violation
-from forze_dst.oracle import ViolationReport
 from forze_dst.oracle.recorder import Event, History, Recorder
 
 

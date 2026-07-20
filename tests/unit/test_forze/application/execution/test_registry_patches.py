@@ -4,13 +4,12 @@ from enum import StrEnum
 
 import pytest
 
-from forze.base.exceptions import CoreException
-
 from forze.application.contracts.execution import BeforeStep, DispatchStep
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
+from forze.base.exceptions import CoreException
 from forze.base.primitives import (
     StrKeyNamespace,
     StrKeySelector,

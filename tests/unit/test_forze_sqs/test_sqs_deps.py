@@ -8,8 +8,7 @@ from forze.application.contracts.queue import (
     QueueQueryDepKey,
     QueueSpec,
 )
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
 from forze.base.serialization import PydanticModelCodec
 from forze_sqs.adapters import SQSQueueAdapter
 from forze_sqs.execution.deps import (
@@ -20,6 +19,9 @@ from forze_sqs.execution.deps import (
     SQSQueueConfig,
 )
 from forze_sqs.kernel.client import SQSClient
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 
 class _QueuePayload(BaseModel):

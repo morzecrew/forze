@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.application.contracts.document import DocumentWriteTypes
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 from forze_postgres.execution.deps.keys import (

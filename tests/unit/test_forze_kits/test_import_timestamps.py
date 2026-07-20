@@ -1,16 +1,15 @@
 """Smoke tests for ``forze_kits.dto.ImportTimestamps`` import/restore semantics."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.domain.models import BaseDTO, Document, ReadDocument
+from forze_kits.dto import ImportTimestamps
 from forze_mock.adapters import MockDocumentAdapter
 from forze_mock.state import MockState
-
-from forze_kits.dto import ImportTimestamps
 
 # ----------------------- #
 
@@ -52,8 +51,8 @@ def _adapter(
     )
 
 
-_CREATED = datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
-_UPDATED = datetime(2021, 6, 7, 8, 9, 10, tzinfo=timezone.utc)
+_CREATED = datetime(2020, 1, 2, 3, 4, 5, tzinfo=UTC)
+_UPDATED = datetime(2021, 6, 7, 8, 9, 10, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
@@ -86,6 +85,6 @@ async def test_ensure_omitted_timestamps_fall_back_to_server_stamp() -> None:
     restored = await doc.ensure(uuid4(), _NoteImportCreate(body="fresh"))
     read = await doc.get(restored.id)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     assert abs(now - read.created_at) < timedelta(minutes=1)
     assert abs(now - read.last_update_at) < timedelta(minutes=1)

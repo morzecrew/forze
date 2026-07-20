@@ -11,7 +11,8 @@ feeds from two surfaces — deps-scoped (``wrap_intercepted`` here) and ambient
 from __future__ import annotations
 
 import asyncio
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import attrs
 import pytest
@@ -169,7 +170,7 @@ def test_cooperative_interceptor_interleaves_per_stream_item() -> None:
 
 
 def test_stream_aware_interceptor_sees_and_transforms_each_item() -> None:
-    from typing import AsyncIterator as _AsyncIterator
+    from collections.abc import AsyncIterator as _AsyncIterator
 
     from forze.application.execution.interception import StreamPortNext
 
@@ -199,7 +200,7 @@ def test_mixed_chain_stream_aware_and_acquisition_only() -> None:
     # A stream-aware interceptor (per-item) composed with an around-only interceptor
     # (acquisition-only, via ``_acquisition_only_stream``): the stream still transforms per
     # item while the outer around-only wraps acquisition exactly once, before any item flows.
-    from typing import AsyncIterator as _AsyncIterator
+    from collections.abc import AsyncIterator as _AsyncIterator
 
     from forze.application.execution.interception import StreamPortNext
 

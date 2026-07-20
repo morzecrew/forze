@@ -7,7 +7,6 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.base.serialization import default_model_codec
 from forze.application.contracts.crypto import (
     AesGcmAead,
     KeyRef,
@@ -26,6 +25,7 @@ from forze.application.integrations.crypto import (
     Keyring,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.serialization import default_model_codec
 from forze_mock import MockKeyManagement
 
 # ----------------------- #

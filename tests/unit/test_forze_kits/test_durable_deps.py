@@ -11,7 +11,6 @@ from __future__ import annotations
 from datetime import timedelta
 
 from forze.testing import context_from_deps, context_from_modules
-
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
     DurableFunctionRunner,

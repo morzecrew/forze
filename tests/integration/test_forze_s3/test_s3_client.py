@@ -73,7 +73,7 @@ async def test_s3_ensure_bucket_creates_missing_bucket_and_is_idempotent(
 
 @pytest.mark.asyncio
 async def test_sequential_operations_reuse_single_aiobotocore_client(
-    s3_backend,  # noqa: ANN001 - session backend fixture
+    s3_backend,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``initialize`` opens one aiobotocore client; sequential ops reuse it.
@@ -89,7 +89,7 @@ async def test_sequential_operations_reuse_single_aiobotocore_client(
     create_calls = 0
     original_client = aioboto3.Session.client
 
-    def _counting_client(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+    def _counting_client(self, *args, **kwargs):
         nonlocal create_calls
         create_calls += 1
         return original_client(self, *args, **kwargs)

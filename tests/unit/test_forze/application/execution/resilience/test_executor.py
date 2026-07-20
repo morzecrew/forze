@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 from datetime import timedelta
-from typing import AsyncGenerator
 
 import attrs
 import pytest
@@ -928,9 +928,8 @@ class TestDeadline:
             counter.calls += 1
             return "ok"
 
-        with bind_deadline(0.0):
-            with pytest.raises(CoreException) as ei:
-                await executor.run(fn, policy="p")
+        with bind_deadline(0.0), pytest.raises(CoreException) as ei:
+            await executor.run(fn, policy="p")
 
         assert ei.value.kind is ExceptionKind.TIMEOUT
         assert ei.value.code == "deadline_exceeded"
@@ -943,9 +942,8 @@ class TestDeadline:
             await asyncio.Event().wait()
             return "ok"
 
-        with bind_deadline(0.05):
-            with pytest.raises(CoreException) as ei:
-                await executor.run(fn, policy="p")
+        with bind_deadline(0.05), pytest.raises(CoreException) as ei:
+            await executor.run(fn, policy="p")
 
         assert ei.value.kind is ExceptionKind.TIMEOUT
         assert ei.value.code == "deadline_exceeded"
@@ -967,9 +965,8 @@ class TestDeadline:
             counter.calls += 1
             raise exc.infrastructure("down")
 
-        with bind_deadline(5.0):
-            with pytest.raises(CoreException) as ei:
-                await executor.run(fn, policy="p")
+        with bind_deadline(5.0), pytest.raises(CoreException) as ei:
+            await executor.run(fn, policy="p")
 
         assert ei.value.kind is ExceptionKind.INFRASTRUCTURE
         assert counter.calls == 1

@@ -1,16 +1,17 @@
 """Unit tests for :mod:`forze_s3.kernel.client.client` helpers (no I/O)."""
 
-from forze.base.exceptions import CoreException
 from contextlib import asynccontextmanager
+from datetime import UTC
 from typing import Any
-
 
 import pytest
 from pydantic import SecretStr
 
 import forze_s3.kernel.client.client as s3_client_module
 import forze_s3.kernel.client.value_objects as s3_value_objects
+from forze.base.exceptions import CoreException
 from forze_s3.kernel.client import S3Client, S3Config
+
 
 class _FakeAioConfig:
     def __init__(self, **kwargs: Any) -> None:
@@ -855,11 +856,11 @@ async def test_presign_upload_url_without_content_type_has_no_headers() -> None:
 
 @pytest.mark.asyncio
 async def test_presign_expires_at_reflects_expiry_window() -> None:
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     from forze.base.primitives import FrozenTimeSource, bind_time_source
 
-    instant = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    instant = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     client = S3Client()
     api = _PresignApi()
     tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]

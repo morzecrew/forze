@@ -9,7 +9,7 @@ tenant key-scoping.
 from __future__ import annotations
 
 import contextlib
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 from uuid import uuid4
 
 import attrs
@@ -56,7 +56,7 @@ class _FakeClient:
     async def ensure_bucket(self, bucket: str) -> None:
         return None
 
-    async def upload_bytes(  # noqa: PLR0913
+    async def upload_bytes(
         self,
         bucket: str,
         key: str,
@@ -115,7 +115,7 @@ class _FakeClient:
         self.content_types[key] = content_type or "application/octet-stream"
         return upload_id
 
-    async def upload_multipart_part(  # noqa: PLR0913
+    async def upload_multipart_part(
         self,
         bucket: str,
         key: str,
@@ -131,7 +131,7 @@ class _FakeClient:
             part_number=part_number, etag=f"e{part_number}", size=len(data)
         )
 
-    async def complete_multipart_upload(  # noqa: PLR0913
+    async def complete_multipart_upload(
         self,
         bucket: str,
         key: str,
@@ -608,7 +608,7 @@ async def test_download_if_changed_decrypts_chunked_object() -> None:
     assert result.data == data
 
 
-def _conditional_body(client: "_FakeClient", key: str):  # type: ignore[name-defined]
+def _conditional_body(client: _FakeClient, key: str):  # type: ignore[name-defined]
     async def _download_bytes_conditional(
         bucket: str, key: str, *, if_none_match=None, if_modified_since=None
     ):

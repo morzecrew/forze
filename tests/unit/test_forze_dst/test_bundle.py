@@ -18,13 +18,27 @@ from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze_dst import Simulation, SimulationConfig, Strategy
-from forze_dst.markers import record_event
-from forze_dst.artifacts import FailureBundle, bundle_from_report, config_from_dict, config_to_dict, replay_bundle
+from forze_dst.artifacts import (
+    FailureBundle,
+    bundle_from_report,
+    config_from_dict,
+    config_to_dict,
+    replay_bundle,
+)
 from forze_dst.cluster import ClusterConfig, Partition, PartitionSchedule
+from forze_dst.config import CrashPolicy
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.invariants import expect
-from forze_dst.latency import Constant, Exponential, LatencyProfile, LatencyRule, LogNormal, Pareto, Uniform
-from forze_dst.config import CrashPolicy
+from forze_dst.latency import (
+    Constant,
+    Exponential,
+    LatencyProfile,
+    LatencyRule,
+    LogNormal,
+    Pareto,
+    Uniform,
+)
+from forze_dst.markers import record_event
 from forze_dst.scheduler import PCTScheduler
 from forze_mock import MockDepsModule
 

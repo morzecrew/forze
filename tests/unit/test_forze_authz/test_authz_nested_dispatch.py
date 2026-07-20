@@ -9,24 +9,26 @@ import pytest
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import AuthzSpec
-from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
+from forze.application.execution import Deps, InvocationMetadata
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.authz import AuthzBeforeAuthorize
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import str_key_selector
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 pytestmark = pytest.mark.unit
 
 class _AllowRuntime:
-    async def authorize(self, request):  # noqa: ANN001
+    async def authorize(self, request):
         from forze.application.contracts.authz import AuthzDecision
 
         _ = request
         return AuthzDecision(allowed=True, matched_permission_key="child.read")
 
 class _DenyRuntime:
-    async def authorize(self, request):  # noqa: ANN001
+    async def authorize(self, request):
         from forze.application.contracts.authz import AuthzDecision
 
         _ = request

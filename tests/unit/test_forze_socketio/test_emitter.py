@@ -10,7 +10,6 @@ from forze_socketio.emitter import (
     SocketIOServerEvent,
 )
 
-
 # ----------------------- #
 
 

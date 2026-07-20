@@ -99,9 +99,8 @@ async def test_uninitialized_usage_lazily_creates_per_outermost_scope() -> None:
         secret_access_key="s",
     )
 
-    async with client.client() as first:
-        async with client.client() as nested:
-            assert nested is first
+    async with client.client() as first, client.client() as nested:
+        assert nested is first
 
     async with client.client():
         pass

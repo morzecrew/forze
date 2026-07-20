@@ -5,10 +5,12 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import BaseModel
 
 from forze.base.exceptions import CoreException
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
-from pydantic import BaseModel
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 pytest.importorskip("psycopg")
 
@@ -30,6 +32,12 @@ from forze_postgres.adapters import (
     PostgresVectorSearchAdapter,
 )
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
+from forze_postgres.execution.deps import (
+    ConfigurablePostgresDocument,
+    ConfigurablePostgresReadOnlyDocument,
+    ConfigurablePostgresSearch,
+    postgres_txmanager,
+)
 from forze_postgres.execution.deps.configs import (
     FtsEngine,
     PgroongaEngine,
@@ -40,23 +48,17 @@ from forze_postgres.execution.deps.configs import (
     PostgresSearchConfig,
     VectorEngine,
 )
-from forze_postgres.execution.deps import (
-    ConfigurablePostgresDocument,
-    ConfigurablePostgresReadOnlyDocument,
-    ConfigurablePostgresSearch,
-    postgres_txmanager,
-)
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.execution.deps.module import PostgresDepsModule
 from forze_postgres.execution.deps.utils import doc_write_gw, read_gw
-from forze_postgres.kernel.gateways import PostgresReadGateway, PostgresWriteGateway
 from forze_postgres.kernel.catalog.hub_fk_columns import normalize_hub_fk_columns
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client import RoutedPostgresClient
 from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.kernel.gateways import PostgresReadGateway, PostgresWriteGateway
 
 
 class _R(ReadDocument):

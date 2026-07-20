@@ -6,6 +6,7 @@
   "excludeBranches": [
     "dependabot-**"
   ],
+  "ignorePatterns": "tests/**",
   "summarySection": {
     "included": true,
     "collapsible": false

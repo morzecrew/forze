@@ -23,13 +23,12 @@ from forze_postgres.execution.deps.configs import (
     PostgresReadOnlyDocumentConfig,
 )
 from forze_postgres.kernel.client.client import PostgresClient
-from tests.support.execution_context import context_from_deps
-
 from tests.integration.test_forze_authz.test_pg_authz_kernel_flow import (
     _AUTHZ_SPEC,
     _authz_pg_deps,
     _authz_pg_setup,
 )
+from tests.support.execution_context import context_from_deps
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -90,7 +89,7 @@ async def _delegation_ctx(
     )
 
 
-async def _seed_principal(pg_client: PostgresClient, *, suffix: str, principal_id) -> None:  # noqa: ANN001
+async def _seed_principal(pg_client: PostgresClient, *, suffix: str, principal_id) -> None:
     await pg_client.execute(
         f"""
         INSERT INTO authz_pri_{suffix}

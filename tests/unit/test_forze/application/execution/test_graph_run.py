@@ -9,6 +9,8 @@ from forze.application.execution.graph_run import (
     run_wave_forward,
     run_wave_reverse,
 )
+
+
 class TestRunWaveForward:
     @pytest.mark.asyncio
     async def test_empty_wave_is_noop(self) -> None:

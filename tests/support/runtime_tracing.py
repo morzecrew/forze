@@ -9,8 +9,6 @@ from forze.application.execution.tracing import (
 )
 from forze_mock import MockDepsModule, MockState
 
-from tests.support.execution_context import context_from_deps
-
 # ----------------------- #
 
 

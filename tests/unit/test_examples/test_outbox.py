@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+from examples.recipes.outbox.app import ORDERS_QUEUE, place_order, relay
 from forze.application.contracts.queue import QueueQueryDepKey
 from forze.application.execution import DepsRegistry, ExecutionContext
 from forze_mock import MockDepsModule
-
-from examples.recipes.outbox.app import ORDERS_QUEUE, place_order, relay
 
 
 async def test_outbox_relays_to_queue() -> None:

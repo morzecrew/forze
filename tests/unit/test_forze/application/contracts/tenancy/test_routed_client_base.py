@@ -8,12 +8,10 @@ from uuid import uuid4
 import attrs
 import pytest
 
-from forze.application.contracts.tenancy.registry import TenantClientRegistry
 from forze.application.contracts.tenancy.routed_client_base import (
     DsnRoutedTenantClientBase,
     RoutedTenantClientBase,
 )
-from forze.base.exceptions import exc
 
 
 class _Client:
@@ -29,13 +27,13 @@ async def test_routed_base_evict_clears_fingerprint() -> None:
 
   @attrs.define(slots=True, kw_only=True)
   class _Routed(RoutedTenantClientBase[_Client]):
-      async def resolve_credentials(self, tenant_id):  # noqa: ANN001
+      async def resolve_credentials(self, tenant_id):
           return "creds"
 
-      async def initialize_client(self, tenant_id, creds):  # noqa: ANN001
+      async def initialize_client(self, tenant_id, creds):
           return _Client()
 
-      async def ensure_access_fingerprint(self, tenant_id) -> None:  # noqa: ANN001
+      async def ensure_access_fingerprint(self, tenant_id) -> None:
           self._pool.set_fingerprint(tenant_id, "fp")
 
   routed = _Routed(
@@ -59,7 +57,7 @@ async def test_dsn_routed_sets_fingerprint_before_create() -> None:
 
   @attrs.define(slots=True, kw_only=True)
   class _Routed(DsnRoutedTenantClientBase[_Client]):
-      async def initialize_client(self, tenant_id, creds: str) -> _Client:  # noqa: ANN001
+      async def initialize_client(self, tenant_id, creds: str) -> _Client:
           return _Client()
 
   routed = _Routed(

@@ -12,8 +12,6 @@ from forze.application.contracts.search import (
     HubSearchSpec,
     SearchOptions,
     SearchSpec,
-)
-from forze.application.contracts.search import (
     prepare_federated_search_options,
     prepare_hub_search_options,
 )

@@ -16,9 +16,9 @@ Every run is seeded, so any failure reproduces exactly.
 from __future__ import annotations
 
 import random
+from collections.abc import AsyncIterator
 from contextlib import aclosing
 from datetime import timedelta
-from typing import AsyncIterator
 
 import attrs
 import pytest
@@ -30,18 +30,16 @@ from forze.application.contracts.queue import QueueSpec
 from forze.application.execution.interception import wrap_intercepted
 from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
-
 from forze_dst.faults import (
     FaultPolicy,
     FaultRule,
     SimulatedCrash,
     _FaultPolicyInterceptor,
+    compile_fault_policy,
 )
 from forze_dst.runtime import run_simulation
-from forze_dst.faults import compile_fault_policy
 from forze_mock import MockDepsModule
 from forze_mock.adapters import MockQueueAdapter, MockState
-
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -238,7 +236,7 @@ class _ScriptedRng:
 
 @attrs.define(slots=True)
 class _StreamPort:
-    async def stream(self, n: int) -> "AsyncIterator[int]":
+    async def stream(self, n: int) -> AsyncIterator[int]:
         for i in range(n):
             yield i
 

@@ -30,21 +30,21 @@ class _FakeManagement:
         self.detached: tuple | None = None
         self.deactivated = None
 
-    async def provision_tenant(self, *, tenant_key=None):  # noqa: ANN001, ANN202
+    async def provision_tenant(self, *, tenant_key=None):
         self.provisioned = tenant_key
         return TenantIdentity(tenant_id=uuid4(), tenant_key=tenant_key)
 
-    async def list_tenant_principals(self, tenant_id):  # noqa: ANN001, ANN202
+    async def list_tenant_principals(self, tenant_id):
         self.listed_for = tenant_id
         return self._members
 
-    async def attach_principal(self, principal_id, tenant_id):  # noqa: ANN001, ANN202
+    async def attach_principal(self, principal_id, tenant_id):
         self.attached = (principal_id, tenant_id)
 
-    async def detach_principal(self, principal_id, tenant_id):  # noqa: ANN001, ANN202
+    async def detach_principal(self, principal_id, tenant_id):
         self.detached = (principal_id, tenant_id)
 
-    async def deactivate_tenant(self, tenant_id):  # noqa: ANN001, ANN202
+    async def deactivate_tenant(self, tenant_id):
         self.deactivated = tenant_id
 
 

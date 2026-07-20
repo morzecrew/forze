@@ -22,8 +22,8 @@ from forze.base.logging.processors import (
     OpenTelemetryContextInjector,
     RedundantKeysDropper,
 )
-from forze.base.scrubbing import SECRET_PLACEHOLDER
 from forze.base.logging.renderers import ForzeConsoleRenderer
+from forze.base.scrubbing import SECRET_PLACEHOLDER
 
 
 @pytest.fixture(autouse=True)

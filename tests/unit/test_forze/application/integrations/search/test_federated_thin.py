@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
 
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.search import FederatedSearchSpec, SearchSpec
-from forze.application.contracts.search import SearchResultSnapshotSpec
+from forze.application.contracts.search import (
+    FederatedSearchSpec,
+    SearchResultSnapshotSpec,
+    SearchSpec,
+)
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     execute_federated_thin_offset,

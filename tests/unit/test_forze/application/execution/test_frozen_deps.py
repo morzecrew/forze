@@ -3,10 +3,9 @@
 import attrs
 import pytest
 
-from forze.application.contracts.deps import DepKey
+from forze.application.contracts.deps import DepKey, ProviderStore
 from forze.application.execution import Deps, DepsRegistry, ExecutionContext, FrozenDeps
 from forze.application.execution.deps.resolution import frame_for
-from forze.application.contracts.deps import ProviderStore
 from forze.base.exceptions import CoreException
 from tests.support.execution_context import context_from_deps
 

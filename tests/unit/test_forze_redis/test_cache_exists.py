@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Mapping, Sequence
 
 import attrs
 
@@ -44,7 +44,7 @@ class FakeRedisClient:
     @asynccontextmanager
     async def pipeline(
         self, *, transaction: bool = True
-    ) -> AsyncGenerator["FakeRedisClient"]:
+    ) -> AsyncGenerator[FakeRedisClient]:
         yield self
 
 

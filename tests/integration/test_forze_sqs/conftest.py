@@ -5,7 +5,7 @@ SQS wire protocol (see ``tests/support/floci.py`` for why it replaced
 LocalStack and what was verified about its fidelity).
 """
 
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 from uuid import uuid4
 
 import pytest
@@ -17,9 +17,9 @@ from pydantic import BaseModel
 pytest.importorskip("aioboto3")
 pytest.importorskip("testcontainers")
 
+from forze.base.serialization import PydanticModelCodec
 from forze_sqs.adapters import SQSQueueAdapter, SQSQueueCodec
 from forze_sqs.kernel.client import SQSClient
-from forze.base.serialization import PydanticModelCodec
 from tests.support.floci import FlociContainer
 
 

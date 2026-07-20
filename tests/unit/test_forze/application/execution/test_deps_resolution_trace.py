@@ -1,9 +1,9 @@
 """Tests for :mod:`forze.application.execution.deps.resolution.graph`."""
 
-from forze.application.execution.deps import DepsResolutionTrace
-from forze.application.execution.deps.resolution import ResolutionFrame, frame_for
 from forze.application.contracts.counter import CounterDepKey
 from forze.application.contracts.document import DocumentQueryDepKey
+from forze.application.execution.deps import DepsResolutionTrace
+from forze.application.execution.deps.resolution import ResolutionFrame, frame_for
 
 
 class TestDepsResolutionTrace:

@@ -7,8 +7,8 @@ import pytest
 from forze.application.contracts.search import Rrf
 from forze.base.exceptions import CoreException
 from forze_meilisearch.execution.deps.configs import (
-    MeilisearchFederation,
     MeilisearchFederatedSearchConfig,
+    MeilisearchFederation,
     MeilisearchSearchConfig,
 )
 

@@ -11,7 +11,6 @@ from forze.application.contracts.authz import (
     AuthzRequest,
     subject_from_authn,
 )
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.document import DocumentCommandDepKey
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze_identity.authz.application.constants import AuthzResourceName
@@ -19,11 +18,13 @@ from forze_identity.authz.execution import AuthzDepsModule, AuthzKernelConfig
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.kernel.client.client import PostgresClient
-
 from tests.integration.test_forze_authz.test_pg_authz_kernel_flow import (
     _AUTHZ_SPEC,
     _authz_pg_deps,
     _authz_pg_setup,
+)
+from tests.support.execution_context import (
+    context_from_deps,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]

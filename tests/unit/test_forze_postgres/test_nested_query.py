@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Mapping, Union
+from typing import Any, Union
 from uuid import UUID
 
 import pytest
-
-from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
+from forze.base.exceptions import CoreException
 from forze_postgres.kernel.catalog.introspect import PostgresType
 from forze_postgres.kernel.sql.query.nested import (
     build_nested_json_scalar_expr,
@@ -444,7 +444,7 @@ def test_sort_key_expr_nested_renders_json_extraction_with_cast() -> None:
 
 
 class _AnyKeyDict(BaseModel):
-    meta: "dict[Any, str]"
+    meta: dict[Any, str]
 
 
 class _BareDict(BaseModel):

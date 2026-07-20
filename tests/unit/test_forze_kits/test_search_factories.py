@@ -6,11 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 from pydantic import BaseModel
 
-from forze_kits.aggregates.search import SearchKernelOp
-from forze_kits.aggregates.search.factories import (
-    build_hub_search_registry,
-    build_search_registry,
-)
 from forze.application.contracts.search import (
     HubSearchQueryDepKey,
     HubSearchSpec,
@@ -18,13 +13,18 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
-from tests.support.execution_context import context_from_deps
+from forze_kits.aggregates.search import SearchKernelOp
+from forze_kits.aggregates.search.factories import (
+    build_hub_search_registry,
+    build_search_registry,
+)
 from forze_kits.aggregates.search.handlers import (
     CursorSearch,
     ProjectedCursorSearch,
     ProjectedSearch,
     Search,
 )
+from tests.support.execution_context import context_from_deps
 
 from .registry_helpers import handler_at, registry_has_handler
 
@@ -189,10 +189,10 @@ class TestSearchSensitivePropagation:
         )
 
     def test_federated_is_sensitive_when_any_member_is(self) -> None:
+        from forze.application.contracts.search import FederatedSearchSpec
         from forze_kits.aggregates.search.factories import (
             build_federated_search_registry,
         )
-        from forze.application.contracts.search import FederatedSearchSpec
 
         a = SearchSpec(name="a", model_type=_Hit, fields=["id"], sensitive=True)
         b = SearchSpec(name="b", model_type=_Hit, fields=["id"])

@@ -3,14 +3,13 @@
 from datetime import datetime
 
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.crypto import (
     is_encrypted_payload,
     wrap_encrypted_payload,
 )
 from forze.base.exceptions import CoreException
-from pydantic import BaseModel
-
 from forze.base.serialization import PydanticModelCodec
 from forze_redis.adapters.codecs import RedisPubSubCodec, RedisStreamCodec
 

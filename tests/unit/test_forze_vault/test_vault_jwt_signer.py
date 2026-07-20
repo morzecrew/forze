@@ -182,10 +182,11 @@ def test_unsupported_algorithm_rejected() -> None:
 # public-key TTL refresh (rotation picked up without a restart)
 
 
-import attrs  # noqa: E402
-from datetime import UTC, datetime  # noqa: E402
+from datetime import UTC, datetime
 
-from forze.base.primitives import bind_time_source  # noqa: E402
+import attrs
+
+from forze.base.primitives import bind_time_source
 
 
 @attrs.define(slots=True)

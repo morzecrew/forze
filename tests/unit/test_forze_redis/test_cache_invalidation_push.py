@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 
 import attrs
 

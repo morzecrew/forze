@@ -37,7 +37,7 @@ class _BytesModeRedis:
 
 async def test_rows_are_normalized_to_string_keys_and_text_values() -> None:
     client = RedisClient()
-    client._RedisClient__client = _BytesModeRedis()  # type: ignore[attr-defined]  # noqa: SLF001
+    client._RedisClient__client = _BytesModeRedis()  # type: ignore[attr-defined]
 
     rows = await client.xinfo_groups("s")
 

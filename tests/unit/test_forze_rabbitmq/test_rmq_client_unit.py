@@ -1,13 +1,12 @@
 """Unit tests for :class:`~forze_rabbitmq.kernel.client.client.RabbitMQClient` helpers (no broker)."""
 
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
 pytest.importorskip("aio_pika")
 
 from forze_rabbitmq.kernel.client.client import RabbitMQClient
-
 
 # ----------------------- #
 
@@ -33,7 +32,7 @@ class TestRabbitMQClientExtractors:
 
     def test_extract_timestamp_numeric_unix(self) -> None:
         got = RabbitMQClient._RabbitMQClient__extract_timestamp(1_700_000_000.0)
-        assert got == datetime.fromtimestamp(1_700_000_000, tz=timezone.utc)
+        assert got == datetime.fromtimestamp(1_700_000_000, tz=UTC)
 
     def test_extract_timestamp_other(self) -> None:
         assert RabbitMQClient._RabbitMQClient__extract_timestamp("nope") is None

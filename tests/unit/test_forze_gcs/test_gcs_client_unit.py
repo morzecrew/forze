@@ -7,7 +7,6 @@ import pytest
 
 from forze.base.exceptions import CoreException
 from forze.base.primitives.owned_temp_path import OwnedTempPath
-
 from forze_gcs.kernel.client.client import TAG_METADATA_PREFIX, GCSClient
 from forze_gcs.kernel.client.value_objects import GCSConfig
 
@@ -21,12 +20,11 @@ async def test_initialize_creates_storage_client() -> None:
     with patch(
         "forze_gcs.kernel.client.client.Storage",
         return_value=fake_storage,
-    ) as storage_ctor:
-        with patch.dict(
-            os.environ,
-            {"STORAGE_EMULATOR_HOST": "http://localhost:4443"},
-        ):
-            await client.initialize("test-project")
+    ) as storage_ctor, patch.dict(
+        os.environ,
+        {"STORAGE_EMULATOR_HOST": "http://localhost:4443"},
+    ):
+        await client.initialize("test-project")
 
     storage_ctor.assert_called_once_with(
         service_file=None,
@@ -44,18 +42,17 @@ async def test_initialize_uses_service_file_from_config() -> None:
     with patch(
         "forze_gcs.kernel.client.client.Storage",
         return_value=fake_storage,
-    ) as storage_ctor:
-        with patch.dict(
-            os.environ,
-            {"STORAGE_EMULATOR_HOST": ""},
-        ):
-            await client.initialize(
-                project_id="test-project",
-                config=GCSConfig(
-                    service_file="/keys/sa.json",
-                    timeout=timedelta(seconds=60),
-                ),
-            )
+    ) as storage_ctor, patch.dict(
+        os.environ,
+        {"STORAGE_EMULATOR_HOST": ""},
+    ):
+        await client.initialize(
+            project_id="test-project",
+            config=GCSConfig(
+                service_file="/keys/sa.json",
+                timeout=timedelta(seconds=60),
+            ),
+        )
 
     storage_ctor.assert_called_once_with(
         api_root=None,

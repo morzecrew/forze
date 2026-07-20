@@ -130,7 +130,7 @@ def _registry() -> OperationRegistry:
     }
     return OperationRegistry(
         handlers=handlers,
-        plans={op: _TX_PLAN for op in handlers},
+        plans=dict.fromkeys(handlers, _TX_PLAN),
         descriptors={
             "create_order": OperationDescriptor(
                 input_type=None, output_type=None, description="x"

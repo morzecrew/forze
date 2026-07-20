@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import statistics
+from datetime import UTC
 from typing import Any
 
 import pytest
@@ -11,18 +12,16 @@ from pydantic import BaseModel
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.querying import (
     ELEM_SCALAR_FIELD,
+    GroupField,
+    GroupTrunc,
     QueryAnd,
     QueryCompare,
     QueryElem,
     QueryField,
     QueryOr,
 )
-from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
-from forze.application.contracts.querying import (
-    GroupField,
-    GroupTrunc,
-)
 from forze.base.exceptions import CoreException
+from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_mock.adapters import MockDocumentAdapter, MockState
 from forze_mock.query import _match_expr  # type: ignore[reportPrivateUsage]
 from forze_mock.query._types import _MISSING  # type: ignore[reportPrivateUsage]
@@ -506,11 +505,11 @@ def test_percentile_cont_edges() -> None:
 
 
 def test_coerce_datetime_for_bucket_variants() -> None:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     naive = datetime(2020, 1, 1)
     aware = _coerce_datetime_for_bucket(naive)
-    assert aware.tzinfo is timezone.utc
+    assert aware.tzinfo is UTC
     assert _coerce_datetime_for_bucket("2020-01-01T00:00:00Z").year == 2020
     assert _coerce_datetime_for_bucket(0).year == 1970  # epoch
     with pytest.raises(CoreException, match="Invalid timestamp"):
@@ -518,7 +517,7 @@ def test_coerce_datetime_for_bucket_variants() -> None:
 
 
 def test_group_key_part_ref_trunc_and_unsupported() -> None:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from forze.application.contracts.querying.internal.time_bucket import (
         parse_aggregate_timezone,
@@ -530,7 +529,7 @@ def test_group_key_part_ref_trunc_and_unsupported() -> None:
     trunc = GroupTrunc(
         field="ts", unit="day", timezone=parse_aggregate_timezone("UTC")
     )
-    ts = datetime(2020, 5, 17, 13, 0, tzinfo=timezone.utc)
+    ts = datetime(2020, 5, 17, 13, 0, tzinfo=UTC)
     floored = _group_key_part({"ts": ts}, trunc)
     assert isinstance(floored, str) and floored.startswith("2020-05-17")
     assert _group_key_part({}, trunc) is None  # missing timestamp → None
@@ -566,7 +565,7 @@ async def test_aggregate_computed_filter_subsets_rows() -> None:
 @pytest.mark.asyncio
 async def test_aggregate_trunc_grouping() -> None:
     # GroupTrunc bucket grouping through the document adapter.
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     class _TFields(BaseModel):
         ts: datetime
@@ -594,13 +593,13 @@ async def test_aggregate_trunc_grouping() -> None:
         domain_model=_TDoc,
     )
     await doc.create(
-        _TCreate(ts=datetime(2020, 1, 1, 9, tzinfo=timezone.utc), amount=1)
+        _TCreate(ts=datetime(2020, 1, 1, 9, tzinfo=UTC), amount=1)
     )
     await doc.create(
-        _TCreate(ts=datetime(2020, 1, 1, 18, tzinfo=timezone.utc), amount=2)
+        _TCreate(ts=datetime(2020, 1, 1, 18, tzinfo=UTC), amount=2)
     )
     await doc.create(
-        _TCreate(ts=datetime(2020, 1, 2, 9, tzinfo=timezone.utc), amount=4)
+        _TCreate(ts=datetime(2020, 1, 2, 9, tzinfo=UTC), amount=4)
     )
     rows = await _rows(
         doc,

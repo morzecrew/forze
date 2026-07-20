@@ -589,7 +589,7 @@ class TestGraphDeps:
         assert GraphRawQueryDepKey.name == "graph_raw_query"
 
 
-async def _empty_stream():  # noqa: ANN202
+async def _empty_stream():
     """An async generator yielding nothing — the stream methods' shape, not their behaviour."""
 
     return
@@ -606,105 +606,105 @@ class TestGraphPortProtocols:
             def __init__(self) -> None:
                 self.spec = spec
 
-            async def get_vertex(self, ref):  # noqa: ANN001, ANN202
+            async def get_vertex(self, ref):
                 return None
 
-            async def get_vertices(self, refs):  # noqa: ANN001, ANN202
+            async def get_vertices(self, refs):
                 return []
 
-            async def get_edge(self, ref):  # noqa: ANN001, ANN202
+            async def get_edge(self, ref):
                 return None
 
-            async def get_edges(self, refs):  # noqa: ANN001, ANN202
+            async def get_edges(self, refs):
                 return []
 
-            async def vertex_exists(self, ref):  # noqa: ANN001, ANN202
+            async def vertex_exists(self, ref):
                 return False
 
-            async def edge_exists(self, ref):  # noqa: ANN001, ANN202
+            async def edge_exists(self, ref):
                 return False
 
-            async def count_vertices(self, node_kind, *, property_filter=None):  # noqa: ANN001, ANN202
+            async def count_vertices(self, node_kind, *, property_filter=None):
                 return 0
 
-            async def count_edges(self, edge_kind, *, property_filter=None):  # noqa: ANN001, ANN202
+            async def count_edges(self, edge_kind, *, property_filter=None):
                 return 0
 
-            async def neighbors(  # noqa: ANN202, PLR0913
+            async def neighbors(
                 self,
-                origin,  # noqa: ANN001
-                direction,  # noqa: ANN001
-                edge_kinds,  # noqa: ANN001
+                origin,
+                direction,
+                edge_kinds,
                 *,
-                limit,  # noqa: ANN001
-                to_vertex_kinds=None,  # noqa: ANN001
+                limit,
+                to_vertex_kinds=None,
             ):
                 return []
 
-            async def incident_edges(  # noqa: ANN202
+            async def incident_edges(
                 self,
-                origin,  # noqa: ANN001
-                direction,  # noqa: ANN001
-                edge_kinds,  # noqa: ANN001
+                origin,
+                direction,
+                edge_kinds,
                 *,
-                limit,  # noqa: ANN001
+                limit,
             ):
                 return []
 
-            async def expand(self, start, params):  # noqa: ANN001, ANN202
+            async def expand(self, start, params):
                 return []
 
-            async def shortest_path(self, from_ref, to_ref, params):  # noqa: ANN001, ANN202
+            async def shortest_path(self, from_ref, to_ref, params):
                 return None
 
-            async def scoped_walk(self, anchor, params):  # noqa: ANN001, ANN202
+            async def scoped_walk(self, anchor, params):
                 return []
 
-            async def k_shortest_paths(self, from_ref, to_ref, params, *, k):  # noqa: ANN001, ANN202
+            async def k_shortest_paths(self, from_ref, to_ref, params, *, k):
                 return []
 
-            async def find_vertices(  # noqa: ANN202
+            async def find_vertices(
                 self,
-                node_kind,  # noqa: ANN001
+                node_kind,
                 *,
-                property_filter=None,  # noqa: ANN001
-                limit=100,  # noqa: ANN001
-                offset=0,  # noqa: ANN001
+                property_filter=None,
+                limit=100,
+                offset=0,
             ):
                 return []
 
-            async def find_edges(  # noqa: ANN202
+            async def find_edges(
                 self,
-                edge_kind,  # noqa: ANN001
+                edge_kind,
                 *,
-                property_filter=None,  # noqa: ANN001
-                limit=100,  # noqa: ANN001
-                offset=0,  # noqa: ANN001
+                property_filter=None,
+                limit=100,
+                offset=0,
             ):
                 return []
 
-            def find_vertices_stream(  # noqa: ANN202
+            def find_vertices_stream(
                 self,
-                node_kind,  # noqa: ANN001
+                node_kind,
                 *,
-                property_filter=None,  # noqa: ANN001
-                chunk_size=500,  # noqa: ANN001
+                property_filter=None,
+                chunk_size=500,
             ):
                 return _empty_stream()
 
-            def find_edges_stream(  # noqa: ANN202
+            def find_edges_stream(
                 self,
-                edge_kind,  # noqa: ANN001
+                edge_kind,
                 *,
-                property_filter=None,  # noqa: ANN001
-                chunk_size=500,  # noqa: ANN001
+                property_filter=None,
+                chunk_size=500,
             ):
                 return _empty_stream()
 
-            async def vertex_degree(self, ref, *, direction=GraphDirection.BOTH, edge_kinds=None):  # noqa: ANN001, ANN202
+            async def vertex_degree(self, ref, *, direction=GraphDirection.BOTH, edge_kinds=None):
                 return 0
 
-            async def count_neighbors(self, ref, *, direction=GraphDirection.BOTH, edge_kinds=None):  # noqa: ANN001, ANN202
+            async def count_neighbors(self, ref, *, direction=GraphDirection.BOTH, edge_kinds=None):
                 return 0
 
         assert isinstance(_Query(), GraphQueryPort)
@@ -723,40 +723,40 @@ class TestGraphPortProtocols:
             def __init__(self) -> None:
                 self.spec = spec
 
-            async def create_vertex(self, node_kind, cmd, *, return_new=True):  # noqa: ANN001, ANN202
+            async def create_vertex(self, node_kind, cmd, *, return_new=True):
                 return None
 
-            async def update_vertex(self, ref, cmd):  # noqa: ANN001, ANN202
+            async def update_vertex(self, ref, cmd):
                 return cmd
 
-            async def delete_vertex(self, ref):  # noqa: ANN001, ANN202
+            async def delete_vertex(self, ref):
                 return None
 
-            async def create_edge(self, edge_kind, cmd, *, return_new=True):  # noqa: ANN001, ANN202
+            async def create_edge(self, edge_kind, cmd, *, return_new=True):
                 return None
 
-            async def update_edge(self, ref, cmd):  # noqa: ANN001, ANN202
+            async def update_edge(self, ref, cmd):
                 return cmd
 
-            async def delete_edge(self, ref):  # noqa: ANN001, ANN202
+            async def delete_edge(self, ref):
                 return None
 
-            async def create_vertices(self, items, *, return_new=True):  # noqa: ANN001, ANN202
+            async def create_vertices(self, items, *, return_new=True):
                 return None
 
-            async def create_edges(self, items, *, return_new=True):  # noqa: ANN001, ANN202
+            async def create_edges(self, items, *, return_new=True):
                 return None
 
-            async def ensure_vertex(self, node_kind, cmd, *, return_new=True):  # noqa: ANN001, ANN202
+            async def ensure_vertex(self, node_kind, cmd, *, return_new=True):
                 return None
 
-            async def ensure_edge(self, edge_kind, cmd, *, return_new=True):  # noqa: ANN001, ANN202
+            async def ensure_edge(self, edge_kind, cmd, *, return_new=True):
                 return None
 
-            async def delete_vertices(self, refs):  # noqa: ANN001, ANN202
+            async def delete_vertices(self, refs):
                 return None
 
-            async def delete_edges(self, refs):  # noqa: ANN001, ANN202
+            async def delete_edges(self, refs):
                 return None
 
         assert isinstance(_Command(), GraphCommandPort)
@@ -768,7 +768,7 @@ class TestGraphPortProtocols:
             def __init__(self) -> None:
                 self.spec = spec
 
-            async def run(self, query, params=None):  # noqa: ANN001, ANN202
+            async def run(self, query, params=None):
                 return []
 
         assert isinstance(_Raw(), GraphRawQueryPort)

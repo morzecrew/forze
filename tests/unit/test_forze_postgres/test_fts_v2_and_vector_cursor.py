@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
+from pydantic import BaseModel
 
 from forze.base.exceptions import CoreException
-from pydantic import BaseModel
 
 pytest.importorskip("psycopg")
 
@@ -18,7 +18,6 @@ from forze_postgres.adapters.search import (
     PostgresFTSSearchAdapter,
     PostgresVectorSearchAdapter,
 )
-from forze_postgres.kernel.gateways import PostgresQualifiedName
 
 
 class _M(BaseModel):

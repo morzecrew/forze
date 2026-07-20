@@ -10,7 +10,7 @@ engine level in tests/unit/test_forze/application/execution/test_two_phase_runne
 
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 import attrs
 import pytest

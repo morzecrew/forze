@@ -1,0 +1,4 @@
+{
+    "name": "doubler",
+    "implementation": "models.DoublerRuntime"
+}

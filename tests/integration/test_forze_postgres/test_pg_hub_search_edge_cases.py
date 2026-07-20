@@ -9,12 +9,12 @@ from pydantic import BaseModel
 
 from forze.application.contracts.base import CountlessPage, Page
 from forze.application.contracts.search import HubSearchSpec, SearchSpec
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
+from forze_postgres.execution.deps import ConfigurablePostgresHubSearch
 from forze_postgres.execution.deps.configs import (
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
 )
-from forze_postgres.execution.deps import ConfigurablePostgresHubSearch
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,

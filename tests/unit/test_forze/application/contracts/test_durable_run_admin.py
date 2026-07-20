@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -23,7 +23,7 @@ from forze.base.exceptions import CoreException
 
 # ----------------------- #
 
-UTC = timezone.utc
+UTC = UTC
 _CURSOR_CODEC = B64UrlJsonCodec()  # same encoding decode_run_cursor consumes
 
 

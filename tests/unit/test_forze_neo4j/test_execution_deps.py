@@ -38,7 +38,7 @@ def _spec() -> GraphModuleSpec:
     return GraphModuleSpec(name="g", nodes=(GraphNodeSpec(name="N", read=_R),), edges=())
 
 
-def _ctx():  # noqa: ANN202
+def _ctx():
     return context_from_deps(
         Deps.plain({Neo4jClientDepKey: MagicMock(spec=Neo4jClient)})
     )

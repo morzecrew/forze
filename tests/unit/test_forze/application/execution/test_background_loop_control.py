@@ -16,8 +16,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from forze.base.exceptions import CoreException
 from forze.application.execution.background import BackgroundLoopControl
+from forze.base.exceptions import CoreException
 
 # ----------------------- #
 

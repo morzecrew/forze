@@ -11,16 +11,19 @@ Three layers:
 
 from __future__ import annotations
 
+from ipaddress import IPv4Address
+from uuid import UUID
+
 import attrs
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.planning import OperationPlan
 from forze.application.execution.operations.registry import OperationRegistry
-from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.execution.tracing.port_proxy import REDACTED
 from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -40,8 +43,6 @@ from forze_dst.invariants import (
 )
 from forze_dst.oracle.recorder import Event, History
 from forze_mock import MockDepsModule
-from ipaddress import IPv4Address
-from uuid import UUID
 
 # ----------------------- #
 # Layer 1 — the kernel over explicit read/write sets.

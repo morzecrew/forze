@@ -8,10 +8,10 @@ from pydantic import BaseModel
 
 pytest.importorskip("redis")
 
-from forze_redis.adapters.stream import RedisStreamAdapter, RedisStreamGroupAdapter
-from forze_redis.adapters.codecs import RedisStreamCodec
-from forze_redis.kernel.client import RedisClient
 from forze.base.serialization import PydanticModelCodec
+from forze_redis.adapters.codecs import RedisStreamCodec
+from forze_redis.adapters.stream import RedisStreamAdapter, RedisStreamGroupAdapter
+from forze_redis.kernel.client import RedisClient
 
 
 class _Payload(BaseModel):

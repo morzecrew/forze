@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+from collections.abc import AsyncIterator
 from datetime import timedelta
-from typing import AsyncIterator
 from uuid import UUID, uuid4
 
 import attrs
@@ -46,7 +46,7 @@ class _InMemoryStorageClient:
     )
 
     @contextlib.asynccontextmanager
-    async def client(self) -> AsyncIterator["_InMemoryStorageClient"]:
+    async def client(self) -> AsyncIterator[_InMemoryStorageClient]:
         yield self
 
     async def ensure_bucket(self, bucket: str) -> None:

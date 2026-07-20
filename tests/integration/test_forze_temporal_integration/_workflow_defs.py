@@ -168,7 +168,6 @@ class ItCheckoutSagaWorkflow:
     async def run(self, fail_at: str) -> SagaOut:
         with workflow.unsafe.imports_passed_through():
             from forze.application.contracts.saga import SagaStepKind
-
             from forze_temporal import TemporalSaga
 
         saga = TemporalSaga(name="checkout")

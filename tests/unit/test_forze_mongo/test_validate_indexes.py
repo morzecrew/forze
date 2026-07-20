@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from forze_mongo.kernel.introspect import MongoIntrospector
 from forze_mongo.kernel.client import MongoClient
+from forze_mongo.kernel.introspect import MongoIntrospector
 from forze_mongo.kernel.validate_indexes import (
     MongoDocumentIndexSpec,
     validate_mongo_document_indexes,

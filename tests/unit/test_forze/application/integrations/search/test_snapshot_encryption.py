@@ -14,8 +14,8 @@ from forze.application.contracts.crypto import (
     KeyRef,
     StaticKeyDirectory,
 )
-from forze.application.integrations.crypto import Keyring
 from forze.application.contracts.search import SearchResultSnapshotSpec
+from forze.application.integrations.crypto import Keyring
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     resolve_snapshot_cipher,

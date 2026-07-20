@@ -4,8 +4,7 @@ from collections.abc import Mapping
 
 from pydantic import BaseModel
 
-from forze.application.contracts.search import SearchSpec
-from forze.application.contracts.search import calculate_effective_field_weights
+from forze.application.contracts.search import SearchSpec, calculate_effective_field_weights
 
 # ----------------------- #
 

@@ -3,7 +3,6 @@
 import pytest
 
 from forze.application.execution import Deps, LifecyclePlan
-from tests.support.execution_context import context_from_deps
 from forze_inngest.execution.deps import InngestClientDepKey
 from forze_inngest.execution.lifecycle import (
     InngestShutdownHook,
@@ -11,6 +10,7 @@ from forze_inngest.execution.lifecycle import (
     inngest_lifecycle_step,
     routed_inngest_lifecycle_step,
 )
+from tests.support.execution_context import context_from_deps
 
 
 @pytest.mark.asyncio

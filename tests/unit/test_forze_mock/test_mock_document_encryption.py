@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import base64
 
-from forze.base.serialization import default_model_codec
 from forze.application.contracts.crypto import (
     AesGcmAead,
     KeyRef,
@@ -22,6 +21,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.integrations.crypto import EncryptingModelCodec, Keyring
 from forze.base.crypto import is_envelope
+from forze.base.serialization import default_model_codec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion
 from forze_mock.adapters import MockDocumentAdapter, MockKeyManagement, MockState

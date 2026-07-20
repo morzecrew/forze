@@ -4,12 +4,13 @@ from datetime import timedelta
 from unittest.mock import Mock
 
 import pytest
+from _kafka_fakes import Msg
 
+from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.stream import StreamSpec
 from forze.application.execution import Deps
 from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
-from forze.application.contracts.secrets import SecretRef
 from forze_kafka import (
     KafkaClient,
     KafkaClientDepKey,
@@ -32,10 +33,7 @@ from forze_kafka.execution.deps import (
     ConfigurableKafkaConsume,
     ConfigurableKafkaProduce,
 )
-
 from tests.support.execution_context import context_from_deps
-
-from _kafka_fakes import Msg
 
 # ----------------------- #
 

@@ -1,13 +1,12 @@
 from datetime import datetime, timedelta
-from typing import Optional
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from pydantic import BaseModel
 
+from forze.base.serialization import PydanticModelCodec
 from forze_rabbitmq.adapters import RabbitMQQueueAdapter, RabbitMQQueueCodec
 from forze_rabbitmq.kernel.client import RabbitMQClient, RabbitMQQueueMessage
-from forze.base.serialization import PydanticModelCodec
 
 
 class _Payload(BaseModel):
@@ -182,7 +181,7 @@ async def test_queue_adapter_consume_decodes_messages() -> None:
             body=codec.encode(_Payload(value="hello")),
         )
 
-    def _consume(queue: str, timeout: Optional[timedelta] = None):
+    def _consume(queue: str, timeout: timedelta | None = None):
         captured["queue"] = queue
         captured["timeout"] = timeout
         return _iter()

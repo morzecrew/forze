@@ -28,7 +28,6 @@ from forze.application.contracts.outbox import (
     OutboxQueryDepKey,
     OutboxSpec,
 )
-from forze.application.execution import CryptoDepsModule
 from forze.application.contracts.queue import (
     QueueCommandDepKey,
     QueueMessage,
@@ -37,6 +36,7 @@ from forze.application.contracts.queue import (
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import (
+    CryptoDepsModule,
     Deps,
     DepsRegistry,
     ExecutionRuntime,

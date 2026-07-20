@@ -1,6 +1,6 @@
 """Unit tests for forze.application.contracts.querying.internal."""
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -700,7 +700,7 @@ class TestQueryValueCaster:
 
     # as_datetime
     def test_as_datetime_from_datetime(self) -> None:
-        dt = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
         assert QueryValueCaster.as_datetime(dt, force_tz=True) == dt
 
     def test_as_datetime_from_iso_string(self) -> None:
@@ -723,10 +723,10 @@ class TestQueryValueCaster:
     def test_as_datetime_force_tz_adds_utc_to_naive(self) -> None:
         dt = datetime(2024, 1, 15, 12, 0, 0)
         result = QueryValueCaster.as_datetime(dt, force_tz=True)
-        assert result.tzinfo is timezone.utc
+        assert result.tzinfo is UTC
 
     def test_as_datetime_no_force_tz_strips_tz(self) -> None:
-        dt = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
         result = QueryValueCaster.as_datetime(dt, force_tz=False)
         assert result.tzinfo is None
 

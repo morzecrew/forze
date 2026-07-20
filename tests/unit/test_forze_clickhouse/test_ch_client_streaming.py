@@ -35,7 +35,7 @@ class _FakeStream:
         self.entered = False
         self.exited = False
 
-    async def __aenter__(self) -> "_FakeStream":
+    async def __aenter__(self) -> _FakeStream:
         self.entered = True
         return self
 
@@ -43,7 +43,7 @@ class _FakeStream:
         self.exited = True
         return False
 
-    def __aiter__(self) -> "_FakeStream":
+    def __aiter__(self) -> _FakeStream:
         return self
 
     async def __anext__(self) -> list[tuple[Any, ...]]:

@@ -7,24 +7,23 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
 from forze.application.integrations.durable import next_cron_fire, validate_cron
 from forze.base.exceptions import CoreException
-from tests.support.execution_context import context_from_modules
-
 from forze_kits.integrations.durable import (
     DurableScheduler,
     resolve_durable_run_store,
     resolve_durable_schedule_store,
 )
 from forze_mock import MockDepsModule, MockState
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 
-UTC = timezone.utc
+UTC = UTC
 
 
 def _runs_for(state: MockState, name: str) -> list[dict]:

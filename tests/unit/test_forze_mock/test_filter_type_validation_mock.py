@@ -10,13 +10,13 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.querying import OPERATOR_TYPE_MISMATCH_CODE
 from forze.base.exceptions import CoreException
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_mock.adapters import MockDocumentAdapter, MockState
-from pydantic import BaseModel
 
 pytestmark = pytest.mark.unit
 

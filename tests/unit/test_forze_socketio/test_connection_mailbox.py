@@ -7,9 +7,9 @@ from uuid import UUID
 
 from forze.application.contracts.authn import AuthnIdentity, ClientIdentity
 from forze.application.contracts.realtime import Audience, RealtimeSignal
-from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.primitives import HlcTimestamp
+from forze_mock import MockDepsModule
 from forze_socketio import (
     InMemoryMailboxCursors,
     InMemoryRealtimeMailbox,
@@ -17,7 +17,6 @@ from forze_socketio import (
     attach_realtime_connection,
 )
 from forze_socketio.routing import SocketIOConnect
-from forze_mock import MockDepsModule
 
 # ----------------------- #
 

@@ -1,6 +1,5 @@
 """Unit tests for text pattern validation helpers."""
 
-from forze.base.exceptions import CoreException
 import pytest
 
 from forze.application.contracts.querying.internal.parse import QueryFilterLimits
@@ -8,6 +7,8 @@ from forze.application.contracts.querying.internal.text_pattern import (
     like_pattern_to_regex,
     validate_text_pattern,
 )
+from forze.base.exceptions import CoreException
+
 
 def _limits(**kwargs: int) -> tuple[int, int]:
     lim = QueryFilterLimits(**kwargs)

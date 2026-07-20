@@ -14,8 +14,6 @@ import pytest
 from forze.application.contracts.durable.function import DurableRunStatus
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, exc
-from tests.support.execution_context import context_from_modules
-
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
     DurableFunctionRunner,
@@ -23,6 +21,7 @@ from forze_kits.integrations.durable import (
     resolve_durable_step,
 )
 from forze_mock import MockDepsModule, MockDurableRunStore
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 

@@ -34,6 +34,7 @@ from forze.application.contracts.graph import GraphModuleSpec
 from forze.application.contracts.http import HttpServiceSpec
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySpec
 from forze.application.contracts.inbox import InboxPort, InboxSpec
+from forze.application.contracts.inference import InferenceSpec
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.contracts.procedure import ProcedureSpec
 from forze.application.contracts.pubsub import PubSubCommandPort, PubSubSpec
@@ -106,6 +107,8 @@ from forze_mock.adapters import (
     MockHubSearchAdapter,
     MockIdempotencyAdapter,
     MockInboxAdapter,
+    MockInferenceAdapter,
+    MockInferenceRegistry,
     MockJournalTxManagerAdapter,
     MockProcedureAdapter,
     MockProcedureRegistry,
@@ -347,6 +350,21 @@ class ConfigurableMockAnalytics(_MockFactoryBase):
             ),
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockInference(_MockFactoryBase):
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: InferenceSpec[Any, Any],
+    ) -> MockInferenceAdapter[Any, Any]:
+        _ = context
+        return MockInferenceAdapter(
+            spec=spec,
+            registry=self.module.inference or MockInferenceRegistry(),
         )
 
 

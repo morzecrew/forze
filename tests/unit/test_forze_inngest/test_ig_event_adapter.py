@@ -1,14 +1,14 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.durable.function import DurableFunctionEventSpec
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
 from forze.base.serialization import PydanticModelCodec
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_inngest.adapters import InngestEventCommandAdapter
 from forze_inngest.execution.deps import InngestClientDepKey
-
+from tests.support.execution_context import context_from_deps
 from tests.unit.test_forze_inngest.helpers import RecordingInngestClient
 
 
@@ -33,7 +33,7 @@ async def test_send_builds_inngest_event() -> None:
     event_id = await adapter.send(
         _Payload(value="x"),
         event_id="dedup",
-        occurred_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        occurred_at=datetime(2025, 1, 1, tzinfo=UTC),
     )
 
     assert event_id == "id-1"
@@ -42,7 +42,7 @@ async def test_send_builds_inngest_event() -> None:
     assert event.name == "app/test"
     assert event.data == {"value": "x"}
     assert event.id == "dedup"
-    assert event.ts == int(datetime(2025, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    assert event.ts == int(datetime(2025, 1, 1, tzinfo=UTC).timestamp() * 1000)
 
 
 @pytest.mark.asyncio

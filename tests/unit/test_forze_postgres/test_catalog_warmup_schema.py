@@ -3,18 +3,13 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import BaseModel
 
 from forze.base.exceptions import CoreException, exc
-from pydantic import BaseModel
 
 pytest.importorskip("psycopg")
 
-from forze.application.execution import Deps, ExecutionContext
-from forze_postgres.execution.lifecycle import (
-    postgres_catalog_warmup_lifecycle_step,
-    postgres_document_schema_validation_lifecycle_step,
-    warm_postgres_catalog,
-)
+from forze.application.execution import Deps
 from forze_postgres.execution.deps.configs import (
     FtsEngine,
     PostgresFederatedSearchConfig,
@@ -26,6 +21,11 @@ from forze_postgres.execution.deps.configs import (
     VectorEngine,
 )
 from forze_postgres.execution.deps.keys import PostgresIntrospectorDepKey
+from forze_postgres.execution.lifecycle import (
+    postgres_catalog_warmup_lifecycle_step,
+    postgres_document_schema_validation_lifecycle_step,
+    warm_postgres_catalog,
+)
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
 from forze_postgres.kernel.catalog.validation.validate_schema import (
     PostgresDocumentSchemaSpec,

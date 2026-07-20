@@ -8,9 +8,8 @@ import pytest
 
 from forze.application.contracts.inbox import InboxPort, InboxSpec
 from forze.base.exceptions import CoreException, ExceptionKind
-from tests.support.execution_context import context_from_modules
-
 from forze_mock import MockDepsModule
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 

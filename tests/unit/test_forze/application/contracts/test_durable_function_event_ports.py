@@ -1,6 +1,6 @@
 """Unit tests for DurableFunctionEventCommandPort."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import BaseModel
@@ -41,6 +41,6 @@ async def test_send_returns_event_id() -> None:
     event_id = await cmd.send(
         _Payload(value="x"),
         event_id="dedup-1",
-        occurred_at=datetime.now(tz=timezone.utc),
+        occurred_at=datetime.now(tz=UTC),
     )
     assert event_id == "dedup-1"

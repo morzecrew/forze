@@ -3,10 +3,9 @@
 from unittest.mock import MagicMock
 
 from forze.domain.models import Document
-
-from forze_postgres.kernel.gateways import PostgresGateway, PostgresQualifiedName
-from tests.unit._gateway_codec_helpers import codec_for
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
+from forze_postgres.kernel.gateways import PostgresGateway
+from tests.unit._gateway_codec_helpers import codec_for
 
 
 class _Doc(Document):

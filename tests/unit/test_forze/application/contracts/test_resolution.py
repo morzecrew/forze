@@ -50,7 +50,7 @@ async def test_resolve_scoped_namespace_memoizes_static() -> None:
     cell: OnceCell[str] = OnceCell()
     calls = 0
 
-    async def resolver(spec, tenant_id):  # noqa: ANN001, ANN202
+    async def resolver(spec, tenant_id):
         nonlocal calls
         calls += 1
         return f"{spec}"

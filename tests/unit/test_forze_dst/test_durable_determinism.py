@@ -20,13 +20,12 @@ from forze.application.execution.operations.descriptors import OperationDescript
 from forze.application.execution.operations.registry import OperationRegistry
 from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig, Strategy
 from forze_dst.invariants import no_unexpected_error
-from forze_mock import MockDepsModule
-
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
     DurableFunctionRunner,
     resolve_durable_step,
 )
+from forze_mock import MockDepsModule
 
 # ----------------------- #
 

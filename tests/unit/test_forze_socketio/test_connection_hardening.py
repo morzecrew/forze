@@ -10,16 +10,16 @@ from uuid import UUID
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.execution import ExecutionContext
+from forze.application.execution.background.periodic import (  # pyright: ignore[reportPrivateUsage]
+    _PeriodicShutdown,
+    _PeriodicStartup,
+)
 from forze_socketio import (
     RealtimeConnection,
     refresh_presence,
     sweep_expired_connections,
 )
 from forze_socketio.connection import CONNECTION_SESSION_KEY
-from forze.application.execution.background.periodic import (  # pyright: ignore[reportPrivateUsage]
-    _PeriodicShutdown,
-    _PeriodicStartup,
-)
 
 # ----------------------- #
 

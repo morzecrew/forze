@@ -56,9 +56,8 @@ async def test_receive_skips_poison_base64_and_returns_good() -> None:
         client,
         "_SQSClient__resolve_queue_url",
         AsyncMock(return_value="https://sqs/jobs"),
-    ):
-        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
-            msgs = await client.receive("jobs", limit=10)
+    ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        msgs = await client.receive("jobs", limit=10)
 
     # The poison message is skipped; the good one still comes back decoded.
     assert [m.id for m in msgs] == ["good"]
@@ -91,9 +90,8 @@ async def test_receive_deletes_fifo_poison_to_unblock_group() -> None:
         client,
         "_SQSClient__resolve_queue_url",
         AsyncMock(return_value="https://sqs/jobs.fifo"),
-    ):
-        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
-            msgs = await client.receive("jobs.fifo", limit=10)
+    ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        msgs = await client.receive("jobs.fifo", limit=10)
 
     # Poison deleted (group unblocked); good message still returned and pending.
     mock_boto.delete_message.assert_awaited_once_with(
@@ -126,9 +124,8 @@ async def test_fifo_poison_without_poison_queue_warns_and_deletes(
         client,
         "_SQSClient__resolve_queue_url",
         AsyncMock(return_value="https://sqs/jobs.fifo"),
-    ):
-        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
-            msgs = await client.receive("jobs.fifo", limit=10)
+    ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        msgs = await client.receive("jobs.fifo", limit=10)
 
     assert msgs == []
     mock_boto.send_message.assert_not_awaited()
@@ -175,9 +172,8 @@ async def test_fifo_poison_with_poison_queue_retains_before_delete(
         client,
         "_SQSClient__resolve_queue_url",
         AsyncMock(return_value="https://sqs/jobs.fifo"),
-    ):
-        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
-            msgs = await client.receive("jobs.fifo", limit=10)
+    ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        msgs = await client.receive("jobs.fifo", limit=10)
 
     assert msgs == []
     assert calls == ["send", "delete"]  # retain first, then unblock the group
@@ -223,9 +219,8 @@ async def test_fifo_poison_copy_to_fifo_side_queue_sets_group_and_dedup() -> Non
         client,
         "_SQSClient__resolve_queue_url",
         AsyncMock(return_value="https://sqs/jobs.fifo"),
-    ):
-        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
-            await client.receive("jobs.fifo", limit=10)
+    ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        await client.receive("jobs.fifo", limit=10)
 
     send_kwargs = mock_boto.send_message.await_args.kwargs
     assert send_kwargs["MessageGroupId"] == "bad"
@@ -256,9 +251,8 @@ async def test_fifo_poison_side_send_failure_still_deletes_and_logs_error(
         client,
         "_SQSClient__resolve_queue_url",
         AsyncMock(return_value="https://sqs/jobs.fifo"),
-    ):
-        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
-            msgs = await client.receive("jobs.fifo", limit=10)
+    ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        msgs = await client.receive("jobs.fifo", limit=10)
 
     assert msgs == []
     mock_boto.delete_message.assert_awaited_once_with(
@@ -283,9 +277,8 @@ async def test_receive_does_not_delete_poison_on_standard_queue() -> None:
         client,
         "_SQSClient__resolve_queue_url",
         AsyncMock(return_value="https://sqs/jobs"),
-    ):
-        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
-            msgs = await client.receive("jobs", limit=10)
+    ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        msgs = await client.receive("jobs", limit=10)
 
     assert msgs == []
     mock_boto.delete_message.assert_not_awaited()
@@ -479,9 +472,8 @@ async def test_self_targeted_poison_queue_still_deletes_and_logs_error(
         client,
         "_SQSClient__resolve_queue_url",
         AsyncMock(return_value="https://sqs/jobs.fifo"),
-    ):
-        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
-            msgs = await client.receive("jobs.fifo", limit=10)
+    ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        msgs = await client.receive("jobs.fifo", limit=10)
 
     assert msgs == []
     mock_boto.send_message.assert_not_awaited()  # nothing published to itself

@@ -26,13 +26,12 @@ from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig, 
 from forze_dst.faults import CrashPolicy
 from forze_dst.invariants import Invariant, expect, no_duplicate_trace_effect
 from forze_dst.markers import record_event
-from forze_mock import MockDepsModule
-
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
     DurableFunctionRunner,
     resolve_durable_step,
 )
+from forze_mock import MockDepsModule
 
 # ----------------------- #
 # Two document routes: step "charge" writes one, step "ship" writes the other.

@@ -6,7 +6,6 @@ import pytest
 from pydantic import SecretStr
 
 from forze.application.execution import Deps, LifecyclePlan
-from tests.support.execution_context import context_from_deps
 from forze_meilisearch.execution.deps.keys import MeilisearchClientDepKey
 from forze_meilisearch.execution.lifecycle import (
     MeilisearchShutdownHook,
@@ -15,6 +14,7 @@ from forze_meilisearch.execution.lifecycle import (
     routed_meilisearch_lifecycle_step,
 )
 from forze_meilisearch.kernel.client import MeilisearchClient, MeilisearchConfig
+from tests.support.execution_context import context_from_deps
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -14,8 +14,8 @@ from forze.application.contracts.document import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -232,7 +232,7 @@ async def test_stale_rev_identical_datetime_resend_does_not_false_conflict(
     )
     cmd = ctx.document.command(spec)
 
-    due_v1 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    due_v1 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     doc = await cmd.create(HistDueCreate(name="v1", due=due_v1))
     assert doc.rev == 1
 
@@ -241,7 +241,7 @@ async def test_stale_rev_identical_datetime_resend_does_not_false_conflict(
     moved = await cmd.update(
         doc.id,
         doc.rev,
-        HistDueUpdate(due=datetime(2027, 2, 2, 12, 0, tzinfo=timezone.utc)),
+        HistDueUpdate(due=datetime(2027, 2, 2, 12, 0, tzinfo=UTC)),
     )
     assert moved.rev == 2
 

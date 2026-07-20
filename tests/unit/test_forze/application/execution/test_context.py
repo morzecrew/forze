@@ -22,10 +22,10 @@ from forze.application.execution.context.transaction import (
 )
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
-from tests.support.execution_context import context_from_deps, frozen_deps_from_deps
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters import MockCounterAdapter, MockStorageAdapter
 from forze_mock.execution import MockStateDepKey
+from tests.support.execution_context import context_from_deps, frozen_deps_from_deps
 
 # ----------------------- #
 
@@ -111,9 +111,8 @@ class TestExecutionContextTransaction:
 
     @pytest.mark.asyncio
     async def test_nested_transaction(self, ctx: ExecutionContext) -> None:
-        async with ctx.tx_ctx.scope("mock"):
-            async with ctx.tx_ctx.scope("mock"):
-                pass
+        async with ctx.tx_ctx.scope("mock"), ctx.tx_ctx.scope("mock"):
+            pass
 
     @pytest.mark.asyncio
     async def test_transaction_cleanup_on_error(self, ctx: ExecutionContext) -> None:
@@ -474,13 +473,11 @@ class TestNestedReadOnly:
     async def test_nested_unspecified_inherits_root(
         self, ctx: ExecutionContext
     ) -> None:
-        async with ctx.tx_ctx.scope("mock", read_only=True):
-            async with ctx.tx_ctx.scope("mock"):
-                pass
+        async with ctx.tx_ctx.scope("mock", read_only=True), ctx.tx_ctx.scope("mock"):
+            pass
 
-        async with ctx.tx_ctx.scope("mock"):
-            async with ctx.tx_ctx.scope("mock"):
-                pass
+        async with ctx.tx_ctx.scope("mock"), ctx.tx_ctx.scope("mock"):
+            pass
 
     @pytest.mark.asyncio
     async def test_read_only_not_forwarded_to_nested_transaction(

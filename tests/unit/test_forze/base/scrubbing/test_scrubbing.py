@@ -7,8 +7,6 @@ from hypothesis import given
 from hypothesis import strategies as st
 from pydantic import BaseModel, EmailStr, SecretStr, ValidationError
 
-from tests.support.hypothesis_strategies import integration_hypothesis_settings
-
 from forze.base.scrubbing import (
     SECRET_PLACEHOLDER,
     dump_bound_args_for_errors,
@@ -19,6 +17,7 @@ from forze.base.scrubbing import (
 )
 from forze.base.scrubbing import policy as _scrub_policy
 from forze.base.scrubbing.policy import scrub_log_string
+from tests.support.hypothesis_strategies import integration_hypothesis_settings
 
 # ----------------------- #
 

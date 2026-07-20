@@ -10,6 +10,7 @@ import pytest
 pytest.importorskip("psycopg")
 
 from psycopg import sql
+from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchSpec
 from forze_postgres.adapters.search import PostgresFTSSearchAdapter
@@ -17,8 +18,6 @@ from forze_postgres.adapters.search._offset_run import (
     RankedOffsetPlan,
     execute_simple_ranked_offset_search,
 )
-from forze_postgres.kernel.gateways import PostgresQualifiedName
-from pydantic import BaseModel
 
 
 class _M(BaseModel):

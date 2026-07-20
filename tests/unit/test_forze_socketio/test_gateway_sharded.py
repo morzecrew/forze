@@ -33,13 +33,13 @@ from forze_kits.integrations.realtime import (
     realtime_outbox_spec,
     realtime_stream_spec,
 )
+from forze_mock import MockDepsModule, MockRouteConfig
 from forze_socketio import (
     GatewayDedup,
     RealtimeGateway,
     RealtimeShard,
     TenantShardedSignalSource,
 )
-from forze_mock import MockDepsModule, MockRouteConfig
 
 # ----------------------- #
 

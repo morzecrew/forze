@@ -9,9 +9,9 @@ found a bug to ``_REGRESSION_SEEDS`` so it is re-checked forever.
 
 from __future__ import annotations
 
-from typing import Sequence
-
 import asyncio
+from collections.abc import Sequence
+
 import pytest
 
 from forze_dst.invariants import RegisterSpec, expect, linearizable, record_operation

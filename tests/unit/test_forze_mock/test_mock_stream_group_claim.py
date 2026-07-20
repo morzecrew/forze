@@ -21,9 +21,9 @@ from forze.application.contracts.stream.specs import StreamSpec
 from forze.base.primitives import FrozenTimeSource, bind_time_source
 from forze.base.serialization import PydanticModelCodec
 from forze_mock.adapters import (
+    MockAckStreamGroupAdapter,
     MockState,
     MockStreamAdapter,
-    MockAckStreamGroupAdapter,
 )
 
 # ----------------------- #

@@ -11,12 +11,11 @@ would catch *any* double-charged order, not a hand-named one.
 
 from __future__ import annotations
 
+from examples.recipes.dst_payments.app import _EVENTS, PAYMENT_SPEC, registry
 from forze.application.contracts.invariants import CountAll, ReadSet, SystemInvariant
 from forze_dst import Simulation, SimulationConfig, Strategy
 from forze_dst.invariants import compile_oracle
 from forze_mock import MockDepsModule
-
-from examples.recipes.dst_payments.app import PAYMENT_SPEC, _EVENTS, registry
 
 # ----------------------- #
 

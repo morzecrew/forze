@@ -1,6 +1,5 @@
 """Broader coverage for in-memory mock ports (cache, storage, queue, stream, idempotency)."""
 
-from forze.base.exceptions import CoreException
 import asyncio
 from datetime import timedelta
 
@@ -11,8 +10,10 @@ from forze.application.contracts.idempotency import IdempotencyRecord
 from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.stream.specs import StreamSpec
+from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
 from forze_mock.adapters import (
+    MockAckStreamGroupAdapter,
     MockCacheAdapter,
     MockIdempotencyAdapter,
     MockPubSubAdapter,
@@ -20,7 +21,6 @@ from forze_mock.adapters import (
     MockState,
     MockStorageAdapter,
     MockStreamAdapter,
-    MockAckStreamGroupAdapter,
     MockTxManagerAdapter,
 )
 

@@ -20,7 +20,6 @@ domain operations and observe invariants — a poor fit for operator verbs that 
 from __future__ import annotations
 
 import unittest.mock as mock
-from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -199,7 +198,7 @@ async def test_import_crash_resumes_to_convergence(tmp_path: Path) -> None:
     assert await _count(target, B_SPEC) == 3
 
 
-def _uuid(n: int):  # noqa: ANN202 - test helper
+def _uuid(n: int):
     from uuid import UUID
 
     return UUID(int=n)

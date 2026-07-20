@@ -8,10 +8,10 @@ import pytest
 
 from forze.application.contracts.authz import (
     AuthzRequest,
+    AuthzResource,
     AuthzSubject,
     EffectiveGrants,
     PermissionRef,
-    AuthzResource,
 )
 
 pytestmark = pytest.mark.unit

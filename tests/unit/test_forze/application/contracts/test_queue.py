@@ -1,7 +1,7 @@
 """Unit tests for queue contracts (QueueSpec and dep keys)."""
 
+from collections.abc import AsyncGenerator
 from datetime import timedelta
-from typing import AsyncGenerator
 
 from pydantic import BaseModel
 

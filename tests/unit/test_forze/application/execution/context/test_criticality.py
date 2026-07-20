@@ -50,9 +50,8 @@ def test_bind_nests() -> None:
 
 
 def test_bind_none_is_passthrough() -> None:
-    with bind_criticality(Criticality.CRITICAL):
-        with bind_criticality(None):
-            assert current_criticality() is Criticality.CRITICAL
+    with bind_criticality(Criticality.CRITICAL), bind_criticality(None):
+        assert current_criticality() is Criticality.CRITICAL
 
 
 def test_set_reset_fast_path() -> None:

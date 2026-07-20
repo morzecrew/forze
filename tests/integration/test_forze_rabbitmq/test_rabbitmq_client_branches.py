@@ -154,9 +154,8 @@ async def test_duplicate_message_ids_single_receive_suffixed(
 async def test_nested_channel_reuses_parent(
     rabbitmq_client: RabbitMQClient,
 ) -> None:
-    async with rabbitmq_client.channel() as outer:
-        async with rabbitmq_client.channel() as inner:
-            assert inner is outer
+    async with rabbitmq_client.channel() as outer, rabbitmq_client.channel() as inner:
+        assert inner is outer
 
 
 @pytest.mark.asyncio

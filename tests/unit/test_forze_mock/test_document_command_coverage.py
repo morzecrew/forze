@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
-from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
-from forze.application.contracts.document import KeyedCreate
-from forze.application.execution import ExecutionContext
+from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes, KeyedCreate
+from forze.application.execution import DomainEventRegistry, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
-from uuid import UUID
-
-from forze.application.execution import DomainEventRegistry
 from forze.domain.models import (
     AggregateRoot,
     BaseDTO,

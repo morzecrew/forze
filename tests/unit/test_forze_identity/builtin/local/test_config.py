@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Iterator, Mapping
+from collections.abc import Iterator, Mapping
+from typing import Any
 from uuid import UUID
 
 import pytest
 
 from forze.base.exceptions import CoreException
-from forze_identity.builtin.local import LocalIdentityConfig, from_json_path, from_mapping
+from forze_identity.builtin.local import from_json_path, from_mapping
 
 pytestmark = pytest.mark.unit
 

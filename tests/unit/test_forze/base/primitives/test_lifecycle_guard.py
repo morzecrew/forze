@@ -147,7 +147,7 @@ class TestGuardedLifecycle:
         seen_locked: list[bool] = []
 
         async def teardown() -> None:
-            seen_locked.append(guard._lock.locked())  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+            seen_locked.append(guard._lock.locked())  # pyright: ignore[reportPrivateUsage]
 
         await guard.close(teardown)
 

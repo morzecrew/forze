@@ -24,6 +24,11 @@ from forze_mock.adapters.graph import MockGraphAdapter
 from forze_mock.adapters.http import MockHttpRegistry, MockHttpServiceAdapter
 from forze_mock.adapters.idempotency import MockIdempotencyAdapter
 from forze_mock.adapters.inbox import MockInboxAdapter
+from forze_mock.adapters.inference import (
+    MockInferenceAdapter,
+    MockInferencePredict,
+    MockInferenceRegistry,
+)
 from forze_mock.adapters.outbox import MockOutboxRow, MockOutboxStore
 from forze_mock.adapters.procedure import (
     MockProcedureAdapter,
@@ -79,6 +84,9 @@ __all__ = [
     "MockCacheAdapter",
     "MockIdempotencyAdapter",
     "MockInboxAdapter",
+    "MockInferenceAdapter",
+    "MockInferencePredict",
+    "MockInferenceRegistry",
     "MockStorageAdapter",
     "MockTxManagerAdapter",
     "MockStrictTxManagerAdapter",

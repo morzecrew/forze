@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from forze.base.exceptions import CoreException
-
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 
 # ----------------------- #

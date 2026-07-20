@@ -10,6 +10,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -27,14 +28,32 @@ from forze_postgres.kernel.client.client import PostgresClient
 from tests.support.execution_context import context_from_deps
 from tests.support.scenarios.document_nested_filters import (
     NestedArrayItem as Item,
+)
+from tests.support.scenarios.document_nested_filters import (
     NestedArrayRowCreate as ArrCreate,
+)
+from tests.support.scenarios.document_nested_filters import (
     NestedArrayRowDoc as ArrDoc,
+)
+from tests.support.scenarios.document_nested_filters import (
     NestedArrayRowRead as ArrRead,
+)
+from tests.support.scenarios.document_nested_filters import (
     NestedArrayRowUpdate as ArrUpdate,
+)
+from tests.support.scenarios.document_nested_filters import (
     NestedFilterMeta as Meta,
+)
+from tests.support.scenarios.document_nested_filters import (
     NestedFilterRowCreate as RowCreate,
+)
+from tests.support.scenarios.document_nested_filters import (
     NestedFilterRowDoc as RowDoc,
+)
+from tests.support.scenarios.document_nested_filters import (
     NestedFilterRowRead as RowRead,
+)
+from tests.support.scenarios.document_nested_filters import (
     NestedFilterRowUpdate as RowUpdate,
 )
 

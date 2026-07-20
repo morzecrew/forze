@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from tests.support.aggregate_having import AggCreate, AggDoc, AggRead, SEED
+from tests.support.aggregate_having import SEED, AggCreate, AggDoc, AggRead
 
 __all__ = [
     "AggCreate",

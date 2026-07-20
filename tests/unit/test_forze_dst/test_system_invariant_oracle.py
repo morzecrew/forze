@@ -29,7 +29,6 @@ from forze_dst.oracle import run_recorded
 from forze_dst.oracle.recorder import Recorder, bind_recorder
 from forze_dst.oracle.system_invariants import SYSTEM_INVARIANT_KIND
 from forze_mock import MockDepsModule
-
 from tests.support.execution_context import context_from_deps
 
 # ----------------------- #

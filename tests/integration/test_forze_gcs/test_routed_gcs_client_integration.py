@@ -13,7 +13,6 @@ pytest.importorskip("gcloud.aio.storage")
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException
 from forze_gcs.kernel.client import GCSClient, RoutedGCSClient
-
 from tests.support.secrets_fixtures import (
     MemSecretsByPath,
     MemSecretsTenantJson,

@@ -16,6 +16,8 @@ import pytest
 
 pytest.importorskip("aiokafka")
 
+from _kafka_models import Payload
+
 from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.stream import StreamPosition
 from forze.base.exceptions import CoreException, exc
@@ -27,8 +29,6 @@ from forze_kafka.adapters import (
     KafkaStreamCommandAdapter,
 )
 from forze_kafka.kernel.client import KafkaConfig, RoutedKafkaClient
-
-from _kafka_models import Payload
 
 # ----------------------- #
 
@@ -68,7 +68,7 @@ def _codec() -> KafkaStreamCodec[Payload]:
 
 
 async def test_routed_client_round_trip_and_delegation(
-    kafka_container,  # noqa: ANN001 - session container fixture
+    kafka_container,
 ) -> None:
     bootstrap = kafka_container.get_bootstrap_server()
     tenant = uuid4()
@@ -146,7 +146,7 @@ async def test_routed_client_round_trip_and_delegation(
 
 
 async def test_routed_client_requires_tenant(
-    kafka_container,  # noqa: ANN001 - session container fixture
+    kafka_container,
 ) -> None:
     bootstrap = kafka_container.get_bootstrap_server()
     tenant = uuid4()

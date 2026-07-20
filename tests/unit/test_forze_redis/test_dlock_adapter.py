@@ -8,7 +8,6 @@ import pytest
 pytest.importorskip("redis")
 
 from forze.application.contracts.dlock import AcquiredLock, DistributedLockSpec
-
 from forze_redis.adapters import RedisDistributedLockAdapter
 
 

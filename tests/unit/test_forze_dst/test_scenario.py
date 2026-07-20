@@ -19,12 +19,10 @@ from pydantic import BaseModel
 from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
-
 from forze.base.exceptions import exc
-
 from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig, Strategy
-from forze_dst.markers import record_event
 from forze_dst.invariants import expect, no_duplicate_effect, no_unexpected_error
+from forze_dst.markers import record_event
 from forze_mock import MockDepsModule
 
 # ----------------------- #

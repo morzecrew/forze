@@ -5,9 +5,10 @@ not readily produce — the un-initialized guards, the credential/endpoint wirin
 botocore, and the orphan-CMK cleanup when aliasing a freshly minted key fails.
 """
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Any, AsyncIterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

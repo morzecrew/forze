@@ -13,7 +13,6 @@ from forze_duckdb import (
     DuckDbQueryConfig,
 )
 from forze_duckdb.adapters import DuckDbAnalyticsAdapter
-
 from tests.unit.test_forze_duckdb.conftest import Params, Row
 
 # ----------------------- #

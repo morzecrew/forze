@@ -5,7 +5,7 @@ no real HTTP, so a presigned part URL is informational and tests deposit bytes
 directly, standing in for the client's PUT to that URL).
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -17,7 +17,7 @@ from forze_mock.state import MockState
 
 # ----------------------- #
 
-INSTANT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+INSTANT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 @pytest.fixture

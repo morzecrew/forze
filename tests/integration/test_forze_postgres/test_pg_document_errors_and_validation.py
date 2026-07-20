@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from forze.base.exceptions import CoreException
 from uuid import uuid4
 
 import pytest
@@ -13,17 +12,19 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
+from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from tests.support.execution_context import context_from_deps
+
 
 class _Doc(Document):
     title: str

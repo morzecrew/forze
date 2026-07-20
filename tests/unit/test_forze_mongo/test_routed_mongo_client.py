@@ -1,12 +1,12 @@
 """Unit tests for :class:`~forze_mongo.kernel.client.RoutedMongoClient`."""
 
-from forze.base.exceptions import CoreException, exc
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 
 from forze.application.contracts.secrets import SecretRef
+from forze.base.exceptions import CoreException
 from forze_mongo.kernel.client import RoutedMongoClient
 
 # ----------------------- #

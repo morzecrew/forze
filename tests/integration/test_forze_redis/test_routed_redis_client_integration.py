@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from forze.base.exceptions import CoreException, exc
 import asyncio
 from collections.abc import Callable
 from contextlib import suppress
@@ -12,14 +11,15 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from forze.base.exceptions import CoreException, exc
+
 pytest.importorskip("redis")
 
 from testcontainers.redis import RedisContainer
 
 from forze.application.contracts.secrets import SecretRef
+from forze_redis.kernel.client import RedisClient, RedisConfig, RoutedRedisClient
 
-from forze_redis.kernel.client import RoutedRedisClient
-from forze_redis.kernel.client import RedisClient, RedisConfig
 
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/redis")

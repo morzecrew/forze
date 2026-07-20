@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock
 from forze.application.contracts.resilience import RateLimitStrategy
 from forze.application.execution.resilience import InMemoryRateLimitStore
 from forze.base.exceptions import exc
-
 from forze_redis.adapters.rate_limit import RedisRateLimitStore
 
 # ----------------------- #
@@ -74,4 +73,4 @@ class TestFailOpen:
         store = RedisRateLimitStore(client=client, fallback=fallback)
 
         assert await store.try_acquire(_KEY, _strat(permits=1)) is True
-        assert ("p", "r") in fallback._states  # noqa: SLF001 — asserting delegation
+        assert ("p", "r") in fallback._states

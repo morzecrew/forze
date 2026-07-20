@@ -86,9 +86,8 @@ class TestTransactionContextTxTracer:
         tx = TransactionContext()
         tx.lock(_mock_tx_resolver, tx_tracer=recording)
 
-        async with tx.scope("mock"):
-            async with tx.scope("mock"):
-                pass
+        async with tx.scope("mock"), tx.scope("mock"):
+            pass
 
         assert recording.events == [
             ("enter", "mock", 1),

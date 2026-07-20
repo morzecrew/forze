@@ -28,8 +28,8 @@ from forze_mongo.execution.deps import (
     mongo_txmanager,
 )
 from forze_mongo.execution.deps.utils import doc_write_gw, read_gw
-from forze_mongo.kernel.gateways import MongoReadGateway, MongoWriteGateway
 from forze_mongo.kernel.client import MongoClient
+from forze_mongo.kernel.gateways import MongoReadGateway, MongoWriteGateway
 from tests.support.execution_context import context_from_deps
 
 

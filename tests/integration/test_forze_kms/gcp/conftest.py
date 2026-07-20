@@ -1,6 +1,6 @@
 """Pytest configuration for forze_kms.gcp integration tests (fake-cloud-kms emulator)."""
 
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 from uuid import uuid4
 
 import pytest

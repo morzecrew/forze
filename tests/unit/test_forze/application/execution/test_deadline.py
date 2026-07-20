@@ -74,11 +74,10 @@ class TestDeadlineContext:
                 assert current_deadline() == outer
 
     def test_nested_bind_tightens(self) -> None:
-        with bind_deadline(5.0):
-            with bind_deadline(1.0):
-                left = remaining_time()
-                assert left is not None
-                assert left <= 1.0
+        with bind_deadline(5.0), bind_deadline(1.0):
+            left = remaining_time()
+            assert left is not None
+            assert left <= 1.0
 
     def test_nested_bind_never_extends(self) -> None:
         with bind_deadline(1.0):
@@ -131,9 +130,8 @@ class TestOperationDeadlineEnforcement:
         reg = OperationRegistry(handlers={"op": lambda _ctx: TrackingHandler()}).freeze()
         resolved = reg.resolve("op", ctx)
 
-        with bind_deadline(0.0):
-            with pytest.raises(CoreException) as ei:
-                await resolved("x")
+        with bind_deadline(0.0), pytest.raises(CoreException) as ei:
+            await resolved("x")
 
         assert ei.value.kind is ExceptionKind.TIMEOUT
         assert ei.value.code == "deadline_exceeded"
@@ -146,9 +144,8 @@ class TestOperationDeadlineEnforcement:
         reg = OperationRegistry(handlers={"op": lambda _ctx: StallHandler()}).freeze()
         resolved = reg.resolve("op", ctx)
 
-        with bind_deadline(0.05):
-            with pytest.raises(CoreException) as ei:
-                await resolved("x")
+        with bind_deadline(0.05), pytest.raises(CoreException) as ei:
+            await resolved("x")
 
         assert ei.value.kind is ExceptionKind.TIMEOUT
         assert ei.value.code == "deadline_exceeded"

@@ -616,9 +616,8 @@ def test_config_empty_sql_rejected() -> None:
 
 
 def test_deps_module_registers_procedure_command_key() -> None:
-    from tests.support.execution_context import context_from_deps
-
     from forze_postgres import PostgresClient, PostgresDepsModule
+    from tests.support.execution_context import context_from_deps
 
     module = PostgresDepsModule(
         client=PostgresClient(),

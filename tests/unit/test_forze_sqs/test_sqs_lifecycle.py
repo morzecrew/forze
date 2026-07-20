@@ -4,8 +4,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from pydantic import SecretStr
 
-from forze.application.execution import Deps, ExecutionContext
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from forze.application.execution import Deps
 from forze_sqs.execution.deps import SQSClientDepKey
 from forze_sqs.execution.lifecycle import (
     SQSShutdownHook,
@@ -13,6 +12,9 @@ from forze_sqs.execution.lifecycle import (
     sqs_lifecycle_step,
 )
 from forze_sqs.kernel.client import SQSClient, SQSConfig
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 
 @pytest.mark.asyncio

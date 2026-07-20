@@ -1,15 +1,14 @@
 """Kafka admin adapter: topic creation, lag, replay/reset target math, ensure_group."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
+from _kafka_fakes import FakeAdmin, FakeConsumer, FakeKafkaClient
 from aiokafka.structs import OffsetAndMetadata, OffsetAndTimestamp, TopicPartition
 
 from forze.application.contracts.stream import ConsumerLag, OffsetReset
 from forze.base.exceptions import CoreException
 from forze_kafka.adapters import KafkaCommitStreamGroupAdminAdapter
-
-from _kafka_fakes import FakeAdmin, FakeConsumer, FakeKafkaClient
 
 # ----------------------- #
 
@@ -151,7 +150,7 @@ async def test_reset_offsets_timestamp() -> None:
     await adapter.reset_offsets(
         "g",
         "events",
-        to=OffsetReset.at_timestamp(datetime(2021, 1, 1, tzinfo=timezone.utc)),
+        to=OffsetReset.at_timestamp(datetime(2021, 1, 1, tzinfo=UTC)),
     )
 
     assert transient.committed[tp].offset == 5
@@ -169,7 +168,7 @@ async def test_reset_offsets_timestamp_no_match_uses_end() -> None:
     await adapter.reset_offsets(
         "g",
         "events",
-        to=OffsetReset.at_timestamp(datetime(2021, 1, 1, tzinfo=timezone.utc)),
+        to=OffsetReset.at_timestamp(datetime(2021, 1, 1, tzinfo=UTC)),
     )
 
     assert transient.committed[tp].offset == 9

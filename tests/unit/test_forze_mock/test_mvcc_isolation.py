@@ -168,7 +168,7 @@ def _registry(isolation: IsolationLevel) -> OperationRegistry:
     }
     return OperationRegistry(
         handlers=handlers,
-        plans={op: plan for op in handlers},
+        plans=dict.fromkeys(handlers, plan),
         descriptors={
             "create_flag": OperationDescriptor(
                 input_type=None, output_type=None, description="x"

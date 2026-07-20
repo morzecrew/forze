@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
-from forze.base.exceptions import CoreException
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import (
@@ -13,7 +10,7 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
     IngestSpec,
 )
-from forze.application.execution import ExecutionContext
+from forze.base.exceptions import CoreException
 from forze_clickhouse.execution.deps import (
     ClickHouseAnalyticsConfig,
     ClickHouseDepsModule,
@@ -21,6 +18,9 @@ from forze_clickhouse.execution.deps import (
     ConfigurableClickHouseAnalytics,
 )
 from forze_clickhouse.kernel.client import ClickHouseClient
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 
 def test_rejects_mapping_config() -> None:

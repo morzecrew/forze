@@ -51,7 +51,7 @@ async def test_poll_job_done_returns_on_done_status() -> None:
     fake_job.get_job = AsyncMock(return_value={"status": {"state": "DONE"}})
 
     with patch.object(BigQueryClient, "job", return_value=fake_job):
-        poll = getattr(client, "_BigQueryClient__poll_job_done")
+        poll = client._BigQueryClient__poll_job_done
         await poll("job-1", timeout=60)
 
     fake_job.get_job.assert_awaited_once()

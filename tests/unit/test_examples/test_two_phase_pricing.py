@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+from examples.recipes.two_phase_pricing.app import place_priced_order
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze_mock import MockDepsModule
-
-from examples.recipes.two_phase_pricing.app import place_priced_order
 
 
 async def test_place_priced_order_prices_then_writes() -> None:

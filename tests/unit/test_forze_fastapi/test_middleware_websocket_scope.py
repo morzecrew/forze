@@ -299,13 +299,14 @@ class TestAllowlistCheck:
         app = self._governed_app(prefix="/api", allow="/realtime/ws")
         app.router.lifespan_context = runtime_lifespan(runtime)
 
-        with pytest.raises(CoreException):
-            with TestClient(app):  # entering runs the lifespan
-                pass  # pragma: no cover - startup refuses
+        with pytest.raises(CoreException), TestClient(app):  # entering runs the lifespan
+            pass  # pragma: no cover - startup refuses
 
 
 def test_socket_teardown_error_predicate() -> None:
-    from forze_fastapi.realtime.ws import _is_socket_teardown_error  # pyright: ignore[reportPrivateUsage]
+    from forze_fastapi.realtime.ws import (
+        _is_socket_teardown_error,  # pyright: ignore[reportPrivateUsage]
+    )
 
     assert _is_socket_teardown_error(
         RuntimeError('Cannot call "send" once a close message has been sent.')
@@ -333,9 +334,8 @@ def test_raw_websocket_route_handshake_is_rejected_end_to_end() -> None:
 
     client = TestClient(app)
 
-    with pytest.raises(WebSocketDisconnect) as caught:
-        with client.websocket_connect("/ws"):
-            pass  # pragma: no cover - the handshake never completes
+    with pytest.raises(WebSocketDisconnect) as caught, client.websocket_connect("/ws"):
+        pass  # pragma: no cover - the handshake never completes
 
     assert caught.value.code == WS_POLICY_VIOLATION
 

@@ -11,6 +11,7 @@ import pytest
 
 from forze.application.contracts.execution import (
     Handler,
+    LifecycleStep,
     OnSuccessStep,
     TwoPhaseHandler,
 )
@@ -21,7 +22,6 @@ from forze.application.contracts.resilience import (
 )
 from forze.application.execution import ExecutionContext, build_runtime
 from forze.application.execution.context import OperationDrainGate
-from forze.application.contracts.execution import LifecycleStep
 from forze.application.execution.graph_run import run_wave_forward
 from forze.application.execution.lifecycle import LifecyclePlan
 from forze.application.execution.operations.registry import OperationRegistry

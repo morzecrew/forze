@@ -1,17 +1,17 @@
 """Unit tests for :class:`PostgresHistoryGateway`."""
 
-from forze.base.exceptions import CoreException, exc
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 
+from forze.base.exceptions import CoreException
 from forze.domain.constants import HISTORY_DATA_FIELD
 from forze.domain.models import Document
-from forze_postgres.kernel.gateways import PostgresHistoryGateway, PostgresQualifiedName
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
 from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.kernel.gateways import PostgresHistoryGateway
 from tests.unit._gateway_codec_helpers import history_codecs_for
 
 pytest.importorskip("psycopg")

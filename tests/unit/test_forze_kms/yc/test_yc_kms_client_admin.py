@@ -7,7 +7,7 @@ handling, and that the configured deadline covers both the RPC and the wait.
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -22,9 +22,9 @@ _FOLDER = "fldr-1"
 
 
 def _admin(client: YcKmsClient, sdk: Any, key_stub: Any) -> YcKmsClient:
-    client._YcKmsClient__sdk = sdk  # type: ignore[attr-defined]  # noqa: SLF001
-    client._YcKmsClient__key_stub = key_stub  # type: ignore[attr-defined]  # noqa: SLF001
-    client._YcKmsClient__stub = MagicMock()  # type: ignore[attr-defined]  # noqa: SLF001
+    client._YcKmsClient__sdk = sdk  # type: ignore[attr-defined]
+    client._YcKmsClient__key_stub = key_stub  # type: ignore[attr-defined]
+    client._YcKmsClient__stub = MagicMock()  # type: ignore[attr-defined]
 
     return client
 
@@ -203,7 +203,7 @@ class TestKeyAdministration:
         )
         key_stub = MagicMock()
         client = _admin(YcKmsClient(), sdk, key_stub)
-        client._YcKmsClient__request_timeout = 9.0  # type: ignore[attr-defined]  # noqa: SLF001
+        client._YcKmsClient__request_timeout = 9.0  # type: ignore[attr-defined]
 
         await client.create_key(_FOLDER, "tenant-x")
 

@@ -1,11 +1,11 @@
 """Unit tests for :class:`~forze_kits.adapters.secrets.EnvSecrets`."""
 
-from forze.base.exceptions import CoreException
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, resolve_structured
+from forze.base.exceptions import CoreException
 from forze_kits.adapters.secrets import EnvSecrets
-from pydantic import BaseModel
 
 # ----------------------- #
 

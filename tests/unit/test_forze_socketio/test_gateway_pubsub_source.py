@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.contracts.realtime import Audience, RealtimeEvent, RealtimeSignal
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
+from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import HlcTimestamp
 from forze.base.serialization import PydanticModelCodec
@@ -216,8 +216,7 @@ class TestWiring:
         async with runtime.scope():
             ctx = runtime.get_context()
 
-            with ctx.inv_ctx.bind_read_only():
-                with pytest.raises(CoreException) as caught:
-                    build_realtime_pubsub_publisher(ctx, pubsub_spec=realtime_pubsub_spec())
+            with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException) as caught:
+                build_realtime_pubsub_publisher(ctx, pubsub_spec=realtime_pubsub_spec())
 
         assert caught.value.kind.value == "precondition"

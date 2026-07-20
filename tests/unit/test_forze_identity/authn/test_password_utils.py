@@ -8,7 +8,6 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.base import CountlessPage
-from forze.application.contracts.document import DocumentSpec
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import utcnow
 from forze_identity.authn.adapters._utils import find_password_account_by_login

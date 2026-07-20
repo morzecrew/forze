@@ -3,10 +3,9 @@
 import warnings
 
 import pytest
-
-from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
+from forze.base.exceptions import CoreException
 from forze.base.primitives import JsonDict
 from forze.domain.validation import collect_update_validators, update_validator
 from forze.domain.validation.updates import (

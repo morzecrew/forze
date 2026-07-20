@@ -7,7 +7,6 @@ import base64
 import pytest
 from pydantic import BaseModel
 
-from forze.base.serialization import default_model_codec
 from forze.application.contracts.crypto import (
     AesGcmAead,
     FieldEncryption,
@@ -22,6 +21,7 @@ from forze.application.integrations.crypto import (
     resolve_document_codecs,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.serialization import default_model_codec
 from forze_mock import MockKeyManagement
 
 # ----------------------- #

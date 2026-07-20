@@ -4,8 +4,6 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.search import (
@@ -15,6 +13,7 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.integrations.search import SearchResultSnapshot
+from forze.base.exceptions import CoreException
 
 
 class _Row(BaseModel):

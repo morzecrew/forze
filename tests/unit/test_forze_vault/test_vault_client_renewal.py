@@ -1,8 +1,9 @@
 """Unit tests for Vault client token renewal and health (mocked hvac)."""
 
 import asyncio
+from collections.abc import Callable
 from datetime import timedelta
-from typing import Any, Callable
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest

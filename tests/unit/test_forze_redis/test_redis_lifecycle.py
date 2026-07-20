@@ -6,7 +6,6 @@ import pytest
 from pydantic import SecretStr
 
 from forze.application.execution import Deps, LifecyclePlan
-from tests.support.execution_context import context_from_deps
 from forze_redis.execution.deps import RedisClientDepKey
 from forze_redis.execution.lifecycle import (
     RedisShutdownHook,
@@ -15,6 +14,7 @@ from forze_redis.execution.lifecycle import (
     routed_redis_lifecycle_step,
 )
 from forze_redis.kernel.client import RedisClient, RedisConfig
+from tests.support.execution_context import context_from_deps
 
 
 @pytest.mark.asyncio

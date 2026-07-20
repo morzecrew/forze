@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from ipaddress import IPv4Address
+from typing import Any
 
 import attrs
 import pytest
-
-from ipaddress import IPv4Address
 
 from forze.application.contracts.base.value_objects import CountlessPage
 from forze.application.execution import DepsRegistry

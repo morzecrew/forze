@@ -5,7 +5,6 @@ from forze_temporal.execution.deps import (
     ConfigurableTemporalWorkflowQuery,
     ConfigurableTemporalWorkflowScheduleCommand,
     ConfigurableTemporalWorkflowScheduleQuery,
-    TemporalWorkflowConfig,
 )
 
 

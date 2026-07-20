@@ -7,7 +7,7 @@ consume loop alive — mirroring the RabbitMQ adapter's contract.
 """
 
 from datetime import timedelta
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -122,7 +122,7 @@ class TestConsumePoison:
             for raw in raws:
                 yield raw
 
-        def _consume(queue: str, timeout: Optional[timedelta] = None):
+        def _consume(queue: str, timeout: timedelta | None = None):
             return _iter()
 
         client.consume = Mock(side_effect=_consume)

@@ -15,9 +15,8 @@ from forze.application.contracts.graph import (
     VertexRef,
 )
 from forze.application.execution import ExecutionContext
-from tests.support.execution_context import context_from_deps
-
 from forze_mock import MockDepsModule, MockState
+from tests.support.execution_context import context_from_deps
 
 
 class UserRead(BaseModel):

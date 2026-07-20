@@ -80,9 +80,9 @@ class TestInvalidationPush:
 
         # The last unsubscribe winds the hub down: its listener task exits and
         # the pinned connection is released back to the pool.
-        hub = redis_client._RedisClient__invalidation_hub  # noqa: SLF001
+        hub = redis_client._RedisClient__invalidation_hub
         assert hub is not None
-        await _wait_for(lambda: hub._task is None or hub._task.done())  # noqa: SLF001
+        await _wait_for(lambda: hub._task is None or hub._task.done())
 
     async def test_delete_pushes_invalidation(
         self,

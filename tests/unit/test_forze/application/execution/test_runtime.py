@@ -2,8 +2,8 @@
 
 import pytest
 
-from forze.application.execution import Deps, DepsRegistry
 from forze.application.contracts.execution import LifecycleStep
+from forze.application.execution import Deps, DepsRegistry
 from forze.application.execution.lifecycle import LifecyclePlan
 from forze.application.execution.runtime import ExecutionRuntime
 from forze.base.exceptions import CoreException

@@ -1,10 +1,10 @@
 """Unit tests for secrets contracts."""
 
-from forze.base.exceptions import CoreException, exc
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, resolve_structured
+from forze.base.exceptions import CoreException, exc
 
 # ----------------------- #
 

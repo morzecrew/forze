@@ -9,7 +9,7 @@ stale-read bug is found by `explore` and minimized to a minimal counterexample.
 from __future__ import annotations
 
 import asyncio
-from typing import Sequence
+from collections.abc import Sequence
 
 from forze_dst.invariants import RegisterSpec, check, linearizable, record_operation
 from forze_dst.oracle import explore, run_recorded

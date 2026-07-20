@@ -1,9 +1,10 @@
 """Unit tests for Vault client KV error translation (mocked hvac)."""
 
-from forze.base.exceptions import CoreException
 from unittest.mock import MagicMock
 
 import pytest
+
+from forze.base.exceptions import CoreException
 
 pytest.importorskip("hvac")
 

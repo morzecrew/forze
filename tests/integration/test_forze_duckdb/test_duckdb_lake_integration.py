@@ -30,7 +30,6 @@ from forze_duckdb import (
 from forze_duckdb.execution.deps import DuckDbClientDepKey
 from forze_duckdb.execution.lifecycle.pool import DuckDbStartupHook
 from forze_kits.adapters.secrets import MappingSecrets
-
 from tests.integration.test_forze_duckdb.conftest import (
     MINIO_ROOT_PASSWORD,
     MINIO_ROOT_USER,

@@ -7,7 +7,7 @@ about its fidelity, and the one accepted gap: no server-side ``KeyId``
 enforcement on ``Decrypt``, a guard the keyring already applies client-side).
 """
 
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import pytest
 import pytest_asyncio

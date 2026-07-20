@@ -1,13 +1,13 @@
 """Unit tests for :class:`~forze_sqs.kernel.client.SQSClient` helpers (no I/O)."""
 
-from forze.base.exceptions import CoreException, exc
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import SecretStr
 
+from forze.base.exceptions import CoreException
 from forze_sqs.kernel.client import SQSClient, SQSConfig
 
 # ----------------------- #
@@ -149,7 +149,7 @@ def test_decode_body_invalid_base64() -> None:
         SQSClient._SQSClient__decode_body("@@@", attrs)
 
 def test_extract_enqueued_at_iso_and_sent_timestamp() -> None:
-    dt = datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    dt = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
     attrs = {
         "forze_enqueued_at": {"StringValue": dt.isoformat(), "DataType": "String"},
     }
@@ -160,7 +160,7 @@ def test_extract_enqueued_at_iso_and_sent_timestamp() -> None:
         {"forze_enqueued_at": {"StringValue": "nope", "DataType": "String"}},
         {"SentTimestamp": "1700000000000"},
     )
-    assert bad_iso == datetime.fromtimestamp(1_700_000_000, tz=timezone.utc)
+    assert bad_iso == datetime.fromtimestamp(1_700_000_000, tz=UTC)
 
 def test_chunked_pending() -> None:
     pending = [("a", "ra"), ("b", "rb"), ("c", "rc")]

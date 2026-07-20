@@ -9,19 +9,18 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
-from forze.application.execution import Deps, ExecutionContext
-from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
+from forze.application.execution import Deps
 from forze_firestore.execution.deps import ConfigurableFirestoreDocument
+from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.client import FirestoreClient
-from tests.support.execution_context import context_from_deps
-
 from tests.integration._computed_field_models import (
     ComputedCreate,
     ComputedReadDoc,
     ComputedStoredDoc,
     ComputedUpdate,
 )
+from tests.support.execution_context import context_from_deps
 
 
 @pytest.mark.integration

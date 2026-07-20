@@ -1,10 +1,11 @@
 """Integration tests for RedisIdempotencyAdapter."""
 
-from forze.base.exceptions import CoreException
 import pytest
 
 from forze.application.contracts.idempotency import IdempotencyRecord
+from forze.base.exceptions import CoreException
 from forze_redis.adapters import RedisIdempotencyAdapter
+
 
 @pytest.mark.asyncio
 async def test_idempotency_begin_returns_none_when_new(

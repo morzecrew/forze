@@ -1,12 +1,10 @@
 from datetime import datetime, timedelta
-from typing import Optional
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-
-from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
+from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
 from forze_redis.adapters.pubsub import RedisPubSubAdapter, RedisPubSubCodec
 from forze_redis.kernel.client import RedisClient
@@ -66,7 +64,7 @@ async def test_pubsub_adapter_subscribe_decodes_messages() -> None:
     async def _iter():
         yield ("orders", codec.encode(_Payload(value="hello")))
 
-    def _subscribe(topics, timeout: Optional[timedelta] = None):
+    def _subscribe(topics, timeout: timedelta | None = None):
         captured["topics"] = topics
         captured["timeout"] = timeout
         return _iter()
@@ -93,7 +91,7 @@ async def test_pubsub_adapter_subscribe_passes_timeout() -> None:
     async def _iter():
         yield ("orders", codec.encode(_Payload(value="hello")))
 
-    def _subscribe(topics, timeout: Optional[timedelta] = None):
+    def _subscribe(topics, timeout: timedelta | None = None):
         captured["topics"] = topics
         captured["timeout"] = timeout
         return _iter()

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from pydantic import BaseModel
-
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowInvokeSpec,

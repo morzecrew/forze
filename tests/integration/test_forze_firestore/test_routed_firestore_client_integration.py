@@ -12,7 +12,6 @@ pytest.importorskip("google.cloud.firestore")
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException
 from forze_firestore.kernel.client import FirestoreClient, RoutedFirestoreClient
-
 from tests.support.secrets_fixtures import (
     MemSecretsByPath,
     MemSecretsTenantJson,

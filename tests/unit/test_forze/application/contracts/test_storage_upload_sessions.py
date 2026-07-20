@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Sequence
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,7 +17,6 @@ from forze.application.contracts.storage import (
 )
 from forze.application.contracts.storage.deps import StorageDeps
 from forze.base.exceptions import CoreException
-
 
 # ----------------------- #
 # Value objects
@@ -79,7 +78,7 @@ class _StubUploads:
         return PresignedUrl(
             url=f"https://stub/{session.key}?part={part_number}",
             method="PUT",
-            expires_at=datetime.now(timezone.utc) + expires_in,
+            expires_at=datetime.now(UTC) + expires_in,
         )
 
     async def list_parts(self, session: UploadSession) -> list[UploadPart]:

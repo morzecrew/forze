@@ -1,6 +1,6 @@
 """Unit tests for :class:`~forze.application.integrations.storage.ObjectStorageAdapter`."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
@@ -179,7 +179,7 @@ async def test_list_falls_back_for_envelope_less_objects(
     ``list`` must not raise — it falls back to the key basename + head fields,
     mirroring ``download``."""
 
-    modified = datetime(2025, 1, 15, 12, 0, tzinfo=timezone.utc)
+    modified = datetime(2025, 1, 15, 12, 0, tzinfo=UTC)
     storage_adapter.client.client.return_value.__aenter__ = AsyncMock()
     storage_adapter.client.client.return_value.__aexit__ = AsyncMock()
     storage_adapter.client.ensure_bucket = AsyncMock()

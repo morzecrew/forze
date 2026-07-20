@@ -3,6 +3,7 @@
 from uuid import UUID
 
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.secrets import (
     SecretRef,
@@ -11,7 +12,6 @@ from forze.application.contracts.secrets import (
 )
 from forze.application.contracts.secrets.resolution import resolve_structured
 from forze.base.exceptions import CoreException, exc
-from pydantic import BaseModel
 
 # ----------------------- #
 

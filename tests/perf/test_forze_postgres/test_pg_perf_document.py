@@ -12,8 +12,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.keys import (
@@ -22,6 +21,9 @@ from forze_postgres.execution.deps.keys import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 _PG_DOC_CREATE_MANY_LARGE = 500
 _PG_DOC_GET_MANY_LARGE = 200

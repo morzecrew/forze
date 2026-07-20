@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from forze.application.execution import Deps, LifecyclePlan
-from tests.support.execution_context import context_from_deps
 from forze_bigquery.execution.deps import BigQueryClientDepKey
 from forze_bigquery.execution.lifecycle import (
     BigQueryShutdownHook,
@@ -14,6 +13,7 @@ from forze_bigquery.execution.lifecycle import (
     routed_bigquery_lifecycle_step,
 )
 from forze_bigquery.kernel.client import BigQueryClient, BigQueryConfig
+from tests.support.execution_context import context_from_deps
 
 
 @pytest.mark.asyncio

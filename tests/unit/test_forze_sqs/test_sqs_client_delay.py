@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -41,14 +41,13 @@ async def test_enqueue_many_sets_delay_seconds_on_batch_entry() -> None:
         client,
         "_SQSClient__resolve_queue_url",
         AsyncMock(return_value="https://sqs/queue"),
-    ):
-        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
-            with patch.object(client, "_SQSClient__is_fifo_target", return_value=False):
-                await client.enqueue_many(
-                    "jobs",
-                    [b"body"],
-                    delay=timedelta(seconds=12),
-                )
+    ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        with patch.object(client, "_SQSClient__is_fifo_target", return_value=False):
+            await client.enqueue_many(
+                "jobs",
+                [b"body"],
+                delay=timedelta(seconds=12),
+            )
 
     entries = mock_boto.send_message_batch.await_args.kwargs["Entries"]
     assert entries[0]["DelaySeconds"] == 12
@@ -64,13 +63,12 @@ async def test_enqueue_many_fifo_rejects_per_message_delay() -> None:
         client,
         "_SQSClient__resolve_queue_url",
         AsyncMock(return_value="https://sqs/q.fifo"),
-    ):
-        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
-            with patch.object(client, "_SQSClient__is_fifo_target", return_value=True):
-                with pytest.raises(CoreException) as ei:
-                    await client.enqueue_many(
-                        "jobs.fifo", [b"body"], delay=timedelta(seconds=12), key="g1"
-                    )
+    ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        with patch.object(client, "_SQSClient__is_fifo_target", return_value=True):
+            with pytest.raises(CoreException) as ei:
+                await client.enqueue_many(
+                    "jobs.fifo", [b"body"], delay=timedelta(seconds=12), key="g1"
+                )
 
     assert ei.value.code == "sqs.fifo_per_message_delay"
     mock_boto.send_message_batch.assert_not_called()  # never reached the AWS call

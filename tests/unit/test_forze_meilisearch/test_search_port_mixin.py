@@ -1,11 +1,10 @@
 """Cursor methods are not implemented on Meilisearch search adapters."""
 
 import pytest
-
-from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchSpec
+from forze.base.exceptions import CoreException
 from forze_meilisearch.adapters.search._port import MeilisearchSearchPortMixin
 from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
 

@@ -61,6 +61,7 @@ nav = [
             "data-events/query-parameters.md",
             "data-events/procedures.md",
             "data-events/analytics.md",
+            "data-events/inference.md",
             "data-events/caching.md",
             "data-events/events-sagas.md",
             "data-events/messaging-delivery-models.md",
@@ -132,6 +133,7 @@ nav = [
         ] },
         { "Outbound" = [
             "integrations/http.md",
+            "integrations/inference.md",
         ] },
     ] },
     { "Recipes" = [

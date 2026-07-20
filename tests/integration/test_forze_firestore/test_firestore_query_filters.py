@@ -10,10 +10,10 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
 from forze_firestore.execution.deps import ConfigurableFirestoreDocument
+from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.client import FirestoreClient
 from tests.support.execution_context import context_from_deps

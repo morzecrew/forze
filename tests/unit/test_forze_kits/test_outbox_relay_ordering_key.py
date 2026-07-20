@@ -200,7 +200,7 @@ async def test_same_ordering_key_events_relay_in_order_and_both_process() -> Non
 
     processed: list[int] = []
 
-    async def handler(message) -> None:  # noqa: ANN001
+    async def handler(message) -> None:
         processed.append(message.payload.n)
 
     for message in messages:

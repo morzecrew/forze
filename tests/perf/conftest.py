@@ -1,4 +1,5 @@
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import pytest
 from anyio import from_thread, to_thread

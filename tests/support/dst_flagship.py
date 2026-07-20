@@ -19,7 +19,7 @@ state per call, so distinct seeds share nothing — the inter-seed parallelism t
 from __future__ import annotations
 
 import asyncio
-from typing import Sequence
+from collections.abc import Sequence
 
 from forze.application.contracts.dlock import DistributedLockSpec
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes

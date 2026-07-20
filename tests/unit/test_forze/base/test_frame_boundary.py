@@ -1,6 +1,5 @@
 """Unit tests for :mod:`forze.base.exceptions.boundary`."""
 
-import pytest
 
 from forze.base.exceptions import CoreException, FrameErr, FrameOk, exc, guard_frame
 

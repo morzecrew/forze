@@ -10,7 +10,6 @@ from forze.application.contracts.querying.pagination.cursor_token import (
     decode_keyset_v1,
 )
 from forze.application.contracts.search import SearchSpec
-
 from forze_mongo.adapters.search._cursor_run import execute_mongo_ranked_cursor_search
 from forze_mongo.adapters.search._cursor_seek import build_keyset_seek_match
 

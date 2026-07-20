@@ -16,10 +16,10 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.application.integrations.crypto import Keyring, is_encrypted_payload
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.serialization import PydanticModelCodec
-from forze_mock import MockKeyManagement
 from forze_inngest.adapters import InngestEventCommandAdapter
 from forze_inngest.adapters.context import merge_envelope, split_envelope
 from forze_inngest.adapters.crypto import open_event_payload, seal_event_payload
+from forze_mock import MockKeyManagement
 from tests.support.execution_context import frozen_deps_from_deps
 
 # ----------------------- #

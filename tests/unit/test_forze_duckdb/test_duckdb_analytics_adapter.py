@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import pytest
-
 from pydantic import BaseModel
 
 from forze.application.contracts.base import CountlessPage, CursorPage, Page
-
 from tests.unit.test_forze_duckdb.conftest import Params
 
 # ----------------------- #
@@ -197,21 +196,20 @@ async def test_dry_run_skips_execution(
 # tenant advisory floor (real engine)
 
 
-from pathlib import Path  # noqa: E402
-from uuid import UUID, uuid4  # noqa: E402
+from pathlib import Path
+from uuid import UUID, uuid4
 
-import duckdb  # noqa: E402
+import duckdb
 
-from forze.application.contracts.analytics import (  # noqa: E402
+from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
     AnalyticsSpec,
 )
-from forze.application.contracts.tenancy import TenantIdentity  # noqa: E402
-from forze.base.exceptions import CoreException  # noqa: E402
-from forze_duckdb import DuckDbAnalyticsConfig, DuckDbQueryConfig  # noqa: E402
-from forze_duckdb.adapters import DuckDbAnalyticsAdapter  # noqa: E402
-
-from tests.unit.test_forze_duckdb.conftest import Row  # noqa: E402
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.base.exceptions import CoreException
+from forze_duckdb import DuckDbAnalyticsConfig, DuckDbQueryConfig
+from forze_duckdb.adapters import DuckDbAnalyticsAdapter
+from tests.unit.test_forze_duckdb.conftest import Row
 
 
 def _tenant_parquet(tmp_path: Path, t1: str, t2: str) -> str:

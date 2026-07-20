@@ -17,11 +17,11 @@ from forze_postgres.adapters.search._pipeline_sql import (
     build_pipeline_with_clause,
     build_rank_first_order,
     build_scored_cte,
-    scored_order_by_rank_alias,
     filtered_select_list,
     outer_join_on_scored,
     scored_join_on_filtered,
     scored_key_columns,
+    scored_order_by_rank_alias,
     validate_join_pairs,
 )
 from forze_postgres.kernel.gateways import PostgresQualifiedName

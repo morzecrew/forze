@@ -8,6 +8,7 @@ import pytest
 
 pytest.importorskip("redis")
 
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.cache import CacheDepKey, CacheSpec
 from forze.application.contracts.counter import CounterDepKey, CounterSpec
 from forze.application.contracts.dlock import (
@@ -15,9 +16,7 @@ from forze.application.contracts.dlock import (
     DistributedLockQueryDepKey,
     DistributedLockSpec,
 )
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.idempotency import IdempotencyDepKey, IdempotencySpec
-from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze_redis.adapters import (
@@ -26,21 +25,25 @@ from forze_redis.adapters import (
     RedisDistributedLockAdapter,
     RedisIdempotencyAdapter,
 )
-from forze_redis.execution.deps.configs import (
-    RedisCacheConfig,
-    RedisCounterConfig,
-    RedisDistributedLockConfig,
-    RedisIdempotencyConfig,
-)
 from forze_redis.execution.deps import (
     ConfigurableRedisCache,
     ConfigurableRedisCounter,
     ConfigurableRedisDistributedLock,
     ConfigurableRedisIdempotency,
 )
+from forze_redis.execution.deps.configs import (
+    RedisCacheConfig,
+    RedisCounterConfig,
+    RedisDistributedLockConfig,
+    RedisIdempotencyConfig,
+)
 from forze_redis.execution.deps.keys import RedisBlockingClientDepKey, RedisClientDepKey
 from forze_redis.execution.deps.module import RedisDepsModule
 from forze_redis.kernel.client import RedisClient
+from tests.support.execution_context import (
+    context_from_deps,
+    frozen_deps_from_deps,
+)
 
 
 def _ctx() -> ExecutionContext:

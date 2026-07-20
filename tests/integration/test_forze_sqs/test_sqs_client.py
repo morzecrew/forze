@@ -1,7 +1,7 @@
 """Integration tests for SQSClient."""
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -28,7 +28,7 @@ async def _receive_until(
 async def test_client_enqueue_receive_ack(
     sqs_client: SQSClient, sqs_queue_url: str
 ) -> None:
-    ts = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    ts = datetime(2025, 1, 15, 12, 0, 0, tzinfo=UTC)
 
     async with sqs_client.client():
         message_id = await sqs_client.enqueue(
@@ -185,7 +185,7 @@ async def test_sequential_operations_reuse_single_aiobotocore_client(
     create_calls = 0
     original_client = aioboto3.Session.client
 
-    def _counting_client(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+    def _counting_client(self, *args, **kwargs):
         nonlocal create_calls
         create_calls += 1
         return original_client(self, *args, **kwargs)

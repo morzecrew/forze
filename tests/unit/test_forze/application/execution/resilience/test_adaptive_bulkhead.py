@@ -427,7 +427,7 @@ class TestExpiredWaiterDrop:
 
         # Shed the parked waiter (set_exception, grant no slot), then cancel the task
         # before it resumes (no await in between) so it wakes with CancelledError.
-        state._displace_lowest()  # noqa: SLF001 - white-box shed of the parked waiter
+        state._displace_lowest()
         assert state.in_use == 1  # displacement granted nothing
 
         task.cancel()
@@ -568,7 +568,7 @@ class TestQueueManagement:
 
         assert await executor.run(fn, policy="p") == "ok"
 
-        ((_, state),) = executor._bulkheads.items()  # noqa: SLF001
+        ((_, state),) = executor._bulkheads.items()
         assert state.queue_target_s == 0.005
         assert state.queue_adaptive_lifo is True
         assert state.limit == 2.0

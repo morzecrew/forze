@@ -6,9 +6,7 @@ import pytest
 from forze.application.contracts.storage import UploadedObject
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException
-
 from forze_s3.adapters.storage import S3StorageAdapter
-
 
 _TENANT = UUID("12345678-1234-5678-1234-567812345678")
 _OWN_KEY = f"tenant_{_TENANT}/docs/object.txt"

@@ -10,7 +10,7 @@ Tiers (increasing cost for strict validation):
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal, NamedTuple
 from uuid import UUID
@@ -101,7 +101,7 @@ def _uuid_for_index(i: int) -> str:
 
 
 def sample_medium_rows(n: int) -> list[JsonDict]:
-    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    base = datetime(2024, 1, 1, tzinfo=UTC)
     rows: list[JsonDict] = []
 
     for i in range(n):
@@ -231,7 +231,7 @@ class ComplexCodecRow(BaseModel):
 
 
 def sample_complex_rows(n: int) -> list[JsonDict]:
-    base = datetime(2023, 6, 1, 12, 0, tzinfo=timezone.utc)
+    base = datetime(2023, 6, 1, 12, 0, tzinfo=UTC)
     rows: list[JsonDict] = []
 
     for i in range(n):

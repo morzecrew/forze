@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from forze.base.exceptions import CoreException
 from uuid import uuid4
 
 import pytest
@@ -14,13 +13,14 @@ from forze.application.contracts.document import (
     KeyedUpdate,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
+from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_mongo.execution.deps import MongoDocumentConfig
-from forze_mongo.execution.deps import ConfigurableMongoDocument
+from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
+from forze_mongo.execution.deps import ConfigurableMongoDocument, MongoDocumentConfig
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.client import MongoClient
 from tests.support.execution_context import context_from_deps
+
 
 class _Doc(Document):
     title: str

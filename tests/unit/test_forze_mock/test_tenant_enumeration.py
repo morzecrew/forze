@@ -15,8 +15,6 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-import pytest
-
 from forze.application.contracts.tenancy import TenantIdentity
 from forze_mock import MockState
 from forze_mock.adapters.identity import MockTenantManagementPort

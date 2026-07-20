@@ -5,7 +5,6 @@ from uuid import uuid4
 import pytest
 
 from forze.base.exceptions import CoreException
-
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 

@@ -1,11 +1,12 @@
 """Integration tests for :class:`~forze_temporal.kernel.client.RoutedTemporalClient`."""
 
-from forze.base.exceptions import CoreException, exc
-from typing import Callable
+from collections.abc import Callable
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
+
+from forze.base.exceptions import CoreException, exc
 
 pytest.importorskip("temporalio")
 
@@ -14,10 +15,10 @@ from temporalio.worker import Worker
 from forze.application.contracts.secrets import SecretRef
 from forze_temporal.kernel.client import RoutedTemporalClient, TemporalClient
 from forze_temporal.sandbox import sandboxed_workflow_runner
-
 from tests.integration._routed_lru_helpers import temporal_hosts_for_lru_eviction
 
 from ._workflow_defs import ItSumWorkflow, SumIn, SumOut, it_sum_pair
+
 
 def _sum_total(out: SumOut | dict[str, object]) -> int:
     if isinstance(out, SumOut):

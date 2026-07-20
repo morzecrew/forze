@@ -16,18 +16,17 @@ import typer
 from pydantic import BaseModel
 from typer.testing import CliRunner
 
+import forze_cli
 from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
-
-import forze_cli
 from forze_cli._compat import require_dst
 from forze_cli.app import app
 from forze_cli.dst import _parse_seeds
 from forze_cli.loader import load_object, load_simulation
 from forze_dst import Simulation
-from forze_dst.markers import record_event
 from forze_dst.invariants import no_duplicate_effect
+from forze_dst.markers import record_event
 from forze_mock import MockDepsModule
 
 # ----------------------- #

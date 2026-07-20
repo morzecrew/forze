@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import contextlib
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import attrs
 import pytest

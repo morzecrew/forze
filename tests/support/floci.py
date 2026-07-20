@@ -50,7 +50,7 @@ class FlociContainer(DockerContainer):
         super().__init__(image)
         self.with_exposed_ports(_EDGE_PORT)
 
-    def start(self) -> "FlociContainer":
+    def start(self) -> FlociContainer:
         super().start()
         wait_for_logs(self, _READY_LOG, timeout=_READY_TIMEOUT_S)
         return self

@@ -118,7 +118,7 @@ class TestInflightLane:
         with pytest.raises(CoreException, match="timed out"):
             await lane.run(("k",), factory, timeout=0.02)
 
-        assert ("k",) in lane._tasks  # noqa: SLF001 - white-box: orphan still tracked
+        assert ("k",) in lane._tasks
 
         # On completion its done-callback deregisters it — no leak, no "exception never
         # retrieved" warning (cleanup is tied to the task finishing, not to a waiter leaving).
@@ -127,10 +127,10 @@ class TestInflightLane:
         for _ in range(5):
             await asyncio.sleep(0)
 
-            if ("k",) not in lane._tasks:  # noqa: SLF001 - white-box
+            if ("k",) not in lane._tasks:
                 break
 
-        assert ("k",) not in lane._tasks  # noqa: SLF001 - white-box: deregistered
+        assert ("k",) not in lane._tasks
 
 
 async def _return(value: int) -> int:

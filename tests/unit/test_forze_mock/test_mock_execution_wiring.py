@@ -1,5 +1,7 @@
 """Smoke test :class:`~forze_mock.execution.MockDepsModule` factory wiring."""
 
+from datetime import timedelta
+
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsQueryDefinition, AnalyticsSpec
@@ -35,10 +37,9 @@ from forze.application.contracts.search import (
 )
 from forze.application.contracts.secrets import SecretsDepKey
 from forze.base.serialization import PydanticModelCodec
-from datetime import timedelta
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from tests.support.execution_context import context_from_deps
 from forze_mock.execution import MockDepsModule, MockStateDepKey
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 

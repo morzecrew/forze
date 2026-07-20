@@ -14,7 +14,6 @@ pytest.importorskip("testcontainers")
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException
 from forze_s3.kernel.client import RoutedS3Client, S3Client, S3Config
-
 from tests.integration._routed_lru_helpers import s3_payloads_for_lru_eviction
 from tests.support.secrets_fixtures import (
     MemSecretsByPath,
@@ -26,7 +25,7 @@ from tests.support.secrets_fixtures import (
 _S3_SUFFIX = "s3"
 
 
-def _payload(backend) -> dict[str, str]:  # noqa: ANN001 - session backend fixture
+def _payload(backend) -> dict[str, str]:
     return {
         "endpoint": backend.endpoint,
         "access_key_id": backend.access_key,
@@ -53,7 +52,7 @@ def _tenant_json(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_s3_health_and_object_crud(s3_backend) -> None:  # noqa: ANN001 - session backend fixture
+async def test_routed_s3_health_and_object_crud(s3_backend) -> None:
     t1 = uuid4()
     secrets = _tenant_json({t1: _payload(s3_backend)})
     tenant_get, tenant_set = tenant_holder()
@@ -117,7 +116,7 @@ async def test_routed_s3_health_and_object_crud(s3_backend) -> None:  # noqa: AN
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_s3_mapping_secret_ref(s3_backend) -> None:  # noqa: ANN001 - session backend fixture
+async def test_routed_s3_mapping_secret_ref(s3_backend) -> None:
     t1 = uuid4()
     custom = SecretRef(path=f"cfg/s3/{uuid4().hex[:12]}")
     secrets = MemSecretsByPath({custom.path: json.dumps(_payload(s3_backend))})
@@ -140,7 +139,7 @@ async def test_routed_s3_mapping_secret_ref(s3_backend) -> None:  # noqa: ANN001
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_s3_requires_startup_and_tenant(s3_backend) -> None:  # noqa: ANN001 - session backend fixture
+async def test_routed_s3_requires_startup_and_tenant(s3_backend) -> None:
     t1 = uuid4()
     secrets = _tenant_json({t1: _payload(s3_backend)})
     tenant_get, tenant_set = tenant_holder()
@@ -165,7 +164,7 @@ async def test_routed_s3_requires_startup_and_tenant(s3_backend) -> None:  # noq
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_s3_secret_errors(s3_backend) -> None:  # noqa: ANN001 - session backend fixture
+async def test_routed_s3_secret_errors(s3_backend) -> None:
     t_ok, t_miss, t_break = uuid4(), uuid4(), uuid4()
     tenant_get, tenant_set = tenant_holder()
 
@@ -201,7 +200,7 @@ async def test_routed_s3_secret_errors(s3_backend) -> None:  # noqa: ANN001 - se
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_s3_invalid_json_raises_core_error(s3_backend) -> None:  # noqa: ANN001 - session backend fixture
+async def test_routed_s3_invalid_json_raises_core_error(s3_backend) -> None:
     t1 = uuid4()
     secrets = MemSecretsByPath({f"tenants/{t1}/{_S3_SUFFIX}": "{not-valid-json"})
     tenant_get, tenant_set = tenant_holder()
@@ -222,7 +221,7 @@ async def test_routed_s3_invalid_json_raises_core_error(s3_backend) -> None:  # 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_routed_s3_lru_and_evict(s3_backend) -> None:  # noqa: ANN001 - session backend fixture
+async def test_routed_s3_lru_and_evict(s3_backend) -> None:
     t1, t2, t3 = uuid4(), uuid4(), uuid4()
     p = _payload(s3_backend)
     secrets = _tenant_json(

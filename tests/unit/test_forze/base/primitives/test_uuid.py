@@ -4,7 +4,6 @@ from uuid import UUID
 import pytest
 
 from forze.base.exceptions import CoreException
-
 from forze.base.primitives.uuid import (
     _hash_from_any,
     _uuid4_from_any,

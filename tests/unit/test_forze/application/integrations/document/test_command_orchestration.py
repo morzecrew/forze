@@ -15,7 +15,8 @@ command mixin (mirroring the production MRO) so ``project_many`` and
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -50,7 +51,7 @@ class _Domain(BaseModel):
 class _Dto:
     """Bare create/update payload exposing the ``id`` ``require_create_id`` reads."""
 
-    def __init__(self, id: UUID | None = None) -> None:  # noqa: A002
+    def __init__(self, id: UUID | None = None) -> None:
         self.id = id
 
 

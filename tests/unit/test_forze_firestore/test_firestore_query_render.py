@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import attrs
 import pytest
-
-from forze.base.exceptions import CoreException, ExceptionKind
 from google.cloud.firestore_v1.base_query import And, FieldFilter, Or
 
 from forze.application.contracts.querying import (
@@ -18,6 +16,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QueryOr,
 )
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_firestore.kernel.query.render import FirestoreQueryRenderer
 
 

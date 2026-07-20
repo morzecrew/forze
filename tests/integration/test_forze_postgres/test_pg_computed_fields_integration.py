@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.document import DocumentWriteTypes
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -13,13 +13,12 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.execution.deps.utils import doc_write_gw
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from tests.support.execution_context import context_from_deps
-
 from tests.integration._computed_field_models import (
     ComputedCreate,
     ComputedStoredDoc,
     ComputedUpdate,
 )
+from tests.support.execution_context import context_from_deps
 
 
 def _write_types() -> DocumentWriteTypes[

@@ -1,11 +1,10 @@
 """Validation tests for Meilisearch federated search configuration."""
 
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.search import FederatedSearchSpec, HubSearchSpec, SearchSpec
 from forze.base.exceptions import CoreException
-from pydantic import BaseModel
-
 from forze_meilisearch.execution.deps.configs import (
     MeilisearchFederatedSearchConfig,
     MeilisearchSearchConfig,

@@ -144,7 +144,7 @@ def test_s3_credentials_render_inline() -> None:
         scope="s3://bucket",
         inline=S3SecretPayload(
             access_key_id="AKIA",
-            secret_access_key="shh",  # noqa: S106
+            secret_access_key="shh",
             region="us-east-1",
             endpoint="localhost:9000",
             url_style="path",
@@ -166,7 +166,7 @@ def test_s3_credentials_render_inline() -> None:
 
 def test_gcs_credentials_render_inline() -> None:
     cred = GcsCredentials(
-        inline=GcsSecretPayload(key_id="GOOG", secret="shh"),  # noqa: S106
+        inline=GcsSecretPayload(key_id="GOOG", secret="shh"),
     )
     sql = cred.render(cast(Any, cred.inline_payload()))
     assert "TYPE GCS" in sql
@@ -176,7 +176,7 @@ def test_gcs_credentials_render_inline() -> None:
 
 def test_secret_value_not_in_repr() -> None:
     cred = S3Credentials(
-        inline=S3SecretPayload(access_key_id="AKIA", secret_access_key="topsecret"),  # noqa: S106
+        inline=S3SecretPayload(access_key_id="AKIA", secret_access_key="topsecret"),
     )
     assert "topsecret" not in repr(cred)
 
@@ -191,7 +191,7 @@ def test_credentials_require_exactly_one_source() -> None:
 
     with pytest.raises(CoreException):
         S3Credentials(
-            inline=S3SecretPayload(access_key_id="a", secret_access_key="b"),  # noqa: S106
+            inline=S3SecretPayload(access_key_id="a", secret_access_key="b"),
             secret_ref=SecretRef(path="x"),  # both
         )
 
@@ -200,7 +200,7 @@ def test_credentials_reject_bad_secret_name() -> None:
     with pytest.raises(CoreException):
         S3Credentials(
             name="bad name",
-            inline=S3SecretPayload(access_key_id="a", secret_access_key="b"),  # noqa: S106
+            inline=S3SecretPayload(access_key_id="a", secret_access_key="b"),
         )
 
 

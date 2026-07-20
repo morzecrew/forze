@@ -5,7 +5,6 @@ import pytest
 
 from forze.application.contracts.storage import UploadedObject
 from forze.application.contracts.tenancy import TenantIdentity
-
 from forze_gcs.adapters.storage import GCSStorageAdapter
 
 _TENANT = UUID("12345678-1234-5678-1234-567812345678")

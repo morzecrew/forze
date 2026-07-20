@@ -1,11 +1,11 @@
 """Tests for forze.domain.models.document."""
 
-from forze.base.exceptions import CoreException, exc
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
 
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict
 from forze.domain.models import (
     AggregateRoot,
@@ -90,7 +90,7 @@ class TestDocumentUpdateCanonicalization:
     def test_same_datetime_object_is_a_noop(self) -> None:
         # Regression: a python datetime equal to the stored value must not produce
         # a spurious diff (previously compared against a json-mode ISO string).
-        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        due = datetime(2026, 1, 1, tzinfo=UTC)
         doc = NestedDocument(address=Address(street="main", city="LA"), due=due)
         before_update = doc.last_update_at
 
@@ -112,7 +112,7 @@ class TestDocumentUpdateCanonicalization:
             def _due_moved(self, after: "Task", diff: JsonDict) -> DomainEvent | None:
                 return _DueMoved()
 
-        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        due = datetime(2026, 1, 1, tzinfo=UTC)
         task = Task(due=due)
 
         after, diff = task.update({"due": due})
@@ -121,14 +121,14 @@ class TestDocumentUpdateCanonicalization:
         assert after.has_pending_events is False
 
         # Sanity: a real change still fires the emitter.
-        moved, diff = task.update({"due": datetime(2027, 1, 1, tzinfo=timezone.utc)})
+        moved, diff = task.update({"due": datetime(2027, 1, 1, tzinfo=UTC)})
         assert "due" in diff
         assert [type(e) for e in moved.collect_events()] == [_DueMoved]
 
     def test_partial_nested_dict_merges_and_validates(self) -> None:
         doc = NestedDocument(
             address=Address(street="main", city="LA"),
-            due=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            due=datetime(2026, 1, 1, tzinfo=UTC),
         )
 
         after, diff = doc.update({"address": {"city": "NY"}})
@@ -146,19 +146,19 @@ class TestDocumentUpdateCanonicalization:
     def test_iso_string_patch_yields_real_datetime(self) -> None:
         doc = NestedDocument(
             address=Address(street="main", city="LA"),
-            due=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            due=datetime(2026, 1, 1, tzinfo=UTC),
         )
 
         after, diff = doc.update({"due": "2027-05-04T00:00:00Z"})
 
         assert isinstance(after.due, datetime)
-        assert after.due == datetime(2027, 5, 4, tzinfo=timezone.utc)
+        assert after.due == datetime(2027, 5, 4, tzinfo=UTC)
         assert isinstance(diff["due"], datetime)
 
     def test_iso_string_equal_to_current_value_is_a_noop(self) -> None:
         doc = NestedDocument(
             address=Address(street="main", city="LA"),
-            due=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            due=datetime(2026, 1, 1, tzinfo=UTC),
         )
 
         after, diff = doc.update({"due": "2026-01-01T00:00:00Z"})
@@ -334,7 +334,7 @@ class TestMaterializeUpdateIsolation:
     def test_updated_nested_model_isolated_from_before_and_patch(self) -> None:
         doc = NestedDocument(
             address=Address(street="main", city="LA"),
-            due=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            due=datetime(2026, 1, 1, tzinfo=UTC),
         )
         patch: JsonDict = {"address": {"city": "NY"}}
 
@@ -524,9 +524,9 @@ class TestValidateHistoricalConsistency:
         # while `data` is python-mode, so a re-sent identical datetime looked
         # like a touch (datetime != ISO string) and a no-op echo of a field
         # another writer concurrently changed raised a false conflict.
-        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        due = datetime(2026, 1, 1, tzinfo=UTC)
         old = NestedDocument(address=Address(street="main", city="LA"), due=due)
-        current, _ = old.update({"due": datetime(2027, 2, 2, tzinfo=timezone.utc)})
+        current, _ = old.update({"due": datetime(2027, 2, 2, tzinfo=UTC)})
 
         # Stale client echoes exactly what it read: no intent to change `due`.
         assert current.validate_historical_consistency(old, {"due": due})
@@ -545,28 +545,28 @@ class TestValidateHistoricalConsistency:
 
     def test_genuine_datetime_conflict_still_flagged(self) -> None:
         # A *different* value for a concurrently-changed field is a real conflict.
-        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        due = datetime(2026, 1, 1, tzinfo=UTC)
         old = NestedDocument(address=Address(street="main", city="LA"), due=due)
-        current, _ = old.update({"due": datetime(2027, 2, 2, tzinfo=timezone.utc)})
+        current, _ = old.update({"due": datetime(2027, 2, 2, tzinfo=UTC)})
 
-        data: JsonDict = {"due": datetime(2028, 3, 3, tzinfo=timezone.utc)}
+        data: JsonDict = {"due": datetime(2028, 3, 3, tzinfo=UTC)}
         assert not current.validate_historical_consistency(old, data)
 
     def test_same_datetime_change_no_conflict(self) -> None:
         # Concurrent agreement: both writers set the same datetime. The
         # compatible-scalar-overlap rule used to break for datetimes because
         # the values were compared across modes (ISO string vs datetime).
-        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        new_due = datetime(2027, 2, 2, tzinfo=timezone.utc)
+        due = datetime(2026, 1, 1, tzinfo=UTC)
+        new_due = datetime(2027, 2, 2, tzinfo=UTC)
         old = NestedDocument(address=Address(street="main", city="LA"), due=due)
         current, _ = old.update({"due": new_due})
 
         assert current.validate_historical_consistency(old, {"due": new_due})
 
     def test_non_overlapping_python_mode_changes_pass(self) -> None:
-        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        due = datetime(2026, 1, 1, tzinfo=UTC)
         old = NestedDocument(address=Address(street="main", city="LA"), due=due)
-        current, _ = old.update({"due": datetime(2027, 2, 2, tzinfo=timezone.utc)})
+        current, _ = old.update({"due": datetime(2027, 2, 2, tzinfo=UTC)})
 
         assert current.validate_historical_consistency(
             old, {"address": {"city": "NY"}}
@@ -575,7 +575,7 @@ class TestValidateHistoricalConsistency:
     def test_nested_scalar_conflict_still_flagged(self) -> None:
         # Hybrid merge-patch semantics are unchanged: overlapping nested
         # scalar paths with different values still conflict.
-        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        due = datetime(2026, 1, 1, tzinfo=UTC)
         old = NestedDocument(address=Address(street="main", city="LA"), due=due)
         current, _ = old.update({"address": {"city": "NY"}})
 

@@ -209,9 +209,8 @@ def test_update_skew_guard_rejects_far_future_remote() -> None:
     clock = HybridLogicalClock(max_drift=timedelta(seconds=1))
     remote = HlcTimestamp(10_000, 0)  # 9s ahead of a 1000ms wall clock
 
-    with bind_time_source(_at(1000)):
-        with pytest.raises(CoreException):
-            clock.update(remote)
+    with bind_time_source(_at(1000)), pytest.raises(CoreException):
+        clock.update(remote)
 
 
 def test_update_skew_guard_allows_within_drift() -> None:

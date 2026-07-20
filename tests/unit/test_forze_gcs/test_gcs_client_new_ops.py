@@ -5,7 +5,7 @@ put_object_tags: correct gcloud-aio call args, range header, 304→None,
 416→precondition, and namespaced tag replacement semantics.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -101,7 +101,7 @@ async def test_conditional_passes_headers_and_returns_body() -> None:
         return_value={"contentType": "text/plain", "size": 5},
     )
     client = _client(fake)
-    since = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)
+    since = datetime(2025, 1, 1, 12, 0, tzinfo=UTC)
 
     result = await client.download_bytes_conditional(
         "b", "k", if_none_match='"abc"', if_modified_since=since

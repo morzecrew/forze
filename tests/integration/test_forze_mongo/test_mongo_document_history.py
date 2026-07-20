@@ -9,7 +9,7 @@ snapshot) surfaces the same codes as the other backends.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -51,8 +51,8 @@ class HistRead(ReadDocument):
     due: datetime
 
 
-DUE_V1 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
-DUE_V2 = datetime(2027, 2, 2, 12, 0, tzinfo=timezone.utc)
+DUE_V1 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+DUE_V2 = datetime(2027, 2, 2, 12, 0, tzinfo=UTC)
 
 
 def _spec() -> DocumentSpec:

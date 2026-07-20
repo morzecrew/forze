@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -12,20 +13,30 @@ from forze.application.contracts.document import (
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from tests.support.execution_context import context_from_deps
 from tests.support.scenarios.document_nested_filters import (
     NestedFilterMeta as Meta,
+)
+from tests.support.scenarios.document_nested_filters import (
     NestedFilterRowCreate as RowCreate,
+)
+from tests.support.scenarios.document_nested_filters import (
     NestedFilterRowDoc as RowDoc,
+)
+from tests.support.scenarios.document_nested_filters import (
     NestedFilterRowRead as RowRead,
+)
+from tests.support.scenarios.document_nested_filters import (
     NestedFilterRowUpdate as RowUpdate,
+)
+from tests.support.scenarios.document_nested_filters import (
     expected_scores_ascending,
 )
 

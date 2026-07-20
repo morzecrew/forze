@@ -84,7 +84,7 @@ async def test_presigned_upload_put_with_bound_content_type(
 async def test_presigned_upload_rejects_unbound_content_type(
     s3_client: S3Client,
     s3_bucket: str,
-    s3_backend,  # noqa: ANN001 - session backend fixture
+    s3_backend,
 ) -> None:
     """SigV4 binds ContentType: a PUT with a different one must not verify."""
 
@@ -117,7 +117,7 @@ async def test_presigned_upload_rejects_unbound_content_type(
 async def test_presigned_download_url_expires(
     s3_client: S3Client,
     s3_bucket: str,
-    s3_backend,  # noqa: ANN001 - session backend fixture
+    s3_backend,
 ) -> None:
     if s3_backend.name == "floci":
         # Emulator infidelity, not an adapter concern: floci's presigned-URL

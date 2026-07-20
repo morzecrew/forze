@@ -2,8 +2,7 @@
 
 from typing import Any
 
-from forze.base.serialization import default_model_codec
-from forze.base.serialization import ModelCodec
+from forze.base.serialization import ModelCodec, default_model_codec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, DocumentHistory
 
 # ----------------------- #

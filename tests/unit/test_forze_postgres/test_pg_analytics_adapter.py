@@ -262,7 +262,7 @@ def test_tenant_aware_config_rejects_unscoped_sql() -> None:
 def _rendered(query: Any) -> str:
     try:
         return query.as_string(None)
-    except Exception:  # noqa: BLE001 - best-effort for assertions
+    except Exception:
         return str(query)
 
 

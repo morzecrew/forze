@@ -87,9 +87,8 @@ class TestRequireTenantId:
     def test_missing_tenant_raises_authentication_not_internal(self) -> None:
         # A missing bound tenant is caller-caused (401-class), matching the sibling
         # ``require_tenant_if_aware`` — not a server fault (500-class ``internal``).
-        from forze.base.exceptions import ExceptionKind
-
         from forze.application.contracts.tenancy import require_tenant_id
+        from forze.base.exceptions import ExceptionKind
 
         with pytest.raises(CoreException) as ei:
             require_tenant_id(lambda: None, message="Tenant ID is required")

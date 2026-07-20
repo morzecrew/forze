@@ -115,7 +115,7 @@ def _plant_duplicate(graph: MockGraphAdapter, *, from_key: str, to_key: str, wei
     carry them: this is how one gets into a store for the cursor to be tested against.
     """
 
-    graph._edges_store().append(  # noqa: SLF001
+    graph._edges_store().append(
         {
             "kind": "FOLLOWS",
             "from_kind": "User",

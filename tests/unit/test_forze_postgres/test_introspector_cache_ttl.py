@@ -130,11 +130,11 @@ async def test_column_types_ttl() -> None:
 
 
 def _filtered_lane(intro: PostgresIntrospector) -> CacheLane[object, object]:
-    return getattr(intro, "_PostgresIntrospector__filtered_row_estimate_lane")
+    return intro._PostgresIntrospector__filtered_row_estimate_lane
 
 
 def _relation_lane(intro: PostgresIntrospector) -> CacheLane[object, object]:
-    return getattr(intro, "_PostgresIntrospector__relation_lane")
+    return intro._PostgresIntrospector__relation_lane
 
 
 def test_filtered_estimate_lane_is_bounded_by_default() -> None:

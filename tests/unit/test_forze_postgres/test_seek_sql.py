@@ -1,10 +1,9 @@
 """Tests for :mod:`forze_postgres.kernel.sql.seek`."""
 
 import pytest
-
-from forze.base.exceptions import CoreException
 from psycopg import sql
 
+from forze.base.exceptions import CoreException
 from forze_postgres.kernel.sql.seek import build_order_by_sql, build_seek_condition
 
 

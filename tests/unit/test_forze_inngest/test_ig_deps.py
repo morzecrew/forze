@@ -6,7 +6,6 @@ from forze.application.contracts.durable.function import (
     DurableFunctionEventCommandDepKey,
     DurableFunctionStepDepKey,
 )
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.execution import Deps
 from forze_inngest.adapters import InngestEventCommandAdapter, InngestStepAdapter
 from forze_inngest.execution.deps import (
@@ -16,6 +15,9 @@ from forze_inngest.execution.deps import (
     InngestEventConfig,
 )
 from forze_inngest.kernel.client import InngestClientPort
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 
 def test_rejects_mapping_config() -> None:
@@ -42,12 +44,12 @@ def test_inngest_deps_module_registers_keys() -> None:
 def test_configurable_event_command_builds_adapter() -> None:
     client = Mock(spec=InngestClientPort)
     deps = Deps.plain({InngestClientDepKey: client})
-    from forze.application.execution import ExecutionContext
 
     ctx = context_from_deps(deps)
+    from pydantic import BaseModel
+
     from forze.application.contracts.durable.function import DurableFunctionEventSpec
     from forze.base.serialization import PydanticModelCodec
-    from pydantic import BaseModel
 
     class _Payload(BaseModel):
         n: int

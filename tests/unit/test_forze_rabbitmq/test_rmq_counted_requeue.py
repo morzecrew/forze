@@ -2,8 +2,9 @@
 originals whose republished copy reached the broker are acked. A failed-republish original is left
 **unacked** for broker redelivery — acking it would drop the message (the copy never landed)."""
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest

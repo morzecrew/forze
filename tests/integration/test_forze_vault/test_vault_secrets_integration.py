@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from forze.base.exceptions import CoreException
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, resolve_structured
+from forze.base.exceptions import CoreException
 from forze_vault.adapters import VaultKvSecrets
 from forze_vault.kernel.client import VaultClient, VaultConfig
 

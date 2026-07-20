@@ -201,11 +201,10 @@ async def test_nested_client_reuses_parent(
 ) -> None:
     """A nested ``client()`` scope reuses the parent context client."""
 
-    async with sqs_client.client() as outer:
-        async with sqs_client.client() as inner:
-            assert inner is outer
-            _, ok = await sqs_client.health()
-            assert ok is True
+    async with sqs_client.client() as outer, sqs_client.client() as inner:
+        assert inner is outer
+        _, ok = await sqs_client.health()
+        assert ok is True
 
 
 @pytest.mark.asyncio

@@ -12,11 +12,11 @@ from forze.application.contracts.durable.function import (
     DurableFunctionSpec,
 )
 from forze.application.contracts.execution import Handler
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.execution.operations.run import (
     handler_for_registry_operation,
     run_durable_function,
 )
-from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import CoreException
 
 # ----------------------- #

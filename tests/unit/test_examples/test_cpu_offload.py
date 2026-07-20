@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+from examples.recipes.cpu_offload.app import import_article
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze_mock import MockDepsModule
-
-from examples.recipes.cpu_offload.app import import_article
 
 
 async def test_import_article_parses_off_loop_then_writes() -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import timedelta
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -20,7 +20,6 @@ from forze.application.contracts.authn import (
     PasswordCredentials,
     TokenLifecycleDepKey,
 )
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -49,12 +48,6 @@ from forze_identity.authn.application.specs import (
     session_spec,
 )
 from forze_identity.authn.domain.models.account import CreatePasswordAccountCmd
-from forze_identity.authz.application import policy_principal_spec
-from forze_identity.authz.application.constants import AuthzResourceName
-from tests.support.authn_pg_fixtures import (
-    create_authn_tables,
-    insert_policy_principal_row,
-)
 from forze_identity.authn.execution import (
     AuthnDepsModule,
     AuthnKernelConfig,
@@ -71,6 +64,8 @@ from forze_identity.authn.services import (
     RefreshTokenService,
     ResetTokenService,
 )
+from forze_identity.authz.application import policy_principal_spec
+from forze_identity.authz.application.constants import AuthzResourceName
 from forze_postgres.execution.deps import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresReadOnlyDocument,
@@ -85,6 +80,13 @@ from forze_postgres.execution.deps.keys import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.support.authn_pg_fixtures import (
+    create_authn_tables,
+    insert_policy_principal_row,
+)
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 # ----------------------- #
 

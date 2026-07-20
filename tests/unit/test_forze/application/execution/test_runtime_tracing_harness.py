@@ -15,6 +15,7 @@ from forze.application.execution import (
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.execution.tracing import TracedOperationResult
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
+
 # ----------------------- #
 
 

@@ -21,8 +21,8 @@ from forze.application.contracts.stream import (
 )
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze_kits.integrations.realtime import (
-    realtime_stream_trim_lifecycle_step,
     realtime_stream_spec,
+    realtime_stream_trim_lifecycle_step,
 )
 from forze_mock import MockDepsModule
 

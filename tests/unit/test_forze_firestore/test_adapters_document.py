@@ -1,19 +1,18 @@
 """Unit tests for ``forze_firestore.adapters.document``."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
-from forze.base.exceptions import CoreException
-
 from forze.application.contracts.document import DocumentSpec
 from forze.application.integrations.document import DocumentCache
-from tests.unit._gateway_codec_helpers import codec_for
+from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_firestore.adapters.document import FirestoreDocumentAdapter
 from forze_firestore.kernel.gateways import FirestoreReadGateway, FirestoreWriteGateway
+from tests.unit._gateway_codec_helpers import codec_for
 
 
 class MyDoc(Document):
@@ -100,7 +99,7 @@ def test_write_gateway_requires_matching_tenant_awareness() -> None:
 
 
 def _domain_doc(name: str) -> MyDoc:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     return MyDoc(
         id=uuid4(),
         rev=1,

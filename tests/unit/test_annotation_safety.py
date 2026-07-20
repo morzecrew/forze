@@ -101,6 +101,6 @@ def test_no_unquoted_type_checking_annotations_without_future_import() -> None:
     assert not offenders, (
         "Modules reference a TYPE_CHECKING-only name in a runtime-evaluated annotation "
         "without `from __future__ import annotations` — these crash on import under "
-        f"Python < 3.14. Add the future import or quote the annotation:\n  "
+        "Python < 3.14. Add the future import or quote the annotation:\n  "
         + "\n  ".join(offenders)
     )

@@ -13,9 +13,9 @@ from testcontainers.rabbitmq import RabbitMqContainer
 
 pytest.importorskip("aio_pika")
 
+from forze.base.serialization import PydanticModelCodec
 from forze_rabbitmq.adapters import RabbitMQQueueAdapter, RabbitMQQueueCodec
 from forze_rabbitmq.kernel.client import RabbitMQClient, RabbitMQConfig
-from forze.base.serialization import PydanticModelCodec
 
 
 def _ensure_docker_available() -> None:

@@ -47,7 +47,11 @@ from forze_redis.adapters import (
     RedisStreamGroupAdminAdapter,
 )
 from forze_redis.kernel.client import RedisClient, RedisConfig
-from forze_socketio import RealtimeGateway, TenantShardedSignalSource, realtime_gateway_lifecycle_step
+from forze_socketio import (
+    RealtimeGateway,
+    TenantShardedSignalSource,
+    realtime_gateway_lifecycle_step,
+)
 
 # ----------------------- #
 

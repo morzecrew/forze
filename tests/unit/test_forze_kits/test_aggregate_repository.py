@@ -22,10 +22,9 @@ from forze.domain.models import (
     event_emitter,
     invariant,
 )
-from tests.support.execution_context import context_from_deps
-
 from forze_kits.aggregates import aggregate_repository
 from forze_mock import MockDepsModule
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 

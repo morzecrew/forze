@@ -21,7 +21,6 @@ from forze.application.execution.context.active_operation import (
 )
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import OperationRegistry
-
 from forze_mock import MockDepsModule
 from tests.support.execution_context import context_from_modules
 

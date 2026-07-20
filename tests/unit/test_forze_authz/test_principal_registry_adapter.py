@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -11,9 +11,7 @@ import pytest
 from forze.application.contracts.document import DocumentSpec
 from forze_identity.authz.adapters.principal_registry import PrincipalRegistryAdapter
 from forze_identity.authz.domain.models.policy_principal import (
-    CreatePolicyPrincipalCmd,
     ReadPolicyPrincipal,
-    UpdatePolicyPrincipalCmd,
 )
 
 
@@ -38,7 +36,7 @@ def _adapter() -> PrincipalRegistryAdapter:
 async def test_ensure_principal_creates_when_missing() -> None:
     adapter = _adapter()
     pid = uuid4()
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     created = ReadPolicyPrincipal(
         id=pid,
         rev=1,
@@ -57,7 +55,7 @@ async def test_ensure_principal_creates_when_missing() -> None:
 async def test_ensure_principal_inactive_on_create() -> None:
     adapter = _adapter()
     pid = uuid4()
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     created = ReadPolicyPrincipal(
         id=pid,
         rev=1,
@@ -85,7 +83,7 @@ async def test_ensure_principal_inactive_on_create() -> None:
 async def test_create_principal() -> None:
     adapter = _adapter()
     pid = uuid4()
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     created = ReadPolicyPrincipal(
         id=pid,
         rev=1,

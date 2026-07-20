@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 
+from _kafka_fakes import FakeConsumer, FakeKafkaClient, Msg, make_codec, record
 from aiokafka.structs import TopicPartition
 
 from forze.application.contracts.stream import (
@@ -10,8 +11,6 @@ from forze.application.contracts.stream import (
     UndecodableStreamPayload,
 )
 from forze_kafka.adapters import KafkaCommitStreamGroupAdapter, KafkaStreamCodec
-
-from _kafka_fakes import FakeConsumer, FakeKafkaClient, Msg, make_codec, record
 
 # ----------------------- #
 

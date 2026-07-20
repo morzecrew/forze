@@ -8,6 +8,7 @@ assignment is by ``key`` (per-partition ordering), and ``reset_offsets`` replays
 """
 
 import asyncio
+from datetime import UTC
 
 import pytest
 from pydantic import BaseModel
@@ -172,11 +173,11 @@ async def test_lag_reports_committed_end_and_gap() -> None:
 
 @pytest.mark.asyncio
 async def test_reset_offsets_to_timestamp() -> None:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     producer, query, admin = _adapters()
     await admin.ensure_group("g", ["orders"], start=OffsetReset.EARLIEST)
-    stamps = [datetime(2026, 7, 3, 12, 0, s, tzinfo=timezone.utc) for s in range(3)]
+    stamps = [datetime(2026, 7, 3, 12, 0, s, tzinfo=UTC) for s in range(3)]
     for i, ts in enumerate(stamps):
         await producer.append("orders", _Msg(v=i), key="k", timestamp=ts)
 
@@ -235,7 +236,7 @@ async def test_ensure_group_is_idempotent() -> None:
 
 @pytest.mark.asyncio
 async def test_reset_to_timestamp_after_end_seeks_to_tail() -> None:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     producer, query, admin = _adapters()
     await admin.ensure_group("g", ["orders"], start=OffsetReset.EARLIEST)
@@ -244,10 +245,10 @@ async def test_reset_to_timestamp_after_end_seeks_to_tail() -> None:
             "orders",
             _Msg(v=i),
             key="k",
-            timestamp=datetime(2026, 7, 3, 12, 0, i, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 7, 3, 12, 0, i, tzinfo=UTC),
         )
 
-    future = datetime(2026, 7, 3, 13, 0, 0, tzinfo=timezone.utc)
+    future = datetime(2026, 7, 3, 13, 0, 0, tzinfo=UTC)
     await admin.reset_offsets("g", "orders", to=OffsetReset.at_timestamp(future))
     assert await query.read("g", "c", ["orders"]) == []
 

@@ -31,7 +31,7 @@ from forze.application.integrations.realtime import (
     InMemoryMailboxCursors,
     InMemoryRealtimeMailbox,
 )
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException
 from forze.base.primitives import HlcTimestamp
 from forze_fastapi.exceptions import ERROR_CODE_HEADER, register_exception_handlers
 from forze_fastapi.realtime import RealtimeSseHub, attach_realtime_sse_route
@@ -313,13 +313,17 @@ class TestHub:
 
 class TestHubReadyGate:
     async def test_ready_hub_admits_immediately(self) -> None:
-        from forze_fastapi.realtime.sse import _await_hub_ready  # pyright: ignore[reportPrivateUsage]
+        from forze_fastapi.realtime.sse import (
+            _await_hub_ready,  # pyright: ignore[reportPrivateUsage]
+        )
 
         hub = RealtimeSseHub()  # ready from construction (manual/test mode)
         await asyncio.wait_for(_await_hub_ready(hub), timeout=1)
 
     async def test_replay_waits_for_the_fast_forward_to_finish(self) -> None:
-        from forze_fastapi.realtime.sse import _await_hub_ready  # pyright: ignore[reportPrivateUsage]
+        from forze_fastapi.realtime.sse import (
+            _await_hub_ready,  # pyright: ignore[reportPrivateUsage]
+        )
 
         hub = RealtimeSseHub()
         hub.ready.clear()  # the tail is still fast-forwarding

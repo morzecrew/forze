@@ -6,7 +6,6 @@ import pytest
 from pydantic import SecretStr
 
 from forze.application.execution import Deps, LifecyclePlan
-from tests.support.execution_context import context_from_deps
 from forze_postgres.execution.deps import PostgresClientDepKey
 from forze_postgres.execution.lifecycle.pool import (
     PostgresShutdownHook,
@@ -15,6 +14,7 @@ from forze_postgres.execution.lifecycle.pool import (
     routed_postgres_lifecycle_step,
 )
 from forze_postgres.kernel.client import PostgresClient, PostgresConfig
+from tests.support.execution_context import context_from_deps
 
 
 @pytest.mark.asyncio

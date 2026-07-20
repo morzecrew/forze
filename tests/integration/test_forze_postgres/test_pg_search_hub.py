@@ -14,21 +14,18 @@ from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.search import (
     HubSearchQueryDepKey,
     HubSearchSpec,
-    SearchQueryDepKey,
     SearchSpec,
 )
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
 from forze.base.exceptions import CoreException
 from forze_postgres.adapters.search import PostgresPGroongaSearchAdapter
 from forze_postgres.execution.deps import (
     ConfigurablePostgresHubSearch,
-    ConfigurablePostgresSearch,
 )
 from forze_postgres.execution.deps.configs import (
     FtsEngine,
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
-    PostgresSearchConfig,
 )
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
@@ -36,8 +33,8 @@ from forze_postgres.execution.deps.keys import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from forze_postgres.kernel.gateways import PostgresQualifiedName
 from tests.support.execution_context import context_from_deps
+
 
 def _hub_member(**kwargs: object) -> PostgresHubSearchMemberConfig:
     if "engine" not in kwargs:

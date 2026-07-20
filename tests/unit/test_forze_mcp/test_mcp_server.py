@@ -13,14 +13,14 @@ from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
 
-from forze.base.exceptions import exc
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.execution import Handler
 from forze.application.execution import OperationDescriptor
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
-from forze.application.contracts.authn import AuthnIdentity
+from forze.base.exceptions import exc
 from forze.domain.models import BaseDTO, ReadDocument
 from forze_mcp.dispatch import build_args, invoke_operation
 from forze_mcp.identity import DelegatedIdentityResolver, StaticIdentityResolver
@@ -29,7 +29,6 @@ from forze_mcp.prompts import register_dsl_query_prompts
 from forze_mcp.registration import register_tools
 from forze_mcp.schemas import register_schema_resources
 from forze_mcp.server import build_mcp_server
-
 from forze_mock import MockDepsModule
 from tests.support.execution_context import context_from_modules
 

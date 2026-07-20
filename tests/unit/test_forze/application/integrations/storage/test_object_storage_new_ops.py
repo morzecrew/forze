@@ -5,7 +5,7 @@ put_object_tags against a stubbed client: key validation, correct client args,
 and value-object mapping.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
@@ -61,7 +61,7 @@ def adapter() -> ObjectStorageAdapter:
 async def test_head_maps_client_head_to_object_head(
     adapter: ObjectStorageAdapter,
 ) -> None:
-    lm = datetime(2025, 1, 15, 12, 0, tzinfo=timezone.utc)
+    lm = datetime(2025, 1, 15, 12, 0, tzinfo=UTC)
     adapter.client.head_object = AsyncMock(
         return_value=ObjectStorageHead(
             content_type="text/plain",

@@ -22,7 +22,7 @@ from forze_identity.authn.services import (
     RefreshTokenConfig,
     RefreshTokenService,
 )
-
+from forze_postgres.kernel.client.client import PostgresClient
 from tests.integration.test_forze_authn.test_pg_authn_integration import (
     _authn_pg_setup,
     _eligibility,
@@ -31,7 +31,6 @@ from tests.integration.test_forze_authn.test_pg_authn_integration import (
     session_spec,
 )
 from tests.support.authn_pg_fixtures import insert_policy_principal_row
-from forze_postgres.kernel.client.client import PostgresClient
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 

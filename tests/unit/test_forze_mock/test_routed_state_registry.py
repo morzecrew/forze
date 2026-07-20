@@ -5,11 +5,10 @@ from uuid import UUID
 import pytest
 
 from forze.application.execution.lifecycle import LifecyclePlan
-from tests.support.execution_context import context_from_deps
-
 from forze_mock import MockDepsModule
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockRoutedStateRegistry, mock_routed_state_lifecycle_step
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 

@@ -23,6 +23,11 @@ from forze.application.contracts.analytics import (
 from forze.application.contracts.counter import CounterSpec
 from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.deps import Deps, frame_for
+from forze.application.contracts.document import (
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
+    DocumentSpec,
+)
 from forze.application.contracts.graph import (
     GraphEdgeDirectionality,
     GraphEdgeEndpoint,
@@ -30,18 +35,13 @@ from forze.application.contracts.graph import (
     GraphModuleSpec,
     GraphNodeSpec,
 )
-from forze.application.contracts.document import (
-    DocumentCommandDepKey,
-    DocumentQueryDepKey,
-    DocumentSpec,
-)
 from forze.application.contracts.inventory import (
     PlaneDisposition,
-    assert_exportable,
     SpecEdgeKind,
     SpecPlane,
     SpecRegistry,
     SpecSource,
+    assert_exportable,
     reconcile_specs,
 )
 from forze.application.contracts.outbox import OutboxSpec

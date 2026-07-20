@@ -11,14 +11,13 @@ from forze.application.contracts.base import CountlessPage, Page
 from forze.application.contracts.querying import QueryFilterExpression
 from forze_postgres.adapters.search import PostgresFTSSearchAdapter
 from forze_postgres.kernel.client.client import PostgresClient
-from tests.support import IsPartialDict, IsUUID
-
 from tests.integration.test_forze_postgres._search_fixtures import (
     PgSearchRow,
     bootstrap_fts_search_table,
     fts_search_context,
     fts_spec,
 )
+from tests.support import IsPartialDict, IsUUID
 
 
 @pytest.mark.integration

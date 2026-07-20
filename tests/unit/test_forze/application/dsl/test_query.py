@@ -1,12 +1,12 @@
 """Unit tests for forze.application.dsl.query."""
 
-from forze.base.exceptions import CoreException
 import pytest
 
 from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QueryValueCaster,
 )
+from forze.base.exceptions import CoreException
 
 # ----------------------- #
 

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Inference seam** — typed model invocation behind one port; the physical model (local artifact, served, cloud) is a wiring fact.
+
+- `forze.application.contracts.inference`: `InferenceSpec[In, Out]` + `InferencePort` (`predict` / all-or-nothing `predict_many` / `predict_stream`) + `InferenceCapabilities` (fail-closed `inference_feature_unsupported`) + `InferenceRunOptions`; resolved via `ctx.inference.model(spec)` — read-plane (`QUERY`-usable). Mis-shaped backend responses raise `inference_output_mismatch` at the boundary.
+- Local adapter (`forze.application.integrations.inference`): `LocalInferenceDepsModule(models={route: LocalInferenceConfig(loader=…)})` — loader returns any object with sync `predict_batch`, run under `run_cpu`; `local_inference_lifecycle_step` warms at boot fail-closed; `serialize_calls=True` for non-thread-safe models. Mock: `MockDepsModule(inference=MockInferenceRegistry().on(route, fn))`, unprogrammed routes raise `mock.inference.unprogrammed`.
+- Remote adapters: `forze_inference.http` (extra `inference-http`) — `HttpInferenceDepsModule` + `HttpInferenceConfig(protocol="kserve_v2"|"mlflow", model_name=…)` + `inference_http_lifecycle_step`; JSON-record scope, kserve_v2 requires flat scalar input fields. `forze_inference.sagemaker` (extra `inference-sagemaker`) — `SageMakerInferenceDepsModule` + `SageMakerInferenceConfig(endpoint_name=…, target_variant=…)` + `sagemaker_inference_lifecycle_step`.
+- Remote wiring fails closed without `acknowledge_data_egress=True`; endpoint failures map to `inference_throttled` / `inference_route_mismatch` / `inference_output_mismatch` / `inference_endpoint_unavailable` / `inference_timeout`.
+- Tenancy: `required_tenant_isolation=` on both modules (`none`/`tagged`/`namespace`/`dedicated`). `dedicated` needs a routed client — `RoutedInferenceHttpClient` (`InferenceHttpRoutingCredentials`) or `RoutedSageMakerRuntimeClient` (`SageMakerRoutingCredentials`, static keys required) — plus `routed_inference_http_lifecycle_step` / `routed_sagemaker_inference_lifecycle_step`.
+- Simulation value capture masks every inference input field (`InferenceSpec(capture_inputs=True)` opts out); any spec type may declare `sensitive_capture_fields`.
+
 **Portability** — `forze_kits.integrations.portability`: carry an application's system-of-record state to any other wired backend.
 
 - `export_archive(runtime, dest, *, scope=…)` / `import_archive(runtime, src, *, on_conflict="skip"|"fail")` — backend-agnostic archive (JSONL + `manifest.json`) over the document, blob, graph and counter planes; ids preserved (timestamps when `create_cmd` subclasses `ImportTimestamps`), `rev` resets to 1; import fail-closed on version, fingerprint and checksums.

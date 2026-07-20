@@ -5,19 +5,19 @@ route was asked to apply at rest, into ``MockState.storage_sse`` (and the
 presign log), so tests can assert "SSE was requested" without a live backend.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from forze.application.integrations.storage.client import ObjectStorageSSE
 from forze.application.contracts.storage import UploadedObject
+from forze.application.integrations.storage.client import ObjectStorageSSE
 from forze.base.primitives import FrozenTimeSource, bind_time_source
 from forze_mock.adapters.storage import MockStorageAdapter
 from forze_mock.state import MockState
 
 # ----------------------- #
 
-INSTANT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+INSTANT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 @pytest.fixture

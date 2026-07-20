@@ -2,31 +2,33 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import attrs
 import pytest
 
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import (
-    AuthzSubject,
     AuthzDocumentScopeRequest,
-    EffectiveGrants,
-    PermissionRef,
     AuthzScope,
     AuthzSensitiveAccessRequest,
+    AuthzSubject,
+    EffectiveGrants,
+    PermissionRef,
 )
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze.application.contracts.authz.specs import AuthzSpec
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
+from forze.application.execution import Deps, InvocationMetadata
 from forze_identity.authz.adapters.scoping import AuthzScopeAdapter
 from forze_identity.authz.domain.models.policy_principal import ReadPolicyPrincipal
 from forze_identity.authz.services.grants import AuthzGrantResolver
 from forze_identity.authz.services.policy import AuthzPolicyService
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -37,7 +39,7 @@ def _adapter(
     principal_active: bool = True,
 ) -> AuthzScopeAdapter:
     pid = uuid4()
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     row = ReadPolicyPrincipal(
         id=pid,
         rev=1,
@@ -153,23 +155,22 @@ async def test_wrap_document_scope_merges_filters_on_ctx() -> None:
 
     args = _ListArgs(filters={"$values": {"status": "open"}})
 
-    with patch.object(ctx.authz, "scope", return_value=adapter):
-        with ctx.inv_ctx.bind(
-            metadata=metadata,
-            authn=ident,
-            tenant=TenantIdentity(tenant_id=tid),
-        ):
-            wrap = AuthzDocumentScopeWrap(
-                spec=AuthzSpec(name="main"),
-                document_name="widgets",
-                operation="list",
-                action="widgets.list",
-            )(ctx)
+    with patch.object(ctx.authz, "scope", return_value=adapter), ctx.inv_ctx.bind(
+        metadata=metadata,
+        authn=ident,
+        tenant=TenantIdentity(tenant_id=tid),
+    ):
+        wrap = AuthzDocumentScopeWrap(
+            spec=AuthzSpec(name="main"),
+            document_name="widgets",
+            operation="list",
+            action="widgets.list",
+        )(ctx)
 
-            async def _next(a: object) -> object:
-                return a
+        async def _next(a: object) -> object:
+            return a
 
-            out = await wrap(_next, args)
+        out = await wrap(_next, args)
 
     assert out.filters == {
         "$and": [

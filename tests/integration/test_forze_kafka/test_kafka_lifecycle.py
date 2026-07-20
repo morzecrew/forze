@@ -6,14 +6,13 @@ from forze.application.execution import Deps
 from forze_kafka.execution.deps import KafkaClientDepKey
 from forze_kafka.execution.lifecycle import kafka_lifecycle_step
 from forze_kafka.kernel.client import KafkaClient
-
 from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 
 
 async def test_lifecycle_startup_initializes_and_shutdown_closes(
-    kafka_container,  # noqa: ANN001 - session container fixture
+    kafka_container,
 ) -> None:
     client = KafkaClient()
     ctx = context_from_deps(Deps.plain({KafkaClientDepKey: client}))

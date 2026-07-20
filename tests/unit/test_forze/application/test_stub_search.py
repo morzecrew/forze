@@ -8,7 +8,6 @@ from pydantic import BaseModel
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.search import SearchSpec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-
 from forze_mock import MockState
 from forze_mock.adapters import MockDocumentAdapter, MockSearchAdapter
 

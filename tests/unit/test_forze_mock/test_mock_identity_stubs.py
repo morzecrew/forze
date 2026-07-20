@@ -17,6 +17,14 @@ from forze.application.contracts.authn import (
     TokenLifecycleDepKey,
     TokenVerifierDepKey,
 )
+from forze.application.contracts.authn.value_objects.assertion import (
+    VerifiedAssertion,
+)
+from forze.application.contracts.authn.value_objects.credentials import (
+    AccessTokenCredentials,
+    ApiKeyCredentials,
+    PasswordCredentials,
+)
 from forze.application.contracts.authz import (
     AuthzDecisionDepKey,
     AuthzScopeDepKey,
@@ -24,21 +32,13 @@ from forze.application.contracts.authz import (
     PrincipalRegistryDepKey,
     RoleAssignmentDepKey,
 )
-from forze.application.contracts.authn.value_objects.assertion import (
-    VerifiedAssertion,
-)
-from forze.application.contracts.authn.value_objects.credentials import (
-    ApiKeyCredentials,
-    PasswordCredentials,
-    AccessTokenCredentials,
-)
 from forze.application.contracts.authz.value_objects import (
     AuthzRequest,
     AuthzScope,
     AuthzSensitiveAccessRequest,
     AuthzSubject,
 )
-from forze.application.contracts.secrets import SecretsDepKey, SecretRef
+from forze.application.contracts.secrets import SecretRef, SecretsDepKey
 from forze.application.contracts.tenancy import (
     NoopTenantProvisioner,
     TenantManagementDepKey,

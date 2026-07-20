@@ -11,14 +11,14 @@ from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_firestore.adapters.document import FirestoreDocumentAdapter
-from forze_firestore.execution.deps.configs import (
-    FirestoreDocumentConfig,
-    FirestoreReadOnlyDocumentConfig,
-)
 from forze_firestore.execution.deps import (
     ConfigurableFirestoreDocument,
     ConfigurableFirestoreReadOnlyDocument,
     firestore_txmanager,
+)
+from forze_firestore.execution.deps.configs import (
+    FirestoreDocumentConfig,
+    FirestoreReadOnlyDocumentConfig,
 )
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from tests.support.execution_context import context_from_deps

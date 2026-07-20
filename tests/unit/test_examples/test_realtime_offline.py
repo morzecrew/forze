@@ -4,10 +4,6 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.primitives import HlcTimestamp
-from forze_kits.integrations.realtime import build_realtime_cursors, build_realtime_mailbox
-
 from examples.recipes.realtime_offline.app import (
     TENANT,
     _context,
@@ -16,6 +12,9 @@ from examples.recipes.realtime_offline.app import (
     emit_while_offline,
     reconnect,
 )
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.base.primitives import HlcTimestamp
+from forze_kits.integrations.realtime import build_realtime_cursors, build_realtime_mailbox
 
 _E1 = str(UUID(int=1))
 _E2 = str(UUID(int=2))
