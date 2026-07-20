@@ -6,14 +6,21 @@ server for the legacy ``/invocations`` dialect. Both serve tiny pure-python mode
 framework) mounted/built from ``_assets/`` — the point is proving the wire encoding
 against real protocol parsers, not prediction quality.
 
-SageMaker has no admissible free emulator (floci does not implement it; LocalStack gates
-it behind the paid Ultimate tier), so the sagemaker adapter keeps stub-based unit
-coverage; a live test would be env-gated real-cloud or LocalStack Ultimate per the
-managed-cloud fidelity policy.
+SageMaker runs against **moto** (``motoserver/moto``) — a free, OSS, independent
+reimplementation of the AWS wire protocol, and therefore admissible under the fidelity
+policy (unlike an engine-proxying emulator). floci does not implement SageMaker at all,
+and LocalStack gates it behind the paid Ultimate tier. moto answers ``InvokeEndpoint``
+from a canned-result queue configured via ``/moto-api/static/sagemaker/endpoint-results``:
+each *distinct* request body consumes the next queued result and is then memoized, so
+repeating a body replays its result. What this proves is the real aioboto3 client, real
+SigV4 signing, real botocore response parsing, and our decode/error-translation path — it
+does not exercise a model container (moto has none), so prediction content is canned by
+construction.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 import time
 from pathlib import Path
@@ -29,6 +36,10 @@ _ASSETS = Path(__file__).parent / "_assets"
 
 _MLSERVER_IMAGE = "seldonio/mlserver:1.6.1"
 _MLFLOW_IMAGE = "ghcr.io/mlflow/mlflow:v3.4.0"
+_MOTO_IMAGE = "motoserver/moto:5.1.22"
+
+MOTO_ACCOUNT_ID = "123456789012"
+MOTO_REGION = "eu-west-1"
 
 
 def _ensure_docker() -> None:
@@ -103,3 +114,58 @@ def mlflow_url() -> str:
         yield url
     finally:
         container.stop()
+
+
+# ....................... #
+
+
+@pytest.fixture(scope="session")
+def moto_url() -> str:
+    """A live moto server answering the SageMaker runtime wire protocol."""
+
+    _ensure_docker()
+
+    container = DockerContainer(_MOTO_IMAGE).with_exposed_ports(5000)
+    container.start()
+
+    try:
+        host = container.get_container_host_ip()
+        port = container.get_exposed_port(5000)
+        url = f"http://{host}:{port}"
+        _wait_http_ok(f"{url}/moto-api/data.json")
+        yield url
+    finally:
+        container.stop()
+
+
+@pytest.fixture
+def sagemaker_results(moto_url: str):
+    """Reset moto, then queue canned ``InvokeEndpoint`` responses for one test.
+
+    Returns a callable taking response bodies (each a JSON-serializable payload). Each
+    *distinct* request body the adapter sends consumes the next queued response in order;
+    an identical body replays its earlier response.
+    """
+
+    httpx.post(f"{moto_url}/moto-api/reset", timeout=10.0).raise_for_status()
+
+    def queue(*bodies: object) -> None:
+        httpx.post(
+            f"{moto_url}/moto-api/static/sagemaker/endpoint-results",
+            json={
+                "account_id": MOTO_ACCOUNT_ID,
+                "region": MOTO_REGION,
+                "results": [
+                    {
+                        "Body": json.dumps(body),
+                        "ContentType": "application/json",
+                        "InvokedProductionVariant": "blue",
+                        "CustomAttributes": "",
+                    }
+                    for body in bodies
+                ],
+            },
+            timeout=10.0,
+        ).raise_for_status()
+
+    return queue
