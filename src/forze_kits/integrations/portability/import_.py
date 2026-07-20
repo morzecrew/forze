@@ -684,6 +684,35 @@ def _verify_files(src: Path, manifest: Manifest) -> None:
 # ....................... #
 
 
+def _expected_section_paths(
+    section: ScopeSection, plan: ExportPlan, compression: Compression
+) -> list[str]:
+    """Every archive path the target's export plan would have written into *section* —
+    documents, blob indexes, counters, and each graph module's node and edge files."""
+
+    suffix = data_suffix(compression)
+    expected: list[str] = []
+    expected.extend(f"{section.prefix}documents/{e.name}{suffix}" for e in plan.documents)
+    expected.extend(f"{section.prefix}blobs/{e.name}/index{suffix}" for e in plan.storage)
+    expected.extend(f"{section.prefix}counters/{e.name}{suffix}" for e in plan.counters)
+
+    for entry in plan.graph:
+        spec = cast("GraphModuleSpec", entry.spec)
+        expected.extend(
+            section.prefix + node_file(entry.name, str(node.name), compression)
+            for node in spec.nodes
+        )
+        expected.extend(
+            section.prefix + edge_file(entry.name, str(edge.name), compression)
+            for edge in spec.edges
+        )
+
+    return expected
+
+
+# ....................... #
+
+
 def _assert_archive_complete(
     src: Path,
     manifest: Manifest,
@@ -705,28 +734,13 @@ def _assert_archive_complete(
       next to checksummed neighbours.
     """
 
-    suffix = data_suffix(manifest.compression)
     listed = {archive_file.path for archive_file in manifest.files}
-    missing: list[str] = []
-
-    for section, _files in sections:
-        expected: list[str] = []
-        expected.extend(f"{section.prefix}documents/{e.name}{suffix}" for e in plan.documents)
-        expected.extend(f"{section.prefix}blobs/{e.name}/index{suffix}" for e in plan.storage)
-        expected.extend(f"{section.prefix}counters/{e.name}{suffix}" for e in plan.counters)
-
-        for entry in plan.graph:
-            spec = cast("GraphModuleSpec", entry.spec)
-            expected.extend(
-                section.prefix + node_file(entry.name, str(node.name), manifest.compression)
-                for node in spec.nodes
-            )
-            expected.extend(
-                section.prefix + edge_file(entry.name, str(edge.name), manifest.compression)
-                for edge in spec.edges
-            )
-
-        missing.extend(path for path in expected if path not in listed)
+    missing = [
+        path
+        for section, _files in sections
+        for path in _expected_section_paths(section, plan, manifest.compression)
+        if path not in listed
+    ]
 
     if missing:
         raise exc.precondition(
