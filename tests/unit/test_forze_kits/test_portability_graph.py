@@ -32,6 +32,7 @@ from forze.application.contracts.inventory import SpecRegistry
 from forze.application.execution import ExecutionRuntime
 from forze.base.exceptions import CoreException
 from forze_kits.integrations.portability import (
+    UNTENANTED,
     ExportReport,
     FullScope,
     ImportReport,
@@ -127,7 +128,7 @@ async def _seed(runtime: ExecutionRuntime) -> None:
 
 async def _export(runtime: ExecutionRuntime, dest: Path) -> ExportReport:
     async with runtime.scope():
-        return await export_archive(runtime, dest, scope=FullScope(quiesce=_ATTESTED))
+        return await export_archive(runtime, dest, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
 
 
 async def _import(runtime: ExecutionRuntime, src: Path) -> ImportReport:
@@ -233,7 +234,7 @@ async def test_graph_migrate_carries_the_plane(tmp_path: Path) -> None:
 
     target = _runtime(MockState())
     async with source.scope(), target.scope():
-        report = await migrate(source, target, scope=FullScope(quiesce=_ATTESTED))
+        report = await migrate(source, target, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
 
     assert report.total_vertices == 3
     assert report.total_edges == 3

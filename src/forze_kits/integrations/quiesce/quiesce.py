@@ -23,6 +23,7 @@ from .report import QuiescePlane, QuiesceReport
 # ----------------------- #
 
 _DURABLE_ADMIN_KEY = "durable_function_run_admin"
+_DURABLE_RUN_STORE_KEY = "durable_function_run_store"
 _COMMIT_STREAM_ADMIN_KEY = "commit_stream_group_admin"
 _ACK_STREAM_ADMIN_KEY = "stream_group_admin"
 
@@ -110,7 +111,15 @@ async def _outbox_plane(
     name = f"outbox:{spec.name}"
 
     if not _wired(ctx, "outbox_admin", str(spec.name)):
-        return QuiescePlane(name=name, state="not_wired")
+        # The outbox EXISTS — its spec reached this sweep — but its admin read is not
+        # wired, so its backlog cannot be seen. Unobserved, not settled: an unreadable
+        # outbox may be holding every event the export is about to not carry.
+        return QuiescePlane(
+            name=name,
+            state="unobserved",
+            detail="outbox route is bound but no outbox_admin dependency is wired to read "
+            "its depth — add the admin binding (e.g. the backend's outbox admin adapter)",
+        )
 
     async def _busy() -> str | None:
         holding: list[str] = []
@@ -154,8 +163,16 @@ async def _durable_plane(
     poll: float,
 ) -> QuiescePlane:
     if not _wired(ctx, _DURABLE_ADMIN_KEY):
-        # Either no durable plane, or its admin read is not opted in — in which case quiesce
-        # cannot see the runs at all, and says so rather than assuming there are none.
+        if _wired(ctx, _DURABLE_RUN_STORE_KEY):
+            # The durable plane exists (a run store is wired) but its admin read is not
+            # opted in — the runs cannot be seen, which is not the same as none existing.
+            return QuiescePlane(
+                name="durable",
+                state="unobserved",
+                detail="a durable run store is wired but its admin read is not — quiesce "
+                "cannot see the runs; wire the durable run admin to attest this plane",
+            )
+
         return QuiescePlane(name="durable", state="not_wired")
 
     admin = resolve_durable_run_admin(ctx)
@@ -193,7 +210,14 @@ async def _stream_plane(
     name = f"stream:{spec.name}/{group}"
 
     if not _wired(ctx, _COMMIT_STREAM_ADMIN_KEY, str(spec.name)):
-        return QuiescePlane(name=name, state="not_wired")
+        # The caller named this group explicitly, so the plane exists — an unwired admin
+        # means it cannot be read, which must not pass for settled.
+        return QuiescePlane(
+            name=name,
+            state="unobserved",
+            detail="stream group was named but no commit-stream admin is wired to read its "
+            "lag — wire the admin binding to attest it",
+        )
 
     admin = ctx.stream.commit_admin(spec)
 
@@ -242,7 +266,13 @@ async def _ack_stream_plane(
     name = f"ack-stream:{spec.name}/{group}"
 
     if not _wired(ctx, _ACK_STREAM_ADMIN_KEY, str(spec.name)):
-        return QuiescePlane(name=name, state="not_wired")
+        # Same posture as the commit-stream plane: named but unreadable is unobserved.
+        return QuiescePlane(
+            name=name,
+            state="unobserved",
+            detail="ack-stream group was named but no ack-stream admin is wired to read its "
+            "depth — wire the admin binding to attest it",
+        )
 
     async def _depth() -> Any:
         # resolved under the current (possibly tenant-bound) identity, so a tenant-aware
@@ -343,6 +373,87 @@ async def _guarded(name: str, plane: Awaitable[QuiescePlane]) -> QuiescePlane:
 # ....................... #
 
 
+def _unprobeable_planes(
+    runtime: ExecutionRuntime,
+    *,
+    streams: Sequence[tuple[StreamSpec[Any], str]],
+    ack_streams: Sequence[tuple[StreamSpec[Any], str]],
+) -> list[QuiescePlane]:
+    """The catalogued planes this sweep has no way to observe — reported, never assumed empty.
+
+    An attested report must mean "every plane that can hold in-flight work was **seen** at
+    rest". Three catalogued kinds can hold work this sweep cannot see, and each one used to be
+    silently omitted — which read as settled:
+
+    - a **queue** — a queued message is undelivered work; no depth probe exists yet.
+    - a **distributed lock** — a held lock marks work in flight somewhere; no holder
+      enumeration exists yet.
+    - a **stream** the caller named no consumer group for — a group's lag is the pending
+      work, and no inventory can know the group names (they are the consumers' identity),
+      so an uncovered stream cannot be attested.
+
+    Three other catalogued kinds are deliberately **exempt**, because by contract they hold no
+    recoverable in-flight work: a pub/sub channel retains nothing (live-only, at-most-once), and
+    the inbox and idempotency planes are dedup *bookkeeping* — records of work already done,
+    not work still owed.
+
+    A runtime with **no inventory at all** cannot enumerate any of this, so it contributes one
+    ``unobserved`` plane for the inventory itself: zero probed routes must never add up to an
+    attested report.
+    """
+
+    if runtime.spec_registry is None:
+        return [
+            QuiescePlane(
+                name="inventory",
+                state="unobserved",
+                detail="runtime carries no spec inventory, so the outbox/queue/stream/lock "
+                "surface cannot be enumerated — zero probed planes is not a quiesced system; "
+                "build the runtime with build_runtime(specs=…)",
+            )
+        ]
+
+    covered = {str(spec.name) for spec, _group in (*streams, *ack_streams)}
+    planes: list[QuiescePlane] = []
+
+    planes.extend(
+        QuiescePlane(
+            name=f"queue:{entry.name}",
+            state="unobserved",
+            detail="no queue-depth probe exists for this plane yet — a queued message is "
+            "pending work this sweep cannot see",
+        )
+        for entry in runtime.spec_registry.of_plane(SpecPlane.QUEUE)
+    )
+
+    planes.extend(
+        QuiescePlane(
+            name=f"dlock:{entry.name}",
+            state="unobserved",
+            detail="no lock-holder probe exists for this plane yet — a held distributed "
+            "lock marks in-flight work this sweep cannot see",
+        )
+        for entry in runtime.spec_registry.of_plane(SpecPlane.DLOCK)
+    )
+
+    planes.extend(
+        QuiescePlane(
+            name=f"stream:{entry.name}",
+            state="unobserved",
+            detail="no consumer group was named for this stream — group lag is the "
+            "pending work, and group names are the consumers' identity, so pass "
+            "streams=/ack_streams= covering it to attest",
+        )
+        for entry in runtime.spec_registry.of_plane(SpecPlane.STREAM)
+        if entry.name not in covered
+    )
+
+    return planes
+
+
+# ....................... #
+
+
 def _inventoried_outboxes(runtime: ExecutionRuntime) -> tuple[OutboxSpec[Any], ...]:
     """Every outbox route the runtime's spec inventory knows about.
 
@@ -420,11 +531,20 @@ async def quiesce(
     probed under its own bound tenant — and each *ack_streams* group likewise, so a
     tenant-aware realtime stream's per-tenant groups are all attested, not just a global key.
 
-    Planes the runtime does not wire are reported ``not_wired`` and do not count against
-    attestation. Two things are outside what this can speak for, in either mode: a
-    Temporal-backed workflow (its state lives in the Temporal cluster), and a **sibling
-    replica** — quiesce holds one process still, and a fleet that is still serving writes
-    elsewhere will happily invalidate whatever this one attested. Stop the fleet first.
+    Planes the runtime genuinely does not have are reported ``not_wired`` and do not count
+    against attestation. Planes that **exist but cannot be read** are ``unobserved`` and
+    **block attestation**: a catalogued outbox whose admin read is not wired, a catalogued
+    queue or distributed lock (no probe exists for either kind yet), a catalogued stream no
+    consumer group was named for, and — the degenerate case — a runtime with no spec
+    inventory at all, which can enumerate none of this and therefore never attests. Three
+    catalogued kinds are exempt by contract: pub/sub retains nothing (live-only), and the
+    inbox and idempotency planes are dedup bookkeeping, records of work already done rather
+    than work still owed.
+
+    Two things are outside what this can speak for, in either mode: a Temporal-backed
+    workflow (its state lives in the Temporal cluster), and a **sibling replica** — quiesce
+    holds one process still, and a fleet that is still serving writes elsewhere will happily
+    invalidate whatever this one attested. Stop the fleet first.
     """
 
     ctx = runtime.get_context()
@@ -480,6 +600,11 @@ async def quiesce(
                 ),
             )
         )
+
+    # What the sweep could not see must weigh against attestation, not vanish from the
+    # report: catalogued queues/locks with no probe, streams no group was named for, or a
+    # runtime with no inventory at all. Unobserved is not empty.
+    planes.extend(_unprobeable_planes(runtime, streams=streams, ack_streams=ack_streams))
 
     # Read the gate rather than trusting *close_gate*: a scope already going down was holding
     # the door before this sweep started, and that counts.

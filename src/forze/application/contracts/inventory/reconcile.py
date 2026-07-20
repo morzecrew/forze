@@ -55,7 +55,18 @@ def reconcile_specs(
       the forgotten identity plane, the derived sync route, the spec added last month — the
       failure mode an export cannot detect and cannot recover from, because a missing plane
       and an empty one look identical in the artifact.
+    - **The inventory is empty while inventoried planes are bound.** The degenerate case of
+      the previous check, and the one *routeless* providers would otherwise hide entirely: an
+      empty registry reconciles vacuously, fingerprints equal to any other empty registry, and
+      an export driven by it carries nothing while reporting success.
     - **An edge points at a spec that is not in the inventory.**
+
+    **A known blind spot, stated rather than hidden:** a *plain* (routeless) provider — one
+    object serving every route of a key, the mock backend's shape — carries no route names, so
+    the bound-but-not-catalogued check has nothing to compare per spec. On a runtime wired
+    entirely with plain providers, that direction can only fire in aggregate (the empty-registry
+    check above); per-route completeness there rests on the contributors
+    (``spec_contributions()``) rather than on this reconciliation.
 
     Only the dependency keys in :data:`PLANE_DEP_KEYS` participate; everything else a runtime
     binds (transaction engines, resilience policies, crypto singletons, authn/authz routes) is
@@ -72,6 +83,30 @@ def reconcile_specs(
     frames = tuple(frames)
     problems: list[str] = []
     warnings: list[str] = []
+
+    if not registry.entries:
+        bound_planes = sorted(
+            {
+                plane.value
+                for plane in (plane_of_key(frame.key_name) for frame in frames)
+                if plane is not None
+            }
+        )
+
+        if bound_planes:
+            message = (
+                f"  - inventory is EMPTY while inventoried plane(s) are bound "
+                f"({', '.join(bound_planes)}): an empty registry reconciles vacuously, "
+                f"fingerprints equal to any other empty registry, and an export driven by it "
+                f"carries nothing while reporting success — catalogue the specs, or drop the "
+                f"inventory instead of passing an empty one"
+            )
+
+            if allow_unregistered:
+                warnings.append(message)
+
+            else:
+                problems.append(message)
 
     problems.extend(
         f"  - {entry.ref.label()}: catalogued (by {entry.source.value}) but no dependency binds it — the port cannot be resolved"

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, cast
 
@@ -28,12 +27,15 @@ from forze_kits.integrations.quiesce import QuiesceReport
 
 from ._core import (
     DEFAULT_CHUNK,
+    ScopeSection,
     assert_scope_permitted,
     counter_row,
     list_keys,
     portable_row,
     require_registry,
-    scope_binding,
+    scope_sections,
+    section_binding,
+    section_label,
 )
 from ._crypt import ArchiveCipher, ArchiveSealer
 from ._graph import edge_file, exported_edge_row, node_file
@@ -53,7 +55,6 @@ class _ResolvedScope:
     consistency: Consistency
     manifest: ScopeManifest
     attestation: dict[str, Any] | None
-    binding: AbstractContextManager[Any]
 
 
 # ....................... #
@@ -101,6 +102,13 @@ class ArchiveExporter:
     longer a plaintext credential store. Off by default (the artifact is plaintext, guarded by the
     filesystem); ``migrate`` needs no sealer, being ports-to-ports with nothing at rest."""
 
+    acknowledge_plaintext: bool = False
+    """Permit an **unsealed** export whose payload is credential-adjacent — identity specs
+    included, or specs declaring field encryption (whose values are decrypted into the archive by
+    design; that decryption is what makes the bricked-KEK escape possible). Off by default: such
+    an export writes every session token and sealed field as plaintext JSONL, so producing one
+    without a :attr:`sealer` must be a stated decision, never a default."""
+
     # ....................... #
 
     async def __call__(
@@ -111,12 +119,14 @@ class ArchiveExporter:
         *,
         scope: ExportScope,
     ) -> ExportReport:
-        """Export *registry*'s document plane under *scope* into the archive directory *dest*.
+        """Export *registry*'s carryable planes under *scope* into the archive directory *dest*.
 
         Call inside the caller's ``async with runtime.scope():``. :class:`TenantScope` runs the
-        walk inside the tenant's bound identity; :class:`FullScope` walks unbound (every tenant's
-        rows) and embeds its quiesce attestation — refusing to stamp ``consistency: quiesced``
-        from a report that did not attest, unless :attr:`allow_fuzzy` opts into a ``fuzzy`` one.
+        walk inside the tenant's bound identity. :class:`FullScope` walks each **declared**
+        tenant bound, one archive section per tenant (or a single unbound walk when the operator
+        declared the deployment untenanted), and embeds its quiesce attestation — refusing to
+        stamp ``consistency: quiesced`` from a report that did not attest, unless
+        :attr:`allow_fuzzy` opts into a ``fuzzy`` one.
         """
 
         # A per-tenant export omits identity/credential specs unless the caller opts in; a
@@ -124,7 +134,9 @@ class ArchiveExporter:
         exclude_identity = isinstance(scope, TenantScope) and not self.include_identity
 
         plan = plan_export(registry, exclude_identity=exclude_identity)
-        resolved = self._resolve_scope(ctx, scope)
+        self._refuse_unacknowledged_plaintext(plan, identity_included=not exclude_identity)
+        resolved = self._resolve_scope(scope)
+        sections = scope_sections(scope)
         cipher, encryption = await self._prepare_encryption()
 
         logger.info(
@@ -133,6 +145,7 @@ class ArchiveExporter:
             consistency=resolved.consistency,
             documents=len(plan.documents),
             rebuild=len(plan.rebuild),
+            sections=len(sections),
             identity_included=not exclude_identity,
             encrypted=encryption is not None,
         )
@@ -143,30 +156,38 @@ class ArchiveExporter:
         graphs: list[GraphExport] = []
         counters: list[CounterExport] = []
 
-        with resolved.binding:
-            for entry in plan.documents:
-                archive_file, outcome = await self._export_document(ctx, dest, entry, cipher)
-                files.append(archive_file)
-                docs.append(outcome)
-                _write_spec_shape(dest, entry)
+        for section in sections:
+            with section_binding(ctx, section):
+                for entry in plan.documents:
+                    archive_file, outcome = await self._export_document(
+                        ctx, dest, entry, cipher, section
+                    )
+                    files.append(archive_file)
+                    docs.append(outcome)
 
-            for entry in plan.storage:
-                index_file, blob_outcome = await self._export_storage(ctx, dest, entry, cipher)
-                files.append(index_file)
-                blobs.append(blob_outcome)
-                _write_spec_shape(dest, entry)
+                for entry in plan.storage:
+                    index_file, blob_outcome = await self._export_storage(
+                        ctx, dest, entry, cipher, section
+                    )
+                    files.append(index_file)
+                    blobs.append(blob_outcome)
 
-            for entry in plan.graph:
-                graph_files, graph_outcome = await self._export_graph(ctx, dest, entry, cipher)
-                files.extend(graph_files)
-                graphs.append(graph_outcome)
-                _write_spec_shape(dest, entry)
+                for entry in plan.graph:
+                    graph_files, graph_outcome = await self._export_graph(
+                        ctx, dest, entry, cipher, section
+                    )
+                    files.extend(graph_files)
+                    graphs.append(graph_outcome)
 
-            for entry in plan.counters:
-                counter_file, counter_outcome = await self._export_counter(ctx, dest, entry, cipher)
-                files.append(counter_file)
-                counters.append(counter_outcome)
-                _write_spec_shape(dest, entry)
+                for entry in plan.counters:
+                    counter_file, counter_outcome = await self._export_counter(
+                        ctx, dest, entry, cipher, section
+                    )
+                    files.append(counter_file)
+                    counters.append(counter_outcome)
+
+        for entry in (*plan.documents, *plan.storage, *plan.graph, *plan.counters):
+            _write_spec_shape(dest, entry)
 
         _write_manifest(
             dest,
@@ -197,13 +218,14 @@ class ArchiveExporter:
 
     # ....................... #
 
-    def _resolve_scope(self, ctx: ExecutionContext, scope: ExportScope) -> _ResolvedScope:
-        """Turn a scope into its manifest facts and the identity binding the walk runs under.
+    def _resolve_scope(self, scope: ExportScope) -> _ResolvedScope:
+        """Turn a scope into its manifest facts.
 
         Refuse an unattested whole-system capture up front (unless :attr:`allow_fuzzy`), so the
-        gate fires before a byte is written. The attestation check and the binding are shared with
-        the direct ``migrate`` (``assert_scope_permitted`` / ``scope_binding`` in ``_core``), so an
-        export and a migration of the same scope refuse — and scope — by exactly the same rule.
+        gate fires before a byte is written. The attestation check and the section walk are shared
+        with the direct ``migrate`` (``assert_scope_permitted`` / ``scope_sections`` in ``_core``),
+        so an export and a migration of the same scope refuse — and partition — by exactly the
+        same rule.
         """
 
         assert_scope_permitted(scope, allow_fuzzy=self.allow_fuzzy)
@@ -213,16 +235,54 @@ class ArchiveExporter:
                 consistency="tenant",
                 manifest=ScopeManifest(kind="tenant", tenant_id=scope.tenant_id),
                 attestation=None,
-                binding=scope_binding(ctx, scope),
             )
 
         report = scope.quiesce
+        tenants = None if scope.tenants == "untenanted" else list(scope.tenants)
 
         return _ResolvedScope(
             consistency="quiesced" if report.attested else "fuzzy",
-            manifest=ScopeManifest(kind="full", tenant_id=None),
+            manifest=ScopeManifest(kind="full", tenant_id=None, tenants=tenants),
             attestation=_attestation_json(report),
-            binding=scope_binding(ctx, scope),
+        )
+
+    # ....................... #
+
+    def _refuse_unacknowledged_plaintext(
+        self, plan: ExportPlan, *, identity_included: bool
+    ) -> None:
+        """Refuse to write credential-adjacent payload as plaintext without a stated decision.
+
+        The archive decrypts sealed fields on read **by design** — that is what makes the
+        bricked-KEK escape possible, and what lets a target re-seal under its own keys. The
+        dangerous part is doing it *silently*: an export carrying identity specs (sessions, API
+        keys) or specs that declare field encryption would land every one of those values as
+        plaintext JSONL under nothing but filesystem permissions. A :attr:`sealer` removes the
+        exposure; :attr:`acknowledge_plaintext` records that the operator chose to keep it.
+        """
+
+        if self.sealer is not None or self.acknowledge_plaintext:
+            return
+
+        sensitive: list[str] = []
+
+        for entry in (*plan.documents, *plan.storage, *plan.graph, *plan.counters):
+            if entry.identity:
+                sensitive.append(f"{entry.ref.label()} (identity/credential material)")
+
+            elif _declares_sealed_fields(entry.spec):
+                sensitive.append(f"{entry.ref.label()} (declares encrypted fields)")
+
+        if not sensitive:
+            return
+
+        raise exc.precondition(
+            "This export would write credential-adjacent data as PLAINTEXT: "
+            + "; ".join(sorted(sensitive))
+            + ". Sealed fields are decrypted into the archive by design (that is what lets a "
+            "target re-seal them under its own keys), so the artifact needs protection of its "
+            "own. Pass sealer=ArchiveSealer(...) to encrypt the archive at rest, or "
+            "acknowledge_plaintext=True to state that a plaintext artifact is the intent."
         )
 
     # ....................... #
@@ -259,18 +319,19 @@ class ArchiveExporter:
         dest: Path,
         entry: SpecRegistryEntry,
         cipher: ArchiveCipher | None,
+        section: ScopeSection,
     ) -> tuple[ArchiveFile, DocumentExport]:
-        """Stream one document spec's rows into ``documents/<name>.jsonl.gz``."""
+        """Stream one document spec's rows into ``[tenants/<t>/]documents/<name>.jsonl.gz``."""
 
         # ``plan_export`` admits only document specs with a write model; narrow to that here
         # without re-checking (an ``assert`` would be stripped under ``-O``, invariant is upstream).
         spec = cast("DocumentSpec[Any, Any, Any, Any]", entry.spec)
 
-        rel = f"documents/{entry.name}{data_suffix(self.compression)}"
+        rel = f"{section.prefix}documents/{entry.name}{data_suffix(self.compression)}"
         query = ctx.document.query(spec)
 
         with JsonlWriter(
-            dest / rel, compression=self.compression, cipher=cipher, base_aad=rel
+            dest / rel, compression=self.compression, cipher=cipher, base_aad=section.file_aad(rel)
         ) as sink:
             async for batch in query.find_stream(chunk_size=self.chunk_size):
                 for doc in batch:
@@ -278,7 +339,7 @@ class ArchiveExporter:
 
         return (
             ArchiveFile(path=rel, sha256=sink.sha256, rows=sink.rows),
-            DocumentExport(name=entry.name, rows=sink.rows),
+            DocumentExport(name=section_label(section, entry.name), rows=sink.rows),
         )
 
     # ....................... #
@@ -289,6 +350,7 @@ class ArchiveExporter:
         dest: Path,
         entry: SpecRegistryEntry,
         cipher: ArchiveCipher | None,
+        section: ScopeSection,
     ) -> tuple[ArchiveFile, StorageExport]:
         """Stream one storage route's objects — raw bytes under ``objects/``, one index row each.
 
@@ -306,19 +368,25 @@ class ArchiveExporter:
         route = entry.name
         query = ctx.storage.query(spec)
 
-        objects_dir = dest / "blobs" / route / "objects"
-        index_rel = f"blobs/{route}/index{data_suffix(self.compression)}"
+        objects_dir = dest / section.prefix / "blobs" / route / "objects"
+        index_rel = f"{section.prefix}blobs/{route}/index{data_suffix(self.compression)}"
 
         keys = await list_keys(query)
 
         with JsonlWriter(
-            dest / index_rel, compression=self.compression, cipher=cipher, base_aad=index_rel
+            dest / index_rel,
+            compression=self.compression,
+            cipher=cipher,
+            base_aad=section.file_aad(index_rel),
         ) as index:
             for key in keys:
                 head = await query.head(key, include_tags=True)
                 streamed = await query.download_stream(key)
                 sha256, size = await write_blob(
-                    streamed.chunks, objects_dir, cipher=cipher, base_aad=f"blobs/{route}|{key}"
+                    streamed.chunks,
+                    objects_dir,
+                    cipher=cipher,
+                    base_aad=section.blob_aad(route, key),
                 )
 
                 index.write(
@@ -333,7 +401,7 @@ class ArchiveExporter:
 
         return (
             ArchiveFile(path=index_rel, sha256=index.sha256, rows=index.rows),
-            StorageExport(name=route, blobs=index.rows),
+            StorageExport(name=section_label(section, route), blobs=index.rows),
         )
 
     # ....................... #
@@ -344,6 +412,7 @@ class ArchiveExporter:
         dest: Path,
         entry: SpecRegistryEntry,
         cipher: ArchiveCipher | None,
+        section: ScopeSection,
     ) -> tuple[list[ArchiveFile], GraphExport]:
         """Stream one graph module — one file per node and edge kind, vertices then edges.
 
@@ -372,10 +441,13 @@ class ArchiveExporter:
         edges = 0
 
         for node in spec.nodes:
-            rel = node_file(module, str(node.name), self.compression)
+            rel = section.prefix + node_file(module, str(node.name), self.compression)
 
             with JsonlWriter(
-                dest / rel, compression=self.compression, cipher=cipher, base_aad=rel
+                dest / rel,
+                compression=self.compression,
+                cipher=cipher,
+                base_aad=section.file_aad(rel),
             ) as sink:
                 async for batch in query.find_vertices_stream(
                     str(node.name), chunk_size=self.chunk_size
@@ -389,10 +461,13 @@ class ArchiveExporter:
         export_query = cast("GraphEdgeExportAware", query)
 
         for edge in spec.edges:
-            rel = edge_file(module, str(edge.name), self.compression)
+            rel = section.prefix + edge_file(module, str(edge.name), self.compression)
 
             with JsonlWriter(
-                dest / rel, compression=self.compression, cipher=cipher, base_aad=rel
+                dest / rel,
+                compression=self.compression,
+                cipher=cipher,
+                base_aad=section.file_aad(rel),
             ) as sink:
                 async for edge_batch in export_query.find_edges_export_stream(
                     str(edge.name), chunk_size=self.chunk_size
@@ -403,7 +478,9 @@ class ArchiveExporter:
             files.append(ArchiveFile(path=rel, sha256=sink.sha256, rows=sink.rows))
             edges += sink.rows
 
-        return files, GraphExport(name=module, vertices=vertices, edges=edges)
+        return files, GraphExport(
+            name=section_label(section, module), vertices=vertices, edges=edges
+        )
 
     # ....................... #
 
@@ -413,30 +490,33 @@ class ArchiveExporter:
         dest: Path,
         entry: SpecRegistryEntry,
         cipher: ArchiveCipher | None,
+        section: ScopeSection,
     ) -> tuple[ArchiveFile, CounterExport]:
         """Enumerate one counter spec's partitions into ``counters/<name>`` — one row per suffix.
 
         A counter is durable state — *the* state behind every invoice, order and ticket number an
         application has handed out — so an export that left it at zero would silently reissue
-        sequence numbers already in customers' hands. ``list_counters`` returns the complete set
-        (it drives the backend cursor internally); the values are point-in-time, which the
-        full-system quiesce is what makes safe to carry.
+        sequence numbers already in customers' hands. ``list_counters`` enumerates the partition
+        the **bound identity** resolves — which is why this runs once per scope section: a
+        tenant-aware counter route holds one partition set per tenant, and a walk that enumerated
+        only the unbound default would carry one tenant's sequences and zero everyone else's.
+        The values are point-in-time, which the full-system quiesce is what makes safe to carry.
         """
 
         spec = cast("CounterSpec", entry.spec)
-        rel = f"counters/{entry.name}{data_suffix(self.compression)}"
+        rel = f"{section.prefix}counters/{entry.name}{data_suffix(self.compression)}"
 
         entries = await ctx.counter.admin(spec).list_counters()
 
         with JsonlWriter(
-            dest / rel, compression=self.compression, cipher=cipher, base_aad=rel
+            dest / rel, compression=self.compression, cipher=cipher, base_aad=section.file_aad(rel)
         ) as sink:
             for counter in entries:
                 sink.write(counter_row(counter))
 
         return (
             ArchiveFile(path=rel, sha256=sink.sha256, rows=sink.rows),
-            CounterExport(name=entry.name, partitions=sink.rows),
+            CounterExport(name=section_label(section, entry.name), partitions=sink.rows),
         )
 
 
@@ -453,6 +533,7 @@ async def export_archive(
     compression: Compression = "gzip",
     include_identity: bool = False,
     sealer: ArchiveSealer | None = None,
+    acknowledge_plaintext: bool = False,
 ) -> ExportReport:
     """Convenience over :class:`ArchiveExporter`: pull the registry and the active context off
     *runtime* and export.
@@ -465,7 +546,9 @@ async def export_archive(
     already holds a context), use :class:`ArchiveExporter` directly.
 
     Pass a *sealer* to encrypt the archive at rest (RFC §9): the artifact is otherwise plaintext,
-    so a full-system one is a credential store.
+    so a full-system one is a credential store. An unsealed export whose payload is
+    credential-adjacent (identity specs included, or specs declaring field encryption) is
+    **refused** unless *acknowledge_plaintext* states that a plaintext artifact is the intent.
     """
 
     registry = require_registry(runtime)
@@ -476,7 +559,31 @@ async def export_archive(
         compression=compression,
         include_identity=include_identity,
         sealer=sealer,
+        acknowledge_plaintext=acknowledge_plaintext,
     )(runtime.get_context(), registry, dest, scope=scope)
+
+
+# ....................... #
+
+
+def _declares_sealed_fields(spec: Any) -> bool:
+    """Whether *spec* declares any field-encryption policy — the values an export decrypts.
+
+    Structural on purpose: a ``DocumentSpec`` carries one policy, a ``GraphModuleSpec`` one per
+    node/edge kind, and any future spec that grows an ``encryption`` attribute with an
+    ``is_empty`` is picked up without this list needing to know it.
+    """
+
+    def _sealed(policy: Any) -> bool:
+        return policy is not None and not getattr(policy, "is_empty", False)
+
+    if _sealed(getattr(spec, "encryption", None)):
+        return True
+
+    return any(
+        _sealed(getattr(kind, "encryption", None))
+        for kind in (*getattr(spec, "nodes", ()), *getattr(spec, "edges", ()))
+    )
 
 
 # ....................... #

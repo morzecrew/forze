@@ -490,3 +490,63 @@ def test_registries_merge() -> None:
     assert [e.name for e in entries] == ["audit", "orders"]
     assert entries[0].source is SpecSource.FRAMEWORK
     assert entries[1].source is SpecSource.AUTHOR
+
+
+# ----------------------- #
+# Registration metadata is load-bearing — never first-write-wins
+
+
+def test_conflicting_identity_flags_on_reregistration_are_refused() -> None:
+    # First-write-wins here was an exfiltration path: register an identity spec before the
+    # identity contribution merges and identity=False sticks — a per-tenant export then
+    # carries API keys and session tokens it promised to exclude.
+    spec = _document("sessions")
+    registry = SpecRegistry().register(spec)
+
+    with pytest.raises(CoreException, match="conflicting inventory metadata"):
+        registry.register(spec, identity=True)
+
+
+def test_an_explicit_refused_disposition_cannot_be_downgraded_by_order() -> None:
+    spec = _document("ledger")
+    registry = SpecRegistry().register(spec)  # default: EXPORTABLE
+
+    with pytest.raises(CoreException, match="conflicting inventory metadata"):
+        registry.register(spec, disposition=PlaneDisposition.REFUSED)
+
+
+def test_agreeing_reregistration_stays_benign() -> None:
+    # The derived-spec case: several specs are rebuilt per access; same spec + same
+    # metadata must keep deduplicating silently, whatever the source says.
+    spec = _document("orders")
+    registry = SpecRegistry().register(spec).register(spec, source=SpecSource.KIT)
+
+    assert len(registry.freeze().entries) == 1
+
+
+# ----------------------- #
+# The empty inventory is not vacuously fine
+
+
+def test_an_empty_inventory_with_bound_planes_fails_reconciliation() -> None:
+    # The degenerate case routeless providers would otherwise hide entirely: zero entries
+    # reconcile vacuously and fingerprint equal to any other empty registry, so an export
+    # driven by one carries nothing while reporting success.
+    with pytest.raises(CoreException, match="inventory is EMPTY"):
+        reconcile_specs(SpecRegistry().freeze(), frozenset({frame_for(DocumentQueryDepKey, None)}))
+
+
+def test_an_empty_inventory_downgrades_to_a_warning_when_allowed() -> None:
+    warnings = reconcile_specs(
+        SpecRegistry().freeze(),
+        frozenset({frame_for(DocumentQueryDepKey, None)}),
+        allow_unregistered=True,
+    )
+
+    assert len(warnings) == 1
+    assert "EMPTY" in warnings[0]
+
+
+def test_an_empty_inventory_with_no_inventoried_planes_reconciles_clean() -> None:
+    # Nothing catalogued and nothing bound: genuinely nothing to reconcile.
+    assert reconcile_specs(SpecRegistry().freeze(), frozenset()) == ()

@@ -29,6 +29,7 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze_kits.dto import ImportTimestamps
 from forze_kits.integrations.portability import (
+    UNTENANTED,
     ArchiveExporter,
     ArchiveImporter,
     ExportReport,
@@ -146,7 +147,7 @@ async def test_document_roundtrip_preserves_identity_timestamps_and_data(tmp_pat
     assert (archive / "documents" / "notes.jsonl.gz").exists()
 
     target = _runtime(MockState())
-    result = await _import(target, archive)
+    result = await _import(target, archive, tenant=tenant)
 
     assert result.total_imported == 3
 
@@ -176,8 +177,8 @@ async def test_reimport_is_idempotent(tmp_path: Path) -> None:
     await _export(source, archive, tenant)
 
     target = _runtime(MockState())
-    first = await _import(target, archive)
-    second = await _import(target, archive)
+    first = await _import(target, archive, tenant=tenant)
+    second = await _import(target, archive, tenant=tenant)
 
     assert first.total_imported == 2
     assert second.total_imported == 0
@@ -194,10 +195,10 @@ async def test_import_on_conflict_fail_refuses_a_nonempty_target(tmp_path: Path)
     await _export(source, archive, tenant)
 
     target = _runtime(MockState())
-    await _import(target, archive)  # target now holds the rows
+    await _import(target, archive, tenant=tenant)  # target now holds the rows
 
     with pytest.raises(CoreException) as excinfo:
-        await _import(target, archive, on_conflict="fail")
+        await _import(target, archive, on_conflict="fail", tenant=tenant)
 
     assert excinfo.value.kind is ExceptionKind.CONFLICT
 
@@ -219,13 +220,13 @@ async def test_import_refuses_a_checksum_mismatch(tmp_path: Path) -> None:
     target = _runtime(MockState())
 
     with pytest.raises(CoreException, match="checksum"):
-        await _import(target, archive)
+        await _import(target, archive, tenant=tenant)
 
 
 def test_export_scope_union_is_the_public_api() -> None:
     # Both arms of the stable ExportScope union.
     tenant: ExportScope = TenantScope(tenant_id=uuid4())
-    full: ExportScope = FullScope(quiesce=_ATTESTED)
+    full: ExportScope = FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
     assert isinstance(tenant, TenantScope)
     assert isinstance(full, FullScope)
 
@@ -253,7 +254,9 @@ async def test_callables_operate_on_a_caller_owned_context(tmp_path: Path) -> No
     async with target.scope():
         ctx = target.get_context()
         assert target.spec_registry is not None
-        report = await ArchiveImporter(batch_size=1)(ctx, target.spec_registry, archive)
+        report = await ArchiveImporter(batch_size=1, tenant=tenant)(
+            ctx, target.spec_registry, archive
+        )
 
     assert report.total_imported == 2
 
@@ -298,7 +301,7 @@ async def test_full_scope_attested_stamps_quiesced_and_embeds_the_attestation(
 
     archive = tmp_path / "archive"
     async with runtime.scope():
-        report = await export_archive(runtime, archive, scope=FullScope(quiesce=_ATTESTED))
+        report = await export_archive(runtime, archive, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
 
     assert report.total_rows == 3
 
@@ -320,7 +323,7 @@ async def test_full_scope_unattested_is_refused_by_default(tmp_path: Path) -> No
 
     with pytest.raises(CoreException, match="not quiesced"):
         async with runtime.scope():
-            await export_archive(runtime, tmp_path / "a", scope=FullScope(quiesce=_UNATTESTED))
+            await export_archive(runtime, tmp_path / "a", scope=FullScope(quiesce=_UNATTESTED, tenants=UNTENANTED))
 
 
 @pytest.mark.asyncio
@@ -331,7 +334,7 @@ async def test_full_scope_unattested_is_fuzzy_when_explicitly_allowed(tmp_path: 
     archive = tmp_path / "archive"
     async with runtime.scope():
         await export_archive(
-            runtime, archive, scope=FullScope(quiesce=_UNATTESTED), allow_fuzzy=True
+            runtime, archive, scope=FullScope(quiesce=_UNATTESTED, tenants=UNTENANTED), allow_fuzzy=True
         )
 
     manifest = _manifest(archive)
@@ -349,7 +352,7 @@ async def test_full_scope_round_trips_every_row(tmp_path: Path) -> None:
 
     archive = tmp_path / "archive"
     async with source.scope():
-        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED))
+        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
 
     target = _runtime(MockState())
     result = await _import(target, archive)
@@ -418,7 +421,7 @@ async def test_blob_round_trip_preserves_bytes_keys_and_tags(tmp_path: Path) -> 
 
     archive = tmp_path / "archive"
     async with source.scope():
-        report = await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED))
+        report = await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
 
     assert report.total_blobs == 3
     assert (archive / "blobs" / "attachments" / "index.jsonl.gz").exists()
@@ -447,7 +450,7 @@ async def test_blob_import_verifies_object_checksums(tmp_path: Path) -> None:
 
     archive = tmp_path / "archive"
     async with source.scope():
-        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED))
+        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
 
     objects = archive / "blobs" / "attachments" / "objects"
     (blob,) = list(objects.iterdir())

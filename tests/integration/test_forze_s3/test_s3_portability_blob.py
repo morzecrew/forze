@@ -22,6 +22,7 @@ from forze.application.contracts.storage import StorageSpec
 from forze.application.execution import ExecutionContext
 from forze.testing import context_from_deps
 from forze_kits.integrations.portability import (
+    UNTENANTED,
     ArchiveExporter,
     ArchiveImporter,
     FullScope,
@@ -88,7 +89,7 @@ async def test_blob_round_trip_through_real_s3(s3_client: S3Client, tmp_path: Pa
 
     archive = tmp_path / "archive"
     export = await ArchiveExporter()(
-        source, _registry(), archive, scope=FullScope(quiesce=_ATTESTED)
+        source, _registry(), archive, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
     )
     assert export.total_blobs == len(_CORPUS)
 

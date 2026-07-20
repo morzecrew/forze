@@ -22,7 +22,12 @@ from forze.application.contracts.counter import CounterSpec
 from forze.application.contracts.inventory import FrozenSpecRegistry, SpecRegistry
 from forze.application.execution import ExecutionContext
 from forze.testing import context_from_deps
-from forze_kits.integrations.portability import ArchiveExporter, ArchiveImporter, FullScope
+from forze_kits.integrations.portability import (
+    UNTENANTED,
+    ArchiveExporter,
+    ArchiveImporter,
+    FullScope,
+)
 from forze_kits.integrations.quiesce import QuiesceReport
 from forze_redis import RedisCounterConfig, RedisDepsModule
 from forze_redis.kernel.client import RedisClient
@@ -62,7 +67,7 @@ async def test_counter_round_trips_through_real_redis(
 
     archive = tmp_path / "archive"
     export = await ArchiveExporter()(
-        source, _registry(), archive, scope=FullScope(quiesce=_ATTESTED)
+        source, _registry(), archive, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
     )
     assert export.total_counters == 2
 

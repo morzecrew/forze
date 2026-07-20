@@ -125,13 +125,15 @@ async def test_import_re_seals_under_the_targets_key(tmp_path: Path) -> None:
     assert _stored_key_id(source_state, pk) == "cmk-source"
 
     async with source.scope():
-        await export_archive(source, tmp_path, scope=TenantScope(tenant_id=tenant))
+        await export_archive(
+            source, tmp_path, scope=TenantScope(tenant_id=tenant), acknowledge_plaintext=True
+        )
 
     target_state = MockState()
     target = _runtime(target_state, "cmk-target")
 
     async with target.scope():
-        await import_archive(target, tmp_path)
+        await import_archive(target, tmp_path, tenant=tenant)
 
     # Re-sealed under the target's CMK: fresh ciphertext, the target's key id, and the
     # value reads back in the target deployment.

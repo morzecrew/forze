@@ -117,7 +117,18 @@ class SpecRegistry:
     # ....................... #
 
     def register_entry(self, entry: SpecRegistryEntry) -> Self:
-        """Catalogue one fully-formed entry."""
+        """Catalogue one fully-formed entry.
+
+        A re-registration of the same spec must also agree on what the inventory *says about*
+        it. Disposition and the identity flag are load-bearing downstream — a per-tenant export
+        excludes ``identity=True`` entries, and ``REFUSED`` stops an export cold — so silently
+        keeping whichever registration came first would make those guarantees an accident of
+        merge order: register an identity spec before merging ``spec_contributions()`` and
+        ``identity=False`` sticks, and a per-tenant export carries API keys and session tokens;
+        register an explicit ``REFUSED`` second and it is silently downgraded to exportable.
+        Conflicting metadata is refused instead; ``source`` is provenance, not a guarantee, so
+        it alone never conflicts.
+        """
 
         existing = self._entries.get(_key(entry))
 
@@ -127,7 +138,18 @@ class SpecRegistry:
 
         if existing.spec == entry.spec:
             # The same spec, re-derived. Benign, and unavoidable: several specs are rebuilt
-            # per access rather than held.
+            # per access rather than held — but only while both registrations agree on what
+            # the inventory says about it.
+            if (existing.disposition, existing.identity) != (entry.disposition, entry.identity):
+                raise exc.configuration(
+                    f"{entry.ref.label()!r} is registered twice with conflicting inventory "
+                    f"metadata: {existing.source.value} says disposition="
+                    f"{existing.disposition.value}, identity={existing.identity}; "
+                    f"{entry.source.value} says disposition={entry.disposition.value}, "
+                    f"identity={entry.identity}. Exports act on these flags, so the "
+                    f"registrations must agree — align them (or register the spec once)."
+                )
+
             return self
 
         raise exc.configuration(

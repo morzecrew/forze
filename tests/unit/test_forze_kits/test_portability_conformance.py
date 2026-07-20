@@ -19,7 +19,12 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.application.execution import ExecutionContext, ExecutionRuntime
-from forze_kits.integrations.portability import ExportScope, FullScope, TenantScope
+from forze_kits.integrations.portability import (
+    UNTENANTED,
+    ExportScope,
+    FullScope,
+    TenantScope,
+)
 from forze_kits.integrations.portability.conformance import (
     PORTABILITY_DIVERGENCES,
     RoundTripOutcome,
@@ -103,7 +108,7 @@ async def test_roundtrip_carries_documents_and_blobs_losslessly_full_scope(tmp_p
         mock_runtime(MockState(), with_blobs=True),
         mock_runtime(MockState(), with_blobs=True),
         seed=seed,
-        scope=FullScope(quiesce=_ATTESTED),
+        scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED),
         workdir=tmp_path,
     )
 

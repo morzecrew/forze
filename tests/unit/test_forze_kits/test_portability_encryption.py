@@ -28,6 +28,7 @@ from forze.application.contracts.crypto import KeyRef
 from forze.application.execution import ExecutionRuntime
 from forze.base.exceptions import CoreException
 from forze_kits.integrations.portability import (
+    UNTENANTED,
     ArchiveExporter,
     ArchiveImporter,
     ArchiveMigrator,
@@ -99,11 +100,17 @@ async def _export(
 
 
 async def _import(
-    runtime: ExecutionRuntime, src: Path, *, sealer: ArchiveSealer | None = None
+    runtime: ExecutionRuntime,
+    src: Path,
+    *,
+    sealer: ArchiveSealer | None = None,
+    tenant: UUID | None = None,
 ) -> ImportReport:
     async with runtime.scope():
         assert runtime.spec_registry is not None
-        return await ArchiveImporter(sealer=sealer)(runtime.get_context(), runtime.spec_registry, src)
+        return await ArchiveImporter(sealer=sealer, tenant=tenant)(
+            runtime.get_context(), runtime.spec_registry, src
+        )
 
 
 async def _read(runtime: ExecutionRuntime, tenant: UUID, ids: list[UUID]) -> dict[UUID, OrderRead]:
@@ -149,7 +156,7 @@ async def test_encrypted_round_trip_under_each_codec(
     assert manifest.encryption.wrapped_dek  # base64, non-empty
 
     target = mock_runtime(MockState())
-    result = await _import(target, archive, sealer=_reader_sealer())
+    result = await _import(target, archive, sealer=_reader_sealer(), tenant=tenant)
     assert result.total_imported == 4
 
     assert_orders_faithful(await _read(target, tenant, list(seeded)), seeded)
@@ -170,7 +177,7 @@ async def test_encrypted_multi_frame_round_trip(tmp_path: Path) -> None:
 
     target = mock_runtime(MockState())
     # The reader needs no matching chunk size — the frames are self-describing.
-    result = await _import(target, archive, sealer=_reader_sealer())
+    result = await _import(target, archive, sealer=_reader_sealer(), tenant=tenant)
     assert result.total_imported == 6
 
     assert_orders_faithful(await _read(target, tenant, list(seeded)), seeded)
@@ -216,7 +223,7 @@ async def test_import_without_sealer_on_encrypted_archive_is_refused(tmp_path: P
 
     target = mock_runtime(MockState())
     with pytest.raises(CoreException, match="encrypted"):
-        await _import(target, archive, sealer=None)
+        await _import(target, archive, sealer=None, tenant=tenant)
 
 
 @pytest.mark.asyncio
@@ -234,7 +241,7 @@ async def test_plaintext_archive_imports_without_a_sealer(tmp_path: Path) -> Non
     assert _manifest(archive).encryption is None
 
     target = mock_runtime(MockState())
-    result = await _import(target, archive, sealer=None)
+    result = await _import(target, archive, sealer=None, tenant=tenant)
     assert result.total_imported == 2
     assert_orders_faithful(await _read(target, tenant, list(seeded)), seeded)
 
@@ -261,7 +268,7 @@ async def test_tampered_wrapped_key_is_refused(tmp_path: Path) -> None:
 
     target = mock_runtime(MockState())
     with pytest.raises(CoreException) as excinfo:
-        await _import(target, archive, sealer=_reader_sealer())
+        await _import(target, archive, sealer=_reader_sealer(), tenant=tenant)
 
     assert "crypto" in (excinfo.value.code or "")
 
@@ -285,7 +292,7 @@ async def test_algorithm_mismatch_is_refused(tmp_path: Path) -> None:
 
     target = mock_runtime(MockState())
     with pytest.raises(CoreException, match="AEAD"):
-        await _import(target, archive, sealer=_reader_sealer())
+        await _import(target, archive, sealer=_reader_sealer(), tenant=tenant)
 
 
 # ....................... #
@@ -300,7 +307,7 @@ async def _export_full(
     runtime: ExecutionRuntime, dest: Path, *, sealer: ArchiveSealer | None
 ) -> ExportReport:
     async with runtime.scope():
-        return await export_archive(runtime, dest, scope=FullScope(quiesce=_ATTESTED), sealer=sealer)
+        return await export_archive(runtime, dest, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED), sealer=sealer)
 
 
 @pytest.mark.asyncio

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import base64
 from collections.abc import AsyncIterator
-from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, cast
+from uuid import UUID
 
 import attrs
 
@@ -15,7 +15,6 @@ from forze.application.contracts.document import DocumentSpec, KeyedCreate
 from forze.application.contracts.graph import GraphModuleSpec
 from forze.application.contracts.inventory import FrozenSpecRegistry, SpecPlane
 from forze.application.contracts.storage import StorageSpec
-from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionRuntime
 from forze.application.execution.context import ExecutionContext
 from forze.base.crypto import DEFAULT_CHUNK_SIZE
@@ -26,15 +25,19 @@ from forze_kits.integrations._logger import logger
 from ._core import (
     DEFAULT_BATCH,
     OnConflict,
+    ScopeSection,
     counter_reset_args,
     ingest_documents,
     keyed_create,
     require_registry,
+    section_binding,
+    section_label,
 )
 from ._crypt import ArchiveCipher, ArchiveSealer
-from ._graph import edge_create_from_row
+from ._graph import edge_create_from_row, edge_file, node_file
 from .format import Compression, data_suffix, read_blob, read_rows, verify_file
 from .manifest import FORMAT_VERSION, ArchiveFile, Manifest
+from .planes import ExportPlan, plan_export
 from .report import CounterImport, DocumentImport, GraphImport, ImportReport, StorageImport
 
 # ----------------------- #
@@ -55,12 +58,24 @@ class ArchiveImporter:
     Like :class:`~forze_kits.integrations.portability.ArchiveExporter`, it takes only what it uses
     — an already-scoped :class:`ExecutionContext` and the target's :class:`FrozenSpecRegistry` —
     and does not own the runtime or open a scope. Fail-closed on arrival: format version, registry
-    fingerprint, and every file checksum are checked **before a single row is decoded**, so a
-    corrupt or incompatible archive is one clear refusal, never a scatter of half-written rows.
+    fingerprint, the tenant confirmation, every file checksum, **and** the archive's completeness
+    against both the manifest and the target's own export plan are checked before a single row is
+    decoded — a corrupt, tampered-with, or incompatible archive is one clear refusal, never a
+    scatter of half-written rows.
     """
 
     on_conflict: OnConflict = "skip"
     batch_size: int = DEFAULT_BATCH
+
+    tenant: UUID | None = None
+    """The tenant a **per-tenant** archive is being restored into — required for one, refused for
+    a full-system archive. The manifest is plaintext and unauthenticated, so the tenant it names is
+    a *claim*: binding it directly would let a one-field edit land the whole payload in another
+    tenant's partition with every checksum passing. This parameter is the out-of-band confirmation
+    — import refuses when it is absent or disagrees with the manifest — and it (not the manifest)
+    is what the import binds. For a **sealed** archive it is also what the frames authenticate
+    against: their AAD binds the exporting tenant, so a re-homed sealed payload fails decryption
+    rather than landing somewhere else."""
 
     sealer: ArchiveSealer | None = None
     """Unwrap a sealed archive's data key (RFC §9). Required to read an encrypted archive — one whose
@@ -92,12 +107,19 @@ class ArchiveImporter:
 
         manifest = _load_manifest(src)
         _assert_compatible(manifest, registry)
+        _assert_scope_confirmed(manifest, self.tenant)
         _verify_files(src, manifest)
+
+        sections = _manifest_sections(manifest, self.tenant)
+        plan = plan_export(registry, exclude_identity=not manifest.identity_included)
+        _assert_archive_complete(src, manifest, plan, sections)
+
         cipher = await self._prepare_cipher(manifest)
 
         logger.info(
             "Importing archive",
             files=len(manifest.files),
+            sections=len(sections),
             fingerprint=manifest.registry_fingerprint[:16],
             on_conflict=self.on_conflict,
             encrypted=cipher is not None,
@@ -106,41 +128,66 @@ class ArchiveImporter:
         docs: list[DocumentImport] = []
         blobs: list[StorageImport] = []
         counters: list[CounterImport] = []
-        graph_files: list[ArchiveFile] = []
+        graphs: list[GraphImport] = []
 
-        # A per-tenant archive restores into the tenant it names, so rows land in the right
-        # partition on a tenant-aware backend (a tenant-agnostic target simply ignores the bind).
-        with self._tenant_binding(ctx, manifest):
-            for archive_file in manifest.files:
-                if archive_file.path.startswith(_DOCUMENTS_PREFIX):
-                    docs.append(
-                        await self._import_document(
-                            ctx, src, archive_file, registry, manifest.compression, cipher
+        for section, section_files in sections:
+            graph_files: list[ArchiveFile] = []
+
+            # A tenant section restores under its bound tenant, so rows land in the right
+            # partition on a tenant-aware backend (a tenant-agnostic target ignores the bind).
+            with section_binding(ctx, section):
+                for archive_file in section_files:
+                    inner = archive_file.path.removeprefix(section.prefix)
+
+                    if inner.startswith(_DOCUMENTS_PREFIX):
+                        docs.append(
+                            await self._import_document(
+                                ctx,
+                                src,
+                                archive_file,
+                                registry,
+                                manifest.compression,
+                                cipher,
+                                section,
+                            )
                         )
-                    )
 
-                elif archive_file.path.startswith(_BLOBS_PREFIX):
-                    blobs.append(
-                        await self._import_storage(
-                            ctx, src, archive_file, registry, manifest.compression, cipher
+                    elif inner.startswith(_BLOBS_PREFIX):
+                        blobs.append(
+                            await self._import_storage(
+                                ctx,
+                                src,
+                                archive_file,
+                                registry,
+                                manifest.compression,
+                                cipher,
+                                section,
+                            )
                         )
-                    )
 
-                elif archive_file.path.startswith(_COUNTERS_PREFIX):
-                    counters.append(
-                        await self._import_counter(
-                            ctx, src, archive_file, registry, manifest.compression, cipher
+                    elif inner.startswith(_COUNTERS_PREFIX):
+                        counters.append(
+                            await self._import_counter(
+                                ctx,
+                                src,
+                                archive_file,
+                                registry,
+                                manifest.compression,
+                                cipher,
+                                section,
+                            )
                         )
+
+                    elif inner.startswith(_GRAPH_PREFIX):
+                        # Deferred: a graph is restored vertices-before-edges, which needs the
+                        # whole module's files grouped rather than replayed in manifest order.
+                        graph_files.append(archive_file)
+
+                graphs.extend(
+                    await self._import_graph(
+                        ctx, src, graph_files, registry, manifest.compression, cipher, section
                     )
-
-                elif archive_file.path.startswith(_GRAPH_PREFIX):
-                    # Deferred: a graph is restored vertices-before-edges, which needs the whole
-                    # module's files grouped rather than replayed one at a time in manifest order.
-                    graph_files.append(archive_file)
-
-            graphs = await self._import_graph(
-                ctx, src, graph_files, registry, manifest.compression, cipher
-            )
+                )
 
         logger.info(
             "Import complete",
@@ -157,16 +204,6 @@ class ArchiveImporter:
             counters=tuple(counters),
             rebuild=tuple(manifest.rebuild),
         )
-
-    # ....................... #
-
-    def _tenant_binding(self, ctx: ExecutionContext, manifest: Manifest) -> Any:
-        if manifest.scope.kind == "tenant" and manifest.scope.tenant_id is not None:
-            return ctx.inv_ctx.bind_identity(
-                tenant=TenantIdentity(tenant_id=manifest.scope.tenant_id)
-            )
-
-        return nullcontext()
 
     # ....................... #
 
@@ -216,6 +253,7 @@ class ArchiveImporter:
         registry: FrozenSpecRegistry,
         compression: Compression,
         cipher: ArchiveCipher | None,
+        section: ScopeSection,
     ) -> DocumentImport:
         """Replay one ``documents/<name>`` data file into its spec's command port."""
 
@@ -248,14 +286,14 @@ class ArchiveImporter:
                 src / archive_file.path,
                 compression=compression,
                 cipher=cipher,
-                base_aad=archive_file.path,
+                base_aad=section.file_aad(archive_file.path),
             ):
                 yield keyed_create(row, create_codec)
 
         return await ingest_documents(
             query=ctx.document.query(spec),
             command=ctx.document.command(spec),
-            name=name,
+            name=section_label(section, name),
             rows=keyed_creates(),
             on_conflict=self.on_conflict,
             batch_size=self.batch_size,
@@ -271,6 +309,7 @@ class ArchiveImporter:
         registry: FrozenSpecRegistry,
         compression: Compression,
         cipher: ArchiveCipher | None,
+        section: ScopeSection,
     ) -> StorageImport:
         """Replay one ``blobs/<route>/index`` file — each blob back to its archived key.
 
@@ -282,7 +321,7 @@ class ArchiveImporter:
         index recorded before a single one is uploaded under an intact-looking key.
         """
 
-        route = Path(index_file.path).parent.name  # blobs/<route>/index.jsonl.gz -> <route>
+        route = Path(index_file.path).parent.name  # .../blobs/<route>/index.jsonl.gz -> <route>
         entry = registry.find(SpecPlane.STORAGE, route)
 
         if entry is None:
@@ -293,7 +332,7 @@ class ArchiveImporter:
 
         spec = cast("StorageSpec", entry.spec)
         command = ctx.storage.command(spec)
-        objects_dir = src / "blobs" / route / "objects"
+        objects_dir = src / section.prefix / "blobs" / route / "objects"
 
         uploaded = 0
 
@@ -301,7 +340,7 @@ class ArchiveImporter:
             src / index_file.path,
             compression=compression,
             cipher=cipher,
-            base_aad=index_file.path,
+            base_aad=section.file_aad(index_file.path),
         ):
             key = str(row["key"])
             sha256 = str(row["sha256"])
@@ -310,7 +349,7 @@ class ArchiveImporter:
                 expected_sha256=sha256,
                 chunk_size=DEFAULT_CHUNK_SIZE,
                 cipher=cipher,
-                base_aad=f"blobs/{route}|{key}",
+                base_aad=section.blob_aad(route, key),
             )
             await command.overwrite_stream(
                 key,
@@ -320,7 +359,7 @@ class ArchiveImporter:
             )
             uploaded += 1
 
-        return StorageImport(name=route, uploaded=uploaded)
+        return StorageImport(name=section_label(section, route), uploaded=uploaded)
 
     # ....................... #
 
@@ -332,6 +371,7 @@ class ArchiveImporter:
         registry: FrozenSpecRegistry,
         compression: Compression,
         cipher: ArchiveCipher | None,
+        section: ScopeSection,
     ) -> CounterImport:
         """Replay one ``counters/<name>`` file — each partition ``reset`` to its archived value.
 
@@ -357,13 +397,13 @@ class ArchiveImporter:
             src / archive_file.path,
             compression=compression,
             cipher=cipher,
-            base_aad=archive_file.path,
+            base_aad=section.file_aad(archive_file.path),
         ):
             value, suffix = counter_reset_args(row)
             await port.reset(value, suffix=suffix)
             restored += 1
 
-        return CounterImport(name=name, restored=restored)
+        return CounterImport(name=section_label(section, name), restored=restored)
 
     # ....................... #
 
@@ -375,8 +415,9 @@ class ArchiveImporter:
         registry: FrozenSpecRegistry,
         compression: Compression,
         cipher: ArchiveCipher | None,
+        section: ScopeSection,
     ) -> list[GraphImport]:
-        """Replay every graph file, grouped by module and ordered vertices-before-edges.
+        """Replay one section's graph files, grouped by module and ordered vertices-before-edges.
 
         An edge references its endpoint vertices, so a module's node kinds must all land before any
         of its edge kinds — which is why graph files are collected up front and grouped here rather
@@ -386,14 +427,15 @@ class ArchiveImporter:
         modules: dict[str, tuple[list[ArchiveFile], list[ArchiveFile]]] = {}
 
         for archive_file in files:
-            parts = Path(archive_file.path).parts  # graph / <module> / nodes|edges / <kind><suffix>
+            # <section>graph / <module> / nodes|edges / <kind><suffix>
+            parts = Path(archive_file.path.removeprefix(section.prefix)).parts
             module = parts[1]
             node_files, edge_files = modules.setdefault(module, ([], []))
             (node_files if parts[2] == "nodes" else edge_files).append(archive_file)
 
         return [
             await self._import_graph_module(
-                ctx, src, module, nodes, edges, registry, compression, cipher
+                ctx, src, module, nodes, edges, registry, compression, cipher, section
             )
             for module, (nodes, edges) in modules.items()
         ]
@@ -410,6 +452,7 @@ class ArchiveImporter:
         registry: FrozenSpecRegistry,
         compression: Compression,
         cipher: ArchiveCipher | None,
+        section: ScopeSection,
     ) -> GraphImport:
         """Restore one graph module: every vertex kind, then every edge kind.
 
@@ -450,7 +493,7 @@ class ArchiveImporter:
                 src / archive_file.path,
                 compression=compression,
                 cipher=cipher,
-                base_aad=archive_file.path,
+                base_aad=section.file_aad(archive_file.path),
             ):
                 await command.ensure_vertex(
                     kind, create_codec.decode_mapping(row), return_new=False
@@ -465,12 +508,12 @@ class ArchiveImporter:
                 src / archive_file.path,
                 compression=compression,
                 cipher=cipher,
-                base_aad=archive_file.path,
+                base_aad=section.file_aad(archive_file.path),
             ):
                 await command.ensure_edge(kind, edge_create_from_row(row), return_new=False)
                 edges += 1
 
-        return GraphImport(name=module, vertices=vertices, edges=edges)
+        return GraphImport(name=section_label(section, module), vertices=vertices, edges=edges)
 
 
 # ....................... #
@@ -481,6 +524,7 @@ async def import_archive(
     src: Path,
     *,
     on_conflict: OnConflict = "skip",
+    tenant: UUID | None = None,
     sealer: ArchiveSealer | None = None,
 ) -> ImportReport:
     """Convenience over :class:`ArchiveImporter`: pull the registry and the active context off
@@ -491,13 +535,15 @@ async def import_archive(
     scope**. Call it inside ``async with runtime.scope():``. For finer control, use
     :class:`ArchiveImporter` directly.
 
-    Pass a *sealer* to read an encrypted archive (RFC §9); import fails closed without one when the
-    manifest says the archive is sealed.
+    A **per-tenant** archive requires *tenant* — the out-of-band confirmation of whose partition
+    the payload lands in; the manifest names a tenant but is plaintext and unauthenticated, so it
+    is cross-checked, never trusted. Pass a *sealer* to read an encrypted archive (RFC §9); import
+    fails closed without one when the manifest says the archive is sealed.
     """
 
     registry = require_registry(runtime)
 
-    return await ArchiveImporter(on_conflict=on_conflict, sealer=sealer)(
+    return await ArchiveImporter(on_conflict=on_conflict, tenant=tenant, sealer=sealer)(
         runtime.get_context(), registry, src
     )
 
@@ -542,6 +588,166 @@ def _assert_compatible(manifest: Manifest, registry: FrozenSpecRegistry) -> None
 # ....................... #
 
 
+def _assert_scope_confirmed(manifest: Manifest, tenant: UUID | None) -> None:
+    """Require the caller to confirm a per-tenant archive's target tenant out of band.
+
+    The manifest is plaintext: one edited field would otherwise re-home the whole payload into
+    another tenant's partition with every checksum passing and (for a sealed archive) the DEK
+    still unwrapping. The confirmation is what import *binds*; the manifest is only cross-checked
+    against it.
+    """
+
+    if manifest.scope.kind == "tenant":
+        if manifest.scope.tenant_id is None:
+            raise exc.precondition(
+                "Archive manifest declares a tenant scope but names no tenant — it is malformed."
+            )
+
+        if tenant is None:
+            raise exc.precondition(
+                f"Archive is a per-tenant export (manifest names tenant "
+                f"{manifest.scope.tenant_id}). Pass tenant=… to confirm the partition it restores "
+                f"into — the manifest is plaintext and unauthenticated, so it cannot be the sole "
+                f"authority on where this payload lands."
+            )
+
+        if tenant != manifest.scope.tenant_id:
+            raise exc.precondition(
+                f"Archive was exported for tenant {manifest.scope.tenant_id}, but the import was "
+                f"confirmed for tenant {tenant}. Re-homing an archive into a different tenant is "
+                f"refused — re-export for the intended tenant instead."
+            )
+
+        return
+
+    if tenant is not None:
+        raise exc.precondition(
+            "Archive is a full-system export; tenant= confirms per-tenant archives only. Its "
+            "tenant sections restore into the tenants recorded in their own paths."
+        )
+
+
+# ....................... #
+
+
+def _manifest_sections(
+    manifest: Manifest, tenant: UUID | None
+) -> list[tuple[ScopeSection, list[ArchiveFile]]]:
+    """The scope sections this archive was written in, each with its manifest files.
+
+    Mirrors the export's ``scope_sections`` exactly — same prefixes, same AAD scheme — so a
+    sealed frame written under a section decrypts only under the same section on import. A file
+    that belongs to no section is refused: an unattributable file is tampering or corruption,
+    never something to import "somewhere".
+    """
+
+    if manifest.scope.kind == "tenant":
+        # _assert_scope_confirmed has already required and cross-checked the confirmation;
+        # the section binds the CONFIRMED tenant, so the manifest never picks the partition.
+        sections = [ScopeSection(tenant_id=tenant, prefix="", aad_prefix=f"tenant:{tenant}|")]
+
+    elif manifest.scope.tenants is None:
+        sections = [ScopeSection(tenant_id=None, prefix="", aad_prefix="")]
+
+    else:
+        sections = [
+            ScopeSection(tenant_id=one, prefix=f"tenants/{one}/", aad_prefix="")
+            for one in manifest.scope.tenants
+        ]
+
+    # Longest prefix first, so the untenanted "" prefix never swallows a tenant section's files.
+    ordered = sorted(sections, key=lambda section: len(section.prefix), reverse=True)
+    assigned: dict[str, list[ArchiveFile]] = {section.prefix: [] for section in sections}
+
+    for archive_file in manifest.files:
+        owner = next((one for one in ordered if archive_file.path.startswith(one.prefix)), None)
+
+        if owner is None or (owner.prefix == "" and archive_file.path.startswith("tenants/")):
+            raise exc.precondition(
+                f"Archive file {archive_file.path!r} belongs to no scope section the manifest "
+                f"declares — the archive and its manifest disagree."
+            )
+
+        assigned[owner.prefix].append(archive_file)
+
+    return [(section, assigned[section.prefix]) for section in sections]
+
+
+# ....................... #
+
+
 def _verify_files(src: Path, manifest: Manifest) -> None:
     for archive_file in manifest.files:
         verify_file(src / archive_file.path, archive_file.sha256)
+
+
+# ....................... #
+
+
+def _assert_archive_complete(
+    src: Path,
+    manifest: Manifest,
+    plan: ExportPlan,
+    sections: list[tuple[ScopeSection, list[ArchiveFile]]],
+) -> None:
+    """Cross-check the artifact against the manifest **and** the target's own export plan.
+
+    The "a missing plane and an empty one look alike" doctrine is worthless if it is only
+    enforced against the author's specs: delete a data file *and* its manifest entry and a
+    manifest-driven import runs clean, reporting success with the plane silently absent. Two
+    checks close that:
+
+    - **Plan coverage.** Every file the target's own ``plan_export`` would have written (an
+      empty plane still writes its file) must be listed in the manifest, per section. A planned
+      file with no manifest entry means the archive lost a plane, however it happened.
+    - **No unlisted payload.** Every data file present in the directory must be in the manifest.
+      An extra file is tampering or a mixed-up directory — never something to silently ignore
+      next to checksummed neighbours.
+    """
+
+    suffix = data_suffix(manifest.compression)
+    listed = {archive_file.path for archive_file in manifest.files}
+    missing: list[str] = []
+
+    for section, _files in sections:
+        expected: list[str] = []
+        expected.extend(f"{section.prefix}documents/{e.name}{suffix}" for e in plan.documents)
+        expected.extend(f"{section.prefix}blobs/{e.name}/index{suffix}" for e in plan.storage)
+        expected.extend(f"{section.prefix}counters/{e.name}{suffix}" for e in plan.counters)
+
+        for entry in plan.graph:
+            spec = cast("GraphModuleSpec", entry.spec)
+            expected.extend(
+                section.prefix + node_file(entry.name, str(node.name), manifest.compression)
+                for node in spec.nodes
+            )
+            expected.extend(
+                section.prefix + edge_file(entry.name, str(edge.name), manifest.compression)
+                for edge in spec.edges
+            )
+
+        missing.extend(path for path in expected if path not in listed)
+
+    if missing:
+        raise exc.precondition(
+            "Archive is incomplete: the target's spec inventory expects data files the manifest "
+            "never lists — a missing plane must not import as an empty one:\n"
+            + "\n".join(f"  - {path}" for path in sorted(missing))
+        )
+
+    unlisted = sorted(
+        path.relative_to(src).as_posix()
+        for path in src.rglob("*")
+        if path.is_file()
+        and path.name != "manifest.json"
+        and "specs" not in path.relative_to(src).parts[:1]
+        and "objects" not in path.relative_to(src).parts
+        and path.relative_to(src).as_posix() not in listed
+    )
+
+    if unlisted:
+        raise exc.precondition(
+            "Archive contains data files its manifest never recorded — refusing to import a "
+            "directory that disagrees with its own table of contents:\n"
+            + "\n".join(f"  - {path}" for path in unlisted)
+        )

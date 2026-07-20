@@ -18,6 +18,7 @@ from contextlib import AbstractContextManager, nullcontext
 from typing import Any, Literal, cast
 from uuid import UUID
 
+import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.counter import CounterEntry
@@ -219,19 +220,97 @@ def assert_scope_permitted(scope: ExportScope, *, allow_fuzzy: bool) -> None:
 # ....................... #
 
 
-def scope_binding(ctx: ExecutionContext, scope: ExportScope) -> AbstractContextManager[Any]:
-    """The identity a scoped walk runs under against *ctx*.
+@attrs.frozen(kw_only=True)
+class ScopeSection:
+    """One partition of a scoped walk: the identity it binds, and where its files live.
 
-    A :class:`TenantScope` binds the tenant, so tenancy's own fail-closed scoping does the
-    filtering; a :class:`FullScope` binds nothing (every tenant's rows). ``migrate`` binds one on
-    the source and one on the target from the same scope, so reads and writes land in the same
-    tenant partition.
+    A scope resolves to **sections**, and every verb (export, import, migrate) walks each
+    section under its bound identity — the shape that makes a full-system walk complete on a
+    tenant-aware deployment. A :class:`TenantScope` is one section; a :class:`FullScope` is one
+    per declared tenant (files under ``tenants/<uuid>/``) or a single unbound one when the
+    operator declared :data:`~forze_kits.integrations.portability.scope.UNTENANTED`.
+    """
+
+    tenant_id: UUID | None
+    """The tenant this section binds; ``None`` for the unbound (untenanted) walk."""
+
+    prefix: str
+    """Archive path prefix for the section's files (``""`` or ``tenants/<uuid>/``)."""
+
+    aad_prefix: str
+    """Prefix bound into every sealed frame's AAD. For a per-tenant archive the tenant is not in
+    the file path, so it is bound here (``tenant:<uuid>|``) — a sealed archive whose manifest is
+    edited to name another tenant then fails frame authentication instead of importing into the
+    wrong partition. Full-scope sections carry the tenant in the path itself, so this stays empty.
+    """
+
+    # ....................... #
+
+    def file_aad(self, rel: str) -> str:
+        """The AAD a sealed data file at archive path *rel* is bound to."""
+
+        return f"{self.aad_prefix}{rel}"
+
+    def blob_aad(self, route: str, key: str) -> str:
+        """The AAD a sealed blob object is bound to — its route + key identity, section-scoped."""
+
+        return f"{self.aad_prefix}{self.prefix}blobs/{route}|{key}"
+
+
+# ....................... #
+
+
+def scope_sections(scope: ExportScope) -> tuple[ScopeSection, ...]:
+    """The sections a scope walks — the one place the scope → partition mapping exists.
+
+    Shared by export and the direct ``migrate`` (and mirrored by import from the manifest), so
+    a full-system export and a full-system migration cover exactly the same partitions by
+    construction.
     """
 
     if isinstance(scope, TenantScope):
-        return ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=scope.tenant_id))
+        return (
+            ScopeSection(
+                tenant_id=scope.tenant_id,
+                prefix="",
+                aad_prefix=f"tenant:{scope.tenant_id}|",
+            ),
+        )
+
+    if scope.tenants == "untenanted":
+        return (ScopeSection(tenant_id=None, prefix="", aad_prefix=""),)
+
+    return tuple(
+        ScopeSection(tenant_id=tenant, prefix=f"tenants/{tenant}/", aad_prefix="")
+        for tenant in scope.tenants
+    )
+
+
+# ....................... #
+
+
+def section_binding(ctx: ExecutionContext, section: ScopeSection) -> AbstractContextManager[Any]:
+    """The identity one section's walk runs under against *ctx*.
+
+    A tenant section binds its tenant, so tenancy's own fail-closed scoping does the filtering
+    (and a tenant-aware backend resolves that tenant's partition); the untenanted section binds
+    nothing. ``migrate`` binds one on the source and one on the target from the same section, so
+    reads and writes land in the same partition.
+    """
+
+    if section.tenant_id is not None:
+        return ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=section.tenant_id))
 
     return nullcontext()
+
+
+# ....................... #
+
+
+def section_label(section: ScopeSection, name: str) -> str:
+    """A report label that stays unambiguous when a full-system walk repeats per tenant."""
+
+    return name if section.prefix == "" else f"{section.tenant_id}/{name}"
 
 
 # ....................... #

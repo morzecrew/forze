@@ -23,6 +23,7 @@ from forze.application.contracts.inventory import SpecRegistry
 from forze.application.execution import ExecutionRuntime
 from forze_identity.inventory import spec_contributions
 from forze_kits.integrations.portability import (
+    UNTENANTED,
     ExportReport,
     FullScope,
     Manifest,
@@ -87,7 +88,9 @@ async def test_full_system_export_includes_identity(tmp_path: Path) -> None:
     runtime = _runtime(MockState())
     archive = tmp_path / "archive"
 
-    await _export(runtime, archive, FullScope(quiesce=_ATTESTED))
+    await _export(
+        runtime, archive, FullScope(quiesce=_ATTESTED, tenants=UNTENANTED), acknowledge_plaintext=True
+    )
 
     files = _doc_files(archive)
     assert "orders.jsonl.gz" in files
@@ -100,7 +103,13 @@ async def test_per_tenant_include_identity_opts_in(tmp_path: Path) -> None:
     runtime = _runtime(MockState())
     archive = tmp_path / "archive"
 
-    await _export(runtime, archive, TenantScope(tenant_id=uuid4()), include_identity=True)
+    await _export(
+        runtime,
+        archive,
+        TenantScope(tenant_id=uuid4()),
+        include_identity=True,
+        acknowledge_plaintext=True,
+    )
 
     assert _doc_files(archive) >= _IDENTITY_FILES, "opting in carries identity per-tenant"
     assert _manifest(archive).identity_included is True
@@ -136,7 +145,7 @@ async def test_per_tenant_archive_still_imports_into_the_full_application(tmp_pa
 
     target = _runtime(MockState())
     async with target.scope():
-        result = await import_archive(target, archive)
+        result = await import_archive(target, archive, tenant=tenant)
 
     assert result.total_imported == 2  # business data landed; fingerprints matched
 
