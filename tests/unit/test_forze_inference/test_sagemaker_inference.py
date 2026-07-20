@@ -169,3 +169,25 @@ class TestSageMakerInferenceAdapter:
         port = _ctx(_ScalarClient(), _config()).inference.model(_spec())
 
         assert (await port.predict(_Features(x=4.0))).y == 8.0
+
+    @pytest.mark.asyncio
+    async def test_empty_batch_makes_no_invocation(self) -> None:
+        client = _StubRuntimeClient()
+        port = _ctx(client, _config()).inference.model(_spec())
+
+        assert await port.predict_many([]) == []
+        assert client.invocations == []
+
+    @pytest.mark.asyncio
+    async def test_stream_without_a_cap_sends_one_invocation_per_chunk(self) -> None:
+        client = _StubRuntimeClient()
+        port = _ctx(client, _config()).inference.model(_spec())
+
+        async def chunks():
+            yield []
+            yield [_Features(x=1.0), _Features(x=2.0)]
+
+        seen = [[o.y for o in chunk] async for chunk in port.predict_stream(chunks())]
+
+        assert seen == [[], [2.0, 4.0]]
+        assert [len(call["instances"]) for call in client.invocations] == [2]

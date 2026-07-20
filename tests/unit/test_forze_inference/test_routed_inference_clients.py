@@ -27,6 +27,7 @@ from forze_inference.http import (
     InferenceHttpClient,
     InferenceHttpRoutingCredentials,
     RoutedInferenceHttpClient,
+    routed_inference_http_lifecycle_step,
 )
 from forze_inference.http.kernel.routing_credentials import credential_headers
 from forze_inference.sagemaker import (
@@ -322,3 +323,15 @@ class TestCredentialHeaders:
         )
 
         assert credential_headers(creds) == {"Authorization": "Bearer derived-token"}
+
+
+def test_routed_http_step_id_is_stable_and_overridable() -> None:
+    secrets = _MemSecrets({_T1: {"base_url": "http://tenant-one.invalid"}})
+    routed = RoutedInferenceHttpClient(
+        secrets=secrets,  # type: ignore[arg-type]
+        secret_ref_for_tenant=_ref,
+        tenant_provider=lambda: _T1,
+    )
+
+    assert routed_inference_http_lifecycle_step(routed).id == "routed_inference_http_client"
+    assert routed_inference_http_lifecycle_step(routed, name="custom").id == "custom"

@@ -262,3 +262,43 @@ class TestLocalInferenceLifecycle:
     def test_non_callable_loader_rejected_at_wiring(self) -> None:
         with pytest.raises(CoreException, match="callable"):
             LocalInferenceConfig(loader="not-a-callable")  # type: ignore[arg-type]
+
+    @pytest.mark.asyncio
+    async def test_concurrent_first_calls_load_the_model_once(self) -> None:
+        """Two requests racing the first prediction must share one load — otherwise a
+        cold start multiplies an expensive artifact load by the concurrency."""
+
+        import asyncio
+
+        class _SlowLoader:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def __call__(self) -> object:
+                self.calls += 1
+                time.sleep(0.05)
+                return _DoublingModel()
+
+        loader = _SlowLoader()
+        module = LocalInferenceDepsModule(
+            models={"doubler": LocalInferenceConfig(loader=loader, warm_on_startup=False)},
+        )
+        port = _ctx(module).inference.model(_spec())
+
+        out = await asyncio.gather(
+            port.predict(_Features(x=1.0)),
+            port.predict(_Features(x=2.0)),
+        )
+
+        assert [o.y for o in out] == [2.0, 4.0]
+        assert loader.calls == 1
+
+    @pytest.mark.asyncio
+    async def test_loader_returning_none_fails_closed(self) -> None:
+        module = LocalInferenceDepsModule(
+            models={"doubler": LocalInferenceConfig(loader=lambda: None, warm_on_startup=False)},
+        )
+        port = _ctx(module).inference.model(_spec())
+
+        with pytest.raises(CoreException, match="returned None"):
+            await port.predict(_Features(x=1.0))

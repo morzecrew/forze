@@ -343,3 +343,35 @@ class TestLifecycle:
 
         with pytest.raises(CoreException, match="not initialized"):
             await port.predict(_Features())
+
+
+# ....................... #
+
+
+class TestHttpLifecycleWiring:
+    @pytest.mark.asyncio
+    async def test_startup_leaves_a_custom_port_implementation_alone(self) -> None:
+        """A caller may register their own ``InferenceHttpClientPort``; the hook must not
+        try to initialize a client it does not own."""
+
+        class _Custom:
+            def __init__(self) -> None:
+                self.initialized = False
+
+            async def post_json(self, path: str, body: Any, **kwargs: Any) -> dict[str, Any]:
+                return {"predictions": []}
+
+            async def close(self) -> None:
+                return None
+
+        custom = _Custom()
+        module = HttpInferenceDepsModule(client=custom, models={"doubler": _config()})
+        ctx = context_from_modules(module)
+
+        await inference_http_lifecycle_step("http://model-server").startup(ctx)
+
+        assert not custom.initialized
+
+    def test_step_id_is_stable_and_overridable(self) -> None:
+        assert inference_http_lifecycle_step("http://m").id == "inference_http_client"
+        assert inference_http_lifecycle_step("http://m", name="custom").id == "custom"
