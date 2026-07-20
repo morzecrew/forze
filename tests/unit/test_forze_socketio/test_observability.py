@@ -63,13 +63,14 @@ def test_gateway_instrument_reflects_live_stats() -> None:
 
     instrument_realtime_gateway(stats, meter=meter)  # pyright: ignore[reportArgumentType]
 
-    assert len(meter.callbacks) == 8  # every delivery outcome registered
+    assert len(meter.callbacks) == 9  # every delivery outcome registered
 
     stats.emitted = 7
     stats.emit_failed = 2
     stats.presence_skipped = 1
     stats.dedup_skipped = 3
     stats.admission_rejected = 4
+    stats.untenanted_dropped = 2
     stats.mailboxed = 5
     stats.bridge_failed = 6
     stats.poisoned = 1
@@ -79,6 +80,7 @@ def test_gateway_instrument_reflects_live_stats() -> None:
     assert _scrape(meter, "forze.realtime.gateway.presence_skipped") == 1
     assert _scrape(meter, "forze.realtime.gateway.dedup_skipped") == 3
     assert _scrape(meter, "forze.realtime.gateway.admission_rejected") == 4
+    assert _scrape(meter, "forze.realtime.gateway.untenanted_dropped") == 2
     assert _scrape(meter, "forze.realtime.gateway.mailboxed") == 5
     assert _scrape(meter, "forze.realtime.gateway.bridge_failed") == 6
     assert _scrape(meter, "forze.realtime.gateway.poisoned") == 1

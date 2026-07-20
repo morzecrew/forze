@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Observability + inventory** — `RealtimeGatewayStats` + `instrument_realtime_gateway`; the gateway bridges under the producer's `traceparent`; `BackplaneHealth` + `realtime_backplane_heartbeat_lifecycle_step` + `instrument_realtime_backplane`; `RealtimeTransport.spec_contributions()`.
 - **Connection hygiene** — built-in `realtime.reauth` (same principal and tenant only); `InMemoryRealtimeMailbox` per-principal cap (1000).
 - **Crash conformance** — `forze_dst.conformance.run_gateway_crash_delivery` (+ `GatewayCrashPoint`, `GatewayDeliveryOutcome`, `RealtimeBridge`), runnable against the mock or a real Redis stream.
+- **Mailbox retention backstop** — `realtime_mailbox_retention_lifecycle_step(max_age=…, cursor_max_age=…, tenants=…)` age-sweeps mailbox entries and prunes idle device cursors; new `sweep_older_than` / `prune_stale`, `MailboxStats.overflowed`, `MailboxDocumentSpec` / `CursorDocumentSpec`.
+- **Mailbox sealing** — `realtime_mailbox_spec(encryption=…)` seals stored signal bodies at rest; sealing the replay index (`principal` / `event_id` / `hlc`) is refused (`realtime_mailbox_sealed_index`).
+- **WS perimeter** — `attach_realtime_ws_route(allowed_origins=…)` Origin allowlist; `WsConnection.expires_at` enforced continuously (socket closed past expiry; `realtime.reauth` refreshes it).
+- **Egress tenancy fail-closed** — `RealtimeGateway.require_tenant` drops untenanted signals instead of emitting to the global room; new `stats.untenanted_dropped`.
 
 **Realtime transports & client contract** — three transports (Socket.IO, SSE, raw WebSocket), one versioned wire contract.
 
@@ -87,6 +91,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`OutboxEmit` rejects a relay with no destination** — a `RelayBinding` whose `transport` names a spec it was never given raises `precondition` at construction instead of quietly dropping that route from the inventory.
 
 ### Fixed
+
+**Realtime**
+
+- **An untenanted signal no longer stops the gateway for every tenant** — the tenant-aware-mailbox `tenant_required` rewrap is a per-signal error (parked, bounded by the poison ceiling), no longer a process-terminal configuration verdict.
+- **Cumulative ack could skip — then trim — undelivered mailbox entries** — the replay cap is now a newest-first retention window (a complete suffix, never a truncated prefix), and Socket.IO acks clamp to the replay's delivered floor mid-drain; new `acknowledge_up_to(delivered_floor=…)`.
+- **Node-local presence on a multi-node backplane suppressed every live emit** — the gateway refuses `presence` without `cluster_wide = True` under a pub/sub Socket.IO manager (`realtime_presence_node_local`).
+- **One hostile frame could tear down a WS connection** — a binary frame closes with 1003 instead of an escaping `KeyError`; a non-JSON command ack becomes an error ack (`realtime_ack_unserializable`) instead of a `TypeError` cancelling every in-flight command.
 
 - **`CounterPort.reset` now returns the new value on Redis** (it returned the *previous* value) — **behavior change** for callers relying on the old return; `incr_batch` uniformly accepts `size=1` and rejects `size < 1` as `precondition` on every backend.
 

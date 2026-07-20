@@ -17,7 +17,7 @@ from forze.application.contracts.realtime import (
     RealtimeSignal,
 )
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import HlcTimestamp
 from forze_kits.integrations.realtime import realtime_inbox_spec
 from forze_mock import MockDepsModule
@@ -26,6 +26,7 @@ from forze_socketio import (
     InMemoryRealtimeMailbox,
     InMemoryRealtimePresence,
     RealtimeGateway,
+    RealtimeGatewayStats,
     RealtimeMailbox,
     RealtimeSignalSource,
     SignalHandler,
@@ -247,13 +248,17 @@ class _TenantRequiredMailbox(RealtimeMailbox):
 async def test_tenant_aware_mailbox_without_binding_fails_with_actionable_error() -> None:
     # The gateway has no ambient tenant and bind_tenant_from_headers is off (default),
     # so a tenant-aware mailbox cannot scope — the opaque tenant_required is rewrapped
-    # into a configuration error naming the wiring contract.
+    # into an error naming the wiring contract. Deliberately NOT a configuration kind:
+    # in the consume loop a configuration verdict is process-terminal (supervision
+    # stops for every tenant, the message redelivers on restart, and the loop dies
+    # again). A per-signal kind parks the one message for the poison ceiling instead.
     sio = _StubSio()
 
     with pytest.raises(CoreException) as caught:
         await _drive(_gateway(sio), _TenantRequiredMailbox(), _principal_signal())
 
     assert caught.value.code == "realtime_mailbox_tenant_unbound"
+    assert caught.value.kind is not ExceptionKind.CONFIGURATION
     assert "bind_tenant_from_headers" in caught.value.summary
 
 
@@ -264,3 +269,33 @@ async def test_presence_skips_live_emit_when_offline_but_still_stores() -> None:
 
     assert [r.event_id for r in await mailbox.read_since(principal="u1", since=None)] == ["evt-1"]
     assert sio.emits == []  # offline → live emit skipped
+
+
+# ----------------------- #
+# require_tenant: an untenanted signal is refused, never emitted to the global room
+
+
+async def test_require_tenant_drops_untenanted_signal() -> None:
+    # the room name is the isolation boundary — with require_tenant the gateway drops a
+    # signal that resolves no tenant (missing/malformed header) instead of degrading to
+    # the unprefixed global room, and the drop is counted
+    sio, mailbox = _StubSio(), InMemoryRealtimeMailbox()
+    stats = RealtimeGatewayStats()
+    gw = _gateway(sio, require_tenant=True, stats=stats)
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await gw._handle(ctx, mailbox, _principal_signal(), None, "evt-1", _HLC)  # no tenant
+
+    assert sio.emits == []  # nothing reaches the global room
+    assert await mailbox.read_since(principal="u1", since=None) == []  # nor the mailbox
+    assert stats.untenanted_dropped == 1
+
+
+async def test_require_tenant_passes_tenanted_signal_to_the_scoped_room() -> None:
+    sio, mailbox = _StubSio(), InMemoryRealtimeMailbox()
+    gw = _gateway(sio, require_tenant=True)
+    await _drive(gw, mailbox, _principal_signal())  # _drive binds _TENANT
+
+    assert sio.emits[0]["room"] == f"t:{_TENANT}:principal:u1"  # tenant-prefixed, never global

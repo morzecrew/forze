@@ -24,6 +24,7 @@ MAILBOX_STORED_COUNTER = "forze.realtime.mailbox.stored"
 MAILBOX_REPLAYED_COUNTER = "forze.realtime.mailbox.replayed"
 MAILBOX_TRIMMED_COUNTER = "forze.realtime.mailbox.trimmed"
 MAILBOX_ACKED_COUNTER = "forze.realtime.mailbox.acked"
+MAILBOX_OVERFLOWED_COUNTER = "forze.realtime.mailbox.overflowed"
 
 # ....................... #
 
@@ -45,6 +46,9 @@ def instrument_realtime_mailbox(
     - ``forze.realtime.mailbox.replayed`` — entries fetched on connect-time replay.
     - ``forze.realtime.mailbox.trimmed`` — entries dropped by retention/ack trimming.
     - ``forze.realtime.mailbox.acked`` — cursor advances (devices confirming receipt).
+    - ``forze.realtime.mailbox.overflowed`` — replays that lost their oldest backlog to
+      the retention cap; every increment is a device that fell more than ``cap``
+      entries behind (alarm on it).
     """
 
     from opentelemetry import metrics
@@ -79,4 +83,9 @@ def instrument_realtime_mailbox(
         MAILBOX_ACKED_COUNTER,
         lambda: cursors.stats().acked,
         "Per-device cursor advances (acked deliveries).",
+    )
+    _counter(
+        MAILBOX_OVERFLOWED_COUNTER,
+        lambda: mailbox.stats().overflowed,
+        "Replays that lost their oldest backlog to the retention cap (bounded loss).",
     )

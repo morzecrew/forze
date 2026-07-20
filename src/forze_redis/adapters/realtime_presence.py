@@ -19,7 +19,7 @@ require_redis()
 # ....................... #
 
 from datetime import timedelta
-from typing import Final, final
+from typing import ClassVar, Final, final
 
 import attrs
 
@@ -42,6 +42,10 @@ class RedisRealtimePresence:
     The TTL must exceed the heartbeat interval so a live connection stays counted
     between refreshes; size it at a small multiple of the heartbeat.
     """
+
+    cluster_wide: ClassVar[bool] = True
+    """Counts are read from shared Redis state — visible to every node, so the
+    gateway's presence-based emit skip may trust them on a multi-node backplane."""
 
     client: RedisClientPort
     """Redis client used for the presence sorted sets."""

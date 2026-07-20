@@ -25,9 +25,18 @@ from forze.application.execution.background import (
     BackgroundLoopControl,
 )
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze.base.primitives import StrKey, current_entropy_source
+from forze.base.primitives import HlcTimestamp, StrKey, current_entropy_source, utcnow
 from forze_kits.integrations._logger import logger
 from forze_kits.integrations.outbox import outbox_relay_background_lifecycle_step
+
+from .mailbox import (
+    CursorDocumentSpec,
+    DocumentMailboxCursors,
+    DocumentRealtimeMailbox,
+    MailboxDocumentSpec,
+    build_realtime_cursors,
+    build_realtime_mailbox,
+)
 
 # ----------------------- #
 
@@ -366,6 +375,242 @@ class _StreamTrimShutdown(LifecycleHook):
     async def __call__(self, ctx: ExecutionContext) -> None:
         clock = asyncio.get_running_loop()
         await self.startup.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class _MailboxRetentionStartup(LifecycleHook):
+    """Periodically sweep the mailbox by age and prune stale device cursors.
+
+    The retention backstop the ack-driven trim cannot be: without it the mailbox has
+    **no delete path at all** for a principal whose devices stop acking (the replay cap
+    bounds reads, not storage), and cursor rows — one per per-connection fallback key —
+    are immortal, each freezing the all-device trim floor wherever it last acked.
+    """
+
+    max_age: timedelta
+    cursor_max_age: timedelta
+    mailbox_builder: Callable[[ExecutionContext], DocumentRealtimeMailbox]
+    cursors_builder: Callable[[ExecutionContext], DocumentMailboxCursors]
+    interval: timedelta
+    jitter: float
+    tenants: Callable[[], Sequence[UUID]] | None
+
+    control: BackgroundLoopControl = attrs.field(
+        default=attrs.Factory(lambda: BackgroundLoopControl(name="realtime_mailbox_retention")),
+        init=False,
+    )
+    """Stop signal and bounded teardown, shared with every other background loop."""
+
+    # ....................... #
+
+    @property
+    def task(self) -> asyncio.Task[None] | None:
+        """The running loop, if any."""
+
+        return self.control.task
+
+    # ....................... #
+
+    @property
+    def loop_name(self) -> str:
+        """Satisfies ``DrainableLoop``."""
+
+        return self.control.loop_name
+
+    # ....................... #
+
+    async def stop(self, *, deadline: float) -> bool:
+        """Stop the loop between ticks. Idempotent — a retention sweep is idempotent and
+        monotonic, so a tick cut mid-sweep costs nothing (the next sweep finishes it)."""
+
+        return await self.control.stop(deadline=deadline)
+
+    # ....................... #
+
+    async def _sweep(self, ctx: ExecutionContext) -> None:
+        now = utcnow()
+        entry_cutoff = HlcTimestamp(
+            physical_ms=int((now - self.max_age).timestamp() * 1000), logical=0
+        )
+        cursor_idle_since = now - self.cursor_max_age
+
+        mailbox = self.mailbox_builder(ctx)
+        cursors = self.cursors_builder(ctx)
+
+        swept = await mailbox.sweep_older_than(cutoff=entry_cutoff)
+        pruned = await cursors.prune_stale(idle_since=cursor_idle_since)
+
+        if swept or pruned:
+            logger.info(
+                "Realtime mailbox retention sweep",
+                entries_swept=swept,
+                cursors_pruned=pruned,
+            )
+
+    # ....................... #
+
+    async def _sweep_tick(self, ctx: ExecutionContext, tenants: Sequence[UUID] | None) -> None:
+        if tenants is None:
+            await self._sweep(ctx)
+            return
+
+        for tenant in tenants:
+            try:
+                with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+                    await self._sweep(ctx)
+
+            except asyncio.CancelledError:
+                raise
+
+            except CoreException as error:
+                # A wiring error (misrouted spec, missing dep) does not fix itself by
+                # moving to the next tenant — terminate loudly. Operational failures
+                # stay isolated per tenant.
+                if error.kind is ExceptionKind.CONFIGURATION:
+                    raise
+
+                logger.exception("Realtime mailbox retention failed for tenant", tenant=str(tenant))
+
+            except Exception:
+                logger.exception("Realtime mailbox retention failed for tenant", tenant=str(tenant))
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        # Freeze the assigned tenant shard at startup (restart to repartition), matching
+        # the sharded gateway/relay — a broken provider fails startup loudly.
+        tenants = list(self.tenants()) if self.tenants is not None else None
+
+        if self.control.running:
+            logger.warning("Realtime mailbox retention already running; ignoring duplicate startup")
+            return
+
+        self.control.arm()
+
+        async def _loop() -> None:
+            while True:
+                try:
+                    await self._sweep_tick(ctx, tenants)
+                except asyncio.CancelledError:
+                    raise
+                except CoreException as error:
+                    if error.kind is ExceptionKind.CONFIGURATION:
+                        logger.exception(
+                            "Realtime mailbox retention hit a configuration error; "
+                            "loop stopped — fix the wiring and restart"
+                        )
+                        return
+
+                    logger.exception("Realtime mailbox retention sweep failed")
+                except Exception:
+                    logger.exception("Realtime mailbox retention sweep failed")
+
+                # Multiplicative jitter desynchronizes N replicas' sweeps; racing sweeps
+                # are harmless (deletes are idempotent), this only avoids redundant work.
+                if await self.control.sleep_or_stop(
+                    self.interval.total_seconds()
+                    * (
+                        1.0
+                        + current_entropy_source().as_random().uniform(-self.jitter, self.jitter)
+                    )
+                ):
+                    return
+
+        self.control.task = asyncio.create_task(_loop(), name=self.control.loop_name)
+        ctx.drainables.register(self)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class _MailboxRetentionShutdown(LifecycleHook):
+    """Stop the retention loop (fallback for a hand-driven lifecycle; idempotent)."""
+
+    startup: _MailboxRetentionStartup
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        clock = asyncio.get_running_loop()
+        await self.startup.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
+
+
+# ....................... #
+
+
+def realtime_mailbox_retention_lifecycle_step(
+    *,
+    max_age: timedelta,
+    cursor_max_age: timedelta | None = None,
+    mailbox_spec: MailboxDocumentSpec | None = None,
+    cursor_spec: CursorDocumentSpec | None = None,
+    interval: timedelta = timedelta(minutes=10),
+    jitter: float = 0.2,
+    tenants: Callable[[], Sequence[UUID]] | None = None,
+    step_id: StrKey = "realtime_mailbox_retention",
+) -> LifecycleStep:
+    """Periodically delete mailbox entries older than *max_age* and prune device cursors
+    idle longer than *cursor_max_age* — the mailbox's **only** storage bound.
+
+    The ack-driven trim follows the all-device cursor floor, and the replay cap bounds
+    reads; neither deletes anything for a principal whose devices stop acking, and the
+    per-connection cursor fallback mints one immortal row per connection whose stale
+    position freezes the trim floor forever. This sweep is the declared retention
+    lifecycle: *max_age* is how long offline delivery is owed (an older entry is
+    deleted, acked or not); *cursor_max_age* (default: *max_age*, never less) is how
+    long a silent device stays in the trim-floor registry — a pruned device replays the
+    retained window on its next connect and dedups by envelope id.
+
+    Deletes are idempotent and monotonic, so any interval and any number of concurrent
+    sweepers are safe; under a ``FLEET`` profile wrap it with a singleton step to avoid
+    redundant round trips. *tenants* mirrors the sharded gateway: on ``tenant_aware``
+    mailbox/cursor routes, pass ``lambda: shard.tenants`` to sweep each assigned
+    tenant's collections; ``None`` sweeps the tenant-global collections once.
+    """
+
+    if max_age.total_seconds() <= 0:
+        raise exc.configuration("Mailbox retention max_age must be positive")
+
+    resolved_cursor_age = cursor_max_age if cursor_max_age is not None else max_age
+
+    if resolved_cursor_age < max_age:
+        # A cursor pruned while its acked prefix is still retained would replay (and
+        # re-offer) entries the device already confirmed — keep the registry's memory
+        # at least as long as the entries it indexes.
+        raise exc.configuration(
+            "Mailbox retention cursor_max_age must be at least max_age: pruning a "
+            "device cursor before its acked entries expire re-offers confirmed "
+            "deliveries on every reconnect"
+        )
+
+    if interval.total_seconds() <= 0:
+        raise exc.configuration("Mailbox retention interval must be positive")
+
+    if not 0.0 <= jitter < 1.0:
+        raise exc.configuration("Jitter must be in [0, 1)")
+
+    startup = _MailboxRetentionStartup(
+        max_age=max_age,
+        cursor_max_age=resolved_cursor_age,
+        mailbox_builder=lambda ctx: build_realtime_mailbox(ctx, spec=mailbox_spec),
+        cursors_builder=lambda ctx: build_realtime_cursors(ctx, spec=cursor_spec),
+        interval=interval,
+        jitter=jitter,
+        tenants=tenants,
+    )
+
+    return LifecycleStep(
+        id=step_id,
+        startup=startup,
+        shutdown=_MailboxRetentionShutdown(startup=startup),
+        requires_long_running=True,
+    )
 
 
 # ....................... #

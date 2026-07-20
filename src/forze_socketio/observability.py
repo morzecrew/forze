@@ -36,6 +36,7 @@ GATEWAY_EMIT_FAILED_COUNTER = "forze.realtime.gateway.emit_failed"
 GATEWAY_PRESENCE_SKIPPED_COUNTER = "forze.realtime.gateway.presence_skipped"
 GATEWAY_DEDUP_SKIPPED_COUNTER = "forze.realtime.gateway.dedup_skipped"
 GATEWAY_ADMISSION_REJECTED_COUNTER = "forze.realtime.gateway.admission_rejected"
+GATEWAY_UNTENANTED_DROPPED_COUNTER = "forze.realtime.gateway.untenanted_dropped"
 GATEWAY_MAILBOXED_COUNTER = "forze.realtime.gateway.mailboxed"
 GATEWAY_BRIDGE_FAILED_COUNTER = "forze.realtime.gateway.bridge_failed"
 GATEWAY_POISONED_COUNTER = "forze.realtime.gateway.poisoned"
@@ -123,6 +124,9 @@ class RealtimeGatewayStats:
     admission_rejected: int = 0
     """Signals dropped at the catalog gate (undeclared event, audience, payload shape)."""
 
+    untenanted_dropped: int = 0
+    """Signals dropped for resolving no tenant on a ``require_tenant`` gateway."""
+
     mailboxed: int = 0
     """Durable principal signals stored for offline replay."""
 
@@ -187,6 +191,11 @@ def instrument_realtime_gateway(
         GATEWAY_ADMISSION_REJECTED_COUNTER,
         lambda: stats.admission_rejected,
         "Signals rejected at the catalog admission gate.",
+    )
+    _counter(
+        GATEWAY_UNTENANTED_DROPPED_COUNTER,
+        lambda: stats.untenanted_dropped,
+        "Signals dropped for resolving no tenant on a require_tenant gateway.",
     )
     _counter(
         GATEWAY_MAILBOXED_COUNTER,

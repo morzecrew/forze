@@ -62,8 +62,21 @@ async def _create_note(args: _CreateNote) -> _NoteAck:
     return _NoteAck(note_id=f"note:{args.text}")
 
 
+async def _note_when(_args: _CreateNote) -> Any:
+    from datetime import datetime, timezone
+
+    # an untyped ack (ack_type=None) passes through parse_ack verbatim — a datetime
+    # here is exactly the non-JSON value the serialization guard must contain
+    return {"at": datetime(2026, 1, 1, tzinfo=timezone.utc)}
+
+
 def _registry() -> Any:
-    return OperationRegistry().set_handler("note.create", lambda _ctx: _create_note).freeze()
+    return (
+        OperationRegistry()
+        .set_handler("note.create", lambda _ctx: _create_note)
+        .set_handler("note.when", lambda _ctx: _note_when)
+        .freeze()
+    )
 
 
 _COMMANDS = (
@@ -72,6 +85,11 @@ _COMMANDS = (
         operation="note.create",
         payload_type=_CreateNote,
         ack_type=_NoteAck,
+    ),
+    RealtimeCommandRoute[Any, Any](
+        event="note.when",
+        operation="note.when",
+        payload_type=_CreateNote,  # untyped ack: no ack_type
     ),
 )
 
@@ -89,6 +107,16 @@ async def _resolver(connect: WsConnect) -> WsConnection | None:
 
     if token == "other":
         return WsConnection(authn=AuthnIdentity(principal_id=uuid4()))
+
+    if token == "expired":
+        from datetime import timedelta
+
+        from forze.base.primitives import utcnow
+
+        return WsConnection(
+            authn=AuthnIdentity(principal_id=_PRINCIPAL),
+            expires_at=utcnow() - timedelta(seconds=1),
+        )
 
     device = auth.get("device_id") or connect.websocket.query_params.get("device_id")
 
@@ -555,3 +583,120 @@ class TestPresence:
             "topic:t1",
         ]
         assert [room for room, _ in presence.leaves] == [room for room, _ in presence.joins]
+
+
+# ----------------------- #
+# perimeter: origin allowlist + credential expiry
+
+
+class TestOriginAllowlist:
+    def test_disallowed_origin_is_refused_with_policy_close(self) -> None:
+        client, _ = _build(allowed_origins=["https://app.example.com"])
+
+        with client.websocket_connect(
+            "/realtime/ws", headers={"Origin": "https://evil.example"}
+        ) as ws:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                ws.receive_json()
+
+        assert caught.value.code == 1008
+        assert "Origin" in str(caught.value.reason)
+
+    def test_allowed_origin_connects(self) -> None:
+        client, _ = _build(allowed_origins=["https://app.example.com"])
+
+        with client.websocket_connect(
+            "/realtime/ws", headers={"Origin": "https://app.example.com"}
+        ) as ws:
+            ws.send_text(json.dumps({"type": "nope"}))
+            frame = ws.receive_json()  # a live socket answers with an error frame
+
+        assert frame["type"] == "error"
+
+    def test_missing_origin_is_a_non_browser_client_and_passes(self) -> None:
+        client, _ = _build(allowed_origins=["https://app.example.com"])
+
+        with client.websocket_connect("/realtime/ws") as ws:
+            ws.send_text(json.dumps({"type": "nope"}))
+            frame = ws.receive_json()
+
+        assert frame["type"] == "error"
+
+    def test_empty_allowlist_is_refused_at_attach(self) -> None:
+        with pytest.raises(CoreException, match="allowed_origins"):
+            _build(allowed_origins=[])
+
+
+class TestCredentialExpiry:
+    def test_expired_credential_closes_the_socket(self) -> None:
+        client, _ = _build()
+
+        with client.websocket_connect("/realtime/ws?token=expired") as ws:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                ws.receive_json()
+
+        assert caught.value.code == 1008
+        assert "credential expired" in str(caught.value.reason)
+
+    def test_unexpiring_credential_stays_connected(self) -> None:
+        client, _ = _build()
+
+        with client.websocket_connect("/realtime/ws") as ws:
+            ws.send_text(json.dumps({"type": "nope"}))
+            frame = ws.receive_json()
+
+        assert frame["type"] == "error"
+
+
+# ----------------------- #
+# hostile frames must cost the frame (or a deliberate close), never a teardown
+
+
+class TestHostileFrames:
+    def test_binary_frame_closes_deliberately_with_1003(self) -> None:
+        # receive_text would surface a binary frame as a KeyError escaping every
+        # except* clause — the route must instead refuse it with a clean 1003 close
+        client, _ = _build()
+
+        with client.websocket_connect("/realtime/ws") as ws:
+            ws.send_bytes(b"\x00\x01\x02")
+
+            with pytest.raises(WebSocketDisconnect) as caught:
+                ws.receive_json()
+
+        assert caught.value.code == 1003
+
+    def test_unserializable_ack_costs_an_error_ack_not_the_connection(self) -> None:
+        # note.when returns a datetime through an untyped ack: json.dumps raises AFTER
+        # guard_frame — unguarded, that TypeError would cancel every in-flight command
+        client, _ = _build(with_commands=True)
+
+        with client.websocket_connect("/realtime/ws") as ws:
+            ws.send_text(
+                json.dumps(
+                    {"type": "cmd", "event": "note.when", "cid": 1, "payload": {"text": "x"}}
+                )
+            )
+            frame = ws.receive_json()
+
+            # the internal-kind detail is scrubbed on the wire (no server internals
+            # leak); the code still names the failure for the client
+            assert frame == {
+                "type": "ack",
+                "cid": 1,
+                "error": {
+                    "detail": "Internal server error",
+                    "code": "realtime_ack_unserializable",
+                    "kind": "internal",
+                },
+            }
+
+            # the socket survives: the next command still dispatches normally
+            ws.send_text(
+                json.dumps(
+                    {"type": "cmd", "event": "note.create", "cid": 2, "payload": {"text": "ok"}}
+                )
+            )
+            after = ws.receive_json()
+
+        assert after == {"type": "ack", "cid": 2, "data": {"note_id": "note:ok"}}

@@ -339,10 +339,12 @@ async def _process_messages(
                 )
 
         except Exception as error:
-            # A deterministic wiring error (e.g. a tenant-aware mailbox with no bound tenant)
-            # never succeeds on retry — re-raise to fail fast instead of leaving the durable
-            # message pending and reclaim-looping it forever. The message stays unacked, so it
-            # redelivers once the operator fixes the wiring and restarts.
+            # A deterministic wiring error (a misrouted spec, a missing dep) never succeeds
+            # on retry — re-raise to fail fast instead of leaving the durable message
+            # pending and reclaim-looping it forever. The message stays unacked, so it
+            # redelivers once the operator fixes the wiring and restarts. Per-message data
+            # conditions (an untenanted signal against a tenant-aware mailbox) are NOT
+            # configuration errors: they park below and the poison ceiling bounds them.
             if isinstance(error, CoreException) and error.kind is ExceptionKind.CONFIGURATION:
                 raise
 
@@ -961,6 +963,19 @@ class RealtimeGateway:
     scopes by it. Off by default because the header is untrusted/forgeable — enable only
     on brokers where every producer is trusted to assert tenancy (see :func:`_bind_tenant`)."""
 
+    require_tenant: bool = False
+    """Refuse (drop, loudly) any signal that resolves **no tenant**, instead of emitting it
+    to the untenanted global room.
+
+    The room name is the isolation boundary, and on the tenant-global stream the tenant
+    comes from an untrusted header: absent or malformed, the signal would otherwise degrade
+    to the unprefixed room — the wrong direction for a tenanted deployment, where "no
+    tenant" means "misrouted", never "everyone". Set ``True`` on every deployment whose
+    connections are tenant-scoped; leave ``False`` only where untenanted delivery is the
+    intended, declared posture. Dropped signals are counted
+    (``stats.untenanted_dropped``) and logged critically; a missing tenant is a
+    deterministic property of the signal, so the drop is final (retrying cannot heal it)."""
+
     emit_timeout: timedelta | None = timedelta(seconds=5)
     """Bound on a single ``sio.emit`` — **bounded by default**; ``None`` opts into
     waiting indefinitely.
@@ -986,6 +1001,8 @@ class RealtimeGateway:
         finishes and acks first), so a graceful shutdown never abandons a signal mid-bridge.
         """
 
+        self._refuse_node_local_presence_on_backplane()
+
         # resolve the mailbox's ports once, against the run ctx (worker-resolved-once)
         mailbox = self.mailbox_factory(ctx) if self.mailbox_factory is not None else None
 
@@ -998,6 +1015,43 @@ class RealtimeGateway:
             await self._handle(ctx, mailbox, signal, tenant, dedup_id, hlc)
 
         await self.source.run(ctx, handle, stop=stop)
+
+    # ....................... #
+
+    def _refuse_node_local_presence_on_backplane(self) -> None:
+        """Fail closed on a node-local presence tracker paired with a multi-node backplane.
+
+        The presence-based emit skip asks "is the principal room empty?" — and with a
+        pub/sub manager the room's members live on *other* nodes, invisible to a
+        node-local tracker. Every mailboxed signal's live emit would then be skipped
+        (clients receive only reconnect replays) while every metric looks healthy — a
+        silent multi-node delivery outage. A cluster-wide store (e.g.
+        ``RedisRealtimePresence``) marks itself ``cluster_wide = True``; anything else
+        combined with a pub/sub manager is refused at run start, the same seam that
+        refuses an encrypted realtime route.
+        """
+
+        if self.presence is None or self.mailbox_factory is None:
+            return  # the presence skip is only ever taken for mailboxed signals
+
+        from socketio.async_pubsub_manager import AsyncPubSubManager
+
+        if not isinstance(self.sio.manager, AsyncPubSubManager):
+            return  # single-process manager: node-local presence sees every room
+
+        if getattr(self.presence, "cluster_wide", False):
+            return
+
+        raise exc.configuration(
+            "RealtimeGateway.presence is a node-local tracker, but the Socket.IO server "
+            "runs a pub/sub (multi-node) manager: room members on other nodes are "
+            "invisible here, so every live emit for a mailboxed signal would be skipped "
+            "as 'nobody present' and clients would only receive signals on "
+            "reconnect-replay. Use a cluster-wide presence store (e.g. "
+            "RedisRealtimePresence, which sets cluster_wide=True) or drop presence from "
+            "the gateway.",
+            code="realtime_presence_node_local",
+        )
 
     # ....................... #
 
@@ -1018,6 +1072,21 @@ class RealtimeGateway:
             return
 
         signal = admitted  # emit/store the catalog-normalized payload, not the raw one
+
+        if self.require_tenant and tenant is None:
+            # The room name is the isolation boundary — an untenanted signal would land in
+            # the global (unprefixed) room. A missing/malformed tenant header is a
+            # deterministic property of the signal, so the drop is final: the caller acks,
+            # and the loss is counted and logged instead of silently degrading isolation.
+            if self.stats is not None:
+                self.stats.untenanted_dropped += 1
+
+            _logger.critical(
+                "Realtime signal dropped: no tenant resolved on a tenant-required gateway",
+                realtime_event=signal.event,
+                event_id=dedup_id,
+            )
+            return
 
         if self.dedup is None or dedup_id is None:
             # ephemeral, or durable with no dedup configured — emit directly
@@ -1065,7 +1134,7 @@ class RealtimeGateway:
                         # ``tenant_required`` when nothing is bound; the gateway is the
                         # only place that knows *why* nothing is bound, so rewrap it.
                         if error.code == "tenant_required":
-                            raise self._mailbox_tenant_unbound() from error
+                            raise self._mailbox_tenant_unbound(dedup_id) from error
                         raise
                 else:
                     # not replay-safe: emit inside the tx so a failed emit rolls the mark back
@@ -1093,27 +1162,39 @@ class RealtimeGateway:
 
     # ....................... #
 
-    def _mailbox_tenant_unbound(self) -> CoreException:
-        """Actionable error when a tenant-aware mailbox has no tenant to scope by.
+    def _mailbox_tenant_unbound(self, event_id: str | None) -> CoreException:
+        """Actionable **per-signal** error when a tenant-aware mailbox has no tenant to
+        scope by.
 
         The gateway is a **cross-tenant** consumer with no ambient tenant of its own
         (the realtime stream is tenant-global). So a tenant-aware mailbox's
         only possible tenant is the stream's ``forze_tenant_id`` header — bound only
         when :attr:`bind_tenant_from_headers` is enabled *and* the header is present.
         Otherwise the adapter raises a bare ``tenant_required``; this names the wiring
-        contract instead. (Per-tenant *trusted* mailbox scoping without header trust is
-        the tenant-aware-gateway follow-up.)
+        contract instead.
+
+        Deliberately **not** a configuration error: whether a tenant is bound is a
+        per-message data condition (one producer omitting the header), and a
+        configuration verdict is process-terminal in the consume loop — one untenanted
+        durable signal would stop supervision for *every* tenant, redeliver on restart,
+        and kill the loop again. Raising a per-signal kind instead leaves this message
+        pending (parked): reclaim retries it, and the poison ceiling
+        (``max_deliveries``) acks and drops it — a bounded, observable loss scoped to
+        the one signal. (Per-tenant *trusted* mailbox scoping without header trust is
+        :class:`TenantShardedSignalSource`.)
         """
 
-        return exc.configuration(
+        return exc.precondition(
             "Realtime gateway cannot store into a tenant-aware mailbox: no tenant is "
-            "bound. The gateway has no ambient tenant of its own, so the only tenant "
-            "source is the stream's forze_tenant_id header. Either set "
+            "bound for this signal. The gateway has no ambient tenant of its own, so "
+            "the only tenant source is the stream's forze_tenant_id header. Either set "
             "RealtimeGateway.bind_tenant_from_headers=True to bind it (the header must "
             "be present on every signal, and is untrusted/forgeable — enable only where "
             "every stream producer is trusted to assert tenancy), or wire a "
-            "tenant-global mailbox route (tenant_aware=False).",
+            "tenant-global mailbox route (tenant_aware=False). The signal stays pending "
+            "until the delivery ceiling drops it.",
             code="realtime_mailbox_tenant_unbound",
+            details={"event_id": event_id},
         )
 
     # ....................... #

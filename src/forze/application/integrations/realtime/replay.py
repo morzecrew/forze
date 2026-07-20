@@ -75,12 +75,24 @@ async def acknowledge_up_to(
     principal: str,
     client_key: str,
     event_id: str,
+    delivered_floor: HlcTimestamp | None = None,
 ) -> HlcTimestamp | None:
     """Cumulative ack: advance the device cursor to *event_id*, trim the all-device floor.
 
     Returns the acked position, or ``None`` when the event id is no longer retained
     (already trimmed, or never durable) — a no-op then, since the cursor only ever
     moves forward past entries that still exist.
+
+    A cumulative ack asserts "this device has everything at or before this position" —
+    which is only true when the transport has delivered that prefix **contiguously**.
+    A transport that interleaves live delivery with an in-progress replay (Socket.IO
+    room emits race the connect-time drain) passes *delivered_floor*: the highest
+    position it has delivered in order so far. An ack past the floor (a live frame
+    received mid-replay) is clamped to it, so the cursor never advances over mailbox
+    entries the replay has not delivered yet — jumping would skip them forever and let
+    the all-device trim delete them. ``None`` means the transport's delivery is
+    strictly ordered (replay fully drains before the live tail starts), so any acked
+    id implies its whole prefix.
     """
 
     position = await mailbox.position_of(principal=principal, event_id=event_id)
@@ -88,9 +100,12 @@ async def acknowledge_up_to(
     if position is None:
         return None
 
+    if delivered_floor is not None and position > delivered_floor:
+        position = delivered_floor
+
     await cursors.advance(principal=principal, client_key=client_key, up_to=position)
 
-    # trim what every known device has now acked (TTL/cap is the backstop)
+    # trim what every known device has now acked (the retention sweep is the backstop)
     floor = await cursors.min_cursor(principal=principal)
 
     if floor is not None:
