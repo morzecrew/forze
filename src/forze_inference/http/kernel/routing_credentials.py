@@ -47,11 +47,17 @@ def routing_fingerprint(creds: InferenceHttpRoutingCredentials) -> str:
 
 
 def credential_headers(creds: InferenceHttpRoutingCredentials) -> dict[str, str]:
-    """Default headers for a tenant's client — explicit headers win over the token."""
+    """Default headers for a tenant's client — explicit headers win over the token.
+
+    The existing-header check is case-insensitive because HTTP header names are: a tenant
+    secret carrying ``authorization`` must suppress the derived header, not sit alongside a
+    second ``Authorization`` and send both.
+    """
 
     headers = dict(creds.headers or {})
+    has_authorization = any(name.lower() == "authorization" for name in headers)
 
-    if creds.bearer_token is not None and "Authorization" not in headers:
+    if creds.bearer_token is not None and not has_authorization:
         headers["Authorization"] = f"Bearer {creds.bearer_token.get_secret_value()}"
 
     return headers

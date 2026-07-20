@@ -171,14 +171,19 @@ class SageMakerInferenceAdapter[In: BaseModel, Out: BaseModel](
                 yield []
                 continue
 
+            # The per-call deadline covers the wire calls only. Yielding inside the bound
+            # context would charge the consumer's own processing time to the model's
+            # budget, and would reset the deadline token from whatever context finalizes
+            # the generator if the consumer abandons it mid-stream.
+            scored: list[Out]
+
             with bind_run_options(options):
                 if wire_cap is None:
-                    yield await self._score(prepared)
-                    continue
+                    scored = list(await self._score(prepared))
+                else:
+                    scored = []
 
-                scored: list[Out] = []
+                    for sub_batch in batched(prepared, wire_cap, strict=False):
+                        scored.extend(await self._score(list(sub_batch)))
 
-                for sub_batch in batched(prepared, wire_cap, strict=False):
-                    scored.extend(await self._score(list(sub_batch)))
-
-                yield scored
+            yield scored

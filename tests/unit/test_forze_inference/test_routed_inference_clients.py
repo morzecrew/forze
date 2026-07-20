@@ -15,7 +15,7 @@ from uuid import UUID
 
 import httpx
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 from forze.application.contracts.inference import InferenceSpec
 from forze.application.contracts.secrets import SecretRef
@@ -25,8 +25,10 @@ from forze_inference.http import (
     HttpInferenceConfig,
     HttpInferenceDepsModule,
     InferenceHttpClient,
+    InferenceHttpRoutingCredentials,
     RoutedInferenceHttpClient,
 )
+from forze_inference.http.kernel.routing_credentials import credential_headers
 from forze_inference.sagemaker import (
     RoutedSageMakerRuntimeClient,
     SageMakerInferenceConfig,
@@ -292,3 +294,31 @@ class TestTenancyCeilingWithRoutedClients:
                 await routed.invoke_endpoint("doubler-prod", body=b"{}")
         finally:
             await routed.close()
+
+
+# ....................... #
+
+
+class TestCredentialHeaders:
+    """A tenant-supplied Authorization header must suppress the derived one — HTTP header
+    names are case-insensitive, so a lowercase key would otherwise send two of them."""
+
+    @pytest.mark.parametrize("header_name", ["Authorization", "authorization", "AUTHORIZATION"])
+    def test_tenant_header_wins_regardless_of_casing(self, header_name: str) -> None:
+        creds = InferenceHttpRoutingCredentials(
+            base_url="http://tenant-one.invalid",
+            headers={header_name: "Basic tenant-supplied"},
+            bearer_token=SecretStr("derived-token"),
+        )
+
+        headers = credential_headers(creds)
+
+        assert headers == {header_name: "Basic tenant-supplied"}
+
+    def test_bearer_token_is_used_when_no_header_is_supplied(self) -> None:
+        creds = InferenceHttpRoutingCredentials(
+            base_url="http://tenant-one.invalid",
+            bearer_token=SecretStr("derived-token"),
+        )
+
+        assert credential_headers(creds) == {"Authorization": "Bearer derived-token"}

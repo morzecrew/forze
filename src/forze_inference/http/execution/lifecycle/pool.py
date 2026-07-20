@@ -74,13 +74,13 @@ def inference_http_lifecycle_step(
     *,
     default_headers: Mapping[str, str] | None = None,
     timeout_s: float = DEFAULT_REQUEST_TIMEOUT_S,
-    id: StrKey = "inference_http_client",
+    name: StrKey = "inference_http_client",
     depends_on: tuple[StrKey, ...] = (),
 ) -> LifecycleStep:
     """Lifecycle step initializing and closing the served-model endpoint client."""
 
     return LifecycleStep(
-        id=id,
+        id=name,
         depends_on=depends_on,
         startup=InferenceHttpStartupHook(
             base_url=base_url,
@@ -97,7 +97,7 @@ def inference_http_lifecycle_step(
 def routed_inference_http_lifecycle_step(
     client: RoutedInferenceHttpClient,
     *,
-    id: StrKey = "routed_inference_http_client",
+    name: StrKey = "routed_inference_http_client",
 ) -> LifecycleStep:
     """Lifecycle step for a tenant-routed served-model client (``dedicated`` isolation).
 
@@ -105,4 +105,4 @@ def routed_inference_http_lifecycle_step(
     from its own secret, resolved on first use.
     """
 
-    return routed_client_lifecycle_step(str(id), client=client)
+    return routed_client_lifecycle_step(str(name), client=client)

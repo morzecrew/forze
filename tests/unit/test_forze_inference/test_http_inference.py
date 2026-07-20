@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from typing import Any
 
 import httpx
@@ -15,6 +16,7 @@ from forze.application.contracts.inference import (
 )
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
+from forze.base.primitives import remaining_time
 from forze.testing import context_from_modules
 from forze_inference.http import (
     HttpInferenceConfig,
@@ -277,6 +279,26 @@ class TestGuards:
 
         assert seen == [[2.0, 4.0, 6.0, 8.0, 10.0], [12.0]]  # caller chunks preserved
         assert wire_sizes == [2, 2, 1, 1]  # wire calls capped at the endpoint's limit
+
+    @pytest.mark.asyncio
+    async def test_stream_does_not_charge_consumer_time_to_the_model_budget(self) -> None:
+        """The per-call deadline must cover the wire calls, not the consumer's own work:
+        a slow consumer would otherwise burn the budget the next chunk still needs."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"predictions": [{"y": 1.0}]})
+
+        port = _ctx(await _client(handler), _config()).inference.model(_spec())
+
+        async def chunks():
+            yield [_Features(x=1.0)]
+
+        bound_during_yield: list[bool] = []
+
+        async for _ in port.predict_stream(chunks(), options={"timeout": timedelta(seconds=30)}):
+            bound_during_yield.append(remaining_time() is not None)
+
+        assert bound_during_yield == [False]
 
     @pytest.mark.asyncio
     async def test_tenant_aware_route_without_tenant_fails_closed(self) -> None:

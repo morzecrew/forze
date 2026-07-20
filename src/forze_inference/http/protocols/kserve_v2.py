@@ -112,15 +112,18 @@ class KserveV2Protocol:
     ) -> Sequence[Mapping[str, Any]]:
         raw_outputs = body.get("outputs")
 
-        if not isinstance(raw_outputs, Sequence) or not raw_outputs:
+        # `list`, not `Sequence`: a JSON array decodes to a list, while a bare string is
+        # also a Sequence — accepting one would iterate an error message character by
+        # character instead of refusing the response.
+        if not isinstance(raw_outputs, list) or not raw_outputs:
             raise exc.validation(
                 f"Inference {spec.name!r}: kserve_v2 response has no 'outputs'.",
                 code="inference_output_mismatch",
             )
 
-        # mypy narrows the isinstance to Sequence[Any] (cast "redundant"); pyright
-        # narrows to Sequence[Unknown] and needs it.
-        outputs = cast(Sequence[Any], raw_outputs)  # type: ignore[redundant-cast]
+        # mypy narrows the isinstance to list[Any] (cast "redundant"); pyright narrows to
+        # list[Unknown] and needs it.
+        outputs = cast(list[Any], raw_outputs)  # type: ignore[redundant-cast]
         columns: dict[str, Sequence[Any]] = {}
 
         for item in outputs:
@@ -133,8 +136,8 @@ class KserveV2Protocol:
             tensor = cast(Mapping[str, Any], item)
             raw_data = tensor.get("data")
             data = (
-                cast(Sequence[Any], raw_data)  # type: ignore[redundant-cast]
-                if isinstance(raw_data, Sequence)
+                cast(list[Any], raw_data)  # type: ignore[redundant-cast]
+                if isinstance(raw_data, list)
                 else None
             )
 

@@ -48,7 +48,19 @@ def validated_instances[In: BaseModel](
         if isinstance(instance, Mapping):
             # isinstance narrows Any to Mapping[Unknown, Unknown]; the wire is JSON.
             record = dict(cast(Mapping[str, Any], instance))
-            checked.append(spec.resolved_input_codec.decode_mapping(record))
+
+            try:
+                checked.append(spec.resolved_input_codec.decode_mapping(record))
+
+            except Exception as e:
+                # A mapping that does not fit the input model is a caller error, not an
+                # internal one — surface it in the port's taxonomy like a bad output does,
+                # instead of leaking the codec's own exception type.
+                raise exc.validation(
+                    f"Inference {spec.name!r} instance {position} does not decode to "
+                    f"{spec.input.__name__}."
+                ) from e
+
             continue
 
         raise exc.validation(

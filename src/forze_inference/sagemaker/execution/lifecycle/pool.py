@@ -80,13 +80,13 @@ def sagemaker_inference_lifecycle_step(
     endpoint_url: str | None = None,
     access_key_id: str | None = None,
     secret_access_key: SecretStr | str | None = None,
-    id: StrKey = "sagemaker_inference_client",
+    name: StrKey = "sagemaker_inference_client",
     depends_on: tuple[StrKey, ...] = (),
 ) -> LifecycleStep:
     """Lifecycle step initializing and closing the SageMaker runtime client."""
 
     return LifecycleStep(
-        id=id,
+        id=name,
         depends_on=depends_on,
         startup=SageMakerInferenceStartupHook(
             region_name=region_name,
@@ -104,7 +104,7 @@ def sagemaker_inference_lifecycle_step(
 def routed_sagemaker_inference_lifecycle_step(
     client: RoutedSageMakerRuntimeClient,
     *,
-    id: StrKey = "routed_sagemaker_inference_client",
+    name: StrKey = "routed_sagemaker_inference_client",
 ) -> LifecycleStep:
     """Lifecycle step for a tenant-routed runtime client (``dedicated`` isolation).
 
@@ -112,4 +112,4 @@ def routed_sagemaker_inference_lifecycle_step(
     identity comes from its own secret, resolved on first use.
     """
 
-    return routed_client_lifecycle_step(str(id), client=client)
+    return routed_client_lifecycle_step(str(name), client=client)

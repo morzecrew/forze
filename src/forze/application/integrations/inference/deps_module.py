@@ -110,7 +110,7 @@ class LocalInferenceWarmupHook(LifecycleHook):
 def local_inference_lifecycle_step(
     module: LocalInferenceDepsModule,
     *,
-    id: StrKey = "local_inference_warmup",
+    name: StrKey = "local_inference_warmup",
     depends_on: tuple[StrKey, ...] = (),
 ) -> LifecycleStep:
     """Lifecycle step warming *module*'s ``warm_on_startup`` models at startup.
@@ -121,7 +121,7 @@ def local_inference_lifecycle_step(
     """
 
     return LifecycleStep(
-        id=id,
+        id=name,
         depends_on=depends_on,
         startup=LocalInferenceWarmupHook(hosts=tuple(module.hosts.values())),
     )
