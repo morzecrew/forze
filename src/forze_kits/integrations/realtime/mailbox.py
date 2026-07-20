@@ -310,19 +310,21 @@ class DocumentRealtimeMailbox:
         if since is not None:
             values["hlc"] = {"$gt": since.pack()}
 
-        # One hlc-only probe, newest-first: a full page means the backlog past *since*
-        # overflows the cap, and the page's last (smallest) hlc is the window start.
+        # One hlc-only probe, newest-first, asking for one row PAST the cap: a backlog
+        # of exactly ``cap`` entries fits (a cap-limited probe could not tell it from a
+        # real overflow and would count a false loss). More than ``cap`` rows means a
+        # true overflow, and the cap-th newest hlc is the window start.
         probe = await self.query.project_many(
             ["hlc"],
             filters={"$values": values},
             sorts={"hlc": "desc"},
-            pagination={"limit": self.cap},
+            pagination={"limit": self.cap + 1},
         )
 
-        if len(probe.hits) < self.cap:
+        if len(probe.hits) <= self.cap:
             return values  # the whole backlog fits — replay it all
 
-        floor = int(probe.hits[-1]["hlc"])
+        floor = int(probe.hits[self.cap - 1]["hlc"])
         self._overflowed += 1
         logger.warning(
             "Realtime mailbox replay overflowed the retention cap; the oldest backlog was skipped",

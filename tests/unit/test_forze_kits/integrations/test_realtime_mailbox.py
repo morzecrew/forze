@@ -128,6 +128,24 @@ async def test_replay_since_bounded_by_cap_keeps_newest_window() -> None:
     assert mb.stats().overflowed == 1
 
 
+async def test_backlog_exactly_at_cap_is_not_counted_as_overflow() -> None:
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with _bind(ctx):
+            mb = build_realtime_mailbox(ctx, cap=3, replay_page_size=2)
+            for n in range(1, 4):
+                await mb.store(
+                    principal="u1", event_id=_eid(n), hlc=_hlc(n), signal=_signal(f"s{n}")
+                )
+
+            streamed = [e.event_id async for e in mb.replay_since(principal="u1", since=None)]
+
+    # a backlog that fills the window exactly loses nothing — no false loss counted
+    assert streamed == [_eid(1), _eid(2), _eid(3)]
+    assert mb.stats().overflowed == 0
+
+
 async def test_stored_counter_tracks_real_writes_not_redeliveries() -> None:
     # a redelivered signal (same event_id) is idempotent and must NOT recount
     runtime = _runtime()

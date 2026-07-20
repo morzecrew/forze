@@ -647,6 +647,20 @@ class TestCredentialExpiry:
 
         assert frame["type"] == "error"
 
+    def test_naive_expires_at_is_refused_at_construction(self) -> None:
+        # a naive datetime cannot be compared against the aware enforcement clock —
+        # unrefused it would surface as a TypeError killing the connection at
+        # expiry-check time instead of an actionable error where it was resolved
+        from datetime import datetime
+
+        with pytest.raises(CoreException) as caught:
+            WsConnection(
+                authn=AuthnIdentity(principal_id=_PRINCIPAL),
+                expires_at=datetime(2026, 1, 1),  # noqa: DTZ001 — the refusal under test
+            )
+
+        assert caught.value.code == "realtime_expiry_naive"
+
 
 # ----------------------- #
 # hostile frames must cost the frame (or a deliberate close), never a teardown

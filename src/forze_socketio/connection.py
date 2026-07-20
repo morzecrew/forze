@@ -80,17 +80,32 @@ class RealtimeConnection:
     """The connection's tenant, used to scope its rooms."""
 
     expires_at: datetime | None = None
-    """When the connection's credential expires; ``None`` never expires.
+    """When the connection's credential expires — a **timezone-aware** (UTC) instant;
+    ``None`` never expires.
 
     Captured from the verified assertion/token at connect time (``AuthnIdentity``
     itself is principal-only). A sweeper drops the connection once past this, so a
-    long-lived socket can't outlive the credential that authenticated it."""
+    long-lived socket can't outlive the credential that authenticated it. A naive
+    datetime is refused at construction: the sweep isolates per-connection failures,
+    so a naive value would not error the connect — it would make every expiry check
+    raise inside the sweep and be logged-and-skipped, silently never enforcing."""
 
     client: ClientIdentity | None = None
     """The device/session this connection is, keying its offline-replay cursor.
 
     Resolve it from the connect handshake (a client-supplied ``device_id``) and/or
     the token ``sid``; absent one, the cursor falls back to the per-connection sid."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.expires_at is not None and self.expires_at.tzinfo is None:
+            raise exc.configuration(
+                "RealtimeConnection.expires_at must be a timezone-aware (UTC) datetime; "
+                "a naive value cannot be compared against the aware sweep clock. "
+                "Resolve it with tzinfo set (e.g. from the token's exp claim in UTC).",
+                code="realtime_expiry_naive",
+            )
 
     # ....................... #
 

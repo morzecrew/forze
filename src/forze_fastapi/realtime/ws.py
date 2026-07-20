@@ -141,12 +141,27 @@ class WsConnection:
     """The device/session this connection is, keying its offline-replay cursor."""
 
     expires_at: datetime | None = None
-    """When the connection's credential expires; ``None`` never expires.
+    """When the connection's credential expires — a **timezone-aware** (UTC) instant;
+    ``None`` never expires.
 
     Captured from the verified token at connect/reauth time. The route enforces it
     continuously — a socket past this instant is closed (policy code), so a long-lived
     connection can't outlive the credential that authenticated it. Set it when
-    resolving, or a stolen token stays live for the socket's whole lifetime."""
+    resolving, or a stolen token stays live for the socket's whole lifetime. A naive
+    datetime is refused at construction: it cannot be compared against the aware
+    enforcement clock, so it would surface as a connection-killing ``TypeError`` at
+    expiry-check time instead of an actionable error here."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.expires_at is not None and self.expires_at.tzinfo is None:
+            raise exc.configuration(
+                "WsConnection.expires_at must be a timezone-aware (UTC) datetime; a "
+                "naive value cannot be compared against the aware enforcement clock. "
+                "Resolve it with tzinfo set (e.g. from the token's exp claim in UTC).",
+                code="realtime_expiry_naive",
+            )
 
     # ....................... #
 

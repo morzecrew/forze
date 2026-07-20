@@ -219,3 +219,17 @@ async def test_refresh_presence_continues_past_a_failing_heartbeat() -> None:
     # failing early entry must not expire healthy connections behind it
     assert [sid for _room, sid in presence.joins] == ["sid-later"]
     assert refreshed == 1
+
+
+def test_naive_expires_at_is_refused_at_construction() -> None:
+    # the sweep isolates per-connection failures, so a naive expires_at would not
+    # error the connect — every expiry check would raise inside the sweep and be
+    # logged-and-skipped, silently never enforcing; refuse it where it is resolved
+    import pytest
+
+    from forze.base.exceptions import CoreException
+
+    with pytest.raises(CoreException) as caught:
+        _conn(expires_at=datetime(2026, 1, 1))  # noqa: DTZ001 — the refusal under test
+
+    assert caught.value.code == "realtime_expiry_naive"
