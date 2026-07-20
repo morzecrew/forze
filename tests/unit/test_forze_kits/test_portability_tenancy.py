@@ -353,3 +353,12 @@ async def test_an_unlisted_file_in_the_archive_is_refused(tmp_path: Path) -> Non
 def test_plan_export_refuses_an_empty_inventory() -> None:
     with pytest.raises(CoreException, match="inventory is empty"):
         plan_export(SpecRegistry().freeze())
+
+
+def test_duplicate_tenant_declarations_collapse_to_one_section() -> None:
+    # tenants=[A, A] would otherwise mint two sections on one archive prefix — export
+    # overwriting its own files with duplicate manifest entries, import replaying twice
+    # (aborting midway under on_conflict="fail").
+    scope = FullScope(quiesce=_ATTESTED, tenants=[_T1, _T1, _T2])
+
+    assert scope.tenants == (_T1, _T2)  # order-preserving dedupe

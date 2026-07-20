@@ -376,15 +376,19 @@ async def _guarded(name: str, plane: Awaitable[QuiescePlane]) -> QuiescePlane:
 def _unprobeable_planes(
     runtime: ExecutionRuntime,
     *,
+    outboxes: Sequence[OutboxSpec[Any]],
     streams: Sequence[tuple[StreamSpec[Any], str]],
     ack_streams: Sequence[tuple[StreamSpec[Any], str]],
 ) -> list[QuiescePlane]:
     """The catalogued planes this sweep has no way to observe — reported, never assumed empty.
 
     An attested report must mean "every plane that can hold in-flight work was **seen** at
-    rest". Three catalogued kinds can hold work this sweep cannot see, and each one used to be
+    rest". Four catalogued kinds can hold work this sweep cannot see, and each one used to be
     silently omitted — which read as settled:
 
+    - an **outbox** the caller excluded — an explicit ``outboxes=`` narrows the sweep, but a
+      catalogued route left out of it may still hold pending events; narrowing must narrow
+      the *probing*, never the attestation.
     - a **queue** — a queued message is undelivered work; no depth probe exists yet.
     - a **distributed lock** — a held lock marks work in flight somewhere; no holder
       enumeration exists yet.
@@ -414,7 +418,20 @@ def _unprobeable_planes(
         ]
 
     covered = {str(spec.name) for spec, _group in (*streams, *ack_streams)}
+    probed_outboxes = {str(spec.name) for spec in outboxes}
     planes: list[QuiescePlane] = []
+
+    planes.extend(
+        QuiescePlane(
+            name=f"outbox:{entry.name}",
+            state="unobserved",
+            detail="catalogued outbox route was excluded from this sweep (outboxes=…) — an "
+            "unprobed outbox may hold pending events; include it, or pass outboxes=None to "
+            "sweep the whole inventory",
+        )
+        for entry in runtime.spec_registry.of_plane(SpecPlane.OUTBOX)
+        if entry.name not in probed_outboxes
+    )
 
     planes.extend(
         QuiescePlane(
@@ -602,9 +619,11 @@ async def quiesce(
         )
 
     # What the sweep could not see must weigh against attestation, not vanish from the
-    # report: catalogued queues/locks with no probe, streams no group was named for, or a
-    # runtime with no inventory at all. Unobserved is not empty.
-    planes.extend(_unprobeable_planes(runtime, streams=streams, ack_streams=ack_streams))
+    # report: catalogued outboxes the caller excluded, queues/locks with no probe, streams
+    # no group was named for, or a runtime with no inventory at all. Unobserved is not empty.
+    planes.extend(
+        _unprobeable_planes(runtime, outboxes=outboxes, streams=streams, ack_streams=ack_streams)
+    )
 
     # Read the gate rather than trusting *close_gate*: a scope already going down was holding
     # the door before this sweep started, and that counts.

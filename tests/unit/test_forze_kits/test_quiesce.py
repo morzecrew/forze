@@ -599,3 +599,31 @@ async def test_ack_stream_plane_not_wired_and_trimmed_unknown_details() -> None:
     plane = next(p for p in report.planes if p.name.startswith("ack-stream"))
     assert plane.state == "residual"
     assert "backlog unknown" in (plane.detail or "")  # never attested as empty
+
+
+@pytest.mark.asyncio
+async def test_a_catalogued_outbox_excluded_from_the_sweep_is_unobserved() -> None:
+    # Narrowing outboxes= narrows the probing, never the attestation: a catalogued route
+    # left out of the sweep may still hold pending events, so it must weigh against it.
+    other = OutboxSpec(name="audit", codec=PydanticModelCodec(_Payload))
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(MockDepsModule()).freeze(),
+        spec_registry=SpecRegistry().register(OUTBOX).register(other).freeze(),
+    )
+
+    async with runtime.scope():
+        report = await quiesce(
+            runtime, outboxes=[OUTBOX], timeout=timedelta(milliseconds=50)
+        )
+
+    states = {plane.name: plane.state for plane in report.planes}
+
+    assert states["outbox:events"] == "settled"  # probed
+    assert states["outbox:audit"] == "unobserved"  # excluded — never assumed empty
+    assert not report.attested
+
+    async with runtime.scope():
+        skipped_all = await quiesce(runtime, outboxes=(), timeout=timedelta(milliseconds=50))
+
+    assert {p.name for p in skipped_all.unsettled} == {"outbox:events", "outbox:audit"}
+    assert not skipped_all.attested

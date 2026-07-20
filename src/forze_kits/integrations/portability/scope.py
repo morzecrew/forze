@@ -36,7 +36,10 @@ class TenantScope:
 def _normalize_tenants(
     value: Sequence[UUID] | Literal["untenanted"],
 ) -> tuple[UUID, ...] | Literal["untenanted"]:
-    return UNTENANTED if value == UNTENANTED else tuple(value)
+    # Order-preserving dedupe: a repeated tenant would mint two sections with the same
+    # archive prefix — export overwriting its own files and recording duplicate manifest
+    # entries, import replaying the same section twice.
+    return UNTENANTED if value == UNTENANTED else tuple(dict.fromkeys(value))
 
 
 @attrs.frozen(kw_only=True)
