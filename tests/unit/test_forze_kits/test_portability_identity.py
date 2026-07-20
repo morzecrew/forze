@@ -20,6 +20,7 @@ import pytest
 
 from forze import build_runtime
 from forze.application.contracts.inventory import SpecRegistry
+from forze.base.exceptions import CoreException
 from forze.application.execution import ExecutionRuntime
 from forze_identity.inventory import spec_contributions
 from forze_kits.integrations.portability import (
@@ -152,3 +153,15 @@ async def test_per_tenant_archive_still_imports_into_the_full_application(tmp_pa
     async with target.scope():
         restored = await read_orders(target.get_context(), list(seeded), tenant=tenant)
     assert set(restored) == set(seeded)
+
+
+@pytest.mark.asyncio
+async def test_unsealed_identity_export_is_refused_without_acknowledgement(
+    tmp_path: Path,
+) -> None:
+    # A full-system export always carries identity — sessions, API keys — so an unsealed
+    # one is a credential store and must not be producible by default.
+    runtime = _runtime(MockState())
+
+    with pytest.raises(CoreException, match="PLAINTEXT"):
+        await _export(runtime, tmp_path / "a", FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))

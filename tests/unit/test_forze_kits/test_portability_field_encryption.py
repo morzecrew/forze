@@ -186,3 +186,14 @@ async def test_a_deployment_cannot_read_rows_sealed_under_a_foreign_key(
                 await ctx.document.query(VAULT_SPEC).get(pk)
 
     assert excinfo.value.code == "core.crypto.key_id_unauthorized"
+
+
+@pytest.mark.asyncio
+async def test_unsealed_export_of_encrypted_fields_is_refused(tmp_path: Path) -> None:
+    # The registry declares sealed fields, and export decrypts them into the archive by
+    # design — writing them as plaintext without a sealer must be a stated decision.
+    source = _runtime(MockState(), "cmk-source")
+
+    with pytest.raises(CoreException, match="declares encrypted fields"):
+        async with source.scope():
+            await export_archive(source, tmp_path, scope=TenantScope(tenant_id=uuid4()))

@@ -362,3 +362,162 @@ def test_duplicate_tenant_declarations_collapse_to_one_section() -> None:
     scope = FullScope(quiesce=_ATTESTED, tenants=[_T1, _T1, _T2])
 
     assert scope.tenants == (_T1, _T2)  # order-preserving dedupe
+
+
+# ....................... #
+# The arrival gates refuse before a row is read
+
+
+@pytest.mark.asyncio
+async def test_unknown_format_version_and_foreign_fingerprint_are_refused(
+    tmp_path: Path,
+) -> None:
+    source = _runtime(MockState())
+    await _seed(source)
+
+    archive = tmp_path / "archive"
+    async with source.scope():
+        await export_archive(source, archive, scope=TenantScope(tenant_id=_T1))
+
+    manifest_path = archive / "manifest.json"
+    original = manifest_path.read_text()
+
+    tampered = json.loads(original)
+    tampered["format_version"] = "1"  # the pre-section layout is not half-importable
+    manifest_path.write_text(json.dumps(tampered))
+
+    target = _runtime(MockState())
+    async with target.scope():
+        with pytest.raises(CoreException, match="format version"):
+            await import_archive(target, archive, tenant=_T1)
+
+    tampered = json.loads(original)
+    tampered["registry_fingerprint"] = "deadbeef" * 8  # different application shape
+    manifest_path.write_text(json.dumps(tampered))
+
+    async with target.scope():
+        with pytest.raises(CoreException, match="spec shapes differ"):
+            await import_archive(target, archive, tenant=_T1)
+
+
+@pytest.mark.asyncio
+async def test_a_tenant_manifest_naming_no_tenant_is_malformed(tmp_path: Path) -> None:
+    source = _runtime(MockState())
+    await _seed(source)
+
+    archive = tmp_path / "archive"
+    async with source.scope():
+        await export_archive(source, archive, scope=TenantScope(tenant_id=_T1))
+
+    manifest_path = archive / "manifest.json"
+    tampered = json.loads(manifest_path.read_text())
+    tampered["scope"]["tenant_id"] = None
+    manifest_path.write_text(json.dumps(tampered))
+
+    target = _runtime(MockState())
+    async with target.scope():
+        with pytest.raises(CoreException, match="malformed"):
+            await import_archive(target, archive, tenant=_T1)
+
+
+@pytest.mark.asyncio
+async def test_a_file_belonging_to_no_declared_section_is_refused(tmp_path: Path) -> None:
+    import hashlib
+
+    source = _runtime(MockState())
+    await _seed(source)
+
+    archive = tmp_path / "archive"
+    async with source.scope():
+        await export_archive(
+            source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1])
+        )
+
+    # A checksummed, manifest-listed file OUTSIDE every declared tenant section: the
+    # archive and its manifest disagree on what the scope covers.
+    orphan = archive / "documents"
+    orphan.mkdir(parents=True)
+    payload = b"orphaned bytes"
+    (orphan / "notes.jsonl.gz").write_bytes(payload)
+
+    manifest_path = archive / "manifest.json"
+    tampered = json.loads(manifest_path.read_text())
+    tampered["files"].append(
+        {
+            "path": "documents/notes.jsonl.gz",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "rows": 0,
+        }
+    )
+    manifest_path.write_text(json.dumps(tampered))
+
+    target = _runtime(MockState())
+    async with target.scope():
+        with pytest.raises(CoreException, match="no scope section"):
+            await import_archive(target, archive)
+
+
+# ....................... #
+# The defensive plane guards (unreachable behind the fingerprint gate; guarded anyway)
+
+
+@pytest.mark.asyncio
+async def test_defensive_guards_refuse_planes_the_registry_does_not_bind(
+    tmp_path: Path,
+) -> None:
+    from forze_kits.integrations.portability import ArchiveFile, ArchiveImporter
+    from forze_kits.integrations.portability._core import ScopeSection
+
+    importer = ArchiveImporter()
+    empty = SpecRegistry().freeze()
+    section = ScopeSection(tenant_id=None, prefix="", aad_prefix="")
+    runtime = _runtime(MockState())
+
+    def _file(path: str) -> ArchiveFile:
+        return ArchiveFile(path=path, sha256="0" * 64, rows=0)
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        with pytest.raises(CoreException, match="does not bind"):
+            await importer._import_document(
+                ctx, tmp_path, _file("documents/ghost.jsonl.gz"), empty, "gzip", None, section
+            )
+
+        with pytest.raises(CoreException, match="does not bind"):
+            await importer._import_storage(
+                ctx, tmp_path, _file("blobs/ghost/index.jsonl.gz"), empty, "gzip", None, section
+            )
+
+        with pytest.raises(CoreException, match="does not bind"):
+            await importer._import_counter(
+                ctx, tmp_path, _file("counters/ghost.jsonl.gz"), empty, "gzip", None, section
+            )
+
+        with pytest.raises(CoreException, match="does not bind"):
+            await importer._import_graph_module(
+                ctx, tmp_path, "ghost", [], [], empty, "gzip", None, section
+            )
+
+        # a read-only document (no write model) is equally un-importable
+        read_only = SpecRegistry().register(
+            DocumentSpec(name="ghost", read=_NoteRead)
+        ).freeze()
+
+        with pytest.raises(CoreException, match="read-only"):
+            await importer._import_document(
+                ctx, tmp_path, _file("documents/ghost.jsonl.gz"), read_only, "gzip", None, section
+            )
+
+
+def test_kind_level_encryption_counts_as_sealed_fields() -> None:
+    from types import SimpleNamespace
+
+    from forze.application.contracts.crypto import FieldEncryption
+    from forze_kits.integrations.portability.export import _declares_sealed_fields
+
+    sealed_kind = SimpleNamespace(encryption=FieldEncryption(encrypted={"secret"}))
+    module = SimpleNamespace(encryption=None, nodes=(sealed_kind,), edges=())
+
+    assert _declares_sealed_fields(module)  # a node kind's policy counts
+    assert not _declares_sealed_fields(SimpleNamespace(encryption=None, nodes=(), edges=()))
