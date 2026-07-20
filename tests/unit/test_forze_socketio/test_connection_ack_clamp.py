@@ -238,3 +238,32 @@ async def test_ack_before_anything_is_delivered_is_ignored() -> None:
 
     await sio.handlers["realtime.ack"]("sid-1", {"up_to": "e2"})
     assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(2)
+
+
+async def test_failed_room_join_does_not_leak_replay_progress() -> None:
+    # a raise between progress registration and connect completion refuses the
+    # connect, and a refused connect never reaches on_disconnect — the entry must
+    # be dropped on the failure path or every failed join leaks one forever
+    sio, cursors = _StubSio(), InMemoryMailboxCursors()
+    mailbox = InMemoryRealtimeMailbox()
+
+    async def _exploding_enter_room(sid: str, room: str, namespace: str | None = None) -> None:
+        raise RuntimeError("room join failed")
+
+    sio.enter_room = _exploding_enter_room  # type: ignore[method-assign]
+
+    attach_realtime_connection(
+        sio,  # pyright: ignore[reportArgumentType]
+        resolve=_resolver(_connection()),
+        mailbox_factory=lambda _ctx: mailbox,
+        cursors_factory=lambda _ctx: cursors,
+        runtime=_runtime(),
+    )
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="room join failed"):
+        await sio.handlers["connect"]("sid-1", {}, None)
+
+    lifecycle = sio.handlers["connect"].__self__
+    assert lifecycle._replay_progress == {}

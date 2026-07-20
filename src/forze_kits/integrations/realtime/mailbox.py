@@ -292,8 +292,10 @@ class DocumentRealtimeMailbox:
 
     # ....................... #
 
-    async def _window_values(self, *, principal: str, since: HlcTimestamp | None) -> dict[str, Any]:
-        """The filter values for a **complete** replay window past *since*.
+    async def _window_filters(
+        self, *, principal: str, since: HlcTimestamp | None
+    ) -> QueryFilterExpression:
+        """The filter selecting a **complete** replay window past *since*.
 
         The cap is a *newest-first retention bound*, so a backlog larger than the cap
         must lose its **oldest** entries, not its newest — and the loss must move the
@@ -304,6 +306,12 @@ class DocumentRealtimeMailbox:
         floor would delete them. Skipping *ahead* keeps the delivered prefix complete:
         everything at or after the window start is replayed, everything before it is a
         declared, counted retention loss.
+
+        The window start is the **composite** ``(hlc, id)`` of the cap-th newest row —
+        an HLC-only floor would match a whole equal-HLC run (the wall-clock fallback
+        stamps a burst with one HLC), widening the window past the cap so the
+        cap-limited ascending read delivers the run's *older* entries and drops the
+        newest — the exact inversion of the retention bound.
         """
 
         values: dict[str, Any] = {"principal": principal}
@@ -311,37 +319,46 @@ class DocumentRealtimeMailbox:
         if since is not None:
             values["hlc"] = {"$gt": since.pack()}
 
-        # One hlc-only probe, newest-first, asking for one row PAST the cap: a backlog
-        # of exactly ``cap`` entries fits (a cap-limited probe could not tell it from a
-        # real overflow and would count a false loss). More than ``cap`` rows means a
-        # true overflow, and the cap-th newest hlc is the window start.
+        # One (hlc, id)-only probe, newest-first, asking for one row PAST the cap: a
+        # backlog of exactly ``cap`` entries fits (a cap-limited probe could not tell
+        # it from a real overflow and would count a false loss). More than ``cap``
+        # rows means a true overflow, and the cap-th newest row is the window start.
         probe = await self.query.project_many(
-            ["hlc"],
+            ["hlc", "id"],
             filters={"$values": values},
-            sorts={"hlc": "desc"},
+            sorts={"hlc": "desc", "id": "desc"},
             pagination={"limit": self.cap + 1},
         )
 
         if len(probe.hits) <= self.cap:
-            return values  # the whole backlog fits — replay it all
+            return {"$values": values}  # the whole backlog fits — replay it all
 
-        floor = int(probe.hits[self.cap - 1]["hlc"])
+        floor_row = probe.hits[self.cap - 1]
+        floor_hlc = int(floor_row["hlc"])
+        floor_id = UUID(str(floor_row["id"]))
         self._overflowed += 1
         logger.warning(
             "Realtime mailbox replay overflowed the retention cap; the oldest backlog was skipped",
             principal=principal,
             cap=self.cap,
-            window_floor=str(HlcTimestamp.unpack(floor)),
+            window_floor=str(HlcTimestamp.unpack(floor_hlc)),
         )
 
-        return {"principal": principal, "hlc": {"$gte": floor}}
+        # No `> since` term needed: every probed row already satisfies it, so the
+        # floor bound subsumes it. The floor row itself is included ($gte on id).
+        return {
+            "$or": [
+                {"$values": {"principal": principal, "hlc": {"$gt": floor_hlc}}},
+                {"$values": {"principal": principal, "hlc": floor_hlc, "id": {"$gte": floor_id}}},
+            ]
+        }
 
     # ....................... #
 
     async def read_since(self, *, principal: str, since: HlcTimestamp | None) -> list[MailboxEntry]:
         page = await self.query.find_many(
-            filters={"$values": await self._window_values(principal=principal, since=since)},
-            sorts={"hlc": "asc"},
+            filters=await self._window_filters(principal=principal, since=since),
+            sorts={"hlc": "asc", "id": "asc"},
             pagination={"limit": self.cap},
         )
 
@@ -372,12 +389,13 @@ class DocumentRealtimeMailbox:
         inside it. Only one page of rows is materialized at a time, so peak memory is
         one page per reconnecting device instead of the whole (up to :attr:`cap`)
         backlog. A backlog larger than the cap starts at the newest-``cap`` window
-        (see :meth:`_window_values`) — the stream is always a **complete** suffix of
+        (see :meth:`_window_filters`) — the stream is always a **complete** suffix of
         the retained backlog, never a truncated prefix.
         """
 
-        window = await self._window_values(principal=principal, since=since)
-        filters: QueryFilterExpression = {"$values": window}
+        filters: QueryFilterExpression = await self._window_filters(
+            principal=principal, since=since
+        )
         remaining = self.cap
 
         while remaining > 0:

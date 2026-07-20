@@ -430,19 +430,27 @@ class _ConnectionLifecycle:
             # must be clamped to what the (not yet started) replay has delivered.
             self._replay_progress[sid] = _ReplayProgress()
 
-        room = connection.principal_room
-        await self.sio.enter_room(sid, room, namespace=self.namespace)
+        try:
+            room = connection.principal_room
+            await self.sio.enter_room(sid, room, namespace=self.namespace)
 
-        if self.presence is not None:
-            await self.presence.joined(room, sid)
+            if self.presence is not None:
+                await self.presence.joined(room, sid)
 
-        if self.replay_enabled:
-            # replay is best-effort: a drain error must not refuse the live connection
-            try:
-                await self.replay(connection, sid)
+            if self.replay_enabled:
+                # replay is best-effort: a drain error must not refuse the live connection
+                try:
+                    await self.replay(connection, sid)
 
-            except Exception as error:
-                log_server_error(error)
+                except Exception as error:
+                    log_server_error(error)
+
+        except BaseException:
+            # A raise here refuses the connect, and a refused connect never reaches
+            # on_disconnect — without this pop, every failed room join or presence
+            # write would leak its progress entry forever (sids are never reused).
+            self._replay_progress.pop(sid, None)
+            raise
 
     # ....................... #
 

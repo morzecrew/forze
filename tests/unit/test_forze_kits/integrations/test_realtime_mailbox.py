@@ -387,3 +387,29 @@ async def test_replay_pages_through_an_equal_hlc_run_without_skipping() -> None:
             streamed = [e.event_id async for e in mb.replay_since(principal="u1", since=None)]
 
     assert streamed == [_eid(n) for n in range(1, 6)]  # all five, in id order
+
+
+async def test_overflow_window_inside_an_equal_hlc_group_keeps_the_newest() -> None:
+    # cap boundary inside an equal-HLC group: an HLC-only floor would match the whole
+    # group, and the cap-limited ascending read would deliver the group's OLDER
+    # entries and drop the newest — the composite (hlc, id) floor keeps exactly the
+    # newest-cap window
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with _bind(ctx):
+            mb = build_realtime_mailbox(ctx, cap=5, replay_page_size=2)
+            for n in (1, 2, 3):
+                await mb.store(
+                    principal="u1", event_id=_eid(n), hlc=_hlc(10), signal=_signal(f"s{n}")
+                )
+            for n in (4, 5, 6):
+                await mb.store(
+                    principal="u1", event_id=_eid(n), hlc=_hlc(20), signal=_signal(f"s{n}")
+                )
+
+            streamed = [e.event_id async for e in mb.replay_since(principal="u1", since=None)]
+
+    # the newest five in (hlc, id) order — id 1 (oldest of the hlc-10 group) is the loss
+    assert streamed == [_eid(n) for n in (2, 3, 4, 5, 6)]
+    assert mb.stats().overflowed == 1

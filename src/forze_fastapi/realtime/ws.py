@@ -631,11 +631,16 @@ def attach_realtime_ws_route(
 
         # ....................... #
 
+        receiver_done = asyncio.Event()
+
         async def _expiry_guard() -> None:
             # The Socket.IO twin sweeps its connection registry on an interval; a
             # FastAPI socket has no registry, so each connection guards itself. The
             # live session identity is re-read every cycle: a reauth that extends (or
-            # shortens) expires_at takes effect within one check ceiling.
+            # shortens) expires_at takes effect within one check ceiling. The guard
+            # exits on its own once the receiver ends (interruptible wait, not a bare
+            # sleep) so the ordinary teardown never has to cancel it — a live sibling
+            # at TaskGroup exit races any external cancellation of the endpoint task.
             while True:
                 expires_at = session.connection.expires_at
                 now = utcnow()
@@ -660,7 +665,17 @@ def attach_realtime_ws_route(
                     if expires_at is None
                     else (expires_at - now).total_seconds()
                 )
-                await asyncio.sleep(max(0.0, min(remaining, _EXPIRY_CHECK_CEILING_SECONDS)))
+
+                try:
+                    await asyncio.wait_for(
+                        receiver_done.wait(),
+                        timeout=max(0.0, min(remaining, _EXPIRY_CHECK_CEILING_SECONDS)),
+                    )
+
+                except TimeoutError:
+                    continue  # interval elapsed — re-check the live deadline
+
+                return  # the receiver ended: the socket is tearing down anyway
 
         # ....................... #
 
@@ -758,9 +773,19 @@ def attach_realtime_ws_route(
             for room in rooms:
                 await presence.joined(room, member_key)  # type: ignore[union-attr]
 
+            async def _receive_then_signal() -> None:
+                # however the receiver ends (disconnect, refused frame, failure), the
+                # signal lets the expiry guard finish on its own instead of being
+                # cancelled at TaskGroup exit
+                try:
+                    await _receiver(tasks)
+
+                finally:
+                    receiver_done.set()
+
             async with asyncio.TaskGroup() as tasks:
                 tasks.create_task(_sender())
-                tasks.create_task(_receiver(tasks))
+                tasks.create_task(_receive_then_signal())
                 tasks.create_task(_expiry_guard())
 
         except* WebSocketDisconnect:
