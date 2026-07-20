@@ -11,9 +11,14 @@ from forze.application.contracts.deps import (
     routed_from_mapping,
 )
 from forze.application.contracts.inference import InferenceDepKey
+from forze.application.contracts.tenancy import (
+    TenancyRouteGroup,
+    TenantIsolationMode,
+    validate_module_tenancy,
+)
 from forze.base.primitives import MappingConverter, StrKeyMapping
 
-from ...kernel import SageMakerRuntimeClientPort
+from ...kernel import RoutedSageMakerRuntimeClient, SageMakerRuntimeClientPort
 from .configs import SageMakerInferenceConfig
 from .factories import ConfigurableSageMakerInference
 from .keys import SageMakerRuntimeClientDepKey
@@ -37,6 +42,34 @@ class SageMakerInferenceDepsModule(DepsModule):
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Per-route endpoint configs, keyed by spec name."""
+
+    required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
+    """Minimum tenant isolation this deployment accepts; wiring fails closed below it.
+
+    ``none`` (one shared endpoint), ``tagged`` (a bound tenant is required, still one shared
+    endpoint), ``namespace`` (a per-tenant ``endpoint_name`` resolver — an endpoint per
+    tenant under one AWS identity) and ``dedicated`` (a
+    :class:`~forze_inference.sagemaker.RoutedSageMakerRuntimeClient` — each tenant invokes
+    under its own AWS credentials, so access is enforced by IAM, not just by endpoint name)."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        validate_module_tenancy(
+            integration="SageMakerInference",
+            client_is_routed=isinstance(self.client, RoutedSageMakerRuntimeClient),
+            groups=[
+                TenancyRouteGroup(
+                    kind="inference",
+                    configs=self.models,
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.endpoint_name,
+                )
+            ],
+            required_isolation=self.required_tenant_isolation,
+            max_supported_isolation="dedicated",
+            validation_failed_code="sagemaker_inference_tenancy_validation_failed",
+        )
 
     # ....................... #
 

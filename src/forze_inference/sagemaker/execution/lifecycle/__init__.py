@@ -3,6 +3,7 @@
 from .pool import (
     SageMakerInferenceShutdownHook,
     SageMakerInferenceStartupHook,
+    routed_sagemaker_inference_lifecycle_step,
     sagemaker_inference_lifecycle_step,
 )
 
@@ -11,5 +12,6 @@ from .pool import (
 __all__ = [
     "SageMakerInferenceShutdownHook",
     "SageMakerInferenceStartupHook",
+    "routed_sagemaker_inference_lifecycle_step",
     "sagemaker_inference_lifecycle_step",
 ]

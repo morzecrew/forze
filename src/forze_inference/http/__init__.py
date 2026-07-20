@@ -22,11 +22,14 @@ from .execution import (
     InferenceHttpStartupHook,
     InferenceWireProtocolName,
     inference_http_lifecycle_step,
+    routed_inference_http_lifecycle_step,
 )
 from .kernel import (
     DEFAULT_REQUEST_TIMEOUT_S,
     InferenceHttpClient,
     InferenceHttpClientPort,
+    InferenceHttpRoutingCredentials,
+    RoutedInferenceHttpClient,
 )
 from .protocols import KserveV2Protocol, MlflowProtocol, WireProtocol
 
@@ -41,11 +44,14 @@ __all__ = [
     "InferenceHttpClient",
     "InferenceHttpClientDepKey",
     "InferenceHttpClientPort",
+    "InferenceHttpRoutingCredentials",
     "InferenceHttpShutdownHook",
     "InferenceHttpStartupHook",
     "InferenceWireProtocolName",
     "KserveV2Protocol",
     "MlflowProtocol",
+    "RoutedInferenceHttpClient",
     "WireProtocol",
     "inference_http_lifecycle_step",
+    "routed_inference_http_lifecycle_step",
 ]

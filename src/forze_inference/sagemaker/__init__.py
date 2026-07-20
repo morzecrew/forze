@@ -21,22 +21,31 @@ from .execution import (
     SageMakerInferenceShutdownHook,
     SageMakerInferenceStartupHook,
     SageMakerRuntimeClientDepKey,
+    routed_sagemaker_inference_lifecycle_step,
     sagemaker_inference_lifecycle_step,
 )
-from .kernel import SageMakerRuntimeClient, SageMakerRuntimeClientPort
+from .kernel import (
+    RoutedSageMakerRuntimeClient,
+    SageMakerRoutingCredentials,
+    SageMakerRuntimeClient,
+    SageMakerRuntimeClientPort,
+)
 
 # ----------------------- #
 
 __all__ = [
     "SAGEMAKER_BACKEND",
     "ConfigurableSageMakerInference",
+    "RoutedSageMakerRuntimeClient",
     "SageMakerInferenceAdapter",
     "SageMakerInferenceConfig",
     "SageMakerInferenceDepsModule",
     "SageMakerInferenceShutdownHook",
     "SageMakerInferenceStartupHook",
+    "SageMakerRoutingCredentials",
     "SageMakerRuntimeClient",
     "SageMakerRuntimeClientDepKey",
     "SageMakerRuntimeClientPort",
+    "routed_sagemaker_inference_lifecycle_step",
     "sagemaker_inference_lifecycle_step",
 ]

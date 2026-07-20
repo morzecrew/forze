@@ -7,11 +7,14 @@ from pydantic import SecretStr
 
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.execution.lifecycle.builtin import ClientShutdownHook
+from forze.application.execution.lifecycle.builtin import (
+    ClientShutdownHook,
+    routed_client_lifecycle_step,
+)
 from forze.base.primitives import StrKey
 from forze.base.serialization.pydantic import pydantic_secret_converter
 
-from ...kernel import SageMakerRuntimeClient
+from ...kernel import RoutedSageMakerRuntimeClient, SageMakerRuntimeClient
 from ..deps.keys import SageMakerRuntimeClientDepKey
 
 if TYPE_CHECKING:
@@ -93,3 +96,20 @@ def sagemaker_inference_lifecycle_step(
         ),
         shutdown=SageMakerInferenceShutdownHook(),
     )
+
+
+# ....................... #
+
+
+def routed_sagemaker_inference_lifecycle_step(
+    client: RoutedSageMakerRuntimeClient,
+    *,
+    id: StrKey = "routed_sagemaker_inference_client",
+) -> LifecycleStep:
+    """Lifecycle step for a tenant-routed runtime client (``dedicated`` isolation).
+
+    Unlike the single-client step there are no ambient credentials here — each tenant's AWS
+    identity comes from its own secret, resolved on first use.
+    """
+
+    return routed_client_lifecycle_step(str(id), client=client)

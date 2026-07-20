@@ -89,6 +89,45 @@ chain; `endpoint_name` is per-tenant capable like `model_name` above.
   by necessity — the model needs real values. Every remote config therefore
   requires `acknowledge_data_egress=True`; wiring fails closed until the
   operator states it.
+- **A declarable tenancy floor.** Pass `required_tenant_isolation=` to either
+  deps module and wiring refuses anything weaker: `none` (one shared model),
+  `tagged` (a bound tenant is required, still one shared model), `namespace` (a
+  per-tenant `model_name` / `endpoint_name` resolver — a model per tenant behind
+  one connection), or `dedicated` (below).
+
+## Per-tenant models (`dedicated`)
+
+`namespace` gives each tenant its own model *name*; every tenant's features
+still travel over one shared client and one shared credential. `dedicated`
+resolves a whole client per tenant from that tenant's own secret:
+
+```python
+from forze_inference.http import (
+    RoutedInferenceHttpClient,
+    routed_inference_http_lifecycle_step,
+)
+
+client = RoutedInferenceHttpClient(
+    secrets=secrets,                                   # SecretsPort
+    secret_ref_for_tenant=lambda t: SecretRef(path=f"tenants/{t}/inference"),
+    tenant_provider=current_tenant,
+)
+steps = [routed_inference_http_lifecycle_step(client)]
+```
+
+The secret holds `InferenceHttpRoutingCredentials` — `base_url` plus optional
+`headers` / `bearer_token` — so a tenant's features reach *that tenant's* model
+server and nothing else. `RoutedSageMakerRuntimeClient` is the AWS counterpart:
+its `SageMakerRoutingCredentials` carry `region_name` and static access keys, so
+each tenant invokes under its own AWS identity and endpoint access is enforced
+by IAM rather than only by the endpoint name your app resolved. Static
+credentials are required there — falling back to the ambient botocore chain
+would put every tenant back on one principal, defeating the isolation.
+
+Clients are built lazily per tenant and cached (`max_cached_tenants`, LRU);
+rotating a tenant's secret changes its fingerprint and rebuilds that client
+transparently. Calls with no bound tenant fail closed rather than picking a
+default.
 - **All-or-nothing batches.** `predict_many` is one wire call
   (`native_batch=True`); with a configured `max_batch_size` an oversized batch
   is refused whole, never silently split. `predict_stream` *does* sub-batch its
