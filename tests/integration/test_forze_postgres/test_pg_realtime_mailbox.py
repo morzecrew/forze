@@ -230,3 +230,94 @@ async def test_cursors_monotonic_min_and_ack_trim(
         await mb.trim(principal="u1", before=_hlc(1))
         remaining = await mb.read_since(principal="u1", since=None)
         assert [e.event_id for e in remaining] == [_eid(2), _eid(3)]
+
+
+@pytest.mark.asyncio
+async def test_equal_hlc_run_pages_without_skipping_on_postgres(
+    mailbox_ctx: ExecutionContext,
+) -> None:
+    """The composite (hlc, id) keyset — an `$or` of range and tie-break — in real SQL."""
+    ctx = mailbox_ctx
+
+    with _bind(ctx, _T1):
+        mb = build_realtime_mailbox(ctx, replay_page_size=2)
+        for n in range(1, 6):  # one burst, one HLC — the wall-clock fallback shape
+            await mb.store(
+                principal="u1", event_id=_eid(n), hlc=_hlc(7), signal=_signal(f"s{n}")
+            )
+
+        streamed = [
+            e.event_id async for e in mb.replay_since(principal="u1", since=None)
+        ]
+
+    # a page boundary inside the tie run resumes on the row id — nothing skipped
+    assert streamed == [_eid(n) for n in range(1, 6)]
+
+
+@pytest.mark.asyncio
+async def test_overflow_window_keeps_the_newest_entries_on_postgres(
+    mailbox_ctx: ExecutionContext,
+) -> None:
+    ctx = mailbox_ctx
+
+    with _bind(ctx, _T1):
+        mb = build_realtime_mailbox(ctx, cap=5, replay_page_size=2)
+        for n in (1, 2, 3):
+            await mb.store(
+                principal="u1", event_id=_eid(n), hlc=_hlc(10), signal=_signal(f"s{n}")
+            )
+        for n in (4, 5, 6):
+            await mb.store(
+                principal="u1", event_id=_eid(n), hlc=_hlc(20), signal=_signal(f"s{n}")
+            )
+
+        streamed = [
+            e.event_id async for e in mb.replay_since(principal="u1", since=None)
+        ]
+
+    # the cap boundary falls inside the hlc-10 group: the composite floor keeps the
+    # newest five and loses exactly the group's oldest entry
+    assert streamed == [_eid(n) for n in (2, 3, 4, 5, 6)]
+    assert mb.stats().overflowed == 1
+
+
+@pytest.mark.asyncio
+async def test_retention_sweeps_scope_by_tenant_on_postgres(
+    mailbox_ctx: ExecutionContext,
+) -> None:
+    """Age sweep + stale-cursor prune against real columns (bigint hlc, timestamptz)."""
+    from datetime import timedelta
+
+    from forze.base.primitives import utcnow
+
+    ctx = mailbox_ctx
+
+    with _bind(ctx, _T2):  # another tenant's ancient row must survive T1's sweep
+        await build_realtime_mailbox(ctx).store(
+            principal="u1", event_id=_eid(9), hlc=_hlc(1), signal=_signal("other-tenant")
+        )
+
+    with _bind(ctx, _T1):
+        mb = build_realtime_mailbox(ctx)
+        cursors = build_realtime_cursors(ctx)
+
+        await mb.store(principal="u1", event_id=_eid(1), hlc=_hlc(1), signal=_signal("old"))
+        await mb.store(principal="u2", event_id=_eid(2), hlc=_hlc(2), signal=_signal("old2"))
+        await mb.store(principal="u1", event_id=_eid(3), hlc=_hlc(5000), signal=_signal("new"))
+        await cursors.advance(principal="u1", client_key="d1", up_to=_hlc(5000))
+
+        deleted = await mb.sweep_older_than(cutoff=_hlc(3000))
+        assert deleted == 2  # both principals' ancient entries, one pass
+        remaining = await mb.read_since(principal="u1", since=None)
+        assert [e.event_id for e in remaining] == [_eid(3)]
+        assert await mb.read_since(principal="u2", since=None) == []
+
+        # the prune filters on the row's own last_update_at (a real timestamptz)
+        assert await cursors.prune_stale(idle_since=utcnow() - timedelta(days=1)) == 0
+        assert await cursors.get(principal="u1", client_key="d1") is not None
+        assert await cursors.prune_stale(idle_since=utcnow() + timedelta(days=1)) == 1
+        assert await cursors.get(principal="u1", client_key="d1") is None
+
+    with _bind(ctx, _T2):
+        survivors = await build_realtime_mailbox(ctx).read_since(principal="u1", since=None)
+        assert [e.event_id for e in survivors] == [_eid(9)]  # the sweep never crossed tenants

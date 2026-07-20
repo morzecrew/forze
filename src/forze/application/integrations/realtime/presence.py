@@ -13,7 +13,7 @@ expire rather than leak — which in turn means live connections must heartbeat
 """
 
 from collections.abc import Awaitable
-from typing import Protocol, final, runtime_checkable
+from typing import ClassVar, Protocol, final, runtime_checkable
 
 import attrs
 
@@ -27,7 +27,15 @@ __all__ = [
 
 @runtime_checkable
 class RealtimePresence(Protocol):
-    """Tracks how many connections occupy a room (e.g. is a principal online)."""
+    """Tracks how many connections occupy a room (e.g. is a principal online).
+
+    An implementation whose counts are visible to **every** node (a shared store like
+    ``RedisRealtimePresence``) should declare ``cluster_wide: ClassVar[bool] = True``.
+    Consumers that make skip-delivery decisions from a count (the gateway's
+    presence-based emit skip) treat an absent or ``False`` marker as node-local and
+    refuse to pair it with a multi-node Socket.IO backplane — a node-local count of 0
+    there just means "not on *this* node", not "offline".
+    """
 
     def joined(self, room: str, sid: str) -> Awaitable[None]: ...  # pragma: no cover
 
@@ -43,6 +51,9 @@ class RealtimePresence(Protocol):
 @attrs.define(slots=True)
 class InMemoryRealtimePresence(RealtimePresence):
     """Single-node, in-memory presence. For multi-node use a TTL-backed store."""
+
+    cluster_wide: ClassVar[bool] = False
+    """Counts cover this process only — never a basis for multi-node skip decisions."""
 
     _rooms: dict[str, set[str]] = attrs.field(factory=dict, init=False)
 

@@ -120,6 +120,44 @@ class TestAcknowledgeUpTo:
         remaining = await mailbox.read_since(principal="p1", since=None)
         assert [e.event_id for e in remaining] == ids[1:]
 
+    async def test_delivered_floor_clamps_an_ack_past_the_delivered_prefix(self) -> None:
+        # a live frame acked mid-replay: the cumulative claim stops at the transport's
+        # contiguously-delivered floor, so undelivered entries are neither skipped nor
+        # trimmed out from under the still-running replay
+        mailbox = InMemoryRealtimeMailbox()
+        cursors = InMemoryMailboxCursors()
+        ids = await _seed(mailbox)
+
+        position = await acknowledge_up_to(
+            mailbox,
+            cursors,
+            principal="p1",
+            client_key="d1",
+            event_id=ids[2],
+            delivered_floor=_hlc(1),
+        )
+
+        assert position == _hlc(1)  # clamped, not the acked entry's own position
+        assert await cursors.get(principal="p1", client_key="d1") == _hlc(1)
+        remaining = await mailbox.read_since(principal="p1", since=None)
+        assert [e.event_id for e in remaining] == ids[1:]  # 2..3 stay retained
+
+    async def test_delivered_floor_at_or_past_the_ack_does_not_clamp(self) -> None:
+        mailbox = InMemoryRealtimeMailbox()
+        cursors = InMemoryMailboxCursors()
+        ids = await _seed(mailbox)
+
+        position = await acknowledge_up_to(
+            mailbox,
+            cursors,
+            principal="p1",
+            client_key="d1",
+            event_id=ids[1],
+            delivered_floor=_hlc(5),
+        )
+
+        assert position == _hlc(2)  # within the delivered prefix: the ack stands as-is
+
     async def test_unknown_event_id_is_a_noop(self) -> None:
         mailbox = InMemoryRealtimeMailbox()
         cursors = InMemoryMailboxCursors()

@@ -105,7 +105,7 @@ async def test_replay_since_streams_in_order_across_pages() -> None:
     assert mb.stats().replayed == 7  # 5 + 2, counted per yielded entry
 
 
-async def test_replay_since_bounded_by_cap() -> None:
+async def test_replay_since_bounded_by_cap_keeps_newest_window() -> None:
     runtime = _runtime()
     async with runtime.scope():
         ctx = runtime.get_context()
@@ -120,9 +120,30 @@ async def test_replay_since_bounded_by_cap() -> None:
                 e.event_id async for e in mb.replay_since(principal="u1", since=None)
             ]
 
-    # The cap bounds the stream regardless of page size (first 3 after the cursor).
-    assert streamed == [_eid(1), _eid(2), _eid(3)]
+    # The cap is a newest-first retention bound: an overflowing backlog loses its
+    # OLDEST entries and the stream is a complete suffix — never a truncated prefix,
+    # which would let a later cumulative ack skip (then trim) the undelivered middle.
+    assert streamed == [_eid(3), _eid(4), _eid(5)]
     assert mb.stats().replayed == 3
+    assert mb.stats().overflowed == 1
+
+
+async def test_backlog_exactly_at_cap_is_not_counted_as_overflow() -> None:
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with _bind(ctx):
+            mb = build_realtime_mailbox(ctx, cap=3, replay_page_size=2)
+            for n in range(1, 4):
+                await mb.store(
+                    principal="u1", event_id=_eid(n), hlc=_hlc(n), signal=_signal(f"s{n}")
+                )
+
+            streamed = [e.event_id async for e in mb.replay_since(principal="u1", since=None)]
+
+    # a backlog that fills the window exactly loses nothing — no false loss counted
+    assert streamed == [_eid(1), _eid(2), _eid(3)]
+    assert mb.stats().overflowed == 0
 
 
 async def test_stored_counter_tracks_real_writes_not_redeliveries() -> None:
@@ -218,3 +239,177 @@ async def test_shared_stats_count_store_replay_trim_ack() -> None:
     assert len(replayed) == 2
     assert mb.stats() == MailboxStats(stored=2, replayed=2, trimmed=1)
     assert cursors.stats() == MailboxStats(acked=1)
+
+
+# ----------------------- #
+# retention backstop: age-based entry sweep + stale-cursor pruning
+
+
+async def test_sweep_older_than_deletes_across_principals() -> None:
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with _bind(ctx):
+            mb = build_realtime_mailbox(ctx)
+            await mb.store(principal="u1", event_id=_eid(1), hlc=_hlc(1), signal=_signal("a"))
+            await mb.store(principal="u2", event_id=_eid(2), hlc=_hlc(2), signal=_signal("b"))
+            await mb.store(principal="u1", event_id=_eid(3), hlc=_hlc(5000), signal=_signal("c"))
+
+            deleted = await mb.sweep_older_than(cutoff=_hlc(3000))
+
+            u1 = await mb.read_since(principal="u1", since=None)
+            u2 = await mb.read_since(principal="u2", since=None)
+
+    # entries older than the cutoff die for EVERY principal (no cursor floor consulted)
+    assert deleted == 2
+    assert [e.event_id for e in u1] == [_eid(3)]
+    assert u2 == []
+    assert mb.stats().trimmed == 2
+
+
+async def test_prune_stale_cursors_unfreezes_the_trim_floor() -> None:
+    from datetime import timedelta
+
+    from forze.base.primitives import utcnow
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with _bind(ctx):
+            cursors = build_realtime_cursors(ctx)
+            # two per-connection fallback keys: without pruning these rows are immortal
+            # and the lower one freezes the all-device trim floor forever
+            await cursors.advance(principal="u1", client_key="conn-1", up_to=_hlc(1))
+            await cursors.advance(principal="u1", client_key="conn-2", up_to=_hlc(9))
+
+            untouched = await cursors.prune_stale(idle_since=utcnow() - timedelta(days=1))
+            assert untouched == 0  # both rows advanced just now — not stale
+            assert await cursors.min_cursor(principal="u1") == _hlc(1)
+
+            pruned = await cursors.prune_stale(idle_since=utcnow() + timedelta(days=1))
+            assert pruned == 2  # idle past the window: the registry forgets them
+            assert await cursors.min_cursor(principal="u1") is None
+
+
+async def test_retention_step_tick_sweeps_entries_and_keeps_fresh_cursors() -> None:
+    from datetime import timedelta
+
+    from forze.base.primitives import utcnow
+    from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
+
+    now_ms = int(utcnow().timestamp() * 1000)
+    step = realtime_mailbox_retention_lifecycle_step(
+        max_age=timedelta(hours=1), tenants=lambda: [_T1]
+    )
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with _bind(ctx):
+            mb = build_realtime_mailbox(ctx)
+            cursors = build_realtime_cursors(ctx)
+            await mb.store(principal="u1", event_id=_eid(1), hlc=_hlc(1), signal=_signal("old"))
+            await mb.store(
+                principal="u1", event_id=_eid(2), hlc=_hlc(now_ms), signal=_signal("new")
+            )
+            await cursors.advance(principal="u1", client_key="d1", up_to=_hlc(now_ms))
+
+        # the tick binds each assigned tenant itself (tenant-aware collections)
+        await step.startup._sweep_tick(ctx, [_T1])  # pyright: ignore[reportAttributeAccessIssue, reportPrivateUsage]
+
+        with _bind(ctx):
+            remaining = await mb.read_since(principal="u1", since=None)
+            cursor = await cursors.get(principal="u1", client_key="d1")
+
+    assert [e.event_id for e in remaining] == [_eid(2)]  # ancient entry swept by age
+    assert cursor == _hlc(now_ms)  # a freshly-advanced cursor survives the prune
+
+
+def test_retention_step_refuses_incoherent_windows() -> None:
+    from datetime import timedelta
+
+    from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
+
+    with pytest.raises(CoreException, match="max_age must be positive"):
+        realtime_mailbox_retention_lifecycle_step(max_age=timedelta(0))
+
+    # a cursor pruned before its acked entries expire re-offers confirmed deliveries
+    with pytest.raises(CoreException, match="cursor_max_age"):
+        realtime_mailbox_retention_lifecycle_step(
+            max_age=timedelta(hours=2), cursor_max_age=timedelta(hours=1)
+        )
+
+    with pytest.raises(CoreException, match="interval must be positive"):
+        realtime_mailbox_retention_lifecycle_step(
+            max_age=timedelta(hours=1), interval=timedelta(0)
+        )
+
+
+# ----------------------- #
+# sealing the stored signal bodies
+
+
+def test_mailbox_spec_encryption_passthrough() -> None:
+    from forze.application.contracts.crypto import FieldEncryption
+
+    policy = FieldEncryption(encrypted={"payload", "event"})
+    spec = realtime_mailbox_spec(encryption=policy)
+
+    assert spec.encryption is policy
+
+
+def test_mailbox_spec_refuses_sealing_the_replay_index() -> None:
+    from forze.application.contracts.crypto import FieldEncryption
+
+    # principal/event_id/hlc are filtered and sorted by replay, ack resolution, and
+    # trimming — sealed they would fail at query time, so the build refuses them
+    for field in ("principal", "event_id", "hlc"):
+        with pytest.raises(CoreException) as caught:
+            realtime_mailbox_spec(encryption=FieldEncryption(encrypted={field}))
+
+        assert caught.value.code == "realtime_mailbox_sealed_index"
+
+
+async def test_replay_pages_through_an_equal_hlc_run_without_skipping() -> None:
+    # the wall-clock fallback stamps a whole burst with ONE hlc: a page boundary
+    # inside the tie run must not skip the rest (an `hlc > cursor` keyset would) —
+    # the composite (hlc, id) cursor resumes inside the run
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with _bind(ctx):
+            mb = build_realtime_mailbox(ctx, replay_page_size=2)
+            for n in range(1, 6):
+                await mb.store(
+                    principal="u1", event_id=_eid(n), hlc=_hlc(7), signal=_signal(f"s{n}")
+                )
+
+            streamed = [e.event_id async for e in mb.replay_since(principal="u1", since=None)]
+
+    assert streamed == [_eid(n) for n in range(1, 6)]  # all five, in id order
+
+
+async def test_overflow_window_inside_an_equal_hlc_group_keeps_the_newest() -> None:
+    # cap boundary inside an equal-HLC group: an HLC-only floor would match the whole
+    # group, and the cap-limited ascending read would deliver the group's OLDER
+    # entries and drop the newest — the composite (hlc, id) floor keeps exactly the
+    # newest-cap window
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        with _bind(ctx):
+            mb = build_realtime_mailbox(ctx, cap=5, replay_page_size=2)
+            for n in (1, 2, 3):
+                await mb.store(
+                    principal="u1", event_id=_eid(n), hlc=_hlc(10), signal=_signal(f"s{n}")
+                )
+            for n in (4, 5, 6):
+                await mb.store(
+                    principal="u1", event_id=_eid(n), hlc=_hlc(20), signal=_signal(f"s{n}")
+                )
+
+            streamed = [e.event_id async for e in mb.replay_since(principal="u1", since=None)]
+
+    # the newest five in (hlc, id) order — id 1 (oldest of the hlc-10 group) is the loss
+    assert streamed == [_eid(n) for n in (2, 3, 4, 5, 6)]
+    assert mb.stats().overflowed == 1

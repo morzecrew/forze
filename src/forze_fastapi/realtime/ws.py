@@ -33,6 +33,7 @@ import asyncio
 import json
 import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from datetime import datetime
 from inspect import isawaitable
 from typing import Any, cast, final
 from uuid import UUID
@@ -66,7 +67,7 @@ from forze.base.exceptions import (
     guard_frame,
 )
 from forze.base.logging import Logger
-from forze.base.primitives import uuid7
+from forze.base.primitives import utcnow, uuid7
 from forze.base.scrubbing import sanitize_pydantic_errors
 
 from .._logging import ForzeFastAPILogger
@@ -96,6 +97,13 @@ WS_POLICY_CLOSE = 1008
 
 WS_TOO_BIG_CLOSE = 1009
 """Close code for an oversized inbound frame."""
+
+WS_UNSUPPORTED_DATA_CLOSE = 1003
+"""Close code for a non-text (binary) inbound frame — the protocol is JSON text."""
+
+_EXPIRY_CHECK_CEILING_SECONDS = 30.0
+"""Upper bound between credential-expiry checks, so a reauth that *shortens*
+``expires_at`` is enforced within this window even mid-sleep."""
 
 FRAME_ACK = "realtime.ack"
 FRAME_REAUTH = "realtime.reauth"
@@ -131,6 +139,29 @@ class WsConnection:
 
     client: ClientIdentity | None = None
     """The device/session this connection is, keying its offline-replay cursor."""
+
+    expires_at: datetime | None = None
+    """When the connection's credential expires — a **timezone-aware** (UTC) instant;
+    ``None`` never expires.
+
+    Captured from the verified token at connect/reauth time. The route enforces it
+    continuously — a socket past this instant is closed (policy code), so a long-lived
+    connection can't outlive the credential that authenticated it. Set it when
+    resolving, or a stolen token stays live for the socket's whole lifetime. A naive
+    datetime is refused at construction: it cannot be compared against the aware
+    enforcement clock, so it would surface as a connection-killing ``TypeError`` at
+    expiry-check time instead of an actionable error here."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.expires_at is not None and self.expires_at.tzinfo is None:
+            raise exc.configuration(
+                "WsConnection.expires_at must be a timezone-aware (UTC) datetime; a "
+                "naive value cannot be compared against the aware enforcement clock. "
+                "Resolve it with tzinfo set (e.g. from the token's exp claim in UTC).",
+                code="realtime_expiry_naive",
+            )
 
     # ....................... #
 
@@ -200,6 +231,32 @@ def _log_server_error(core: CoreException | None, error: BaseException) -> None:
     _logger.critical_exception("WebSocket realtime unit failed", exc=error)
 
 
+def _require_allowed_origin(websocket: WebSocket, allowed: frozenset[str] | None) -> None:
+    """Refuse a browser upgrade whose ``Origin`` is not on the allowlist.
+
+    The browser is the one client that attaches ambient credentials (cookies) to a
+    cross-site WebSocket upgrade and enforces **nothing** itself — no CORS preflight
+    guards a WS handshake — so the server-side Origin check is the whole cross-site
+    perimeter. A request with no ``Origin`` header is a non-browser client (curl, a
+    mobile SDK, a service): it carries no ambient credentials to launder, so it passes —
+    the allowlist gates browsers, authentication gates everyone.
+    """
+
+    if allowed is None:
+        return
+
+    origin = websocket.headers.get("origin")
+
+    if origin is None:
+        return
+
+    if origin.strip().rstrip("/").lower() not in allowed:
+        raise exc.authorization(
+            "Origin not allowed for the realtime WebSocket",
+            code="realtime_origin_forbidden",
+        )
+
+
 def _is_socket_teardown_error(error: BaseException) -> bool:
     """Whether a ``RuntimeError`` is starlette's send/receive-after-close race.
 
@@ -244,6 +301,7 @@ def attach_realtime_ws_route(
     commands: Sequence[RealtimeCommandRoute[Any, Any]] | None = None,
     max_frame_bytes: int = 64 * 1024,
     max_inflight_commands: int = 16,
+    allowed_origins: Sequence[str] | None = None,
     path: str = "/realtime/ws",
 ) -> APIRouter:
     """Attach the governed realtime WebSocket endpoint to *router*.
@@ -258,10 +316,33 @@ def attach_realtime_ws_route(
     enable ``cmd`` frame dispatch — the same
     :class:`~forze.application.integrations.realtime.RealtimeCommandRoute`
     declarations a Socket.IO namespace router registers.
+
+    *allowed_origins* is the browser perimeter: when set, an upgrade whose ``Origin``
+    header is not in the list is refused (policy close) — the WS handshake has no CORS
+    preflight, so this check is the only cross-site defense the transport gets. Pass
+    your app origins (e.g. ``["https://app.example.com"]``); requests without an
+    ``Origin`` header (non-browser clients) pass. ``None`` disables the check — safe
+    only when the resolver never honors cookie/ambient credentials.
+
+    Credential expiry is enforced continuously from
+    :attr:`WsConnection.expires_at`: the socket is closed once past it (a
+    ``realtime.reauth`` swaps in a fresh ``expires_at`` without reconnecting), the
+    same contract as the Socket.IO expiry sweep.
     """
 
     if max_topics <= 0:
         raise exc.configuration("max_topics must be positive")
+
+    origin_allowlist: frozenset[str] | None = None
+
+    if allowed_origins is not None:
+        origin_allowlist = frozenset(o.strip().rstrip("/").lower() for o in allowed_origins)
+
+        if not origin_allowlist or "" in origin_allowlist:
+            raise exc.configuration(
+                "allowed_origins must be a non-empty list of origins "
+                "(e.g. ['https://app.example.com']); pass None to disable the check"
+            )
 
     if max_frame_bytes <= 0:
         raise exc.configuration("max_frame_bytes must be positive")
@@ -288,6 +369,7 @@ def attach_realtime_ws_route(
         ctx = ctx_dep()
 
         async def _handshake() -> tuple[WsConnection, frozenset[str]]:
+            _require_allowed_origin(websocket, origin_allowlist)
             negotiate_realtime_protocol(websocket.query_params.get("protocol"))
             connection = await _resolve(resolve, WsConnect(websocket=websocket))
 
@@ -516,7 +598,84 @@ def attach_realtime_ws_route(
                 )
                 return
 
-            await _send_json({"type": "ack", "cid": cid, "data": outcome.value})
+            # Serialize before sending: an ack value that json.dumps cannot encode (a
+            # datetime from an untyped parse_ack) raises past guard_frame's protection —
+            # unguarded, that TypeError escapes every except* clause and cancels every
+            # in-flight command on the socket. It must cost this command an error ack.
+            try:
+                payload = json.dumps(
+                    {"type": "ack", "cid": cid, "data": outcome.value}, separators=(",", ":")
+                )
+
+            except (TypeError, ValueError) as error:
+                _logger.critical_exception(
+                    "WebSocket command ack is not JSON-serializable", exc=error
+                )
+                await _send_json(
+                    {
+                        "type": "ack",
+                        "cid": cid,
+                        "error": _render_error(
+                            error_envelope(
+                                exc.internal(
+                                    "Command ack could not be serialized",
+                                    code="realtime_ack_unserializable",
+                                )
+                            )
+                        ),
+                    }
+                )
+                return
+
+            await _send(payload)
+
+        # ....................... #
+
+        receiver_done = asyncio.Event()
+
+        async def _expiry_guard() -> None:
+            # The Socket.IO twin sweeps its connection registry on an interval; a
+            # FastAPI socket has no registry, so each connection guards itself. The
+            # live session identity is re-read every cycle: a reauth that extends (or
+            # shortens) expires_at takes effect within one check ceiling. The guard
+            # exits on its own once the receiver ends (interruptible wait, not a bare
+            # sleep) so the ordinary teardown never has to cancel it — a live sibling
+            # at TaskGroup exit races any external cancellation of the endpoint task.
+            while True:
+                expires_at = session.connection.expires_at
+                now = utcnow()
+
+                if expires_at is not None and now >= expires_at:
+                    async with send_lock:
+                        # Re-read under the lock: a reauth that swapped in a fresh
+                        # credential while this task waited for the lock must win —
+                        # closing on the stale deadline would disconnect the client
+                        # right after its successful reauth ack.
+                        refreshed = session.connection.expires_at
+
+                        if refreshed is None or utcnow() < refreshed:
+                            continue
+
+                        await websocket.close(code=WS_POLICY_CLOSE, reason="credential expired")
+
+                    raise WebSocketDisconnect(WS_POLICY_CLOSE)
+
+                remaining = (
+                    _EXPIRY_CHECK_CEILING_SECONDS
+                    if expires_at is None
+                    else (expires_at - now).total_seconds()
+                )
+
+                try:
+                    await asyncio.wait_for(
+                        receiver_done.wait(),
+                        timeout=max(0.0, min(remaining, _EXPIRY_CHECK_CEILING_SECONDS)),
+                    )
+
+                except TimeoutError:
+                    continue  # interval elapsed — re-check the live deadline
+
+                return  # the receiver ended: the socket is tearing down anyway
 
         # ....................... #
 
@@ -531,7 +690,24 @@ def attach_realtime_ws_route(
                     inflight.release()
 
             while True:
-                raw = await websocket.receive_text()  # WebSocketDisconnect unwinds all
+                # Raw receive, not receive_text: a client is free to send a binary
+                # frame, and receive_text would surface it as a KeyError that escapes
+                # every except* clause — one hostile frame cancelling every in-flight
+                # command. Non-text input is refused with a deliberate 1003 close.
+                message = await websocket.receive()
+
+                if message["type"] == "websocket.disconnect":
+                    raise WebSocketDisconnect(int(message.get("code") or 1000))
+
+                raw = message.get("text")
+
+                if raw is None:
+                    async with send_lock:
+                        await websocket.close(
+                            code=WS_UNSUPPORTED_DATA_CLOSE, reason="text frames only"
+                        )
+
+                    raise WebSocketDisconnect(WS_UNSUPPORTED_DATA_CLOSE)
 
                 if len(raw.encode()) > max_frame_bytes:
                     # the close is a socket write too — serialize it with the sender
@@ -597,9 +773,20 @@ def attach_realtime_ws_route(
             for room in rooms:
                 await presence.joined(room, member_key)  # type: ignore[union-attr]
 
+            async def _receive_then_signal() -> None:
+                # however the receiver ends (disconnect, refused frame, failure), the
+                # signal lets the expiry guard finish on its own instead of being
+                # cancelled at TaskGroup exit
+                try:
+                    await _receiver(tasks)
+
+                finally:
+                    receiver_done.set()
+
             async with asyncio.TaskGroup() as tasks:
                 tasks.create_task(_sender())
-                tasks.create_task(_receiver(tasks))
+                tasks.create_task(_receive_then_signal())
+                tasks.create_task(_expiry_guard())
 
         except* WebSocketDisconnect:
             pass  # client went away — normal teardown

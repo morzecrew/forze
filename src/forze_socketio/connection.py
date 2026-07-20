@@ -47,7 +47,7 @@ from forze.application.integrations.realtime import (
     resolve_client_key,
 )
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import utcnow
+from forze.base.primitives import HlcTimestamp, utcnow
 
 from .exceptions import (
     GENERIC_INTERNAL_DETAIL,
@@ -80,17 +80,32 @@ class RealtimeConnection:
     """The connection's tenant, used to scope its rooms."""
 
     expires_at: datetime | None = None
-    """When the connection's credential expires; ``None`` never expires.
+    """When the connection's credential expires — a **timezone-aware** (UTC) instant;
+    ``None`` never expires.
 
     Captured from the verified assertion/token at connect time (``AuthnIdentity``
     itself is principal-only). A sweeper drops the connection once past this, so a
-    long-lived socket can't outlive the credential that authenticated it."""
+    long-lived socket can't outlive the credential that authenticated it. A naive
+    datetime is refused at construction: the sweep isolates per-connection failures,
+    so a naive value would not error the connect — it would make every expiry check
+    raise inside the sweep and be logged-and-skipped, silently never enforcing."""
 
     client: ClientIdentity | None = None
     """The device/session this connection is, keying its offline-replay cursor.
 
     Resolve it from the connect handshake (a client-supplied ``device_id``) and/or
     the token ``sid``; absent one, the cursor falls back to the per-connection sid."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.expires_at is not None and self.expires_at.tzinfo is None:
+            raise exc.configuration(
+                "RealtimeConnection.expires_at must be a timezone-aware (UTC) datetime; "
+                "a naive value cannot be compared against the aware sweep clock. "
+                "Resolve it with tzinfo set (e.g. from the token's exp claim in UTC).",
+                code="realtime_expiry_naive",
+            )
 
     # ....................... #
 
@@ -172,6 +187,31 @@ def _bind_connection(
 
 
 @final
+@attrs.define(slots=True)
+class _ReplayProgress:
+    """How far a connection's replay has contiguously delivered — the ack clamp's input.
+
+    Socket.IO live emits (room fan-out) race the connect-time replay, so a client can
+    receive — and ack — a live frame while older mailbox entries are still draining.
+    Without this, that ack's cumulative claim would advance the cursor over the
+    undelivered middle and the all-device trim would delete it. Node-local by design:
+    the replay runs on the node holding the socket, and ``realtime.ack`` arrives on
+    that same node.
+    """
+
+    floor: HlcTimestamp | None = None
+    """The highest position delivered in order so far (the replay-start cursor until
+    the first entry drains); ``None`` when nothing is contiguously delivered yet."""
+
+    complete: bool = False
+    """The replay drained fully — every retained entry up to the live tail was sent,
+    so cumulative acks need no clamp from here on."""
+
+
+# ....................... #
+
+
+@final
 @attrs.define(slots=True, kw_only=True)
 class _ConnectionLifecycle:
     """The connect / ack / disconnect handlers, as methods so each can be unit-tested in
@@ -184,6 +224,9 @@ class _ConnectionLifecycle:
     mailbox_factory: Callable[[ExecutionContext], RealtimeMailbox] | None = None
     cursors_factory: Callable[[ExecutionContext], MailboxCursors] | None = None
     runtime: ExecutionRuntime | None = None
+
+    _replay_progress: dict[str, _ReplayProgress] = attrs.field(factory=dict, init=False)
+    """Per-sid replay progress on this node, created at connect, dropped at disconnect."""
 
     # ....................... #
 
@@ -204,6 +247,7 @@ class _ConnectionLifecycle:
             return
 
         client_key = connection.client_key(sid)
+        progress = self._replay_progress.get(sid)
 
         # Stream the backlog page-by-page inside the scope and emit as we go, so peak
         # memory is one page rather than the whole (up to ``cap``) backlog per
@@ -217,6 +261,9 @@ class _ConnectionLifecycle:
                 cursors = self.cursors_factory(ctx)
                 since = await cursors.get(principal=connection.principal, client_key=client_key)
 
+                if progress is not None and since is not None:
+                    progress.floor = since  # the already-acked prefix counts as delivered
+
                 async for entry in iter_replay(
                     mailbox, principal=connection.principal, since=since
                 ):
@@ -226,6 +273,14 @@ class _ConnectionLifecycle:
                         to=sid,
                         namespace=self.namespace,
                     )
+
+                    if progress is not None:
+                        progress.floor = entry.hlc
+
+        if progress is not None:
+            # only a fully-drained replay lifts the ack clamp — a replay that raised
+            # leaves ``complete`` False, so later acks stay bounded by what was sent
+            progress.complete = True
 
     # ....................... #
 
@@ -309,6 +364,19 @@ class _ConnectionLifecycle:
         if connection is None or event_id is None:
             return
 
+        # Live room emits race the connect-time replay, so an ack can name a frame
+        # delivered ahead of the drain. Clamp it to the replay's contiguous floor —
+        # unclamped it would advance the cursor over undelivered entries, and the
+        # all-device trim below the new floor would delete them (silent loss).
+        progress = self._replay_progress.get(sid)
+        delivered_floor: HlcTimestamp | None = None
+
+        if progress is not None and not progress.complete:
+            if progress.floor is None:
+                return  # nothing contiguously delivered yet — nothing an ack can claim
+
+            delivered_floor = progress.floor
+
         async with self.runtime.scope():
             ctx = self.runtime.get_context()
             with _bind_connection(ctx, connection):
@@ -318,6 +386,7 @@ class _ConnectionLifecycle:
                     principal=connection.principal,
                     client_key=connection.client_key(sid),
                     event_id=event_id,
+                    delivered_floor=delivered_floor,
                 )
 
     # ....................... #
@@ -356,24 +425,39 @@ class _ConnectionLifecycle:
         session[CONNECTION_SESSION_KEY] = connection
         await self.sio.save_session(sid, session, namespace=self.namespace)
 
-        room = connection.principal_room
-        await self.sio.enter_room(sid, room, namespace=self.namespace)
-
-        if self.presence is not None:
-            await self.presence.joined(room, sid)
-
         if self.replay_enabled:
-            # replay is best-effort: a drain error must not refuse the live connection
-            try:
-                await self.replay(connection, sid)
+            # Registered before the room join: from the first live emit onward, acks
+            # must be clamped to what the (not yet started) replay has delivered.
+            self._replay_progress[sid] = _ReplayProgress()
 
-            except Exception as error:
-                log_server_error(error)
+        try:
+            room = connection.principal_room
+            await self.sio.enter_room(sid, room, namespace=self.namespace)
+
+            if self.presence is not None:
+                await self.presence.joined(room, sid)
+
+            if self.replay_enabled:
+                # replay is best-effort: a drain error must not refuse the live connection
+                try:
+                    await self.replay(connection, sid)
+
+                except Exception as error:
+                    log_server_error(error)
+
+        except BaseException:
+            # A raise here refuses the connect, and a refused connect never reaches
+            # on_disconnect — without this pop, every failed room join or presence
+            # write would leak its progress entry forever (sids are never reused).
+            self._replay_progress.pop(sid, None)
+            raise
 
     # ....................... #
 
     async def on_disconnect(self, sid: str) -> None:
         """Update presence on disconnect (Socket.IO drops room membership itself)."""
+
+        self._replay_progress.pop(sid, None)
 
         if self.presence is None:
             return

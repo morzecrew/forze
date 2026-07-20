@@ -13,26 +13,31 @@ ambient tenant; this kit carries **zero** tenant code. The mailbox doc's key is 
 durable event's own id (already a ``UUID``); a cursor's key is a **deterministic** id
 derived from ``(principal, client_key)`` (``uuid5``), so concurrent first-acks converge on
 one row. Ordering/cursor values are the HLC the durable path carries, stored
-packed (monotonic int, range-queryable). Encryption is whatever the app sets on the spec.
+packed (monotonic int, range-queryable). Encryption is whatever the app sets on the spec —
+``realtime_mailbox_spec(encryption=...)`` seals the stored signal bodies at rest.
 """
 
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import Any, Final, final
 from uuid import UUID, uuid5
 
 import attrs
 from pydantic import Field
 
+from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,
     DocumentSpec,
 )
+from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.realtime import MailboxEntry, RealtimeSignal
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import HlcTimestamp
 from forze.domain.models import BaseDTO, Document, ReadDocument
+from forze_kits.integrations._logger import logger
 
 from .specs import DEFAULT_REALTIME_CHANNEL
 
@@ -46,6 +51,9 @@ _DEFAULT_REPLAY_PAGE_SIZE: Final = 100
 
 _CURSOR_NS: Final = UUID("1d3e0b5a-7c9f-4e2a-8b6d-0a1c2e4f6a8b")
 """Fixed namespace for deriving a cursor's id from ``(principal, client_key)``."""
+
+_PRUNE_PAGE_SIZE: Final = 500
+"""Rows deleted per page by the stale-cursor sweep (id-only projection)."""
 
 # ....................... #
 
@@ -86,6 +94,12 @@ class MailboxStats:
 
     acked: int = 0
     """Cursor advances (device acks that moved a cursor forward)."""
+
+    overflowed: int = 0
+    """Replays whose backlog exceeded the retention cap (oldest overflow skipped).
+
+    Every increment is a device that fell more than ``cap`` entries behind and lost
+    the oldest part of its backlog — a bounded, declared loss, but one to alarm on."""
 
 
 # ....................... #
@@ -141,16 +155,46 @@ class _CursorRead(ReadDocument):
 # ....................... #
 # specs
 
+MailboxDocumentSpec = DocumentSpec[_MailboxRead, _MailboxDoc, _MailboxCreate, Any]
+"""The mailbox collection's spec type (the models themselves stay private)."""
+
+CursorDocumentSpec = DocumentSpec[_CursorRead, _CursorDoc, _CursorCreate, _CursorUpdate]
+"""The cursor collection's spec type (the models themselves stay private)."""
+
 
 def realtime_mailbox_spec(
     channel: str = DEFAULT_REALTIME_CHANNEL,
+    *,
+    encryption: FieldEncryption | None = None,
 ) -> DocumentSpec[_MailboxRead, _MailboxDoc, _MailboxCreate, Any]:
-    """The document collection holding per-principal durable signals (wire it tenant-aware)."""
+    """The document collection holding per-principal durable signals (wire it tenant-aware).
+
+    Mailbox entries persist the **signal bodies** — DM texts, notification contents —
+    for the whole retention window, so an app that seals its other collections should
+    seal this one too. The document models are private, so *encryption* is the seam:
+    pass a :class:`~forze.application.contracts.crypto.FieldEncryption` over the stored
+    field names — seal ``payload`` (the signal body; usually also ``event``, the event
+    name) with randomized encryption. ``principal``, ``event_id`` and ``hlc`` are the
+    replay/ack index — the mailbox filters and sorts on them, so they must stay
+    plaintext (a policy sealing them is refused at build).
+    """
+
+    if encryption is not None and (
+        forbidden := encryption.sealed & {"principal", "event_id", "hlc"}
+    ):
+        raise exc.configuration(
+            f"realtime_mailbox_spec cannot seal {sorted(forbidden)}: the mailbox "
+            "filters and sorts on principal/event_id/hlc for replay, ack resolution, "
+            "and trimming — sealed, every replay and ack would fail at query time. "
+            "Seal 'payload' (and optionally 'event') instead.",
+            code="realtime_mailbox_sealed_index",
+        )
 
     return DocumentSpec(
         name=f"{channel}-mailbox",
         read=_MailboxRead,
         write={"domain": _MailboxDoc, "create_cmd": _MailboxCreate},
+        encryption=encryption,
     )
 
 
@@ -203,6 +247,7 @@ class DocumentRealtimeMailbox:
     _stored: int = attrs.field(default=0, init=False)
     _replayed: int = attrs.field(default=0, init=False)
     _trimmed: int = attrs.field(default=0, init=False)
+    _overflowed: int = attrs.field(default=0, init=False)
 
     # ....................... #
 
@@ -211,6 +256,7 @@ class DocumentRealtimeMailbox:
             stored=self._stored,
             replayed=self._replayed,
             trimmed=self._trimmed,
+            overflowed=self._overflowed,
         )
 
     # ....................... #
@@ -246,15 +292,73 @@ class DocumentRealtimeMailbox:
 
     # ....................... #
 
-    async def read_since(self, *, principal: str, since: HlcTimestamp | None) -> list[MailboxEntry]:
+    async def _window_filters(
+        self, *, principal: str, since: HlcTimestamp | None
+    ) -> QueryFilterExpression:
+        """The filter selecting a **complete** replay window past *since*.
+
+        The cap is a *newest-first retention bound*, so a backlog larger than the cap
+        must lose its **oldest** entries, not its newest — and the loss must move the
+        window start, never silently truncate the read. A truncated oldest-first read
+        would deliver an incomplete prefix while later frames still flow live; the
+        client's cumulative ack (which asserts "I have everything up to here") would
+        then advance the cursor over entries that were never delivered, and the trim
+        floor would delete them. Skipping *ahead* keeps the delivered prefix complete:
+        everything at or after the window start is replayed, everything before it is a
+        declared, counted retention loss.
+
+        The window start is the **composite** ``(hlc, id)`` of the cap-th newest row —
+        an HLC-only floor would match a whole equal-HLC run (the wall-clock fallback
+        stamps a burst with one HLC), widening the window past the cap so the
+        cap-limited ascending read delivers the run's *older* entries and drops the
+        newest — the exact inversion of the retention bound.
+        """
+
         values: dict[str, Any] = {"principal": principal}
 
         if since is not None:
             values["hlc"] = {"$gt": since.pack()}
 
-        page = await self.query.find_many(
+        # One (hlc, id)-only probe, newest-first, asking for one row PAST the cap: a
+        # backlog of exactly ``cap`` entries fits (a cap-limited probe could not tell
+        # it from a real overflow and would count a false loss). More than ``cap``
+        # rows means a true overflow, and the cap-th newest row is the window start.
+        probe = await self.query.project_many(
+            ["hlc", "id"],
             filters={"$values": values},
-            sorts={"hlc": "asc"},
+            sorts={"hlc": "desc", "id": "desc"},
+            pagination={"limit": self.cap + 1},
+        )
+
+        if len(probe.hits) <= self.cap:
+            return {"$values": values}  # the whole backlog fits — replay it all
+
+        floor_row = probe.hits[self.cap - 1]
+        floor_hlc = int(floor_row["hlc"])
+        floor_id = UUID(str(floor_row["id"]))
+        self._overflowed += 1
+        logger.warning(
+            "Realtime mailbox replay overflowed the retention cap; the oldest backlog was skipped",
+            principal=principal,
+            cap=self.cap,
+            window_floor=str(HlcTimestamp.unpack(floor_hlc)),
+        )
+
+        # No `> since` term needed: every probed row already satisfies it, so the
+        # floor bound subsumes it. The floor row itself is included ($gte on id).
+        return {
+            "$or": [
+                {"$values": {"principal": principal, "hlc": {"$gt": floor_hlc}}},
+                {"$values": {"principal": principal, "hlc": floor_hlc, "id": {"$gte": floor_id}}},
+            ]
+        }
+
+    # ....................... #
+
+    async def read_since(self, *, principal: str, since: HlcTimestamp | None) -> list[MailboxEntry]:
+        page = await self.query.find_many(
+            filters=await self._window_filters(principal=principal, since=since),
+            sorts={"hlc": "asc", "id": "asc"},
             pagination={"limit": self.cap},
         )
 
@@ -275,27 +379,30 @@ class DocumentRealtimeMailbox:
     async def replay_since(
         self, *, principal: str, since: HlcTimestamp | None
     ) -> AsyncIterator[MailboxEntry]:
-        """Stream entries after *since*, keyset-paged by HLC, bounded by :attr:`cap`.
+        """Stream entries after *since*, keyset-paged by ``(hlc, id)``, bounded by
+        :attr:`cap`.
 
-        The HLC is the monotonic per-principal position (the cursor value), so
-        ``hlc > last`` advances the keyset without an offset rescan. Only one page of
-        rows is materialized at a time, so peak memory is one page per reconnecting
-        device instead of the whole (up to :attr:`cap`) backlog.
+        The HLC is the per-principal position (the cursor value) but it is not unique —
+        the wall-clock fallback stamps a whole burst with one HLC — so the keyset pages
+        by the **composite** ``(hlc, id)``: an ``hlc > last`` keyset alone would
+        permanently skip the rest of an equal-HLC run whenever a page boundary lands
+        inside it. Only one page of rows is materialized at a time, so peak memory is
+        one page per reconnecting device instead of the whole (up to :attr:`cap`)
+        backlog. A backlog larger than the cap starts at the newest-``cap`` window
+        (see :meth:`_window_filters`) — the stream is always a **complete** suffix of
+        the retained backlog, never a truncated prefix.
         """
 
-        cursor = since
+        filters: QueryFilterExpression = await self._window_filters(
+            principal=principal, since=since
+        )
         remaining = self.cap
 
         while remaining > 0:
-            values: dict[str, Any] = {"principal": principal}
-
-            if cursor is not None:
-                values["hlc"] = {"$gt": cursor.pack()}
-
             limit = min(self.replay_page_size, remaining)
             page = await self.query.find_many(
-                filters={"$values": values},
-                sorts={"hlc": "asc"},
+                filters=filters,
+                sorts={"hlc": "asc", "id": "asc"},
                 pagination={"limit": limit},
             )
 
@@ -311,7 +418,13 @@ class DocumentRealtimeMailbox:
                     payload=row.payload,
                 )
 
-            cursor = HlcTimestamp.unpack(page.hits[-1].hlc)
+            last = page.hits[-1]
+            filters = {
+                "$or": [
+                    {"$values": {"principal": principal, "hlc": {"$gt": last.hlc}}},
+                    {"$values": {"principal": principal, "hlc": last.hlc, "id": {"$gt": last.id}}},
+                ]
+            }
             remaining -= len(page.hits)
 
             # A short page means the backend has no more rows past the cursor.
@@ -346,6 +459,36 @@ class DocumentRealtimeMailbox:
 
             await self.command.kill_many([UUID(str(row["id"])) for row in stale.hits])
             self._trimmed += len(stale.hits)
+
+    # ....................... #
+
+    async def sweep_older_than(self, *, cutoff: HlcTimestamp) -> int:
+        """Delete entries older than *cutoff* across **every** principal; return how many.
+
+        The age-based retention backstop the ack-driven :meth:`trim` cannot be: trimming
+        follows the all-device cursor floor, and one stale device cursor (or a principal
+        no device ever acks for) holds that floor forever — the ack path bounds *reads*
+        (the replay cap), never storage. Run it from
+        ``realtime_mailbox_retention_lifecycle_step``; an entry older than the retention
+        window is deleted whether acked or not, a declared bound on how long offline
+        delivery is owed.
+        """
+
+        deleted = 0
+
+        while True:
+            stale = await self.query.project_many(
+                ["id"],
+                filters={"$values": {"hlc": {"$lt": cutoff.pack()}}},
+                pagination={"limit": self.cap},
+            )
+
+            if not stale.hits:
+                return deleted
+
+            await self.command.kill_many([UUID(str(row["id"])) for row in stale.hits])
+            self._trimmed += len(stale.hits)
+            deleted += len(stale.hits)
 
 
 # ....................... #
@@ -443,6 +586,38 @@ class DocumentMailboxCursors:
         )
 
         return HlcTimestamp.unpack(page.hits[0].hlc) if page.hits else None
+
+    # ....................... #
+
+    async def prune_stale(self, *, idle_since: datetime) -> int:
+        """Delete cursor rows that have not advanced since *idle_since*; return how many.
+
+        Cursor rows are the device registry, and they otherwise never die: every
+        per-connection fallback key (a Socket.IO ``sid``, a ``ws:`` uuid) mints a row on
+        its first ack and then goes stale on disconnect — each one freezes the
+        all-device trim floor at wherever it stopped, and the collection grows one row
+        per connection forever. Staleness is the row's own ``last_update_at`` (bumped by
+        every monotonic advance). A pruned row costs an active-but-quiet device nothing
+        but one extra replay (a fresh cursor replays the retained window; the client
+        dedups by envelope id) — run it from
+        ``realtime_mailbox_retention_lifecycle_step`` with an idle window at least the
+        mailbox's retention age.
+        """
+
+        pruned = 0
+
+        while True:
+            stale = await self.query.project_many(
+                ["id"],
+                filters={"$values": {"last_update_at": {"$lt": idle_since}}},
+                pagination={"limit": _PRUNE_PAGE_SIZE},
+            )
+
+            if not stale.hits:
+                return pruned
+
+            await self.command.kill_many([UUID(str(row["id"])) for row in stale.hits])
+            pruned += len(stale.hits)
 
 
 # ----------------------- #

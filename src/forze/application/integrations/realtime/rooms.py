@@ -20,7 +20,11 @@ def room_for(audience: Audience, tenant: UUID | None) -> str:
     """Resolve a logical *audience* to a tenant-scoped room name.
 
     When a tenant is bound the room is prefixed ``t:<tenant>:`` so tenants cannot
-    share a room.
+    share a room. ``tenant=None`` names the **untenanted global** room — a valid
+    scope only for deployments that genuinely run without tenancy. Callers whose
+    tenant is derived from untrusted input must refuse ``None`` rather than let a
+    missing value degrade into the global scope (the gateway's ``require_tenant``
+    flag exists for exactly that).
     """
 
     base = f"{audience.kind.value}:{audience.name}"
