@@ -160,12 +160,48 @@ so a captured trace shows `"<redacted>"` in their place unless you set
 production traces are id-only regardless. It is worth knowing because a DST
 bundle is an artifact that gets stored and shared.
 
-Resilience is worth wiring deliberately here, since the framework's existing
-policies fit inference unusually well: **hedging** attacks the tail latency a
-slow model or cold endpoint produces, **criticality** lets a `BEST_EFFORT`
-recommendation shed before a `CRITICAL` fraud check under load, and the error
-taxonomy above already classifies which failures are worth retrying (`throttled`
-and `infrastructure` are, `validation` and `precondition` are not).
+## Resilience
+
+Inference has an unusually good fit with the framework's
+[resilience policies](../running-in-prod/resilience.md), because a prediction is
+a *pure read*: it mutates nothing, so the strategies that are normally unsafe to
+apply are safe here. Bind a policy to the inference dep key and every resolved
+port runs under it:
+
+```python
+from forze.application.contracts.inference import InferenceDepKey
+from forze.application.contracts.resilience import PortPolicy
+
+ResilienceDepsModule(
+    spec=my_policies,                       # defines "model_calls"
+    port_policies=(PortPolicy(key=InferenceDepKey, policy="model_calls"),),
+)
+```
+
+Three things are worth tuning deliberately:
+
+- **Hedging.** Models have a long tail — a cold endpoint, an unlucky queue, a
+  slow batch. A [hedge](../running-in-prod/resilience.md#hedging-the-tail) races
+  a second attempt and takes whichever returns first. It is normally restricted
+  to idempotent reads, which every `predict` is. The real cost is money rather
+  than correctness: a hedged call to a paid endpoint is billed twice, so set
+  `budget` to cap the extra load, and prefer `adaptive_delay_quantile` so the
+  hedge tracks the model's actual p95 instead of a guess that ages badly.
+- **Criticality.** One policy serves every tier, and the tier rides the call
+  context — so a `BEST_EFFORT` recommendation sheds ahead of a `CRITICAL` fraud
+  check under load without duplicating any wiring. Set it with
+  `bind_criticality` on the caller; see
+  [load shedding](../running-in-prod/load-shedding.md#shedding-the-right-requests).
+- **Retries.** The taxonomy above already says what is worth retrying:
+  `throttled` and `infrastructure` are, `validation` and `precondition` are not.
+  A retried call re-runs the whole `predict` — including the CPU offload for a
+  local model — so keep `max_batch_size` in mind when retrying big batches.
+
+One caveat specific to this port: `predict_stream` is an async generator, so it
+gets the **circuit breaker only**. Retry, hedging, timeout, bulkhead, and rate
+limiting never apply to it — a partially consumed stream cannot be replayed. Put
+the policy pressure on `predict` / `predict_many`, and treat a long scoring
+stream as something you bound with deadlines instead.
 
 ## What this seam is not
 
