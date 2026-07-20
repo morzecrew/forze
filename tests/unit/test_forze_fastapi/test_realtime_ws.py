@@ -118,6 +118,16 @@ async def _resolver(connect: WsConnect) -> WsConnection | None:
             expires_at=utcnow() - timedelta(seconds=1),
         )
 
+    if token == "expiring-soon":
+        from datetime import timedelta
+
+        from forze.base.primitives import utcnow
+
+        return WsConnection(
+            authn=AuthnIdentity(principal_id=_PRINCIPAL),
+            expires_at=utcnow() + timedelta(milliseconds=300),
+        )
+
     device = auth.get("device_id") or connect.websocket.query_params.get("device_id")
 
     return WsConnection(
@@ -714,3 +724,34 @@ class TestHostileFrames:
             after = ws.receive_json()
 
         assert after == {"type": "ack", "cid": 2, "data": {"note_id": "note:ok"}}
+
+
+class TestExpiryRecheck:
+    def test_credential_expiring_after_connect_is_enforced_when_the_deadline_passes(self) -> None:
+        # not expired at connect: the guard's interruptible wait times out at the
+        # deadline, re-checks the live session, and only then closes — this drives
+        # the timeout-recheck cycle (a past-expiry connect closes on the first check)
+        client, _ = _build()
+
+        with client.websocket_connect("/realtime/ws?token=expiring-soon") as ws:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                ws.receive_json()  # blocks until the deadline passes server-side
+
+        assert caught.value.code == 1008
+        assert "credential expired" in str(caught.value.reason)
+
+
+class TestMalformedText:
+    def test_non_json_text_frame_costs_an_error_frame_not_the_connection(self) -> None:
+        client, _ = _build()
+
+        with client.websocket_connect("/realtime/ws") as ws:
+            ws.send_text("definitely{not json")
+            frame = ws.receive_json()
+
+            assert frame["type"] == "error"
+            assert frame["error"]["code"] == "realtime_invalid_frame"
+
+            # the socket survived — the next frame is still served
+            ws.send_text(json.dumps({"type": "mystery"}))
+            assert ws.receive_json()["error"]["code"] == "realtime_invalid_frame"

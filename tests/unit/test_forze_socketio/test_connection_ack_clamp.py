@@ -267,3 +267,37 @@ async def test_failed_room_join_does_not_leak_replay_progress() -> None:
 
     lifecycle = sio.handlers["connect"].__self__
     assert lifecycle._replay_progress == {}
+
+
+async def test_failed_replay_keeps_the_connection_and_the_ack_clamp() -> None:
+    # replay is best-effort: a drain error must not refuse the live connection — but
+    # the progress stays incomplete, so acks remain refused (nothing was delivered)
+    # until a reconnect replays successfully
+    sio, cursors = _StubSio(), InMemoryMailboxCursors()
+    inner = InMemoryRealtimeMailbox()
+
+    class _BrokenReplayMailbox(_GatedMailbox):
+        async def replay_since(self, *, principal: str, since: HlcTimestamp | None) -> Any:
+            raise RuntimeError("store down")
+            yield  # pragma: no cover — makes this an async generator like the real one
+
+    mailbox = _BrokenReplayMailbox(inner)
+    await inner.store(principal=_PRINCIPAL_STR, event_id="e1", hlc=_hlc(1), signal=_signal("a"))
+
+    attach_realtime_connection(
+        sio,  # pyright: ignore[reportArgumentType]
+        resolve=_resolver(_connection()),
+        mailbox_factory=lambda _ctx: mailbox,  # pyright: ignore[reportArgumentType]
+        cursors_factory=lambda _ctx: cursors,
+        runtime=_runtime(),
+    )
+
+    await sio.handlers["connect"]("sid-1", {}, None)  # no raise — replay failure is logged
+
+    await sio.handlers["realtime.ack"]("sid-1", {"up_to": "e1"})
+    assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") is None  # still clamped
+
+    # disconnect drops the per-connection progress (with or without presence wired)
+    await sio.handlers["disconnect"]("sid-1")
+    lifecycle = sio.handlers["connect"].__self__
+    assert lifecycle._replay_progress == {}

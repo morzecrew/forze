@@ -299,3 +299,17 @@ async def test_require_tenant_passes_tenanted_signal_to_the_scoped_room() -> Non
     await _drive(gw, mailbox, _principal_signal())  # _drive binds _TENANT
 
     assert sio.emits[0]["room"] == f"t:{_TENANT}:principal:u1"  # tenant-prefixed, never global
+
+
+async def test_require_tenant_drop_needs_no_stats_wired() -> None:
+    # the drop path must not assume observability wiring — stats are optional
+    sio, mailbox = _StubSio(), InMemoryRealtimeMailbox()
+    gw = _gateway(sio, require_tenant=True)  # no stats
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await gw._handle(ctx, mailbox, _principal_signal(), None, "evt-1", _HLC)
+
+    assert sio.emits == []
+    assert await mailbox.read_since(principal="u1", since=None) == []
