@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.47">
+      <meta name="generator" content="zensical-0.0.50">
     
     
       
@@ -36,7 +36,7 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5e19f6ca.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.62c9b9cc.min.css">
       
         
           
@@ -2480,6 +2480,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../data-events/inference/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-brain-circuit" viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M9 13a4.5 4.5 0 0 0 3-4M6.003 5.125A3 3 0 0 0 6.401 6.5M3.477 10.896a4 4 0 0 1 .585-.396M6 18a4 4 0 0 1-1.967-.516M12 13h4M12 18h6a2 2 0 0 1 2 2v1M12 8h8M16 8V5a2 2 0 0 1 2-2"/><circle cx="16" cy="13" r=".5"/><circle cx="18" cy="3" r=".5"/><circle cx="20" cy="21" r=".5"/><circle cx="20" cy="8" r=".5"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Inference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../data-events/caching/" class="md-nav__link">
         
   
@@ -4519,6 +4548,35 @@
     
   
   HTTP (outbound)
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/inference/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-brain-circuit" viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M9 13a4.5 4.5 0 0 0 3-4M6.003 5.125A3 3 0 0 0 6.401 6.5M3.477 10.896a4 4 0 0 1 .585-.396M6 18a4 4 0 0 1-1.967-.516M12 13h4M12 18h6a2 2 0 0 1 2 2v1M12 8h8M16 8V5a2 2 0 0 1 2-2"/><circle cx="16" cy="13" r=".5"/><circle cx="18" cy="3" r=".5"/><circle cx="20" cy="21" r=".5"/><circle cx="20" cy="8" r=".5"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Remote inference
 
     
   </span>
@@ -7545,6 +7603,15 @@
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.5.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<p><strong>Inference seam</strong> — typed model invocation behind one port; the physical model (local artifact, served, cloud) is a wiring fact.</p>
+<ul>
+<li><code>forze.application.contracts.inference</code>: <code>InferenceSpec[In, Out]</code> + <code>InferencePort</code> (<code>predict</code> / all-or-nothing <code>predict_many</code> / <code>predict_stream</code>) + <code>InferenceCapabilities</code> (fail-closed <code>inference_feature_unsupported</code>) + <code>InferenceRunOptions</code>; resolved via <code>ctx.inference.model(spec)</code> — read-plane (<code>QUERY</code>-usable). Mis-shaped backend responses raise <code>inference_output_mismatch</code> at the boundary.</li>
+<li>Local adapter (<code>forze.application.integrations.inference</code>): <code>LocalInferenceDepsModule(models={route: LocalInferenceConfig(loader=…)})</code> — loader returns any object with sync <code>predict_batch</code>, run under <code>run_cpu</code>; <code>local_inference_lifecycle_step</code> warms at boot fail-closed; <code>serialize_calls=True</code> for non-thread-safe models. Mock: <code>MockDepsModule(inference=MockInferenceRegistry().on(route, fn))</code>, unprogrammed routes raise <code>mock.inference.unprogrammed</code>.</li>
+<li>Remote adapters: <code>forze_inference.http</code> (extra <code>inference-http</code>) — <code>HttpInferenceDepsModule</code> + <code>HttpInferenceConfig(protocol="kserve_v2"|"mlflow", model_name=…)</code> + <code>inference_http_lifecycle_step</code>; JSON-record scope, kserve_v2 requires flat scalar input fields. <code>forze_inference.sagemaker</code> (extra <code>inference-sagemaker</code>) — <code>SageMakerInferenceDepsModule</code> + <code>SageMakerInferenceConfig(endpoint_name=…, target_variant=…)</code> + <code>sagemaker_inference_lifecycle_step</code>.</li>
+<li>Remote wiring fails closed without <code>acknowledge_data_egress=True</code>; endpoint failures map to <code>inference_throttled</code> / <code>inference_route_mismatch</code> / <code>inference_output_mismatch</code> / <code>inference_endpoint_unavailable</code> / <code>inference_timeout</code>.</li>
+<li>Tenancy: <code>required_tenant_isolation=</code> on both modules (<code>none</code>/<code>tagged</code>/<code>namespace</code>/<code>dedicated</code>). <code>dedicated</code> needs a routed client — <code>RoutedInferenceHttpClient</code> (<code>InferenceHttpRoutingCredentials</code>) or <code>RoutedSageMakerRuntimeClient</code> (<code>SageMakerRoutingCredentials</code>, static keys required) — plus <code>routed_inference_http_lifecycle_step</code> / <code>routed_sagemaker_inference_lifecycle_step</code>.</li>
+<li>Simulation value capture masks every inference input field (<code>InferenceSpec(capture_inputs=True)</code> opts out); any spec type may declare <code>sensitive_capture_fields</code>.</li>
+</ul>
 <p><strong>Portability</strong> — <code>forze_kits.integrations.portability</code>: carry an application's system-of-record state to any other wired backend.</p>
 <ul>
 <li><code>export_archive(runtime, dest, *, scope=…)</code> / <code>import_archive(runtime, src, *, on_conflict="skip"|"fail")</code> — backend-agnostic archive (JSONL + <code>manifest.json</code>) over the document, blob, graph and counter planes; ids preserved (timestamps when <code>create_cmd</code> subclasses <code>ImportTimestamps</code>), <code>rev</code> resets to 1; import fail-closed on version, fingerprint and checksums.</li>
@@ -9789,7 +9856,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.0df4f2d0.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7f30b55.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

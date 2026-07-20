@@ -76,6 +76,9 @@
         <loc>https://morzecrew.github.io/forze/dev/data-events/analytics/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/data-events/inference/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/data-events/caching/</loc>
       </url>
       <url>
@@ -215,6 +218,9 @@
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/integrations/http/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/inference/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/recipes/crud-fastapi-postgres/</loc>

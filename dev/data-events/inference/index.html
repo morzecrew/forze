@@ -12,11 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/reference/resilience-tuning/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/data-events/inference/">
       
       
-        <link rel="prev" href="../errors/">
+        <link rel="prev" href="../analytics/">
       
+      
+        <link rel="next" href="../caching/">
       
       
         
@@ -27,7 +29,7 @@
     
     
       
-        <title>Resilience tuning - Forze</title>
+        <title>Inference - Forze</title>
       
     
     
@@ -92,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rate-limit" class="md-skip">
+        <a href="#the-shape-in-code" class="md-skip">
           Skip to content
         </a>
       
@@ -146,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Resilience tuning
+              Inference
             
           </span>
         </div>
@@ -266,15 +268,7 @@
   
   
   
-  
     
-      
-    
-    
-    
-      
-  
-  
   
   
     
@@ -282,7 +276,19 @@
     
     
     
-      <li class="md-tabs__item">
+      
+  
+  
+  
+    
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
         <a href="../../core-concepts/overview/" class="md-tabs__link">
           
   
@@ -358,16 +364,14 @@
   
   
   
-    
-  
   
     
       
     
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../glossary/" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../reference/glossary/" class="md-tabs__link">
           
   
   Reference
@@ -654,26 +658,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -690,7 +699,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -713,17 +722,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
         
           
-          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="">
             
   
   
@@ -974,17 +986,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
         
           
-          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="">
             
   
   
@@ -1255,26 +1270,31 @@
                 
   
   
+    
   
   
+  
     
     
     
     
       
       
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
         
           
-          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="">
             
   
   
@@ -1291,7 +1311,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1308,7 +1328,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/reading-data/" class="md-nav__link">
+      <a href="../reading-data/" class="md-nav__link">
         
   
   
@@ -1337,7 +1357,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/query-parameters/" class="md-nav__link">
+      <a href="../query-parameters/" class="md-nav__link">
         
   
   
@@ -1366,7 +1386,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/procedures/" class="md-nav__link">
+      <a href="../procedures/" class="md-nav__link">
         
   
   
@@ -1395,7 +1415,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/analytics/" class="md-nav__link">
+      <a href="../analytics/" class="md-nav__link">
         
   
   
@@ -1421,10 +1441,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../data-events/inference/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-brain-circuit" viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M9 13a4.5 4.5 0 0 0 3-4M6.003 5.125A3 3 0 0 0 6.401 6.5M3.477 10.896a4 4 0 0 1 .585-.396M6 18a4 4 0 0 1-1.967-.516M12 13h4M12 18h6a2 2 0 0 1 2 2v1M12 8h8M16 8V5a2 2 0 0 1 2-2"/><circle cx="16" cy="13" r=".5"/><circle cx="18" cy="3" r=".5"/><circle cx="20" cy="21" r=".5"/><circle cx="20" cy="8" r=".5"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Inference
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1441,6 +1487,102 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-shape-in-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The shape in code
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#in-process-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        In-process models
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-mock" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The mock
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capabilities-and-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Capabilities and errors
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features-in-traces" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Features in traces
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resilience" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Resilience
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-this-seam-is-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What this seam is not
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1453,7 +1595,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/caching/" class="md-nav__link">
+      <a href="../caching/" class="md-nav__link">
         
   
   
@@ -1482,7 +1624,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/events-sagas/" class="md-nav__link">
+      <a href="../events-sagas/" class="md-nav__link">
         
   
   
@@ -1511,7 +1653,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/messaging-delivery-models/" class="md-nav__link">
+      <a href="../messaging-delivery-models/" class="md-nav__link">
         
   
   
@@ -1540,7 +1682,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/realtime/" class="md-nav__link">
+      <a href="../realtime/" class="md-nav__link">
         
   
   
@@ -1569,7 +1711,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/durable-execution/" class="md-nav__link">
+      <a href="../durable-execution/" class="md-nav__link">
         
   
   
@@ -1612,17 +1754,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
         
           
-          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="">
             
   
   
@@ -1786,17 +1931,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
         
           
-          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="">
             
   
   
@@ -1989,17 +2137,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
         
           
-          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="">
             
   
   
@@ -2105,17 +2256,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
         
           
-          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="">
             
   
   
@@ -4508,31 +4662,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
             
   
   
@@ -4549,7 +4698,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -4566,7 +4715,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../glossary/" class="md-nav__link">
+      <a href="../../reference/glossary/" class="md-nav__link">
         
   
   
@@ -4601,20 +4750,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_2" >
         
           
-          <label class="md-nav__link" for="__nav_6_2" id="__nav_6_2_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_2" id="__nav_6_2_label" tabindex="0">
             
   
   
@@ -4648,7 +4794,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contracts/" class="md-nav__link">
+      <a href="../../reference/contracts/" class="md-nav__link">
         
   
   
@@ -4677,7 +4823,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contracts/document/" class="md-nav__link">
+      <a href="../../reference/contracts/document/" class="md-nav__link">
         
   
   
@@ -4706,7 +4852,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contracts/search/" class="md-nav__link">
+      <a href="../../reference/contracts/search/" class="md-nav__link">
         
   
   
@@ -4735,7 +4881,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contracts/analytics/" class="md-nav__link">
+      <a href="../../reference/contracts/analytics/" class="md-nav__link">
         
   
   
@@ -4764,7 +4910,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contracts/procedure/" class="md-nav__link">
+      <a href="../../reference/contracts/procedure/" class="md-nav__link">
         
   
   
@@ -4793,7 +4939,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contracts/graph/" class="md-nav__link">
+      <a href="../../reference/contracts/graph/" class="md-nav__link">
         
   
   
@@ -4822,7 +4968,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contracts/stores/" class="md-nav__link">
+      <a href="../../reference/contracts/stores/" class="md-nav__link">
         
   
   
@@ -4851,7 +4997,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contracts/messaging/" class="md-nav__link">
+      <a href="../../reference/contracts/messaging/" class="md-nav__link">
         
   
   
@@ -4880,7 +5026,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contracts/streaming/" class="md-nav__link">
+      <a href="../../reference/contracts/streaming/" class="md-nav__link">
         
   
   
@@ -4909,7 +5055,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contracts/durable/" class="md-nav__link">
+      <a href="../../reference/contracts/durable/" class="md-nav__link">
         
   
   
@@ -4938,7 +5084,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contracts/coordination/" class="md-nav__link">
+      <a href="../../reference/contracts/coordination/" class="md-nav__link">
         
   
   
@@ -4967,7 +5113,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contracts/identity/" class="md-nav__link">
+      <a href="../../reference/contracts/identity/" class="md-nav__link">
         
   
   
@@ -5010,20 +5156,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_3" >
         
           
-          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="0">
             
   
   
@@ -5057,7 +5200,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tenancy-matrix/" class="md-nav__link">
+      <a href="../../reference/tenancy-matrix/" class="md-nav__link">
         
   
   
@@ -5086,7 +5229,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../encryption-matrix/" class="md-nav__link">
+      <a href="../../reference/encryption-matrix/" class="md-nav__link">
         
   
   
@@ -5129,20 +5272,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_4" >
         
           
-          <label class="md-nav__link" for="__nav_6_4" id="__nav_6_4_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_4" id="__nav_6_4_label" tabindex="0">
             
   
   
@@ -5176,7 +5316,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../query-syntax/" class="md-nav__link">
+      <a href="../../reference/query-syntax/" class="md-nav__link">
         
   
   
@@ -5205,7 +5345,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../mapping/" class="md-nav__link">
+      <a href="../../reference/mapping/" class="md-nav__link">
         
   
   
@@ -5234,7 +5374,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../outbox-schema/" class="md-nav__link">
+      <a href="../../reference/outbox-schema/" class="md-nav__link">
         
   
   
@@ -5263,7 +5403,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../fastapi-routes/" class="md-nav__link">
+      <a href="../../reference/fastapi-routes/" class="md-nav__link">
         
   
   
@@ -5292,7 +5432,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../realtime-protocol/" class="md-nav__link">
+      <a href="../../reference/realtime-protocol/" class="md-nav__link">
         
   
   
@@ -5324,31 +5464,26 @@
                 
   
   
-    
   
   
-  
     
     
     
     
       
       
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5" >
         
           
-          
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_6_5" id="__nav_6_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6_5" id="__nav_6_5_label" tabindex="0">
             
   
   
@@ -5365,7 +5500,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_6_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -5382,7 +5517,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../errors/" class="md-nav__link">
+      <a href="../../reference/errors/" class="md-nav__link">
         
   
   
@@ -5408,36 +5543,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sliders" viewBox="0 0 24 24"><path d="M10 8h4M12 21v-9M12 8V3M17 16h4M19 12V3M19 21v-5M3 14h4M5 10V3M5 21v-7"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Resilience tuning
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../reference/resilience-tuning/" class="md-nav__link">
         
   
   
@@ -5454,163 +5563,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#rate-limit" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Rate limit
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#retry-backoff" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Retry &amp; backoff
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#timeout" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Timeout
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#circuit-breaker" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Circuit breaker
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#bulkheads" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Bulkheads
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Bulkheads">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#fixed-bulkheadstrategy" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Fixed — <code>BulkheadStrategy</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#adaptive-aimd-adaptivebulkheadstrategy" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Adaptive (AIMD) — <code>AdaptiveBulkheadStrategy</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#gradient-gradientbulkheadstrategy" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Gradient — <code>GradientBulkheadStrategy</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#queue-management-every-bulkhead-kind" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Queue management (every bulkhead kind)
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#adaptive-throttle" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Adaptive throttle
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#hedge" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Hedge
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#control-plane" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Control plane
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -5668,10 +5620,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#rate-limit" class="md-nav__link">
+  <a href="#the-shape-in-code" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Rate limit
+        The shape in code
       </span>
     </span>
   </a>
@@ -5679,10 +5631,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#retry-backoff" class="md-nav__link">
+  <a href="#in-process-models" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Retry &amp; backoff
+        In-process models
       </span>
     </span>
   </a>
@@ -5690,10 +5642,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#timeout" class="md-nav__link">
+  <a href="#the-mock" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Timeout
+        The mock
       </span>
     </span>
   </a>
@@ -5701,10 +5653,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#circuit-breaker" class="md-nav__link">
+  <a href="#capabilities-and-errors" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Circuit breaker
+        Capabilities and errors
       </span>
     </span>
   </a>
@@ -5712,71 +5664,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#bulkheads" class="md-nav__link">
+  <a href="#features-in-traces" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Bulkheads
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Bulkheads">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#fixed-bulkheadstrategy" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Fixed — <code>BulkheadStrategy</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#adaptive-aimd-adaptivebulkheadstrategy" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Adaptive (AIMD) — <code>AdaptiveBulkheadStrategy</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#gradient-gradientbulkheadstrategy" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Gradient — <code>GradientBulkheadStrategy</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#queue-management-every-bulkhead-kind" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Queue management (every bulkhead kind)
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#adaptive-throttle" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Adaptive throttle
+        Features in traces
       </span>
     </span>
   </a>
@@ -5784,10 +5675,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#hedge" class="md-nav__link">
+  <a href="#resilience" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Hedge
+        Resilience
       </span>
     </span>
   </a>
@@ -5795,10 +5686,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#control-plane" class="md-nav__link">
+  <a href="#what-this-seam-is-not" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Control plane
+        What this seam is not
       </span>
     </span>
   </a>
@@ -5851,16 +5742,27 @@
     
     
     
+      
+  
+  
+    
+    
+    
+    
+    
       <li class="md-path__item">
-        <a href="../glossary/" class="md-path__link">
+        <a href="../../core-concepts/overview/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Reference
+    Learn
   </span>
 
         </a>
       </li>
+    
+  
+
     
   
 
@@ -5874,11 +5776,11 @@
     
     
       <li class="md-path__item">
-        <a href="../errors/" class="md-path__link">
+        <a href="../reading-data/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Operations
+    Data & events
   </span>
 
         </a>
@@ -5898,421 +5800,228 @@
   
 
 
-  <h1 id="__skip">Resilience tuning</h1>
+  <h1 id="__skip">Inference</h1>
 
-<p>The narrative is in <a href="../../running-in-prod/resilience/">Resilience</a>; this is the
-exhaustive surface — each strategy's constructor parameters and defaults, and the
-algorithm behind the adaptive controllers. A <code>ResiliencePolicy</code> composes these
-outer→inner: rate limit → bulkhead → circuit breaker → retry → timeout, plus
-optional fallback and hedge. The policy itself carries one more knob —
-<code>fail_open_on_store_error</code> (default <code>True</code>): when a shared breaker / rate-limit
-store errors, admit the call instead of failing it.</p>
-<h2 id="rate-limit">Rate limit<a class="headerlink" href="#rate-limit" title="Permanent link">&para;</a></h2>
-<p><code>RateLimitStrategy</code> — token bucket, sustained <code>permits/per</code>, capacity <code>burst or
-permits</code>. The bucket starts full and refills continuously; an empty bucket rejects
-immediately (no queuing) with <code>exc.throttled(code="rate_limited")</code>. State is keyed
-<code>(policy, route)</code>.</p>
-<table>
-<thead>
-<tr>
-<th>Param</th>
-<th>Default</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>permits</code></td>
-<td>—</td>
-<td>tokens issued per <code>per</code> window (<code>&gt;= 1</code>)</td>
-</tr>
-<tr>
-<td><code>per</code></td>
-<td>—</td>
-<td>refill window</td>
-</tr>
-<tr>
-<td><code>burst</code></td>
-<td><code>permits</code></td>
-<td>bucket capacity (max tokens saved up)</td>
-</tr>
-</tbody>
-</table>
-<h2 id="retry-backoff">Retry &amp; backoff<a class="headerlink" href="#retry-backoff" title="Permanent link">&para;</a></h2>
-<p><code>RetryStrategy</code> re-runs on classified-<strong>retryable</strong> kinds only (<code>concurrency</code>,
-<code>infrastructure</code>, <code>throttled</code>); a non-retryable kind in <code>retry_on</code> fails at wiring.</p>
-<table>
-<thead>
-<tr>
-<th>Param</th>
-<th>Default</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>max_attempts</code></td>
-<td>—</td>
-<td>total attempts including the first (<code>&gt;= 1</code>)</td>
-</tr>
-<tr>
-<td><code>backoff</code></td>
-<td>—</td>
-<td>a <code>BackoffStrategy</code> (<code>base</code>, <code>max</code>, <code>multiplier</code>, <code>jitter</code>)</td>
-</tr>
-<tr>
-<td><code>retry_on</code></td>
-<td>—</td>
-<td>the <code>ExceptionKind</code>s that trigger a retry (all must be retryable)</td>
-</tr>
-<tr>
-<td><code>budget</code></td>
-<td><code>None</code></td>
-<td>optional <code>RetryBudget</code> token-bucket cap on retries across calls</td>
-</tr>
-</tbody>
-</table>
-<h2 id="timeout">Timeout<a class="headerlink" href="#timeout" title="Permanent link">&para;</a></h2>
-<p><code>TimeoutStrategy(timeout=…)</code> — a per-attempt timeout; cancellation on expiry.</p>
-<h2 id="circuit-breaker">Circuit breaker<a class="headerlink" href="#circuit-breaker" title="Permanent link">&para;</a></h2>
-<p><code>CircuitBreakerStrategy</code> — rolling-window breaker; trips open when the failure
-fraction exceeds <code>failure_ratio</code> over <code>sampling_window</code> (once <code>min_throughput</code> calls
-have been seen), then probes half-open after <code>break_duration</code>.</p>
-<table>
-<thead>
-<tr>
-<th>Param</th>
-<th>Default</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>failure_ratio</code></td>
-<td>—</td>
-<td>failure fraction in the window that trips open (<code>(0, 1]</code>)</td>
-</tr>
-<tr>
-<td><code>sampling_window</code></td>
-<td>—</td>
-<td>rolling window outcomes are counted over</td>
-</tr>
-<tr>
-<td><code>min_throughput</code></td>
-<td>—</td>
-<td>minimum calls in the window before it may trip</td>
-</tr>
-<tr>
-<td><code>break_duration</code></td>
-<td>—</td>
-<td>how long it stays open before probing half-open</td>
-</tr>
-<tr>
-<td><code>half_open_max_calls</code></td>
-<td><code>1</code></td>
-<td>probe calls allowed while half-open</td>
-</tr>
-</tbody>
-</table>
-<h2 id="bulkheads">Bulkheads<a class="headerlink" href="#bulkheads" title="Permanent link">&para;</a></h2>
-<p>Cap concurrent in-flight calls. The three kinds are <strong>mutually exclusive within one
-policy</strong>; all share the queue-management controls below.</p>
-<h3 id="fixed-bulkheadstrategy">Fixed — <code>BulkheadStrategy</code><a class="headerlink" href="#fixed-bulkheadstrategy" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Param</th>
-<th>Default</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>max_concurrency</code></td>
-<td>—</td>
-<td>max concurrent in-flight calls</td>
-</tr>
-<tr>
-<td><code>max_queue</code></td>
-<td><code>0</code></td>
-<td>calls allowed to wait for a slot before rejection</td>
-</tr>
-</tbody>
-</table>
-<h3 id="adaptive-aimd-adaptivebulkheadstrategy">Adaptive (AIMD) — <code>AdaptiveBulkheadStrategy</code><a class="headerlink" href="#adaptive-aimd-adaptivebulkheadstrategy" title="Permanent link">&para;</a></h3>
-<p>Latency sets the limit. Starts at <code>max_concurrency</code>; a completion over
-<code>latency_threshold</code> decreases it multiplicatively (<code>*= backoff_ratio</code>, at most once
-per <code>cooldown</code>), in-budget completions recover it additively (<code>+= increase_step /
-limit</code> — ~one slot per <code>limit</code> successes). This is <strong>AIMD</strong> (the TCP-congestion
-algorithm): N process-local limits sharing one downstream converge like N TCP flows
-sharing a link, so uncoordinated replicas need no shared state. The congestion signal
-is <strong>latency only</strong> — errors stay the breaker's job — and shrinking never evicts
-in-flight work, only gates admission.</p>
-<table>
-<thead>
-<tr>
-<th>Param</th>
-<th>Default</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>latency_threshold</code></td>
-<td>—</td>
-<td>completion latency above this counts as congestion</td>
-</tr>
-<tr>
-<td><code>max_concurrency</code></td>
-<td>—</td>
-<td>ceiling and initial limit</td>
-</tr>
-<tr>
-<td><code>min_concurrency</code></td>
-<td><code>1</code></td>
-<td>floor the limit never drops below</td>
-</tr>
-<tr>
-<td><code>max_queue</code></td>
-<td><code>0</code></td>
-<td>calls allowed to wait for a slot</td>
-</tr>
-<tr>
-<td><code>backoff_ratio</code></td>
-<td><code>0.9</code></td>
-<td>multiplicative decrease on a breach (<code>(0, 1)</code>)</td>
-</tr>
-<tr>
-<td><code>increase_step</code></td>
-<td><code>1.0</code></td>
-<td>additive recovery: <code>increase_step / limit</code> per in-budget completion</td>
-</tr>
-<tr>
-<td><code>cooldown</code></td>
-<td><code>1 s</code></td>
-<td>minimum spacing between decreases (coalesces a slow burst into one backoff)</td>
-</tr>
-<tr>
-<td><code>latency_quantile</code></td>
-<td><code>None</code></td>
-<td>distributional signal — see below</td>
-</tr>
-</tbody>
-</table>
-<p><strong><code>latency_quantile</code> (the p-quantile signal).</strong> By default <em>any single</em> completion
-over the threshold is a breach — instant, but one GC pause halves concurrency. Set
-<code>latency_quantile=0.95</code> to breach only when the observed p95 of recent completions (a
-windowed streaming <strong>P²</strong> estimate — five floats, no sample storage) exceeds the
-threshold: outliers can't move a quantile, only a genuinely shifted distribution can.
-A backoff opens a fresh measurement epoch, so a stale-high quantile never ratchets the
-limit to the floor after recovery. In a fleet, the per-replica sketch can be shared
-via <code>latency_digest_store</code> (see <a href="../../running-in-prod/resilience/#fleet-wide-state">Resilience → fleet-wide state</a>).</p>
-<h3 id="gradient-gradientbulkheadstrategy">Gradient — <code>GradientBulkheadStrategy</code><a class="headerlink" href="#gradient-gradientbulkheadstrategy" title="Permanent link">&para;</a></h3>
-<p>Drops the threshold entirely. The Gradient2 controller (Netflix <code>concurrency-limits</code>)
-learns the no-load baseline RTT and tracks the gradient between it and recent latency,
-finding the load/latency knee on its own — <strong>no <code>latency_threshold</code> to tune</strong>. Probes
-up gently while latency sits near baseline, contracts as latency inflates. Only
-<em>successful</em> completions feed it.</p>
-<table>
-<thead>
-<tr>
-<th>Param</th>
-<th>Default</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>max_concurrency</code></td>
-<td>—</td>
-<td>ceiling and initial limit</td>
-</tr>
-<tr>
-<td><code>min_concurrency</code></td>
-<td><code>1</code></td>
-<td>floor</td>
-</tr>
-<tr>
-<td><code>max_queue</code></td>
-<td><code>0</code></td>
-<td>calls allowed to wait for a slot</td>
-</tr>
-<tr>
-<td><code>rtt_tolerance</code></td>
-<td><code>1.5</code></td>
-<td>latency-rise headroom before contracting (1.5 = tolerate a 50% rise)</td>
-</tr>
-<tr>
-<td><code>smoothing</code></td>
-<td><code>0.2</code></td>
-<td>EWMA factor on limit <em>increases</em> (gentle up, fast down)</td>
-</tr>
-<tr>
-<td><code>long_window</code></td>
-<td><code>600</code></td>
-<td>samples the no-load baseline RTT is averaged over</td>
-</tr>
-<tr>
-<td><code>headroom</code></td>
-<td><code>4.0</code></td>
-<td>standing in-flight headroom probed toward while healthy</td>
-</tr>
-</tbody>
-</table>
-<h3 id="queue-management-every-bulkhead-kind">Queue management (every bulkhead kind)<a class="headerlink" href="#queue-management-every-bulkhead-kind" title="Permanent link">&para;</a></h3>
-<p>Opt-in controls for a queued bulkhead (<code>max_queue &gt;= 1</code>); the first two are from
-Facebook's <em>Fail at Scale</em>, the last is Netflix-style prioritized shedding.</p>
-<table>
-<thead>
-<tr>
-<th>Param</th>
-<th>Default</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>queue_target</code></td>
-<td><code>None</code></td>
-<td><strong>CoDel</strong> target sojourn — under sustained congestion, a waiter parked longer than this is shed at dequeue (<code>code="bulkhead_queue_shed"</code>), bounding queueing by <em>time</em>, not length</td>
-</tr>
-<tr>
-<td><code>queue_interval</code></td>
-<td><code>100 ms</code></td>
-<td>CoDel congestion-detection window + the generous sojourn allowance while the queue has recently been empty (must exceed <code>queue_target</code>)</td>
-</tr>
-<tr>
-<td><code>queue_adaptive_lifo</code></td>
-<td><code>False</code></td>
-<td>serve the <em>newest</em> waiter first while congested (its client is likeliest still listening); FIFO otherwise — pair with <code>queue_target</code> to shed the starved tail</td>
-</tr>
-<tr>
-<td><code>prioritized</code></td>
-<td><code>False</code></td>
-<td>criticality-aware: a full queue admits a higher-criticality arrival by shedding the lowest, and lower tiers shed sooner. Tiers come from the task-scoped <code>Criticality</code> (<code>BEST_EFFORT &lt; DEGRADED &lt; NORMAL &lt; CRITICAL</code>), bound with <code>bind_criticality(...)</code></td>
-</tr>
-</tbody>
-</table>
-<p>A parked waiter whose <a href="../../running-in-prod/deadlines/">invocation deadline</a> has
-expired is failed at wake rather than granted a slot it can't use — no knob needed.</p>
-<h2 id="adaptive-throttle">Adaptive throttle<a class="headerlink" href="#adaptive-throttle" title="Permanent link">&para;</a></h2>
-<p><code>AdaptiveThrottleStrategy</code> — probabilistic client-side shedding for a degraded
-downstream (Google SRE book). Where the breaker is binary, this sheds
-<strong>proportionally</strong>. Tracks <code>requests</code> and <code>accepts</code> per window and rejects locally
-with probability:</p>
-<div class="highlight"><pre><span></span><code>max(0, (requests − k·accepts) / (requests + 1))
+<p>Calling an ML model from a handler usually means one of three very different
+things: invoking an artifact loaded in-process, POSTing to a model server, or
+hitting a cloud endpoint. The <strong>inference</strong> port makes all three the same call.
+A spec names one logical task with typed input and output models; the wiring
+config binds it to a physical model. Handlers pass typed instances and get typed
+predictions back — no model URIs, artifact formats, or wire protocols cross the
+port, so swapping a pickled sklearn model for a SageMaker endpoint is a wiring
+change with zero handler edits.</p>
+<h2 id="the-shape-in-code">The shape in code<a class="headerlink" href="#the-shape-in-code" title="Permanent link">&para;</a></h2>
+<p>One spec = one model. The spec names the <em>task</em>, never the artifact:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">InferenceSpec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">FraudFeatures</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">amount</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">country</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">velocity_24h</span><span class="p">:</span> <span class="nb">int</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">FraudScore</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">risk</span><span class="p">:</span> <span class="nb">float</span>
+
+<span class="n">FRAUD_SCORER</span> <span class="o">=</span> <span class="n">InferenceSpec</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;fraud_scorer&quot;</span><span class="p">,</span>
+    <span class="nb">input</span><span class="o">=</span><span class="n">FraudFeatures</span><span class="p">,</span>
+    <span class="n">output</span><span class="o">=</span><span class="n">FraudScore</span><span class="p">,</span>
+<span class="p">)</span>
 </code></pre></div>
-<p>A healthy downstream (<code>accepts ≈ requests</code>) computes a negative number — nothing is
-shed. As the accept ratio degrades, shedding rises proportionally; the steady state is
-self-limiting because shed calls count as requests but not accepts, so the client
-converges on ~<code>k ×</code> the downstream's current capacity, leaving a continuous probe that
-detects recovery on its own (no half-open ceremony). Shed calls fail with a retryable
-<code>throttled</code> (<code>code="adaptive_throttle"</code>). <strong>Mutually exclusive with the circuit breaker</strong>
-in one policy. "Accepted" mirrors the breaker's classification inverted — a
-non-retryable (domain) failure is the downstream doing its job, so it never sheds.</p>
-<table>
-<thead>
-<tr>
-<th>Param</th>
-<th>Default</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>k</code></td>
-<td><code>2.0</code></td>
-<td>permissiveness multiplier (<code>&gt;= 1</code>); higher tolerates more failure before shedding</td>
-</tr>
-<tr>
-<td><code>window</code></td>
-<td><code>2 min</code></td>
-<td>counting window; counters reset when it elapses, so shedding decays within one window of recovery</td>
-</tr>
-<tr>
-<td><code>min_throughput</code></td>
-<td><code>10</code></td>
-<td>requests per window below which nothing is shed</td>
-</tr>
-</tbody>
-</table>
-<h2 id="hedge">Hedge<a class="headerlink" href="#hedge" title="Permanent link">&para;</a></h2>
-<p><code>HedgeStrategy</code> — race the tail: if the primary hasn't completed after <code>delay</code>, fire a
-concurrent copy and take the first to finish (losers cancelled). Only safe on
-idempotent reads; <code>budget</code> caps the extra load. Applied outside the strategy pipeline.</p>
-<table>
-<thead>
-<tr>
-<th>Param</th>
-<th>Default</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>delay</code></td>
-<td>—</td>
-<td>wait before the next concurrent copy (~p95); the fallback until the estimator warms when <code>adaptive_delay_quantile</code> is set</td>
-</tr>
-<tr>
-<td><code>max_attempts</code></td>
-<td>—</td>
-<td>total concurrent attempts including the primary (<code>&gt;= 2</code>)</td>
-</tr>
-<tr>
-<td><code>budget</code></td>
-<td><code>None</code></td>
-<td>optional <code>RetryBudget</code> cap on extra attempts</td>
-</tr>
-<tr>
-<td><code>adaptive_delay_quantile</code></td>
-<td><code>None</code></td>
-<td>hedge after the <em>observed</em> quantile of primary latencies (streaming P² per <code>(policy, route)</code>) instead of the fixed <code>delay</code> — <em>The Tail at Scale</em>; typical <code>0.95</code></td>
-</tr>
-<tr>
-<td><code>delay_min</code></td>
-<td><code>None</code></td>
-<td>floor for the adaptive delay (guards over-eager hedging when every call is fast); requires <code>adaptive_delay_quantile</code></td>
-</tr>
-<tr>
-<td><code>delay_max</code></td>
-<td><code>None</code></td>
-<td>cap for the adaptive delay (guards a degraded downstream dragging the trigger past usefulness); requires <code>adaptive_delay_quantile</code></td>
-</tr>
-</tbody>
-</table>
-<p>The effective adaptive delay is the <code>forze.resilience.hedge.delay</code> gauge once
-<a href="../../running-in-prod/observability/#resilience-metrics"><code>instrument_resilience</code></a> is
-attached.</p>
-<h2 id="control-plane">Control plane<a class="headerlink" href="#control-plane" title="Permanent link">&para;</a></h2>
-<p><code>ResilienceAdminPort</code> (<code>ctx.resilience.admin()</code>, <code>ResilienceAdminDepKey</code>) inspects and
-retunes live policy state without a redeploy:</p>
+<p>Handlers resolve it off the context and call it like any other port. Both type
+parameters propagate, so predictions are fully typed with zero annotations:</p>
+<div class="highlight"><pre><span></span><code><span class="n">port</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">inference</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">FRAUD_SCORER</span><span class="p">)</span>
+
+<span class="n">score</span> <span class="o">=</span> <span class="k">await</span> <span class="n">port</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">FraudFeatures</span><span class="p">(</span><span class="n">amount</span><span class="o">=</span><span class="mf">120.0</span><span class="p">,</span> <span class="n">country</span><span class="o">=</span><span class="s2">&quot;NL&quot;</span><span class="p">,</span> <span class="n">velocity_24h</span><span class="o">=</span><span class="mi">3</span><span class="p">))</span>
+<span class="n">scores</span> <span class="o">=</span> <span class="k">await</span> <span class="n">port</span><span class="o">.</span><span class="n">predict_many</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span>          <span class="c1"># vectorized, order-preserving</span>
+</code></pre></div>
+<p>The port is <strong>read-plane</strong>: invoking a model is a pure read of it, so a <code>QUERY</code>
+operation can call it — a query handler computing a recommendation must be able
+to score. A scalar prediction wraps in a one-field output model; tensor-shaped
+payloads are plain lists of floats inside the models.</p>
+<p>Three calls, three shapes:</p>
 <table>
 <thead>
 <tr>
 <th>Method</th>
-<th>Notes</th>
+<th>Shape</th>
+<th>Semantics</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>inspect(*, policy=None)</code></td>
-<td><code>ResilienceStateSnapshot</code>s — per <code>(policy, route)</code>: <code>forced_open</code>, the adaptive <code>concurrency_limit</code>, <code>in_use</code>, <code>waiting</code>, and the effective <code>hedge_delay</code></td>
+<td><code>predict</code></td>
+<td>one instance → one prediction</td>
+<td>the request-path call</td>
 </tr>
 <tr>
-<td><code>force_open(policy, route=None)</code></td>
-<td>manual kill-switch — trip the breaker open (<code>route=None</code> = every route)</td>
+<td><code>predict_many</code></td>
+<td>batch → batch</td>
+<td>vectorized; <strong>all-or-nothing</strong>, order-preserving</td>
 </tr>
 <tr>
-<td><code>clear_forced_open(policy, route=None)</code></td>
-<td>lift a manual trip</td>
-</tr>
-<tr>
-<td><code>retune(policy)</code></td>
-<td>hot-swap a <code>ResiliencePolicy</code> by name; drops that policy's cached adaptive state</td>
+<td><code>predict_stream</code></td>
+<td>chunk stream → chunk stream</td>
+<td>bounded-memory scoring over large sets</td>
 </tr>
 </tbody>
 </table>
+<p><code>predict_many</code> either returns a prediction for every instance or raises for the
+whole batch — never a silent partial result. <code>predict_stream</code> streams <em>instance
+chunks</em>, not tokens; every chunk boundary is a deadline check and a cancellation
+point.</p>
+<h2 id="in-process-models">In-process models<a class="headerlink" href="#in-process-models" title="Permanent link">&para;</a></h2>
+<p>The local adapter's contract is a <strong>callable, not an artifact format</strong>. You
+supply a loader returning an object with a sync <code>predict_batch</code>; the framework
+only schedules it — loading and every prediction run off the event loop under
+the CPU-offload seam (bounded pool, deadline enforcement, cancellation):</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.integrations.inference</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">LocalInferenceConfig</span><span class="p">,</span>
+    <span class="n">LocalInferenceDepsModule</span><span class="p">,</span>
+    <span class="n">local_inference_lifecycle_step</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">load_fraud_model</span><span class="p">():</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">joblib</span>                      <span class="c1"># your dependency, not the framework&#39;s</span>
+    <span class="k">return</span> <span class="n">joblib</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;fraud-v3.bin&quot;</span><span class="p">)</span> <span class="c1"># exposes predict_batch(instances)</span>
+
+<span class="n">inference_module</span> <span class="o">=</span> <span class="n">LocalInferenceDepsModule</span><span class="p">(</span>
+    <span class="n">models</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;fraud_scorer&quot;</span><span class="p">:</span> <span class="n">LocalInferenceConfig</span><span class="p">(</span><span class="n">loader</span><span class="o">=</span><span class="n">load_fraud_model</span><span class="p">)},</span>
+<span class="p">)</span>
+<span class="n">steps</span> <span class="o">=</span> <span class="p">[</span><span class="n">local_inference_lifecycle_step</span><span class="p">(</span><span class="n">inference_module</span><span class="p">)]</span>
+</code></pre></div>
+<p>The framework never deserializes artifacts itself — unpickling is arbitrary code
+execution, and that trust decision stays in your loader. Two behaviors worth
+knowing:</p>
+<ul>
+<li><strong>Warm by default.</strong> <code>warm_on_startup=True</code> loads the model at boot through
+  the lifecycle step and <strong>fails startup closed</strong> on a loader error: a service
+  that would fail its first prediction should not come up. Set it <code>False</code> to
+  load lazily on first call.</li>
+<li><strong>Thread safety is your model's contract.</strong> Predictions run on a shared
+  worker pool, so concurrent calls hit the same model object from multiple
+  threads. sklearn and ONNX Runtime sessions generally tolerate this; for a
+  model that does not, set <code>serialize_calls=True</code> to route every call through a
+  per-route lock — correctness over throughput.</li>
+</ul>
+<h2 id="the-mock">The mock<a class="headerlink" href="#the-mock" title="Permanent link">&para;</a></h2>
+<p><code>MockDepsModule</code> answers inference routes from a <strong>pure sync function</strong> you
+register — deterministic by contract, so simulation replays stay exact:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_mock</span><span class="w"> </span><span class="kn">import</span> <span class="n">MockDepsModule</span><span class="p">,</span> <span class="n">MockInferenceRegistry</span>
+
+<span class="n">registry</span> <span class="o">=</span> <span class="n">MockInferenceRegistry</span><span class="p">()</span><span class="o">.</span><span class="n">on</span><span class="p">(</span>
+    <span class="s2">&quot;fraud_scorer&quot;</span><span class="p">,</span>
+    <span class="k">lambda</span> <span class="n">instances</span><span class="p">:</span> <span class="p">[{</span><span class="s2">&quot;risk&quot;</span><span class="p">:</span> <span class="nb">min</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">i</span><span class="o">.</span><span class="n">amount</span> <span class="o">/</span> <span class="mi">1000</span><span class="p">)}</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">instances</span><span class="p">],</span>
+<span class="p">)</span>
+<span class="n">module</span> <span class="o">=</span> <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">inference</span><span class="o">=</span><span class="n">registry</span><span class="p">)</span>
+</code></pre></div>
+<p>An unprogrammed route fails closed (<code>code="mock.inference.unprogrammed"</code>).
+Outputs pass through the same boundary shaping as every real adapter, so a
+mis-shaped stub fails under the mock exactly where a mis-shaped backend would
+fail in production.</p>
+<h2 id="capabilities-and-errors">Capabilities and errors<a class="headerlink" href="#capabilities-and-errors" title="Permanent link">&para;</a></h2>
+<p>Backends diverge, and the port says so declaratively instead of pretending
+uniformity: each adapter publishes <code>inference_capabilities</code> (native batching, a
+hard batch cap, chunked streaming, offline jobs, a determinism promise), and a
+request that strays is refused up front with a clean precondition
+(<code>inference_feature_unsupported</code>) naming the feature and backend — never a
+silent degradation. The failure taxonomy at the boundary:</p>
+<table>
+<thead>
+<tr>
+<th>Condition</th>
+<th>Kind</th>
+<th>Code</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Instance is not the spec's input model</td>
+<td><code>validation</code></td>
+<td><code>core.validation</code></td>
+</tr>
+<tr>
+<td>Backend response doesn't fit the output model</td>
+<td><code>validation</code></td>
+<td><code>inference_output_mismatch</code></td>
+</tr>
+<tr>
+<td>Feature the backend lacks</td>
+<td><code>precondition</code></td>
+<td><code>inference_feature_unsupported</code></td>
+</tr>
+<tr>
+<td>Per-call timeout / invocation deadline expired</td>
+<td><code>timeout</code></td>
+<td><code>cpu_offload_deadline</code> (local)</td>
+</tr>
+</tbody>
+</table>
+<p>Per-call options tighten, never extend: <code>options={"timeout": timedelta(...)}</code>
+binds a deadline that is the earlier of the per-call budget and the ambient
+invocation deadline.</p>
+<h2 id="features-in-traces">Features in traces<a class="headerlink" href="#features-in-traces" title="Permanent link">&para;</a></h2>
+<p>Simulation value capture masks every input field by default:</p>
+<div class="highlight"><pre><span></span><code><span class="n">FRAUD_SCORER</span> <span class="o">=</span> <span class="n">InferenceSpec</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;fraud_scorer&quot;</span><span class="p">,</span> <span class="nb">input</span><span class="o">=</span><span class="n">FraudFeatures</span><span class="p">,</span> <span class="n">output</span><span class="o">=</span><span class="n">FraudScore</span><span class="p">,</span>
+    <span class="n">capture_inputs</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>   <span class="c1"># opt in to verbatim features on captured traces</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Features cannot be field-encrypted — the model needs real values, which is why
+external routes must acknowledge data egress — and they are usually PII-dense,
+so a captured trace shows <code>"&lt;redacted&gt;"</code> in their place unless you set
+<code>capture_inputs=True</code>. This only affects runtime tracing and simulation;
+production traces are id-only regardless. It is worth knowing because a <abbr title="Deterministic Simulation Testing">DST</abbr>
+bundle is an artifact that gets stored and shared.</p>
+<h2 id="resilience">Resilience<a class="headerlink" href="#resilience" title="Permanent link">&para;</a></h2>
+<p>Inference has an unusually good fit with the framework's
+<a href="../../running-in-prod/resilience/">resilience policies</a>, because a prediction is
+a <em>pure read</em>: it mutates nothing, so the strategies that are normally unsafe to
+apply are safe here. Bind a policy to the inference dep key and every resolved
+port runs under it:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">InferenceDepKey</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.resilience</span><span class="w"> </span><span class="kn">import</span> <span class="n">PortPolicy</span>
+
+<span class="n">ResilienceDepsModule</span><span class="p">(</span>
+    <span class="n">spec</span><span class="o">=</span><span class="n">my_policies</span><span class="p">,</span>                       <span class="c1"># defines &quot;model_calls&quot;</span>
+    <span class="n">port_policies</span><span class="o">=</span><span class="p">(</span><span class="n">PortPolicy</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="n">InferenceDepKey</span><span class="p">,</span> <span class="n">policy</span><span class="o">=</span><span class="s2">&quot;model_calls&quot;</span><span class="p">),),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Three things are worth tuning deliberately:</p>
+<ul>
+<li><strong>Hedging.</strong> Models have a long tail — a cold endpoint, an unlucky queue, a
+  slow batch. A <a href="../../running-in-prod/resilience/#hedging-the-tail">hedge</a> races
+  a second attempt and takes whichever returns first. It is normally restricted
+  to idempotent reads, which every <code>predict</code> is. The real cost is money rather
+  than correctness: a hedged call to a paid endpoint is billed twice, so set
+  <code>budget</code> to cap the extra load, and prefer <code>adaptive_delay_quantile</code> so the
+  hedge tracks the model's actual p95 instead of a guess that ages badly.</li>
+<li><strong>Criticality.</strong> One policy serves every tier, and the tier rides the call
+  context — so a <code>BEST_EFFORT</code> recommendation sheds ahead of a <code>CRITICAL</code> fraud
+  check under load without duplicating any wiring. Set it with
+  <code>bind_criticality</code> on the caller; see
+  <a href="../../running-in-prod/load-shedding/#shedding-the-right-requests">load shedding</a>.</li>
+<li><strong>Retries.</strong> The taxonomy above already says what is worth retrying:
+  <code>throttled</code> and <code>infrastructure</code> are, <code>validation</code> and <code>precondition</code> are not.
+  A retried call re-runs the whole <code>predict</code> — including the CPU offload for a
+  local model — so keep <code>max_batch_size</code> in mind when retrying big batches.</li>
+</ul>
+<p>One caveat specific to this port: <code>predict_stream</code> is an async generator, so it
+gets the <strong>circuit breaker only</strong>. Retry, hedging, timeout, bulkhead, and rate
+limiting never apply to it — a partially consumed stream cannot be replayed. Put
+the policy pressure on <code>predict</code> / <code>predict_many</code>, and treat a long scoring
+stream as something you bound with deadlines instead.</p>
+<h2 id="what-this-seam-is-not">What this seam is not<a class="headerlink" href="#what-this-seam-is-not" title="Permanent link">&para;</a></h2>
+<p>No training, no experiment tracking, no model registry, no agent loops. The
+contract is deliberately <em>invocation only</em> — an opaque, versioned, possibly
+non-deterministic function artifact with typed IO. Anything that produces or
+manages artifacts lives outside; the seam just calls them. The
+<a href="../../integrations/inference/">remote adapters</a> (<code>forze_inference</code>) bind the
+same spec to served (KServe V2 / MLflow) and cloud (SageMaker) models — and for
+text-embedding models specifically, use the dedicated embeddings provider port
+(<code>ctx.embeddings.provider(spec)</code>) that <a href="../reading-data/">vector search</a> already
+consumes.</p>
 
 
 
@@ -6353,7 +6062,7 @@ retunes live policy state without a redeploy:</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../errors/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Errors">
+          <a href="../analytics/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Analytics">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -6363,11 +6072,27 @@ retunes live policy state without a redeploy:</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Errors
+                Analytics
               </div>
             </div>
           </a>
         
+        
+          
+          <a href="../caching/" class="md-footer__link md-footer__link--next" aria-label="Next: Caching reads">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Caching reads
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
         
       </nav>
     
