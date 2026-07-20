@@ -6,7 +6,11 @@ import attrs
 from pydantic import BaseModel
 
 from forze.base.exceptions import exc
-from forze.base.serialization import ModelCodec, default_model_codec
+from forze.base.serialization import (
+    ModelCodec,
+    default_model_codec,
+    stored_field_names_for,
+)
 
 from ..base import BaseSpec
 
@@ -52,6 +56,15 @@ class InferenceSpec[In: BaseModel, Out: BaseModel](BaseSpec):
     )
     """Output codec; defaults to :func:`default_model_codec` for :attr:`output`."""
 
+    capture_inputs: bool = attrs.field(default=False)
+    """Allow simulation value capture to record input values verbatim.
+
+    Off by default, and deliberately so: features cross to the model in plaintext (they cannot be
+    field-encrypted — that is why external routes must acknowledge data egress) and are typically
+    PII-dense, so every input field is masked on captured traces unless an author opts in. Capture
+    only happens under runtime tracing / simulation — production traces stay id-only either way —
+    but a DST bundle is still an artifact that gets stored and shared."""
+
     description: str | None = attrs.field(default=None)
     """Optional human-readable description for documentation."""
 
@@ -59,6 +72,22 @@ class InferenceSpec[In: BaseModel, Out: BaseModel](BaseSpec):
 
     def __attrs_post_init__(self) -> None:
         validate_inference_spec(self)
+
+    # ....................... #
+
+    @property
+    def sensitive_capture_fields(self) -> frozenset[str]:
+        """Input fields masked in simulation value capture (see :attr:`capture_inputs`).
+
+        Read duck-typed by the port-instrumentation layer, which unions it with the encryption
+        signal — inference declares every input field rather than a subset, because it has no
+        encryption declaration to derive one from.
+        """
+
+        if self.capture_inputs:
+            return frozenset()
+
+        return stored_field_names_for(self.input)
 
     # ....................... #
 

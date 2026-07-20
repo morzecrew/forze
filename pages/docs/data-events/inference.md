@@ -142,6 +142,31 @@ Per-call options tighten, never extend: `options={"timeout": timedelta(...)}`
 binds a deadline that is the earlier of the per-call budget and the ambient
 invocation deadline.
 
+## Features in traces
+
+Simulation value capture masks every input field by default:
+
+```python
+FRAUD_SCORER = InferenceSpec(
+    name="fraud_scorer", input=FraudFeatures, output=FraudScore,
+    capture_inputs=True,   # opt in to verbatim features on captured traces
+)
+```
+
+Features cannot be field-encrypted — the model needs real values, which is why
+external routes must acknowledge data egress — and they are usually PII-dense,
+so a captured trace shows `"<redacted>"` in their place unless you set
+`capture_inputs=True`. This only affects runtime tracing and simulation;
+production traces are id-only regardless. It is worth knowing because a DST
+bundle is an artifact that gets stored and shared.
+
+Resilience is worth wiring deliberately here, since the framework's existing
+policies fit inference unusually well: **hedging** attacks the tail latency a
+slow model or cold endpoint produces, **criticality** lets a `BEST_EFFORT`
+recommendation shed before a `CRITICAL` fraud check under load, and the error
+taxonomy above already classifies which failures are worth retrying (`throttled`
+and `infrastructure` are, `validation` and `precondition` are not).
+
 ## What this seam is not
 
 No training, no experiment tracking, no model registry, no agent loops. The

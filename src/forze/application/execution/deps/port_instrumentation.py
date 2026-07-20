@@ -137,17 +137,29 @@ def maybe_wrap_otel_spans(
 def _sensitive_fields(spec: BaseSpec) -> frozenset[str]:
     """The spec's declared-sensitive field names — what value capture redacts.
 
-    Reuses the encryption signal (``spec.encryption.encrypted`` ∪ ``.searchable``); a spec with no
-    declared encryption contributes nothing (captured values stay unmasked — safe, sim data only).
+    Two signals, unioned:
+
+    * the encryption declaration (``spec.encryption.encrypted`` ∪ ``.searchable``) — a field sealed
+      at rest should not appear in plaintext on a trace either;
+    * an explicit ``spec.sensitive_capture_fields`` — for planes whose payloads are sensitive
+      *without* being encryptable. Inference is the motivating case: features are sent to the model
+      in plaintext by construction (they cannot be sealed), yet are typically PII-dense, so
+      :class:`~forze.application.contracts.inference.InferenceSpec` masks every input field here
+      unless the author opts into capture.
+
+    A spec declaring neither contributes nothing (captured values stay unmasked — safe, sim data
+    only). Both are read duck-typed, so a spec type opts in simply by exposing the attribute.
     """
 
+    declared = frozenset(getattr(spec, "sensitive_capture_fields", None) or ())
     encryption = getattr(spec, "encryption", None)
+
     if encryption is None:
-        return frozenset()
+        return declared
 
     encrypted = getattr(encryption, "encrypted", ()) or ()
     searchable = getattr(encryption, "searchable", ()) or ()
-    return frozenset(encrypted) | frozenset(searchable)
+    return frozenset(encrypted) | frozenset(searchable) | declared
 
 
 # ....................... #
