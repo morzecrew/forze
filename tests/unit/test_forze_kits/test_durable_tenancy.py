@@ -6,14 +6,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from forze.application.contracts.durable.function import DurableRunStatus
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
-from tests.support.execution_context import context_from_modules
-
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
     DurableFunctionRunner,
@@ -22,10 +20,11 @@ from forze_kits.integrations.durable import (
     resolve_durable_schedule_store,
 )
 from forze_mock import MockDepsModule, MockState
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 
-UTC = timezone.utc
+UTC = UTC
 
 
 def _tenant_recording_registry(seen: dict[str, UUID | None]) -> DurableFunctionRegistry:

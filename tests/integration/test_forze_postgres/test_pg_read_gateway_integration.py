@@ -1,13 +1,13 @@
 """Integration tests for :class:`~forze_postgres.kernel.gateways.read.PostgresReadGateway`."""
 
-from forze.base.exceptions import CoreException, exc
 from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import encode_keyset_v1
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
+from forze.base.exceptions import CoreException
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import Document
 from forze_postgres.execution.deps.keys import (
@@ -18,6 +18,7 @@ from forze_postgres.execution.deps.utils import read_gw
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from tests.support.execution_context import context_from_deps
+
 
 class RdDoc(Document):
     name: str

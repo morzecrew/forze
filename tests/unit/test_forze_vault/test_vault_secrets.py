@@ -1,9 +1,10 @@
 """Unit tests for Vault secrets adapter and client error mapping."""
 
-from forze.base.exceptions import CoreException
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from forze.base.exceptions import CoreException
 
 pytest.importorskip("hvac")
 

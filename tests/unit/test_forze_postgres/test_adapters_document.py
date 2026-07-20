@@ -1,6 +1,5 @@
 """Unit tests for ``forze_postgres.adapters.document``."""
 
-from forze.base.exceptions import CoreException, exc
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
@@ -10,18 +9,20 @@ from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec, KeyedUpdate
 from forze.application.integrations.document import DocumentCache
-from forze.base.serialization import PydanticModelCodec
-from tests.unit._gateway_codec_helpers import codec_for
-from forze.domain.constants import ID_FIELD
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze.application.integrations.document._limits import (
     MAX_BATCH_SIZE,
     MAX_STREAM_CHUNK_SIZE,
     MIN_BATCH_SIZE,
     MIN_STREAM_CHUNK_SIZE,
 )
+from forze.base.exceptions import CoreException
+from forze.base.serialization import PydanticModelCodec
+from forze.domain.constants import ID_FIELD
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.adapters.document import PostgresDocumentAdapter
 from forze_postgres.kernel.gateways import PostgresReadGateway, PostgresWriteGateway
+from tests.unit._gateway_codec_helpers import codec_for
+
 
 def _build_read_doc(pk: UUID, *, rev: int = 1) -> ReadDocument:
     now = datetime.now(tz=UTC)

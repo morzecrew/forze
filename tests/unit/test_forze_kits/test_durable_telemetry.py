@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -21,8 +21,6 @@ from opentelemetry.trace import StatusCode
 
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, exc
-from tests.support.execution_context import context_from_modules
-
 from forze_kits.integrations.durable import (
     DURABLE_RECOVERED_COUNTER,
     DURABLE_RUN_DURATION_HISTOGRAM,
@@ -34,10 +32,11 @@ from forze_kits.integrations.durable import (
     DurableTelemetry,
 )
 from forze_mock import MockDepsModule
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 
-UTC = timezone.utc
+UTC = UTC
 
 
 def _otel() -> tuple[Any, Any, InMemorySpanExporter, InMemoryMetricReader]:

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator
 
 from forze.application.contracts.transaction import IsolationAware, IsolationLevel
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter

@@ -154,7 +154,7 @@ class TestExecutorIntegration:
         for _ in range(50):
             assert await ex.run(ok, policy="p", route="r") == "ok"
 
-        ((_, state),) = ex._throttles.items()  # noqa: SLF001
+        ((_, state),) = ex._throttles.items()
         assert state.requests == 50
         assert state.accepts == 50
 
@@ -217,7 +217,7 @@ class TestExecutorIntegration:
 
             assert ei.value.code != "adaptive_throttle"
 
-        ((_, state),) = ex._throttles.items()  # noqa: SLF001
+        ((_, state),) = ex._throttles.items()
         assert state.accepts == 50
 
     async def test_recovery_after_window_roll(self) -> None:

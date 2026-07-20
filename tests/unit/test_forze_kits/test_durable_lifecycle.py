@@ -7,13 +7,13 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.durable.function import (
     DurableFunctionCronTrigger,
@@ -21,9 +21,6 @@ from forze.application.contracts.durable.function import (
     DurableFunctionSpec,
 )
 from forze.base.exceptions import CoreException
-from pydantic import BaseModel
-from tests.support.execution_context import context_from_modules
-
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
     DurableFunctionRunner,
@@ -39,6 +36,7 @@ from forze_kits.integrations.durable.lifecycle import (
     _DurableSchedulerBackgroundStartup,
 )
 from forze_mock import MockDepsModule
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 

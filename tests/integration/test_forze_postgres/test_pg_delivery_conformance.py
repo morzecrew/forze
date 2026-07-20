@@ -26,7 +26,6 @@ from forze.application.execution import (
 from forze.testing import context_from_deps
 from forze_dst.conformance import (
     DELIVERY_EVENTS,
-    DELIVERY_INBOX,
     DELIVERY_OUTBOX,
     DeliveryOutcome,
     observe_uncommitted_outbox_visibility,

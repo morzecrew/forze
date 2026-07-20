@@ -1,12 +1,11 @@
-from forze.base.exceptions import CoreException
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-
 import pytest
 from pydantic import BaseModel, ValidationError, computed_field
 
+from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
 from forze.base.serialization.pydantic import (
     pydantic_decode_json_bytes,
@@ -21,6 +20,7 @@ from forze.base.serialization.pydantic import (
     pydantic_validate_many,
     pydantic_validate_many_batched,
 )
+
 
 class SampleModel(BaseModel):
     a: int

@@ -9,7 +9,8 @@ through their cap/limit/empty/boundary branches.
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import pytest
 from pydantic import BaseModel

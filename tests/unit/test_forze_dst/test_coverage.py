@@ -9,27 +9,34 @@ the sweep hits one).
 from __future__ import annotations
 
 import asyncio
+from types import MappingProxyType
 
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.execution import Handler
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
-from forze_dst import ModelState, PCTScheduler, Rule, Scenario, Simulation, SimulationConfig, Strategy
-from forze_dst.markers import record_event
+from forze_dst import (
+    ModelState,
+    PCTScheduler,
+    Rule,
+    Scenario,
+    Simulation,
+    SimulationConfig,
+    Strategy,
+)
 from forze_dst.invariants import expect, operation_succeeds
+from forze_dst.markers import record_event
 from forze_dst.oracle import behavioral_coverage
-from forze_dst.oracle.coverage import CoverageStats, behavioral_fingerprint
 from forze_dst.oracle.confidence import ConfidenceReport
+from forze_dst.oracle.coverage import CoverageStats, behavioral_fingerprint
 from forze_dst.oracle.reachability import ReachabilityReport
 from forze_dst.oracle.recorder import Event, History
 from forze_mock import MockDepsModule
-
-from types import MappingProxyType
 
 # ----------------------- #
 

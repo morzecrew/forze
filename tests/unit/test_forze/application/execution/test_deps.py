@@ -2,9 +2,8 @@
 
 import pytest
 
-from forze.application.contracts.deps import DepKey
+from forze.application.contracts.deps import DepKey, ProviderStore
 from forze.application.execution import Deps
-from forze.application.contracts.deps import ProviderStore
 from forze.base.exceptions import CoreException
 
 _A = DepKey[str]("a")

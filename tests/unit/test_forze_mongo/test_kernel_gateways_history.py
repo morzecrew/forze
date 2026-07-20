@@ -7,8 +7,8 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.domain.models import Document
-from forze_mongo.kernel.gateways import MongoHistoryGateway
 from forze_mongo.kernel.client import MongoClient
+from forze_mongo.kernel.gateways import MongoHistoryGateway
 from tests.unit._gateway_codec_helpers import history_codecs_for
 
 

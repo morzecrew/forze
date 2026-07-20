@@ -23,9 +23,9 @@ from forze.application.contracts.pubsub import (
     PubSubSpec,
 )
 from forze.application.contracts.stream import (
-    StreamCommandDepKey,
     AckStreamGroupAdminDepKey,
     AckStreamGroupQueryDepKey,
+    StreamCommandDepKey,
     StreamSpec,
 )
 from forze.application.execution import DepsRegistry, ExecutionRuntime
@@ -106,7 +106,7 @@ async def test_module_wired_pubsub_roundtrip(redis_client: RedisClient) -> None:
                 try:
                     received = await asyncio.wait_for(asyncio.shield(recv), timeout=0.5)
                     break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
             assert received is not None, "pub-sub message not received in time"

@@ -231,5 +231,5 @@ async def test_unexpected_recovery_failure_propagates() -> None:
             stream_spec=spec,
             bridge=_always_broken,
             crash=GatewayCrashPoint.BEFORE_BRIDGE,
-            emitted_ids=lambda: [],
+            emitted_ids=list,
         )

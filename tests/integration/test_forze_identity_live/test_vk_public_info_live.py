@@ -22,8 +22,8 @@ import os
 
 import pytest
 
-from forze.base.exceptions import CoreException, ExceptionKind
 from forze.application.contracts.authn import AccessTokenCredentials
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_identity.builtin.idp.vk import VkPublicInfoTokenVerifier
 
 pytestmark = [

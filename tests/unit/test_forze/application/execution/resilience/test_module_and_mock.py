@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from datetime import timedelta
-from typing import AsyncGenerator
 
 import pytest
 
@@ -28,10 +28,9 @@ from forze.application.execution import (
     ResilienceDepsModule,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
-from tests.support.execution_context import context_from_modules
-
 from forze_mock import MockDepsModule
 from forze_mock.adapters.resilience import PassthroughResilienceExecutor
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 

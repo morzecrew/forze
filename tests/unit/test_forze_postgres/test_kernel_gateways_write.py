@@ -1,6 +1,5 @@
 """Unit tests for ``forze_postgres.kernel.gateways.write``."""
 
-from forze.base.exceptions import CoreException, ExceptionKind
 import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -9,16 +8,17 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
+from forze_postgres.kernel.client import PostgresClient
 from forze_postgres.kernel.gateways import (
-    PostgresQualifiedName,
     PostgresReadGateway,
     PostgresWriteGateway,
 )
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
-from forze_postgres.kernel.client import PostgresClient
 from tests.unit._gateway_codec_helpers import write_codecs_for
+
 
 class MyDoc(Document):
     name: str

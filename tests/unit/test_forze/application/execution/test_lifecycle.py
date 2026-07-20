@@ -12,8 +12,8 @@ from forze.application.execution.lifecycle import (
     LifecyclePlan,
 )
 from forze.application.execution.runtime import ExecutionRuntime
-from tests.support.execution_context import context_from_deps
 from forze_mock import MockDepsModule, MockState
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 

@@ -11,7 +11,7 @@ bound with ``attrs.evolve(gw, bound_params=…)`` — exactly what
 ``PostgresDocumentAdapter.with_parameters`` does.
 """
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import attrs
@@ -88,7 +88,7 @@ async def _make_view(pg_client: PostgresClient, namespace: str = "forze") -> str
         );
         """
     )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for region, player, score, recorded_on in _RESULTS:
         await pg_client.execute(
             f"""

@@ -18,7 +18,6 @@ from forze.application.contracts.graph import (
     VertexRef,
 )
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.exceptions import CoreException
 from forze_neo4j.adapters import Neo4jGraphAdapter
 from forze_neo4j.kernel.client import Neo4jClient
 

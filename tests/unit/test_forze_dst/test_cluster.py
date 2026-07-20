@@ -10,11 +10,10 @@ the holds overlap and updates race; the oracle catches it and minimizes to two r
 from __future__ import annotations
 
 import asyncio
-from typing import Sequence
+from collections.abc import Sequence
 
 from forze.application.contracts.dlock import DistributedLockSpec
 from forze.base.primitives import monotonic
-
 from forze_dst.invariants import expect, mutual_exclusion
 from forze_dst.oracle import explore
 from forze_dst.oracle.recorder import record_event

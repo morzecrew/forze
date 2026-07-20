@@ -15,6 +15,7 @@ from uuid import uuid4
 import attrs
 import pytest
 
+from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.invariants import (
     CountAll,
     ReadSet,
@@ -25,10 +26,8 @@ from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
-from forze.application.contracts.document import DocumentSpec
 from forze_kits.invariants import enforce, enforce_preventive, evaluate, propose
 from forze_mock import MockDepsModule
-
 from tests.support.execution_context import context_from_deps
 
 # ----------------------- #

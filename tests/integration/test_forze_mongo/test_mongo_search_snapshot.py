@@ -14,14 +14,14 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
     SearchSpec,
 )
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
 from forze_mongo.adapters.search import MongoTextSearchAdapter
-from forze_mongo.execution.deps.configs import MongoSearchConfig
 from forze_mongo.execution.deps import ConfigurableMongoSearch
+from forze_mongo.execution.deps.configs import MongoSearchConfig
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.client import MongoClient
-from forze_redis.execution.deps.configs import RedisSearchResultSnapshotConfig
 from forze_redis.execution.deps import ConfigurableRedisSearchResultSnapshot
+from forze_redis.execution.deps.configs import RedisSearchResultSnapshotConfig
 from forze_redis.execution.deps.keys import RedisClientDepKey
 from forze_redis.kernel.client import RedisClient
 from tests.support.execution_context import context_from_deps

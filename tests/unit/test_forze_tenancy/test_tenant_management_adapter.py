@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -181,7 +181,7 @@ def test_post_init_rejects_cache_and_history() -> None:
 async def test_provision_tenant() -> None:
     adapter = _adapter()
     tid = uuid4()
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     row = ReadTenant(
         id=tid,
         rev=1,
@@ -230,7 +230,7 @@ async def test_detach_principal_kills_bindings() -> None:
 async def test_deactivate_tenant() -> None:
     adapter = _adapter()
     tid = uuid4()
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     row = ReadTenant(
         id=tid,
         rev=1,
@@ -257,7 +257,7 @@ async def test_list_principal_tenants_filters_inactive() -> None:
     )
 
     def _get(tid: object) -> ReadTenant:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         return ReadTenant(
             id=tid,  # type: ignore[arg-type]
             rev=1,

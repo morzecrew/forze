@@ -163,7 +163,7 @@ class TestPurgeHook:
     async def test_purge_fires_after_commit_on_delete(self) -> None:
         purged: list = []
 
-        async def _purge(ctx, row) -> None:  # noqa: ARG001
+        async def _purge(ctx, row) -> None:
             purged.append(row.id)
 
         runtime = build_runtime(MockDepsModule())

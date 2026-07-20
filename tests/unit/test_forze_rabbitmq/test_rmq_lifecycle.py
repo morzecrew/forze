@@ -2,8 +2,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from forze.application.execution import Deps, ExecutionContext
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from forze.application.execution import Deps
 from forze_rabbitmq.execution.deps import RabbitMQClientDepKey
 from forze_rabbitmq.execution.lifecycle import (
     RabbitMQShutdownHook,
@@ -11,6 +10,9 @@ from forze_rabbitmq.execution.lifecycle import (
     rabbitmq_lifecycle_step,
 )
 from forze_rabbitmq.kernel.client import RabbitMQClient, RabbitMQConfig
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 
 @pytest.mark.asyncio

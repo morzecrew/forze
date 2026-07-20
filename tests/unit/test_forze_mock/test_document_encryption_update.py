@@ -6,7 +6,6 @@ import base64
 
 import pytest
 
-from forze.base.serialization import default_model_codec
 from forze.application.contracts.crypto import AesGcmAead, KeyRef, StaticKeyDirectory
 from forze.application.contracts.document import (
     DocumentCodecs,
@@ -20,6 +19,7 @@ from forze.application.integrations.crypto import (
 )
 from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException
+from forze.base.serialization import default_model_codec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock.adapters import MockDocumentAdapter, MockKeyManagement, MockState
 

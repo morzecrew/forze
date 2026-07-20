@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -16,8 +15,8 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
     IngestSpec,
 )
-from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.base import CountlessPage
+from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException
 from forze_bigquery.execution import BigQueryAnalyticsConfig, BigQueryDepsModule
 from forze_bigquery.execution.deps.configs import BigQueryQueryConfig

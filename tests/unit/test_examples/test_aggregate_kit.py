@@ -8,6 +8,15 @@ from __future__ import annotations
 
 import pytest
 
+from examples.recipes.aggregate_kit.app import (
+    TASK_EVENTS,
+    TASK_SPEC,
+    TASKS,
+    TASKS_QUEUE,
+    TaskCreate,
+    TaskUpdate,
+    build_stack,
+)
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_kits.aggregates.document.dto import (
@@ -15,20 +24,9 @@ from forze_kits.aggregates.document.dto import (
     DocumentUpdateDTO,
     ListRequestDTO,
 )
-from forze_kits.aggregates.document.operations import DocumentKernelOp
 from forze_kits.aggregates.soft_deletion import SoftDeletionKernelOp
-from forze_mock import MockStateDepKey
-
-from examples.recipes.aggregate_kit.app import (
-    TASK_SPEC,
-    TASKS,
-    TASKS_QUEUE,
-    TASK_EVENTS,
-    TaskCreate,
-    TaskUpdate,
-    build_stack,
-)
 from forze_kits.integrations.outbox import OutboxRelay
+from forze_mock import MockStateDepKey
 
 # ----------------------- #
 

@@ -151,11 +151,11 @@ class TestSegments:
         # Push "a" out of the 1-slot window into probation.
         store.set("b", 2)
 
-        assert "a" in store._probation  # noqa: SLF001
+        assert "a" in store._probation
 
         store.get("a")  # reuse on probation proves worth
 
-        assert "a" in store._protected  # noqa: SLF001
+        assert "a" in store._protected
 
     def test_invalidate_keeps_sketch_for_instant_readmission(self) -> None:
         store = _store(capacity=10)
@@ -208,7 +208,7 @@ class TestSeamWiring:
             tenant_key=lambda: None,
         )
 
-        assert isinstance(coord._l1, TinyLfuStore)  # noqa: SLF001
+        assert isinstance(coord._l1, TinyLfuStore)
 
         async def fetch() -> DocModel:
             return doc
@@ -235,7 +235,7 @@ def test_register_l1_store_sweeps_dead_refs_on_append() -> None:
 
     from forze.application.integrations.document import l1 as l1_mod
 
-    registry = l1_mod._LIVE_STORES  # noqa: SLF001
+    registry = l1_mod._LIVE_STORES
     saved = list(registry)
     registry.clear()
 

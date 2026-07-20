@@ -8,7 +8,6 @@ from uuid import UUID
 import pytest
 
 from forze.base.primitives import bind_time_source, utcnow, uuid7
-
 from forze_temporal.interceptors import clock as clock_mod
 from forze_temporal.interceptors.clock import TemporalWorkflowTimeSource
 

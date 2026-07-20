@@ -6,7 +6,6 @@ import pytest
 from pydantic import SecretStr
 
 from forze.application.execution import Deps, LifecyclePlan
-from tests.support.execution_context import context_from_deps
 from forze_mongo.execution.deps import MongoClientDepKey
 from forze_mongo.execution.lifecycle import (
     MongoShutdownHook,
@@ -15,6 +14,7 @@ from forze_mongo.execution.lifecycle import (
     routed_mongo_lifecycle_step,
 )
 from forze_mongo.kernel.client import MongoClient, MongoConfig
+from tests.support.execution_context import context_from_deps
 
 
 @pytest.mark.asyncio

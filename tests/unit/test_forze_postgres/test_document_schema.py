@@ -8,9 +8,8 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
 from forze.base.exceptions import CoreException, exc
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_postgres.execution.deps.configs import (
     PostgresDocumentConfig,
     PostgresReadOnlyDocumentConfig,
@@ -22,6 +21,9 @@ from forze_postgres.execution.lifecycle import (
     postgres_document_schema_validation_lifecycle_step,
 )
 from forze_postgres.kernel.catalog.validation.validate_schema import PostgresDocumentSchemaSpec
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 
 class _Read(BaseModel):

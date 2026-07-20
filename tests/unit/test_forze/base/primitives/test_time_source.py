@@ -69,7 +69,7 @@ class TestBoundSource:
 
 class TestDomainStampingIsControlled:
     def test_domain_event_and_document_stamp_from_bound_source(self) -> None:
-        from forze.domain.models import DomainEvent, Document
+        from forze.domain.models import Document, DomainEvent
 
         class _Event(DomainEvent):
             aggregate_id: UUID

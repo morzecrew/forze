@@ -5,7 +5,6 @@ from enum import StrEnum
 import pytest
 
 from forze.base.exceptions import CoreException
-
 from forze.base.primitives import (
     StrKeyNamespace,
     StrKeySelector,

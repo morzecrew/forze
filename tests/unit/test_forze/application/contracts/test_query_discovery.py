@@ -95,7 +95,7 @@ class TestClassification:
 
 
 class TestBuildDiscovery:
-    def _discovery(self, **kw):  # noqa: ANN003
+    def _discovery(self, **kw):
         names = set(_Doc.model_fields)
         return build_query_discovery(
             _Doc,

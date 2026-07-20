@@ -62,7 +62,7 @@ def test_envelope_header_names_follow_forze_convention() -> None:
     assert HEADER_OCCURRED_AT == "forze_occurred_at"
     assert HEADER_HLC == "forze_hlc"
 
-    assert ENVELOPE_HEADER_KEYS == {
+    assert {
         HEADER_CORRELATION_ID,
         HEADER_CAUSATION_ID,
         HEADER_EXECUTION_ID,
@@ -70,7 +70,7 @@ def test_envelope_header_names_follow_forze_convention() -> None:
         HEADER_EVENT_ID,
         HEADER_OCCURRED_AT,
         HEADER_HLC,
-    }
+    } == ENVELOPE_HEADER_KEYS
 
 
 def test_envelope_header_names_do_not_collide_with_reserved_transport_keys() -> None:

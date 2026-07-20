@@ -19,7 +19,7 @@ from forze_identity.oidc.keys import JwksKeyProvider, StaticKeyProvider
 class TestStaticKeyProvider:
     def test_returns_configured_key(self) -> None:
         provider = StaticKeyProvider(key=b"secret")
-        assert provider.get_signing_key("any.jwt.token") is b"secret"
+        assert provider.get_signing_key("any.jwt.token") == b"secret"
 
 
 class TestJwksKeyProvider:
@@ -31,7 +31,7 @@ class TestJwksKeyProvider:
         mock_client.get_signing_key_from_jwt.return_value = signing
 
         with patch.object(provider, "_require_client", return_value=mock_client):
-            assert provider.get_signing_key("header.payload.sig") is b"rsa-key"
+            assert provider.get_signing_key("header.payload.sig") == b"rsa-key"
 
         mock_client.get_signing_key_from_jwt.assert_called_once_with("header.payload.sig")
 

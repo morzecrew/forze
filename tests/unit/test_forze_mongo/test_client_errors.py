@@ -3,6 +3,7 @@
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_mongo.kernel.client.errors import _mongo_eh, exc_interceptor
 
+
 class TestMongoErrorHandler:
     def test_core_error_passthrough(self) -> None:
         original = exc.internal("original")

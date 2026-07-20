@@ -1,11 +1,10 @@
 """Unit tests for forze_postgres.kernel.sql.query."""
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import pytest
 
 from forze.base.exceptions import CoreException
-
 from forze_postgres.kernel.catalog.introspect import PostgresType
 from forze_postgres.kernel.sql.query.render import PsycopgValueCoercer
 
@@ -98,7 +97,7 @@ class TestPsycopgValueCoercer:
 
         # ISO string with Z
         assert coercer.scalar("2023-01-01T12:00:00Z", t=tz_type) == datetime(
-            2023, 1, 1, 12, 0, tzinfo=timezone.utc
+            2023, 1, 1, 12, 0, tzinfo=UTC
         )
         # force_tz=False strips tzinfo
         assert coercer.scalar("2023-01-01T12:00:00Z", t=dt_type) == datetime(

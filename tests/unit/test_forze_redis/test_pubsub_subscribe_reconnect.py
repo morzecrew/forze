@@ -73,8 +73,8 @@ async def test_subscribe_retries_the_subscribe_leg_and_survives_cleanup_errors()
 
     client = RedisClient()
     # wire the stub through the private seams — no broker in a unit test
-    client._RedisClient__client = _StubRedis(shared)  # type: ignore[attr-defined]  # noqa: SLF001
-    client._RedisClient__redis_config = RedisConfig(  # type: ignore[attr-defined]  # noqa: SLF001
+    client._RedisClient__client = _StubRedis(shared)  # type: ignore[attr-defined]
+    client._RedisClient__redis_config = RedisConfig(  # type: ignore[attr-defined]
         pubsub_auto_reconnect=True,
         pubsub_reconnect_max_delay=timedelta(milliseconds=10),
         on_pubsub_reconnect=_hook,

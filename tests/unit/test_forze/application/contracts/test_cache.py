@@ -2,7 +2,6 @@
 
 from datetime import timedelta
 
-
 from forze.application.contracts.cache import CacheDepKey, CacheSpec
 
 # ----------------------- #

@@ -19,6 +19,8 @@ from testcontainers.kafka import KafkaContainer, RedpandaContainer
 
 pytest.importorskip("aiokafka")
 
+from _kafka_models import Payload
+
 from forze.base.serialization import PydanticModelCodec
 from forze_kafka.adapters import (
     KafkaCommitStreamGroupAdapter,
@@ -27,8 +29,6 @@ from forze_kafka.adapters import (
     KafkaStreamCommandAdapter,
 )
 from forze_kafka.kernel.client import KafkaClient, KafkaConfig
-
-from _kafka_models import Payload
 
 # ----------------------- #
 

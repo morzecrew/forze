@@ -7,8 +7,6 @@ never configured must stay absent.
 
 from uuid import uuid4
 
-import pytest
-
 from forze.application.contracts.crypto import (
     KeyDirectoryWithPrevious,
     KeyRef,

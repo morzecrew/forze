@@ -164,7 +164,7 @@ class TestLocalInferenceAdapter:
         )
         port = _ctx(module).inference.model(_spec())
 
-        async def chunks():  # noqa: ANN202
+        async def chunks():
             yield [_Features(x=1.0), _Features(x=2.0)]
             yield [_Features(x=3.0)]
 

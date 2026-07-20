@@ -1,9 +1,10 @@
 """Integration tests for :class:`~forze_mongo.kernel.gateways.history.MongoHistoryGateway`."""
 
-from forze.base.exceptions import CoreException
 from uuid import UUID, uuid4
 
 import pytest
+
+from forze.base.exceptions import CoreException
 
 pytest.importorskip("pymongo")
 
@@ -14,11 +15,12 @@ from forze.domain.constants import (
     ID_FIELD,
     REV_FIELD,
 )
-from forze_kits.domain.soft_deletion import SoftDeletionMixin
 from forze.domain.models import Document
-from forze_mongo.kernel.gateways.history import MongoHistoryGateway
+from forze_kits.domain.soft_deletion import SoftDeletionMixin
 from forze_mongo.kernel.client import MongoClient
+from forze_mongo.kernel.gateways.history import MongoHistoryGateway
 from tests.unit._gateway_codec_helpers import history_codecs_for
+
 
 class HistDoc(Document, SoftDeletionMixin):
     title: str

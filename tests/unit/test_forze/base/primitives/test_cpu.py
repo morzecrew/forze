@@ -115,9 +115,8 @@ class TestBindCpuExecutor:
 
 class TestDeadline:
     async def test_already_passed_deadline_raises_at_entry(self) -> None:
-        with bind_deadline(0.0):
-            with pytest.raises(CoreException) as ei:
-                await run_cpu(_double, 1)
+        with bind_deadline(0.0), pytest.raises(CoreException) as ei:
+            await run_cpu(_double, 1)
 
         assert ei.value.kind is ExceptionKind.TIMEOUT
         assert ei.value.code == "cpu_offload_deadline"
@@ -207,9 +206,8 @@ class TestRunCpuMap:
                 yield i
                 i += 1
 
-        with bind_deadline(0.0):
-            with pytest.raises(CoreException):
-                await run_cpu_map(unbounded(), _double, chunk_size=4)
+        with bind_deadline(0.0), pytest.raises(CoreException):
+            await run_cpu_map(unbounded(), _double, chunk_size=4)
 
         assert len(pulled) <= 4
 

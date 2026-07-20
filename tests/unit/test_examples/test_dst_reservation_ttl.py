@@ -9,10 +9,9 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
+from examples.recipes.dst_reservation_ttl.app import AUTH_LATENCY, TTL, simulation
 from forze_cli.app import app
 from forze_dst import SimulationConfig, Strategy
-
-from examples.recipes.dst_reservation_ttl.app import AUTH_LATENCY, TTL, simulation
 
 # ----------------------- #
 

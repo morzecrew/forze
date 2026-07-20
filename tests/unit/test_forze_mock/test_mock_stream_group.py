@@ -15,9 +15,9 @@ from pydantic import BaseModel
 from forze.application.contracts.stream.specs import StreamSpec
 from forze.base.serialization import PydanticModelCodec
 from forze_mock.adapters import (
+    MockAckStreamGroupAdapter,
     MockState,
     MockStreamAdapter,
-    MockAckStreamGroupAdapter,
 )
 
 # ----------------------- #

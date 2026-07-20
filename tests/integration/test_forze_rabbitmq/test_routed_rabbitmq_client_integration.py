@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from forze.base.exceptions import CoreException, exc
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import pytest
+
+from forze.base.exceptions import CoreException, exc
 
 pytest.importorskip("aio_pika")
 
@@ -21,8 +22,8 @@ from forze_rabbitmq.kernel.client import (
     RabbitMQConfig,
     RoutedRabbitMQClient,
 )
-
 from tests.integration._routed_lru_helpers import rabbitmq_dsns_for_lru_eviction
+
 
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/rabbitmq")
@@ -152,7 +153,7 @@ async def test_routed_rabbitmq_queue_roundtrip(
             pass
 
         queue = f"it:routed-rabbitmq:{uuid4().hex[:12]}"
-        ts = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        ts = datetime(2025, 1, 15, 12, 0, 0, tzinfo=UTC)
 
         mid = await routed.enqueue(
             queue,

@@ -1,8 +1,7 @@
 """Hub and federated mock search adapters."""
 
-from pydantic import BaseModel
-
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.search import (
     FederatedSearchSpec,

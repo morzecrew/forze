@@ -9,6 +9,8 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 from uuid import uuid4
 
+from _kafka_models import Payload
+
 from forze.application.contracts.stream import OffsetReset, StreamPosition
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.serialization import PydanticModelCodec
@@ -19,8 +21,6 @@ from forze_kafka.adapters import (
     KafkaStreamCommandAdapter,
 )
 from forze_kafka.kernel.client import KafkaClient, KafkaConfig
-
-from _kafka_models import Payload
 
 # ----------------------- #
 
@@ -144,7 +144,7 @@ async def test_per_partition_ordering(
 
 
 async def test_replay_reset_to_earliest(
-    kafka_container,  # noqa: ANN001 - session container fixture
+    kafka_container,
     producer: KafkaStreamCommandAdapter[Payload],
     admin: KafkaCommitStreamGroupAdminAdapter,
 ) -> None:
@@ -172,7 +172,7 @@ async def test_replay_reset_to_earliest(
 
 
 async def test_at_least_once_redelivery_without_commit(
-    kafka_container,  # noqa: ANN001 - session container fixture
+    kafka_container,
     producer: KafkaStreamCommandAdapter[Payload],
     admin: KafkaCommitStreamGroupAdminAdapter,
 ) -> None:
@@ -196,7 +196,7 @@ async def test_at_least_once_redelivery_without_commit(
 
 
 async def test_namespaced_tenant_round_trip(
-    kafka_client,  # noqa: ANN001 - initialized client fixture
+    kafka_client,
 ) -> None:
     # tenant_aware=True + namespace → the physical topic is prefixed per tenant.
     tenant = uuid4()

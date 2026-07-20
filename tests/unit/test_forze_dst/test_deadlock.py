@@ -15,7 +15,15 @@ from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
-from forze_dst import ModelState, OperationCase, Rule, Scenario, Simulation, SimulationConfig, Strategy
+from forze_dst import (
+    ModelState,
+    OperationCase,
+    Rule,
+    Scenario,
+    Simulation,
+    SimulationConfig,
+    Strategy,
+)
 from forze_dst.invariants import check, operation_succeeds
 from forze_dst.oracle.recorder import Event, History
 from forze_mock import MockDepsModule

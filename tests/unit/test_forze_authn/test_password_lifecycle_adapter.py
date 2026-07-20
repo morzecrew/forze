@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
@@ -37,7 +37,7 @@ def _slow_password_config() -> PasswordConfig:
 
 
 def _account(password_hash: str) -> ReadPasswordAccount:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     return ReadPasswordAccount(
         id=uuid4(),
         rev=1,

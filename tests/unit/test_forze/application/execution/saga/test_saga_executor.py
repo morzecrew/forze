@@ -7,9 +7,8 @@ import pytest
 from forze.application.contracts.saga import SagaDefinition, SagaStep, SagaStepKind
 from forze.application.execution import ExecutionContext, run_saga
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from tests.support.execution_context import context_from_modules
-
 from forze_mock import MockDepsModule
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 

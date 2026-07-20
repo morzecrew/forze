@@ -25,12 +25,10 @@ async def _enqueue(client: SQSClient, **kwargs: Any) -> AsyncMock:
         client,
         "_SQSClient__resolve_queue_url",
         AsyncMock(return_value="https://sqs/queue"),
+    ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto), patch.object(
+        client, "_SQSClient__is_fifo_target", return_value=False
     ):
-        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
-            with patch.object(
-                client, "_SQSClient__is_fifo_target", return_value=False
-            ):
-                await client.enqueue_many("orders", **kwargs)
+        await client.enqueue_many("orders", **kwargs)
 
     return mock_boto
 

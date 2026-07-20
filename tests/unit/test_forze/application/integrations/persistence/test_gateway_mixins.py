@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -14,7 +14,6 @@ from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QueryFilterLimits,
 )
-from forze.application.contracts.tenancy.mixins import TenancyMixin
 from forze.application.integrations.persistence import (
     DocumentWriteCodecMixin,
     FilterParserMixin,
@@ -299,13 +298,13 @@ class TestHistoryOccMixin:
         # ``historical_consistency_violation`` when another writer had
         # concurrently changed that same field.
         pk = uuid4()
-        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        due = datetime(2026, 1, 1, tzinfo=UTC)
         hist = _HistDueDoc(id=pk, rev=2, name="alpha", due=due)
         current = _HistDueDoc(
             id=pk,
             rev=3,
             name="alpha",
-            due=datetime(2027, 2, 2, tzinfo=timezone.utc),
+            due=datetime(2027, 2, 2, tzinfo=UTC),
         )
         gw = _OccGateway(_FakeHistoryGw([hist]))  # type: ignore[list-item]
 
@@ -318,7 +317,7 @@ class TestHistoryOccMixin:
         # Echoing identical datetimes for fields no other writer touched is a
         # no-op and must not conflict with concurrent changes elsewhere.
         pk = uuid4()
-        due = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        due = datetime(2026, 1, 1, tzinfo=UTC)
         hist = _HistDueDoc(id=pk, rev=2, name="alpha", due=due)
         current = _HistDueDoc(id=pk, rev=3, name="beta", due=due)
         gw = _OccGateway(_FakeHistoryGw([hist]))  # type: ignore[list-item]
@@ -333,19 +332,19 @@ class TestHistoryOccMixin:
             id=pk,
             rev=2,
             name="alpha",
-            due=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            due=datetime(2026, 1, 1, tzinfo=UTC),
         )
         current = _HistDueDoc(
             id=pk,
             rev=3,
             name="alpha",
-            due=datetime(2027, 2, 2, tzinfo=timezone.utc),
+            due=datetime(2027, 2, 2, tzinfo=UTC),
         )
         gw = _OccGateway(_FakeHistoryGw([hist]))  # type: ignore[list-item]
 
         with pytest.raises(CoreException) as exc_info:
             await gw._validate_history(
-                (current, 2, {"due": datetime(2028, 3, 3, tzinfo=timezone.utc)})
+                (current, 2, {"due": datetime(2028, 3, 3, tzinfo=UTC)})
             )
 
         assert exc_info.value.code == "historical_consistency_violation"

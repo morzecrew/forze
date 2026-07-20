@@ -2,6 +2,7 @@ import pytest
 
 from forze.domain.models import BaseDTO, CoreModel
 
+
 def test_core_model_uses_common_config() -> None:
     class Sample(CoreModel):
         value: int

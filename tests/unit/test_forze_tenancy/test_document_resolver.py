@@ -1,6 +1,5 @@
 """Unit tests for :mod:`forze_identity.tenancy` document resolver."""
 
-from forze.base.exceptions import CoreException
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -9,6 +8,7 @@ import pytest
 from forze.application.contracts.base import CountlessPage
 from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.document import DocumentSpec
+from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
 from forze_identity.tenancy.adapters.resolver import TenantResolverAdapter
 from forze_identity.tenancy.application.specs import principal_tenant_binding_spec, tenant_spec
@@ -16,6 +16,7 @@ from forze_identity.tenancy.domain.models.principal_tenant_binding import (
     ReadPrincipalTenantBinding,
 )
 from forze_identity.tenancy.domain.models.tenant import ReadTenant
+
 
 def _binding_row(*, pid: UUID, tid: UUID) -> ReadPrincipalTenantBinding:
     now = utcnow()

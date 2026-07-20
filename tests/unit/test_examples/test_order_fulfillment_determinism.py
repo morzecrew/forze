@@ -18,13 +18,6 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from forze.base.primitives import (
-    FrozenTimeSource,
-    SeededEntropySource,
-    bind_entropy_source,
-    bind_time_source,
-)
-
 from examples.recipes.order_fulfillment.app import (
     INVENTORY_SPEC,
     ORDER_SPEC,
@@ -34,6 +27,12 @@ from examples.recipes.order_fulfillment.app import (
     place_order,
     relay_once,
     run_checkout,
+)
+from forze.base.primitives import (
+    FrozenTimeSource,
+    SeededEntropySource,
+    bind_entropy_source,
+    bind_time_source,
 )
 
 # ----------------------- #

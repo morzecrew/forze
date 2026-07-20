@@ -1,8 +1,8 @@
 """Kafka record codec: value round-trip, encrypted passthrough, header/type split."""
 
-from forze.application.contracts.crypto import ENCRYPTED_PAYLOAD_KEY
-
 from _kafka_fakes import Msg, make_codec
+
+from forze.application.contracts.crypto import ENCRYPTED_PAYLOAD_KEY
 
 # ----------------------- #
 

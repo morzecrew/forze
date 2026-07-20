@@ -17,7 +17,7 @@ from forze.application.contracts.realtime import (
     RealtimeShard,
     RealtimeSignal,
 )
-from forze.application.contracts.stream import StreamCommandDepKey, AckStreamGroupQueryDepKey
+from forze.application.contracts.stream import AckStreamGroupQueryDepKey, StreamCommandDepKey
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze_kits.integrations.outbox.lifecycle import _OutboxRelayBackgroundStartup

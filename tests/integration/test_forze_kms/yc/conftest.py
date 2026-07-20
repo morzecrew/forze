@@ -14,7 +14,7 @@ CI leaves these unset, so the suite skips there; the mocked-stub unit tests unde
 
 import json
 import os
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import pytest
 import pytest_asyncio

@@ -4,17 +4,15 @@ from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
-
-from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchSpec
+from forze.base.exceptions import CoreException
 from forze_postgres.adapters.search import (
     PostgresFTSSearchAdapter,
     PostgresPGroongaSearchAdapter,
 )
 from forze_postgres.adapters.search._leg_pgroonga import build_pgroonga_leg
-from forze_postgres.kernel.gateways import PostgresQualifiedName
 
 # ----------------------- #
 

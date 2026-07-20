@@ -13,9 +13,10 @@ work. A ``max_size=1`` pool guarantees every operation reuses the *same*
 physical connection, so any leak surfaces deterministically.
 """
 
+from uuid import uuid4
+
 import pytest
 import pytest_asyncio
-from uuid import uuid4
 
 pytest.importorskip("psycopg")
 

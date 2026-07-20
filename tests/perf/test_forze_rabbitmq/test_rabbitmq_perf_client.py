@@ -9,7 +9,6 @@ pytest.importorskip("aio_pika")
 
 from forze_rabbitmq.kernel.client import RabbitMQClient
 
-
 # Note: receive-only benchmarks are omitted because a pre-seeded queue is
 # exhausted after the first benchmark iterations; use enqueue_receive_ack
 # for round-trip receive performance.

@@ -6,13 +6,12 @@ from collections.abc import Sequence
 
 import pytest
 
-from forze.base.exceptions import CoreException
-
 from forze.application.contracts.embeddings import (
     EmbeddingInputKind,
     EmbeddingsProviderPort,
     EmbeddingsSpec,
 )
+from forze.base.exceptions import CoreException
 
 
 class _StubEmbeddings:

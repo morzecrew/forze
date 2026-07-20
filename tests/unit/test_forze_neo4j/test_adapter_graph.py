@@ -71,7 +71,7 @@ class _FakeClient:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.databases: list[str | None] = []
 
-    async def run(self, query, params=None, *, database=None):  # noqa: ANN001, ANN202
+    async def run(self, query, params=None, *, database=None):
         self.calls.append((query, dict(params or {})))
         self.databases.append(database)
         return self.rows
@@ -83,7 +83,7 @@ class _FakeClient:
     def is_in_transaction(self) -> bool:
         return False
 
-    def transaction(self, *, database=None):  # noqa: ANN001, ANN202
+    def transaction(self, *, database=None):
         raise NotImplementedError
 
 

@@ -1,14 +1,13 @@
 """Unit tests for build_stored_file_registry."""
 
+from forze.application.execution.operations.registry import OperationRegistry
+from forze_kits.aggregates.search.operations import SearchKernelOp
 from forze_kits.aggregates.stored_file import (
     StoredFileFacade,
     StoredFileKernelOp,
     build_stored_file_registry,
 )
-from forze_kits.aggregates.search.operations import SearchKernelOp
 from forze_kits.domain.stored_file import StoredFileKitSpec
-from forze.application.execution.operations.registry import OperationRegistry
-
 from tests.unit.test_forze_kits.registry_helpers import registry_has_handler
 
 

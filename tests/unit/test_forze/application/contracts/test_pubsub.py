@@ -1,6 +1,6 @@
 """Unit tests for pubsub contract (PubSubSpec and dep keys)."""
 
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from pydantic import BaseModel
 

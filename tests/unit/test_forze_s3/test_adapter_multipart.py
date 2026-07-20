@@ -9,24 +9,24 @@ encrypting-route refusal.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
 from forze.application.contracts.storage import (
     PresignedUrl,
     StorageSpec,
     UploadPart,
 )
+from forze.application.execution import CryptoDepsModule
 from forze.application.integrations.storage.client import (
     ObjectStorageHead,
     ObjectStoragePartInfo,
 )
 from forze.base.exceptions import CoreException
-from forze.application.execution import CryptoDepsModule
-from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
 from forze_mock import MockKeyManagement
 from forze_s3.adapters import S3StorageAdapter
 from forze_s3.execution.deps import S3DepsModule
@@ -94,7 +94,7 @@ class _FakeClient:
         return PresignedUrl(
             url="https://s3/part",
             method="PUT",
-            expires_at=datetime.now(timezone.utc) + expires_in,
+            expires_at=datetime.now(UTC) + expires_in,
         )
 
     async def list_multipart_parts(

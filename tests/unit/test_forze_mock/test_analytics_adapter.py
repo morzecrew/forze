@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
-from forze.base.exceptions import CoreException
-from tests.support.execution_context import context_from_deps
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import (
@@ -13,8 +10,10 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
 )
 from forze.application.execution import ExecutionContext
+from forze.base.exceptions import CoreException
 from forze_mock import MockDepsModule, MockState
 from forze_mock.execution import MockStateDepKey
+from tests.support.execution_context import context_from_deps
 
 
 class _Row(BaseModel):

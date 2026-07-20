@@ -21,7 +21,6 @@ from forze.application.contracts.storage import (
 from forze_gcs.execution.deps.configs import GCSStorageConfig
 from forze_gcs.execution.deps.module import GCSDepsModule
 from forze_gcs.kernel.client.client import GCSClient
-
 from tests.support.execution_context import context_from_deps
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -55,7 +54,7 @@ async def _probe_compose(gcs_client: GCSClient, bucket: str) -> None:
                 ["__probe__/a", "__probe__/b"],
                 timeout=30,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             pytest.skip(f"fake-gcs-server does not support compose: {e!r}")
 
 

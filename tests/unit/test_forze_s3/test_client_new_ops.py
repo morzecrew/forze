@@ -5,7 +5,7 @@ put_object_tags: correct boto call args, Content-Range parsing, 304→None,
 416→precondition.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -184,7 +184,7 @@ async def test_conditional_passes_headers_and_returns_body() -> None:
     api = _FakeApi()
     api.get_object_result = {"Body": _Body(b"hi"), "ContentType": "text/plain"}
     client, tok = _client_with(api)
-    since = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    since = datetime(2025, 1, 1, tzinfo=UTC)
 
     try:
         result = await client.download_bytes_conditional(

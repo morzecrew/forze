@@ -3,15 +3,14 @@ from uuid import uuid4
 
 import pytest
 
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.storage import (
     StorageCommandDepKey,
     StorageQueryDepKey,
     StorageSpec,
 )
-from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from forze.application.execution import Deps, InvocationMetadata
 from forze_gcs.adapters.storage import GCSStorageAdapter
 from forze_gcs.execution.deps import (
     ConfigurableGCSStorageCommand,
@@ -21,6 +20,9 @@ from forze_gcs.execution.deps import (
     GCSStorageConfig,
 )
 from forze_gcs.kernel.client import GCSClient
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 
 def test_rejects_mapping_config() -> None:

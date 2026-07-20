@@ -14,8 +14,8 @@ from forze.application.contracts.resilience import (
     RetryBudget,
     TimeoutStrategy,
 )
-from forze.base.exceptions import CoreException, exc
 from forze.application.execution.resilience import InProcessResilienceExecutor
+from forze.base.exceptions import CoreException, exc
 
 # ----------------------- #
 

@@ -8,11 +8,10 @@ valid; these tests pin that the round-trip preserves the object and its metadata
 
 from __future__ import annotations
 
-from typing import AsyncIterator
-
-import pytest
+from collections.abc import AsyncIterator
 
 import attrs
+import pytest
 
 from forze.application.contracts.storage import OVERWRITE_PRECONDITION_FAILED_CODE
 from forze.application.integrations.crypto import ReencryptReport, reencrypt_objects

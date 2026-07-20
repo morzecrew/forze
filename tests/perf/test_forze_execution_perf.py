@@ -27,15 +27,13 @@ Save a baseline (optional)::
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any, Awaitable, Callable, cast
+from typing import Any, cast
 from uuid import UUID
 
 import attrs
 import pytest
-
-from forze.base.primitives import utcnow, uuid7
-from forze.domain.models import BaseDTO, Document, invariant
 
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import (
@@ -54,6 +52,8 @@ from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.execution.operations.registry.registries import (
     FrozenOperationRegistry,
 )
+from forze.base.primitives import utcnow, uuid7
+from forze.domain.models import BaseDTO, Document, invariant
 from tests.support.execution_context import frozen_deps_from_deps
 
 # ----------------------- #

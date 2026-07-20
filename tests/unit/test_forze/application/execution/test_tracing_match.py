@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from forze.base.exceptions import CoreException
-
 from forze.application.execution import (
     RuntimeTrace,
     TraceExpectation,
     assert_trace_contains,
     assert_trace_equals,
 )
+from forze.base.exceptions import CoreException
 
 # ----------------------- #
 

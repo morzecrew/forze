@@ -4,8 +4,6 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.base import CountlessPage, Page, page_from_limit_offset
@@ -18,11 +16,13 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.integrations.search import SearchResultSnapshot
+from forze.base.exceptions import CoreException
 from forze_mock.adapters.search.snapshot import MockSearchResultSnapshotAdapter
 from forze_mock.state import MockState
 from forze_postgres.adapters.search.federated import (
     PostgresFederatedSearchAdapter,
 )
+from forze_postgres.execution.deps import ConfigurablePostgresFederatedSearch
 from forze_postgres.execution.deps.configs import (
     FtsEngine,
     PostgresFederatedSearchConfig,
@@ -32,7 +32,6 @@ from forze_postgres.execution.deps.configs import (
     PostgresHubSearchMemberConfig,
     PostgresSearchConfig,
 )
-from forze_postgres.execution.deps import ConfigurablePostgresFederatedSearch
 
 # ----------------------- #
 

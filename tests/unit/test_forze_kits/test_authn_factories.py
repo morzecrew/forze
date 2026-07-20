@@ -8,8 +8,6 @@ from uuid import uuid4
 
 import pytest
 
-from forze_kits.aggregates.authn import AuthnKernelOp, build_authn_registry
-from forze_kits.aggregates.authn.factories import build_authn_registry as build_registry
 from forze.application.contracts.authn import (
     AuthnDepKey,
     AuthnResult,
@@ -29,6 +27,9 @@ from forze.application.contracts.authn.value_objects import (
     RefreshTokenCredentials,
 )
 from forze.application.execution import ExecutionContext
+from forze.base.primitives import StrKeyNamespace
+from forze_kits.aggregates.authn import AuthnKernelOp, build_authn_registry
+from forze_kits.aggregates.authn.factories import build_authn_registry as build_registry
 from forze_kits.aggregates.authn.handlers import (
     AuthnChangePassword,
     AuthnLogout,
@@ -38,7 +39,6 @@ from forze_kits.aggregates.authn.handlers import (
     AuthnResetPassword,
     DeactivatePrincipalHandler,
 )
-from forze.base.primitives import StrKeyNamespace
 
 from .registry_helpers import handler_at, registry_has_handler
 

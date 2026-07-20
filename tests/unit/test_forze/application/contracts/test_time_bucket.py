@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -77,7 +77,7 @@ def test_tzinfo_from_resolved_fixed_and_iana() -> None:
 
 
 def test_floor_to_time_bucket_hour_day_week_month() -> None:
-    dt = datetime(2026, 3, 15, 14, 37, 22, tzinfo=timezone.utc)
+    dt = datetime(2026, 3, 15, 14, 37, 22, tzinfo=UTC)
     tz = ZoneInfo("UTC")
 
     hour = floor_to_time_bucket(dt, unit="hour", tz=tz)
@@ -95,11 +95,11 @@ def test_floor_to_time_bucket_hour_day_week_month() -> None:
 
 def test_floor_to_time_bucket_naive_input_uses_utc() -> None:
     naive = datetime(2026, 1, 1, 12, 0, 0)
-    floored = floor_to_time_bucket(naive, unit="hour", tz=timezone.utc)
+    floored = floor_to_time_bucket(naive, unit="hour", tz=UTC)
     assert floored.tzinfo is not None
 
 
 def test_floor_to_time_bucket_invalid_unit_raises() -> None:
-    dt = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    dt = datetime(2026, 1, 1, tzinfo=UTC)
     with pytest.raises(CoreException, match="Invalid time bucket unit"):
-        floor_to_time_bucket(dt, unit="year", tz=timezone.utc)  # type: ignore[arg-type]
+        floor_to_time_bucket(dt, unit="year", tz=UTC)  # type: ignore[arg-type]

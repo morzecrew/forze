@@ -3,11 +3,8 @@
 import asyncio
 from datetime import timedelta
 
-from pydantic import BaseModel
-
 import pytest
-
-from forze.base.serialization import PydanticModelCodec
+from pydantic import BaseModel
 
 from forze.application.contracts.durable.function import DurableFunctionEventSpec
 from forze.application.contracts.durable.workflow import (
@@ -16,6 +13,7 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowScheduleTiming,
     DurableWorkflowSpec,
 )
+from forze.base.serialization import PydanticModelCodec
 from forze_mock.adapters.durable import (
     MockDurableFunctionEventAdapter,
     MockDurableFunctionStepAdapter,

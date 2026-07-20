@@ -1,7 +1,8 @@
 """Unit tests for :mod:`forze_s3.kernel.client.errors`."""
 
-from forze.base.exceptions import CoreException, ExceptionKind, exc
 import pytest
+
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 
 pytest.importorskip("botocore")
 

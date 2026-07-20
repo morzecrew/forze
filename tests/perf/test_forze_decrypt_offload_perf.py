@@ -23,7 +23,6 @@ from pydantic import BaseModel
 from forze.application.contracts.crypto import AesGcmAead, KeyRef, StaticKeyDirectory
 from forze.application.integrations.crypto import EncryptingModelCodec, Keyring
 from forze.base.serialization import default_model_codec
-
 from forze_mock import MockKeyManagement
 
 # ----------------------- #

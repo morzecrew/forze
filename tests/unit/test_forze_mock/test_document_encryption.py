@@ -22,7 +22,6 @@ from forze import build_runtime
 from forze.application.contracts.crypto import (
     AesGcmAead,
     FieldEncryption,
-    KeyRef,
     TenantTemplateKeyDirectory,
 )
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes

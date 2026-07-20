@@ -19,9 +19,9 @@ from botocore import exceptions as boto_errors
 from google.api_core import exceptions as gcp_errors
 
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_kms.aws.kernel.client.errors import _awskms_eh  # noqa: PLC2701
-from forze_kms.gcp.kernel.client.errors import _gcpkms_eh  # noqa: PLC2701
-from forze_kms.yc.kernel.client.errors import _yckms_eh  # noqa: PLC2701
+from forze_kms.aws.kernel.client.errors import _awskms_eh
+from forze_kms.gcp.kernel.client.errors import _gcpkms_eh
+from forze_kms.yc.kernel.client.errors import _yckms_eh
 
 # ----------------------- #
 

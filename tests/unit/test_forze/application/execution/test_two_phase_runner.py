@@ -10,7 +10,7 @@ while still firing the outer failure/finally hooks.
 from __future__ import annotations
 
 import asyncio
-from typing import Callable
+from collections.abc import Callable
 
 import attrs
 import pytest
@@ -24,10 +24,10 @@ from forze.application.contracts.execution import (
     OnSuccessStep,
     TwoPhaseHandler,
 )
-from forze.base.exceptions import CoreException
 from forze.application.contracts.execution.value_objects import Failure, Success
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.base.exceptions import CoreException
 from forze_mock import MockDepsModule
 from tests.support.execution_context import context_from_deps
 

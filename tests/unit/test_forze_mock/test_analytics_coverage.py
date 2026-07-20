@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import attrs
-
 import pytest
-
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import (

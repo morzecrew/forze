@@ -1,11 +1,10 @@
 """Unit tests for PGroonga index field resolution and alignment."""
 
 import pytest
-
-from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchSpec
+from forze.base.exceptions import CoreException
 from forze_postgres.adapters.search._pgroonga_index_fields import (
     align_pgroonga_search_columns,
     heap_columns_to_logical,
@@ -13,8 +12,8 @@ from forze_postgres.adapters.search._pgroonga_index_fields import (
     pgroonga_index_uses_array_expr,
     resolve_pgroonga_index_alignment,
 )
-from forze_postgres.kernel.gateways import PostgresQualifiedName
 from forze_postgres.kernel.catalog.introspect.types import PostgresIndexInfo
+from forze_postgres.kernel.gateways import PostgresQualifiedName
 
 
 class _Doc(BaseModel):

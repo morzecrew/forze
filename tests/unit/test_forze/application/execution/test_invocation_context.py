@@ -63,14 +63,13 @@ def test_bind_matches_bind_metadata_composed_with_bind_identity() -> None:
     authn = _authn()
     tenant = TenantIdentity(tenant_id=uuid4())
 
-    with ctx.bind_metadata(metadata=metadata):
-        with ctx.bind_identity(authn=authn, tenant=tenant):
-            composed = (
-                ctx.get_metadata(),
-                ctx.get_authn(),
-                ctx.get_tenant(),
-                _bound_log_vars(),
-            )
+    with ctx.bind_metadata(metadata=metadata), ctx.bind_identity(authn=authn, tenant=tenant):
+        composed = (
+            ctx.get_metadata(),
+            ctx.get_authn(),
+            ctx.get_tenant(),
+            _bound_log_vars(),
+        )
 
     assert ctx.get_metadata() is None
     assert ctx.get_authn() is None
@@ -167,10 +166,9 @@ def test_bind_identity_empty_resets_contextvars_on_exception() -> None:
     outer_authn = _authn()
 
     with ctx.bind_identity(authn=outer_authn):
-        with pytest.raises(RuntimeError, match="boom"):
-            with ctx.bind_identity():
-                assert ctx.get_authn() is None
-                raise RuntimeError("boom")
+        with pytest.raises(RuntimeError, match="boom"), ctx.bind_identity():
+            assert ctx.get_authn() is None
+            raise RuntimeError("boom")
 
         assert ctx.get_authn() is outer_authn
 
@@ -180,11 +178,10 @@ def test_bind_identity_empty_resets_contextvars_on_exception() -> None:
 def test_bind_idempotency_none_binds_no_log_fields() -> None:
     ctx = InvocationContext()
 
-    with bound_contextvars(custom="outer"):
-        with ctx.bind_idempotency(None):
-            assert ctx.get_idempotency_key() is None
-            assert IDEMPOTENCY_KEY_KEY not in get_contextvars()
-            assert get_contextvars().get("custom") == "outer"
+    with bound_contextvars(custom="outer"), ctx.bind_idempotency(None):
+        assert ctx.get_idempotency_key() is None
+        assert IDEMPOTENCY_KEY_KEY not in get_contextvars()
+        assert get_contextvars().get("custom") == "outer"
 
     assert ctx.get_idempotency_key() is None
 

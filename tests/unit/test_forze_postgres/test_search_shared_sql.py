@@ -4,11 +4,10 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchFuzzySpec, SearchSpec
+from forze.base.exceptions import CoreException
 from forze_postgres.adapters.search._fts_sql import (
     fts_effective_group_weights,
     fts_rank_cd_weight_array,
@@ -30,8 +29,8 @@ from forze_postgres.adapters.search.hub import (
     VectorHubLegEngine,
     hub_leg_engine_for,
 )
-from forze_postgres.kernel.gateways import PostgresQualifiedName
 from forze_postgres.kernel.catalog.introspect.types import PostgresIndexInfo
+from forze_postgres.kernel.gateways import PostgresQualifiedName
 
 
 class _Doc(BaseModel):

@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from forze.application.execution import DepsRegistry, ExecutionRuntime
-from forze.application.integrations.inference import local_inference_lifecycle_step
-
 from examples.recipes.inference_scoring.app import (
     PAYMENT_RISK,
     PaymentFeatures,
     inference_module,
     score_payment,
 )
+from forze.application.execution import DepsRegistry, ExecutionRuntime
+from forze.application.integrations.inference import local_inference_lifecycle_step
 
 
 async def test_score_payment_round_trips_through_the_local_model() -> None:

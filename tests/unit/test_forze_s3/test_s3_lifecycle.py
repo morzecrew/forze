@@ -6,7 +6,6 @@ import pytest
 from pydantic import SecretStr
 
 from forze.application.execution import Deps, LifecyclePlan
-from tests.support.execution_context import context_from_deps
 from forze_s3.execution.deps import S3ClientDepKey
 from forze_s3.execution.lifecycle import (
     S3ShutdownHook,
@@ -15,6 +14,7 @@ from forze_s3.execution.lifecycle import (
     s3_lifecycle_step,
 )
 from forze_s3.kernel.client import S3Client, S3Config
+from tests.support.execution_context import context_from_deps
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,6 @@ import pytest
 
 from forze.application.execution import bind_deadline
 from forze.base.primitives import DEFAULT_DRIVER_DEADLINE_GRACE
-
 from forze_mongo.kernel.client import client as mongo_client
 
 # ----------------------- #
@@ -20,7 +19,7 @@ class _FakeTimeout:
     def __init__(self, seconds: float) -> None:
         self.seconds = seconds
 
-    def __enter__(self) -> "_FakeTimeout":
+    def __enter__(self) -> _FakeTimeout:
         _FakeTimeout.entered.append(self.seconds)
         return self
 

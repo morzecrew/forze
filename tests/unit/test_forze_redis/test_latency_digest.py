@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock
 from forze.application.contracts.resilience import AdaptiveBulkheadStrategy
 from forze.application.execution.resilience import InMemoryLatencyDigestStore
 from forze.base.primitives import DDSketch
-
 from forze_redis.adapters.latency_digest import RedisLatencyDigestStore
 
 # ----------------------- #

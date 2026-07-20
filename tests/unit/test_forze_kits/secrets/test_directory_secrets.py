@@ -1,12 +1,12 @@
 """Unit tests for :class:`~forze_kits.adapters.secrets.DirectorySecrets`."""
 
-from forze.base.exceptions import CoreException, exc
 from pathlib import Path
 
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, resolve_structured
+from forze.base.exceptions import CoreException
 from forze_kits.adapters.secrets import DirectorySecrets
 
 # ----------------------- #

@@ -13,13 +13,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import duckdb
-import pytest
 
 from forze.application.contracts.secrets import SecretRef, SecretsDepKey
 from forze.application.execution import Deps
-from forze.base.exceptions import CoreException
-from forze_kits.adapters.secrets import MappingSecrets
-
 from forze_duckdb import (
     DuckDbAnalyticsConfig,
     DuckDbClient,
@@ -36,7 +32,7 @@ from forze_duckdb.execution.lifecycle import (
     DuckDbStartupHook,
     duckdb_lifecycle_step,
 )
-
+from forze_kits.adapters.secrets import MappingSecrets
 from tests.support.execution_context import context_from_deps
 from tests.unit.test_forze_duckdb.conftest import Params
 

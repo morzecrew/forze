@@ -10,20 +10,20 @@ from pydantic import BaseModel
 from forze.application.contracts.embeddings import EmbeddingsProviderDepKey, EmbeddingsSpec
 from forze.application.contracts.search import HubSearchSpec, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
+from forze_mock import MockHashEmbeddingsProvider
 from forze_postgres.adapters.search._vector_sql import vector_param_literal
+from forze_postgres.execution.deps import ConfigurablePostgresHubSearch
 from forze_postgres.execution.deps.configs import (
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
     VectorEngine,
 )
-from forze_postgres.execution.deps import ConfigurablePostgresHubSearch
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from forze_mock import MockHashEmbeddingsProvider
 from tests.support.execution_context import context_from_deps
 
 

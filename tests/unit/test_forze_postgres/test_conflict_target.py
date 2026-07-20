@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from forze.base.exceptions import CoreException
-from forze_postgres.kernel.sql.conflict_target import resolve_write_conflict_target
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
+from forze_postgres.kernel.sql.conflict_target import resolve_write_conflict_target
 
 
 @pytest.mark.asyncio

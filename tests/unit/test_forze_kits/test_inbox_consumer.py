@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from collections.abc import Mapping
 
 import attrs
 import pytest
@@ -11,10 +11,9 @@ from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_HLC
 from forze.application.contracts.inbox import InboxSpec
 from forze.base.exceptions import CoreException
 from forze.base.primitives import HlcTimestamp, uuid7
-from tests.support.execution_context import context_from_modules
-
 from forze_kits.integrations.inbox import process_with_inbox
 from forze_mock import MockDepsModule
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 

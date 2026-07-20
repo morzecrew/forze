@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
-
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowHandle,
     DurableWorkflowInvokeSpec,
     DurableWorkflowQuerySpec,
-    DurableWorkflowSignalSpec,
     DurableWorkflowRunStatus,
+    DurableWorkflowSignalSpec,
     DurableWorkflowSpec,
     DurableWorkflowUpdateSpec,
 )

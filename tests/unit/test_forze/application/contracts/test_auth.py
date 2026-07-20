@@ -6,8 +6,6 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pytest
 
-from forze.base.exceptions import CoreException
-
 from forze.application.contracts.authn import (
     AccessTokenCredentials,
     ApiKeyCredentials,
@@ -35,6 +33,7 @@ from forze.application.contracts.authz import (
     subject_from_authn,
 )
 from forze.application.contracts.authz.specs import AuthzSpec
+from forze.base.exceptions import CoreException
 
 # ----------------------- #
 

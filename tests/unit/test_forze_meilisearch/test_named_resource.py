@@ -13,11 +13,11 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze_meilisearch.adapters.search._command import (
     MeilisearchSearchManagementAdapter,
 )
-from forze_meilisearch.execution.deps.module import MeilisearchDepsModule
 from forze_meilisearch.execution.deps.configs import (
     MeilisearchFederatedSearchConfig,
     MeilisearchSearchConfig,
 )
+from forze_meilisearch.execution.deps.module import MeilisearchDepsModule
 from forze_meilisearch.kernel.relation import resolve_meilisearch_index_uid
 
 

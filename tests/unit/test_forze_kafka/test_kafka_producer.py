@@ -1,10 +1,10 @@
 """Kafka producer adapter: position id, native key/headers/timestamp mapping."""
 
-from datetime import datetime, timezone
-
-from forze_kafka.adapters import KafkaStreamCommandAdapter
+from datetime import UTC, datetime
 
 from _kafka_fakes import FakeKafkaClient, Msg, make_codec
+
+from forze_kafka.adapters import KafkaStreamCommandAdapter
 
 # ----------------------- #
 
@@ -42,7 +42,7 @@ async def test_append_returns_canonical_position_id() -> None:
 async def test_append_maps_timestamp_to_millis() -> None:
     client = FakeKafkaClient()
     adapter = _adapter(client)
-    when = datetime(2021, 6, 1, tzinfo=timezone.utc)
+    when = datetime(2021, 6, 1, tzinfo=UTC)
 
     await adapter.append("events", Msg(body="x"), timestamp=when)
 

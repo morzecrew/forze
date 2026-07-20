@@ -10,26 +10,27 @@ These cover the new seams introduced by the strategic authn refactor:
 
 from __future__ import annotations
 
-from forze.base.exceptions import CoreException, exc
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
 
+from forze.base.exceptions import CoreException
+
 pytest.importorskip("argon2")
 
 pytestmark = pytest.mark.unit
 
+from unittest.mock import AsyncMock, MagicMock
+
 from forze.application.contracts.authn import (
-    ApiKeyCredentials,
-    PasswordCredentials,
     AccessTokenCredentials,
+    ApiKeyCredentials,
     AuthnIdentity,
+    PasswordCredentials,
     VerifiedAssertion,
 )
 from forze.base.primitives import uuid4 as deterministic_uuid4
-from unittest.mock import AsyncMock, MagicMock
-
 from forze_identity.authn import (
     AuthnOrchestrator,
     DeterministicUuidResolver,

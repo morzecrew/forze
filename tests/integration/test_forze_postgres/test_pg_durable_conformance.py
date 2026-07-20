@@ -12,8 +12,9 @@ byte-identical on both (the JSON-projection divergence is documented, not exerci
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import timedelta
-from typing import Any, Callable, cast
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -28,6 +29,7 @@ from forze.application.contracts.durable.function import (
     bind_durable_run,
     reset_durable_run,
 )
+from forze_mock import MockDurableFunctionStepAdapter, MockDurableRunStore, MockState
 from forze_postgres.adapters.durable import (
     PostgresDurableFunctionStepAdapter,
     PostgresDurableRunStore,
@@ -37,8 +39,6 @@ from forze_postgres.execution.deps.configs import (
     PostgresDurableStepConfig,
 )
 from forze_postgres.kernel.client import PostgresClient
-
-from forze_mock import MockDurableFunctionStepAdapter, MockDurableRunStore, MockState
 
 # ----------------------- #
 

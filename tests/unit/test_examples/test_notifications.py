@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from forze.application.execution import DepsRegistry, ExecutionContext
-from forze_mock import MockDepsModule
-
 from examples.recipes.notifications.app import (
     RecordingSenders,
     deliver_notifications,
     stage_welcome,
 )
+from forze.application.execution import DepsRegistry, ExecutionContext
+from forze_mock import MockDepsModule
 
 
 async def test_notification_delivered() -> None:

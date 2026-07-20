@@ -5,7 +5,6 @@ import pytest
 from forze_meilisearch.execution.deps import (
     ConfigurableMeilisearchFederatedSearch,
     ConfigurableMeilisearchSearch,
-    MeilisearchFederatedSearchConfig,
     MeilisearchSearchConfig,
 )
 

@@ -7,7 +7,7 @@ reads back via ranged GETs; ``download_range`` over a client-side-encrypted
 plaintext routes plus a multi-part (compose-chained) upload.
 """
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import pytest
 

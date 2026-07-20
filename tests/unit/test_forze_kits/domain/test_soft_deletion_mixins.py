@@ -1,10 +1,10 @@
-from forze.base.exceptions import CoreException
 import pytest
 
-
+from forze.base.exceptions import CoreException
 from forze.base.primitives import JsonDict
 from forze_kits.domain.soft_deletion import SoftDeletionMixin
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
+
 
 class SoftDoc(SoftDeletionMixin): ...
 

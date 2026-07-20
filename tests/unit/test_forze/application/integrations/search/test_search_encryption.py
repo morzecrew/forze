@@ -14,7 +14,6 @@ from forze.application.contracts.crypto import (
     KeyRef,
     StaticKeyDirectory,
 )
-from forze.base.serialization import default_model_codec
 from forze.application.contracts.search import SearchSpec
 from forze.application.integrations.crypto import (
     DeterministicFieldCipher,
@@ -27,7 +26,7 @@ from forze.application.integrations.search import (
 )
 from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze.base.serialization import PydanticModelCodec
+from forze.base.serialization import PydanticModelCodec, default_model_codec
 from forze_mock import MockKeyManagement
 
 # ----------------------- #

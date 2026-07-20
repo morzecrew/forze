@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from forze.application.contracts.deps import DepKey
-from forze.application.execution import Deps
 from forze.application.contracts.deps import (
+    DepKey,
     merge_deps,
     routed_constant,
     routed_from_mapping,
     routed_shared_factories,
 )
+from forze.application.execution import Deps
 
 # ----------------------- #
 
@@ -95,7 +95,7 @@ def test_routed_from_mapping_multi_key() -> None:
 
 def test_routed_constant_matches_manual_expansion() -> None:
     provider = object()
-    manual = Deps.routed({_QUERY: {name: provider for name in ("a", "b")}})
+    manual = Deps.routed({_QUERY: dict.fromkeys(("a", "b"), provider)})
     built = routed_constant(
         {"a", "b"},
         bindings=[(_QUERY, provider)],

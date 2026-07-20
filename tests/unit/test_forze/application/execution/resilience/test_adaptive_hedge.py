@@ -152,10 +152,10 @@ class TestExecutorIntegration:
         fn = _Fn([(0.5, "slow"), (0.0, "hedge")])
         assert await ex.run_hedged(fn, policy="h", route="r") == "hedge"
 
-        ((key, state),) = ex._hedge_delays.items()  # noqa: SLF001
+        ((key, state),) = ex._hedge_delays.items()
         assert key == ("h", "r")
         # The cancelled primary was recorded at >= the hedge delay.
-        assert state._estimator._old.count == 1  # noqa: SLF001
+        assert state._estimator._old.count == 1
 
     async def test_caller_cancellation_records_no_sample(self) -> None:
         # A caller cancel can land at any elapsed time — recording it would
@@ -172,8 +172,8 @@ class TestExecutorIntegration:
         with pytest.raises(asyncio.CancelledError):
             await task
 
-        ((_, state),) = ex._hedge_delays.items()  # noqa: SLF001
-        assert state._estimator._old.count == 0  # noqa: SLF001
+        ((_, state),) = ex._hedge_delays.items()
+        assert state._estimator._old.count == 0
 
     async def test_routes_keep_separate_estimators(self) -> None:
         ex = _executor(_strategy())
@@ -182,7 +182,7 @@ class TestExecutorIntegration:
             fn = _Fn([(0.0, "ok")])
             await ex.run_hedged(fn, policy="h", route=route)
 
-        keys = {key for key, _ in ex._hedge_delays.items()}  # noqa: SLF001
+        keys = {key for key, _ in ex._hedge_delays.items()}
         assert keys == {("h", "a"), ("h", "b")}
 
     async def test_fixed_strategy_keeps_no_state(self) -> None:
@@ -191,5 +191,5 @@ class TestExecutorIntegration:
         fn = _Fn([(0.0, "ok")])
         assert await ex.run_hedged(fn, policy="h", route="r") == "ok"
 
-        assert not ex._hedge_delays  # noqa: SLF001
+        assert not ex._hedge_delays
         assert list(ex.hedge_delays()) == []

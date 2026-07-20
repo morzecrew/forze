@@ -5,7 +5,6 @@ from datetime import timedelta
 import pytest
 
 from forze.base.exceptions import CoreException
-
 from forze_redis.adapters import RedisSearchResultSnapshotAdapter
 
 

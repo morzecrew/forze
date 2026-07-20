@@ -9,13 +9,12 @@ from forze.application.contracts.queue import (
     QueueQueryDepKey,
     QueueSpec,
 )
-from tests.support.execution_context import context_from_deps
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.stream import (
-    StreamCommandDepKey,
     AckStreamGroupQueryDepKey,
     CommitStreamGroupAdminDepKey,
     CommitStreamGroupQueryDepKey,
+    StreamCommandDepKey,
 )
 from forze.application.contracts.stream.specs import StreamSpec
 from forze.base.serialization import PydanticModelCodec
@@ -23,6 +22,7 @@ from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
 from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion
 from forze_mock import MockDepsModule
 from forze_mock.execution import MockStateDepKey
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 

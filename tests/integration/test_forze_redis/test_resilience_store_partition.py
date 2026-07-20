@@ -18,8 +18,9 @@ driven deterministically with no sleeping.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import timedelta
-from typing import Any, Sequence, cast
+from typing import Any, cast
 from uuid import uuid4
 
 import attrs

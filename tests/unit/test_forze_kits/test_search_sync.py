@@ -291,7 +291,7 @@ class _FakeSearchDeps:
     def __init__(self, command: _FlakyCommand) -> None:
         self._command = command
 
-    def command(self, search: object) -> _FlakyCommand:  # noqa: ARG002
+    def command(self, search: object) -> _FlakyCommand:
         return self._command
 
 
@@ -320,9 +320,8 @@ class TestSearchSyncRetry:
         row = _read_row(WidgetRead, name="alpha")
         hook = steps.upsert_on_write().factory(_FakeCtx(command))
 
-        with structlog.testing.capture_logs() as logs:
-            with pytest.raises(ConnectionError):
-                await hook(None, row)
+        with structlog.testing.capture_logs() as logs, pytest.raises(ConnectionError):
+            await hook(None, row)
 
         assert len(command.calls) == 2  # the first call plus one bounded retry
 

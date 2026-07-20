@@ -1,11 +1,12 @@
 """Unit tests for :mod:`forze_temporal.kernel.client.client`."""
 
-from forze.base.exceptions import CoreException
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
 from temporalio.exceptions import WorkflowAlreadyStartedError
+
+from forze.base.exceptions import CoreException
 
 pytest.importorskip("temporalio")
 
@@ -13,6 +14,7 @@ from temporalio.client import TLSConfig
 from temporalio.contrib.pydantic import pydantic_data_converter
 
 from forze_temporal.kernel.client.client import TemporalClient, TemporalConfig
+
 
 class _Arg(BaseModel):
     """Workflow argument model for tests."""

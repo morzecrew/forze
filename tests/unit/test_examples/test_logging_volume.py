@@ -12,8 +12,6 @@ import json
 
 import pytest
 
-from forze.base.logging import bootstrap_logging
-
 from examples.recipes.order_fulfillment.app import (
     build_context,
     deliver,
@@ -21,6 +19,7 @@ from examples.recipes.order_fulfillment.app import (
     relay_once,
     run_checkout,
 )
+from forze.base.logging import bootstrap_logging
 from tests.support.logging import reset_forze_stdlib_loggers
 
 # The framework should emit at most a handful of info+ lines for a full happy-path flow.

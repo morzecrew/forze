@@ -12,7 +12,7 @@ from uuid import uuid4
 import attrs
 import pytest
 
-from forze.application.contracts.tenancy import TenantIdentity, TenancyMixin
+from forze.application.contracts.tenancy import TenancyMixin, TenantIdentity
 from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #

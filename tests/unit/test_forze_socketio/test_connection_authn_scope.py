@@ -15,9 +15,9 @@ from uuid import UUID
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
 from forze.base.primitives import HlcTimestamp
+from forze_mock import MockDepsModule
 from forze_socketio import RealtimeConnection
 from forze_socketio.connection import CONNECTION_SESSION_KEY, _ConnectionLifecycle
-from forze_mock import MockDepsModule
 
 # ----------------------- #
 

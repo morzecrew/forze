@@ -4,8 +4,6 @@ from typing import Any, cast
 
 import pytest
 
-from forze.base.exceptions import CoreException
-
 from forze.application.contracts.querying.pagination.cursor_page import (
     assemble_keyset_cursor_page,
     assert_cursor_projection_includes_sort_keys,
@@ -14,6 +12,7 @@ from forze.application.contracts.querying.pagination.cursor_page import (
 from forze.application.contracts.querying.pagination.cursor_token import (
     decode_keyset_v1,
 )
+from forze.base.exceptions import CoreException
 from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD
 

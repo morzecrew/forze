@@ -1,6 +1,6 @@
 """Integration tests: lenient read fields and write-omit fields on Mongo documents."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -85,7 +85,7 @@ async def test_lenient_read_field_hydrates_from_default(
     # Seed a complete document that simply has no ``nickname`` field.
     coll = await mongo_client.collection(collection, db_name=db_name)
     row_id = uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await mongo_client.insert_one(
         coll,
         {

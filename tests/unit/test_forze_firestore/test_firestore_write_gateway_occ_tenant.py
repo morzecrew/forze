@@ -12,8 +12,8 @@ preserved instead of being clobbered.
 from __future__ import annotations
 
 import contextlib
-from datetime import UTC, datetime
-from typing import Any, AsyncGenerator, Callable, Mapping
+from collections.abc import AsyncGenerator, Callable, Mapping
+from typing import Any
 from uuid import UUID, uuid4
 
 import attrs
@@ -23,7 +23,7 @@ pytest.importorskip("google.cloud.firestore")
 
 from forze.application.contracts.tenancy import TENANT_ID_FIELD, TenantIdentity
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
 from forze_firestore.kernel.gateways import FirestoreReadGateway, FirestoreWriteGateway
 from tests.unit._gateway_codec_helpers import write_codecs_for
 

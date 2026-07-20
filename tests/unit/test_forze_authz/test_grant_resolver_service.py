@@ -8,7 +8,7 @@ and the pagination helper's boundaries.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -37,7 +37,7 @@ from forze_identity.authz.services.grants import (
 
 # ----------------------- #
 
-_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _doc_kwargs(_id: UUID) -> dict:
@@ -58,10 +58,10 @@ class FakeDocQuery:
         self._rows = rows or []
         self._by_id = by_id or {}
 
-    async def get(self, doc_id: UUID):  # noqa: ANN202
+    async def get(self, doc_id: UUID):
         return self._by_id[doc_id]
 
-    async def find_many(self, *, filters, pagination):  # noqa: ANN001, ANN202
+    async def find_many(self, *, filters, pagination):
         values: dict = filters["$values"]
         limit = pagination["limit"]
         offset = pagination["offset"]

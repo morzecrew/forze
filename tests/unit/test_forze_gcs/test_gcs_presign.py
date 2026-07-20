@@ -5,7 +5,7 @@ PEM signing code against a throwaway RSA key, so the local-signing path is
 covered end to end without any network.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 from urllib.parse import parse_qs, urlparse
@@ -144,7 +144,7 @@ async def test_presign_upload_url_without_content_type(
 async def test_presign_expires_at_reflects_expiry_window(
     service_key_pem: str,
 ) -> None:
-    instant = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    instant = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     client = _client_with_storage(_signed_storage(service_key_pem))
 
     with bind_time_source(FrozenTimeSource(instant)):

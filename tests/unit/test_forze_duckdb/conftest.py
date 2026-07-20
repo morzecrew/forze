@@ -6,8 +6,9 @@ a small local Parquet fixture rather than a mock.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterator
+from typing import Any
 
 import pytest
 

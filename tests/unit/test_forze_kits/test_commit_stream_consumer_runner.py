@@ -38,8 +38,6 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException
 from forze.base.primitives import StrKey
 from forze.base.serialization import PydanticModelCodec
-from tests.support.execution_context import context_from_deps, context_from_modules
-
 from forze_kits.integrations.consumer import (
     CommitStreamGroupConsumer,
     CommitStreamGroupConsumerRunResult,
@@ -52,6 +50,7 @@ from forze_mock.adapters import (
     MockStreamAdapter,
 )
 from forze_mock.execution.module import ConfigurableMockInbox, mock_strict_txmanager
+from tests.support.execution_context import context_from_deps, context_from_modules
 
 # ----------------------- #
 
@@ -307,7 +306,7 @@ class _RetryOnceExecutor:
         self.policies_used.append(str(policy))
         try:
             return await fn()
-        except Exception:  # noqa: BLE001 — retry-once double
+        except Exception:
             return await fn()
 
 

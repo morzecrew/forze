@@ -11,7 +11,10 @@ pytest.importorskip("temporalio")
 
 from temporalio.worker import Worker
 
-from forze.application.contracts.durable.workflow import DurableWorkflowScheduleTiming, DurableWorkflowSpec
+from forze.application.contracts.durable.workflow import (
+    DurableWorkflowScheduleTiming,
+    DurableWorkflowSpec,
+)
 from forze.application.contracts.durable.workflow.specs import DurableWorkflowInvokeSpec
 from forze_temporal.adapters.schedule import (
     TemporalWorkflowScheduleCommandAdapter,

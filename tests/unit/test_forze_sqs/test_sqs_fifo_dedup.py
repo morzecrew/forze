@@ -32,10 +32,9 @@ async def _enqueue_entries(client: SQSClient, **kwargs: Any) -> list[dict[str, A
         client,
         "_SQSClient__resolve_queue_url",
         AsyncMock(return_value="https://sqs/queue.fifo"),
-    ):
-        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
-            with patch.object(client, "_SQSClient__is_fifo_target", return_value=True):
-                await client.enqueue_many("orders.fifo", **kwargs)
+    ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        with patch.object(client, "_SQSClient__is_fifo_target", return_value=True):
+            await client.enqueue_many("orders.fifo", **kwargs)
 
     entries: list[dict[str, Any]] = []
 
@@ -136,19 +135,18 @@ async def test_message_headers_give_each_entry_distinct_event_id_and_dedup() -> 
         client,
         "_SQSClient__resolve_queue_url",
         AsyncMock(return_value="https://sqs/queue.fifo"),
-    ):
-        with patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
-            with patch.object(client, "_SQSClient__is_fifo_target", return_value=True):
-                await client.enqueue_many(
-                    "orders.fifo",
-                    [b"a", b"b"],
-                    key="order-42",
-                    headers={"trace": "t-shared"},
-                    message_headers=[
-                        {HEADER_EVENT_ID: "e1"},
-                        {HEADER_EVENT_ID: "e2"},
-                    ],
-                )
+    ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        with patch.object(client, "_SQSClient__is_fifo_target", return_value=True):
+            await client.enqueue_many(
+                "orders.fifo",
+                [b"a", b"b"],
+                key="order-42",
+                headers={"trace": "t-shared"},
+                message_headers=[
+                    {HEADER_EVENT_ID: "e1"},
+                    {HEADER_EVENT_ID: "e2"},
+                ],
+            )
 
     # A single batched SendMessageBatch round-trip preserved.
     assert mock_boto.send_message_batch.await_count == 1

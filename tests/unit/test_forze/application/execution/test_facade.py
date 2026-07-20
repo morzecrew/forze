@@ -3,11 +3,10 @@
 import attrs
 import pytest
 
-from forze.base.exceptions import CoreException
-
 from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.facade import OperationFacade, facade_op
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.base.exceptions import CoreException
 from forze.base.primitives import StrKeyNamespace
 
 # ----------------------- #

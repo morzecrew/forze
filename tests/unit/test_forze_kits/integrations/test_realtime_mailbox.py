@@ -178,9 +178,8 @@ async def test_build_refused_in_read_only_operation() -> None:
     runtime = _runtime()
     async with runtime.scope():
         ctx = runtime.get_context()
-        with ctx.inv_ctx.bind_read_only():
-            with pytest.raises(CoreException, match="read-only"):
-                build_realtime_mailbox(ctx)
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="read-only"):
+            build_realtime_mailbox(ctx)
 
 
 # ----------------------- #

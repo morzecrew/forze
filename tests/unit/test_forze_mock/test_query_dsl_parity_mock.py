@@ -7,9 +7,9 @@ reference semantics every real backend's parity suite is checked against.
 
 from __future__ import annotations
 
-import pytest
-
 from typing import Any
+
+import pytest
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.querying import (

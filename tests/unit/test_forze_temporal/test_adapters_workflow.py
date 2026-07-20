@@ -3,13 +3,12 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import BaseModel
 
 from forze.base.exceptions import CoreException
-from pydantic import BaseModel
 
 pytest.importorskip("temporalio")
 
-from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowHandle,
     DurableWorkflowQuerySpec,
@@ -20,6 +19,7 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowUpdateSpec,
 )
 from forze.application.contracts.durable.workflow.specs import DurableWorkflowInvokeSpec
+from forze.application.contracts.tenancy import TenantIdentity
 from forze_temporal.adapters.workflow import (
     TemporalWorkflowCommandAdapter,
     TemporalWorkflowQueryAdapter,

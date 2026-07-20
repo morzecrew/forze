@@ -2,23 +2,24 @@
 
 from __future__ import annotations
 
-from forze.base.exceptions import CoreException, exc
 import json
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
+
+from forze.base.exceptions import CoreException, exc
 
 pytest.importorskip("aioboto3")
 pytest.importorskip("testcontainers")
 
 from forze.application.contracts.secrets import SecretRef
 from forze_sqs.kernel.client import RoutedSQSClient, SQSClient
-
 from tests.integration._routed_lru_helpers import sqs_payloads_for_lru_eviction
 from tests.support.floci import FlociContainer
+
 
 def _ref(tid: UUID) -> SecretRef:
     return SecretRef(path=f"tenants/{tid}/sqs")
@@ -129,7 +130,7 @@ async def test_routed_sqs_enqueue_receive_consume_ack(
         async with routed.client() as _c:
             _ = _c
 
-        ts = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        ts = datetime(2025, 1, 15, 12, 0, 0, tzinfo=UTC)
         mid = await routed.enqueue(
             url,
             b'{"value":"hello"}',

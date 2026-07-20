@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -10,8 +10,8 @@ import pytest
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import AuthzScope, RoleRef
-from forze.application.contracts.base import Page
 from forze.application.contracts.authz.specs import AuthzSpec
+from forze.application.contracts.base import Page
 from forze.application.contracts.document import DocumentSpec
 from forze.base.exceptions import CoreException
 from forze_identity.authz.adapters.role_assignment import RoleAssignmentAdapter
@@ -28,7 +28,7 @@ def _secure_spec(name: str, model: type) -> DocumentSpec:
 def _adapter(**kwargs: object) -> RoleAssignmentAdapter:
     pid = uuid4()
     rid = uuid4()
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     principal = ReadPolicyPrincipal(
         id=pid,
         rev=1,
@@ -108,8 +108,8 @@ async def test_assign_role_idempotent_when_binding_exists() -> None:
     binding = ReadPrincipalRoleBinding(
         id=uuid4(),
         rev=1,
-        created_at=datetime.now(tz=timezone.utc),
-        last_update_at=datetime.now(tz=timezone.utc),
+        created_at=datetime.now(tz=UTC),
+        last_update_at=datetime.now(tz=UTC),
         principal_id=uuid4(),
         role_id=rid,
     )
@@ -138,8 +138,8 @@ async def test_revoke_role_kills_binding() -> None:
     binding = ReadPrincipalRoleBinding(
         id=uuid4(),
         rev=1,
-        created_at=datetime.now(tz=timezone.utc),
-        last_update_at=datetime.now(tz=timezone.utc),
+        created_at=datetime.now(tz=UTC),
+        last_update_at=datetime.now(tz=UTC),
         principal_id=uuid4(),
         role_id=rid,
     )

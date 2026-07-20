@@ -24,7 +24,12 @@ from forze.application.execution.operations.descriptors import OperationDescript
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig, Strategy
-from forze_dst.invariants import check, completes_within, operation_succeeds, single_key_per_operation
+from forze_dst.invariants import (
+    check,
+    completes_within,
+    operation_succeeds,
+    single_key_per_operation,
+)
 from forze_dst.oracle.recorder import Event, History
 from forze_mock import MockDepsModule
 

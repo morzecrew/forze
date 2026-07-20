@@ -18,6 +18,7 @@ import random
 from uuid import UUID
 
 import attrs
+from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.execution import Handler
@@ -32,11 +33,10 @@ from forze.domain.models import (
     ReadDocument,
 )
 from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig, Strategy
-from forze_dst.markers import record_event
 from forze_dst.faults import PortFaultInterceptor
 from forze_dst.invariants import expect
+from forze_dst.markers import record_event
 from forze_mock import MockDepsModule
-from pydantic import BaseModel
 
 # ----------------------- #
 # Domain — orders + payments through the document port.
@@ -134,7 +134,7 @@ def _registry(*, tx_routed: bool) -> OperationRegistry:
     plans = {}
     if tx_routed:
         tx_plan = OperationPlan().bind_tx().set_route("mock").finish(deep=False)
-        plans = {op: tx_plan for op in handlers}
+        plans = dict.fromkeys(handlers, tx_plan)
 
     return OperationRegistry(
         handlers=handlers, plans=plans, descriptors=descriptors

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from forze.base.exceptions import CoreException
 import secrets
 from datetime import timedelta
 from uuid import uuid4
@@ -10,20 +9,23 @@ from uuid import uuid4
 import jwt
 import pytest
 
+from forze.base.exceptions import CoreException
+
 pytestmark = pytest.mark.unit
 
 from forze.base.primitives import utcnow
 from forze_identity.authn.services import (
     AccessTokenConfig,
     AccessTokenService,
-    Hs256Signer,
     ApiKeyConfig,
     ApiKeyService,
+    Hs256Signer,
     InviteTokenService,
     PasswordConfig,
     PasswordService,
     RefreshTokenService,
 )
+
 
 def _slow_password_config() -> PasswordConfig:
     return PasswordConfig(time_cost=1, memory_cost=8192, parallelism=1)

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from typing import Any
-
 from uuid import UUID
 
 from forze.application.contracts.realtime import Audience, RealtimeSignal

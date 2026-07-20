@@ -1,8 +1,7 @@
 """Mock hub + federated facets & highlights."""
 
-from pydantic import BaseModel
-
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.search import (
     FacetBucket,

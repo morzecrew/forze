@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from forze.application.contracts.queue import resolve_delivery_delay
 from forze.base.exceptions import CoreException
 
-UTC = timezone.utc
+UTC = UTC
 
 
 def test_resolve_none_for_immediate() -> None:

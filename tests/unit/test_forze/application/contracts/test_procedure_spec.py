@@ -9,8 +9,8 @@ from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.procedure import (
     ExecResult,
     ProcedureCommandDepKey,
-    ProcedureSpec,
     ProcedureDeps,
+    ProcedureSpec,
     validate_procedure_spec,
 )
 from forze.base.exceptions import CoreException

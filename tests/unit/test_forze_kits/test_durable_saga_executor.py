@@ -22,8 +22,6 @@ from forze.application.contracts.saga import SagaDefinition, SagaStep, SagaStepK
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import utcnow
-from tests.support.execution_context import context_from_modules
-
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
     DurableFunctionRunner,
@@ -33,6 +31,7 @@ from forze_kits.integrations.durable import (
     resolve_durable_step,
 )
 from forze_mock import MockDepsModule, MockState
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 

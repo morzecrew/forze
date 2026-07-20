@@ -6,8 +6,6 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from forze.base.exceptions import CoreException
-
 from forze.application.contracts.document import (
     DocumentSpec,
     KeyedCreate,
@@ -15,6 +13,7 @@ from forze.application.contracts.document import (
     UpsertItem,
 )
 from forze.application.integrations.document import DocumentCache
+from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.adapters.document import MongoDocumentAdapter
 from forze_mongo.kernel.gateways import MongoReadGateway, MongoWriteGateway

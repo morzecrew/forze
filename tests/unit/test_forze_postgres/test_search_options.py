@@ -3,8 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.search import (
@@ -15,6 +13,7 @@ from forze.application.contracts.search import (
     prepare_hub_search_options,
     search_options_for_simple_adapter,
 )
+from forze.base.exceptions import CoreException
 
 # ----------------------- #
 

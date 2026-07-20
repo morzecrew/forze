@@ -20,9 +20,8 @@ from forze.application.contracts.graph import (
 )
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
-from tests.support.execution_context import context_from_deps
-
 from forze_mock import MockDepsModule, MockState
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 

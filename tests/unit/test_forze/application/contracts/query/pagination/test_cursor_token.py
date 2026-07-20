@@ -11,9 +11,9 @@ from forze.application.contracts.querying.pagination.cursor_token import (
     _CODEC,
     _KEYSET_V1,
     compare_keyset_sort_values,
-    keyset_canonical_value,
     decode_keyset_v1,
     encode_keyset_v1,
+    keyset_canonical_value,
     keyset_page_bounds,
     ordered_compare,
     row_passes_keyset_seek,
@@ -524,9 +524,8 @@ def test_encrypted_cursor_rejects_tampering_and_a_foreign_key() -> None:
             validate_cursor_token(flipped, sort_keys=["id"], directions=["asc"])
 
     # A token sealed under one key does not open under another.
-    with bind_cursor_cipher(CursorTokenCipher(secret=b"w" * 32)):
-        with pytest.raises(CoreException):
-            validate_cursor_token(tok, sort_keys=["id"], directions=["asc"])
+    with bind_cursor_cipher(CursorTokenCipher(secret=b"w" * 32)), pytest.raises(CoreException):
+        validate_cursor_token(tok, sort_keys=["id"], directions=["asc"])
 
 
 def test_encrypted_cursor_rejects_malformed_and_truncated_bodies() -> None:
@@ -558,9 +557,8 @@ def test_encryption_is_a_hard_cutover() -> None:
         {"v": _KEYSET_V1, "k": ["id"], "d": ["asc"], "n": ["first"], "x": [5]}
     )
 
-    with bind_cursor_cipher(CursorTokenCipher(secret=b"z" * 32)):
-        with pytest.raises(CoreException):
-            decode_keyset_v1(plaintext)
+    with bind_cursor_cipher(CursorTokenCipher(secret=b"z" * 32)), pytest.raises(CoreException):
+        decode_keyset_v1(plaintext)
 
 
 def test_cipher_supersedes_signer_when_both_are_bound() -> None:

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Mapping, Sequence
 
 import pytest
 from pydantic import BaseModel

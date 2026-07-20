@@ -38,7 +38,7 @@ class _Transport:
 def _client_with(transport: _Transport) -> MeilisearchClient:
     client = MeilisearchClient()
     # Inject the mocked transport (attrs slots, name-mangled private field).
-    setattr(client, "_MeilisearchClient__client", transport)
+    client._MeilisearchClient__client = transport
     return client
 
 

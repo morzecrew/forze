@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from starlette.requests import Request
 from starlette.testclient import TestClient
 
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import exc
 from forze.base.logging import configure_logging
 from forze.base.scrubbing import SECRET_PLACEHOLDER
 from forze_fastapi._logging import ForzeFastAPILogger

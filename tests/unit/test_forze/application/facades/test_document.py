@@ -1,18 +1,17 @@
 """Unit tests for document kernel op keys and DocumentFacade."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import attrs
 import pytest
 
-from forze.base.exceptions import CoreException
-
-from forze_kits.aggregates.document import DocumentFacade, DocumentKernelOp
 from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.base.exceptions import CoreException
 from forze.base.primitives import StrKeyNamespace
 from forze.domain.models import ReadDocument
+from forze_kits.aggregates.document import DocumentFacade, DocumentKernelOp
 
 # ----------------------- #
 
@@ -36,7 +35,7 @@ class TestDocumentKernelOp:
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class StubGetHandler(Handler[UUID, ReadDocument]):
     async def __call__(self, args: UUID) -> ReadDocument:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return ReadDocument(id=args, rev=1, created_at=now, last_update_at=now)
 
 

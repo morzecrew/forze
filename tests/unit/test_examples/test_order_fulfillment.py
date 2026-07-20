@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import pytest
 
-from forze.base.exceptions import CoreException, ExceptionKind
-
 from examples.recipes.order_fulfillment.app import (
     INVENTORY_SPEC,
     ORDER_SPEC,
@@ -20,6 +18,7 @@ from examples.recipes.order_fulfillment.app import (
     relay_once,
     run_checkout,
 )
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 

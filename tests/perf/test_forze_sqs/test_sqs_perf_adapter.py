@@ -1,6 +1,6 @@
 """Performance tests for SQSQueueAdapter."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -51,7 +51,7 @@ async def test_sqs_adapter_enqueue_batch_benchmark(
 ) -> None:
     """Benchmark adapter batch enqueue of 10 messages."""
     queue = f"jobs-{uuid4().hex[:8]}"
-    ts = datetime(2025, 2, 1, 12, 0, 0, tzinfo=timezone.utc)
+    ts = datetime(2025, 2, 1, 12, 0, 0, tzinfo=UTC)
     await _ensure_queue(sqs_client, sqs_queue, queue)
 
     async def run() -> None:

@@ -5,8 +5,8 @@ per the nack contract), log an error with the message id (never the
 payload), and keep the receive batch / consume loop alive.
 """
 
-from typing import Any, Optional
 from datetime import timedelta
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -133,7 +133,7 @@ class TestConsumePoison:
             for raw in raws:
                 yield raw
 
-        def _consume(queue: str, timeout: Optional[timedelta] = None):
+        def _consume(queue: str, timeout: timedelta | None = None):
             return _iter()
 
         client.consume = Mock(side_effect=_consume)

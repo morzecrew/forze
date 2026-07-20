@@ -269,7 +269,7 @@ class TestGuards:
         config = _config(max_batch_size=2)
         port = _ctx(await _client(handler), config).inference.model(_spec())
 
-        async def chunks():  # noqa: ANN202
+        async def chunks():
             yield [_Features(x=v) for v in (1.0, 2.0, 3.0, 4.0, 5.0)]
             yield [_Features(x=6.0)]
 

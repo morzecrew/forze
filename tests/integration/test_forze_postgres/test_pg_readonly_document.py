@@ -1,22 +1,23 @@
 """Integration tests for :class:`ConfigurablePostgresReadOnlyDocument`."""
 
-from forze.base.exceptions import CoreException
 from uuid import uuid4
 
 import pytest
 
 from forze.application.contracts.document import DocumentQueryDepKey, DocumentSpec
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
+from forze.base.exceptions import CoreException
 from forze.domain.models import ReadDocument
 from forze_postgres.execution.deps import ConfigurablePostgresReadOnlyDocument
+from forze_postgres.execution.deps.configs import PostgresReadOnlyDocumentConfig
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from forze_postgres.execution.deps.configs import PostgresReadOnlyDocumentConfig
 from tests.support.execution_context import context_from_deps
+
 
 class _ReadOnlyRow(ReadDocument):
     title: str

@@ -19,7 +19,6 @@ from pydantic import BaseModel
 from forze.application.contracts.execution import Handler
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
-
 from forze_dst import (
     ModelState,
     PCTScheduler,
@@ -29,10 +28,10 @@ from forze_dst import (
     SimulationConfig,
     Strategy,
 )
-from forze_dst.markers import record_event
-from forze_dst.invariants import Violation, expect, no_duplicate_effect
 from forze_dst.engines import projection
 from forze_dst.engines.scenario import _expand_frontier, explore_dpor, run_scenario
+from forze_dst.invariants import Violation, expect, no_duplicate_effect
+from forze_dst.markers import record_event
 from forze_dst.oracle.invariants import check
 from forze_dst.oracle.recorder import History
 from forze_dst.runtime import run_simulation

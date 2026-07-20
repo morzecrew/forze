@@ -1,12 +1,12 @@
-from forze.base.exceptions import CoreException
 import pytest
 
-
+from forze.base.exceptions import CoreException
 from forze_postgres.kernel.client.client import (
     PostgresClient,
     PostgresConfig,
     PostgresTransactionOptions,
 )
+
 
 @pytest.mark.asyncio
 async def test_health_reports_ok(pg_client: PostgresClient) -> None:
@@ -298,15 +298,14 @@ async def test_transaction_on_bound_connection_serializable(
     pg_client: PostgresClient,
 ) -> None:
     """Top-level :meth:`transaction` on a pre-bound pool connection (UoW-style)."""
-    async with pg_client.bound_connection():
-        async with pg_client.transaction(
-            options=PostgresTransactionOptions(
-                isolation="serializable",
-                read_only=True,
-            ),
-        ):
-            rows = await pg_client.fetch_all("SELECT 1 AS n")
-            assert rows[0]["n"] == 1
+    async with pg_client.bound_connection(), pg_client.transaction(
+        options=PostgresTransactionOptions(
+            isolation="serializable",
+            read_only=True,
+        ),
+    ):
+        rows = await pg_client.fetch_all("SELECT 1 AS n")
+        assert rows[0]["n"] == 1
 
 @pytest.mark.asyncio
 async def test_bound_connection_rejects_nested_bind(pg_client: PostgresClient) -> None:

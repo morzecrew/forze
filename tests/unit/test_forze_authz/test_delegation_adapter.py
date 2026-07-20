@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -27,8 +27,8 @@ def _secure_spec(name: str, model: type) -> DocumentSpec:
     return DocumentSpec(name=name, read=model)
 
 
-def _read_grant(actor_id, subject_id) -> ReadDelegationGrant:  # noqa: ANN001
-    now = datetime.now(tz=timezone.utc)
+def _read_grant(actor_id, subject_id) -> ReadDelegationGrant:
+    now = datetime.now(tz=UTC)
     return ReadDelegationGrant(
         id=uuid4(),
         rev=1,
@@ -50,7 +50,7 @@ def _query_adapter(find_return: object) -> DelegationQueryAdapter:
 
 
 def _grant_adapter(*, principal_exists: bool = True) -> DelegationGrantAdapter:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     principal = ReadPolicyPrincipal(
         id=uuid4(),
         rev=1,

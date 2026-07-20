@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from forze.application.execution import Deps, LifecyclePlan
-from tests.support.execution_context import context_from_deps
 from forze_firestore.execution.deps import FirestoreClientDepKey
 from forze_firestore.execution.lifecycle import (
     FirestoreShutdownHook,
@@ -14,6 +13,7 @@ from forze_firestore.execution.lifecycle import (
     routed_firestore_lifecycle_step,
 )
 from forze_firestore.kernel.client import FirestoreClient
+from tests.support.execution_context import context_from_deps
 
 
 @pytest.mark.asyncio

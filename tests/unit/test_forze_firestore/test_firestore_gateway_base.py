@@ -9,8 +9,8 @@ import attrs
 import pytest
 from google.cloud.firestore_v1.base_query import And, FieldFilter
 
-from forze.base.exceptions import CoreException
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
+from forze.base.exceptions import CoreException
 from forze.domain.constants import ID_FIELD
 from forze_firestore.kernel.gateways.base import FirestoreGateway
 from tests.support.factories import IntegrationDocument

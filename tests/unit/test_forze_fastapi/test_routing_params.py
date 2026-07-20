@@ -4,7 +4,6 @@ import pytest
 
 from forze_kits.dto.paginated import Pagination
 
-
 # ----------------------- #
 
 

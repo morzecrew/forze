@@ -20,8 +20,8 @@ from yandex.cloud.kms.v1.symmetric_key_pb2 import SymmetricAlgorithm
 from forze.application.contracts.crypto import KeyManagementDepKey, KeyRef
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_kms.yc import YcKmsClient, YcKmsClientPort, YcKmsKeyManagement
-from forze_kms.yc.kernel.client import YcGeneratedDataKey
 from forze_kms.yc.execution import YcKmsDepsModule
+from forze_kms.yc.kernel.client import YcGeneratedDataKey
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -60,7 +60,7 @@ def _client_with_stub(stub: Any) -> YcKmsClient:
 
     client = YcKmsClient()
     # The stub is a private (name-mangled) field set by ``initialize``.
-    client._YcKmsClient__stub = stub  # type: ignore[attr-defined]  # noqa: SLF001
+    client._YcKmsClient__stub = stub  # type: ignore[attr-defined]
 
     return client
 

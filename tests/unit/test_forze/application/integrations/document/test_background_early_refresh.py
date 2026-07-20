@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import time
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from typing import Awaitable, Callable
 from unittest.mock import AsyncMock
 from uuid import UUID
 
@@ -79,8 +79,8 @@ async def _read(
 
 
 async def _drain_tasks(coord: DocumentCache[DocModel]) -> None:
-    while coord._bg_tasks:  # noqa: SLF001
-        await asyncio.gather(*list(coord._bg_tasks), return_exceptions=True)  # noqa: SLF001
+    while coord._bg_tasks:
+        await asyncio.gather(*list(coord._bg_tasks), return_exceptions=True)
 
 
 # ----------------------- #
@@ -140,10 +140,10 @@ class TestBackgroundRefresh:
             return _FRESH
 
         leader = asyncio.create_task(
-            coord._inflight.run(str(_PK), leader_load)  # noqa: SLF001
+            coord._inflight.run(str(_PK), leader_load)
         )
         await asyncio.sleep(0)  # let the leader register in flight
-        assert str(_PK) in coord._inflight  # noqa: SLF001
+        assert str(_PK) in coord._inflight
 
         async def fetch() -> DocModel:  # pragma: no cover — must not run
             raise AssertionError("spawned despite in-flight load")
@@ -151,7 +151,7 @@ class TestBackgroundRefresh:
         result = await _read(coord, fetch)
 
         assert result.payload == "stale"
-        assert not coord._bg_tasks  # noqa: SLF001
+        assert not coord._bg_tasks
 
         gate.set()
         await leader
@@ -172,7 +172,7 @@ class TestBackgroundRefresh:
         result = await _read(coord, fetch)
 
         assert result.payload == "stale"
-        assert not coord._bg_tasks  # noqa: SLF001 — nothing spawned inside the "tx"
+        assert not coord._bg_tasks
         assert len(captured) == 1
 
         await captured[0]()  # the commit happens: now the refresh spawns
@@ -221,7 +221,7 @@ class TestBackgroundRefresh:
         await _read(coord, fetch)
         await _drain_tasks(coord)
 
-        assert not coord._bg_tasks  # noqa: SLF001
+        assert not coord._bg_tasks
 
     async def test_flag_off_keeps_inline_refresh(self) -> None:
         cache = AsyncMock()
@@ -235,7 +235,7 @@ class TestBackgroundRefresh:
 
         # The elected reader awaited the recompute, exactly as before.
         assert result.payload == "fresh"
-        assert not coord._bg_tasks  # noqa: SLF001
+        assert not coord._bg_tasks
 
 
 class TestRefreshFanoutCap:
@@ -254,15 +254,15 @@ class TestRefreshFanoutCap:
         # Saturate with one in-flight refresh task.
         blocker = asyncio.Event()
         held = asyncio.get_running_loop().create_task(blocker.wait())
-        coord._bg_tasks.add(held)  # noqa: SLF001
-        held.add_done_callback(coord._bg_tasks.discard)  # noqa: SLF001
+        coord._bg_tasks.add(held)
+        held.add_done_callback(coord._bg_tasks.discard)
 
         async def fetch() -> DocModel:
             return _FRESH
 
         # A distinct key cannot spawn while at the cap — dropped, not queued.
-        await coord._schedule_background_refresh("other-key", fetch)  # noqa: SLF001
-        assert len(coord._bg_tasks) == 1  # noqa: SLF001
+        await coord._schedule_background_refresh("other-key", fetch)
+        assert len(coord._bg_tasks) == 1
 
         blocker.set()
         await asyncio.gather(held, return_exceptions=True)

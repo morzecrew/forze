@@ -23,13 +23,13 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.crypto import KeyringDepKey, wrap_encrypted_payload
+from forze.application.contracts.deps.keys import DepKey
 from forze.application.contracts.outbox import (
     OutboxClaim,
     OutboxSpec,
     OutboxStatus,
 )
-from forze.application.contracts.crypto import KeyringDepKey, wrap_encrypted_payload
-from forze.application.contracts.deps.keys import DepKey
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.application.execution.context import ExecutionContext
 from forze.application.execution.deps.frozen import FrozenDeps

@@ -1,10 +1,11 @@
 """Unit tests for :class:`~forze_temporal.kernel.client.RoutedTemporalClient`."""
 
-from forze.base.exceptions import CoreException, exc
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
+
+from forze.base.exceptions import CoreException
 
 pytest.importorskip("temporalio")
 

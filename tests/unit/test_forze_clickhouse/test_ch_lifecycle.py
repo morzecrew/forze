@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from forze.application.execution import Deps, LifecyclePlan
-from tests.support.execution_context import context_from_deps
 from forze_clickhouse.execution.deps import ClickHouseClientDepKey
 from forze_clickhouse.execution.lifecycle import (
     ClickHouseShutdownHook,
@@ -14,6 +13,7 @@ from forze_clickhouse.execution.lifecycle import (
     routed_clickhouse_lifecycle_step,
 )
 from forze_clickhouse.kernel.client import ClickHouseClient, ClickHouseConfig
+from tests.support.execution_context import context_from_deps
 
 
 @pytest.mark.asyncio

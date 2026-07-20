@@ -21,7 +21,6 @@ from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.domain.models import DomainEvent
-
 from forze_dst import Simulation
 from forze_dst.derive import ReactiveMap
 from forze_mock import MockDepsModule

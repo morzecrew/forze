@@ -19,11 +19,10 @@ from forze.domain.models import (
     ReadDocument,
     event_emitter,
 )
-from tests.support.execution_context import context_from_deps
-
 from forze_mock import MockDepsModule
 from forze_mock.adapters import MockDocumentAdapter
 from forze_mock.state import MockState
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 

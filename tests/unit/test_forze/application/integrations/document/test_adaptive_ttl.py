@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import UUID
 
@@ -39,7 +39,7 @@ def _doc(pk: UUID = _PK, *, age: timedelta) -> DocModel:
     return DocModel(
         id=pk,
         rev=1,
-        last_update_at=datetime.now(timezone.utc) - age,
+        last_update_at=datetime.now(UTC) - age,
     )
 
 

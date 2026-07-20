@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from collections.abc import Mapping
 from uuid import UUID, uuid4
 
 import attrs
@@ -17,10 +17,9 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import InvocationMetadata
 from forze.application.execution.context import ExecutionContext
 from forze.base.primitives import uuid7
-from tests.support.execution_context import context_from_modules
-
 from forze_kits.integrations.inbox import process_with_inbox
 from forze_mock import MockDepsModule
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 

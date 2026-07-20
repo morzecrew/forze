@@ -2,10 +2,9 @@
 
 import pytest
 
-from forze.base.exceptions import CoreException
-
 from forze.application.contracts.execution import BeforeStep
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.base.exceptions import CoreException
 
 
 def _noop_before_factory(_ctx):

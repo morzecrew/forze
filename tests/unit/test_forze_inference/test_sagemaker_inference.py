@@ -138,7 +138,7 @@ class TestSageMakerInferenceAdapter:
         client = _StubRuntimeClient()
         port = _ctx(client, _config(max_batch_size=2)).inference.model(_spec())
 
-        async def chunks():  # noqa: ANN202
+        async def chunks():
             yield [_Features(x=v) for v in (1.0, 2.0, 3.0)]
 
         seen = [[o.y for o in chunk] async for chunk in port.predict_stream(chunks())]

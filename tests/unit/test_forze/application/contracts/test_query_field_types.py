@@ -176,7 +176,7 @@ class TestBestEffortSkips:
         _check({"$values": {"name": {"$gt": 1}}}, field_type_hints={"name": int | str})
 
     def test_unmodeled_generic_hint_is_skipped(self) -> None:
-        from typing import Iterator
+        from collections.abc import Iterator
 
         _check(
             {"$values": {"name": {"$gt": 1}}},

@@ -1,13 +1,14 @@
 """Unit tests for forze_kits.aggregates.search."""
 
+from pydantic import BaseModel
+
+from forze.application.contracts.search import SearchSpec
+from forze.application.execution.operations.registry import OperationRegistry
 from forze_kits.aggregates.search import (
     SearchFacade,
     SearchKernelOp,
     build_search_registry,
 )
-from forze.application.contracts.search import SearchSpec
-from forze.application.execution.operations.registry import OperationRegistry
-from pydantic import BaseModel
 
 from .registry_helpers import registry_has_handler
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import attrs
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.analytics import (
     AnalyticsQueryDefinition,
@@ -27,8 +28,6 @@ from forze.domain.models import (
     Document,
     ReadDocument,
 )
-from pydantic import BaseModel
-
 from forze_mock import MockDepsModule, MockState
 from tests.support.execution_context import context_from_modules
 

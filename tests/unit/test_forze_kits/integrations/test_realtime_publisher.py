@@ -9,10 +9,15 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.realtime import Audience, AudienceKind, RealtimeEvent, RealtimeSignal
+from forze.application.contracts.realtime import (
+    Audience,
+    AudienceKind,
+    RealtimeEvent,
+    RealtimeSignal,
+)
 from forze.application.contracts.stream import (
-    StreamCommandDepKey,
     AckStreamGroupQueryDepKey,
+    StreamCommandDepKey,
     StreamQueryDepKey,
 )
 from forze.application.contracts.tenancy import TenantIdentity
@@ -99,9 +104,8 @@ async def test_build_refused_in_read_only_operation() -> None:
     runtime = _runtime()
     async with runtime.scope():
         ctx = runtime.get_context()
-        with ctx.inv_ctx.bind_read_only():
-            with pytest.raises(CoreException) as err:
-                build_realtime_publisher(ctx, stream_spec=_STREAM)
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException) as err:
+            build_realtime_publisher(ctx, stream_spec=_STREAM)
 
     assert err.value.kind.value == "precondition"
 

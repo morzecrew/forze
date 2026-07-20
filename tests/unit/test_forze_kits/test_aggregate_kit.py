@@ -17,16 +17,16 @@ from forze import build_runtime
 from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.execution import Handler
-from forze.application.contracts.inventory import SpecEdgeKind, SpecPlane, SpecSource
 from forze.application.contracts.invariants import ReadSet, SumOf, SystemInvariant
+from forze.application.contracts.inventory import SpecEdgeKind, SpecPlane, SpecSource
 from forze.application.contracts.outbox import (
     OutboxDestination,
     OutboxSpec,
 )
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.search import SearchSpec
-from forze.application.contracts.stream import StreamSpec
 from forze.application.contracts.storage import StorageSpec
+from forze.application.contracts.stream import StreamSpec
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -43,11 +43,11 @@ from forze_kits.aggregates.search import (
 )
 from forze_kits.aggregates.soft_deletion import SoftDeletionKernelOp
 from forze_kits.aggregates.storage import StorageFacade, StorageKernelOp
-from forze_kits.integrations.outbox import EmitMapping, OutboxEmit, RelayBinding
 from forze_kits.domain.soft_deletion import (
     DocWithSoftDeletion,
     UpdateCmdWithSoftDeletion,
 )
+from forze_kits.integrations.outbox import EmitMapping, OutboxEmit, RelayBinding
 from forze_mock import MockDepsModule, MockStateDepKey
 
 # ----------------------- #
@@ -349,7 +349,7 @@ class TestSearchReadExclusion:
 
 @attrs.define(frozen=True, kw_only=True, slots=True)
 class _StubGet(Handler[DocumentIdDTO, str]):
-    async def __call__(self, args: DocumentIdDTO) -> str:  # noqa: ARG002
+    async def __call__(self, args: DocumentIdDTO) -> str:
         return "stubbed"
 
 
@@ -357,7 +357,7 @@ class TestEscapeHatch:
     async def test_handlers_override_a_generated_op(self) -> None:
         kit = AggregateKit(
             spec=WIDGET_SPEC,
-            handlers={DocumentKernelOp.GET: lambda ctx: _StubGet()},  # noqa: ARG005
+            handlers={DocumentKernelOp.GET: lambda ctx: _StubGet()},
         )
         runtime = build_runtime(MockDepsModule())
         reg = kit.registry(tx_route=_TX)
@@ -370,7 +370,7 @@ class TestEscapeHatch:
             assert result == "stubbed"  # the override replaced the generated GET
 
     def test_extra_ops_merge_into_the_registry(self) -> None:
-        extra = OperationRegistry(handlers={"widgets.report": lambda ctx: _StubGet()})  # noqa: ARG005
+        extra = OperationRegistry(handlers={"widgets.report": lambda ctx: _StubGet()})
         kit = AggregateKit(spec=WIDGET_SPEC, extra_ops=extra)
 
         assert "widgets.report" in kit.registry(tx_route=_TX).handlers

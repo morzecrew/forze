@@ -16,9 +16,8 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.idempotency import IdempotencyWrap
 from forze.base.exceptions import CoreException, ExceptionKind
-from tests.support.execution_context import context_from_modules
-
 from forze_mock import MockDepsModule
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 
@@ -144,10 +143,9 @@ class TestIdempotencyWrapDirect:
             MockIdempotencyAdapter,
             "fail",
             AsyncMock(side_effect=RuntimeError("fail() broke")),
-        ):
-            with ctx.inv_ctx.bind_idempotency("key-mask"):
-                with pytest.raises(RuntimeError, match="handler boom"):
-                    await mw(handler, _Args(n=1))
+        ), ctx.inv_ctx.bind_idempotency("key-mask"):
+            with pytest.raises(RuntimeError, match="handler boom"):
+                await mw(handler, _Args(n=1))
 
     async def test_commit_failure_does_not_fail_successful_operation(self) -> None:
         from unittest.mock import AsyncMock, patch
@@ -169,9 +167,8 @@ class TestIdempotencyWrapDirect:
             MockIdempotencyAdapter,
             "commit",
             AsyncMock(side_effect=RuntimeError("commit store down")),
-        ):
-            with ctx.inv_ctx.bind_idempotency("key-commit-fail"):
-                result = await mw(handler, _Args(n=8))
+        ), ctx.inv_ctx.bind_idempotency("key-commit-fail"):
+            result = await mw(handler, _Args(n=8))
 
         assert calls == 1
         assert result.value == 8  # returned despite the record-write failure

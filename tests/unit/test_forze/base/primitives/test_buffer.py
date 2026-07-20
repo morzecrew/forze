@@ -53,9 +53,8 @@ class TestContextualBuffer:
         buf = ContextualBuffer[int]()
         buf.push([1])
 
-        with pytest.raises(ValueError):
-            with buf.scope():
-                buf.push([2])
-                raise ValueError("oops")
+        with pytest.raises(ValueError), buf.scope():
+            buf.push([2])
+            raise ValueError("oops")
 
         assert buf.peek() == [1]

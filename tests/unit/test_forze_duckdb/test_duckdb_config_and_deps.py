@@ -19,7 +19,6 @@ from forze_duckdb import (
 )
 from forze_duckdb.execution.deps import ConfigurableDuckDbAnalytics
 from forze_duckdb.kernel.client import DuckDbClient
-
 from tests.support.execution_context import context_from_deps
 from tests.unit.test_forze_duckdb.conftest import Params, Row
 

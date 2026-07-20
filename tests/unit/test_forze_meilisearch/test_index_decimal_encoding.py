@@ -13,8 +13,8 @@ from pydantic import BaseModel
 from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.search import SearchSpec
 from forze_meilisearch.adapters.search.base import (
-    MeilisearchSearchGateway,
     _UNMATCHABLE,
+    MeilisearchSearchGateway,
     _ann_may_hold_canonical_leaf,
     _canonicalize_leaves,
     _match_key,

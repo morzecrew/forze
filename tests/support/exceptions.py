@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from forze.base.exceptions import CoreException, ExceptionKind
 from typing import TypeAlias
 
 import pytest
 
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 

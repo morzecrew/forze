@@ -16,9 +16,8 @@ from forze.application.execution import (
 )
 from forze.base.serialization import PydanticModelCodec
 from forze.domain.models import AggregateRoot, Document, DomainEvent
-from tests.support.execution_context import context_from_modules
-
 from forze_mock import MockDepsModule
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 

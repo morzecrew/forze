@@ -3,9 +3,7 @@ from uuid import UUID
 
 import pytest
 
-from forze_redis.adapters.codecs import RedisKeyCodec
 from forze.application.contracts.tenancy import TenantIdentity
-
 from forze_redis.adapters.counter import RedisCounterAdapter
 from forze_redis.kernel.client import RedisClient
 

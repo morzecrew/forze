@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import pytest
-
-from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 
 from forze.base.exceptions import (
     ChainExceptionMapper,
+    CoreException,
     ExceptionInterceptor,
     ExceptionKind,
     default_chain_exc_mapper,
@@ -290,9 +289,8 @@ class TestExceptionInterceptor:
             raise ValueError("enter")
             yield
 
-        with pytest.raises(CoreException):
-            with broken():
-                pass
+        with pytest.raises(CoreException), broken():
+            pass
 
 
 class TestExceptionEgressPolicy:

@@ -132,9 +132,8 @@ class TestExceptionInterceptorCancellation:
             raise asyncio.CancelledError
             yield
 
-        with pytest.raises(asyncio.CancelledError):
-            with cancelled():
-                pass
+        with pytest.raises(asyncio.CancelledError), cancelled():
+            pass
 
     def test_contextmanager_body_cancellederror_passes_through(self) -> None:
         interceptor = ExceptionInterceptor(mapper=_mapper())
@@ -144,9 +143,8 @@ class TestExceptionInterceptorCancellation:
         def scope() -> __import__("typing").Generator[None, None, None]:
             yield
 
-        with pytest.raises(asyncio.CancelledError):
-            with scope():
-                raise asyncio.CancelledError
+        with pytest.raises(asyncio.CancelledError), scope():
+            raise asyncio.CancelledError
 
     @pytest.mark.asyncio
     async def test_asynccontextmanager_cancellederror_passes_through(self) -> None:
@@ -426,9 +424,8 @@ class TestLazyErrorPathDetails:
             raise ValueError("enter")
             yield
 
-        with pytest.raises(CoreException):
-            with scope("tx"):
-                pass
+        with pytest.raises(CoreException), scope("tx"):
+            pass
 
         assert captured["site"] == "cm"
         assert captured["details"] == {"name": "tx"}

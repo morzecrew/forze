@@ -16,9 +16,9 @@ from pydantic import BaseModel
 pytest.importorskip("aioboto3")
 pytest.importorskip("testcontainers")
 
+from forze.base.serialization import PydanticModelCodec
 from forze_sqs.adapters import SQSQueueAdapter, SQSQueueCodec
 from forze_sqs.kernel.client import SQSClient
-from forze.base.serialization import PydanticModelCodec
 from tests.support.floci import FlociContainer
 
 

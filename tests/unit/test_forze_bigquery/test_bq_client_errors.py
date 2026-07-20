@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from forze.base.exceptions import CoreException, ExceptionKind, exc
 import pytest
+
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 
 pytest.importorskip("aiohttp")
 
@@ -11,6 +12,7 @@ from aiohttp import ClientResponseError, RequestInfo
 from yarl import URL
 
 from forze_bigquery.kernel.client.errors import _bigquery_eh, exc_interceptor
+
 
 def _client_error(status: int) -> ClientResponseError:
     request_info = RequestInfo(

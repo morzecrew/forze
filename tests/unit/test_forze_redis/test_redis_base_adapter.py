@@ -15,7 +15,6 @@ from forze_redis.adapters.codecs import RedisKeyCodec
 class _Adapter(RedisBaseAdapter):
     """Minimal concrete adapter for base-class behavior."""
 
-    pass
 
 
 def test_static_namespace_key_codec() -> None:

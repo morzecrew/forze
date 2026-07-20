@@ -16,7 +16,6 @@ from forze.application.contracts.authn import (
     AuthnResult,
     AuthnSpec,
 )
-from tests.support.execution_context import context_from_deps
 from forze.application.contracts.tenancy import (
     TENANT_ID_HEADER,
     TenantIdentity,
@@ -34,6 +33,7 @@ from forze_fastapi.security import (
     resolve_authn_ingress,
 )
 from forze_mock import MockDepsModule, MockState
+from tests.support.execution_context import context_from_deps
 
 
 def _execution_ctx() -> ExecutionContext:

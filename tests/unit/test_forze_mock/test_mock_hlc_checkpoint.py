@@ -8,11 +8,10 @@ from forze.application.execution.lifecycle.builtin import (
     hlc_checkpoint_recovery_lifecycle_step,
 )
 from forze.base.primitives import HlcTimestamp
-from tests.support.execution_context import context_from_modules
-
 from forze_mock import MockDepsModule
 from forze_mock.adapters.hlc_checkpoint import MockHlcCheckpointAdapter
 from forze_mock.state import MockState
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 

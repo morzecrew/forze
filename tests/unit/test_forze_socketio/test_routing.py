@@ -8,9 +8,6 @@ from uuid import uuid4
 
 import attrs
 import pytest
-
-from forze.base.exceptions import CoreException, exc
-from tests.support.execution_context import context_from_deps
 from pydantic import BaseModel
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
 
@@ -18,6 +15,7 @@ from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.execution import Handler
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.base.exceptions import CoreException, exc
 from forze_socketio.exceptions import GENERIC_INTERNAL_DETAIL
 from forze_socketio.routing import (
     IDENTITY_SESSION_KEY,
@@ -26,6 +24,7 @@ from forze_socketio.routing import (
     SocketIONamespaceRouter,
     SocketIORequest,
 )
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 

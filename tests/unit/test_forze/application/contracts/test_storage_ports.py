@@ -1,7 +1,7 @@
 """Tests for forze.application.contracts.storage.ports."""
 
-from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator, Mapping, Optional
+from collections.abc import AsyncIterator, Mapping
+from datetime import UTC, datetime, timedelta
 
 from forze.application.contracts.storage import (
     DownloadedObject,
@@ -53,10 +53,10 @@ class _StubStorage:
         chunks: AsyncIterator[bytes],
         *,
         filename: str,
-        prefix: Optional[str] = None,
-        description: Optional[str] = None,
-        tags: Optional[Mapping[str, str]] = None,
-        content_type: Optional[str] = None,
+        prefix: str | None = None,
+        description: str | None = None,
+        tags: Mapping[str, str] | None = None,
+        content_type: str | None = None,
         chunk_size: int = 1 << 20,
     ) -> StoredObject:
         total = 0
@@ -77,11 +77,11 @@ class _StubStorage:
         key: str,
         chunks: AsyncIterator[bytes],
         *,
-        content_type: Optional[str] = None,
-        metadata: Optional[Mapping[str, str]] = None,
-        tags: Optional[Mapping[str, str]] = None,
+        content_type: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+        tags: Mapping[str, str] | None = None,
         chunk_size: int = 1 << 20,
-        if_match: Optional[str] = None,
+        if_match: str | None = None,
     ) -> StoredObject:
         total = 0
         async for piece in chunks:
@@ -106,7 +106,7 @@ class _StubStorage:
         return PresignedUrl(
             url=f"https://stub/{key}",
             method="GET",
-            expires_at=datetime.now(timezone.utc) + expires_in,
+            expires_at=datetime.now(UTC) + expires_in,
         )
 
     async def presign_upload(
@@ -114,12 +114,12 @@ class _StubStorage:
         key: str,
         *,
         expires_in: timedelta,
-        content_type: Optional[str] = None,
+        content_type: str | None = None,
     ) -> PresignedUrl:
         return PresignedUrl(
             url=f"https://stub/{key}",
             method="PUT",
-            expires_at=datetime.now(timezone.utc) + expires_in,
+            expires_at=datetime.now(UTC) + expires_in,
             headers={"Content-Type": content_type} if content_type else {},
         )
 
@@ -131,7 +131,7 @@ class _StubStorage:
         key: str,
         *,
         start: int,
-        end: Optional[int] = None,
+        end: int | None = None,
     ) -> RangedDownload:
         return RangedDownload(
             data=b"con",
@@ -144,9 +144,9 @@ class _StubStorage:
         self,
         key: str,
         *,
-        if_none_match: Optional[str] = None,
-        if_modified_since: Optional[datetime] = None,
-    ) -> Optional[DownloadedObject]:
+        if_none_match: str | None = None,
+        if_modified_since: datetime | None = None,
+    ) -> DownloadedObject | None:
         return None
 
     async def delete(self, key: str) -> None:
@@ -166,7 +166,7 @@ class _StubStorage:
         limit: int,
         offset: int,
         *,
-        prefix: Optional[str] = None,
+        prefix: str | None = None,
         include_tags: bool = False,
     ) -> tuple[list[StoredObject], int]:
         return [], 0

@@ -16,17 +16,14 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
     IngestSpec,
 )
-from tests.support.execution_context import (
-    context_from_deps,
-    context_from_modules,
-    frozen_deps_from_deps,
-)
-from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_bigquery.adapters import BigQueryAnalyticsAdapter
 from forze_bigquery.execution import BigQueryAnalyticsConfig, BigQueryDepsModule
 from forze_bigquery.execution.deps.configs import BigQueryQueryConfig
 from tests.integration.test_forze_bigquery.conftest import TEST_PROJECT_ID
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 pytestmark = pytest.mark.integration
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -68,7 +68,7 @@ async def test_relay_to_queue_forwards_full_envelope_headers() -> None:
     causation_id = uuid4()
     execution_id = uuid4()
     tenant_id = uuid4()
-    occurred_at = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+    occurred_at = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
 
     module = MockDepsModule()
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())

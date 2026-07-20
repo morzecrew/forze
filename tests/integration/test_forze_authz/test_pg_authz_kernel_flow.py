@@ -9,9 +9,9 @@ import pytest
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import (
     AuthzRequest,
-    AuthzSubject,
-    AuthzSpec,
     AuthzScope,
+    AuthzSpec,
+    AuthzSubject,
     subject_from_authn,
 )
 from forze.application.contracts.document import (
@@ -20,7 +20,6 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
-from tests.support.execution_context import context_from_deps
 from forze_identity.authz.application.constants import AuthzResourceName
 from forze_identity.authz.execution import AuthzDepsModule, AuthzKernelConfig
 from forze_postgres.execution.deps import (
@@ -37,6 +36,7 @@ from forze_postgres.execution.deps.keys import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.support.execution_context import context_from_deps
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 

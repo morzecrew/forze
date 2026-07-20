@@ -19,7 +19,6 @@ from forze.application.integrations.http.descriptors import (
 )
 from forze.base.exceptions import CoreException
 from forze.testing import context_from_deps
-
 from forze_http.adapters.http_service import HttpServiceAdapter
 from forze_http.execution.deps.configs import HttpServiceConfig
 from forze_http.execution.deps.factories import ConfigurableHttpService

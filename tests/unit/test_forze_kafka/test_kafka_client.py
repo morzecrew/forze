@@ -5,13 +5,12 @@ consumer ``tail`` loop over a thin recording fake.
 """
 
 import pytest
+from _kafka_fakes import FakeConsumer, FakeKafkaClient, Msg, make_codec, record
 from aiokafka.structs import TopicPartition
 
 from forze.base.exceptions import CoreException
 from forze_kafka.adapters import KafkaCommitStreamGroupAdapter
 from forze_kafka.kernel.client import KafkaClient
-
-from _kafka_fakes import FakeConsumer, FakeKafkaClient, Msg, make_codec, record
 
 # ----------------------- #
 

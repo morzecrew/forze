@@ -9,15 +9,15 @@ from pydantic import BaseModel
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
 from forze_postgres.execution.deps import ConfigurablePostgresSearch
+from forze_postgres.execution.deps.configs import FtsEngine, PostgresSearchConfig
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from forze_postgres.execution.deps.configs import FtsEngine, PostgresSearchConfig
-from tests.support.execution_context import context_from_deps
 from tests.support import IntegrationSearchHitFactory
+from tests.support.execution_context import context_from_deps
 
 
 class PgSearchRow(BaseModel):

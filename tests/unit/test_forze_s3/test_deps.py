@@ -1,18 +1,17 @@
 from unittest.mock import Mock
 from uuid import uuid4
 
+import pytest
+
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.storage import (
     StorageCommandDepKey,
     StorageQueryDepKey,
     StorageSpec,
 )
-from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from forze.application.execution import Deps, InvocationMetadata
 from forze_s3.adapters.storage import S3StorageAdapter
-import pytest
-
 from forze_s3.execution.deps import (
     ConfigurableS3StorageCommand,
     ConfigurableS3StorageQuery,
@@ -21,6 +20,9 @@ from forze_s3.execution.deps import (
     S3StorageConfig,
 )
 from forze_s3.kernel.client import S3Client
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 
 def test_rejects_mapping_config() -> None:

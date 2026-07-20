@@ -12,7 +12,6 @@ pytest.importorskip("psycopg")
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException
 from forze_postgres.kernel.client import PostgresClient, PostgresConfig, RoutedPostgresClient
-
 from tests.integration._routed_lru_helpers import postgres_dsns_for_lru_eviction
 from tests.support.secrets_fixtures import (
     MemSecretsByPath,

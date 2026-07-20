@@ -19,8 +19,8 @@ from forze.application.contracts.document import (
     DocumentWriteTypes,
 )
 from forze.application.contracts.querying import OPERATOR_TYPE_MISMATCH_CODE
-from forze.base.exceptions import CoreException
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.exceptions import CoreException
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import (

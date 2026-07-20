@@ -12,10 +12,6 @@ import asyncio
 
 import pytest
 
-from forze.application.execution.context.deadline import bind_deadline, remaining_time
-from forze.base.primitives import current_entropy_source, monotonic, uuid7
-from forze_dst.runtime import RealIOForbidden, SimulationDeadlock, SimulationEventLoop, run_simulation
-
 from examples.recipes.order_fulfillment.app import (
     ORDER_SPEC,
     build_context,
@@ -23,6 +19,14 @@ from examples.recipes.order_fulfillment.app import (
     place_order,
     relay_once,
     run_checkout,
+)
+from forze.application.execution.context.deadline import bind_deadline, remaining_time
+from forze.base.primitives import current_entropy_source, monotonic, uuid7
+from forze_dst.runtime import (
+    RealIOForbidden,
+    SimulationDeadlock,
+    SimulationEventLoop,
+    run_simulation,
 )
 
 # ----------------------- #
@@ -123,7 +127,7 @@ class TestLeakGuards:
             return None
 
         with pytest.raises(ValueError):
-            run_simulation(scenario, epoch=datetime(2020, 1, 1))  # noqa: DTZ001 - the point
+            run_simulation(scenario, epoch=datetime(2020, 1, 1))
 
     def test_real_io_transports_forbidden(self) -> None:
         loop = SimulationEventLoop()

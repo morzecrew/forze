@@ -1,6 +1,5 @@
 """Unit tests for :class:`~forze_sqs.kernel.client.RoutedSQSClient`."""
 
-from forze.base.exceptions import CoreException
 import json
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,6 +8,7 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.secrets import SecretRef
+from forze.base.exceptions import CoreException
 from forze_sqs.kernel.client import RoutedSQSClient
 from forze_sqs.kernel.client.routing_credentials import SQSRoutingCredentials
 

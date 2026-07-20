@@ -39,11 +39,11 @@ class _FakeManagement:
         self.listed_for = None
         self.detached: tuple | None = None
 
-    async def list_principal_tenants(self, principal_id):  # noqa: ANN001, ANN202
+    async def list_principal_tenants(self, principal_id):
         self.listed_for = principal_id
         return self._tenants
 
-    async def detach_principal(self, principal_id, tenant_id):  # noqa: ANN001, ANN202
+    async def detach_principal(self, principal_id, tenant_id):
         self.detached = (principal_id, tenant_id)
 
 
@@ -52,7 +52,7 @@ class _FakeResolver:
         self.calls: list[tuple] = []
         self._raises = raises
 
-    async def resolve_from_principal(self, principal_id, *, requested_tenant_id=None):  # noqa: ANN001, ANN202
+    async def resolve_from_principal(self, principal_id, *, requested_tenant_id=None):
         self.calls.append((principal_id, requested_tenant_id))
         if self._raises is not None:
             raise self._raises
@@ -63,7 +63,7 @@ class _FakeTokenLifecycle:
     def __init__(self) -> None:
         self.issued: tuple | None = None
 
-    async def issue_tokens(self, identity, *, tenant_id=None):  # noqa: ANN001, ANN202
+    async def issue_tokens(self, identity, *, tenant_id=None):
         self.issued = (identity, tenant_id)
         return IssuedTokens(
             access=IssuedAccessToken(

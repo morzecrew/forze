@@ -178,7 +178,7 @@ class TestSimpleLruRegistry:
         dispose = AsyncMock()
 
         async def racing_create(key: str) -> str:
-            reg._entries["a"] = "winner"  # noqa: SLF001
+            reg._entries["a"] = "winner"
             return f"loser-{key}"
 
         reg = SimpleLruRegistry(max_entries=4, create=racing_create, dispose=dispose)
@@ -328,9 +328,8 @@ class TestGuardedLruRegistry:
             dedup_key=lambda k: "shared",
         )
 
-        async with reg.use("a") as v1:
-            async with reg.use("b") as v2:
-                assert v1 == v2 == "v-a"
+        async with reg.use("a") as v1, reg.use("b") as v2:
+            assert v1 == v2 == "v-a"
 
         create.assert_awaited_once()
 
@@ -373,12 +372,12 @@ class TestGuardedLruRegistry:
         # Move the entry into the draining map so peek falls through the active
         # lookup and reads from ``_draining``.
         slot = "a"
-        entry = reg._slots.pop(slot)  # noqa: SLF001
-        reg._draining[slot] = entry  # noqa: SLF001
+        entry = reg._slots.pop(slot)
+        reg._draining[slot] = entry
         assert reg.peek("a") == "v-a"
 
         # Slot absent from both maps -> final ``return None``.
-        del reg._draining[slot]  # noqa: SLF001
+        del reg._draining[slot]
         assert reg.peek("a") is None
 
     @pytest.mark.asyncio
@@ -407,7 +406,7 @@ class TestGuardedLruRegistry:
         # Entry is active and idle (refcount 0) -> evict disposes immediately.
         await reg.evict("a")
         dispose.assert_awaited_once_with("v-a")
-        assert "a" not in reg._slots  # noqa: SLF001
+        assert "a" not in reg._slots
 
     @pytest.mark.asyncio
     async def test_use_finds_entry_created_under_init_lock(self) -> None:
@@ -418,11 +417,11 @@ class TestGuardedLruRegistry:
         dispose = AsyncMock()
         reg = GuardedLruRegistry(max_entries=4, create=create, dispose=dispose)
 
-        original = type(reg)._lock_for_init  # noqa: SLF001
+        original = type(reg)._lock_for_init
 
         async def lock_then_inject(self: object, slot: str) -> asyncio.Lock:
             lock = await original(self, slot)
-            reg._slots[slot] = reg._make_entry(slot, "preexisting")  # noqa: SLF001
+            reg._slots[slot] = reg._make_entry(slot, "preexisting")
             return lock
 
         with patch.object(type(reg), "_lock_for_init", lock_then_inject):
@@ -439,7 +438,7 @@ class TestGuardedLruRegistry:
         reg: GuardedLruRegistry[str, str, str]
 
         async def racing_create(key: str) -> str:
-            reg._slots["a"] = reg._make_entry("a", "winner")  # noqa: SLF001
+            reg._slots["a"] = reg._make_entry("a", "winner")
             return f"loser-{key}"
 
         reg = GuardedLruRegistry(max_entries=4, create=racing_create, dispose=dispose)
@@ -456,16 +455,16 @@ class TestGuardedLruRegistry:
         reg = GuardedLruRegistry(max_entries=4, create=create, dispose=dispose)
 
         slot = "a"
-        entry = reg._make_entry(slot, "v-a")  # noqa: SLF001
+        entry = reg._make_entry(slot, "v-a")
         entry.refcount = 1
-        reg._dedup.slot_for("a")  # noqa: SLF001
-        reg._draining[slot] = entry  # noqa: SLF001
+        reg._dedup.slot_for("a")
+        reg._draining[slot] = entry
 
         await reg.evict("a")
 
         # In-use draining entry: still deferred, not disposed immediately.
         dispose.assert_not_awaited()
-        assert slot in reg._draining  # noqa: SLF001
+        assert slot in reg._draining
 
     @pytest.mark.asyncio
     async def test_evict_unknown_slot_is_noop(self) -> None:
@@ -475,7 +474,7 @@ class TestGuardedLruRegistry:
 
         # Register a logical key in the dedup index without any backing entry, so
         # ``release`` yields a slot but neither map holds it -> immediate stays None.
-        reg._dedup.slot_for("a")  # noqa: SLF001
+        reg._dedup.slot_for("a")
 
         await reg.evict("a")
 
@@ -524,7 +523,7 @@ class TestGuardedLruRegistryRaces:
         async with reg.use("a"):
             pass
 
-        entry = reg._slots["a"]  # noqa: SLF001
+        entry = reg._slots["a"]
         # Hold the entry condition: the old code blocked here BEFORE the
         # refcount increment; the fixed code reserves under the registry lock
         # and only touches the condition on scope exit.
@@ -630,7 +629,7 @@ class TestGuardedLruRegistryRaces:
             await asyncio.wait_for(t, timeout=2)
 
         # Slot is deregistered: no draining leftovers, fresh create succeeds.
-        assert reg._draining == {}  # noqa: SLF001
+        assert reg._draining == {}
 
         async def fresh() -> str:
             async with reg.use("a") as value:
@@ -644,7 +643,7 @@ class TestGuardedEntryDrain:
     async def test_wait_until_drained_resolves_when_barrier_set(self) -> None:
         dispose = AsyncMock()
         reg = GuardedLruRegistry(max_entries=4, create=AsyncMock(), dispose=dispose)
-        entry = reg._make_entry("slot", "v")  # noqa: SLF001
+        entry = reg._make_entry("slot", "v")
         entry.mark_draining()
 
         waiter = asyncio.create_task(entry.wait_until_drained())
@@ -700,10 +699,10 @@ class TestGuardedDrainWait:
         dispose = AsyncMock()
         reg = GuardedLruRegistry(max_entries=4, create=create, dispose=dispose)
         slot = "stuck"
-        entry = reg._make_entry(slot, "v")  # noqa: SLF001
+        entry = reg._make_entry(slot, "v")
         entry.mark_draining()
-        reg._draining[slot] = entry  # noqa: SLF001
+        reg._draining[slot] = entry
 
         with patch.object(type(entry), "wait_until_drained", AsyncMock()):
             with pytest.raises(CoreException, match="draining"):
-                await reg._await_not_draining(slot)  # noqa: SLF001
+                await reg._await_not_draining(slot)

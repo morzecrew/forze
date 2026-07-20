@@ -19,10 +19,9 @@ from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig
 from forze_dst.invariants import expect, operation_succeeds
 from forze_dst.markers import record_event
-from forze_dst.testing import assert_no_regressions, assert_no_violation
+from forze_dst.testing import assert_no_regressions, assert_no_violation, plugin
 from forze_dst.testing._options import DstOptions, active, set_active
 from forze_dst.testing.assertions import _resolve_config
-from forze_dst.testing import plugin
 from forze_mock import MockDepsModule
 
 # ----------------------- #

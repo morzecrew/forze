@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from forze.application.contracts.transaction import IsolationAware, IsolationLevel
 from forze_mongo.adapters.txmanager import MongoTxManagerAdapter

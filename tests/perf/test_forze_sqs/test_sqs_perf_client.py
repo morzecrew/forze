@@ -1,6 +1,6 @@
 """Performance tests for SQSClient."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -8,7 +8,6 @@ import pytest
 pytest.importorskip("aioboto3")
 
 from forze_sqs.kernel.client import SQSClient
-
 
 # Note: receive-only benchmarks are omitted because a pre-seeded queue is
 # exhausted after the first benchmark iterations; use enqueue_receive_ack
@@ -52,7 +51,7 @@ async def test_sqs_enqueue_benchmark(async_benchmark, sqs_client: SQSClient) -> 
 async def test_sqs_enqueue_batch_benchmark(async_benchmark, sqs_client: SQSClient) -> None:
     """Benchmark batch enqueue of 10 messages to the same queue."""
     queue = _perf_queue("enq_batch")
-    ts = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    ts = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
 
     async with sqs_client.client():
         await sqs_client.create_queue(queue)
@@ -77,7 +76,7 @@ async def test_sqs_enqueue_receive_ack_benchmark(
 ) -> None:
     """Benchmark full round-trip: enqueue, receive, ack."""
     queue = _perf_queue("roundtrip")
-    ts = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    ts = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
 
     async with sqs_client.client():
         await sqs_client.create_queue(queue)

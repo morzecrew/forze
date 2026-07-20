@@ -6,8 +6,6 @@ from uuid import uuid4
 
 import attrs
 import pytest
-
-from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
@@ -22,6 +20,7 @@ from forze.application.contracts.querying import (
     QueryNot,
     QueryOr,
 )
+from forze.base.exceptions import CoreException
 from forze_mongo.kernel.query.render import MongoQueryRenderer
 
 
@@ -1012,12 +1011,12 @@ class TestMongoRendererInternalEdges:
     def test_unknown_text_operator_raises(self) -> None:
         r = MongoQueryRenderer()
         with pytest.raises(CoreException, match="Unknown text operator"):
-            r._text_regex_and_options("$nope", "p")  # type: ignore[arg-type]  # noqa: SLF001
+            r._text_regex_and_options("$nope", "p")  # type: ignore[arg-type]
 
     def test_invalid_scalar_inner_default_raises(self) -> None:
         r = MongoQueryRenderer()
         with pytest.raises(CoreException, match="Invalid scalar element inner"):
-            r._render_elem_scalar_match(  # noqa: SLF001
+            r._render_elem_scalar_match(
                 "tags",
                 "$any",
                 QueryCompare("a", "$eq", "b"),
@@ -1072,7 +1071,7 @@ class TestMongoAggregateInternals:
             field=None,
         )
         with pytest.raises(CoreException, match="no field path"):
-            renderer._render_aggregate_function(computed)  # noqa: SLF001
+            renderer._render_aggregate_function(computed)
 
     def test_conditional_value_parses_filter_when_not_prepared(self) -> None:
         renderer = MongoQueryRenderer()
@@ -1083,7 +1082,7 @@ class TestMongoAggregateInternals:
             filter={"$values": {"category": "books"}},
             parsed_filter=None,
         )
-        out = renderer._conditional_value(computed, 1, 0)  # noqa: SLF001
+        out = renderer._conditional_value(computed, 1, 0)
         assert out == {
             "$cond": [{"$eq": ["$category", "books"]}, 1, 0],
         }

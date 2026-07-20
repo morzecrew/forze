@@ -37,8 +37,6 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
 from forze.base.serialization import PydanticModelCodec
-from tests.support.execution_context import context_from_deps, context_from_modules
-
 from forze_kits.integrations.consumer import ConsumerRunResult, QueueConsumer
 from forze_kits.integrations.consumer.runner import _next_or_stop
 from forze_mock import MockDepsModule, MockStateDepKey
@@ -48,6 +46,7 @@ from forze_mock.execution.module import (
     ConfigurableMockQueue,
     mock_strict_txmanager,
 )
+from tests.support.execution_context import context_from_deps, context_from_modules
 
 # ----------------------- #
 
@@ -281,7 +280,7 @@ class _CountingResilienceExecutor:
         try:
             return await fn()
 
-        except Exception:  # noqa: BLE001 — retry-once double
+        except Exception:
             return await fn()
 
     async def run_hedged[T](

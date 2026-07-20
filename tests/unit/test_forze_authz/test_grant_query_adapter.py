@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -49,7 +49,7 @@ def _resolver(tenant_aware: bool = True) -> MagicMock:
 @pytest.mark.asyncio
 async def test_resolve_effective_grants_delegates_to_resolver() -> None:
     pid = uuid4()
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     principal_qry = _document_qry()
     principal_qry.find = AsyncMock(
         return_value=ReadPolicyPrincipal(

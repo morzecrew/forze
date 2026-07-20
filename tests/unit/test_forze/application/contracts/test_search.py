@@ -1,8 +1,6 @@
 """Unit tests for search contract (SearchSpec, SearchQueryDepKey)."""
 
 import pytest
-
-from forze.base.exceptions import CoreException, ExceptionKind
 from pydantic import BaseModel, computed_field
 
 from forze.application.contracts.crypto import FieldEncryption
@@ -14,6 +12,7 @@ from forze.application.contracts.search import (
     SearchQueryDepKey,
     SearchSpec,
 )
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 

@@ -1,6 +1,6 @@
 """Unit tests for :mod:`forze_temporal.kernel.client.workflow_mapping`."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -38,7 +38,7 @@ def _execution_description(
         raw_info=pytest.importorskip("temporalio").api.workflow.v1.WorkflowExecutionInfo(),  # type: ignore[attr-defined]
         run_id=run_id,
         search_attributes={},
-        start_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        start_time=datetime(2026, 1, 1, tzinfo=UTC),
         status=status,
         task_queue="tq",
         typed_search_attributes=pytest.importorskip("temporalio").common.TypedSearchAttributes.empty,
@@ -88,7 +88,7 @@ class TestDescriptionFromTemporalExecution:
             run_id="run-1",
             workflow_name="ItSumWorkflow",
             status=DurableWorkflowRunStatus.RUNNING,
-            started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            started_at=datetime(2026, 1, 1, tzinfo=UTC),
             closed_at=None,
             failure_message=None,
             failure_type=None,

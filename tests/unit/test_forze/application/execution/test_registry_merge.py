@@ -2,9 +2,9 @@
 
 import pytest
 
+from forze.application.execution.operations.planning import OperationPlan
 from forze.application.execution.operations.registry.merge import RegistryMerge
 from forze.application.execution.operations.registry.patch import PlanPatch
-from forze.application.execution.operations.planning import OperationPlan
 from forze.base.exceptions import CoreException
 from forze.base.primitives import str_key_selector
 

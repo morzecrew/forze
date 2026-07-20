@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from pydantic import BaseModel
 
@@ -17,8 +17,6 @@ from forze.application.contracts.durable.function import (
     DurableFunctionSpec,
 )
 from forze.application.execution import DepsRegistry, ExecutionRuntime
-from tests.support.execution_context import context_from_modules
-
 from forze_kits.integrations.durable import (
     DurableScheduler,
     cron_schedule_id,
@@ -26,10 +24,11 @@ from forze_kits.integrations.durable import (
     resolve_durable_schedule_store,
 )
 from forze_mock import MockDepsModule, MockState
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 
-UTC = timezone.utc
+UTC = UTC
 _T0 = datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)
 
 

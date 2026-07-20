@@ -7,8 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from forze.application.contracts.document import DocumentSpec
+from forze.application.execution import Deps
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
-from forze_mongo.execution.deps import MongoDocumentConfig, MongoReadOnlyDocumentConfig
+from forze_mongo.execution.deps import (
+    MongoClientDepKey,
+    MongoDocumentConfig,
+    MongoReadOnlyDocumentConfig,
+)
 from forze_mongo.execution.document_indexes import (
     MongoDocumentIndexValidationHook,
     mongo_document_index_spec_for_binding,
@@ -17,8 +22,6 @@ from forze_mongo.execution.document_indexes import (
 from forze_mongo.kernel.introspect import MongoIntrospector
 from forze_mongo.kernel.validate_indexes import MongoDocumentIndexSpec
 from tests.support.execution_context import context_from_deps
-from forze.application.execution import Deps
-from forze_mongo.execution.deps import MongoClientDepKey
 
 
 def _write_spec() -> DocumentSpec:

@@ -15,7 +15,6 @@ from forze_firestore.execution.deps.configs import (
 )
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.execution.deps.module import FirestoreDepsModule
-
 from tests.support.execution_context import frozen_deps_from_deps
 
 

@@ -9,7 +9,6 @@ agree. A future divergence in either backend fails this file, not production.
 
 import base64
 from typing import Any
-from uuid import uuid4
 
 import pytest
 

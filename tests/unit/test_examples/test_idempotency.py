@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+from examples.recipes.idempotency.app import idempotent_create
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze_mock import MockDepsModule
-
-from examples.recipes.idempotency.app import idempotent_create
 
 
 async def test_idempotent_create_dedupes() -> None:

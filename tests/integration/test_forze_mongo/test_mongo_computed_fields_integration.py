@@ -9,19 +9,17 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
-from forze.application.execution import Deps, ExecutionContext
-from forze_mongo.execution.deps import MongoDocumentConfig
-from forze_mongo.execution.deps import ConfigurableMongoDocument
+from forze.application.execution import Deps
+from forze_mongo.execution.deps import ConfigurableMongoDocument, MongoDocumentConfig
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.client import MongoClient
-from tests.support.execution_context import context_from_deps
-
 from tests.integration._computed_field_models import (
     ComputedCreate,
     ComputedReadDoc,
     ComputedStoredDoc,
     ComputedUpdate,
 )
+from tests.support.execution_context import context_from_deps
 
 
 @pytest.mark.integration

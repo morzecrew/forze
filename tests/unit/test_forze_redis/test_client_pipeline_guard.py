@@ -7,13 +7,13 @@ raise a ``precondition`` error with code ``redis_read_in_pipeline``, while
 write-batching (fire-and-forget) methods keep queuing onto the pipeline.
 """
 
-from typing import Any, Awaitable, Callable
-
-import pytest
+from collections.abc import Awaitable, Callable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from forze.base.exceptions import CoreException, ExceptionKind
+import pytest
 
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_redis.kernel.client import RedisClient
 from forze_redis.kernel.scripts import MSET_BULK_SET
 

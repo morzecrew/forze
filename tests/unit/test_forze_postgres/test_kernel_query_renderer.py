@@ -10,8 +10,6 @@ from uuid import UUID, uuid4
 import attrs
 import pytest
 from psycopg import sql as psql
-
-from forze.base.exceptions import CoreException
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
@@ -24,8 +22,9 @@ from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QueryNot,
     QueryOr,
+    QueryValue,
 )
-from forze.application.contracts.querying import QueryValue
+from forze.base.exceptions import CoreException
 from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, PostgresType
 from forze_postgres.kernel.sql.query.render import (
     PsycopgQueryRenderer,
@@ -1378,7 +1377,7 @@ class TestNestedQuantifierRendering:
         scores: list[int]
 
     class _Row(BaseModel):
-        items: list["TestNestedQuantifierRendering._Item"]
+        items: list[TestNestedQuantifierRendering._Item]
 
     def _renderer(self) -> PsycopgQueryRenderer:
         return PsycopgQueryRenderer(

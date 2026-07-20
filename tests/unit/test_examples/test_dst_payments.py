@@ -11,18 +11,17 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
-from forze_cli.app import app
-from forze_cli.loader import load_simulation
-from forze_dst import Simulation, SimulationConfig, Strategy
-from forze_dst.invariants import expect
-from forze_mock import MockDepsModule
-
 from examples.recipes.dst_payments.app import (
     _EVENTS,
     _observe,
     registry,
     simulation,
 )
+from forze_cli.app import app
+from forze_cli.loader import load_simulation
+from forze_dst import Simulation, SimulationConfig, Strategy
+from forze_dst.invariants import expect
+from forze_mock import MockDepsModule
 
 # ----------------------- #
 

@@ -13,8 +13,8 @@ from forze.application.contracts.tenancy import (
 )
 from forze.application.execution import Deps
 from forze.base.exceptions import CoreException
-from tests.support.execution_context import context_from_deps
 from forze_fastapi.security import resolve_tenant_identity
+from tests.support.execution_context import context_from_deps
 
 
 def _authn(

@@ -256,17 +256,16 @@ class TestIdentityFlows:
         with ctx.inv_ctx.bind(
             metadata=_metadata(),
             authn=AuthnIdentity(principal_id=principal_id),
-        ):
-            with pytest.raises(CoreException) as ei:
-                await run_operation(
-                    reg,
-                    AUTHN_SPEC.default_namespace.key(AuthnKernelOp.CHANGE_PASSWORD),
-                    AuthnChangePasswordRequestDTO(
-                        current_password="wrong",
-                        new_password="pw-2",
-                    ),
-                    ctx,
-                )
+        ), pytest.raises(CoreException) as ei:
+            await run_operation(
+                reg,
+                AUTHN_SPEC.default_namespace.key(AuthnKernelOp.CHANGE_PASSWORD),
+                AuthnChangePasswordRequestDTO(
+                    current_password="wrong",
+                    new_password="pw-2",
+                ),
+                ctx,
+            )
 
         assert ei.value.kind is ExceptionKind.AUTHENTICATION
         assert ei.value.code == "invalid_credentials"
@@ -279,17 +278,16 @@ class TestIdentityFlows:
         with ctx.inv_ctx.bind(
             metadata=_metadata(),
             authn=AuthnIdentity(principal_id=uuid4()),
-        ):
-            with pytest.raises(CoreException, match="Password account not found"):
-                await run_operation(
-                    reg,
-                    AUTHN_SPEC.default_namespace.key(AuthnKernelOp.CHANGE_PASSWORD),
-                    AuthnChangePasswordRequestDTO(
-                        current_password="x",
-                        new_password="y",
-                    ),
-                    ctx,
-                )
+        ), pytest.raises(CoreException, match="Password account not found"):
+            await run_operation(
+                reg,
+                AUTHN_SPEC.default_namespace.key(AuthnKernelOp.CHANGE_PASSWORD),
+                AuthnChangePasswordRequestDTO(
+                    current_password="x",
+                    new_password="y",
+                ),
+                ctx,
+            )
 
 
 # ----------------------- #
@@ -578,9 +576,8 @@ class TestMockPasswordReset:
         # One second past expiry: the uniform error, not a special "expired" one.
         with bind_time_source(
             FrozenTimeSource(issued_at + timedelta(hours=1, seconds=1)),
-        ):
-            with pytest.raises(CoreException, match="Invalid or expired reset token") as ei:
-                await port.reset_password(issued.token, "pw-2")
+        ), pytest.raises(CoreException, match="Invalid or expired reset token") as ei:
+            await port.reset_password(issued.token, "pw-2")
 
         assert ei.value.kind is ExceptionKind.AUTHENTICATION
 

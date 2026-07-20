@@ -5,8 +5,10 @@ import pytest
 from forze.application.execution.context import ExecutionContext
 from forze.application.execution.lifecycle import LifecyclePlan
 from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
 from forze_mock import MockDepsModule, MockState
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 # ----------------------- #
 

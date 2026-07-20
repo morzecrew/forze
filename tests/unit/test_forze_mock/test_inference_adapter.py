@@ -94,7 +94,7 @@ class TestMockInferenceAdapter:
         ctx = _mock_ctx(MockInferenceRegistry().on("doubler", _double))
         port = ctx.inference.model(_spec())
 
-        async def chunks():  # noqa: ANN202
+        async def chunks():
             yield [_Features(x=1.0)]
             yield [_Features(x=2.0), _Features(x=3.0)]
 

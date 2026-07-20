@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock
 from forze.application.contracts.resilience import CircuitBreakerStrategy
 from forze.application.execution.resilience import InMemoryCircuitBreakerStore
 from forze.base.exceptions import exc
-
 from forze_redis.adapters.circuit_breaker import RedisCircuitBreakerStore
 
 # ----------------------- #
@@ -98,7 +97,7 @@ class TestLocalCacheBound:
         for i in range(5):
             await store.admit(("p", f"route-{i}"), strat)
 
-        cache = store._cache  # noqa: SLF001
+        cache = store._cache
         assert len(cache) == 3
         # FIFO: the two oldest (route-0, route-1) were evicted.
         assert ("p", "route-0") not in cache
@@ -118,7 +117,7 @@ class TestLocalCacheBound:
         now[0] += 1.0  # expire the fast-path so admit re-runs and re-remembers
         await store.admit(("p", "a"), strat)
 
-        cache = store._cache  # noqa: SLF001
+        cache = store._cache
         assert len(cache) == 1
 
 

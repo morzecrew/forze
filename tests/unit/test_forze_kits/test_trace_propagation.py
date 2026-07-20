@@ -7,11 +7,11 @@ the async boundary that OpenTelemetry's transport auto-instrumentation cannot re
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 from uuid import uuid4
 
 import attrs
-from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
@@ -21,16 +21,14 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 from forze.application.contracts.envelope import HEADER_TRACEPARENT
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.outbox import OutboxClaim
-from forze.application.execution.context import ExecutionContext
 from forze.application.execution.tracing.propagation import current_traceparent
 from forze.base.primitives import uuid7
-from tests.support.execution_context import context_from_modules
-
 from forze_kits.integrations.inbox import process_with_inbox
 from forze_kits.integrations.outbox.relay import (  # type: ignore[reportPrivateUsage]
     _claim_envelope_headers,
 )
 from forze_mock import MockDepsModule
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 

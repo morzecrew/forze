@@ -3,7 +3,6 @@
 import pytest
 
 from forze.base.exceptions import CoreException
-
 from forze.base.primitives import StrKeyNamespace
 
 

@@ -30,7 +30,7 @@ async def _publish_until_received(
 
             try:
                 return await asyncio.wait_for(asyncio.shield(recv_task), timeout=0.5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
         raise AssertionError("PubSub message was not received in time")
@@ -106,7 +106,7 @@ async def _client_subscribe_receive(
                 return await asyncio.wait_for(
                     asyncio.shield(recv_task), timeout=0.2
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
         raise AssertionError("client.subscribe message was not received in time")

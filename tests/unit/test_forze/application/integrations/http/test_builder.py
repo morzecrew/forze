@@ -2,13 +2,12 @@
 
 from pydantic import BaseModel
 
-from forze.application.contracts.http import HttpServiceSpec
+from forze.application.contracts.http import HttpServicePort, HttpServiceSpec
 from forze.application.integrations.http import (
     BaseHttpIntegration,
     async_http_op,
     build_http_service_spec,
 )
-from forze.application.contracts.http import HttpServicePort
 
 # ----------------------- #
 

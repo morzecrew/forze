@@ -6,8 +6,8 @@ re-encryption possible: an object's encryption AAD binds it to ``(bucket, key)``
 to be rewritten where it lies.
 """
 
-from datetime import datetime, timezone
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
@@ -117,7 +117,7 @@ class TestOverwriteStream:
             "files/a", _chunks(b"hello"), metadata=_META
         )
 
-        assert stored.created_at == datetime(2025, 1, 15, 12, 0, tzinfo=timezone.utc)
+        assert stored.created_at == datetime(2025, 1, 15, 12, 0, tzinfo=UTC)
 
     async def test_without_a_metadata_envelope_the_filename_falls_back_to_the_key(
         self,

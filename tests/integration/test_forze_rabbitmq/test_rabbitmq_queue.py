@@ -1,7 +1,7 @@
 """Integration tests for RabbitMQQueueAdapter."""
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -58,7 +58,7 @@ async def test_queue_adapter_enqueue_receive_ack(
     queue_payload_cls,
 ) -> None:
     queue = f"jobs-{uuid4().hex[:8]}"
-    ts = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    ts = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
 
     message_id = await rabbitmq_queue.enqueue(
         queue,
@@ -86,7 +86,7 @@ async def test_queue_adapter_enqueue_many_receive_ack(
     queue_payload_cls,
 ) -> None:
     queue = f"jobs-{uuid4().hex[:8]}"
-    ts = datetime(2025, 2, 1, 12, 0, 0, tzinfo=timezone.utc)
+    ts = datetime(2025, 2, 1, 12, 0, 0, tzinfo=UTC)
 
     message_ids = await rabbitmq_queue.enqueue_many(
         queue,

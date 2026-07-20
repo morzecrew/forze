@@ -1,6 +1,6 @@
 """Integration tests for RabbitMQClient."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -54,7 +54,7 @@ async def _receive_exact(
 @pytest.mark.asyncio
 async def test_client_enqueue_receive_ack(rabbitmq_client: RabbitMQClient) -> None:
     queue = f"it:rabbitmq-client:{uuid4().hex[:12]}"
-    ts = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    ts = datetime(2025, 1, 15, 12, 0, 0, tzinfo=UTC)
 
     message_id = await rabbitmq_client.enqueue(
         queue,
@@ -79,7 +79,7 @@ async def test_client_enqueue_receive_ack(rabbitmq_client: RabbitMQClient) -> No
 @pytest.mark.asyncio
 async def test_client_enqueue_many_receive_ack(rabbitmq_client: RabbitMQClient) -> None:
     queue = f"it:rabbitmq-client:{uuid4().hex[:12]}"
-    ts = datetime(2025, 2, 10, 12, 0, 0, tzinfo=timezone.utc)
+    ts = datetime(2025, 2, 10, 12, 0, 0, tzinfo=UTC)
 
     message_ids = await rabbitmq_client.enqueue_many(
         queue,

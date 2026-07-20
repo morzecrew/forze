@@ -7,7 +7,6 @@ import pytest
 from forze.application.contracts.resolution.specs import (
     coerce_named_resource_spec,
     coerce_relation_spec,
-    is_static_named_resource,
     is_static_relation,
     require_static_named_resource,
     require_static_relation,

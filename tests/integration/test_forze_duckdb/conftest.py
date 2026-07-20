@@ -14,7 +14,7 @@ pytest.importorskip("testcontainers")
 from testcontainers.minio import MinioContainer
 
 MINIO_ROOT_USER = "minioadmin"
-MINIO_ROOT_PASSWORD = "minioadmin"  # noqa: S105
+MINIO_ROOT_PASSWORD = "minioadmin"
 
 
 @pytest.fixture(scope="session")
@@ -39,7 +39,7 @@ def minio_container():
 
         while time.time() < deadline:
             try:
-                with urllib.request.urlopen(health_url, timeout=2) as resp:  # noqa: S310
+                with urllib.request.urlopen(health_url, timeout=2) as resp:
                     if resp.status == 200:
                         break
             except (urllib.error.URLError, TimeoutError, OSError):

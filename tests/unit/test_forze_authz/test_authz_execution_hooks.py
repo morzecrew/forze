@@ -8,46 +8,48 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.authn import AuthnIdentity
-from forze.application.contracts.authz import AuthzSpec, AuthzDecision
-from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
+from forze.application.contracts.authz import AuthzDecision, AuthzSpec
+from forze.application.execution import Deps, InvocationMetadata
 from forze.application.hooks.authz import (
     AuthzBeforeAuthorize,
     AuthzDocumentScopeWrap,
     merge_query_filters,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
-from tests.support.execution_context import context_from_deps, context_from_modules, frozen_deps_from_deps
+from tests.support.execution_context import (
+    context_from_deps,
+)
 
 pytestmark = pytest.mark.unit
 
 class _AllowDecision:
-    async def authorize(self, request):  # noqa: ANN001
+    async def authorize(self, request):
         _ = request
         return AuthzDecision(allowed=True, matched_permission_key="x.read")
 
 class _DenyDecision:
-    async def authorize(self, request):  # noqa: ANN001
+    async def authorize(self, request):
         _ = request
         return AuthzDecision(allowed=False, reason="denied")
 
 class _AllowExceptPrincipal:
     """Allow everyone except one principal id (to exercise actor/delegation checks)."""
 
-    def __init__(self, denied) -> None:  # noqa: ANN001
+    def __init__(self, denied) -> None:
         self.denied = denied
 
-    async def authorize(self, request):  # noqa: ANN001
+    async def authorize(self, request):
         if request.subject.principal_id == self.denied:
             return AuthzDecision(allowed=False, reason="actor not permitted")
         return AuthzDecision(allowed=True, matched_permission_key="x.read")
 
 class _AllowDelegation:
-    async def may_act(self, actor_id, subject_id, *, scope=None):  # noqa: ANN001
+    async def may_act(self, actor_id, subject_id, *, scope=None):
         _ = actor_id, subject_id, scope
         return True
 
 class _DenyDelegation:
-    async def may_act(self, actor_id, subject_id, *, scope=None):  # noqa: ANN001
+    async def may_act(self, actor_id, subject_id, *, scope=None):
         _ = actor_id, subject_id, scope
         return False
 
@@ -103,7 +105,7 @@ async def test_document_scope_wrap_missing_identity_is_authentication() -> None:
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
 
     class _Scope:
-        async def scope_document(self, request):  # noqa: ANN001
+        async def scope_document(self, request):
             raise AssertionError("scope port must not be consulted without identity")
 
     with patch.object(ctx.authz, "scope", return_value=_Scope()):
@@ -114,7 +116,7 @@ async def test_document_scope_wrap_missing_identity_is_authentication() -> None:
                 operation="list",
             )(ctx)
 
-            async def _next(args):  # noqa: ANN001
+            async def _next(args):
                 return args
 
             with pytest.raises(CoreException) as exc_info:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from forze.base.exceptions import CoreException, exc
 from uuid import UUID, uuid4
 
 import pytest
@@ -16,9 +15,10 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
+from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -26,6 +26,7 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from tests.support.execution_context import context_from_deps
+
 
 class TenantDoc(Document):
     """Domain model: ``tenant_id`` is populated by the gateway on insert."""
@@ -101,9 +102,8 @@ async def test_tenant_aware_requires_tenant_in_identity(
     with execution_context.inv_ctx.bind(
         metadata=_metadata(),
         authn=AuthnIdentity(principal_id=uuid4()),
-    ):
-        with pytest.raises(CoreException, match="Tenant ID is required"):
-            await adapter.create(TenantCreateDoc(name="orphan"))
+    ), pytest.raises(CoreException, match="Tenant ID is required"):
+        await adapter.create(TenantCreateDoc(name="orphan"))
 
 @pytest.mark.asyncio
 async def test_rows_are_isolated_by_tenant(pg_client: PostgresClient) -> None:

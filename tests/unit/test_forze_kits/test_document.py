@@ -1,24 +1,23 @@
 """Unit tests for forze_kits.aggregates.document."""
 
-import pytest
 
+from forze.application.contracts.document import DocumentSpec
+from forze.application.execution.operations.registry import OperationRegistry
+from forze.base.primitives import StrKeyNamespace
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_kits.aggregates.document import (
     DocumentDTOs,
     DocumentFacade,
     DocumentKernelOp,
     build_document_registry,
 )
-from forze.application.contracts.document import DocumentSpec
-from forze.application.execution.operations.registry import OperationRegistry
-from forze.base.primitives import StrKeyNamespace
 from forze_kits.aggregates.soft_deletion import (
     SoftDeletionKernelOp,
     build_soft_deletion_registry,
 )
 from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 
-from .registry_helpers import handler_at, registry_has_handler
+from .registry_helpers import registry_has_handler
 
 # ----------------------- #
 
@@ -26,7 +25,6 @@ from .registry_helpers import handler_at, registry_has_handler
 class _SoftDoc(DocWithSoftDeletion):
     """Document with soft-delete for registry tests."""
 
-    pass
 
 
 def _minimal_spec(

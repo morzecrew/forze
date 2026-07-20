@@ -31,11 +31,11 @@ pytest.importorskip("testcontainers")
 from testcontainers.minio import MinioContainer
 
 from forze.application.contracts.storage import StorageSpec, UploadedObject
+from forze.application.execution import ExecutionContext
 from forze.application.integrations.storage.client import (
     ObjectStoragePartInfo,
     ObjectStorageSSE,
 )
-from forze.application.execution import ExecutionContext
 from forze_s3.execution.deps.configs import S3ServerSideEncryption, S3StorageConfig
 from forze_s3.execution.deps.module import S3DepsModule
 from forze_s3.kernel.client import S3Client, S3Config

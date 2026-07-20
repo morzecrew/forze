@@ -9,15 +9,14 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from forze.application.execution import DepsRegistry, ExecutionContext
-from forze_postgres import PostgresDepsModule
-from forze_redis import RedisCacheConfig, RedisDepsModule
-
 from examples.recipes.cache_reads.app import (
     PRODUCT_PG,
     SCHEMA,
     cache_scenario,
 )
+from forze.application.execution import DepsRegistry, ExecutionContext
+from forze_postgres import PostgresDepsModule
+from forze_redis import RedisCacheConfig, RedisDepsModule
 
 
 async def test_cache_reads_read_through(pg_client, redis_client) -> None:

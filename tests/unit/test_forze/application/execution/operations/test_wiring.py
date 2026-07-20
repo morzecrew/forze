@@ -18,7 +18,6 @@ from forze.application.execution.operations import check_wiring
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-
 from forze_mock import MockDepsModule, MockState
 from forze_mock.execution import MockStateDepKey
 from tests.support.execution_context import context_from_modules

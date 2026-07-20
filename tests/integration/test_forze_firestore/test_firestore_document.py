@@ -1,6 +1,5 @@
 """Integration tests for Firestore documents with revision history."""
 
-from forze.base.exceptions import CoreException
 from uuid import uuid4
 
 import pytest
@@ -11,13 +10,15 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.contracts.querying import QueryFilterExpression
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
+from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
 from forze_firestore.execution.deps import ConfigurableFirestoreDocument
+from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.client import FirestoreClient
 from tests.support.execution_context import context_from_deps
+
 
 class MyDoc(Document):
     name: str

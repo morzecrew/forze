@@ -1,13 +1,12 @@
 import uuid
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Mapping, Sequence
 
 import attrs
 
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.codecs import JsonCodec
 from forze_redis.adapters.cache import RedisCacheAdapter
-from forze_redis.adapters.codecs import RedisKeyCodec
 
 
 @attrs.define

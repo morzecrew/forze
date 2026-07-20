@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import pytest
 
-from forze.base.exceptions import CoreException
-
 from examples.recipes.ledger_invariant.app import (
     build_context,
     ledger_balance,
@@ -21,6 +19,7 @@ from examples.recipes.ledger_invariant.app import (
     open_account,
     transfer,
 )
+from forze.base.exceptions import CoreException
 
 # ----------------------- #
 

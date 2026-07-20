@@ -10,8 +10,8 @@ rejected with ``exc.configuration`` rather than silently running weaker isolatio
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import AsyncGenerator
 
 import attrs
 import pytest

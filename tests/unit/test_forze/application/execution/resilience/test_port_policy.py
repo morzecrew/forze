@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from datetime import timedelta
-from typing import Any, AsyncGenerator
+from typing import Any
 
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentQueryDepKey, DocumentSpec
+from forze.application.contracts.interception import (
+    PortCall,
+    PortNext,
+    StreamPortNext,
+)
 from forze.application.contracts.queue import (
     QueueCommandDepKey,
     QueueQueryDepKey,
@@ -22,11 +28,6 @@ from forze.application.contracts.resilience import (
     ResiliencePolicy,
     ResiliencePortPoliciesDepKey,
 )
-from forze.application.contracts.interception import (
-    PortCall,
-    PortNext,
-    StreamPortNext,
-)
 from forze.application.execution import Deps, DepsRegistry, ExecutionContext
 from forze.application.execution.interception import wrap_intercepted
 from forze.application.execution.resilience import InProcessResilienceExecutor
@@ -37,7 +38,6 @@ from forze.application.execution.resilience.port_policy import (
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.serialization import PydanticModelCodec
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
-
 from forze_mock import MockDepsModule, MockState
 
 # ----------------------- #

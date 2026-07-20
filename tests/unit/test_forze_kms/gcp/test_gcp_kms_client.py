@@ -36,8 +36,8 @@ def _gcp() -> MagicMock:
 
 def _client_with(inner: MagicMock, *, timeout: float | None = None) -> GcpKmsClient:
     client = GcpKmsClient()
-    client._GcpKmsClient__client = inner  # type: ignore[attr-defined]  # noqa: SLF001
-    client._GcpKmsClient__request_timeout = timeout  # type: ignore[attr-defined]  # noqa: SLF001
+    client._GcpKmsClient__client = inner  # type: ignore[attr-defined]
+    client._GcpKmsClient__request_timeout = timeout  # type: ignore[attr-defined]
 
     return client
 

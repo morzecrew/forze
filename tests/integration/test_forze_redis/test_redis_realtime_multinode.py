@@ -16,9 +16,9 @@ pytest.importorskip("redis")
 from forze.application.contracts.deps import Deps
 from forze.application.contracts.realtime import Audience, RealtimeSignal
 from forze.application.contracts.stream import (
-    StreamCommandDepKey,
     AckStreamGroupAdminDepKey,
     AckStreamGroupQueryDepKey,
+    StreamCommandDepKey,
 )
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.serialization import PydanticModelCodec
