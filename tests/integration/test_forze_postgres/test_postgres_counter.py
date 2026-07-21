@@ -46,6 +46,7 @@ async def pg_counter(
     return PostgresCounterAdapter(
         client=pg_client,
         config=PostgresCounterConfig(relation=("public", counter_table)),
+        route="orders",
     )
 
 
@@ -57,6 +58,7 @@ async def pg_counter_admin(
     return PostgresCounterAdminAdapter(
         client=pg_client,
         config=PostgresCounterConfig(relation=("public", counter_table)),
+        route="orders",
     )
 
 
@@ -189,3 +191,160 @@ async def test_counter_export_import_continuity(
     [entry] = await pg_counter_admin.list_counters()
     assert await pg_counter.reset(entry.value) == 9
     assert await pg_counter.incr() == 10
+
+
+# ....................... #
+# Tenancy + route isolation (the differential leg — the mock cannot show these)
+
+
+from forze.application.contracts.tenancy import TenantIdentity  # noqa: E402
+
+
+def _tenant_counter(
+    pg_client: PostgresClient, table: str, *, route: str, tenant: object
+) -> PostgresCounterAdapter:
+    """A tagged-tier counter bound to a fixed tenant, sharing *table* with others."""
+
+    return PostgresCounterAdapter(
+        client=pg_client,
+        config=PostgresCounterConfig(relation=("public", table), tenant_aware=True),
+        route=route,
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tenant) if tenant is not None else None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_tagged_tenants_do_not_share_a_sequence(
+    pg_client: PostgresClient, counter_table: str
+) -> None:
+    """Two tenants on one shared table keep independent sequences — no silent collision."""
+
+    a, b = uuid4(), uuid4()
+    counter_a = _tenant_counter(pg_client, counter_table, route="orders", tenant=a)
+    counter_b = _tenant_counter(pg_client, counter_table, route="orders", tenant=b)
+
+    assert await counter_a.incr() == 1
+    assert await counter_a.incr() == 2
+    assert await counter_b.incr() == 1  # b starts fresh, not at 3
+
+    admin_a = PostgresCounterAdminAdapter(
+        client=pg_client,
+        config=PostgresCounterConfig(relation=("public", counter_table), tenant_aware=True),
+        route="orders",
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=a),
+    )
+    assert {e.suffix: e.value for e in await admin_a.list_counters()} == {None: 2}
+
+
+@pytest.mark.asyncio
+async def test_two_specs_sharing_a_table_do_not_merge(
+    pg_client: PostgresClient, counter_table: str
+) -> None:
+    """Two counter specs (routes) on one shared table keep independent sequences."""
+
+    orders = PostgresCounterAdapter(
+        client=pg_client,
+        config=PostgresCounterConfig(relation=("public", counter_table)),
+        route="orders",
+    )
+    invoices = PostgresCounterAdapter(
+        client=pg_client,
+        config=PostgresCounterConfig(relation=("public", counter_table)),
+        route="invoices",
+    )
+
+    assert await orders.incr() == 1
+    assert await orders.incr() == 2
+    assert await invoices.incr() == 1  # invoices is a distinct sequence, not 3
+
+    orders_admin = PostgresCounterAdminAdapter(
+        client=pg_client,
+        config=PostgresCounterConfig(relation=("public", counter_table)),
+        route="orders",
+    )
+    # enumeration reports only this route's counters, decoded to their real suffixes
+    assert {e.suffix: e.value for e in await orders_admin.list_counters()} == {None: 2}
+
+
+@pytest.mark.asyncio
+async def test_namespace_tier_resolves_a_per_tenant_relation(
+    pg_client: PostgresClient,
+) -> None:
+    """Namespace tier (no tagged ``tenant_aware``, a per-tenant relation resolver): the
+    bound tenant must reach relation resolution — the getter bug dropped it, folding
+    every tenant onto one table."""
+
+    a, b = uuid4(), uuid4()
+    tables = {a: f"ns_a_{uuid4().hex[:8]}", b: f"ns_b_{uuid4().hex[:8]}"}
+
+    for name in tables.values():
+        await pg_client.execute(
+            sql.SQL(
+                "CREATE TABLE {t} (tenant_id TEXT NOT NULL, suffix TEXT NOT NULL, "
+                "value BIGINT NOT NULL, PRIMARY KEY (tenant_id, suffix))"
+            ).format(t=sql.Identifier("public", name))
+        )
+
+    def _counter(tenant: object) -> PostgresCounterAdapter:
+        # tenant_aware=False (namespace tier), but a resolver keys the table by tenant.
+        return PostgresCounterAdapter(
+            client=pg_client,
+            config=PostgresCounterConfig(
+                relation=lambda tid: ("public", tables[tid]),
+            ),
+            route="orders",
+            tenant_provider=lambda: TenantIdentity(tenant_id=tenant),
+        )
+
+    assert await _counter(a).incr() == 1
+    assert await _counter(a).incr() == 2
+    assert await _counter(b).incr() == 1  # b's table is separate — not folded onto a's
+
+
+@pytest.mark.asyncio
+async def test_legacy_unprefixed_row_continues_its_sequence(
+    pg_client: PostgresClient, counter_table: str
+) -> None:
+    """A counter allocated before the route fold (stored at the bare ``suffix`` key) must
+    continue from its value on the next increment, not restart at zero and reissue numbers."""
+
+    # Seed a pre-route row: tenant_id='' (no tenant), suffix='' (unsuffixed), value=41.
+    await pg_client.execute(
+        sql.SQL("INSERT INTO {t} (tenant_id, suffix, value) VALUES ('', '', 41)").format(
+            t=sql.Identifier("public", counter_table)
+        )
+    )
+    counter = PostgresCounterAdapter(
+        client=pg_client,
+        config=PostgresCounterConfig(relation=("public", counter_table)),
+        route="orders",
+    )
+
+    assert await counter.incr() == 42  # continues from the legacy 41, not from 0
+    assert await counter.incr() == 43  # and the legacy value is not re-added
+
+    admin = PostgresCounterAdminAdapter(
+        client=pg_client,
+        config=PostgresCounterConfig(relation=("public", counter_table)),
+        route="orders",
+    )
+    assert {e.suffix: e.value for e in await admin.list_counters()} == {None: 43}
+
+
+@pytest.mark.asyncio
+async def test_legacy_suffixed_row_continues_its_sequence(
+    pg_client: PostgresClient, counter_table: str
+) -> None:
+    await pg_client.execute(
+        sql.SQL("INSERT INTO {t} (tenant_id, suffix, value) VALUES ('', 's:2026', 7)").format(
+            t=sql.Identifier("public", counter_table)
+        )
+    )
+    counter = PostgresCounterAdapter(
+        client=pg_client,
+        config=PostgresCounterConfig(relation=("public", counter_table)),
+        route="orders",
+    )
+    assert await counter.incr(suffix="2026") == 8

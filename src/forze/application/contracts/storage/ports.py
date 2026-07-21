@@ -175,6 +175,7 @@ class StorageQueryPort(Protocol):
         *,
         prefix: str | None = None,
         include_tags: bool = False,
+        missing_ok: bool = False,
     ) -> Awaitable[tuple[list[StoredObject], int]]:
         """List stored objects with pagination.
 
@@ -186,10 +187,18 @@ class StorageQueryPort(Protocol):
         ``GetObjectTagging`` per listed object, requiring the
         ``s3:GetObjectTagging`` permission).
 
+        ``missing_ok`` makes a not-yet-provisioned bucket yield an empty
+        listing instead of raising — for callers where an absent bucket means
+        "nothing stored yet" (the object-list route on a fresh deployment, a
+        portability export of an app with no blobs). Left ``False`` a missing
+        bucket raises, so a reader that needs *absent* told apart from *empty*
+        (the re-encryption sweep) keeps that distinction.
+
         :param limit: Maximum number of objects to return.
         :param offset: Offset into the result set.
         :param prefix: Optional prefix filter.
         :param include_tags: Guarantee tags are populated on results.
+        :param missing_ok: Treat a missing bucket as an empty listing.
         :returns: A pair of results and the total count.
         """
         ...  # pragma: no cover

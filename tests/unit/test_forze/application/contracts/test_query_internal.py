@@ -630,8 +630,13 @@ class TestQueryValueCaster:
     def test_as_float_from_string(self) -> None:
         assert QueryValueCaster.as_float("3.14") == 3.14
 
-    def test_as_float_comma_decimal(self) -> None:
-        assert QueryValueCaster.as_float("3,14") == 3.14
+    def test_as_float_comma_string_is_refused_not_locale_guessed(self) -> None:
+        # "3,14" is ambiguous (thousands separator vs decimal comma); reading it as 3.14
+        # was a silent factor-1000 hazard. It is now refused, not guessed.
+        with pytest.raises(CoreException, match="Invalid float"):
+            QueryValueCaster.as_float("3,14")
+        with pytest.raises(CoreException, match="Invalid float"):
+            QueryValueCaster.as_float("1,234")  # thousands separator no longer dropped
 
     def test_as_float_bool_raises(self) -> None:
         with pytest.raises(CoreException, match="got bool"):
@@ -658,7 +663,17 @@ class TestQueryValueCaster:
 
     def test_as_decimal_from_string(self) -> None:
         assert QueryValueCaster.as_decimal(" 3.14 ") == Decimal("3.14")
-        assert QueryValueCaster.as_decimal("3,14") == Decimal("3.14")
+        # An exact high-precision string round-trips without float rounding — the whole
+        # point of the str JSON carrier for a money range bound.
+        assert QueryValueCaster.as_decimal("123.456789012345678901") == Decimal(
+            "123.456789012345678901"
+        )
+
+    def test_as_decimal_comma_string_is_refused_not_locale_guessed(self) -> None:
+        with pytest.raises(CoreException, match="Invalid numeric"):
+            QueryValueCaster.as_decimal("3,14")
+        with pytest.raises(CoreException, match="Invalid numeric"):
+            QueryValueCaster.as_decimal("1,234")
 
     def test_as_decimal_bool_raises(self) -> None:
         with pytest.raises(CoreException, match="got bool"):
@@ -1032,11 +1047,15 @@ class TestQueryFilterExpressionParser:
         with pytest.raises(CoreException, match="Invalid value for"):
             QueryFilterExpressionParser.parse({"$values": {"x": {"$eq": [1, 2]}}})
 
-    def test_parse_ord_invalid_value_raises(self) -> None:
+    def test_parse_ord_accepts_a_string_operand(self) -> None:
+        # A string is the JSON carrier for an exact Decimal / ISO datetime bound, so the
+        # parser admits it for ordering ops; the field-type gate (which needs a model) and
+        # the backend cast validate it downstream. A non-scalar operand still raises here.
+        parsed = QueryFilterExpressionParser.parse({"$values": {"x": {"$gte": "123.45"}}})
+        assert parsed is not None
+
         with pytest.raises(CoreException, match="Invalid value for"):
-            QueryFilterExpressionParser.parse(
-                {"$values": {"x": {"$gte": "not-numeric"}}}
-            )
+            QueryFilterExpressionParser.parse({"$values": {"x": {"$gte": [1, 2]}}})
 
     def test_parse_in_invalid_value_raises(self) -> None:
         with pytest.raises(CoreException, match="Invalid value for"):
@@ -1407,10 +1426,17 @@ class TestQueryFilterParserBranches:
                 {"$values": {"scores": {"$any": {"$eq": [1, 2]}}}},
             )
 
-    def test_element_scalar_ord_invalid_value_raises(self) -> None:
+    def test_element_scalar_ord_accepts_a_string_operand(self) -> None:
+        # As above: a string ord operand is the exact-value carrier, admitted at parse and
+        # validated downstream; a non-scalar operand still raises.
+        parsed = QueryFilterExpressionParser.parse(
+            {"$values": {"scores": {"$any": {"$gt": "123.45"}}}},
+        )
+        assert parsed is not None
+
         with pytest.raises(CoreException, match="Invalid value for"):
             QueryFilterExpressionParser.parse(
-                {"$values": {"scores": {"$any": {"$gt": "abc"}}}},
+                {"$values": {"scores": {"$any": {"$gt": [1, 2]}}}},
             )
 
     def test_element_scalar_text_op_sequence_desugars_to_or(self) -> None:

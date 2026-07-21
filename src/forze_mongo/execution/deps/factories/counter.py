@@ -41,6 +41,7 @@ class ConfigurableMongoCounter(_ConfigurableMongoCounterBase):
         return MongoCounterAdapter(
             client=ctx.deps.provide(MongoClientDepKey),
             config=self.config,
+            route=str(spec.name),
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )
@@ -67,6 +68,7 @@ class ConfigurableMongoCounterAdmin(_ConfigurableMongoCounterBase):
         return MongoCounterAdminAdapter(
             client=ctx.deps.provide(MongoClientDepKey),
             config=self.config,
+            route=str(spec.name),
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )

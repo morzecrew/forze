@@ -43,6 +43,7 @@ from forze.application.contracts.tenancy import TenancyMixin, TenantIdentity
 from forze.application.integrations.storage.client import (
     ObjectStorageClientPort,
     ObjectStorageHead,
+    ObjectStorageListedObject,
     ObjectStoragePartInfo,
     ObjectStorageSSE,
     unsatisfiable_range,
@@ -78,6 +79,14 @@ _HEADER_PROBE_SIZE = 8192
 """Leading bytes fetched to parse a chunked object's header + first frame prefix on a
 ranged read. Comfortably covers the header (magic + key ids + wrapped DEK + chunk size)
 and the ~18-byte first-frame length prefix used to derive the per-chunk stride."""
+
+_LIST_HEAD_FANOUT = 8
+"""Max concurrent ``head_object`` calls while resolving a listing page's metadata.
+
+``list`` HEADs each object it returns; an unbounded ``gather`` over a large page (a
+``size=10000`` list) would schedule that many concurrent requests at once, saturating the
+connection pool and stalling every other storage op behind it. The same bound S3's tag
+fan-out already uses (``GET_OBJECT_TAGGING_CONCURRENCY``)."""
 
 _FRAME_PREFIX_MAX = 512
 """Upper bound on a frame's length-prefix region (is_final + nonce + ct-length), used
@@ -1511,6 +1520,7 @@ class ObjectStorageAdapter(
         *,
         prefix: tuple[str, ...] | str | None = None,
         include_tags: bool = False,
+        missing_ok: bool = False,
     ) -> tuple[list[StoredObject], int]:
         """List stored objects with pagination.
 
@@ -1529,6 +1539,12 @@ class ObjectStorageAdapter(
         *empty* one — and would silently undo a deletion for any caller that merely listed,
         including the re-encryption sweep, whose bucket-vanished guard is exactly that
         distinction.
+
+        ``missing_ok`` opts a caller *out* of that distinction: when set, a bucket that
+        does not yet exist yields an empty listing instead of raising. Use it where an
+        unprovisioned bucket legitimately means "nothing stored yet" — the object-list
+        route on a fresh deployment, a portability export of an app with no blobs — rather
+        than a fault. The sweep keeps the default so a *vanished* bucket still raises.
         """
 
         prefix = default_path_codec.join(prefix)
@@ -1539,21 +1555,30 @@ class ObjectStorageAdapter(
         bucket = await self._resolved_bucket()
 
         async with self.client.client():
-            objects, total_count = await self.client.list_objects(
-                bucket=bucket,
-                prefix=path,
-                limit=limit,
-                offset=offset,
-                include_tags=include_tags,
-            )
+            try:
+                objects, total_count = await self.client.list_objects(
+                    bucket=bucket,
+                    prefix=path,
+                    limit=limit,
+                    offset=offset,
+                    include_tags=include_tags,
+                )
+
+            except CoreException:
+                # A not-yet-provisioned bucket reads as empty only when the caller opted in
+                # *and* the bucket genuinely does not exist — any other list failure (a real
+                # outage, a permission error) still propagates. The existence probe is a
+                # read, so it never creates the bucket the raise was distinguishing.
+                if missing_ok and not await self.client.bucket_exists(bucket):
+                    return [], 0
+
+                raise
 
             for o in objects:
                 if not o.key:
                     raise exc.internal("Invalid object key")
 
-            heads = await asyncio.gather(
-                *(self.client.head_object(bucket=bucket, key=o.key) for o in objects)
-            )
+            heads = await self._head_all(bucket, objects)
 
             out = [
                 self._stored_from_head(o.key, h, o.tags)
@@ -1561,6 +1586,25 @@ class ObjectStorageAdapter(
             ]
 
         return out, total_count
+
+    # ....................... #
+
+    async def _head_all(
+        self, bucket: str, objects: Sequence[ObjectStorageListedObject]
+    ) -> builtins.list[ObjectStorageHead]:
+        """HEAD every listed object with bounded concurrency (see :data:`_LIST_HEAD_FANOUT`).
+
+        ``gather`` preserves input order regardless of completion order, so the caller can
+        ``zip`` heads back onto objects one-to-one — the result length always matches.
+        """
+
+        semaphore = asyncio.Semaphore(_LIST_HEAD_FANOUT)
+
+        async def _one(key: str) -> ObjectStorageHead:
+            async with semaphore:
+                return await self.client.head_object(bucket=bucket, key=key)
+
+        return await asyncio.gather(*(_one(o.key) for o in objects))
 
     # ....................... #
 

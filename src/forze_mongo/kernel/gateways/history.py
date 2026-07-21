@@ -77,6 +77,30 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
 
     # ....................... #
 
+    def _with_history_tenant(self, base: dict[str, Any]) -> dict[str, Any]:
+        """Add a **strict** tenant predicate to a history read filter.
+
+        The write stamps ``tenant_id`` (see :meth:`write`), and reads match the bound
+        tenant only. There is deliberately **no** ``tenant_id $exists: false`` tolerance:
+        in a tagged-tenancy shared collection a legacy snapshot carries no owner, so a
+        tolerant branch would hand any tenant another tenant's pre-upgrade snapshot for a
+        guessed ``(source, pk, rev)`` — a cross-tenant leak both on a direct read and
+        during history-based optimistic-concurrency validation.
+
+        Isolation wins over legacy optimistic-concurrency continuity, and the continuity
+        cost is small and self-healing: a legacy document's ordinary update presents its
+        current revision, skips history validation entirely, and writes a fresh stamped
+        snapshot. Only a concurrent stale-revision update of a not-yet-rewritten document
+        sees a ``history_not_found_retry`` precondition, which the standard retry loop
+        resolves against the now-stamped current revision. Operators needing strict
+        pre-upgrade concurrency continuity should backfill ``tenant_id`` on legacy
+        history rows.
+        """
+
+        return self._add_tenant_filter(base)
+
+    # ....................... #
+
     async def read(self, pk: UUID, rev: int) -> D:
         """Retrieve a single historical snapshot by primary key and revision.
 
@@ -85,13 +109,19 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         :raises NotFoundError: If the history record or its payload is missing.
         """
 
+        # Tenant predicate on reads, matching the Firestore twin: the write now stamps
+        # ``tenant_id`` (see :meth:`write`), and without this gate a read would hand
+        # tenant A's snapshot to tenant B for a guessed (pk, rev) under tagged tenancy —
+        # the write-side stamp is worthless without the read-side filter.
         raw = await self.client.find_one(
             await self.coll(),
-            {
-                HISTORY_SOURCE_FIELD: await self._history_source_key(),
-                ID_FIELD: self._storage_pk(pk),
-                REV_FIELD: rev,
-            },
+            self._with_history_tenant(
+                {
+                    HISTORY_SOURCE_FIELD: await self._history_source_key(),
+                    ID_FIELD: self._storage_pk(pk),
+                    REV_FIELD: rev,
+                }
+            ),
         )
 
         if raw is None:
@@ -128,10 +158,12 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         ]
         rows = await self.client.find_many(
             await self.coll(),
-            {
-                HISTORY_SOURCE_FIELD: await self._history_source_key(),
-                "$or": lookup,
-            },
+            self._with_history_tenant(
+                {
+                    HISTORY_SOURCE_FIELD: await self._history_source_key(),
+                    "$or": lookup,
+                }
+            ),
         )
         keyed = {
             (
@@ -177,7 +209,10 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
 
         record = await self._from_data(data)
         raw_payload = self.history_codec.encode_persistence_mapping(record)
-        raw_payload = self.adapt_payload_for_write(raw_payload)
+        # ``create=True`` stamps ``tenant_id`` — a snapshot is always an insert, and under
+        # tagged tenancy the shared history collection needs the discriminator the tenant
+        # read predicate filters on (matching the Firestore twin, which stamps every write).
+        raw_payload = self.adapt_payload_for_write(raw_payload, create=True)
 
         payload = self._coerce_query_value(raw_payload)
 
@@ -205,7 +240,8 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
             for item in data
         ]
         raw_payloads = self.history_codec.encode_persistence_mapping_many(records)
-        raw_payloads = list(map(self.adapt_payload_for_write, raw_payloads))
+        # ``create=True`` stamps ``tenant_id`` on each snapshot (see :meth:`write`).
+        raw_payloads = [self.adapt_payload_for_write(p, create=True) for p in raw_payloads]
 
         payloads = list(map(self._coerce_query_value, raw_payloads))
 

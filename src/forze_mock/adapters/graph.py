@@ -147,16 +147,22 @@ class MockGraphAdapter(MockTenancyMixin):
     # GraphQueryPort
 
     async def get_vertex(self, ref: VertexRef) -> BaseModel | None:
+        self._node(ref.kind)  # unknown kind raises, matching Neo4j
+
         with self.state.lock:
             props = self._verts().get((ref.kind, ref.key))
 
         return self._vmodel(ref.kind, props) if props is not None else None
 
     async def vertex_exists(self, ref: VertexRef) -> bool:
+        self._node(ref.kind)  # unknown kind raises, matching Neo4j
+
         with self.state.lock:
             return (ref.kind, ref.key) in self._verts()
 
     async def get_edge(self, ref: EdgeRef) -> BaseModel | None:
+        self._edge(ref.kind)  # unknown kind raises, matching Neo4j
+
         with self.state.lock:
             rec = self._find_edge_rec(ref, self._edges_store())
 
@@ -388,6 +394,15 @@ class MockGraphAdapter(MockTenancyMixin):
         props = self._seal(self.codecs.node(node_kind), props)
 
         with self.state.lock:
+            # ``create`` is CREATE, not an upsert: a duplicate key is a conflict, matching
+            # Neo4j's key-uniqueness constraint. A silent overwrite here let the mock accept
+            # a double-create the real backend rejects (``ensure_vertex`` is the upsert).
+            if (node_kind, key) in self._verts():
+                raise exc.conflict(
+                    f"Vertex {node_kind}:{key} already exists",
+                    code="graph_vertex_conflict",
+                )
+
             self._verts()[(node_kind, key)] = props
 
         return self._vmodel(node_kind, props) if return_new else None
@@ -413,8 +428,22 @@ class MockGraphAdapter(MockTenancyMixin):
         return self._vmodel(ref.kind, merged)
 
     async def delete_vertex(self, ref: VertexRef) -> None:
+        self._node(ref.kind)  # unknown kind raises, matching Neo4j
+
         with self.state.lock:
             self._verts().pop((ref.kind, ref.key), None)
+
+            # DETACH DELETE: drop every edge incident to the removed vertex. Neo4j cannot
+            # leave a dangling edge, and a portable export of one aborts on import (the edge
+            # references an endpoint that was never restored) — so a mock that kept the edges
+            # was a strictly looser oracle than the backend it stands in for.
+            store = self._edges_store()
+            store[:] = [
+                rec
+                for rec in store
+                if (rec["from_kind"], rec["from_key"]) != (ref.kind, ref.key)
+                and (rec["to_kind"], rec["to_key"]) != (ref.kind, ref.key)
+            ]
 
     async def create_edge(
         self,
@@ -469,6 +498,23 @@ class MockGraphAdapter(MockTenancyMixin):
         }
 
         with self.state.lock:
+            # Both endpoint vertices must exist: Neo4j's edge writers ``MATCH`` the
+            # endpoints and raise ``graph_edge_endpoints_not_found`` when either is absent,
+            # so an edge can never dangle. The mock created edges without the check, laying
+            # exactly the dangling state the backend forbids.
+            verts = self._verts()
+
+            for kind, key in (
+                (endpoint.from_kind, rec["from_key"]),
+                (endpoint.to_kind, rec["to_key"]),
+            ):
+                if (kind, key) not in verts:
+                    raise exc.not_found(
+                        f"Edge endpoints for {edge_kind!r} not found "
+                        f"({rec['from_key']} -> {rec['to_key']})",
+                        code="graph_edge_endpoints_not_found",
+                    )
+
             store = self._edges_store()
             key_field = edge.key_field
             edge_key = data.get(key_field) if key_field is not None else None
@@ -526,6 +572,9 @@ class MockGraphAdapter(MockTenancyMixin):
         if not refs:
             return []
 
+        for ref in refs:
+            self._node(ref.kind)  # unknown kind raises, matching the singular get_vertex
+
         with self.state.lock:
             verts = dict(self._verts())
 
@@ -540,6 +589,9 @@ class MockGraphAdapter(MockTenancyMixin):
         if not refs:
             return []
 
+        for ref in refs:
+            self._edge(ref.kind)  # unknown kind raises, matching the singular get_edge
+
         with self.state.lock:
             edges = list(self._edges_store())
 
@@ -553,6 +605,8 @@ class MockGraphAdapter(MockTenancyMixin):
         return out
 
     async def edge_exists(self, ref: EdgeRef) -> bool:
+        self._edge(ref.kind)  # unknown kind raises, matching Neo4j
+
         with self.state.lock:
             return self._find_edge_rec(ref, self._edges_store()) is not None
 
@@ -862,6 +916,8 @@ class MockGraphAdapter(MockTenancyMixin):
         return self._emodel(ref.kind, merged)
 
     async def delete_edge(self, ref: EdgeRef) -> None:
+        self._edge(ref.kind)  # unknown kind raises, matching Neo4j
+
         with self.state.lock:
             store = self._edges_store()
             rec = self._find_edge_rec(ref, store)
@@ -885,6 +941,13 @@ class MockGraphAdapter(MockTenancyMixin):
                 props = cmd.model_dump(mode="json", exclude_none=True)
                 key = str(props[node.key_field])
                 props = self._seal(self.codecs.node(kind), props)
+
+                if (kind, key) in verts:
+                    raise exc.conflict(
+                        f"Vertex {kind}:{key} already exists",
+                        code="graph_vertex_conflict",
+                    )
+
                 verts[(kind, key)] = props
                 stored.append((kind, props))
 
@@ -899,12 +962,24 @@ class MockGraphAdapter(MockTenancyMixin):
         if not items:
             return [] if return_new else None
 
+        # Atomic like a real backend's single transaction: a mid-batch failure (a missing
+        # endpoint, an endpoint-identity conflict) must leave *no* edge behind, not the
+        # ones written before it. Snapshot the store, then restore it on any failure so a
+        # raised batch never leaves partially-applied state.
+        with self.state.lock:
+            snapshot = list(self._edges_store())
+
         created: list[BaseModel] = []
 
-        for kind, cmd in items:
-            edge = await self.create_edge(kind, cmd, return_new=return_new)
-            if return_new and edge is not None:
-                created.append(edge)
+        try:
+            for kind, cmd in items:
+                edge = await self.create_edge(kind, cmd, return_new=return_new)
+                if return_new and edge is not None:
+                    created.append(edge)
+        except Exception:
+            with self.state.lock:
+                self._edges_store()[:] = snapshot
+            raise
 
         return created if return_new else None
 
@@ -932,14 +1007,32 @@ class MockGraphAdapter(MockTenancyMixin):
         if not refs:
             return
 
+        for ref in refs:
+            self._node(ref.kind)  # unknown kind raises, matching the singular delete_vertex
+
+        targets = {(ref.kind, ref.key) for ref in refs}
+
         with self.state.lock:
             verts = self._verts()
-            for ref in refs:
-                verts.pop((ref.kind, ref.key), None)
+            for target in targets:
+                verts.pop(target, None)
+
+            # DETACH DELETE every removed vertex's incident edges (as delete_vertex does),
+            # so a batch delete cannot leave a dangling edge the backend would forbid.
+            store = self._edges_store()
+            store[:] = [
+                rec
+                for rec in store
+                if (rec["from_kind"], rec["from_key"]) not in targets
+                and (rec["to_kind"], rec["to_key"]) not in targets
+            ]
 
     async def delete_edges(self, refs: Sequence[EdgeRef]) -> None:
         if not refs:
             return
+
+        for ref in refs:
+            self._edge(ref.kind)  # unknown kind raises, matching the singular delete_edge
 
         with self.state.lock:
             store = self._edges_store()

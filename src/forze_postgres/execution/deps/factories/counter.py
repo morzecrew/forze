@@ -41,6 +41,7 @@ class ConfigurablePostgresCounter(_ConfigurablePostgresCounterBase):
         return PostgresCounterAdapter(
             client=ctx.deps.provide(PostgresClientDepKey),
             config=self.config,
+            route=str(spec.name),
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )
@@ -67,6 +68,7 @@ class ConfigurablePostgresCounterAdmin(_ConfigurablePostgresCounterBase):
         return PostgresCounterAdminAdapter(
             client=ctx.deps.provide(PostgresClientDepKey),
             config=self.config,
+            route=str(spec.name),
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )

@@ -126,6 +126,78 @@ def _decimal_number(value: Decimal) -> float | None:
     return converted if math.isfinite(converted) else None
 
 
+_DECIMAL_EXACT_FIELD = "_forze_decimal_exact"
+"""Reserved index field holding exact ``Decimal`` values, keyed by logical field name.
+
+Decimal fields index as f64 JSON numbers so Meilisearch can *filter and sort* them — but
+f64 rounds (``Decimal("123.456789012345678901")`` → ``…68``), so a search read of that field
+would silently lose precision. The exact decimal string rides alongside in this shadow field
+and is overlaid back onto the read model in :meth:`from_hit`, so filtering stays numeric while
+reads stay exact. Underscore-prefixed, so the ordinary :meth:`from_hit` field walk skips it
+(it is read explicitly). Never written for a sealed (field-encrypted) root — that would put
+the plaintext value in the clear."""
+
+
+def _extract_exact_shadow(plain: Any, dumped: Any) -> tuple[Any, bool]:
+    """The exact-Decimal shadow for a field, and whether any ``Decimal`` was found.
+
+    Walks the python-mode *plain* value (to *detect* Decimals) against its json-mode
+    *dumped* twin — whose leaves are already JSON-safe — and returns the dump with every
+    ``Decimal`` leaf replaced by its exact string. Non-Decimal leaves come straight from
+    *dumped*, so a field mixing a Decimal with a ``datetime`` / ``UUID`` / ``Enum`` shadows
+    the Decimal exactly **without** carrying an unserializable python object into the index
+    (the shadow is stored as JSON, so a raw ``datetime`` there would fail the whole upsert).
+
+    An ``Enum`` — even one wrapping a Decimal — is a leaf: its dumped form is its value, a
+    fixed member restored from the index like any other scalar. Structural mismatches
+    (differing lengths, a python dict against a json non-dict) keep the dumped value as-is.
+    """
+
+    if isinstance(plain, Decimal):
+        # json-mode already dumped this as its exact string; ``str`` is the same value.
+        return str(plain), True
+
+    if isinstance(plain, dict) and isinstance(dumped, dict):
+        plain_map = cast(dict[Any, Any], plain)  # type: ignore[redundant-cast]
+        dumped_map = cast(dict[Any, Any], dumped)  # type: ignore[redundant-cast]
+
+        if len(plain_map) != len(dumped_map):
+            return dumped, False  # pyright: ignore[reportUnknownVariableType]
+
+        # json stringifies mapping keys but keeps insertion order, so pair positionally
+        # and guard per entry by key correspondence (mirrors ``_canonicalize_leaves``).
+        out: dict[Any, Any] = {}
+        found = False
+
+        for (pk, pv), (dk, dv) in zip(plain_map.items(), dumped_map.items(), strict=True):
+            if pk == dk or (isinstance(dk, str) and str(pk) == dk):
+                out[dk], child = _extract_exact_shadow(pv, dv)
+                found = found or child
+            else:
+                out[dk] = dv
+
+        return out, found
+
+    if isinstance(plain, (list, tuple)) and isinstance(dumped, list):
+        plain_items = cast(list[Any], list(plain))  # type: ignore[redundant-cast]
+        dumped_items = cast(list[Any], dumped)  # type: ignore[redundant-cast]
+
+        if len(plain_items) != len(dumped_items):
+            return dumped, False  # pyright: ignore[reportUnknownVariableType]
+
+        out_list: list[Any] = []
+        found = False
+
+        for pv, dv in zip(plain_items, dumped_items, strict=True):
+            item, child = _extract_exact_shadow(pv, dv)
+            out_list.append(item)
+            found = found or child
+
+        return out_list, found
+
+    return dumped, False
+
+
 def _pydantic_json_datetime(value: datetime) -> str:
     """The string a json-mode pydantic dump emits for *value* (``Z`` for UTC offsets)."""
 
@@ -440,12 +512,17 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
             if self._encrypts
             else codec.encode_mapping(model, mode="json")
         )
-        data = self._canonicalize_index_values(model, data)
+        data, decimal_shadow = self._canonicalize_index_values(model, data)
         out: dict[str, Any] = {}
 
         for key, value in data.items():
             phys = self.physical_path(key)
             out[phys] = value
+
+        # The exact-Decimal shadow (keyed by logical field): filtering reads the f64 number
+        # above, ``from_hit`` restores the exact value from here (see _DECIMAL_EXACT_FIELD).
+        if decimal_shadow:
+            out[_DECIMAL_EXACT_FIELD] = decimal_shadow
 
         pk = self.primary_key
         pk_val = out.get(pk, data.get(ID_FIELD, data.get("id")))
@@ -464,17 +541,22 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
 
     # ....................... #
 
-    def _canonicalize_index_values(self, model: M, data: dict[str, Any]) -> dict[str, Any]:
+    def _canonicalize_index_values(
+        self, model: M, data: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Rewrite dump leaves the filter literals must be able to match (see
         ``_canonicalize_leaves``): Decimal → JSON number, aware datetime → UTC-``Z``.
 
-        Guided by the live model's values via a second, python-mode dump, skipped entirely
-        for models that cannot hold such a leaf. Sealed (field-encrypted) roots are left
-        untouched — their dumped value is a ciphertext envelope, not the plaintext scalar.
+        Returns ``(canonicalized, decimal_shadow)`` — the shadow maps each logical field
+        holding a ``Decimal`` to its exact-string form, so :meth:`from_hit` can restore the
+        precision the f64 index value rounds away. Guided by the live model's values via a
+        second, python-mode dump, skipped entirely for models that cannot hold such a leaf.
+        Sealed (field-encrypted) roots are left untouched *and* get no shadow — their dumped
+        value is a ciphertext envelope, and a shadow would put the plaintext in the clear.
         """
 
         if not _model_may_hold_canonical_leaf(type(model)):
-            return data
+            return data, {}
 
         codec = self.spec.resolved_read_codec
         plain = codec.encode_mapping(
@@ -492,10 +574,24 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
             )
         )
 
-        return {
-            k: v if k in sealed_roots else _canonicalize_leaves(plain.get(k), v)
-            for k, v in data.items()
-        }
+        canonical: dict[str, Any] = {}
+        shadow: dict[str, Any] = {}
+
+        for k, v in data.items():
+            if k in sealed_roots:
+                canonical[k] = v
+                continue
+
+            # Extract the exact shadow from the *un-canonicalized* dump first (the values
+            # are read here, before ``_canonicalize_leaves`` builds the numeric form).
+            exact, has_decimal = _extract_exact_shadow(plain.get(k), v)
+
+            if has_decimal:
+                shadow[k] = exact
+
+            canonical[k] = _canonicalize_leaves(plain.get(k), v)
+
+        return canonical, shadow
 
     # ....................... #
 
@@ -509,5 +605,13 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
 
             logical = inv.get(key, key)
             out[logical] = value
+
+        # Restore exact Decimal values the f64 index number rounded (keyed by logical
+        # field). The read codec re-parses the exact strings into Decimals on decode.
+        exact = hit.get(_DECIMAL_EXACT_FIELD)
+
+        if isinstance(exact, dict):
+            for logical, value in cast(dict[str, Any], exact).items():
+                out[logical] = value
 
         return out

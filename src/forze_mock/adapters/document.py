@@ -39,6 +39,7 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
     assert_cursor_projection_includes_sort_keys,
     build_cursor_binding,
+    coerce_query_ord_operands,
     cursor_protection_active,
     normalize_sorts_for_keyset,
     read_fields_for_model,
@@ -362,6 +363,10 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             return lambda _doc: True
 
         expr = QueryFilterExpressionParser.parse(filters)
+        # The same string-operand cast the real backends get from the shared gateway
+        # seam — without it the in-memory comparison would TypeError a string bound
+        # against a stored Decimal/datetime into a silent no-match.
+        expr = coerce_query_ord_operands(expr, self.read_model)
         rewrite = getattr(self._read_codec(), "rewrite_filter", None)
 
         if rewrite is not None:

@@ -95,7 +95,10 @@ class QueryValueCaster:
             return float(v)
 
         if isinstance(v, str):
-            s = v.strip().replace(",", ".")
+            # No locale guessing: "1,234" is ambiguous (thousands separator vs decimal
+            # comma), and silently reading it as 1.234 is a factor-1000 error that raises
+            # nothing. A comma string is refused; the caller sends the canonical form.
+            s = v.strip()
 
             try:
                 return float(s)
@@ -123,7 +126,9 @@ class QueryValueCaster:
             return Decimal(str(v))
 
         if isinstance(v, str):
-            s = v.strip().replace(",", ".")
+            # No locale guessing (see as_float): a thousands-separator comma read as a
+            # decimal point turns 1,234 into 1.234 with nothing raised. Refused instead.
+            s = v.strip()
 
             try:
                 return Decimal(s)

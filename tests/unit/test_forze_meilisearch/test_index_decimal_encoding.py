@@ -368,3 +368,143 @@ def test_decimal_valued_plain_enum_indexes_as_number() -> None:
         color: _Color
 
     assert _model_may_hold_canonical_leaf(_Tag) is False
+
+
+# ....................... #
+# The exact-Decimal shadow: filtering reads the f64 number, reads stay exact
+
+
+from forze_meilisearch.adapters.search.base import (  # noqa: E402
+    _DECIMAL_EXACT_FIELD,
+    _extract_exact_shadow,
+)
+
+
+def test_full_precision_decimal_survives_the_index_round_trip() -> None:
+    """The finding: a high-precision Decimal indexed as f64 rounds to ...68 — the shadow
+    restores the exact value on read, so filtering stays numeric and reads stay exact."""
+
+    gw = _gateway()
+    exact = Decimal("123.456789012345678901")
+
+    doc = gw.to_index_document(_Item(id="a", price=exact))
+
+    # The queryable field is the (rounded) f64 number, for numeric filter/sort.
+    assert isinstance(doc["price"], float)
+    assert doc["price"] != exact  # f64 cannot hold it
+
+    # The shadow carries the exact string, keyed by logical field.
+    assert doc[_DECIMAL_EXACT_FIELD]["price"] == "123.456789012345678901"
+
+    # from_hit overlays it, so the read model decodes the *exact* value back.
+    restored = gw.from_hit(doc)
+    assert _Item.model_validate({"id": "a", **restored}).price == exact
+    assert _DECIMAL_EXACT_FIELD not in restored  # the shadow never leaks as a field
+
+
+def test_shadow_covers_nested_and_collection_decimals() -> None:
+    gw = _gateway()
+    doc = gw.to_index_document(
+        _Item(
+            id="a",
+            price=Decimal("1.5"),
+            nested=_Nested(price=Decimal("9.123456789012345678"), label="x"),
+            prices=[Decimal("2.100000000000000001")],
+            by_key={"k": Decimal("3.5")},
+        ),
+    )
+
+    restored = gw.from_hit(doc)
+
+    assert restored["nested"]["price"] == "9.123456789012345678"
+    assert restored["nested"]["label"] == "x"
+    assert restored["prices"] == ["2.100000000000000001"]
+    assert restored["by_key"] == {"k": "3.5"}
+    validated = _Item.model_validate({"id": "a", **restored})
+    assert validated.nested.price == Decimal("9.123456789012345678")
+    assert validated.prices == [Decimal("2.100000000000000001")]
+
+
+def test_no_shadow_field_when_the_document_holds_no_decimal() -> None:
+    gw = _gateway()
+    doc = gw.to_index_document(_Item(id="a", title="t", fake_number="10.5"))
+
+    # price defaults to Decimal("0"), so a shadow exists for it — but a genuinely
+    # decimal-free field never contributes one.
+    assert doc[_DECIMAL_EXACT_FIELD] == {"price": "0"}
+    assert "fake_number" not in doc[_DECIMAL_EXACT_FIELD]
+
+    plain = _gateway(_PlainItem).to_index_document(_PlainItem(id="a", count=3))
+    assert _DECIMAL_EXACT_FIELD not in plain  # no decimals at all → no shadow field
+
+
+def test_sealed_decimal_root_gets_no_shadow() -> None:
+    """A shadow of a sealed field would write its plaintext in the clear — never do it."""
+
+    gw = _gateway(encryption=FieldEncryption(encrypted=frozenset({"price"})))
+    doc = gw.to_index_document(_Item(id="a", price=Decimal("10.50")))
+
+    shadow = doc.get(_DECIMAL_EXACT_FIELD, {})
+    assert "price" not in shadow  # the sealed root is never shadowed (no plaintext leak)
+
+
+def test_extract_exact_shadow_helper() -> None:
+    # (plain, dumped) → (shadow, found): Decimals become their exact string; every other
+    # leaf comes from the JSON dump.
+    assert _extract_exact_shadow(Decimal("1.50"), "1.50") == ("1.50", True)
+    assert _extract_exact_shadow("plain", "plain") == ("plain", False)
+    assert _extract_exact_shadow(True, True) == (True, False)  # bool is not a Decimal
+    assert _extract_exact_shadow({"a": Decimal("2"), "b": "x"}, {"a": "2", "b": "x"}) == (
+        {"a": "2", "b": "x"},
+        True,
+    )
+    assert _extract_exact_shadow([Decimal("3"), 4], ["3", 4]) == (["3", 4], True)
+    assert _extract_exact_shadow({"a": 1, "b": [2, 3]}, {"a": 1, "b": [2, 3]}) == (
+        {"a": 1, "b": [2, 3]},
+        False,
+    )
+
+
+def test_extract_exact_shadow_uses_json_safe_leaves_for_non_decimals() -> None:
+    """The fix: a field mixing a Decimal with a python object JSON cannot serialize
+    (datetime, UUID) must shadow the Decimal exactly while carrying the *dumped* form of
+    the other leaves — never the raw python object, which would fail the index upsert."""
+
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    plain = {"amount": Decimal("1.5"), "when": datetime(2026, 1, 1, tzinfo=UTC), "who": UUID(int=1)}
+    dumped = {"amount": "1.5", "when": "2026-01-01T00:00:00Z", "who": "00000000-0000-0000-0000-000000000001"}
+
+    shadow, found = _extract_exact_shadow(plain, dumped)
+
+    assert found is True
+    assert shadow == dumped | {"amount": "1.5"}  # decimal exact, datetime/UUID from the dump
+    # and the shadow holds nothing that json cannot serialize
+    import json
+
+    json.dumps(shadow)  # must not raise
+
+
+def test_extract_exact_shadow_keeps_dumped_on_structural_mismatch() -> None:
+    # A python dict paired with a differing-length dump — pairing would be a guess, so the
+    # dumped value is kept verbatim and no Decimal is claimed.
+    assert _extract_exact_shadow({"a": Decimal("1")}, {"a": "1", "b": "2"}) == (
+        {"a": "1", "b": "2"},
+        False,
+    )
+
+
+def test_extract_exact_shadow_keeps_dumped_value_when_keys_do_not_correspond() -> None:
+    # Same length but a positionally-paired entry whose keys neither match nor str-match:
+    # the dumped value is kept for that entry rather than re-keyed by guess.
+    plain = {"a": Decimal("1"), object(): Decimal("2")}
+    dumped = {"a": "1", "b": "2"}
+    shadow, found = _extract_exact_shadow(plain, dumped)
+    assert shadow == {"a": "1", "b": "2"}  # "a" pairs and casts; the "b" entry kept as dumped
+    assert found is True
+
+
+def test_extract_exact_shadow_keeps_dumped_list_on_length_mismatch() -> None:
+    # A python list against a shorter dump — no safe positional pairing, so the dump is kept.
+    assert _extract_exact_shadow([Decimal("1"), Decimal("2")], ["1"]) == (["1"], False)

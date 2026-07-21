@@ -626,15 +626,20 @@ class MockStorageAdapter(
         *,
         prefix: str | None = None,
         include_tags: bool = False,
+        missing_ok: bool = False,
     ) -> tuple[list[StoredObject], int]:
         """List stored objects with pagination.
 
         ``include_tags`` is accepted for port compatibility but adds nothing
         here: the mock stores tags in-memory and always includes them, so
         the guarantee is already satisfied (no extra work either way).
+        ``missing_ok`` is likewise accepted for compatibility and is a no-op:
+        the mock has no bucket-provisioning concept, so a list is always over
+        an existing (possibly empty) container.
         """
 
         _ = include_tags  # tags are always included for free in the mock
+        _ = missing_ok  # the mock has no bucket concept; a list is never "missing"
 
         with self.state.lock:
             rows = list(self._objects().values())

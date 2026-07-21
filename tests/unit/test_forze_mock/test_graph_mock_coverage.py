@@ -101,6 +101,27 @@ def _u(k: str) -> VertexRef:
     return VertexRef(kind="User", key=k)
 
 
+def _inject_dangling_edge(query: object, from_key: str, to_key: str, **props: object) -> None:
+    """Plant an edge whose target vertex does not exist, straight into the store.
+
+    ``create_edge`` now refuses a dangling edge (matching Neo4j's endpoint ``MATCH``), so
+    the *only* way such a state can exist is a corrupt store — and the traversal core's
+    defensive skip is still worth covering against exactly that. Bypass the guarded write
+    to reach it, since the public API can no longer produce the state.
+    """
+
+    query._edges_store().append(  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue]
+        {
+            "kind": "LINK",
+            "from_kind": "User",
+            "from_key": from_key,
+            "to_kind": "User",
+            "to_key": to_key,
+            "props": dict(props),
+        }
+    )
+
+
 @pytest.fixture
 def ctx() -> ExecutionContext:
     return context_from_deps(MockDepsModule(state=MockState())())
@@ -136,10 +157,12 @@ async def test_expand_skips_edges_to_missing_vertices(ctx: ExecutionContext) -> 
     spec = _spec()
     cmd = ctx.graph.command(spec)
     await cmd.create_vertex("User", UserCreate(id="a"))
-    # Edge to a vertex that was never created — the traversal core must skip the dangling target.
-    await cmd.create_edge("LINK", LinkCreate(from_key="a", to_key="ghost"))
+    # A dangling edge cannot be created through the API (Neo4j MATCHes endpoints); inject
+    # one into the store to exercise the traversal core's defensive skip of a missing target.
+    query = ctx.graph.query(spec)
+    _inject_dangling_edge(query, "a", "ghost")
 
-    steps = await ctx.graph.query(spec).expand(
+    steps = await query.expand(
         _u("a"), GraphWalkParams(max_depth=2, max_results=10, direction=GraphDirection.OUT)
     )
     assert steps == []
@@ -252,6 +275,21 @@ async def test_bulk_create_return_new_false_returns_none(ctx: ExecutionContext) 
 
 
 @pytest.mark.asyncio
+async def test_bulk_create_conflicts_on_existing_vertex(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    cmd = ctx.graph.command(spec)
+
+    await cmd.create_vertex("User", UserCreate(id="a"))
+
+    # A batch containing an already-existing vertex is rejected (CREATE, not upsert),
+    # matching the singular path and Neo4j.
+    with pytest.raises(CoreException) as caught:
+        await cmd.create_vertices([("User", UserCreate(id="b")), ("User", UserCreate(id="a"))])
+
+    assert caught.value.code == "graph_vertex_conflict"
+
+
+@pytest.mark.asyncio
 async def test_delete_edges_removes_matching_record(ctx: ExecutionContext) -> None:
     spec = _spec()
     cmd = ctx.graph.command(spec)
@@ -323,9 +361,10 @@ async def test_weighted_shortest_path_revisits_and_skips_dangling(
     await cmd.create_edge("LINK", LinkCreate(from_key="b", to_key="x", weight=5))
     await cmd.create_edge("LINK", LinkCreate(from_key="c", to_key="x", weight=1))
     await cmd.create_edge("LINK", LinkCreate(from_key="x", to_key="d", weight=10))
-    await cmd.create_edge("LINK", LinkCreate(from_key="b", to_key="ghost", weight=1))
+    query = ctx.graph.query(spec)
+    _inject_dangling_edge(query, "b", "ghost", weight=1)  # dangling: Dijkstra must skip it
 
-    path = await ctx.graph.query(spec).shortest_path(
+    path = await query.shortest_path(
         _u("a"), _u("d"), ShortestPathParams(max_hops=4, weight_property="weight")
     )
     assert path is not None
@@ -339,7 +378,8 @@ async def test_scoped_walk_segment_skips_dangling_target(ctx: ExecutionContext) 
     for k in ("a", "b"):
         await cmd.create_vertex("User", UserCreate(id=k))
     await cmd.create_edge("LINK", LinkCreate(from_key="a", to_key="b"))
-    await cmd.create_edge("LINK", LinkCreate(from_key="b", to_key="ghost"))  # dangling
+    query = ctx.graph.query(spec)
+    _inject_dangling_edge(query, "b", "ghost")  # dangling: the second hop must skip it
 
     step = GraphPathStep(
         edge_kinds=frozenset({"LINK"}),
@@ -347,7 +387,7 @@ async def test_scoped_walk_segment_skips_dangling_target(ctx: ExecutionContext) 
         min_hops=1,
         max_hops=2,
     )
-    out = await ctx.graph.query(spec).scoped_walk(
+    out = await query.scoped_walk(
         _u("a"), ScopedWalkParams(steps=(step,), target_kind="User")
     )
     # b is reachable; the second hop onto the missing ``ghost`` vertex is skipped.
@@ -364,3 +404,172 @@ async def test_keyed_ensure_without_key_fails_closed(ctx: ExecutionContext) -> N
     # A keyed ensure with the key omitted cannot form a stable identity.
     with pytest.raises(CoreException, match="graph_edge_key_required"):
         await cmd.ensure_edge("KEYED", KeyedCreate(from_key="a", to_key="b"))
+
+
+# ----------------------- #
+# Write-path faithfulness guards (mock ≡ Neo4j, previously looser)
+
+
+@pytest.mark.asyncio
+async def test_create_vertex_is_create_not_upsert(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    cmd = ctx.graph.command(spec)
+    await cmd.create_vertex("User", UserCreate(id="a"))
+
+    with pytest.raises(CoreException) as caught:
+        await cmd.create_vertex("User", UserCreate(id="a"))  # duplicate key
+
+    assert caught.value.code == "graph_vertex_conflict"
+
+
+@pytest.mark.asyncio
+async def test_create_edge_requires_both_endpoints_to_exist(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    cmd = ctx.graph.command(spec)
+    await cmd.create_vertex("User", UserCreate(id="a"))
+
+    # to-endpoint missing
+    with pytest.raises(CoreException) as caught:
+        await cmd.create_edge("LINK", LinkCreate(from_key="a", to_key="ghost"))
+    assert caught.value.code == "graph_edge_endpoints_not_found"
+
+    # from-endpoint missing
+    with pytest.raises(CoreException) as caught2:
+        await cmd.create_edge("LINK", LinkCreate(from_key="ghost", to_key="a"))
+    assert caught2.value.code == "graph_edge_endpoints_not_found"
+
+    # ensure_edge is held to the same contract (Neo4j MATCHes endpoints for MERGE too)
+    with pytest.raises(CoreException) as caught3:
+        await cmd.ensure_edge("LINK", LinkCreate(from_key="a", to_key="ghost"))
+    assert caught3.value.code == "graph_edge_endpoints_not_found"
+
+
+@pytest.mark.asyncio
+async def test_delete_vertex_detaches_incident_edges(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    cmd = ctx.graph.command(spec)
+    query = ctx.graph.query(spec)
+    for k in ("a", "b", "c"):
+        await cmd.create_vertex("User", UserCreate(id=k))
+    await cmd.create_edge("LINK", LinkCreate(from_key="a", to_key="b"))  # b as target
+    await cmd.create_edge("LINK", LinkCreate(from_key="b", to_key="c"))  # b as source
+    await cmd.create_edge("LINK", LinkCreate(from_key="a", to_key="c"))  # not incident to b
+
+    await cmd.delete_vertex(_u("b"))
+
+    # Both edges touching b are gone (Neo4j DETACH DELETE); the a->c edge survives.
+    assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("a"), to_ref=_u("b"))) is False
+    assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("b"), to_ref=_u("c"))) is False
+    assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("a"), to_ref=_u("c"))) is True
+
+
+@pytest.mark.asyncio
+async def test_unknown_kinds_raise_instead_of_returning_empty(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    query = ctx.graph.query(spec)
+    cmd = ctx.graph.command(spec)
+    bad_vertex = VertexRef(kind="NOPE", key="x")
+
+    for make_op in (
+        lambda: query.get_vertex(bad_vertex),
+        lambda: query.vertex_exists(bad_vertex),
+        lambda: cmd.delete_vertex(bad_vertex),
+    ):
+        with pytest.raises(CoreException) as caught:
+            await make_op()
+        assert caught.value.code == "graph_unknown_node_kind"
+
+    bad_edge = EdgeRef(kind="NOPE", from_ref=_u("a"), to_ref=_u("b"))
+    for make_op in (
+        lambda: query.get_edge(bad_edge),
+        lambda: query.edge_exists(bad_edge),
+        lambda: cmd.delete_edge(bad_edge),
+    ):
+        with pytest.raises(CoreException) as caught2:
+            await make_op()
+        assert caught2.value.code == "graph_unknown_edge_kind"
+
+
+@pytest.mark.asyncio
+async def test_create_edges_is_atomic_on_a_mid_batch_failure(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    cmd = ctx.graph.command(spec)
+    query = ctx.graph.query(spec)
+    for k in ("a", "b"):
+        await cmd.create_vertex("User", UserCreate(id=k))
+
+    # A batch whose second item dangles (to a missing vertex) must roll back the first,
+    # like a single-transaction backend — no partially-applied edges left behind.
+    with pytest.raises(CoreException) as caught:
+        await cmd.create_edges(
+            [
+                ("LINK", LinkCreate(from_key="a", to_key="b")),  # valid
+                ("LINK", LinkCreate(from_key="a", to_key="ghost")),  # missing endpoint
+            ]
+        )
+    assert caught.value.code == "graph_edge_endpoints_not_found"
+
+    # The valid first edge was NOT persisted (the batch is all-or-nothing).
+    assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("a"), to_ref=_u("b"))) is False
+
+
+@pytest.mark.asyncio
+async def test_create_edges_commits_a_fully_valid_batch(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    cmd = ctx.graph.command(spec)
+    query = ctx.graph.query(spec)
+    for k in ("a", "b", "c"):
+        await cmd.create_vertex("User", UserCreate(id=k))
+
+    created = await cmd.create_edges(
+        [
+            ("LINK", LinkCreate(from_key="a", to_key="b")),
+            ("LINK", LinkCreate(from_key="b", to_key="c")),
+        ]
+    )
+    assert created is not None and len(created) == 2
+    assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("a"), to_ref=_u("b"))) is True
+    assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("b"), to_ref=_u("c"))) is True
+
+
+@pytest.mark.asyncio
+async def test_batch_reads_and_deletes_validate_unknown_kinds(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    query = ctx.graph.query(spec)
+    cmd = ctx.graph.command(spec)
+    bad_vertex = VertexRef(kind="NOPE", key="x")
+    bad_edge = EdgeRef(kind="NOPE", from_ref=_u("a"), to_ref=_u("b"))
+
+    for make_op in (
+        lambda: query.get_vertices([bad_vertex]),
+        lambda: cmd.delete_vertices([bad_vertex]),
+    ):
+        with pytest.raises(CoreException) as caught:
+            await make_op()
+        assert caught.value.code == "graph_unknown_node_kind"
+
+    for make_op in (
+        lambda: query.get_edges([bad_edge]),
+        lambda: cmd.delete_edges([bad_edge]),
+    ):
+        with pytest.raises(CoreException) as caught2:
+            await make_op()
+        assert caught2.value.code == "graph_unknown_edge_kind"
+
+
+@pytest.mark.asyncio
+async def test_delete_vertices_detaches_incident_edges(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    cmd = ctx.graph.command(spec)
+    query = ctx.graph.query(spec)
+    for k in ("a", "b", "c"):
+        await cmd.create_vertex("User", UserCreate(id=k))
+    await cmd.create_edge("LINK", LinkCreate(from_key="a", to_key="b"))  # b as target
+    await cmd.create_edge("LINK", LinkCreate(from_key="b", to_key="c"))  # b as source
+    await cmd.create_edge("LINK", LinkCreate(from_key="a", to_key="c"))  # not incident to b
+
+    await cmd.delete_vertices([_u("b")])
+
+    assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("a"), to_ref=_u("b"))) is False
+    assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("b"), to_ref=_u("c"))) is False
+    assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("a"), to_ref=_u("c"))) is True

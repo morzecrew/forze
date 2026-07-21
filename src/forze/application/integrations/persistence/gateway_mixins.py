@@ -16,6 +16,7 @@ from forze.application.contracts.querying import (
     QueryFilterExpressionParser,
     QueryFilterLimits,
     build_cursor_binding,
+    coerce_query_ord_operands,
     cursor_protection_active,
     validate_query_field_types,
     validate_runtime_filter_fields,
@@ -561,6 +562,10 @@ class FilterParserMixin(Generic[M]):
             None,
         )
         validate_query_field_types(expr, self.model_type, field_type_hints=hints)
+        # After validation (which pinned ordering ops to orderable fields): a JSON string
+        # range bound casts to the field's scalar family once, here, so every backend
+        # renders the same typed operand instead of meeting the raw string at its own seam.
+        expr = coerce_query_ord_operands(expr, self.model_type, field_type_hints=hints)
 
         return self._rewrite_encrypted_filter(expr)
 
