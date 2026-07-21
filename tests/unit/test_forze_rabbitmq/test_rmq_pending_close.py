@@ -374,24 +374,29 @@ class TestCloseCountedRequeue:
     """With ``redelivery_counting`` on, close-time requeues go through the counted republish
     path (per queue) so a poison message left pending at shutdown keeps advancing its count."""
 
-    @pytest.mark.asyncio
-    async def test_counted_nack_settles_every_attempted_delivery(self) -> None:
-        # The counted branch isolates republish failures internally, leaving an
-        # unrepublished original unacked — which *is* the requeue that was asked for. So
-        # every attempted id counts as dispositioned and leaves the pending map.
+    @staticmethod
+    def _counting_client(
+        ids: list[str], outcomes: list[bool]
+    ) -> tuple[RabbitMQClient, list[_FakePendingMessage], Any]:
         from unittest.mock import AsyncMock
 
         client = RabbitMQClient()
         client._RabbitMQClient__config = RabbitMQConfig(  # type: ignore[attr-defined]
             redelivery_counting=True
         )
-        messages = [_FakePendingMessage("m1"), _FakePendingMessage("m2")]
+        messages = [_FakePendingMessage(mid) for mid in ids]
         pending = client._RabbitMQClient__pending  # type: ignore[attr-defined]
         for message in messages:
             pending[message.message_id] = ("q", message)
 
-        counted = AsyncMock()
+        counted = AsyncMock(return_value=outcomes)
         client._RabbitMQClient__requeue_counted = counted  # type: ignore[attr-defined]
+
+        return client, messages, counted
+
+    @pytest.mark.asyncio
+    async def test_counted_nack_settles_every_republished_delivery(self) -> None:
+        client, messages, counted = self._counting_client(["m1", "m2"], [True, True])
 
         assert await client.nack("q", ["m1", "m2"], requeue=True) == 2
 
@@ -399,6 +404,17 @@ class TestCloseCountedRequeue:
         # The plain broker nack is never taken on this path.
         assert all(m.nack_calls == [] for m in messages)
         assert client._RabbitMQClient__pending == {}  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_counted_nack_keeps_a_message_whose_republish_failed(self) -> None:
+        # No copy reached the broker for "m2", so it is still sitting unacked: reporting it
+        # requeued would be false, and dropping its entry would remove the only handle a
+        # retry has. Matches the plain-nack and ack paths.
+        client, _, _ = self._counting_client(["m1", "m2"], [True, False])
+
+        assert await client.nack("q", ["m1", "m2"], requeue=True) == 1
+
+        assert set(client._RabbitMQClient__pending) == {"m2"}  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     async def test_close_routes_pending_through_counted_requeue(self) -> None:

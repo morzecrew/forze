@@ -1181,11 +1181,16 @@ class RabbitMQClient(RabbitMQClientPort):
         # so a not-the-message's-fault requeue — the runtime draining mid-message — is never
         # driven toward ``max_deliveries`` parking. Only the counted branch bumps the header.
         if requeue and count and self.__config.redelivery_counting:
-            # Per-message isolation lives inside the counted path: a message whose copy did
-            # not reach the broker is left unacked, which *is* the requeue the caller asked
-            # for, so every attempted id counts as dispositioned.
-            await self.__requeue_counted(queue, [raw for _, raw in messages])
-            disposed_ids: list[str] = [message_id for message_id, _ in messages]
+            # Only the messages whose copy actually reached the broker are requeued. One
+            # whose republish failed is still sitting unacked with nothing published, so it
+            # is neither counted nor forgotten — keeping it pending is what leaves a retry
+            # possible, matching the plain-nack and ack paths.
+            outcomes = await self.__requeue_counted(queue, [raw for _, raw in messages])
+            disposed_ids: list[str] = [
+                message_id
+                for (message_id, _), republished in zip(messages, outcomes, strict=True)
+                if republished
+            ]
 
         else:
             # return_exceptions mirrors ack(): one failed nack must not strand the rest in
@@ -1221,7 +1226,9 @@ class RabbitMQClient(RabbitMQClientPort):
 
     # ....................... #
 
-    async def __requeue_counted(self, queue: str, raws: Sequence[AbstractIncomingMessage]) -> None:
+    async def __requeue_counted(
+        self, queue: str, raws: Sequence[AbstractIncomingMessage]
+    ) -> list[bool]:
         """Requeue by republishing each message with an incremented ``x-forze-delivery`` header,
         then ack the original — so the delivery count survives the requeue (making
         ``max_deliveries`` parking reachable). Publish-then-ack preserves at-least-once: a crash in
@@ -1232,6 +1239,12 @@ class RabbitMQClient(RabbitMQClientPort):
         whose copy actually reached the broker are acked. An original whose republish failed is
         left **unacked** so the broker redelivers it (acking it would drop the message — the copy
         never landed); a duplicate from a partially-published batch is collapsed by inbox dedup.
+
+        :returns: Per-message republish outcome, aligned to *raws*. Keyed on the *publish*, not
+            the follow-up ack: once the copy is on the broker the requeue has happened, and a
+            failed ack only yields a duplicate that inbox dedup collapses. A ``False`` entry is
+            a message still sitting unacked with no copy published, so the caller must keep it
+            pending rather than report it requeued.
         """
 
         delivery_mode = (
@@ -1256,6 +1269,8 @@ class RabbitMQClient(RabbitMQClientPort):
         # Ack only the originals whose republished copy is on the broker; leave a failed-republish
         # original unacked for broker redelivery (never ack it — that would lose the message).
         republished: list[AbstractIncomingMessage] = []
+        outcomes: list[bool] = []
+
         for raw, result in zip(raws, publish_results, strict=True):
             if isinstance(result, BaseException):
                 logger.warning(
@@ -1265,12 +1280,17 @@ class RabbitMQClient(RabbitMQClientPort):
                     queue,
                     result,
                 )
+                outcomes.append(False)
+
             else:
                 republished.append(raw)
+                outcomes.append(True)
 
         # Best-effort acks: a failed ack just redelivers the original (inbox dedup collapses it).
         if republished:
             await asyncio.gather(*(raw.ack() for raw in republished), return_exceptions=True)
+
+        return outcomes
 
     @staticmethod
     def __with_incremented_delivery(
