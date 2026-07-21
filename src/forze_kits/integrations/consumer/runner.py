@@ -90,10 +90,31 @@ async def _dispose(
     ``count=False`` requeues without the disposition counting as a delivery attempt
     (poison-parking), for a requeue that is not the message's fault — see the draining
     case in :meth:`QueueConsumer.run`.
+
+    ``count`` is only passed when it is actually ``False``, so a third-party port written
+    against the older ``nack(queue, ids, *, requeue)`` signature keeps working on every
+    ordinary disposition. If such a port rejects the keyword on the draining path, the
+    disposition is retried without it rather than dropped — the message still goes back,
+    it just counts as a delivery attempt on that backend.
     """
 
     try:
-        await port.nack(queue, [message_id], requeue=requeue, count=count)
+        if count:
+            await port.nack(queue, [message_id], requeue=requeue)
+
+        else:
+            try:
+                await port.nack(queue, [message_id], requeue=requeue, count=False)
+
+            except TypeError:
+                logger.warning(
+                    "Queue port %s does not accept nack(count=…); requeuing message %s on "
+                    "queue %s without suppressing the delivery count",
+                    type(port).__name__,
+                    message_id,
+                    queue,
+                )
+                await port.nack(queue, [message_id], requeue=requeue)
 
     except Exception:
         logger.exception(

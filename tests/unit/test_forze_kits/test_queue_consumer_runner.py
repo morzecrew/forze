@@ -206,6 +206,20 @@ class _ScriptedQueue:
         return len(ids)
 
 
+@attrs.define(slots=True, kw_only=True)
+class _LegacyScriptedQueue(_ScriptedQueue):
+    """A third-party port written against the pre-``count`` nack signature.
+
+    Passing ``count=`` to it is a ``TypeError`` — the disposition must still land.
+    """
+
+    async def nack(self, queue: str, ids: Any, *, requeue: bool = True) -> int:  # type: ignore[override]
+        del queue
+
+        self.nacked.extend((item_id, requeue) for item_id in ids)
+        return len(ids)
+
+
 # ....................... #
 
 
@@ -559,6 +573,33 @@ async def test_draining_refusal_requeues_without_counting_and_stops() -> None:
     assert stub.nacked == [("m-1", True)]  # requeued for redelivery
     assert stub.nack_counts == [("m-1", False)]  # but NOT counted toward the ceiling
     assert stub.acked == []
+
+
+async def test_legacy_port_without_count_still_receives_the_disposition() -> None:
+    # A port predating nack(count=…) must not silently lose dispositions: the ordinary
+    # path never passes the keyword, and the draining path falls back to a plain nack.
+    stub = _LegacyScriptedQueue(script=[_message("m-1", "evt-1", delivery_count=1)])
+    ctx = _plain_ctx(state=MockState(), queue_port=stub)
+
+    async def handler(msg: QueueMessage[_Payload]) -> None:
+        del msg
+        raise RuntimeError("transient")
+
+    assert await _run(ctx, handler) == ConsumerRunResult(failed=1)
+    assert stub.nacked == [("m-1", True)]  # requeued, not dropped on the floor
+
+
+async def test_legacy_port_without_count_still_requeues_while_draining() -> None:
+    stub = _LegacyScriptedQueue(script=[_message("m-1", "evt-1", delivery_count=1)])
+    ctx = _plain_ctx(state=MockState(), queue_port=stub)
+
+    async def handler(msg: QueueMessage[_Payload]) -> None:
+        del msg
+        raise exc.throttled("Runtime scope is draining", code="draining")
+
+    assert await _run(ctx, handler) == ConsumerRunResult()
+    # Fell back to a plain nack: the message still goes back for redelivery.
+    assert stub.nacked == [("m-1", True)]
 
 
 async def test_non_draining_core_exception_is_a_transient_failure() -> None:

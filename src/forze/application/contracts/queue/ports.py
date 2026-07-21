@@ -82,6 +82,11 @@ class QueueQueryPort[M](Protocol):
             their own delivery counter honor it (RabbitMQ under
             ``redelivery_counting``); backends whose count is the broker's own
             receive tally (SQS redrive) cannot suppress it and ignore the flag.
+
+            **Additive:** an implementation predating this parameter stays usable.
+            Callers inside the framework omit it entirely unless it is ``False``, and
+            fall back to a plain nack if a port rejects the keyword — so such a port
+            keeps working, it simply cannot suppress a delivery count.
         """
         ...  # pragma: no cover
 

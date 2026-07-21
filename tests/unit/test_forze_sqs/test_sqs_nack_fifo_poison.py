@@ -143,6 +143,36 @@ async def test_fifo_terminal_nack_retains_a_raw_copy_before_deleting(
 
 
 @pytest.mark.asyncio
+async def test_failed_retention_does_not_delete_the_original(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A throttled or unavailable poison queue must not become permanent data loss: with
+    # retention configured but not achieved, the original stays put. The group is blocked,
+    # which is recoverable — the message reappears and the next attempt retries the copy.
+    recorder = _Recorder()
+    monkeypatch.setattr("forze_sqs.kernel.client.client.logger", recorder)
+
+    client = SQSClient()
+    client._SQSClient__poison_queue_url = "https://sqs/poison"  # type: ignore[attr-defined]
+
+    mock_boto = AsyncMock()
+    mock_boto.send_message = AsyncMock(side_effect=RuntimeError("throttled"))
+    mock_boto.delete_message = AsyncMock(return_value={})
+
+    nacked = await _receive_then_nack(
+        client,
+        mock_boto,
+        queue="jobs.fifo",
+        queue_url="https://sqs/jobs.fifo",
+        requeue=False,
+    )
+
+    assert nacked == 1
+    mock_boto.delete_message.assert_not_awaited()  # on neither queue would be data loss
+    assert any("throttled" in e for e in recorder.errors)
+
+
+@pytest.mark.asyncio
 async def test_standard_queue_terminal_nack_still_leaves_it_for_redrive() -> None:
     # Unchanged on a standard queue: not deleting is what lets SQS's own redrive policy
     # count the receive and dead-letter it. Deleting here would bypass the native DLQ.

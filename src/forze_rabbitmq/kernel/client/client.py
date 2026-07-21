@@ -499,10 +499,14 @@ class RabbitMQClient(RabbitMQClientPort):
             if self.__config.prefetch_count > 0:
                 await channel.set_qos(prefetch_count=self.__config.prefetch_count)
 
-            self.__pending_channel = channel
-
+            # Purge *before* publishing the replacement. The purge suspends on the pending
+            # lock, and everything it clears must predate the new channel — a tag registered
+            # by a read on the replacement is live, and wiping it would make its ack a no-op
+            # and have the broker redeliver already-processed work.
             if reopening:
                 await self.__purge_pending_on_reopen()
+
+            self.__pending_channel = channel
 
             return channel
 
@@ -1117,7 +1121,12 @@ class RabbitMQClient(RabbitMQClientPort):
         # so a not-the-message's-fault requeue — the runtime draining mid-message — is never
         # driven toward ``max_deliveries`` parking. Only the counted branch bumps the header.
         if requeue and count and self.__config.redelivery_counting:
+            # Per-message isolation lives inside the counted path: a message whose copy did
+            # not reach the broker is left unacked, which *is* the requeue the caller asked
+            # for, so every attempted id counts as dispositioned.
             await self.__requeue_counted(queue, [raw for _, raw in messages])
+            nacked = len(messages)
+
         else:
             # return_exceptions mirrors ack(): one failed nack must not strand the rest in
             # the pending map. Attempted ids are dropped regardless — a failed nack still
@@ -1127,20 +1136,27 @@ class RabbitMQClient(RabbitMQClientPort):
                 return_exceptions=True,
             )
 
+            nacked = 0
+
             for (message_id, _), result in zip(messages, results, strict=True):
                 if isinstance(result, BaseException):
+                    # Never counted: with requeue=False the caller is parking poison, and
+                    # reporting a park that did not happen would hide the broker requeuing
+                    # the still-unacked message once the channel recovers.
                     logger.warning(
-                        "RabbitMQ nack: failed to nack message %s on queue %s: %s",
+                        "RabbitMQ nack: failed to nack message %s on queue %s (requeue=%s): %s",
                         message_id,
                         queue,
+                        requeue,
                         result,
                     )
 
-        nacked_ids = [message_id for message_id, _ in messages]
+                else:
+                    nacked += 1
 
-        await self.__drop_pending_many(nacked_ids)
+        await self.__drop_pending_many([message_id for message_id, _ in messages])
 
-        return len(nacked_ids)
+        return nacked
 
     # ....................... #
 

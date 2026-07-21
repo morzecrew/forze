@@ -162,6 +162,19 @@ class TestAckPartialFailure:
         assert good.ack_calls == 1 and bad.ack_calls == 1
         assert client._RabbitMQClient__pending == {}  # type: ignore[attr-defined]  # no leak
 
+    @pytest.mark.asyncio
+    async def test_failed_terminal_nack_is_not_counted_as_parked(self) -> None:
+        # requeue=False is a poison park. A failed nack leaves the message unacked, so the
+        # broker requeues it after recovery — reporting it parked would hide that.
+        good = _FakePendingMessage("good")
+        bad = _FakePendingMessage("bad", fail_nack=True)
+        client, _ = _client_with_pending([good, bad])
+
+        nacked = await client.nack("q", ["good", "bad"], requeue=False)
+
+        assert nacked == 1  # not 2: only the one that actually reached the broker
+        assert client._RabbitMQClient__pending == {}  # type: ignore[attr-defined]
+
 
 # ....................... #
 

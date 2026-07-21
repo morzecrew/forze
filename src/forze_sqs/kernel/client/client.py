@@ -1146,22 +1146,30 @@ class SQSClient(SQSClientPort):
         A FIFO message that is discarded but never deleted stays at the head of its message
         group and blocks every later message in that group until the visibility timeout,
         then redelivers at the head again — a permanent deadlock when no redrive policy
-        trims it. Deleting is the only thing that frees the group, so it happens on *every*
-        path here; the retained copy is what keeps the message from being destroyed
-        silently.
+        trims it. Deleting is the only thing that frees the group.
 
-        The delete is best-effort: a failure only leaves the group blocked until
-        redrive/visibility, no worse than before. A failed copy-send never blocks the delete
-        (unblocking the group is the primary duty) but upgrades the log to ERROR. Callers
-        put the (bounded, non-secret) *why* in *reason* — never the raw body, which can carry
-        production data into central error logs.
+        **The delete is conditional on the message being safe.** It happens when the copy
+        reached the retention queue, or when no retention queue is configured and
+        destruction was therefore accepted at wiring time. If retention *was* configured
+        and the copy could not be sent, the original is left in place: deleting would put
+        the message on neither queue, turning a transient outage of the retention queue
+        into permanent data loss. The group stays blocked in that case, which is
+        recoverable — the message reappears after its visibility timeout and the next
+        attempt retries the copy — where destruction is not.
+
+        The delete itself is best-effort: a failure only leaves the group blocked until
+        redrive/visibility, no worse than before. Callers put the (bounded, non-secret)
+        *why* in *reason* — never the raw body, which can carry production data into
+        central error logs.
 
         :param raw: Wire form to copy, or ``None`` when nothing was retained for this
-            delivery — the message is then destroyed and the log names the knob.
+            delivery.
         :param reason: Short phrase describing why the message is poison, for the logs.
         """
 
         if self.__poison_queue_url is None:
+            # No retention target: destruction was accepted at configuration time, and the
+            # log names the knob that would have prevented it.
             logger.warning(
                 "SQS FIFO message %s on queue %s %s; deleting to unblock its message group "
                 "— the message is destroyed (set SQSConfig(poison_queue_url=...) to retain "
@@ -1174,13 +1182,15 @@ class SQSClient(SQSClientPort):
         elif raw is None:
             logger.error(
                 "SQS FIFO message %s on queue %s %s, but no raw copy was retained for it, "
-                "so none can be sent to %s; deleting anyway to unblock the message group — "
-                "the message is destroyed",
+                "so none can be sent to %s; leaving it in place — its message group stays "
+                "blocked until the message is retried or the queue's redrive policy trims it",
                 message_id,
                 queue,
                 reason,
                 self.__poison_queue_url,
             )
+
+            return
 
         else:
             try:
@@ -1191,26 +1201,34 @@ class SQSClient(SQSClientPort):
                     body=raw.body,
                     attributes=raw.attributes,
                 )
-                logger.warning(
-                    "SQS FIFO message %s on queue %s %s; raw copy retained on %s; deleting "
-                    "the original to unblock its message group",
-                    message_id,
-                    queue,
-                    reason,
-                    self.__poison_queue_url,
-                )
 
             except Exception as send_err:
+                # Retention was configured and did not happen. Deleting now would put the
+                # message on neither queue, turning a throttled or unavailable poison queue
+                # into permanent data loss — so the group stays blocked instead. This is
+                # self-healing: the message becomes visible again, and the next attempt
+                # retries the copy once the retention queue recovers.
                 logger.error(
                     "SQS FIFO message %s on queue %s %s and its raw copy could not be sent "
-                    "to %s (%s); deleting anyway to unblock the message group — the message "
-                    "is destroyed",
+                    "to %s (%s); leaving it in place rather than destroying it — its message "
+                    "group stays blocked until the retention queue recovers",
                     message_id,
                     queue,
                     reason,
                     self.__poison_queue_url,
                     send_err,
                 )
+
+                return
+
+            logger.warning(
+                "SQS FIFO message %s on queue %s %s; raw copy retained on %s; deleting "
+                "the original to unblock its message group",
+                message_id,
+                queue,
+                reason,
+                self.__poison_queue_url,
+            )
 
         try:
             await self.__require_client().delete_message(QueueUrl=queue_url, ReceiptHandle=receipt)
