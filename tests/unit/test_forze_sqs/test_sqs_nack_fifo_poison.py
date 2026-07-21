@@ -173,6 +173,39 @@ async def test_failed_retention_does_not_delete_the_original(
 
 
 @pytest.mark.asyncio
+async def test_retention_configured_after_receive_does_not_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The delivery was read while no retention queue was configured, so no raw copy was
+    # kept for it; retention was turned on afterwards. There is nothing to send, and the
+    # operator has asked for retention — so the original is kept rather than destroyed.
+    recorder = _Recorder()
+    monkeypatch.setattr("forze_sqs.kernel.client.client.logger", recorder)
+
+    client = SQSClient()
+    mock_boto = AsyncMock()
+    mock_boto.receive_message = AsyncMock(return_value={"Messages": [_msg("m1")]})
+    mock_boto.send_message = AsyncMock(return_value={})
+    mock_boto.delete_message = AsyncMock(return_value={})
+
+    with patch.object(
+        client,
+        "_SQSClient__resolve_queue_url",
+        AsyncMock(return_value="https://sqs/jobs.fifo"),
+    ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
+        assert [m.id for m in await client.receive("jobs.fifo", limit=10)] == ["m1"]
+
+        # Retention switched on only now — the in-flight delivery has no retained body.
+        client._SQSClient__poison_queue_url = "https://sqs/poison"  # type: ignore[attr-defined]
+
+        assert await client.nack("jobs.fifo", ["m1"], requeue=False) == 1
+
+    mock_boto.send_message.assert_not_awaited()  # nothing to send
+    mock_boto.delete_message.assert_not_awaited()  # and so nothing destroyed
+    assert any("no raw copy was retained" in e for e in recorder.errors)
+
+
+@pytest.mark.asyncio
 async def test_standard_queue_terminal_nack_still_leaves_it_for_redrive() -> None:
     # Unchanged on a standard queue: not deleting is what lets SQS's own redrive policy
     # count the receive and dead-letter it. Deleting here would bypass the native DLQ.

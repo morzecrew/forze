@@ -236,6 +236,29 @@ async def test_poison_marker_preserves_headers_and_type_for_sealed_dlq_triage() 
     assert message.offset == 7 and message.id == "events:0:7"
 
 
+async def test_poison_marker_survives_undecodable_headers() -> None:
+    # The other direction: the *headers* are the malformed part, so the marker's own
+    # re-decode raises too. It must fall back to empty rather than escape the poison
+    # path — a marker that raises would take down read() for the whole batch.
+    tp = TopicPartition("events", 0)
+    records = [
+        record(
+            "events",
+            0,
+            3,
+            b'{"body": "fine"}',
+            headers=[("forze_event_id", b"\xff\xfe not utf-8")],
+        ),
+    ]
+    adapter = _adapter(FakeKafkaClient(consumer=FakeConsumer(batches={tp: records})))
+
+    [message] = await adapter.read("g", "m", ["events"])  # must not raise
+
+    assert isinstance(message.payload, UndecodableStreamPayload)
+    assert message.headers == {} and message.type is None
+    assert message.offset == 3  # position still preserved, so the runner can pause on it
+
+
 async def test_seek_to_committed_rewinds_each_group_consumer() -> None:
     # BUG 1 (abort path): seek_to_committed rewinds every pooled consumer the group
     # read through, so an aborted/paused batch is re-fetched from committed, not

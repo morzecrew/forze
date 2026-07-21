@@ -257,6 +257,31 @@ class TestReopenPurgesStalePending:
         assert ids is not None and len(ids) == 1
         assert set(client._RabbitMQClient__pending) == set(ids)  # type: ignore[attr-defined]
 
+    @pytest.mark.asyncio
+    async def test_batch_from_a_replaced_channel_is_discarded_not_returned(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # receive()'s side of the same race: a batch drained from a channel that was
+        # replaced hands back nothing, so the caller never gets work it cannot settle.
+        stub = _LoggerStub()
+        monkeypatch.setattr("forze_rabbitmq.kernel.client.client.logger", stub)
+
+        client = RabbitMQClient()
+        to_batch = client._RabbitMQClient__to_message_batch  # type: ignore[attr-defined]
+
+        stale = client._RabbitMQClient__pending_generation - 1  # type: ignore[attr-defined]
+        raws = [_FakePendingMessage(f"m{i}") for i in range(2)]
+
+        assert await to_batch("q", raws, stale) == []
+        assert client._RabbitMQClient__pending == {}  # type: ignore[attr-defined]
+        assert any("replaced mid-drain" in entry[0] for entry in stub.warnings)
+
+        # An empty drain is the ordinary "no messages arrived in the window" case, not a
+        # loss: it must not report discarding anything.
+        stub.warnings.clear()
+        assert await to_batch("q", [], stale) == []
+        assert stub.warnings == []
+
 
 # ....................... #
 
@@ -348,6 +373,32 @@ class TestPendingWatermark:
 class TestCloseCountedRequeue:
     """With ``redelivery_counting`` on, close-time requeues go through the counted republish
     path (per queue) so a poison message left pending at shutdown keeps advancing its count."""
+
+    @pytest.mark.asyncio
+    async def test_counted_nack_settles_every_attempted_delivery(self) -> None:
+        # The counted branch isolates republish failures internally, leaving an
+        # unrepublished original unacked — which *is* the requeue that was asked for. So
+        # every attempted id counts as dispositioned and leaves the pending map.
+        from unittest.mock import AsyncMock
+
+        client = RabbitMQClient()
+        client._RabbitMQClient__config = RabbitMQConfig(  # type: ignore[attr-defined]
+            redelivery_counting=True
+        )
+        messages = [_FakePendingMessage("m1"), _FakePendingMessage("m2")]
+        pending = client._RabbitMQClient__pending  # type: ignore[attr-defined]
+        for message in messages:
+            pending[message.message_id] = ("q", message)
+
+        counted = AsyncMock()
+        client._RabbitMQClient__requeue_counted = counted  # type: ignore[attr-defined]
+
+        assert await client.nack("q", ["m1", "m2"], requeue=True) == 2
+
+        counted.assert_awaited_once()
+        # The plain broker nack is never taken on this path.
+        assert all(m.nack_calls == [] for m in messages)
+        assert client._RabbitMQClient__pending == {}  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     async def test_close_routes_pending_through_counted_requeue(self) -> None:
