@@ -20,11 +20,15 @@ from forze_rabbitmq.kernel.client.value_objects import RabbitMQConfig
 class _FakePendingMessage:
     """Stand-in for an unacked aio_pika incoming message."""
 
-    def __init__(self, message_id: str, *, fail_nack: bool = False) -> None:
+    def __init__(
+        self, message_id: str, *, fail_nack: bool = False, fail_ack: bool = False
+    ) -> None:
         self.message_id = message_id
         self.delivery_tag = 1
         self.fail_nack = fail_nack
+        self.fail_ack = fail_ack
         self.nack_calls: list[dict[str, Any]] = []
+        self.ack_calls = 0
 
     async def nack(self, requeue: bool = True) -> None:
         self.nack_calls.append({"requeue": requeue})
@@ -32,15 +36,25 @@ class _FakePendingMessage:
         if self.fail_nack:
             raise RuntimeError("channel gone")
 
+    async def ack(self) -> None:
+        self.ack_calls += 1
+
+        if self.fail_ack:
+            raise RuntimeError("stale delivery tag")
+
 
 class _FakeChannel:
     is_closed = False
 
     def __init__(self) -> None:
         self.closed = False
+        self.qos: int | None = None
 
     async def close(self) -> None:
         self.closed = True
+
+    async def set_qos(self, prefetch_count: int) -> None:
+        self.qos = prefetch_count
 
 
 class _LoggerStub:
@@ -126,6 +140,80 @@ class TestCloseNacksPending:
         await client.close()
 
         assert channel.closed is True
+
+
+# ....................... #
+
+
+class TestAckPartialFailure:
+    """One failed ack must not strand the rest of the batch in the pending map."""
+
+    @pytest.mark.asyncio
+    async def test_partial_ack_failure_drops_every_attempted_entry(self) -> None:
+        good = _FakePendingMessage("good")
+        bad = _FakePendingMessage("bad", fail_ack=True)  # stale tag after a blip
+        client, _ = _client_with_pending([good, bad])
+
+        # Bare gather would have raised on ``bad`` and left BOTH entries pending; with
+        # return_exceptions the good one is acked and every attempted id is dropped.
+        acked = await client.ack("q", ["good", "bad"])
+
+        assert acked == 1  # only the good one actually acknowledged
+        assert good.ack_calls == 1 and bad.ack_calls == 1
+        assert client._RabbitMQClient__pending == {}  # type: ignore[attr-defined]  # no leak
+
+
+# ....................... #
+
+
+class _ReopenConnection:
+    """A fake robust connection that hands out fresh channels on demand."""
+
+    is_closed = False
+
+    def __init__(self) -> None:
+        self.new_channels: list[_FakeChannel] = []
+
+    async def channel(self, publisher_confirms: bool = True) -> _FakeChannel:
+        del publisher_confirms
+        channel = _FakeChannel()
+        self.new_channels.append(channel)
+        return channel
+
+
+class TestReopenPurgesStalePending:
+    """A robust-channel reopen after a blip must purge the now-invalid delivery tags."""
+
+    @pytest.mark.asyncio
+    async def test_reopen_purges_stale_pending_tags(self) -> None:
+        client = RabbitMQClient()
+        connection = _ReopenConnection()
+        client._RabbitMQClient__connection = connection  # type: ignore[attr-defined]
+
+        # A closed pending channel with entries still mapped to its dead tags.
+        closed = _FakeChannel()
+        closed.is_closed = True  # type: ignore[attr-defined]
+        client._RabbitMQClient__pending_channel = closed  # type: ignore[attr-defined]
+        pending = client._RabbitMQClient__pending  # type: ignore[attr-defined]
+        for i in range(3):
+            pending[f"m{i}"] = ("q", _FakePendingMessage(f"m{i}"))
+
+        channel = await client._RabbitMQClient__require_pending_channel()  # type: ignore[attr-defined]
+
+        assert channel is connection.new_channels[-1]  # a fresh channel was installed
+        assert client._RabbitMQClient__pending == {}  # type: ignore[attr-defined]  # stale tags purged
+
+    @pytest.mark.asyncio
+    async def test_first_open_does_not_purge(self) -> None:
+        # A genuine first-time open (no prior channel) must not touch a map that a
+        # concurrent read may have started populating; nothing to purge anyway.
+        client = RabbitMQClient()
+        client._RabbitMQClient__connection = _ReopenConnection()  # type: ignore[attr-defined]
+
+        await client._RabbitMQClient__require_pending_channel()  # type: ignore[attr-defined]
+
+        # No exception, channel installed; pending untouched (empty here).
+        assert client._RabbitMQClient__pending_channel is not None  # type: ignore[attr-defined]
 
 
 # ....................... #

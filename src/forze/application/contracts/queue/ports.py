@@ -63,6 +63,7 @@ class QueueQueryPort[M](Protocol):
         ids: Sequence[str],
         *,
         requeue: bool = True,
+        count: bool = True,
     ) -> Awaitable[int]:
         """Negatively acknowledge messages, returning the count processed.
 
@@ -74,6 +75,13 @@ class QueueQueryPort[M](Protocol):
             invisible until its visibility timeout lapses, so the queue's
             redrive policy counts the receive and eventually dead-letters it.
             Neither value is an immediate permanent delete.
+        :param count: Whether this negative-ack counts as a delivery **attempt**
+            for poison-parking. Default ``True``. Pass ``False`` for a requeue
+            that is not the message's fault — e.g. the runtime is draining — so it
+            is not driven toward ``max_deliveries``. Only backends that maintain
+            their own delivery counter honor it (RabbitMQ under
+            ``redelivery_counting``); backends whose count is the broker's own
+            receive tally (SQS redrive) cannot suppress it and ignore the flag.
         """
         ...  # pragma: no cover
 

@@ -155,6 +155,7 @@ class _ScriptedQueue:
     script: list[QueueMessage[Any]]
     acked: list[str] = attrs.field(factory=list)
     nacked: list[tuple[str, bool]] = attrs.field(factory=list)
+    nack_counts: list[tuple[str, bool]] = attrs.field(factory=list)
     fail_acks_for: set[str] = attrs.field(factory=set)
     fail_nacks_for: set[str] = attrs.field(factory=set)
 
@@ -190,7 +191,9 @@ class _ScriptedQueue:
         self.acked.extend(ids)
         return len(ids)
 
-    async def nack(self, queue: str, ids: Any, *, requeue: bool = True) -> int:
+    async def nack(
+        self, queue: str, ids: Any, *, requeue: bool = True, count: bool = True
+    ) -> int:
         del queue
 
         for item_id in ids:
@@ -199,6 +202,7 @@ class _ScriptedQueue:
                 raise RuntimeError("nack exploded")
 
         self.nacked.extend((item_id, requeue) for item_id in ids)
+        self.nack_counts.extend((item_id, count) for item_id in ids)
         return len(ids)
 
 
@@ -524,6 +528,54 @@ async def test_tampered_decrypt_failure_still_parked_as_poison() -> None:
     assert result == ConsumerRunResult(parked=1)
     assert stub.nacked == [("m-1", False)]  # parked as poison
     assert stub.acked == []
+
+
+# ----------------------- #
+# Draining: a shutdown artifact is requeued without counting, and stops the loop
+
+
+async def test_draining_refusal_requeues_without_counting_and_stops() -> None:
+    # The drain gate closing mid-message (THROTTLED/code="draining") is not a handler
+    # defect: the message must requeue with count=False (so a rolling deploy never drives
+    # it to max_deliveries and parks it as poison), and the loop must stop — the gate is
+    # one-way, so a following message would only be refused again.
+    stub = _ScriptedQueue(
+        script=[
+            _message("m-1", "evt-1", delivery_count=1),
+            _message("m-2", "evt-2", delivery_count=1),
+        ]
+    )
+    ctx = _plain_ctx(state=MockState(), queue_port=stub)
+    seen: list[str] = []
+
+    async def handler(msg: QueueMessage[_Payload]) -> None:
+        seen.append(msg.id)
+        raise exc.throttled("Runtime scope is draining", code="draining")
+
+    result = await _run(ctx, handler)
+
+    assert seen == ["m-1"]  # loop stopped; m-2 never pulled
+    assert result == ConsumerRunResult()  # not processed, not failed, not parked
+    assert stub.nacked == [("m-1", True)]  # requeued for redelivery
+    assert stub.nack_counts == [("m-1", False)]  # but NOT counted toward the ceiling
+    assert stub.acked == []
+
+
+async def test_non_draining_core_exception_is_a_transient_failure() -> None:
+    # A CoreException that is *not* draining stays on the ordinary transient path:
+    # counted requeue, loop continues.
+    stub = _ScriptedQueue(script=[_message("m-1", "evt-1", delivery_count=1)])
+    ctx = _plain_ctx(state=MockState(), queue_port=stub)
+
+    async def handler(msg: QueueMessage[_Payload]) -> None:
+        del msg
+        raise exc.infrastructure("downstream down", code="dep_unavailable")
+
+    result = await _run(ctx, handler)
+
+    assert result == ConsumerRunResult(failed=1)
+    assert stub.nacked == [("m-1", True)]
+    assert stub.nack_counts == [("m-1", True)]  # counted, unlike draining
 
 
 # ----------------------- #

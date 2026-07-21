@@ -261,7 +261,12 @@ class SQSQueueAdapter[M: BaseModel](
         ids: Sequence[str],
         *,
         requeue: bool = True,
+        count: bool = True,
     ) -> int:
+        # ``count`` is ignored: SQS delivery counting is the queue's own receive tally under
+        # its redrive policy, which the client cannot suppress. A draining requeue still resets
+        # visibility for immediate redelivery; the receive it incurs is inherent to SQS.
+        _ = count
         physical_queue = await self.__queue_name(queue)
 
         async with self.client.client():

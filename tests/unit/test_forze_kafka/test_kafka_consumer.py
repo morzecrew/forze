@@ -211,6 +211,31 @@ async def test_poison_record_does_not_crash_read_or_skip_good_records() -> None:
     assert consumer.committed[tp].offset == 1
 
 
+async def test_poison_marker_preserves_headers_and_type_for_sealed_dlq_triage() -> None:
+    # The dominant poison case is a VALUE codec rejection: the native headers stayed
+    # perfectly decodable. Dropping them would strand a forwarded sealed envelope in the
+    # DLQ — its AAD binds to ids (forze_event_id, tenant) it can no longer recover. The
+    # marker must carry the decoded headers and forze_type through.
+    tp = TopicPartition("events", 0)
+    records = [
+        record(
+            "events",
+            0,
+            7,
+            b"\xff not valid json \x00",  # value fails to decode
+            headers=[("forze_type", b"evt"), ("forze_event_id", b"e-42")],
+        ),
+    ]
+    adapter = _adapter(FakeKafkaClient(consumer=FakeConsumer(batches={tp: records})))
+
+    [message] = await adapter.read("g", "m", ["events"])
+
+    assert isinstance(message.payload, UndecodableStreamPayload)
+    assert message.headers == {"forze_event_id": "e-42"}  # forze_type lifted out
+    assert message.type == "evt"
+    assert message.offset == 7 and message.id == "events:0:7"
+
+
 async def test_seek_to_committed_rewinds_each_group_consumer() -> None:
     # BUG 1 (abort path): seek_to_committed rewinds every pooled consumer the group
     # read through, so an aborted/paused batch is re-fetched from committed, not

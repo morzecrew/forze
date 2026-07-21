@@ -320,7 +320,12 @@ class MockQueueAdapter(MockTenancyMixin, QueueQueryPort[M], QueueCommandPort[M])
         ids: Sequence[str],
         *,
         requeue: bool = True,
+        count: bool = True,
     ) -> int:
+        # ``count`` is accepted for port parity; the mock requeue already preserves
+        # ``delivery_count`` verbatim (it never advances it on requeue), so nothing to gate.
+        _ = count
+
         with self.state.lock:
             pending = self._pending_store().setdefault(queue, {})
             queued = self._queue_store().setdefault(queue, [])

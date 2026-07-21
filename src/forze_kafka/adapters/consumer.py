@@ -127,16 +127,31 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
         off the native record, not the codec), so the runner can pause-and-alert and
         leave the offset uncommitted for redelivery — never skip it. The payload is a
         :class:`UndecodableStreamPayload`, not the model ``M``.
+
+        Headers and type are re-decoded best-effort and carried on the marker: the
+        dominant failure is a *value* codec rejection, where the native headers stayed
+        perfectly decodable, and a forwarded sealed envelope needs the ids its AAD binds
+        to (``forze_event_id``, tenant, correlation) to be re-openable in the DLQ. Header
+        decoding is defensive — a marker must never raise out of the poison path — so if
+        the headers are themselves the malformed part they simply fall back to empty.
         """
 
         raw = record.value if isinstance(record.value, bytes) else b""
+
+        try:
+            headers, message_type = self.codec.decode_headers(record.headers)
+
+        except Exception:
+            headers, message_type = {}, None
 
         return StreamMessage(
             stream=record.topic,
             id=f"{record.topic}:{record.partition}:{record.offset}",
             payload=cast(M, UndecodableStreamPayload(raw=raw, error=str(error))),
+            type=message_type,
             partition=record.partition,
             offset=record.offset,
+            headers=headers,
         )
 
     # ....................... #

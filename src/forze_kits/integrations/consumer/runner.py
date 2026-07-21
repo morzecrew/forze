@@ -35,6 +35,11 @@ from ..inbox import process_with_inbox
 _CIPHER_MISSING_CODE = PAYLOAD_CIPHER_MISSING_CODE
 """Decrypt config error (no keyring): a deployment fault, not a poison message."""
 
+_DRAINING_CODE = "draining"
+"""Drain-gate refusal code (``THROTTLED``/``code="draining"``): the runtime is quiescing,
+not a handler defect — the message must requeue **without** counting toward the poison
+ceiling. Kept in sync with ``DrainGate.admit`` in the execution plane."""
+
 
 # ....................... #
 
@@ -75,15 +80,20 @@ async def _dispose(
     message_id: str,
     *,
     requeue: bool,
+    count: bool = True,
 ) -> None:
     """Best-effort ``nack``: a failed disposition is logged, never fatal.
 
     The message stays unacked on the broker, so its visibility timeout (or
     channel close) redelivers it — the loop must keep consuming.
+
+    ``count=False`` requeues without the disposition counting as a delivery attempt
+    (poison-parking), for a requeue that is not the message's fault — see the draining
+    case in :meth:`QueueConsumer.run`.
     """
 
     try:
-        await port.nack(queue, [message_id], requeue=requeue)
+        await port.nack(queue, [message_id], requeue=requeue, count=count)
 
     except Exception:
         logger.exception(
@@ -236,7 +246,10 @@ class QueueConsumer[M]:
        both ``ack`` — a redelivered already-processed message must leave the queue.
     5. **Transient failure** — a raising handler is nacked back (``requeue=True``) for
        redelivery; the loop continues. With ``retry_policy`` set, the process step first
-       runs under that named policy (in-process retries before the broker redelivery).
+       runs under that named policy (in-process retries before the broker redelivery). A
+       **draining** refusal (``THROTTLED``/``code="draining"``: the runtime began quiescing
+       mid-message, before the loop's stop signal) is not a defect — it requeues with
+       ``count=False`` so it is never driven toward ``max_deliveries``, and stops the loop.
     6. **Ack/nack failures** are logged and skipped (never fatal): broker redelivery plus
        inbox dedup make a lost acknowledgement safe.
     """
@@ -444,7 +457,24 @@ class QueueConsumer[M]:
                 except asyncio.CancelledError:
                     raise
 
-                except Exception:
+                except Exception as e:
+                    # -- Draining: shutdown artifact, not a handler defect. ----- #
+                    # The drain gate closed under us (the runtime is quiescing) and refused
+                    # admission before the loop's stop signal arrived. This is not a delivery
+                    # attempt, so requeue with count=False — a counted requeue would push the
+                    # message toward max_deliveries on every replica of a rolling deploy and
+                    # park it as poison with no defect. Then stop: the gate is one-way, so
+                    # continuing would just re-refuse every remaining message.
+                    if isinstance(e, CoreException) and e.code == _DRAINING_CODE:
+                        logger.info(
+                            "Queue consumer draining: message %s on queue %s refused by the "
+                            "drain gate; nack(requeue=True, count=False) and stopping the loop",
+                            message.id,
+                            queue,
+                        )
+                        await _dispose(port, queue, message.id, requeue=True, count=False)
+                        break
+
                     # -- Transient failure: requeue and keep consuming. -------- #
                     logger.exception(
                         "Queue consumer handler failed for message %s on queue %s "

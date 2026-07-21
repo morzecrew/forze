@@ -149,6 +149,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Kafka**
 
 - **A failed rewind could silently skip records** — `seek_to_committed` treated every failure as a benign rebalance; a coordinator error with partitions still held left the position past unprocessed records, then committed past them. The cases are now told apart and an unrestorable consumer is discarded (new `KafkaClientPort.discard_consumer`).
+- **A poison marker no longer drops the record's headers** — the marker now carries the decoded headers and message type, so a forwarded sealed envelope keeps the ids (`forze_event_id`, tenant) its AAD binds to and stays decryptable for DLQ triage.
+
+**Broker delivery integrity (RabbitMQ, draining)**
+
+- **RabbitMQ pending-map no longer leaks on partial ack or channel reopen** — `ack`/`nack` gather with `return_exceptions` so one failed disposition can't strand the batch, and a robust-channel reopen purges the now-stale delivery tags.
+- **Draining no longer parks in-flight messages as poison** — a queue message refused by the drain gate mid-quiesce (`code="draining"`) requeues without counting toward `max_deliveries` and stops the loop; new `QueueQueryPort.nack(count=…)` (RabbitMQ honors it under `redelivery_counting`, SQS ignores it).
 
 **Graph**
 
