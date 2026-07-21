@@ -155,6 +155,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **RabbitMQ pending-map no longer leaks on partial ack or channel reopen** — `ack`/`nack` gather with `return_exceptions` so one failed disposition can't strand the batch, and a robust-channel reopen purges the now-stale delivery tags.
 - **Draining no longer parks in-flight messages as poison** — a queue message refused by the drain gate mid-quiesce (`code="draining"`) requeues without counting toward `max_deliveries` and stops the loop; new `QueueQueryPort.nack(count=…)` (RabbitMQ honors it under `redelivery_counting`, SQS ignores it).
+- **A terminal nack no longer wedges an SQS FIFO message group** (**behavior change**) — `nack(requeue=False)` on a `.fifo` queue retains a raw copy on `poison_queue_url` (when set) and deletes; standard queues are unchanged (still left for redrive).
 
 **Graph**
 
