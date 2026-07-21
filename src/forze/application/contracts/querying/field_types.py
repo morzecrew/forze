@@ -28,11 +28,13 @@ from types import UnionType
 from typing import Any, Final, Union, get_args, get_origin
 from uuid import UUID
 
+import attrs
 from pydantic import BaseModel
 
 from forze.base.exceptions import exc
 
 from .capabilities import ALL_VALUE_OPS
+from .internal.cast import QueryValueCaster
 from .internal.nodes import (
     ELEM_SCALAR_FIELD,
     QueryAnd,
@@ -87,9 +89,9 @@ _QUANTIFIERS: Final[frozenset[str]] = frozenset({"$any", "$all", "$none"})
 # here (checked separately) so every class implicitly permits them.
 
 _ALLOWED: Final[dict[str, frozenset[str]]] = {
-    # No ``$ord`` on strings: the parser only accepts numeric/temporal ordering
-    # operands (``Numeric``), so ``name $gt 5`` would compile to ``text > number``
-    # and fail in the backend — reject it here instead.
+    # No ``$ord`` on strings: this gate is THE guard — the parser admits ``str``
+    # ordering operands (the JSON carrier for exact Decimal / datetime bounds), so
+    # without this rejection ``name $gt "5"`` would compile to a text comparison.
     _STRING: _TEXT_OPS | _MEMB_OPS,
     _NUMBER: _ORD_OPS | _MEMB_OPS,
     _TEMPORAL: _ORD_OPS | _MEMB_OPS,
@@ -429,6 +431,157 @@ def validate_query_field_types(
                 pass
 
     _walk(expr)
+
+
+# ....................... #
+
+
+def coerce_query_ord_operands(
+    expr: QueryExpr,
+    model_type: type[BaseModel] | None,
+    *,
+    field_type_hints: Mapping[str, type[Any]] | None = None,
+) -> QueryExpr:
+    """Cast JSON string ordering operands to the targeted field's scalar family.
+
+    ``str`` is the JSON carrier for range bounds a JSON number cannot express exactly —
+    an exact ``Decimal`` on a money column, an ISO datetime. Casting once here, keyed by
+    the read model's annotation and through the same :class:`QueryValueCaster` every
+    backend renders with, keeps the backends in lockstep: met raw at each backend's own
+    seam, the string would compare as a string wherever a renderer has no field-type
+    knowledge (the in-memory matcher, a Meilisearch literal) while Postgres casts and
+    matches — the cross-backend divergence the parity harness exists to prevent.
+
+    Non-ordering operators, non-string operands, and unresolvable fields pass through
+    untouched (the backend caster stays the authority there); an unparseable string
+    raises the caster's ``precondition``, the same refusal a backend cast produces.
+    Returns a rebuilt tree — nodes are immutable — sharing every untouched branch.
+    """
+
+    if model_type is None:
+        return expr
+
+    hints = field_type_hints or {}
+
+    def _coerced_value(op: str, ann: Any, value: Any) -> Any:
+        if op not in _ORD_OPS or not isinstance(value, str):
+            return value
+
+        cls = _classify(ann)
+
+        if cls == _NUMBER:
+            # Decimal, not float: exactness is the whole reason the string form exists,
+            # and every backend already renders a Decimal operand correctly.
+            return QueryValueCaster.as_decimal(value)
+
+        if cls == _TEMPORAL:
+            base = _strip_optional(ann)
+
+            if isinstance(base, type) and issubclass(base, datetime):
+                return QueryValueCaster.as_datetime(value, force_tz=True)
+
+            if isinstance(base, type) and issubclass(base, date):
+                return QueryValueCaster.as_date(value)
+
+            return QueryValueCaster.as_datetime(value, force_tz=True)
+
+        if cls == _SCALAR_OTHER and _strip_optional(ann) is UUID:
+            return QueryValueCaster.as_uuid(value)
+
+        return value
+
+    def _field(node: QueryField, ann: Any) -> QueryField:
+        coerced = _coerced_value(node.op, ann, node.value)
+
+        return node if coerced is node.value else attrs.evolve(node, value=coerced)
+
+    def _walk_elem_inner(
+        inner: QueryExpr,
+        *,
+        elem_ann: Any,
+        elem_model: type[BaseModel] | None,
+    ) -> QueryExpr:
+        match inner:
+            case QueryAnd(items):
+                return QueryAnd(
+                    tuple(
+                        _walk_elem_inner(item, elem_ann=elem_ann, elem_model=elem_model)
+                        for item in items
+                    )
+                )
+
+            case QueryOr(items):
+                return QueryOr(
+                    tuple(
+                        _walk_elem_inner(item, elem_ann=elem_ann, elem_model=elem_model)
+                        for item in items
+                    )
+                )
+
+            case QueryNot(item):
+                return QueryNot(_walk_elem_inner(item, elem_ann=elem_ann, elem_model=elem_model))
+
+            case QueryField(name, _op, _):
+                if name == ELEM_SCALAR_FIELD:
+                    return _field(inner, elem_ann)
+
+                if elem_model is not None:
+                    return _field(inner, _resolve_annotation(elem_model, name.split("."), hints))
+
+                return inner
+
+            case QueryElem() as nested:
+                if nested.path == ELEM_SCALAR_FIELD:
+                    deeper = _element_annotation(elem_ann)
+                    deeper = deeper if deeper is not None else Any
+
+                    return attrs.evolve(
+                        nested,
+                        inner=_walk_elem_inner(
+                            nested.inner, elem_ann=deeper, elem_model=_as_model(deeper)
+                        ),
+                    )
+
+                return _quantifier(nested, base_model=elem_model)
+
+            case _:
+                return inner
+
+    def _quantifier(node: QueryElem, *, base_model: type[BaseModel] | None) -> QueryElem:
+        if base_model is None:
+            elem_ann: Any = Any
+
+        else:
+            field_ann = _resolve_annotation(base_model, node.path.split("."), hints)
+            elem_ann = _element_annotation(field_ann)
+            elem_ann = elem_ann if elem_ann is not None else Any
+
+        return attrs.evolve(
+            node,
+            inner=_walk_elem_inner(node.inner, elem_ann=elem_ann, elem_model=_as_model(elem_ann)),
+        )
+
+    def _walk(node: QueryExpr) -> QueryExpr:
+        match node:
+            case QueryAnd(items):
+                return QueryAnd(tuple(_walk(item) for item in items))
+
+            case QueryOr(items):
+                return QueryOr(tuple(_walk(item) for item in items))
+
+            case QueryNot(item):
+                return QueryNot(_walk(item))
+
+            case QueryField(name, _op, _):
+                return _field(node, _resolve_annotation(model_type, name.split("."), hints))
+
+            case QueryElem() as elem:
+                return _quantifier(elem, base_model=model_type)
+
+            case _:
+                return node
+
+    return _walk(expr)
 
 
 # ....................... #

@@ -123,3 +123,64 @@ async def test_s3_storage_list_does_not_create_a_missing_bucket(
     # The read raised *and* left the world alone — the bucket is still gone.
     async with s3_client.client():
         assert not await s3_client.bucket_exists(missing)
+
+
+@pytest.mark.asyncio
+async def test_s3_storage_list_missing_ok_returns_empty(
+    s3_client: S3Client,
+) -> None:
+    """``missing_ok=True`` reads an absent bucket as an empty listing, not a 500.
+
+    Removing create-on-read from ``list`` (above) was correct for the sweep but regressed
+    the object-list route and a portability export of a blob-less app: a fresh deployment
+    has no bucket until its first write, so those callers now opt into 'empty' explicitly
+    while the sweep keeps the raise.
+    """
+
+    missing = f"forze-absent-{uuid4().hex[:12]}"
+    ctx = context_from_deps(
+        S3DepsModule(
+            client=s3_client,
+            storages={missing: S3StorageConfig(bucket=missing)},
+        )()
+    )
+    storage_q = ctx.storage.query(StorageSpec(name=missing))
+
+    listed, total = await storage_q.list(limit=10, offset=0, missing_ok=True)
+
+    assert listed == []
+    assert total == 0
+
+    # Still a read: the empty answer did not conjure the bucket into existence.
+    async with s3_client.client():
+        assert not await s3_client.bucket_exists(missing)
+
+
+@pytest.mark.asyncio
+async def test_s3_storage_list_heads_a_large_page_without_unbounded_fanout(
+    s3_client: S3Client, s3_bucket: str
+) -> None:
+    """A large listing HEADs every object (for metadata) with *bounded* concurrency — a
+    ``size=10000`` list must not schedule 10k concurrent HEADs and saturate the pool."""
+
+    ctx = context_from_deps(
+        S3DepsModule(
+            client=s3_client,
+            storages={s3_bucket: S3StorageConfig(bucket=s3_bucket)},
+        )()
+    )
+    spec = StorageSpec(name=s3_bucket)
+    storage_c = ctx.storage.command(spec)
+    storage_q = ctx.storage.query(spec)
+
+    for i in range(25):
+        await storage_c.upload(
+            UploadedObject(filename=f"f{i}.txt", data=b"x", prefix="bulk"),
+        )
+
+    listed, total = await storage_q.list(limit=10_000, offset=0, prefix="bulk")
+
+    # Every object is HEADed and returned with full metadata, in order, correctly.
+    assert total == 25
+    assert len(listed) == 25
+    assert all(o.size == 1 for o in listed)

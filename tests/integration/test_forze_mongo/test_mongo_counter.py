@@ -25,7 +25,7 @@ async def mongo_counter(
     mongo_client: MongoClient,
     counter_config: MongoCounterConfig,
 ) -> MongoCounterAdapter:
-    return MongoCounterAdapter(client=mongo_client, config=counter_config)
+    return MongoCounterAdapter(client=mongo_client, config=counter_config, route="orders")
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -33,7 +33,7 @@ async def mongo_counter_admin(
     mongo_client: MongoClient,
     counter_config: MongoCounterConfig,
 ) -> MongoCounterAdminAdapter:
-    return MongoCounterAdminAdapter(client=mongo_client, config=counter_config)
+    return MongoCounterAdminAdapter(client=mongo_client, config=counter_config, route="orders")
 
 
 # ....................... #
@@ -131,6 +131,7 @@ async def test_counter_allocation_survives_caller_rollback(
     counter = MongoCounterAdapter(
         client=mongo_client_replica,
         config=MongoCounterConfig(collection=(db_name, f"counters_{uuid4().hex[:8]}")),
+        route="orders",
     )
 
     with pytest.raises(RuntimeError, match="rollback"):
@@ -170,3 +171,61 @@ async def test_counter_export_import_continuity(
     [entry] = await mongo_counter_admin.list_counters()
     assert await mongo_counter.reset(entry.value) == 9
     assert await mongo_counter.incr() == 10
+
+
+# ....................... #
+# Tenancy + route isolation (the differential leg — the mock cannot show these)
+
+
+from forze.application.contracts.tenancy import TenantIdentity  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_tagged_tenants_do_not_share_a_sequence(
+    mongo_client: MongoClient, counter_config: MongoCounterConfig
+) -> None:
+    """Two tenants on one shared collection keep independent sequences."""
+
+    a, b = uuid4(), uuid4()
+
+    def _counter(tenant: object) -> MongoCounterAdapter:
+        cfg = MongoCounterConfig(collection=counter_config.collection, tenant_aware=True)
+        return MongoCounterAdapter(
+            client=mongo_client,
+            config=cfg,
+            route="orders",
+            tenant_aware=True,
+            tenant_provider=lambda: TenantIdentity(tenant_id=tenant),
+        )
+
+    assert await _counter(a).incr() == 1
+    assert await _counter(a).incr() == 2
+    assert await _counter(b).incr() == 1  # b starts fresh
+
+    admin_a = MongoCounterAdminAdapter(
+        client=mongo_client,
+        config=MongoCounterConfig(collection=counter_config.collection, tenant_aware=True),
+        route="orders",
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=a),
+    )
+    assert {e.suffix: e.value for e in await admin_a.list_counters()} == {None: 2}
+
+
+@pytest.mark.asyncio
+async def test_two_specs_sharing_a_collection_do_not_merge(
+    mongo_client: MongoClient, counter_config: MongoCounterConfig
+) -> None:
+    """Two counter specs (routes) on one shared collection keep independent sequences."""
+
+    orders = MongoCounterAdapter(client=mongo_client, config=counter_config, route="orders")
+    invoices = MongoCounterAdapter(client=mongo_client, config=counter_config, route="invoices")
+
+    assert await orders.incr() == 1
+    assert await orders.incr() == 2
+    assert await invoices.incr() == 1  # distinct sequence, not 3
+
+    orders_admin = MongoCounterAdminAdapter(
+        client=mongo_client, config=counter_config, route="orders"
+    )
+    assert {e.suffix: e.value for e in await orders_admin.list_counters()} == {None: 2}

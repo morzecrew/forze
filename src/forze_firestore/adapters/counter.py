@@ -8,7 +8,7 @@ from uuid import UUID
 
 import attrs
 from google.cloud.firestore_v1.async_collection import AsyncCollectionReference
-from google.cloud.firestore_v1.base_query import FieldFilter
+from google.cloud.firestore_v1.base_query import And, FieldFilter
 
 from forze.application.contracts.counter import (
     CounterAdminPort,
@@ -46,11 +46,17 @@ class _FirestoreCounterBase(TenancyMixin):
 
     client: FirestoreClientPort
     config: FirestoreCounterConfig
+    route: str
+    """The counter spec's route — a discriminator in the document id and a stored field,
+    so two specs wired to one collection do not silently share rows."""
 
     # ....................... #
 
     async def _collection(self) -> AsyncCollectionReference:
-        tenant_id = self.require_tenant_if_aware()
+        # Namespace-tier resolution: ``_tenant_id_for_resolve`` returns the bound tenant
+        # for a per-tenant collection even without tagged-tier ``tenant_aware`` — using
+        # ``require_tenant_if_aware`` here collapsed every tenant onto one collection.
+        tenant_id = self._tenant_id_for_resolve()
         db_name, coll_name = await resolve_firestore_collection(
             self.config.collection,
             tenant_id,
@@ -61,25 +67,25 @@ class _FirestoreCounterBase(TenancyMixin):
 
     def _doc_id(self, suffix: str | None, tenant_id: UUID | None) -> str:
         # The document id is the atomicity anchor: concurrent transactions on the same
-        # counter contend on one document. The suffix prefix keeps any suffix (including
-        # one literally named like the unsuffixed sentinel) collision-free, and the
+        # counter contend on one document. The length-prefixed route tag keeps two specs
+        # sharing a collection apart; the suffix prefix keeps any suffix (including one
+        # literally named like the unsuffixed sentinel) collision-free, and the
         # fixed-length tenant UUID keeps tagged-tier tenants apart in a shared collection.
         key = f"{_SUFFIX_DOC_PREFIX}{suffix}" if suffix is not None else _UNSUFFIXED_DOC_ID
+        body = f"tenant:{tenant_id}:{key}" if tenant_id is not None else key
 
-        if tenant_id is not None:
-            return f"tenant:{tenant_id}:{key}"
-
-        return key
+        return f"{len(self.route)}:{self.route}|{body}"
 
     # ....................... #
 
     def _doc_body(self, value: int, suffix: str | None, tenant_id: UUID | None) -> JsonDict:
-        # ``suffix``/``tenant_id`` are carried as plain fields so enumeration reads
-        # fields instead of parsing the id composition.
+        # ``suffix``/``tenant_id``/``route`` are carried as plain fields so enumeration
+        # reads fields instead of parsing the id composition.
         return {
             "value": value,
             "suffix": suffix,
             "tenant_id": (str(tenant_id) if tenant_id is not None else None),
+            "route": self.route,
         }
 
 
@@ -190,17 +196,23 @@ class FirestoreCounterAdminAdapter(_FirestoreCounterBase, CounterAdminPort):
         coll = await self._collection()
         tenant_id = self.require_tenant_if_aware()
 
-        # Server-side tenant filter on the stored field, so a shared tagged-tier
-        # collection only ever reports the bound tenant's counters. Detached, so the
+        # Server-side tenant *and* route filter on the stored fields, so a shared
+        # collection only ever reports the bound tenant's counters for this spec — never
+        # another tenant's, nor another spec sharing the collection. Detached, so the
         # read neither joins a caller's transaction nor trips its read-before-write
         # ordering rule.
         async with self.client.detached():
             docs = await self.client.query_stream(
                 coll,
-                filters=FieldFilter(
-                    "tenant_id",
-                    "==",
-                    (str(tenant_id) if tenant_id is not None else None),
+                filters=And(
+                    [
+                        FieldFilter(
+                            "tenant_id",
+                            "==",
+                            (str(tenant_id) if tenant_id is not None else None),
+                        ),
+                        FieldFilter("route", "==", self.route),
+                    ]
                 ),
             )
 

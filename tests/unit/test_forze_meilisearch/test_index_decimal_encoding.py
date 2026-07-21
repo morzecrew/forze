@@ -368,3 +368,90 @@ def test_decimal_valued_plain_enum_indexes_as_number() -> None:
         color: _Color
 
     assert _model_may_hold_canonical_leaf(_Tag) is False
+
+
+# ....................... #
+# The exact-Decimal shadow: filtering reads the f64 number, reads stay exact
+
+
+from forze_meilisearch.adapters.search.base import (  # noqa: E402
+    _DECIMAL_EXACT_FIELD,
+    _lossless_decimals,
+)
+
+
+def test_full_precision_decimal_survives_the_index_round_trip() -> None:
+    """The finding: a high-precision Decimal indexed as f64 rounds to ...68 — the shadow
+    restores the exact value on read, so filtering stays numeric and reads stay exact."""
+
+    gw = _gateway()
+    exact = Decimal("123.456789012345678901")
+
+    doc = gw.to_index_document(_Item(id="a", price=exact))
+
+    # The queryable field is the (rounded) f64 number, for numeric filter/sort.
+    assert isinstance(doc["price"], float)
+    assert doc["price"] != exact  # f64 cannot hold it
+
+    # The shadow carries the exact string, keyed by logical field.
+    assert doc[_DECIMAL_EXACT_FIELD]["price"] == "123.456789012345678901"
+
+    # from_hit overlays it, so the read model decodes the *exact* value back.
+    restored = gw.from_hit(doc)
+    assert _Item.model_validate({"id": "a", **restored}).price == exact
+    assert _DECIMAL_EXACT_FIELD not in restored  # the shadow never leaks as a field
+
+
+def test_shadow_covers_nested_and_collection_decimals() -> None:
+    gw = _gateway()
+    doc = gw.to_index_document(
+        _Item(
+            id="a",
+            price=Decimal("1.5"),
+            nested=_Nested(price=Decimal("9.123456789012345678"), label="x"),
+            prices=[Decimal("2.100000000000000001")],
+            by_key={"k": Decimal("3.5")},
+        ),
+    )
+
+    restored = gw.from_hit(doc)
+
+    assert restored["nested"]["price"] == "9.123456789012345678"
+    assert restored["nested"]["label"] == "x"
+    assert restored["prices"] == ["2.100000000000000001"]
+    assert restored["by_key"] == {"k": "3.5"}
+    validated = _Item.model_validate({"id": "a", **restored})
+    assert validated.nested.price == Decimal("9.123456789012345678")
+    assert validated.prices == [Decimal("2.100000000000000001")]
+
+
+def test_no_shadow_field_when_the_document_holds_no_decimal() -> None:
+    gw = _gateway()
+    doc = gw.to_index_document(_Item(id="a", title="t", fake_number="10.5"))
+
+    # price defaults to Decimal("0"), so a shadow exists for it — but a genuinely
+    # decimal-free field never contributes one.
+    assert doc[_DECIMAL_EXACT_FIELD] == {"price": "0"}
+    assert "fake_number" not in doc[_DECIMAL_EXACT_FIELD]
+
+    plain = _gateway(_PlainItem).to_index_document(_PlainItem(id="a", count=3))
+    assert _DECIMAL_EXACT_FIELD not in plain  # no decimals at all → no shadow field
+
+
+def test_sealed_decimal_root_gets_no_shadow() -> None:
+    """A shadow of a sealed field would write its plaintext in the clear — never do it."""
+
+    gw = _gateway(encryption=FieldEncryption(encrypted=frozenset({"price"})))
+    doc = gw.to_index_document(_Item(id="a", price=Decimal("10.50")))
+
+    shadow = doc.get(_DECIMAL_EXACT_FIELD, {})
+    assert "price" not in shadow  # the sealed root is never shadowed (no plaintext leak)
+
+
+def test_lossless_decimals_helper() -> None:
+    assert _lossless_decimals(Decimal("1.50")) == ("1.50", True)
+    assert _lossless_decimals("plain") == ("plain", False)
+    assert _lossless_decimals(True) == (True, False)  # bool is not a Decimal
+    assert _lossless_decimals({"a": Decimal("2"), "b": "x"}) == ({"a": "2", "b": "x"}, True)
+    assert _lossless_decimals([Decimal("3"), 4]) == (["3", 4], True)
+    assert _lossless_decimals({"a": 1, "b": [2, 3]}) == ({"a": 1, "b": [2, 3]}, False)

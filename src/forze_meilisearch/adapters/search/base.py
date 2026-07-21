@@ -126,6 +126,55 @@ def _decimal_number(value: Decimal) -> float | None:
     return converted if math.isfinite(converted) else None
 
 
+_DECIMAL_EXACT_FIELD = "_forze_decimal_exact"
+"""Reserved index field holding exact ``Decimal`` values, keyed by logical field name.
+
+Decimal fields index as f64 JSON numbers so Meilisearch can *filter and sort* them — but
+f64 rounds (``Decimal("123.456789012345678901")`` → ``…68``), so a search read of that field
+would silently lose precision. The exact decimal string rides alongside in this shadow field
+and is overlaid back onto the read model in :meth:`from_hit`, so filtering stays numeric while
+reads stay exact. Underscore-prefixed, so the ordinary :meth:`from_hit` field walk skips it
+(it is read explicitly). Never written for a sealed (field-encrypted) root — that would put
+the plaintext value in the clear."""
+
+
+def _lossless_decimals(value: Any) -> tuple[Any, bool]:
+    """Return *value* with every ``Decimal`` leaf stringified, and whether one was found.
+
+    Recurses dicts and lists so a nested money field round-trips exactly too. Non-Decimal
+    leaves pass through unchanged (an ``Enum`` — even one wrapping a Decimal — is left alone:
+    its value is a fixed member, restored from the index like any other scalar)."""
+
+    if isinstance(value, bool):
+        return value, False
+
+    if isinstance(value, Decimal):
+        return str(value), True
+
+    if isinstance(value, dict):
+        out: dict[Any, Any] = {}
+        found = False
+
+        for k, v in value.items():  # pyright: ignore[reportUnknownVariableType]
+            out[k], child = _lossless_decimals(v)
+            found = found or child
+
+        return out, found
+
+    if isinstance(value, (list, tuple)):
+        items: list[Any] = []
+        found = False
+
+        for v in cast("list[Any]", value):
+            item, child = _lossless_decimals(v)
+            items.append(item)
+            found = found or child
+
+        return items, found
+
+    return value, False
+
+
 def _pydantic_json_datetime(value: datetime) -> str:
     """The string a json-mode pydantic dump emits for *value* (``Z`` for UTC offsets)."""
 
@@ -440,12 +489,17 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
             if self._encrypts
             else codec.encode_mapping(model, mode="json")
         )
-        data = self._canonicalize_index_values(model, data)
+        data, decimal_shadow = self._canonicalize_index_values(model, data)
         out: dict[str, Any] = {}
 
         for key, value in data.items():
             phys = self.physical_path(key)
             out[phys] = value
+
+        # The exact-Decimal shadow (keyed by logical field): filtering reads the f64 number
+        # above, ``from_hit`` restores the exact value from here (see _DECIMAL_EXACT_FIELD).
+        if decimal_shadow:
+            out[_DECIMAL_EXACT_FIELD] = decimal_shadow
 
         pk = self.primary_key
         pk_val = out.get(pk, data.get(ID_FIELD, data.get("id")))
@@ -464,17 +518,22 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
 
     # ....................... #
 
-    def _canonicalize_index_values(self, model: M, data: dict[str, Any]) -> dict[str, Any]:
+    def _canonicalize_index_values(
+        self, model: M, data: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Rewrite dump leaves the filter literals must be able to match (see
         ``_canonicalize_leaves``): Decimal → JSON number, aware datetime → UTC-``Z``.
 
-        Guided by the live model's values via a second, python-mode dump, skipped entirely
-        for models that cannot hold such a leaf. Sealed (field-encrypted) roots are left
-        untouched — their dumped value is a ciphertext envelope, not the plaintext scalar.
+        Returns ``(canonicalized, decimal_shadow)`` — the shadow maps each logical field
+        holding a ``Decimal`` to its exact-string form, so :meth:`from_hit` can restore the
+        precision the f64 index value rounds away. Guided by the live model's values via a
+        second, python-mode dump, skipped entirely for models that cannot hold such a leaf.
+        Sealed (field-encrypted) roots are left untouched *and* get no shadow — their dumped
+        value is a ciphertext envelope, and a shadow would put the plaintext in the clear.
         """
 
         if not _model_may_hold_canonical_leaf(type(model)):
-            return data
+            return data, {}
 
         codec = self.spec.resolved_read_codec
         plain = codec.encode_mapping(
@@ -492,10 +551,22 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
             )
         )
 
-        return {
-            k: v if k in sealed_roots else _canonicalize_leaves(plain.get(k), v)
-            for k, v in data.items()
-        }
+        canonical: dict[str, Any] = {}
+        shadow: dict[str, Any] = {}
+
+        for k, v in data.items():
+            if k in sealed_roots:
+                canonical[k] = v
+                continue
+
+            canonical[k] = _canonicalize_leaves(plain.get(k), v)
+
+            exact, has_decimal = _lossless_decimals(plain.get(k))
+
+            if has_decimal:
+                shadow[k] = exact
+
+        return canonical, shadow
 
     # ....................... #
 
@@ -509,5 +580,13 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
 
             logical = inv.get(key, key)
             out[logical] = value
+
+        # Restore exact Decimal values the f64 index number rounded (keyed by logical
+        # field). The read codec re-parses the exact strings into Decimals on decode.
+        exact = hit.get(_DECIMAL_EXACT_FIELD)
+
+        if isinstance(exact, dict):
+            for logical, value in cast(dict[str, Any], exact).items():
+                out[logical] = value
 
         return out

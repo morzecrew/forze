@@ -92,6 +92,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**Persistence tenancy & fidelity**
+
+- **Counter tenancy (Postgres, Mongo, Firestore)** — the relation/collection resolves through the bound tenant (namespace-tier isolation held), and the spec route is folded into the stored key so two specs sharing a relation no longer merge sequences.
+- **Mongo history reads scope by tenant** — snapshots stamp and reads filter `tenant_id` (matching Firestore), closing a tagged-tier cross-tenant read via `history.read(pk, rev)`.
+- **`StorageQueryPort.list(missing_ok=…)`** — a missing bucket reads as empty for the object-list route and a blob-less export instead of 500/abort; the default still raises. `list` bounds its per-object HEAD fan-out.
+- **Decimal filter values** — the query caster no longer locale-guesses a comma; `Numeric` admits `str` for exact Decimal/datetime range bounds over JSON, cast per field by `coerce_query_ord_operands`. New public: `coerce_query_ord_operands`.
+- **Meilisearch Decimal reads are exact** — an exact-value shadow field restores the precision the f64 index number rounds away.
+- **Mock graph matches Neo4j on four write-path guards** — `delete_vertex` detaches edges, edges require existing endpoints, `create_vertex` conflicts on a duplicate key, unknown kinds raise.
+
 **Portability, quiesce & inventory**
 
 - **`FullScope` must declare its tenant dimension** (**breaking**) — `FullScope(quiesce=…, tenants=[…] | UNTENANTED)`, no default; a full-system export/migrate walks each declared tenant bound, one archive section per tenant (`tenants/<uuid>/…`, `scope.tenants`, archive format 2) — counters included, so no tenant's sequences restart at zero.

@@ -47,11 +47,17 @@ class _MongoCounterBase(TenancyMixin):
 
     client: MongoClientPort
     config: MongoCounterConfig
+    route: str
+    """The counter spec's route — a discriminator in the ``_id`` and a stored field, so
+    two specs wired to one collection do not silently share rows."""
 
     # ....................... #
 
     async def _collection(self) -> AsyncCollection[JsonDict]:
-        tenant_id = self.require_tenant_if_aware()
+        # Namespace-tier resolution: ``_tenant_id_for_resolve`` returns the bound tenant
+        # for a per-tenant collection even without tagged-tier ``tenant_aware`` — using
+        # ``require_tenant_if_aware`` here collapsed every tenant onto one collection.
+        tenant_id = self._tenant_id_for_resolve()
         db_name, coll_name = await resolve_mongo_collection(
             self.config.collection,
             tenant_id,
@@ -63,26 +69,24 @@ class _MongoCounterBase(TenancyMixin):
     def _doc_id(self, suffix: str | None, tenant_id: UUID | None) -> str:
         # The ``_id`` is the atomicity anchor: a concurrent upsert of the same counter
         # collides on it instead of inserting a duplicate row (a filter over plain fields
-        # would need a unique index the application never migrated). The suffix prefix
-        # keeps any suffix (including ``""``) apart from the unsuffixed sentinel; the
-        # tenant prefix keeps tagged-tier tenants apart in a shared collection, and the
-        # fixed-length UUID makes the composition unambiguous for any suffix.
+        # would need a unique index the application never migrated). The length-prefixed
+        # route tag keeps two specs sharing a collection apart; the suffix prefix keeps
+        # any suffix (including ``""``) apart from the unsuffixed sentinel; the tenant
+        # prefix keeps tagged-tier tenants apart, and the fixed-length UUID makes the
+        # composition unambiguous for any suffix.
         key = f"{_SUFFIX_PREFIX}{suffix}" if suffix is not None else _UNSUFFIXED
+        body = f"tenant:{tenant_id}:{key}" if tenant_id is not None else key
 
-        if tenant_id is not None:
-            return f"tenant:{tenant_id}:{key}"
-
-        return key
+        return f"{len(self.route)}:{self.route}|{body}"
 
     # ....................... #
 
     def _tenant_filter(self) -> dict[str, Any]:
+        # Route folded into every read filter so a shared collection reports only this
+        # spec's counters, alongside the tenant discriminator.
         tenant_id = self.require_tenant_if_aware()
 
-        if tenant_id is not None:
-            return {"tenant_id": str(tenant_id)}
-
-        return {"tenant_id": None}
+        return {"tenant_id": str(tenant_id) if tenant_id is not None else None, "route": self.route}
 
 
 # ....................... #
@@ -100,8 +104,9 @@ class MongoCounterAdapter(_MongoCounterBase, CounterPort):
     rollback; otherwise the same value could be handed out twice (Redis parity: a counter
     value is burned the moment it is returned).
 
-    Documents look like ``{_id, suffix, tenant_id, value}``; ``suffix``/``tenant_id`` are
-    carried as plain fields so enumeration never has to parse the ``_id`` composition.
+    Documents look like ``{_id, suffix, tenant_id, route, value}``; ``suffix`` /
+    ``tenant_id`` / ``route`` are carried as plain fields so enumeration never has to
+    parse the ``_id`` composition.
     """
 
     async def _apply(self, update: JsonDict, suffix: str | None) -> int:
@@ -120,6 +125,7 @@ class MongoCounterAdapter(_MongoCounterBase, CounterPort):
                         **update.get("$set", {}),
                         "suffix": suffix,
                         "tenant_id": (str(tenant_id) if tenant_id is not None else None),
+                        "route": self.route,
                     },
                 },
                 upsert=True,

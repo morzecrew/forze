@@ -73,6 +73,7 @@ from .field_policy import (
 from .field_types import (
     OPERATOR_TYPE_MISMATCH_CODE,
     classify_field_type,
+    coerce_query_ord_operands,
     field_value_operators,
     is_quantifiable_field,
     validate_query_field_types,
@@ -189,6 +190,7 @@ __all__ = [
     "validate_aggregate_capabilities",
     "validate_query_capabilities",
     "OPERATOR_TYPE_MISMATCH_CODE",
+    "coerce_query_ord_operands",
     "validate_query_field_types",
     "classify_field_type",
     "field_value_operators",

@@ -186,13 +186,17 @@ async def list_keys(query: Any) -> list[str]:
     ordering promise, so a backend that orders by anything a read touches could reshuffle objects
     under an advancing offset and silently skip some. Only the keys are held; the bytes stream one
     object at a time by the caller.
+
+    ``missing_ok``: a storage route an app declares but has never written to has no bucket yet,
+    and exporting such an app must yield *no blobs*, not abort — the archive records the route
+    as empty, which import re-provisions on first write.
     """
 
     keys: list[str] = []
     offset = 0
 
     while True:
-        page, _ = await query.list(BLOB_PAGE, offset)
+        page, _ = await query.list(BLOB_PAGE, offset, missing_ok=True)
 
         if not page:
             return keys

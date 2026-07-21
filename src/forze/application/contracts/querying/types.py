@@ -8,8 +8,15 @@ from uuid import UUID
 
 # ----------------------- #
 
-Numeric = int | float | Decimal | datetime | date | UUID
-"""Numeric types for ordering operators (includes :class:`~uuid.UUID` for keyset paging)."""
+Numeric = int | float | Decimal | datetime | date | UUID | str
+"""Ordering-operator operand types (includes :class:`~uuid.UUID` for keyset paging).
+
+``str`` is the JSON carrier for values JSON numbers cannot express exactly — an exact
+``Decimal`` range bound on a money column, an ISO datetime — and is validated per field at
+render time by the backend caster (``as_decimal`` / ``as_datetime`` / …), which refuses a
+string the field's type cannot parse. Ordering on *text* fields stays refused by the
+field-type gate (see ``field_types``), so admitting ``str`` here never legalizes
+``name $gt "x"``."""
 
 Scalar = Numeric | bool | str
 """Scalar value types for filter expressions."""

@@ -261,10 +261,14 @@ class ListObjects(Handler[ListObjectsRequestDTO, ListedObjects]):
 
         limit, offset = args.offset_limit
 
+        # missing_ok: a fresh deployment where nothing has been uploaded has no bucket yet
+        # (only write paths create it) — that is an empty listing, not a 500. The
+        # re-encryption sweep keeps the default so a *vanished* bucket still raises.
         hits, count = await self.storage.list(
             limit=limit,
             offset=offset,
             prefix=args.prefix,
+            missing_ok=True,
         )
 
         return ListedObjects(

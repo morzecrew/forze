@@ -172,3 +172,59 @@ async def test_history_write_many_bulk_and_empty_noop(
     two = await gw.read(pk, 2)
     assert one.title == "a"
     assert two.title == "b"
+
+
+# ....................... #
+# Tagged-tier tenant isolation on the history read path
+
+
+from forze.application.contracts.tenancy import TenantIdentity  # noqa: E402
+
+
+async def _tenant_gw(
+    client: MongoClient,
+    *,
+    hist_coll: str,
+    target_coll: str,
+    tenant: UUID,
+) -> MongoHistoryGateway[HistDoc]:
+    db_name = (await client.db()).name
+    domain_codec, history_codec = history_codecs_for(HistDoc)
+    return MongoHistoryGateway(
+        relation=(db_name, hist_coll),
+        target_relation=(db_name, target_coll),
+        client=client,
+        model_type=HistDoc,
+        codec=domain_codec,
+        history_codec=history_codec,
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tenant),
+    )
+
+
+@pytest.mark.asyncio
+async def test_history_read_is_tenant_scoped(mongo_client: MongoClient) -> None:
+    """Under tagged tenancy a snapshot is stamped AND read-filtered by tenant, so tenant
+    B cannot read tenant A's history for a guessed (pk, rev). The Firestore twin filtered;
+    the Mongo read did not — this is the bypass."""
+
+    hist_coll = f"h_{uuid4().hex[:8]}"
+    target_coll = f"t_{uuid4().hex[:8]}"
+    a, b = uuid4(), uuid4()
+
+    gw_a = await _tenant_gw(mongo_client, hist_coll=hist_coll, target_coll=target_coll, tenant=a)
+    gw_b = await _tenant_gw(mongo_client, hist_coll=hist_coll, target_coll=target_coll, tenant=b)
+
+    pk = uuid4()
+    await gw_a.write(_doc(pk, 1, "tenant-a-secret"))
+
+    # tenant A reads its own snapshot
+    assert (await gw_a.read(pk, 1)).title == "tenant-a-secret"
+
+    # tenant B, with the exact same (pk, rev), gets nothing — not A's snapshot
+    with pytest.raises(CoreException):
+        await gw_b.read(pk, 1)
+
+    # read_many is filtered too: B sees none of A's rows
+    assert await gw_b.read_many([pk], [1]) == []
+    assert [d.title for d in await gw_a.read_many([pk], [1])] == ["tenant-a-secret"]

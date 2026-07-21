@@ -41,6 +41,7 @@ class ConfigurableFirestoreCounter(_ConfigurableFirestoreCounterBase):
         return FirestoreCounterAdapter(
             client=ctx.deps.provide(FirestoreClientDepKey),
             config=self.config,
+            route=str(spec.name),
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )
@@ -67,6 +68,7 @@ class ConfigurableFirestoreCounterAdmin(_ConfigurableFirestoreCounterBase):
         return FirestoreCounterAdminAdapter(
             client=ctx.deps.provide(FirestoreClientDepKey),
             config=self.config,
+            route=str(spec.name),
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )

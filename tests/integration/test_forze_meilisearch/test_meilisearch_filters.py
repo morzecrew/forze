@@ -282,6 +282,43 @@ async def test_decimal_field_filters_and_sorts_numerically(meilisearch_client) -
     assert [h.id for h in page.hits] == ["1", "2", "3"]
 
 
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_high_precision_decimal_reads_back_exactly(meilisearch_client) -> None:
+    """A Decimal beyond f64 precision indexes as a rounded number for filtering but reads
+    back *exactly* from the shadow field — not the f64-rounded value."""
+
+    index_uid = "products_decimal_exact_it"
+    spec = SearchSpec(name="products", model_type=PricedProduct, fields=["title"])
+    cfg = MeilisearchSearchConfig(index_uid=index_uid, filterable_attributes=["price"])
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MeilisearchClientDepKey: meilisearch_client,
+                SearchQueryDepKey: ConfigurableMeilisearchSearch(config=cfg),
+                SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(config=cfg),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(config=cfg),
+            },
+        ),
+    )
+
+    exact = Decimal("123.456789012345678901")  # 21 significant digits — f64 rounds this
+    mgmt = ctx.search.management(spec)
+    await mgmt.ensure_index()
+    await mgmt.delete_all()
+    await ctx.search.command(spec).upsert(
+        [PricedProduct(id="1", title="Precise apple", price=exact)]
+    )
+
+    page = await ctx.search.query(spec).search_page(
+        "apple", pagination={"offset": 0, "limit": 10}
+    )
+
+    assert page.count == 1
+    assert page.hits[0].price == exact  # exact, not the f64-rounded ...68
+    assert page.hits[0].price != Decimal(str(float(exact)))  # proves f64 would have lost it
+
+
 class StampedNote(BaseModel):
     id: str
     title: str
