@@ -35,7 +35,7 @@ from .report import (
     StorageExport,
     StorageImport,
 )
-from .scope import ExportScope, FullScope, TenantScope
+from .scope import UNTENANTED, ExportScope, FullScope, TenantScope
 
 # ----------------------- #
 
@@ -54,6 +54,7 @@ __all__ = [
     "ExportReport",
     "ExportScope",
     "FullScope",
+    "UNTENANTED",
     "GraphExport",
     "GraphImport",
     "ImportReport",

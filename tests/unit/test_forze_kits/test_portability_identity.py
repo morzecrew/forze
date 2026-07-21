@@ -20,9 +20,11 @@ import pytest
 
 from forze import build_runtime
 from forze.application.contracts.inventory import SpecRegistry
+from forze.base.exceptions import CoreException
 from forze.application.execution import ExecutionRuntime
 from forze_identity.inventory import spec_contributions
 from forze_kits.integrations.portability import (
+    UNTENANTED,
     ExportReport,
     FullScope,
     Manifest,
@@ -87,7 +89,9 @@ async def test_full_system_export_includes_identity(tmp_path: Path) -> None:
     runtime = _runtime(MockState())
     archive = tmp_path / "archive"
 
-    await _export(runtime, archive, FullScope(quiesce=_ATTESTED))
+    await _export(
+        runtime, archive, FullScope(quiesce=_ATTESTED, tenants=UNTENANTED), acknowledge_plaintext=True
+    )
 
     files = _doc_files(archive)
     assert "orders.jsonl.gz" in files
@@ -100,7 +104,13 @@ async def test_per_tenant_include_identity_opts_in(tmp_path: Path) -> None:
     runtime = _runtime(MockState())
     archive = tmp_path / "archive"
 
-    await _export(runtime, archive, TenantScope(tenant_id=uuid4()), include_identity=True)
+    await _export(
+        runtime,
+        archive,
+        TenantScope(tenant_id=uuid4()),
+        include_identity=True,
+        acknowledge_plaintext=True,
+    )
 
     assert _doc_files(archive) >= _IDENTITY_FILES, "opting in carries identity per-tenant"
     assert _manifest(archive).identity_included is True
@@ -136,10 +146,22 @@ async def test_per_tenant_archive_still_imports_into_the_full_application(tmp_pa
 
     target = _runtime(MockState())
     async with target.scope():
-        result = await import_archive(target, archive)
+        result = await import_archive(target, archive, tenant=tenant)
 
     assert result.total_imported == 2  # business data landed; fingerprints matched
 
     async with target.scope():
         restored = await read_orders(target.get_context(), list(seeded), tenant=tenant)
     assert set(restored) == set(seeded)
+
+
+@pytest.mark.asyncio
+async def test_unsealed_identity_export_is_refused_without_acknowledgement(
+    tmp_path: Path,
+) -> None:
+    # A full-system export always carries identity — sessions, API keys — so an unsealed
+    # one is a credential store and must not be producible by default.
+    runtime = _runtime(MockState())
+
+    with pytest.raises(CoreException, match="PLAINTEXT"):
+        await _export(runtime, tmp_path / "a", FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))

@@ -22,6 +22,7 @@ from forze.application.execution import ExecutionRuntime
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import JsonDict
 from forze_kits.integrations.portability import (
+    UNTENANTED,
     ArchiveMigrator,
     ExportScope,
     FullScope,
@@ -118,7 +119,7 @@ async def test_migrate_equals_file_round_trip_by_construction(tmp_path: Path) ->
     async with source.scope():
         await export_archive(source, archive, scope=scope)
     async with filed.scope():
-        await import_archive(filed, archive)
+        await import_archive(filed, archive, tenant=tenant)
 
     migrated_rows = await _reexport_doc_rows(migrated, scope, tmp_path / "from_migrate")
     filed_rows = await _reexport_doc_rows(filed, scope, tmp_path / "from_file")
@@ -174,7 +175,7 @@ async def test_migrate_refuses_fingerprint_incompatible_runtimes(tmp_path: Path)
     target = mock_runtime(MockState(), with_blobs=True)  # orders + attachments → different shape
 
     with pytest.raises(CoreException, match="fingerprint-compatible"):
-        await _migrate(source, target, FullScope(quiesce=_ATTESTED))
+        await _migrate(source, target, FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
 
 
 @pytest.mark.asyncio
@@ -184,7 +185,7 @@ async def test_full_scope_migrate_round_trips_every_row(tmp_path: Path) -> None:
         seeded = await seed_orders(source.get_context(), order_corpus(5))
 
     target = mock_runtime(MockState())
-    report = await _migrate(source, target, FullScope(quiesce=_ATTESTED))
+    report = await _migrate(source, target, FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
 
     assert report.total_imported == 5
 
@@ -206,9 +207,9 @@ async def test_full_scope_unattested_migrate_is_refused_unless_allowed(tmp_path:
     target = mock_runtime(MockState())
 
     with pytest.raises(CoreException, match="not quiesced"):
-        await _migrate(source, target, FullScope(quiesce=_UNATTESTED))
+        await _migrate(source, target, FullScope(quiesce=_UNATTESTED, tenants=UNTENANTED))
 
-    report = await _migrate(source, target, FullScope(quiesce=_UNATTESTED), allow_fuzzy=True)
+    report = await _migrate(source, target, FullScope(quiesce=_UNATTESTED, tenants=UNTENANTED), allow_fuzzy=True)
     assert report.total_imported == 2
 
 
@@ -229,7 +230,7 @@ async def test_blob_migrate_preserves_bytes_keys_and_tags(tmp_path: Path) -> Non
         )
 
     target = mock_runtime(MockState(), with_blobs=True)
-    report = await _migrate(source, target, FullScope(quiesce=_ATTESTED))
+    report = await _migrate(source, target, FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
 
     assert report.total_blobs == 3
 

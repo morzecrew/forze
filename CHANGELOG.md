@@ -92,6 +92,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**Portability, quiesce & inventory**
+
+- **`FullScope` must declare its tenant dimension** (**breaking**) — `FullScope(quiesce=…, tenants=[…] | UNTENANTED)`, no default; a full-system export/migrate walks each declared tenant bound, one archive section per tenant (`tenants/<uuid>/…`, `scope.tenants`, archive format 2) — counters included, so no tenant's sequences restart at zero.
+- **Import confirms the target tenant** (**breaking**) — `import_archive(…, tenant=…)` required for per-tenant archives; the manifest is cross-checked, never trusted, and sealed frames bind the tenant into their AAD, so an edited manifest fails authentication instead of re-homing the payload.
+- **The artifact is cross-checked against the manifest and the target's plan** — an unlisted data file, or a plane the target expects that the manifest never lists, refuses the import (a missing plane no longer imports as an empty one).
+- **Unsealed credential-adjacent exports are refused** — a plan carrying identity specs or field-encrypted specs needs a `sealer` or `acknowledge_plaintext=True`.
+- **Quiesce attests only what it observed** — new `unobserved` plane state blocks attestation: unreadable outbox/stream/durable admins, catalogued queues/locks (no probe exists yet), streams with no named group, and a runtime with no spec inventory never attests.
+- **Inventory registration refuses conflicting metadata** — a re-registration disagreeing on `disposition`/`identity` raises (was silently first-write-wins); an empty registry over bound planes fails reconciliation, and `plan_export` refuses an empty inventory.
+
 **Realtime**
 
 - **An untenanted signal no longer stops the gateway for every tenant** — the tenant-aware-mailbox `tenant_required` rewrap is a per-signal error (parked, bounded by the poison ceiling), no longer a process-terminal configuration verdict.

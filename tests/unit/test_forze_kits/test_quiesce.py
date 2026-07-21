@@ -67,7 +67,12 @@ def _row(
 
 
 def _runtime() -> ExecutionRuntime:
-    return ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+    # Carries its inventory: a runtime without one can no longer attest (its operational
+    # surface cannot be enumerated), which is exactly what these tests need it to do.
+    return ExecutionRuntime(
+        deps=DepsRegistry.from_modules(MockDepsModule()).freeze(),
+        spec_registry=SpecRegistry().register(OUTBOX).freeze(),
+    )
 
 
 async def _quiesce(rows: list[MockOutboxRow], **kwargs: Any) -> QuiesceReport:
@@ -294,12 +299,31 @@ async def test_observe_mode_can_settle_but_never_attests() -> None:
 
 
 @pytest.mark.asyncio
-async def test_quiesce_reports_unwired_planes_without_holding_them_against_it() -> None:
-    # A runtime that wires no outbox at all. "Nothing to settle" and "settled" are different
-    # facts and the report keeps them apart — but neither blocks attestation, because there
-    # is genuinely no work hiding in a plane the application does not have.
+async def test_quiesce_reports_absent_planes_without_holding_them_against_it() -> None:
+    # A runtime that genuinely has no durable plane (no run store wired). "Nothing to
+    # settle" and "settled" are different facts and the report keeps them apart — but a
+    # truly absent plane does not block attestation.
     runtime = ExecutionRuntime(
-        deps=DepsRegistry.from_deps(Deps.plain({MockStateDepKey: MockState()})).freeze()
+        deps=DepsRegistry.from_deps(Deps.plain({MockStateDepKey: MockState()})).freeze(),
+        spec_registry=SpecRegistry().freeze(),
+    )
+
+    async with runtime.scope():
+        report = await quiesce(runtime, outboxes=(), timeout=timedelta(milliseconds=50))
+
+    states = {plane.name: plane.state for plane in report.planes}
+
+    assert states["durable"] == "not_wired"
+    assert report.attested
+
+
+@pytest.mark.asyncio
+async def test_a_named_outbox_with_no_admin_read_is_unobserved_and_blocks() -> None:
+    # The outbox EXISTS (the caller or the inventory named it) but nothing can read its
+    # depth: unreadable is not empty, so the plane is unobserved and attestation refused.
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_deps(Deps.plain({MockStateDepKey: MockState()})).freeze(),
+        spec_registry=SpecRegistry().freeze(),
     )
 
     async with runtime.scope():
@@ -307,11 +331,60 @@ async def test_quiesce_reports_unwired_planes_without_holding_them_against_it() 
             runtime, outboxes=[OUTBOX], timeout=timedelta(milliseconds=50)
         )
 
+    plane = next(p for p in report.planes if p.name == "outbox:events")
+
+    assert plane.state == "unobserved"
+    assert not report.attested
+
+    with pytest.raises(CoreException, match="unobserved"):
+        report.raise_if_unattested()
+
+
+@pytest.mark.asyncio
+async def test_a_runtime_without_an_inventory_never_attests() -> None:
+    # Zero probed routes must never add up to an attested report: without an inventory the
+    # sweep cannot enumerate the outbox/queue/stream/lock surface at all.
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(MockDepsModule()).freeze()
+    )
+
+    async with runtime.scope():
+        report = await quiesce(runtime, timeout=timedelta(milliseconds=50))
+
+    plane = next(p for p in report.planes if p.name == "inventory")
+
+    assert plane.state == "unobserved"
+    assert not report.attested
+
+
+@pytest.mark.asyncio
+async def test_catalogued_queues_locks_and_uncovered_streams_are_unobserved() -> None:
+    # Catalogued planes the sweep has no probe for must weigh against attestation, not
+    # vanish: a queued message, a held lock, or an unwatched consumer group is pending work.
+    from forze.application.contracts.dlock import DistributedLockSpec
+    from forze.application.contracts.queue import QueueSpec
+    from forze.application.contracts.stream import StreamSpec
+
+    registry = (
+        SpecRegistry()
+        .register(QueueSpec(name="jobs", codec=PydanticModelCodec(_Payload)))
+        .register(DistributedLockSpec(name="leases"))
+        .register(StreamSpec(name="firehose", codec=PydanticModelCodec(_Payload)))
+    )
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(MockDepsModule()).freeze(),
+        spec_registry=registry.freeze(),
+    )
+
+    async with runtime.scope():
+        report = await quiesce(runtime, outboxes=(), timeout=timedelta(milliseconds=50))
+
     states = {plane.name: plane.state for plane in report.planes}
 
-    assert states["outbox:events"] == "not_wired"
-    assert states["durable"] == "not_wired"
-    assert report.attested
+    assert states["queue:jobs"] == "unobserved"
+    assert states["dlock:leases"] == "unobserved"
+    assert states["stream:firehose"] == "unobserved"
+    assert not report.attested
 
 
 @pytest.mark.asyncio
@@ -494,7 +567,8 @@ async def test_ack_stream_plane_not_wired_and_trimmed_unknown_details() -> None:
             close_gate=False,
         )
     plane = next(p for p in report.planes if p.name.startswith("ack-stream"))
-    assert plane.state == "not_wired"
+    # named but unreadable: the admin is not wired, so the group cannot pass for settled
+    assert plane.state == "unobserved"
 
     # a capped route that evicted undelivered entries → residual with the unknown marker
     capped = ExecutionRuntime(
@@ -525,3 +599,158 @@ async def test_ack_stream_plane_not_wired_and_trimmed_unknown_details() -> None:
     plane = next(p for p in report.planes if p.name.startswith("ack-stream"))
     assert plane.state == "residual"
     assert "backlog unknown" in (plane.detail or "")  # never attested as empty
+
+
+@pytest.mark.asyncio
+async def test_a_catalogued_outbox_excluded_from_the_sweep_is_unobserved() -> None:
+    # Narrowing outboxes= narrows the probing, never the attestation: a catalogued route
+    # left out of the sweep may still hold pending events, so it must weigh against it.
+    other = OutboxSpec(name="audit", codec=PydanticModelCodec(_Payload))
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(MockDepsModule()).freeze(),
+        spec_registry=SpecRegistry().register(OUTBOX).register(other).freeze(),
+    )
+
+    async with runtime.scope():
+        report = await quiesce(
+            runtime, outboxes=[OUTBOX], timeout=timedelta(milliseconds=50)
+        )
+
+    states = {plane.name: plane.state for plane in report.planes}
+
+    assert states["outbox:events"] == "settled"  # probed
+    assert states["outbox:audit"] == "unobserved"  # excluded — never assumed empty
+    assert not report.attested
+
+    async with runtime.scope():
+        skipped_all = await quiesce(runtime, outboxes=(), timeout=timedelta(milliseconds=50))
+
+    assert {p.name for p in skipped_all.unsettled} == {"outbox:events", "outbox:audit"}
+    assert not skipped_all.attested
+
+
+@pytest.mark.asyncio
+async def test_observe_mode_reports_in_flight_operations_as_residual() -> None:
+    # close_gate=False takes the instantaneous reading: work in flight is residual — and
+    # since nothing holds the door, the reading can never attest either way.
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        ctx.drain_gate.admit("op.slow")
+
+        try:
+            report = await quiesce(
+                runtime, outboxes=(), close_gate=False, timeout=timedelta(milliseconds=50)
+            )
+
+        finally:
+            ctx.drain_gate.release()
+
+    operations = next(plane for plane in report.planes if plane.name == "operations")
+
+    assert operations.state == "residual"
+    assert "in flight" in operations.detail
+    assert not report.attested
+
+
+@pytest.mark.asyncio
+async def test_an_operation_that_never_finishes_leaves_the_gate_residual() -> None:
+    # The drain waits out its budget, then reports what is still holding — never settles
+    # around work that has not finished.
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        ctx.drain_gate.admit("op.stuck")
+
+        try:
+            report = await quiesce(
+                runtime,
+                outboxes=(),
+                timeout=timedelta(milliseconds=60),
+                poll=timedelta(milliseconds=10),
+            )
+
+        finally:
+            ctx.drain_gate.release()
+
+    operations = next(plane for plane in report.planes if plane.name == "operations")
+
+    assert operations.state == "residual"
+    assert "still in flight" in operations.detail
+    assert not report.attested
+
+
+@pytest.mark.asyncio
+async def test_a_commit_stream_group_named_in_streams_is_probed() -> None:
+    # The commit-stream (offset-lag) plane, driven through the caller-named group: the
+    # mock wires the commit admin plainly, and a group with no committed lag settles.
+    from forze.application.contracts.stream import StreamSpec
+
+    spec = StreamSpec(name="firehose", codec=PydanticModelCodec(_Payload))
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(MockDepsModule()).freeze(),
+        spec_registry=SpecRegistry().register(OUTBOX).freeze(),
+    )
+
+    async with runtime.scope():
+        report = await quiesce(
+            runtime,
+            outboxes=(),
+            streams=[(spec, "etl")],
+            timeout=timedelta(milliseconds=80),
+            poll=timedelta(milliseconds=10),
+            close_gate=False,
+        )
+
+    plane = next(p for p in report.planes if p.name == "stream:firehose/etl")
+
+    assert plane.state == "settled"
+
+
+@pytest.mark.asyncio
+async def test_a_durable_plane_with_no_admin_read_is_unobserved() -> None:
+    # A run store is wired, so durable runs exist somewhere — an admin read that is not
+    # opted in means they cannot be SEEN, which is not the same as none existing.
+    from forze.application.contracts.durable.function.deps import DurableRunStoreDepKey
+
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_deps(
+            Deps.plain({MockStateDepKey: MockState(), DurableRunStoreDepKey: object()})
+        ).freeze(),
+        spec_registry=SpecRegistry().freeze(),
+    )
+
+    async with runtime.scope():
+        report = await quiesce(runtime, outboxes=(), timeout=timedelta(milliseconds=50))
+
+    durable = next(plane for plane in report.planes if plane.name == "durable")
+
+    assert durable.state == "unobserved"
+    assert not report.attested
+
+
+@pytest.mark.asyncio
+async def test_a_named_commit_stream_group_with_no_admin_is_unobserved() -> None:
+    from forze.application.contracts.stream import StreamSpec
+
+    spec = StreamSpec(name="firehose", codec=PydanticModelCodec(_Payload))
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_deps(Deps.plain({MockStateDepKey: MockState()})).freeze(),
+        spec_registry=SpecRegistry().freeze(),
+    )
+
+    async with runtime.scope():
+        report = await quiesce(
+            runtime,
+            outboxes=(),
+            streams=[(spec, "etl")],
+            timeout=timedelta(milliseconds=50),
+            close_gate=False,
+        )
+
+    plane = next(p for p in report.planes if p.name == "stream:firehose/etl")
+
+    assert plane.state == "unobserved"
+    assert not report.attested

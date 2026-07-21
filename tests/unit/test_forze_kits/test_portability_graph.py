@@ -32,6 +32,7 @@ from forze.application.contracts.inventory import SpecRegistry
 from forze.application.execution import ExecutionRuntime
 from forze.base.exceptions import CoreException
 from forze_kits.integrations.portability import (
+    UNTENANTED,
     ExportReport,
     FullScope,
     ImportReport,
@@ -127,7 +128,7 @@ async def _seed(runtime: ExecutionRuntime) -> None:
 
 async def _export(runtime: ExecutionRuntime, dest: Path) -> ExportReport:
     async with runtime.scope():
-        return await export_archive(runtime, dest, scope=FullScope(quiesce=_ATTESTED))
+        return await export_archive(runtime, dest, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
 
 
 async def _import(runtime: ExecutionRuntime, src: Path) -> ImportReport:
@@ -233,7 +234,7 @@ async def test_graph_migrate_carries_the_plane(tmp_path: Path) -> None:
 
     target = _runtime(MockState())
     async with source.scope(), target.scope():
-        report = await migrate(source, target, scope=FullScope(quiesce=_ATTESTED))
+        report = await migrate(source, target, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
 
     assert report.total_vertices == 3
     assert report.total_edges == 3
@@ -280,3 +281,30 @@ async def test_read_only_node_kind_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(CoreException, match="create model"):
         await _export(runtime, tmp_path / "archive")
+
+
+@pytest.mark.asyncio
+async def test_export_refuses_a_backend_that_cannot_surface_edge_endpoints(
+    tmp_path: Path,
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    # The plane-completeness rule at the one point the capability is knowable: without
+    # GraphEdgeExportAware the edges could never be re-created, so the module refuses up
+    # front instead of shipping a graph missing its edges. The capability marker is
+    # swapped for one nothing implements (deleting the adapter method would be defeated
+    # by the ABC isinstance cache once any earlier test exercised the real check).
+    from typing import Protocol, runtime_checkable
+
+    @runtime_checkable
+    class _NothingImplements(Protocol):
+        def a_method_no_backend_has(self) -> None: ...
+
+    monkeypatch.setattr(
+        "forze_kits.integrations.portability.export.GraphEdgeExportAware", _NothingImplements
+    )
+
+    runtime = _runtime(MockState())
+    await _seed(runtime)
+
+    with pytest.raises(CoreException, match="endpoints"):
+        await _export(runtime, tmp_path / "a")

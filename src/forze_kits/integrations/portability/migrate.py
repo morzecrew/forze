@@ -12,7 +12,11 @@ Both runtimes are wired in one process and both scopes are the *caller's*, exact
 verbs assume their one scope::
 
     async with source_runtime.scope(), target_runtime.scope():
-        report = await migrate(source_runtime, target_runtime, scope=FullScope(quiesce=report))
+        report = await migrate(
+            source_runtime,
+            target_runtime,
+            scope=FullScope(quiesce=report, tenants=all_tenant_ids),  # or tenants=UNTENANTED
+        )
 
 The fused document write goes through the same ``ingest_documents`` a file import uses, over the
 same ``portable_row`` → ``keyed_create`` projection a file export/import uses — so a migration and a
@@ -47,13 +51,16 @@ from ._core import (
     DEFAULT_BATCH,
     DEFAULT_CHUNK,
     OnConflict,
+    ScopeSection,
     assert_scope_permitted,
     ingest_documents,
     keyed_create,
     list_keys,
     portable_row,
     require_registry,
-    scope_binding,
+    scope_sections,
+    section_binding,
+    section_label,
 )
 from ._graph import edge_create_from_row, exported_edge_row
 from .planes import plan_export
@@ -109,8 +116,11 @@ class ArchiveMigrator:
         Call inside both runtimes' open scopes. The plane-completeness refusals are the export's
         (:func:`plan_export`) — a plane this version cannot carry stops the migration by name
         before a row moves — and the scope gate is the export's too: a :class:`FullScope` whose
-        quiesce did not attest is refused unless :attr:`allow_fuzzy`. A :class:`TenantScope` binds
-        the tenant on *both* sides, so reads and writes stay in the same partition.
+        quiesce did not attest is refused unless :attr:`allow_fuzzy`. Every scope walks in
+        **sections** (the export's ``scope_sections``): a :class:`TenantScope` binds its one
+        tenant on *both* sides, and a :class:`FullScope` binds each **declared** tenant in turn —
+        so a tenant-aware deployment migrates every partition, not the one an unbound resolve
+        happens to reach.
 
         **The registry is trusted here, not verified — :func:`migrate` is the gated front door.**
         One inventory resolves against both contexts (the spec is the logical key; each context
@@ -141,21 +151,22 @@ class ArchiveMigrator:
         graphs: list[GraphImport] = []
         counters: list[CounterImport] = []
 
-        # Hold both scopes' bindings across the whole walk: the source read runs under the source
-        # context's identity and the target write under the target context's, and each binds on its
-        # own context, so a per-tenant migration lands rows in the same partition on both sides.
-        with scope_binding(source, scope), scope_binding(target, scope):
-            for entry in plan.documents:
-                docs.append(await self._migrate_document(source, target, entry))
+        # Hold both sides' bindings across each section's walk: the source read runs under the
+        # source context's identity and the target write under the target context's, so every
+        # partition's rows land in the same partition on the other side.
+        for section in scope_sections(scope):
+            with section_binding(source, section), section_binding(target, section):
+                for entry in plan.documents:
+                    docs.append(await self._migrate_document(source, target, entry, section))
 
-            for entry in plan.storage:
-                blobs.append(await self._migrate_storage(source, target, entry))
+                for entry in plan.storage:
+                    blobs.append(await self._migrate_storage(source, target, entry, section))
 
-            for entry in plan.graph:
-                graphs.append(await self._migrate_graph(source, target, entry))
+                for entry in plan.graph:
+                    graphs.append(await self._migrate_graph(source, target, entry, section))
 
-            for entry in plan.counters:
-                counters.append(await self._migrate_counter(source, target, entry))
+                for entry in plan.counters:
+                    counters.append(await self._migrate_counter(source, target, entry, section))
 
         logger.info(
             "Migration complete",
@@ -180,6 +191,7 @@ class ArchiveMigrator:
         source: ExecutionContext,
         target: ExecutionContext,
         entry: SpecRegistryEntry,
+        section: ScopeSection,
     ) -> DocumentImport:
         """Fuse one document spec's export and import per chunk — no row ever touches disk."""
 
@@ -203,7 +215,7 @@ class ArchiveMigrator:
         return await ingest_documents(
             query=target.document.query(spec),
             command=target.document.command(spec),
-            name=entry.name,
+            name=section_label(section, entry.name),
             rows=keyed_creates(),
             on_conflict=self.on_conflict,
             batch_size=self.batch_size,
@@ -216,6 +228,7 @@ class ArchiveMigrator:
         source: ExecutionContext,
         target: ExecutionContext,
         entry: SpecRegistryEntry,
+        section: ScopeSection,
     ) -> StorageImport:
         """Fuse one storage route's export and import — each blob streamed source → target.
 
@@ -242,7 +255,7 @@ class ArchiveMigrator:
             )
             uploaded += 1
 
-        return StorageImport(name=entry.name, uploaded=uploaded)
+        return StorageImport(name=section_label(section, entry.name), uploaded=uploaded)
 
     # ....................... #
 
@@ -251,6 +264,7 @@ class ArchiveMigrator:
         source: ExecutionContext,
         target: ExecutionContext,
         entry: SpecRegistryEntry,
+        section: ScopeSection,
     ) -> GraphImport:
         """Fuse one graph module's export and import — vertices then edges, no row on disk.
 
@@ -295,7 +309,7 @@ class ArchiveMigrator:
                     await command.ensure_edge(str(edge.name), create, return_new=False)
                     edges += 1
 
-        return GraphImport(name=module, vertices=vertices, edges=edges)
+        return GraphImport(name=section_label(section, module), vertices=vertices, edges=edges)
 
     # ....................... #
 
@@ -304,6 +318,7 @@ class ArchiveMigrator:
         source: ExecutionContext,
         target: ExecutionContext,
         entry: SpecRegistryEntry,
+        section: ScopeSection,
     ) -> CounterImport:
         """Copy one counter spec's partitions source → target — enumerate and reset, no row on disk.
 
@@ -320,7 +335,7 @@ class ArchiveMigrator:
             await port.reset(counter.value, suffix=counter.suffix)
             restored += 1
 
-        return CounterImport(name=entry.name, restored=restored)
+        return CounterImport(name=section_label(section, entry.name), restored=restored)
 
 
 # ....................... #

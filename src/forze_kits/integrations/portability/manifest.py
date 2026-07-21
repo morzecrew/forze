@@ -18,8 +18,13 @@ from .format import Compression
 
 # ----------------------- #
 
-FORMAT_VERSION = "1"
-"""The archive layout version. An importer refuses a format it does not know."""
+FORMAT_VERSION = "2"
+"""The archive layout version. An importer refuses a format it does not know.
+
+Version 2: a full-system archive carries one section per declared tenant
+(``tenants/<uuid>/…``, recorded in ``scope.tenants``), and a per-tenant archive's sealed frames
+bind the tenant into their AAD — version-1 archives (whose full scope silently covered a single
+partition) are refused rather than half-imported."""
 
 Consistency = Literal["tenant", "quiesced", "fuzzy"]
 """What the artifact claims about the moment it captured:
@@ -48,10 +53,21 @@ class ArchiveFile(BaseModel):
 
 
 class ScopeManifest(BaseModel):
-    """The scope, flattened to JSON: what the artifact covers, and — for a tenant export — whom."""
+    """The scope, flattened to JSON: what the artifact covers, and — for a tenant export — whom.
+
+    **This record is plaintext and unauthenticated** — import treats it as a claim to be
+    confirmed, never as an authority. A per-tenant import requires the caller to name the target
+    tenant explicitly (and, for a sealed archive, the frames' AADs bind the tenant
+    cryptographically); a full-system archive's tenant sections are bound into the file paths the
+    sealed frames authenticate.
+    """
 
     kind: Literal["tenant", "full"]
     tenant_id: UUID | None = None
+
+    tenants: list[UUID] | None = None
+    """A full-system archive's declared tenant sections (``tenants/<uuid>/…``), in walk order;
+    ``None`` for a per-tenant archive, or a full one the operator declared untenanted."""
 
 
 # ....................... #

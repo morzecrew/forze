@@ -36,7 +36,7 @@ from .export import ArchiveExporter
 from .format import data_suffix, read_rows
 from .import_ import ArchiveImporter
 from .manifest import Manifest
-from .scope import ExportScope
+from .scope import ExportScope, TenantScope
 
 # ----------------------- #
 
@@ -111,9 +111,18 @@ async def run_export_import_roundtrip(
     archive_a = workdir / "a"
     archive_b = workdir / "b"
 
-    export_a = await ArchiveExporter()(source, registry, archive_a, scope=scope)
-    import_b = await ArchiveImporter()(target, registry, archive_a)
-    export_b = await ArchiveExporter()(target, registry, archive_b, scope=scope)
+    # Throwaway conformance archives in the caller's workdir: plaintext is acknowledged (the
+    # projection comparison must read the rows), and a tenant scope's import is confirmed with
+    # the same tenant the scope names — the exact ceremony a real operator performs.
+    tenant = scope.tenant_id if isinstance(scope, TenantScope) else None
+
+    export_a = await ArchiveExporter(acknowledge_plaintext=True)(
+        source, registry, archive_a, scope=scope
+    )
+    import_b = await ArchiveImporter(tenant=tenant)(target, registry, archive_a)
+    export_b = await ArchiveExporter(acknowledge_plaintext=True)(
+        target, registry, archive_b, scope=scope
+    )
 
     proj_a = await _archive_projection(archive_a)
     proj_b = await _archive_projection(archive_b)

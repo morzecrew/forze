@@ -81,6 +81,14 @@ def plan_export(registry: FrozenSpecRegistry, *, exclude_identity: bool = False)
     exclusion — the manifest records it — not the silent-incompleteness the doctrine forbids.
     """
 
+    if not registry.entries:
+        raise exc.precondition(
+            "The spec inventory is empty — there is nothing to export, and an empty inventory "
+            "fingerprints equal to any other empty inventory, so the compatibility gate "
+            "downstream would wave a vacuous transfer through. Catalogue the application's "
+            "specs (build_runtime(specs=…)) before exporting or migrating."
+        )
+
     assert_exportable(registry)
 
     documents: list[SpecRegistryEntry] = []

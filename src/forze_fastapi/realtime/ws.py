@@ -38,7 +38,9 @@ from inspect import isawaitable
 from typing import Any, cast, final
 from uuid import UUID
 
+import anyio
 import attrs
+from anyio.abc import TaskGroup
 from fastapi import APIRouter, WebSocket
 from pydantic import ValidationError
 from starlette.websockets import WebSocketDisconnect
@@ -679,12 +681,12 @@ def attach_realtime_ws_route(
 
         # ....................... #
 
-        async def _receiver(tasks: asyncio.TaskGroup) -> None:
+        async def _receiver(tasks: TaskGroup) -> None:
             inflight = asyncio.Semaphore(max_inflight_commands)
 
-            async def _bounded(coro: Awaitable[None]) -> None:
+            async def _bounded(frame: Mapping[str, Any], cid: Any) -> None:
                 try:
-                    await coro
+                    await _dispatch(frame, cid)
 
                 finally:
                     inflight.release()
@@ -762,7 +764,7 @@ def attach_realtime_ws_route(
                         continue
 
                     await inflight.acquire()
-                    tasks.create_task(_bounded(_dispatch(frame, cid)))
+                    tasks.start_soon(_bounded, frame, cid)
 
                 else:
                     await _send_error(f"Unknown frame type {frame_type!r}")
@@ -776,17 +778,22 @@ def attach_realtime_ws_route(
             async def _receive_then_signal() -> None:
                 # however the receiver ends (disconnect, refused frame, failure), the
                 # signal lets the expiry guard finish on its own instead of being
-                # cancelled at TaskGroup exit
+                # cancelled at task-group exit
                 try:
                     await _receiver(tasks)
 
                 finally:
                     receiver_done.set()
 
-            async with asyncio.TaskGroup() as tasks:
-                tasks.create_task(_sender())
-                tasks.create_task(_receive_then_signal())
-                tasks.create_task(_expiry_guard())
+            # anyio, not asyncio.TaskGroup: the ASGI server and the test client both
+            # cancel this endpoint through anyio cancel scopes, and a native TaskGroup
+            # unwinding inside one races their cancellation bookkeeping — an external
+            # cancel landing mid-unwind can escape as a bare CancelledError. anyio's
+            # own group composes with those scopes by construction.
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(_sender)
+                tasks.start_soon(_receive_then_signal)
+                tasks.start_soon(_expiry_guard)
 
         except* WebSocketDisconnect:
             pass  # client went away — normal teardown

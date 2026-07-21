@@ -93,6 +93,7 @@ mike = { git = "https://github.com/squidfunk/mike", rev = "2d4ad799442f4592db8ad
 
 [project.optional-dependencies]
 fastapi = [
+    "anyio>=4.12.1",
     "fastapi>=0.135.1",
     "httpx>=0.28.0",
     "python-multipart>=0.0.22",

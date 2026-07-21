@@ -21,6 +21,7 @@ from forze.application.contracts.counter import CounterSpec
 from forze.application.contracts.inventory import SpecRegistry
 from forze.application.execution import ExecutionRuntime
 from forze_kits.integrations.portability import (
+    UNTENANTED,
     ExportReport,
     FullScope,
     ImportReport,
@@ -64,7 +65,7 @@ async def _partitions(runtime: ExecutionRuntime) -> set[tuple[str | None, int]]:
 
 async def _export(runtime: ExecutionRuntime, dest: Path) -> ExportReport:
     async with runtime.scope():
-        return await export_archive(runtime, dest, scope=FullScope(quiesce=_ATTESTED))
+        return await export_archive(runtime, dest, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
 
 
 async def _import(runtime: ExecutionRuntime, src: Path) -> ImportReport:
@@ -120,7 +121,7 @@ async def test_counter_migrate_carries_the_plane(tmp_path: Path) -> None:
 
     target = _runtime(MockState())
     async with source.scope(), target.scope():
-        report = await migrate(source, target, scope=FullScope(quiesce=_ATTESTED))
+        report = await migrate(source, target, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
 
     assert report.total_counters == 3
     assert await _partitions(target) == _EXPECTED

@@ -55,10 +55,12 @@ async def _export(
         )
 
 
-async def _import(runtime: ExecutionRuntime, src: Path) -> ImportReport:
+async def _import(runtime: ExecutionRuntime, src: Path, tenant: UUID) -> ImportReport:
     async with runtime.scope():
         assert runtime.spec_registry is not None
-        return await ArchiveImporter()(runtime.get_context(), runtime.spec_registry, src)
+        return await ArchiveImporter(tenant=tenant)(
+            runtime.get_context(), runtime.spec_registry, src
+        )
 
 
 async def _read(runtime: ExecutionRuntime, tenant: UUID, ids: list[UUID]) -> dict[UUID, OrderRead]:
@@ -86,7 +88,7 @@ async def test_round_trip_under_each_codec(tmp_path: Path, compression: Compress
     assert manifest.compression == compression
 
     target = mock_runtime(MockState())
-    result = await _import(target, archive)
+    result = await _import(target, archive, tenant)
     assert result.total_imported == 4
 
     assert_orders_faithful(await _read(target, tenant, list(seeded)), seeded)

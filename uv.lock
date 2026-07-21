@@ -1217,6 +1217,7 @@ duckdb = [
     { name = "pyarrow" },
 ]
 fastapi = [
+    { name = "anyio" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "python-multipart" },
@@ -1372,6 +1373,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'bigquery'", specifier = ">=3.11.0" },
     { name = "aiohttp", marker = "extra == 'gcs'", specifier = ">=3.11.0" },
     { name = "aiokafka", marker = "extra == 'kafka'", specifier = ">=0.14.0" },
+    { name = "anyio", marker = "extra == 'fastapi'", specifier = ">=4.12.1" },
     { name = "argon2-cffi", marker = "extra == 'authn'", specifier = ">=25.1.0" },
     { name = "attrs", specifier = ">=25.4.0" },
     { name = "botocore", marker = "extra == 'inference-sagemaker'", specifier = ">=1.34.0" },

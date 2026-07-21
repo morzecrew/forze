@@ -10,13 +10,18 @@ from forze.base.exceptions import exc
 
 # ----------------------- #
 
-PlaneState = Literal["settled", "residual", "not_wired", "error"]
+PlaneState = Literal["settled", "residual", "not_wired", "unobserved", "error"]
 """How one plane ended the sweep.
 
 ``settled`` — observed, and nothing was left moving. ``residual`` — observed, but still
-holding work when the budget ran out. ``not_wired`` — no port is registered for it, so there
-is nothing to settle. ``error`` — the probe itself failed, so the plane's state is *unknown*
-(which is not the same as empty, and does not attest).
+holding work when the budget ran out. ``not_wired`` — the plane does not exist on this runtime
+(no spec, no port), so there is genuinely nothing to settle. ``unobserved`` — the plane
+**exists** (a spec is catalogued, or the caller named it) but the sweep has no way to read it:
+its admin port is not wired, no probe exists for its kind, or the runtime carries no inventory
+at all. An unobserved plane is not an empty one, and it does not attest — the difference
+between ``not_wired`` and ``unobserved`` is the difference between "nothing there" and "cannot
+look". ``error`` — the probe itself failed, so the plane's state is *unknown* (which is not
+the same as empty, and does not attest).
 """
 
 

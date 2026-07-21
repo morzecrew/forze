@@ -35,6 +35,7 @@ from forze.application.contracts.inventory import FrozenSpecRegistry, SpecRegist
 from forze.application.execution import ExecutionContext
 from forze.base.primitives import JsonDict
 from forze_kits.integrations.portability import (
+    UNTENANTED,
     ArchiveExporter,
     ArchiveImporter,
     FullScope,
@@ -162,7 +163,7 @@ async def test_graph_round_trips_through_real_neo4j(
 
     archive_a = tmp_path / "a"
     export_a = await ArchiveExporter()(
-        mock_ctx, registry, archive_a, scope=FullScope(quiesce=_ATTESTED)
+        mock_ctx, registry, archive_a, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
     )
     assert export_a.total_vertices == 4
     assert export_a.total_edges == 4  # 3 KNOWS + 1 FOLLOWS
@@ -192,7 +193,7 @@ async def test_graph_round_trips_through_real_neo4j(
     # — and the format is its own equality observable: Neo4j's re-export matches the mock's export.
     archive_b = tmp_path / "b"
     export_b = await ArchiveExporter()(
-        neo_ctx, registry, archive_b, scope=FullScope(quiesce=_ATTESTED)
+        neo_ctx, registry, archive_b, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
     )
     assert export_b.total_vertices == 4
     assert export_b.total_edges == 4
