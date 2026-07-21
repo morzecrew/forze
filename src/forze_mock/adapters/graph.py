@@ -956,12 +956,24 @@ class MockGraphAdapter(MockTenancyMixin):
         if not items:
             return [] if return_new else None
 
+        # Atomic like a real backend's single transaction: a mid-batch failure (a missing
+        # endpoint, an endpoint-identity conflict) must leave *no* edge behind, not the
+        # ones written before it. Snapshot the store, then restore it on any failure so a
+        # raised batch never leaves partially-applied state.
+        with self.state.lock:
+            snapshot = list(self._edges_store())
+
         created: list[BaseModel] = []
 
-        for kind, cmd in items:
-            edge = await self.create_edge(kind, cmd, return_new=return_new)
-            if return_new and edge is not None:
-                created.append(edge)
+        try:
+            for kind, cmd in items:
+                edge = await self.create_edge(kind, cmd, return_new=return_new)
+                if return_new and edge is not None:
+                    created.append(edge)
+        except Exception:
+            with self.state.lock:
+                self._edges_store()[:] = snapshot
+            raise
 
         return created if return_new else None
 

@@ -235,3 +235,24 @@ async def test_two_specs_sharing_a_collection_do_not_merge(
         client=firestore_client, config=counter_config, route="orders"
     )
     assert {e.suffix: e.value for e in await orders_admin.list_counters()} == {None: 2}
+
+
+@pytest.mark.asyncio
+async def test_legacy_document_continues_its_sequence(
+    firestore_client, counter_config
+) -> None:
+    """A counter written before the route fold (legacy doc id, no ``route`` field) is seeded
+    onto the new document so its sequence continues instead of restarting at zero."""
+
+    # Seed a pre-route document under the legacy unsuffixed id "_", value=41.
+    coll = await firestore_client.collection(counter_config.collection[1], database="(default)")
+    await firestore_client.set_document(coll, "_", {"value": 41, "suffix": None})
+
+    counter = FirestoreCounterAdapter(client=firestore_client, config=counter_config, route="orders")
+    assert await counter.incr() == 42  # continues from 41
+    assert await counter.incr() == 43
+
+    admin = FirestoreCounterAdminAdapter(
+        client=firestore_client, config=counter_config, route="orders"
+    )
+    assert {e.suffix: e.value for e in await admin.list_counters()} == {None: 43}

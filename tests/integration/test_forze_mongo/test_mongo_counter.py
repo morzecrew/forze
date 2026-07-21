@@ -229,3 +229,27 @@ async def test_two_specs_sharing_a_collection_do_not_merge(
         client=mongo_client, config=counter_config, route="orders"
     )
     assert {e.suffix: e.value for e in await orders_admin.list_counters()} == {None: 2}
+
+
+@pytest.mark.asyncio
+async def test_legacy_document_continues_its_sequence(
+    mongo_client: MongoClient, counter_config: MongoCounterConfig
+) -> None:
+    """A counter document written before the route fold (legacy ``_id``, no ``route`` field)
+    is migrated onto the new id so its sequence continues instead of restarting at zero."""
+
+    db_name, coll_name = counter_config.collection
+    coll = await mongo_client.collection(coll_name, db_name=db_name)
+
+    # Seed a pre-route document: legacy unsuffixed _id "", no route/tenant fields, value=41.
+    await coll.insert_one({"_id": "", "suffix": None, "value": 41})
+
+    counter = MongoCounterAdapter(client=mongo_client, config=counter_config, route="orders")
+    assert await counter.incr() == 42  # continues from 41
+    assert await counter.incr() == 43
+
+    admin = MongoCounterAdminAdapter(client=mongo_client, config=counter_config, route="orders")
+    assert {e.suffix: e.value for e in await admin.list_counters()} == {None: 43}
+
+    # The legacy document was retired (migrated onto the route-prefixed id).
+    assert await coll.find_one({"_id": ""}) is None

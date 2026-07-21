@@ -53,6 +53,17 @@ def _encode_suffix(route: str, suffix: str | None) -> str:
     return f"{_route_prefix(route)}{body}"
 
 
+def _legacy_suffix(suffix: str | None) -> str:
+    """The pre-route stored suffix key (``""`` or ``s:<suffix>``).
+
+    A counter allocated before the route fold was keyed here. The allocation path seeds the
+    new route-prefixed row from this legacy row's value on first touch, so a live sequence
+    continues instead of restarting from zero (which would reissue already-handed-out
+    numbers). Backward-compat only; new writes never use it."""
+
+    return f"{_SUFFIX_PREFIX}{suffix}" if suffix is not None else _UNSUFFIXED
+
+
 def _decode_suffix(route: str, stored: str) -> str | None:
     length_str, rest = stored.split(":", 1)
     body = rest[int(length_str) :]  # skip the route by position, not by delimiter
@@ -123,23 +134,39 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
     async def _bump(self, by: int, suffix: str | None) -> int:
         table = await self._table()
 
+        # On the first touch of the new route-prefixed row, seed its value from the
+        # pre-route legacy row (``COALESCE(… , 0)``) so an existing sequence continues
+        # instead of restarting at zero — a restart would reissue numbers already handed
+        # out. ``by`` is bound twice: the INSERT adds it to the seed, and the DO UPDATE
+        # adds only ``by`` (not ``EXCLUDED.value``, which carries the one-time seed) so a
+        # subsequent bump never re-adds the legacy value. The legacy row is left in place
+        # (route-filtered out of enumeration); it is simply never read again.
         stmt = sql.SQL(
             "INSERT INTO {table} (tenant_id, suffix, value) "
-            "VALUES ({tenant}, {suffix}, {by}) "
+            "VALUES ({tenant}, {suffix}, "
+            "  COALESCE("
+            "    (SELECT value FROM {table} WHERE tenant_id = {tenant} AND suffix = {legacy}), 0"
+            "  ) + {by}) "
             "ON CONFLICT (tenant_id, suffix) "
-            "DO UPDATE SET value = {table}.value + EXCLUDED.value "
+            "DO UPDATE SET value = {table}.value + {by} "
             "RETURNING value"
         ).format(
             table=table.ident(),
-            tenant=sql.Placeholder(),
-            suffix=sql.Placeholder(),
-            by=sql.Placeholder(),
+            tenant=sql.Placeholder("tenant"),
+            suffix=sql.Placeholder("suffix"),
+            legacy=sql.Placeholder("legacy"),
+            by=sql.Placeholder("by"),
         )
 
         async with self.client.detached():
             row = await self.client.fetch_one(
                 stmt,
-                [self._tenant_value(), _encode_suffix(self.route, suffix), by],
+                {
+                    "tenant": self._tenant_value(),
+                    "suffix": _encode_suffix(self.route, suffix),
+                    "legacy": _legacy_suffix(suffix),
+                    "by": by,
+                },
                 row_factory="tuple",
             )
 

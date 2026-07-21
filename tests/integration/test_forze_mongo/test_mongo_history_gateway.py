@@ -228,3 +228,41 @@ async def test_history_read_is_tenant_scoped(mongo_client: MongoClient) -> None:
     # read_many is filtered too: B sees none of A's rows
     assert await gw_b.read_many([pk], [1]) == []
     assert [d.title for d in await gw_a.read_many([pk], [1])] == ["tenant-a-secret"]
+
+
+@pytest.mark.asyncio
+async def test_history_read_tolerates_legacy_records_without_tenant_id(
+    mongo_client: MongoClient,
+) -> None:
+    """A tenant-aware history read must still find revisions written before tenant-stamping
+    shipped (no ``tenant_id``), or OCC checks would reject every update to a document whose
+    revisions predate the upgrade. New (stamped) revisions stay isolated."""
+
+    from forze.application.contracts.tenancy import TENANT_ID_FIELD
+
+    hist_coll = f"h_{uuid4().hex[:8]}"
+    target_coll = f"t_{uuid4().hex[:8]}"
+    a, b = uuid4(), uuid4()
+    gw_a = await _tenant_gw(mongo_client, hist_coll=hist_coll, target_coll=target_coll, tenant=a)
+    gw_b = await _tenant_gw(mongo_client, hist_coll=hist_coll, target_coll=target_coll, tenant=b)
+
+    db_name = (await mongo_client.db()).name
+    coll = await mongo_client.collection(hist_coll, db_name=db_name)
+
+    # Write a valid record, then strip its tenant_id to simulate a pre-upgrade "legacy" row.
+    legacy_pk = uuid4()
+    await gw_a.write(_doc(legacy_pk, 1, "legacy-value"))
+    await coll.update_one(
+        {ID_FIELD: str(legacy_pk), REV_FIELD: 1},
+        {"$unset": {TENANT_ID_FIELD: ""}},
+    )
+
+    # The legacy revision is still readable by the bound tenant (OCC keeps working).
+    assert (await gw_a.read(legacy_pk, 1)).title == "legacy-value"
+    assert [d.title for d in await gw_a.read_many([legacy_pk], [1])] == ["legacy-value"]
+
+    # A newly written (stamped) record stays isolated: tenant B cannot read tenant A's.
+    new_pk = uuid4()
+    await gw_a.write(_doc(new_pk, 1, "new-isolated"))
+    with pytest.raises(CoreException):
+        await gw_b.read(new_pk, 1)

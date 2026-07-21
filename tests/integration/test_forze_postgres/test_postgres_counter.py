@@ -301,3 +301,50 @@ async def test_namespace_tier_resolves_a_per_tenant_relation(
     assert await _counter(a).incr() == 1
     assert await _counter(a).incr() == 2
     assert await _counter(b).incr() == 1  # b's table is separate — not folded onto a's
+
+
+@pytest.mark.asyncio
+async def test_legacy_unprefixed_row_continues_its_sequence(
+    pg_client: PostgresClient, counter_table: str
+) -> None:
+    """A counter allocated before the route fold (stored at the bare ``suffix`` key) must
+    continue from its value on the next increment, not restart at zero and reissue numbers."""
+
+    # Seed a pre-route row: tenant_id='' (no tenant), suffix='' (unsuffixed), value=41.
+    await pg_client.execute(
+        sql.SQL("INSERT INTO {t} (tenant_id, suffix, value) VALUES ('', '', 41)").format(
+            t=sql.Identifier("public", counter_table)
+        )
+    )
+    counter = PostgresCounterAdapter(
+        client=pg_client,
+        config=PostgresCounterConfig(relation=("public", counter_table)),
+        route="orders",
+    )
+
+    assert await counter.incr() == 42  # continues from the legacy 41, not from 0
+    assert await counter.incr() == 43  # and the legacy value is not re-added
+
+    admin = PostgresCounterAdminAdapter(
+        client=pg_client,
+        config=PostgresCounterConfig(relation=("public", counter_table)),
+        route="orders",
+    )
+    assert {e.suffix: e.value for e in await admin.list_counters()} == {None: 43}
+
+
+@pytest.mark.asyncio
+async def test_legacy_suffixed_row_continues_its_sequence(
+    pg_client: PostgresClient, counter_table: str
+) -> None:
+    await pg_client.execute(
+        sql.SQL("INSERT INTO {t} (tenant_id, suffix, value) VALUES ('', 's:2026', 7)").format(
+            t=sql.Identifier("public", counter_table)
+        )
+    )
+    counter = PostgresCounterAdapter(
+        client=pg_client,
+        config=PostgresCounterConfig(relation=("public", counter_table)),
+        route="orders",
+    )
+    assert await counter.incr(suffix="2026") == 8

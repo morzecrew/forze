@@ -78,6 +78,16 @@ class _FirestoreCounterBase(TenancyMixin):
 
     # ....................... #
 
+    def _legacy_doc_id(self, suffix: str | None, tenant_id: UUID | None) -> str:
+        # The pre-route document id (no route tag) a counter allocated before the route
+        # fold was keyed under; the allocation path seeds the new document from it so an
+        # existing sequence continues instead of restarting from zero.
+        key = f"{_SUFFIX_DOC_PREFIX}{suffix}" if suffix is not None else _UNSUFFIXED_DOC_ID
+
+        return f"tenant:{tenant_id}:{key}" if tenant_id is not None else key
+
+    # ....................... #
+
     def _doc_body(self, value: int, suffix: str | None, tenant_id: UUID | None) -> JsonDict:
         # ``suffix``/``tenant_id``/``route`` are carried as plain fields so enumeration
         # reads fields instead of parsing the id composition.
@@ -119,14 +129,27 @@ class FirestoreCounterAdapter(_FirestoreCounterBase, CounterPort):
         tenant_id = self.require_tenant_if_aware()
         doc_id = self._doc_id(suffix, tenant_id)
 
+        legacy_id = self._legacy_doc_id(suffix, tenant_id)
+
         async with self.client.detached(), self.client.transaction():
+            # Reads before writes (Firestore's transaction rule): read the new document,
+            # and — only on its first touch — seed the base from the pre-route legacy
+            # document so an existing sequence continues instead of restarting at zero
+            # (which would reissue numbers already handed out). The legacy document is
+            # retired in the same transaction; once migrated the fallback read finds none.
             current = await self.client.get_document(coll, doc_id)
-            new_value = (int(current["value"]) if current else 0) + by
+            legacy = None if current else await self.client.get_document(coll, legacy_id)
+            base = int(current["value"]) if current else (int(legacy["value"]) if legacy else 0)
+            new_value = base + by
+
             await self.client.set_document(
                 coll,
                 doc_id,
                 self._doc_body(new_value, suffix, tenant_id),
             )
+
+            if legacy is not None:
+                await self.client.delete_document(coll, legacy_id)
 
         return new_value
 

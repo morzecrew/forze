@@ -473,3 +473,45 @@ async def test_unknown_kinds_raise_instead_of_returning_empty(ctx: ExecutionCont
         with pytest.raises(CoreException) as caught2:
             await make_op()
         assert caught2.value.code == "graph_unknown_edge_kind"
+
+
+@pytest.mark.asyncio
+async def test_create_edges_is_atomic_on_a_mid_batch_failure(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    cmd = ctx.graph.command(spec)
+    query = ctx.graph.query(spec)
+    for k in ("a", "b"):
+        await cmd.create_vertex("User", UserCreate(id=k))
+
+    # A batch whose second item dangles (to a missing vertex) must roll back the first,
+    # like a single-transaction backend — no partially-applied edges left behind.
+    with pytest.raises(CoreException) as caught:
+        await cmd.create_edges(
+            [
+                ("LINK", LinkCreate(from_key="a", to_key="b")),  # valid
+                ("LINK", LinkCreate(from_key="a", to_key="ghost")),  # missing endpoint
+            ]
+        )
+    assert caught.value.code == "graph_edge_endpoints_not_found"
+
+    # The valid first edge was NOT persisted (the batch is all-or-nothing).
+    assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("a"), to_ref=_u("b"))) is False
+
+
+@pytest.mark.asyncio
+async def test_create_edges_commits_a_fully_valid_batch(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    cmd = ctx.graph.command(spec)
+    query = ctx.graph.query(spec)
+    for k in ("a", "b", "c"):
+        await cmd.create_vertex("User", UserCreate(id=k))
+
+    created = await cmd.create_edges(
+        [
+            ("LINK", LinkCreate(from_key="a", to_key="b")),
+            ("LINK", LinkCreate(from_key="b", to_key="c")),
+        ]
+    )
+    assert created is not None and len(created) == 2
+    assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("a"), to_ref=_u("b"))) is True
+    assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("b"), to_ref=_u("c"))) is True

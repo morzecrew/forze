@@ -21,7 +21,7 @@ from forze.application.contracts.counter import (
     CounterPort,
 )
 from forze.application.contracts.tenancy import TenancyMixin
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze_mongo.execution.deps.configs.counter import MongoCounterConfig
 from forze_mongo.kernel.client import MongoClientPort
@@ -81,6 +81,16 @@ class _MongoCounterBase(TenancyMixin):
 
     # ....................... #
 
+    def _legacy_doc_id(self, suffix: str | None, tenant_id: UUID | None) -> str:
+        # The pre-route ``_id`` (no route tag) a counter allocated before the route fold
+        # was keyed under. The allocation path migrates it onto the new id so an existing
+        # sequence continues instead of restarting from zero.
+        key = f"{_SUFFIX_PREFIX}{suffix}" if suffix is not None else _UNSUFFIXED
+
+        return f"tenant:{tenant_id}:{key}" if tenant_id is not None else key
+
+    # ....................... #
+
     def _tenant_filter(self) -> dict[str, Any]:
         # Route folded into every read filter so a shared collection reports only this
         # spec's counters, alongside the tenant discriminator.
@@ -109,11 +119,51 @@ class MongoCounterAdapter(_MongoCounterBase, CounterPort):
     parse the ``_id`` composition.
     """
 
+    async def _migrate_legacy(
+        self, coll: AsyncCollection[JsonDict], suffix: str | None, tenant_id: UUID | None
+    ) -> None:
+        """Carry a pre-route counter document onto its new route-prefixed ``_id``, once.
+
+        A counter allocated before the route fold lives under the legacy ``_id`` with no
+        ``route`` field, so the new upsert would create a fresh document from zero and
+        reissue numbers already handed out. This copies the legacy value onto the new id
+        (leaving the new document untouched if it already exists — a concurrent writer or a
+        prior migration) and drops the legacy document, so enumeration and the next
+        allocation both see one row. A no-op once migrated (the legacy read finds nothing).
+        """
+
+        legacy_id = self._legacy_doc_id(suffix, tenant_id)
+        legacy = await self.client.find_one(coll, {"_id": legacy_id})
+
+        if legacy is None:
+            return
+
+        try:
+            await self.client.insert_one(
+                coll,
+                {
+                    "_id": self._doc_id(suffix, tenant_id),
+                    "value": int(legacy["value"]),
+                    "suffix": suffix,
+                    "tenant_id": (str(tenant_id) if tenant_id is not None else None),
+                    "route": self.route,
+                },
+            )
+        except CoreException as error:
+            if error.kind is not ExceptionKind.CONFLICT:
+                raise
+            # the new document already exists — keep it, just retire the legacy one
+
+        await self.client.delete_one(coll, {"_id": legacy_id})
+
+    # ....................... #
+
     async def _apply(self, update: JsonDict, suffix: str | None) -> int:
         coll = await self._collection()
         tenant_id = self.require_tenant_if_aware()
 
         async with self.client.detached():
+            await self._migrate_legacy(coll, suffix, tenant_id)
             doc = await self.client.find_one_and_update(
                 coll,
                 {"_id": self._doc_id(suffix, tenant_id)},
