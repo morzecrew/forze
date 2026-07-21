@@ -521,3 +521,27 @@ def test_kind_level_encryption_counts_as_sealed_fields() -> None:
 
     assert _declares_sealed_fields(module)  # a node kind's policy counts
     assert not _declares_sealed_fields(SimpleNamespace(encryption=None, nodes=(), edges=()))
+
+
+@pytest.mark.asyncio
+async def test_a_manifest_with_duplicate_tenant_sections_is_refused(tmp_path: Path) -> None:
+    # Export dedupes the scope, but the manifest is unauthenticated: a duplicated entry
+    # would resolve the same section files twice and replay the partition twice.
+    source = _runtime(MockState())
+    await _seed(source)
+
+    archive = tmp_path / "archive"
+    async with source.scope():
+        await export_archive(
+            source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1])
+        )
+
+    manifest_path = archive / "manifest.json"
+    tampered = json.loads(manifest_path.read_text())
+    tampered["scope"]["tenants"] = [str(_T1), str(_T1)]
+    manifest_path.write_text(json.dumps(tampered))
+
+    target = _runtime(MockState())
+    async with target.scope():
+        with pytest.raises(CoreException, match="duplicate tenant sections"):
+            await import_archive(target, archive)

@@ -650,6 +650,16 @@ def _manifest_sections(
         sections = [ScopeSection(tenant_id=None, prefix="", aad_prefix="")]
 
     else:
+        # Export dedupes the scope's tenants, but the manifest is unauthenticated input:
+        # a duplicated entry would mint two sections on one prefix that both resolve the
+        # same files — replaying the partition twice (and aborting mid-run under
+        # on_conflict="fail" after the first pass already changed the target).
+        if len(set(manifest.scope.tenants)) != len(manifest.scope.tenants):
+            raise exc.precondition(
+                "Archive manifest declares duplicate tenant sections — refusing to replay "
+                "the same partition more than once."
+            )
+
         sections = [
             ScopeSection(tenant_id=one, prefix=f"tenants/{one}/", aad_prefix="")
             for one in manifest.scope.tenants
