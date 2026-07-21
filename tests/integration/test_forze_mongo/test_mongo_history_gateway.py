@@ -231,12 +231,14 @@ async def test_history_read_is_tenant_scoped(mongo_client: MongoClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_history_read_tolerates_legacy_records_without_tenant_id(
+async def test_history_read_isolates_legacy_records_without_tenant_id(
     mongo_client: MongoClient,
 ) -> None:
-    """A tenant-aware history read must still find revisions written before tenant-stamping
-    shipped (no ``tenant_id``), or OCC checks would reject every update to a document whose
-    revisions predate the upgrade. New (stamped) revisions stay isolated."""
+    """A tenant-aware history read is strict: a pre-upgrade "legacy" revision that carries
+    no ``tenant_id`` is unowned, so it must be invisible to *every* tenant — a tolerant
+    ``$exists: false`` branch would hand tenant A's snapshot to tenant B for a guessed
+    ``(pk, rev)``. The lost pre-upgrade OCC continuity is intentional and self-healing
+    (an ordinary update re-stamps the current revision)."""
 
     from forze.application.contracts.tenancy import TENANT_ID_FIELD
 
@@ -257,12 +259,17 @@ async def test_history_read_tolerates_legacy_records_without_tenant_id(
         {"$unset": {TENANT_ID_FIELD: ""}},
     )
 
-    # The legacy revision is still readable by the bound tenant (OCC keeps working).
-    assert (await gw_a.read(legacy_pk, 1)).title == "legacy-value"
-    assert [d.title for d in await gw_a.read_many([legacy_pk], [1])] == ["legacy-value"]
+    # The unowned legacy revision is invisible to every tenant — including the writer.
+    with pytest.raises(CoreException):
+        await gw_a.read(legacy_pk, 1)
+    assert await gw_a.read_many([legacy_pk], [1]) == []
+    with pytest.raises(CoreException):
+        await gw_b.read(legacy_pk, 1)
+    assert await gw_b.read_many([legacy_pk], [1]) == []
 
     # A newly written (stamped) record stays isolated: tenant B cannot read tenant A's.
     new_pk = uuid4()
     await gw_a.write(_doc(new_pk, 1, "new-isolated"))
+    assert (await gw_a.read(new_pk, 1)).title == "new-isolated"
     with pytest.raises(CoreException):
         await gw_b.read(new_pk, 1)

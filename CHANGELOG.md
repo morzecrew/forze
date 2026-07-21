@@ -95,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Persistence tenancy & fidelity**
 
 - **Counter tenancy (Postgres, Mongo, Firestore)** — the relation/collection resolves through the bound tenant (namespace-tier isolation held), and the spec route is folded into the stored key so two specs sharing a relation no longer merge sequences; the allocation path seeds from a pre-route legacy row so an existing sequence continues rather than restarting.
-- **Mongo history reads scope by tenant** — snapshots stamp and reads filter `tenant_id` (matching Firestore), closing a tagged-tier cross-tenant read via `history.read(pk, rev)`; the read tolerates pre-upgrade records that carry no `tenant_id`.
+- **Mongo history reads scope by tenant** — snapshots stamp and reads filter `tenant_id` strictly (matching Firestore), closing a tagged-tier cross-tenant read via `history.read(pk, rev)`. A pre-upgrade snapshot with no `tenant_id` is unowned and invisible to every tenant; backfill `tenant_id` on legacy history rows for strict pre-upgrade OCC continuity.
 - **`StorageQueryPort.list(missing_ok=…)`** — a missing bucket reads as empty for the object-list route and a blob-less export instead of 500/abort; the default still raises. `list` bounds its per-object HEAD fan-out.
 - **Decimal filter values** — the query caster no longer locale-guesses a comma; `Numeric` admits `str` for exact Decimal/datetime range bounds over JSON, cast per field by `coerce_query_ord_operands`. New public: `coerce_query_ord_operands`.
 - **Meilisearch Decimal reads are exact** — an exact-value shadow field restores the precision the f64 index number rounds away.

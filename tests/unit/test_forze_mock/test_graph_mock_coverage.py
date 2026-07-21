@@ -275,6 +275,21 @@ async def test_bulk_create_return_new_false_returns_none(ctx: ExecutionContext) 
 
 
 @pytest.mark.asyncio
+async def test_bulk_create_conflicts_on_existing_vertex(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    cmd = ctx.graph.command(spec)
+
+    await cmd.create_vertex("User", UserCreate(id="a"))
+
+    # A batch containing an already-existing vertex is rejected (CREATE, not upsert),
+    # matching the singular path and Neo4j.
+    with pytest.raises(CoreException) as caught:
+        await cmd.create_vertices([("User", UserCreate(id="b")), ("User", UserCreate(id="a"))])
+
+    assert caught.value.code == "graph_vertex_conflict"
+
+
+@pytest.mark.asyncio
 async def test_delete_edges_removes_matching_record(ctx: ExecutionContext) -> None:
     spec = _spec()
     cmd = ctx.graph.command(spec)

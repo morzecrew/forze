@@ -493,3 +493,18 @@ def test_extract_exact_shadow_keeps_dumped_on_structural_mismatch() -> None:
         {"a": "1", "b": "2"},
         False,
     )
+
+
+def test_extract_exact_shadow_keeps_dumped_value_when_keys_do_not_correspond() -> None:
+    # Same length but a positionally-paired entry whose keys neither match nor str-match:
+    # the dumped value is kept for that entry rather than re-keyed by guess.
+    plain = {"a": Decimal("1"), object(): Decimal("2")}
+    dumped = {"a": "1", "b": "2"}
+    shadow, found = _extract_exact_shadow(plain, dumped)
+    assert shadow == {"a": "1", "b": "2"}  # "a" pairs and casts; the "b" entry kept as dumped
+    assert found is True
+
+
+def test_extract_exact_shadow_keeps_dumped_list_on_length_mismatch() -> None:
+    # A python list against a shorter dump — no safe positional pairing, so the dump is kept.
+    assert _extract_exact_shadow([Decimal("1"), Decimal("2")], ["1"]) == (["1"], False)

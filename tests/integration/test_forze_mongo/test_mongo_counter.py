@@ -253,3 +253,27 @@ async def test_legacy_document_continues_its_sequence(
 
     # The legacy document was retired (migrated onto the route-prefixed id).
     assert await coll.find_one({"_id": ""}) is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_migration_keeps_new_document_when_both_exist(
+    mongo_client: MongoClient, counter_config: MongoCounterConfig
+) -> None:
+    """If a route-prefixed document already exists when a legacy row is found (a concurrent
+    writer or a prior migration), migration keeps the new document and only retires the
+    legacy one — the new sequence is never overwritten by the legacy value."""
+
+    db_name, coll_name = counter_config.collection
+    coll = await mongo_client.collection(coll_name, db_name=db_name)
+
+    counter = MongoCounterAdapter(client=mongo_client, config=counter_config, route="orders")
+
+    # Establish the route-prefixed document (value=1), then re-introduce a legacy row that
+    # claims a far larger value; the next allocation must not adopt it.
+    assert await counter.incr() == 1
+    await coll.insert_one({"_id": "", "suffix": None, "value": 500})
+
+    assert await counter.incr() == 2  # continues the new sequence, ignores the legacy 500
+
+    # The legacy row is retired even though its value was discarded.
+    assert await coll.find_one({"_id": ""}) is None

@@ -12,7 +12,6 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import exc
 from forze.base.primitives import OnceCell
 from forze.base.serialization import ModelCodec
@@ -79,33 +78,26 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
     # ....................... #
 
     def _with_history_tenant(self, base: dict[str, Any]) -> dict[str, Any]:
-        """Add a **migration-tolerant** tenant predicate to a history read filter.
+        """Add a **strict** tenant predicate to a history read filter.
 
-        The write now stamps ``tenant_id`` (see :meth:`write`), but a released version
-        stamped nothing on history — so records written before this upgrade carry no
-        ``tenant_id``. A strict ``tenant_id == bound`` filter would make every such
-        revision *not found*, and history-based optimistic-concurrency checks would then
-        reject every update to a document whose revisions predate the upgrade.
+        The write stamps ``tenant_id`` (see :meth:`write`), and reads match the bound
+        tenant only. There is deliberately **no** ``tenant_id $exists: false`` tolerance:
+        in a tagged-tenancy shared collection a legacy snapshot carries no owner, so a
+        tolerant branch would hand any tenant another tenant's pre-upgrade snapshot for a
+        guessed ``(source, pk, rev)`` — a cross-tenant leak both on a direct read and
+        during history-based optimistic-concurrency validation.
 
-        So a read matches the bound tenant **or** a legacy record with no ``tenant_id``.
-        This keeps pre-upgrade history readable while isolating everything written after
-        (which is always stamped); the legacy exposure is exactly the pre-upgrade state
-        — history was unstamped *and* unfiltered before — and decays as revisions are
-        rewritten. A ``_add_tenant_filter`` on the shared gateway path stays strict.
+        Isolation wins over legacy optimistic-concurrency continuity, and the continuity
+        cost is small and self-healing: a legacy document's ordinary update presents its
+        current revision, skips history validation entirely, and writes a fresh stamped
+        snapshot. Only a concurrent stale-revision update of a not-yet-rewritten document
+        sees a ``history_not_found_retry`` precondition, which the standard retry loop
+        resolves against the now-stamped current revision. Operators needing strict
+        pre-upgrade concurrency continuity should backfill ``tenant_id`` on legacy
+        history rows.
         """
 
-        if not self.tenant_aware:
-            return base
-
-        tenant_id = self.require_tenant_if_aware()
-        tenant_clause: dict[str, Any] = {
-            "$or": [
-                {TENANT_ID_FIELD: str(tenant_id)},
-                {TENANT_ID_FIELD: {"$exists": False}},
-            ]
-        }
-
-        return {"$and": [base, tenant_clause]}
+        return self._add_tenant_filter(base)
 
     # ....................... #
 
