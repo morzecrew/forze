@@ -138,7 +138,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Broker delivery integrity (RabbitMQ, draining)**
 
-- **The RabbitMQ pending map leaked on partial ack and after channel recovery** — one failed disposition no longer strands the rest of the batch, and a channel reopen purges the now-stale delivery tags instead of failing every later ack.
+- **The RabbitMQ pending map leaked on partial ack and after channel recovery** — a channel reopen purges the stale delivery tags, deliveries read on a channel replaced mid-drain are discarded rather than registered against it, and only confirmed acks and nacks are counted and settled.
 - **Draining no longer parks in-flight messages as poison** — a message refused by the drain gate mid-quiesce is requeued without counting as a delivery attempt and the loop stops, so a rolling deploy cannot drive it to the poison ceiling with no handler defect. Terminal nacks can now opt out of delivery counting where the backend tracks it.
 - **A terminal nack no longer wedges an SQS FIFO message group** (**behavior change**) — on a FIFO queue it now retains a copy on the configured poison queue and deletes, rather than blocking the group forever where no redrive policy would ever trim it. Standard queues are unchanged.
 - **A FIFO poison message is never deleted without being retained** (**behavior change**) — where a retention queue is configured but the copy cannot be sent, the original is kept rather than destroyed and its message group stays blocked until the retention queue recovers. Unconfigured retention still deletes, as before.
