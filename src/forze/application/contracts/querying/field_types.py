@@ -521,7 +521,7 @@ def coerce_query_ord_operands(
             case QueryNot(item):
                 return QueryNot(_walk_elem_inner(item, elem_ann=elem_ann, elem_model=elem_model))
 
-            case QueryField(name, _op, _):
+            case QueryField(name, _, _):
                 if name == ELEM_SCALAR_FIELD:
                     return _field(inner, elem_ann)
 
@@ -572,7 +572,7 @@ def coerce_query_ord_operands(
             case QueryNot(item):
                 return QueryNot(_walk(item))
 
-            case QueryField(name, _op, _):
+            case QueryField(name, _, _):
                 return _field(node, _resolve_annotation(model_type, name.split("."), hints))
 
             case QueryElem() as elem:

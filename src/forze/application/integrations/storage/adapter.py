@@ -1594,20 +1594,17 @@ class ObjectStorageAdapter(
     ) -> builtins.list[ObjectStorageHead]:
         """HEAD every listed object with bounded concurrency (see :data:`_LIST_HEAD_FANOUT`).
 
-        Preserves input order (the caller ``zip``s heads back onto objects), so results are
-        collected by index rather than completion.
+        ``gather`` preserves input order regardless of completion order, so the caller can
+        ``zip`` heads back onto objects one-to-one — the result length always matches.
         """
 
         semaphore = asyncio.Semaphore(_LIST_HEAD_FANOUT)
-        heads: builtins.list[ObjectStorageHead | None] = [None] * len(objects)
 
-        async def _one(index: int, key: str) -> None:
+        async def _one(key: str) -> ObjectStorageHead:
             async with semaphore:
-                heads[index] = await self.client.head_object(bucket=bucket, key=key)
+                return await self.client.head_object(bucket=bucket, key=key)
 
-        await asyncio.gather(*(_one(i, o.key) for i, o in enumerate(objects)))
-
-        return [head for head in heads if head is not None]
+        return await asyncio.gather(*(_one(o.key) for o in objects))
 
     # ....................... #
 

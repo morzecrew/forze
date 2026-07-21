@@ -138,41 +138,64 @@ reads stay exact. Underscore-prefixed, so the ordinary :meth:`from_hit` field wa
 the plaintext value in the clear."""
 
 
-def _lossless_decimals(value: Any) -> tuple[Any, bool]:
-    """Return *value* with every ``Decimal`` leaf stringified, and whether one was found.
+def _extract_exact_shadow(plain: Any, dumped: Any) -> tuple[Any, bool]:
+    """The exact-Decimal shadow for a field, and whether any ``Decimal`` was found.
 
-    Recurses dicts and lists so a nested money field round-trips exactly too. Non-Decimal
-    leaves pass through unchanged (an ``Enum`` — even one wrapping a Decimal — is left alone:
-    its value is a fixed member, restored from the index like any other scalar)."""
+    Walks the python-mode *plain* value (to *detect* Decimals) against its json-mode
+    *dumped* twin — whose leaves are already JSON-safe — and returns the dump with every
+    ``Decimal`` leaf replaced by its exact string. Non-Decimal leaves come straight from
+    *dumped*, so a field mixing a Decimal with a ``datetime`` / ``UUID`` / ``Enum`` shadows
+    the Decimal exactly **without** carrying an unserializable python object into the index
+    (the shadow is stored as JSON, so a raw ``datetime`` there would fail the whole upsert).
 
-    if isinstance(value, bool):
-        return value, False
+    An ``Enum`` — even one wrapping a Decimal — is a leaf: its dumped form is its value, a
+    fixed member restored from the index like any other scalar. Structural mismatches
+    (differing lengths, a python dict against a json non-dict) keep the dumped value as-is.
+    """
 
-    if isinstance(value, Decimal):
-        return str(value), True
+    if isinstance(plain, Decimal):
+        # json-mode already dumped this as its exact string; ``str`` is the same value.
+        return str(plain), True
 
-    if isinstance(value, dict):
+    if isinstance(plain, dict) and isinstance(dumped, dict):
+        plain_map = cast(dict[Any, Any], plain)  # type: ignore[redundant-cast]
+        dumped_map = cast(dict[Any, Any], dumped)  # type: ignore[redundant-cast]
+
+        if len(plain_map) != len(dumped_map):
+            return dumped, False  # pyright: ignore[reportUnknownVariableType]
+
+        # json stringifies mapping keys but keeps insertion order, so pair positionally
+        # and guard per entry by key correspondence (mirrors ``_canonicalize_leaves``).
         out: dict[Any, Any] = {}
         found = False
 
-        for k, v in value.items():  # pyright: ignore[reportUnknownVariableType]
-            out[k], child = _lossless_decimals(v)
-            found = found or child
+        for (pk, pv), (dk, dv) in zip(plain_map.items(), dumped_map.items(), strict=True):
+            if pk == dk or (isinstance(dk, str) and str(pk) == dk):
+                out[dk], child = _extract_exact_shadow(pv, dv)
+                found = found or child
+            else:
+                out[dk] = dv
 
         return out, found
 
-    if isinstance(value, (list, tuple)):
-        items: list[Any] = []
+    if isinstance(plain, (list, tuple)) and isinstance(dumped, list):
+        plain_items = cast(list[Any], list(plain))  # type: ignore[redundant-cast]
+        dumped_items = cast(list[Any], dumped)  # type: ignore[redundant-cast]
+
+        if len(plain_items) != len(dumped_items):
+            return dumped, False  # pyright: ignore[reportUnknownVariableType]
+
+        out_list: list[Any] = []
         found = False
 
-        for v in cast("list[Any]", value):
-            item, child = _lossless_decimals(v)
-            items.append(item)
+        for pv, dv in zip(plain_items, dumped_items, strict=True):
+            item, child = _extract_exact_shadow(pv, dv)
+            out_list.append(item)
             found = found or child
 
-        return items, found
+        return out_list, found
 
-    return value, False
+    return dumped, False
 
 
 def _pydantic_json_datetime(value: datetime) -> str:
@@ -559,12 +582,14 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
                 canonical[k] = v
                 continue
 
-            canonical[k] = _canonicalize_leaves(plain.get(k), v)
-
-            exact, has_decimal = _lossless_decimals(plain.get(k))
+            # Extract the exact shadow from the *un-canonicalized* dump first (the values
+            # are read here, before ``_canonicalize_leaves`` builds the numeric form).
+            exact, has_decimal = _extract_exact_shadow(plain.get(k), v)
 
             if has_decimal:
                 shadow[k] = exact
+
+            canonical[k] = _canonicalize_leaves(plain.get(k), v)
 
         return canonical, shadow
 

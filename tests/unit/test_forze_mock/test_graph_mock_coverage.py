@@ -515,3 +515,46 @@ async def test_create_edges_commits_a_fully_valid_batch(ctx: ExecutionContext) -
     assert created is not None and len(created) == 2
     assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("a"), to_ref=_u("b"))) is True
     assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("b"), to_ref=_u("c"))) is True
+
+
+@pytest.mark.asyncio
+async def test_batch_reads_and_deletes_validate_unknown_kinds(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    query = ctx.graph.query(spec)
+    cmd = ctx.graph.command(spec)
+    bad_vertex = VertexRef(kind="NOPE", key="x")
+    bad_edge = EdgeRef(kind="NOPE", from_ref=_u("a"), to_ref=_u("b"))
+
+    for make_op in (
+        lambda: query.get_vertices([bad_vertex]),
+        lambda: cmd.delete_vertices([bad_vertex]),
+    ):
+        with pytest.raises(CoreException) as caught:
+            await make_op()
+        assert caught.value.code == "graph_unknown_node_kind"
+
+    for make_op in (
+        lambda: query.get_edges([bad_edge]),
+        lambda: cmd.delete_edges([bad_edge]),
+    ):
+        with pytest.raises(CoreException) as caught2:
+            await make_op()
+        assert caught2.value.code == "graph_unknown_edge_kind"
+
+
+@pytest.mark.asyncio
+async def test_delete_vertices_detaches_incident_edges(ctx: ExecutionContext) -> None:
+    spec = _spec()
+    cmd = ctx.graph.command(spec)
+    query = ctx.graph.query(spec)
+    for k in ("a", "b", "c"):
+        await cmd.create_vertex("User", UserCreate(id=k))
+    await cmd.create_edge("LINK", LinkCreate(from_key="a", to_key="b"))  # b as target
+    await cmd.create_edge("LINK", LinkCreate(from_key="b", to_key="c"))  # b as source
+    await cmd.create_edge("LINK", LinkCreate(from_key="a", to_key="c"))  # not incident to b
+
+    await cmd.delete_vertices([_u("b")])
+
+    assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("a"), to_ref=_u("b"))) is False
+    assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("b"), to_ref=_u("c"))) is False
+    assert await query.edge_exists(EdgeRef(kind="LINK", from_ref=_u("a"), to_ref=_u("c"))) is True

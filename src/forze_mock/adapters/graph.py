@@ -572,6 +572,9 @@ class MockGraphAdapter(MockTenancyMixin):
         if not refs:
             return []
 
+        for ref in refs:
+            self._node(ref.kind)  # unknown kind raises, matching the singular get_vertex
+
         with self.state.lock:
             verts = dict(self._verts())
 
@@ -585,6 +588,9 @@ class MockGraphAdapter(MockTenancyMixin):
     async def get_edges(self, refs: Sequence[EdgeRef]) -> Sequence[BaseModel]:
         if not refs:
             return []
+
+        for ref in refs:
+            self._edge(ref.kind)  # unknown kind raises, matching the singular get_edge
 
         with self.state.lock:
             edges = list(self._edges_store())
@@ -1001,14 +1007,32 @@ class MockGraphAdapter(MockTenancyMixin):
         if not refs:
             return
 
+        for ref in refs:
+            self._node(ref.kind)  # unknown kind raises, matching the singular delete_vertex
+
+        targets = {(ref.kind, ref.key) for ref in refs}
+
         with self.state.lock:
             verts = self._verts()
-            for ref in refs:
-                verts.pop((ref.kind, ref.key), None)
+            for target in targets:
+                verts.pop(target, None)
+
+            # DETACH DELETE every removed vertex's incident edges (as delete_vertex does),
+            # so a batch delete cannot leave a dangling edge the backend would forbid.
+            store = self._edges_store()
+            store[:] = [
+                rec
+                for rec in store
+                if (rec["from_kind"], rec["from_key"]) not in targets
+                and (rec["to_kind"], rec["to_key"]) not in targets
+            ]
 
     async def delete_edges(self, refs: Sequence[EdgeRef]) -> None:
         if not refs:
             return
+
+        for ref in refs:
+            self._edge(ref.kind)  # unknown kind raises, matching the singular delete_edge
 
         with self.state.lock:
             store = self._edges_store()

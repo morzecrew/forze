@@ -376,7 +376,7 @@ def test_decimal_valued_plain_enum_indexes_as_number() -> None:
 
 from forze_meilisearch.adapters.search.base import (  # noqa: E402
     _DECIMAL_EXACT_FIELD,
-    _lossless_decimals,
+    _extract_exact_shadow,
 )
 
 
@@ -448,10 +448,48 @@ def test_sealed_decimal_root_gets_no_shadow() -> None:
     assert "price" not in shadow  # the sealed root is never shadowed (no plaintext leak)
 
 
-def test_lossless_decimals_helper() -> None:
-    assert _lossless_decimals(Decimal("1.50")) == ("1.50", True)
-    assert _lossless_decimals("plain") == ("plain", False)
-    assert _lossless_decimals(True) == (True, False)  # bool is not a Decimal
-    assert _lossless_decimals({"a": Decimal("2"), "b": "x"}) == ({"a": "2", "b": "x"}, True)
-    assert _lossless_decimals([Decimal("3"), 4]) == (["3", 4], True)
-    assert _lossless_decimals({"a": 1, "b": [2, 3]}) == ({"a": 1, "b": [2, 3]}, False)
+def test_extract_exact_shadow_helper() -> None:
+    # (plain, dumped) → (shadow, found): Decimals become their exact string; every other
+    # leaf comes from the JSON dump.
+    assert _extract_exact_shadow(Decimal("1.50"), "1.50") == ("1.50", True)
+    assert _extract_exact_shadow("plain", "plain") == ("plain", False)
+    assert _extract_exact_shadow(True, True) == (True, False)  # bool is not a Decimal
+    assert _extract_exact_shadow({"a": Decimal("2"), "b": "x"}, {"a": "2", "b": "x"}) == (
+        {"a": "2", "b": "x"},
+        True,
+    )
+    assert _extract_exact_shadow([Decimal("3"), 4], ["3", 4]) == (["3", 4], True)
+    assert _extract_exact_shadow({"a": 1, "b": [2, 3]}, {"a": 1, "b": [2, 3]}) == (
+        {"a": 1, "b": [2, 3]},
+        False,
+    )
+
+
+def test_extract_exact_shadow_uses_json_safe_leaves_for_non_decimals() -> None:
+    """The fix: a field mixing a Decimal with a python object JSON cannot serialize
+    (datetime, UUID) must shadow the Decimal exactly while carrying the *dumped* form of
+    the other leaves — never the raw python object, which would fail the index upsert."""
+
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    plain = {"amount": Decimal("1.5"), "when": datetime(2026, 1, 1, tzinfo=UTC), "who": UUID(int=1)}
+    dumped = {"amount": "1.5", "when": "2026-01-01T00:00:00Z", "who": "00000000-0000-0000-0000-000000000001"}
+
+    shadow, found = _extract_exact_shadow(plain, dumped)
+
+    assert found is True
+    assert shadow == dumped | {"amount": "1.5"}  # decimal exact, datetime/UUID from the dump
+    # and the shadow holds nothing that json cannot serialize
+    import json
+
+    json.dumps(shadow)  # must not raise
+
+
+def test_extract_exact_shadow_keeps_dumped_on_structural_mismatch() -> None:
+    # A python dict paired with a differing-length dump — pairing would be a guess, so the
+    # dumped value is kept verbatim and no Decimal is claimed.
+    assert _extract_exact_shadow({"a": Decimal("1")}, {"a": "1", "b": "2"}) == (
+        {"a": "1", "b": "2"},
+        False,
+    )
