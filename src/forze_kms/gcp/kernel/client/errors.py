@@ -22,6 +22,34 @@ _CRYPTO_SITES = frozenset({"gcpkms.encrypt", "gcpkms.decrypt"})
 """Sites where an ``InvalidArgument`` means the *ciphertext* was rejected, as opposed to a
 malformed key ring / key id on a key-administration call."""
 
+_KEY_VERSION_STATE_FIELD = "crypto_key_version.state"
+"""Field GCP names when a precondition failed because of the key version's own state."""
+
+_DEAD_KEY_VERSION_STATES = ("DISABLED", "DESTROYED", "DESTROY_SCHEDULED")
+"""Key-version states an operator must reverse; nothing else about them is transient."""
+
+
+def _is_dead_key_version(error: gcp_errors.FailedPrecondition) -> bool:
+    """Whether a ``FAILED_PRECONDITION`` is specifically a disabled/destroyed key version.
+
+    The state is only in the message — ``details`` arrives empty on this error — so this is
+    necessarily a text check, and it is deliberately narrow: it requires GCP to have named
+    the key-version *state field*, so a message that merely mentions "disabled" for some
+    other reason does not qualify.
+
+    Unrecognized is treated as **transient** by the caller, which is the safe direction for
+    a heuristic: if GCP reworded this message, the failure degrades to retrying (bounded by
+    the supervisor's crash ceiling) instead of permanently stopping a consumer over an
+    outage that would have cleared.
+    """
+
+    message = (getattr(error, "message", None) or str(error)).upper()
+
+    if _KEY_VERSION_STATE_FIELD.upper() not in message:
+        return False
+
+    return any(state in message for state in _DEAD_KEY_VERSION_STATES)
+
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
 def _gcpkms_eh(
@@ -73,9 +101,19 @@ def _gcpkms_eh(
                 details=details,
             )
 
-        case gcp_errors.FailedPrecondition():
-            return CoreException.configuration(
-                "GCP KMS key version is disabled or destroyed.",
+        case gcp_errors.FailedPrecondition() as precondition:
+            # FAILED_PRECONDITION is not synonymous with a dead key. KMS also raises it
+            # when an external key manager is unreachable or misbehaving, which is exactly
+            # the transient case — classifying that permanent stops the consumer on an
+            # outage that clears itself.
+            if _is_dead_key_version(precondition):
+                return CoreException.configuration(
+                    "GCP KMS key version is disabled or destroyed.",
+                    details=details,
+                )
+
+            return CoreException.infrastructure(
+                "GCP KMS precondition failed.",
                 details=details,
             )
 

@@ -824,9 +824,13 @@ def test_keyset_page_bounds_before_flush_on_start_can_still_page_forward() -> No
     )
 
     assert [r["id"] for r in rows] == [1, 2, 3]
-    assert has_more is False  # nothing further *behind* — which is what prv turns on
-    assert prv is None
-    assert nxt is not None  # ...and forward is still reachable
+    assert prv is None  # nothing further behind
+    assert nxt is not None  # ...but forward is still reachable
+
+    # ``has_more`` is the page's *forward* answer, so it agrees with ``nxt`` rather than
+    # reporting the (empty) backward side. A client that stops on ``has_more`` alone would
+    # otherwise strand itself on a page whose next cursor is right there.
+    assert has_more is True
 
     # The forward cursor points at the row nearest the original cursor, so the next page
     # picks up at id4 rather than skipping or repeating.
@@ -848,6 +852,54 @@ def test_keyset_page_bounds_backward_page_is_walkable_in_both_directions() -> No
 
     assert decode_keyset_v1(nxt)[3] == [4]  # forward resumes after the last row shown
     assert decode_keyset_v1(prv)[3] == [3]  # backward resumes before the first
+
+
+def test_a_backward_page_can_be_streamed_forward_to_the_end() -> None:
+    """The consumer's view: land mid-set going backward, then follow the cursors out.
+
+    A page-following loop stops on ``has_more`` or a null cursor, so both have to agree.
+    Walking ``before=id4&limit=3`` over ``[1..5]`` must reach ``id4`` and ``id5`` rather
+    than terminating on the very first (full) page.
+    """
+
+    rows = [{"id": i} for i in range(1, 6)]
+
+    def fetch(cursor: dict[str, int] | None) -> tuple[list[dict[str, int]], bool, str | None]:
+        """Serve one page the way a backend does: over-fetch by one, then bound it."""
+
+        limit = 3
+
+        if cursor is None:  # the initial backward page: before=id4
+            raw = [r for r in reversed(rows) if r["id"] < 4][: limit + 1]
+            page, has_more, nxt, _ = keyset_page_bounds(
+                raw, limit, sort_keys=["id"], directions=["asc"],
+                use_after=False, use_before=True,
+            )
+        else:
+            after = cursor["after"]
+            raw = [r for r in rows if r["id"] > after][: limit + 1]
+            page, has_more, nxt, _ = keyset_page_bounds(
+                raw, limit, sort_keys=["id"], directions=["asc"],
+                use_after=True, use_before=False,
+            )
+
+        return page, has_more, nxt
+
+    seen: list[int] = []
+    cursor: dict[str, int] | None = None
+
+    for _ in range(10):  # bounded: a correct walk finishes well inside this
+        page, has_more, nxt = fetch(cursor)
+        seen.extend(r["id"] for r in page)
+
+        if not has_more or nxt is None:
+            break
+
+        cursor = {"after": decode_keyset_v1(nxt)[3][0]}
+
+    # The whole set, in order, with no row visited twice — the first page is [1,2,3] and
+    # the walk continues into id4/id5 instead of dead-ending on it.
+    assert seen == [1, 2, 3, 4, 5]
 
 
 def test_keyset_page_bounds_forward_last_page_still_has_no_next() -> None:

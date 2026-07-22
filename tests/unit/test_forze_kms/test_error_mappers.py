@@ -4,14 +4,23 @@ A backend failure has to land on the right side of two lines. The client/server 
 corrupt or foreign wrapped data key is caller-caused (``validation``). And the
 transient/permanent one, which decides whether a consumer retries at all.
 
-That second line runs through the *key's state*, not through how the failure reads. A
-deleted or disabled key is ``configuration`` (non-retryable) — retrying one forever is
-what turned a revoked key into a consumer that crash-restarted every few seconds while
-alerting nobody. An outage, a throttle, and — less obviously — a **denied permission**
-stay ``infrastructure``: IAM and key policies propagate, so a freshly granted principal is
-denied for seconds before it is allowed, and refusing to retry would strand a consumer on
-a grant already on its way. A denial that never clears terminates by exhausting the
-supervisor's crash ceiling instead.
+That second line runs through the key's *verified* state, not through how the failure
+reads. Only a state the backend names outright — deleted, disabled, destroyed — is
+``configuration`` (non-retryable); retrying one of those forever is what turned a revoked
+key into a consumer that crash-restarted every few seconds while alerting nobody.
+
+Everything else stays ``infrastructure``, including three that read permanent but are not:
+
+* a **denied permission** — IAM and key policies propagate, so a freshly granted principal
+  is denied for seconds before it is allowed;
+* AWS **KMSInvalidStateException** — it reports only that the state forbids the call, which
+  covers ``Creating`` / ``Updating`` as much as ``PendingDeletion``;
+* a GCP **precondition failure** that does not name a dead key-version state — an
+  unreachable external key manager raises the same code.
+
+Ambiguity resolves toward retrying: a fault that never clears still terminates by
+exhausting the supervisor's crash ceiling, whereas a wrongly-permanent classification
+strands a consumer on an outage that would have fixed itself.
 
 These paths are hard to provoke against a live service, so they are pinned here.
 """
@@ -86,7 +95,6 @@ class TestAwsErrorMapper:
         [
             "NotFoundException",
             "DisabledException",
-            "KMSInvalidStateException",
         ],
     )
     def test_permanent_key_faults_are_not_retryable(self, code: str) -> None:
@@ -111,6 +119,8 @@ class TestAwsErrorMapper:
             "AccessDeniedException",
             "KMSAccessDeniedException",
             "KeyUnavailableException",  # AWS documents this one as retryable
+            # Ambiguous: also covers Creating / Updating / Unavailable, which self-clear.
+            "KMSInvalidStateException",
             "ThrottlingException",
             "LimitExceededException",
             "KMSInternalException",
@@ -169,7 +179,12 @@ class TestGcpErrorMapper:
         "error",
         [
             gcp_errors.NotFound("x"),
-            gcp_errors.FailedPrecondition("x"),  # key version disabled / destroyed
+            gcp_errors.FailedPrecondition(
+                "Resource p has value DESTROYED in field crypto_key_version.state."
+            ),
+            gcp_errors.FailedPrecondition(
+                "Resource p has value DISABLED in field crypto_key_version.state."
+            ),
         ],
     )
     def test_permanent_key_faults_are_not_retryable(self, error: BaseException) -> None:
@@ -183,6 +198,10 @@ class TestGcpErrorMapper:
     @pytest.mark.parametrize(
         "error",
         [
+            # A precondition failure that does not name a dead key-version state: an
+            # unreachable external key manager, or anything unrecognized.
+            gcp_errors.FailedPrecondition("Cannot make request to EKM: connection failed"),
+            gcp_errors.FailedPrecondition("x"),
             # IAM bindings propagate, so a denial can clear on its own.
             gcp_errors.PermissionDenied("x"),
             gcp_errors.Unauthenticated("x"),

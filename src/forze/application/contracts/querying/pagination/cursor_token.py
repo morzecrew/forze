@@ -955,7 +955,7 @@ def keyset_page_bounds[R](
     the default reads the sort keys off a dict row, so pass it for any other row shape.
     """
 
-    has_more = len(raw_rows) > limit
+    over_fetched = len(raw_rows) > limit
 
     # Under ``before``, keep the ``limit`` rows nearest the cursor (the front of the descending
     # fetch, dropping the far sentinel), then reverse into ascending order. Reversing the whole
@@ -968,9 +968,9 @@ def keyset_page_bounds[R](
 
     _row_token_vals = row_values if row_values is not None else _dict_token_vals
 
-    # ``has_more`` answers "was there another row in the direction we fetched", so which
-    # boundary it speaks for flips with that direction — it is evidence about the far side
-    # of the fetch, never about the side the cursor came from.
+    # ``over_fetched`` answers "was there another row in the direction we fetched", so
+    # which boundary it speaks for flips with that direction — it is evidence about the far
+    # side of the fetch, never about the side the cursor came from.
     #
     # Forward (``after``, or an uncursored first page): it means rows remain ahead, so it
     # gates ``nxt``; ``prv`` instead follows from having paged forward at all (``after``
@@ -991,7 +991,7 @@ def keyset_page_bounds[R](
             values=_row_token_vals(rows[-1]),
             binding=binding,
         )
-        if rows and (use_before or has_more)
+        if rows and (use_before or over_fetched)
         else None
     )
 
@@ -1003,8 +1003,15 @@ def keyset_page_bounds[R](
             values=_row_token_vals(rows[0]),
             binding=binding,
         )
-        if rows and (use_after or (use_before and has_more))
+        if rows and (use_after or (use_before and over_fetched))
         else None
     )
 
-    return rows, has_more, nxt, prv
+    # The returned flag is the page's *forward* answer — ``CursorPage.has_more`` is
+    # documented as "whether there are more pages after this one", and every caller maps it
+    # straight onto that field. Returning the raw sentinel instead would make it disagree
+    # with ``nxt`` on a backward page (no rows behind, but ``id4``/``id5`` still ahead),
+    # and a client trusting the documented meaning would stop on a page that has a next
+    # cursor sitting right there. Tying it to ``nxt`` keeps the two answering the same
+    # question in every direction.
+    return rows, nxt is not None, nxt, prv

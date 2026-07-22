@@ -100,17 +100,23 @@ def _awskms_eh(
                     details=details,
                 )
 
-            if code in {"DisabledException", "KMSInvalidStateException"}:
+            if code == "DisabledException":
                 return CoreException.configuration(
-                    "AWS KMS key is disabled or pending deletion.",
+                    "AWS KMS key is disabled.",
                     details=details,
                 )
 
-            # Transient by AWS's own contract: the key exists and access is granted, the
-            # request just could not be served now. Stays retryable.
-            if code == "KeyUnavailableException":
+            # Transient: the key exists and access is granted, the request just could not
+            # be served now. ``KMSInvalidStateException`` is *ambiguous* rather than
+            # permanent — it reports only that the key's state does not permit the call,
+            # and that covers ``Creating`` / ``Updating`` / ``Unavailable`` (which clear on
+            # their own) as much as ``PendingDeletion`` (which does not). Only the states
+            # AWS names explicitly are classified permanent; an ambiguous one retries, and
+            # a genuinely terminal state still stops by exhausting the supervisor's
+            # consecutive-crash ceiling.
+            if code in {"KeyUnavailableException", "KMSInvalidStateException"}:
                 return CoreException.infrastructure(
-                    "AWS KMS key is temporarily unavailable.",
+                    "AWS KMS key is not currently usable.",
                     details=details,
                 )
 

@@ -169,13 +169,13 @@ def test_assemble_before_exact_fit_keeps_all_rows() -> None:
         dump_row=_as_json_dict,
     )
     assert hits == fetched
-    assert has_more is False
     assert prev is None  # no sentinel behind -> nothing further back
 
-    # Forward stays reachable even though has_more is False: that flag reports the
-    # *backward* fetch here, while paging before a cursor proves a row exists ahead — the
-    # cursor row itself. Returning None for both dead-ends the client on a full page.
+    # Forward stays reachable: paging before a cursor proves a row exists ahead — the
+    # cursor row itself. Returning None for both dead-ends the client on a full page, and
+    # ``has_more`` tracks that same forward answer so the two cannot disagree.
     assert nxt is not None
+    assert has_more is True
     _k, _d, _n, next_vals = decode_keyset_v1(nxt)
     assert next_vals == [2]
 
