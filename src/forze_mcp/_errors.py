@@ -8,6 +8,8 @@ is masked) and raise the FastMCP error type native to the surface (``ToolError``
 tools, ``ResourceError`` for resources), which FastMCP passes through to the client.
 """
 
+import json
+
 from fastmcp.exceptions import FastMCPError
 
 from forze.base.exceptions import CoreException, error_envelope
@@ -52,4 +54,14 @@ def client_safe_error[E: FastMCPError](e: CoreException, error_type: type[E]) ->
                 detail=e.summary,
             )
 
-    return error_type(f"{envelope.code}: {envelope.detail}")
+    rendered = f"{envelope.code}: {envelope.detail}"
+
+    # Append the envelope's context when the kind's egress policy exposed one. It is
+    # already sanitized (raw values stripped, app-authored messages replaced), and it
+    # carries the part an agent can act on: *which* argument failed and which rule it
+    # broke. Without it a rejected tool call says only that something was invalid, and the
+    # agent has nothing to correct on a retry.
+    if envelope.context:
+        rendered = f"{rendered} {json.dumps(envelope.context, default=str, sort_keys=True)}"
+
+    return error_type(rendered)

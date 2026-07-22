@@ -27,6 +27,27 @@ DEFAULT_MAX_DEPTH: int = 8
 
 MAX_DEPTH_SENTINEL: str = "<max_depth>"
 
+# A camelCase / PascalCase segment boundary, for the terms short enough to need anchoring.
+#
+# ``\b`` requires a non-word character, and ``dbPwd`` has none — so an anchored ``pwd``
+# matched ``db_pwd`` but not its camelCase twin, leaving the credential unmasked under
+# every naming convention that drops separators (JSON bodies, JS clients, most wire DTOs).
+# Longer terms were never affected: ``api[._ -]?key`` already spans the hump because its
+# separator is optional and the flags are IGNORECASE.
+#
+# Case-sensitive by necessity. The surrounding flags include IGNORECASE, under which
+# ``[A-Z]`` also matches lowercase and the assertion would collapse into "any letter after
+# any alnum" — matching exactly the mid-token runs the anchor exists to reject. ``(?-i:…)``
+# scopes the flag off for the assertion alone; the term itself stays case-insensitive.
+#
+# Two humps, the standard pair: ``dbPwd`` (lower→upper) and ``DBPwd`` (acronym→word). The
+# second requires a trailing lowercase so an all-caps run is not split mid-acronym —
+# without it ``HELPWDESK`` would read as a ``pwd`` segment.
+_CAMEL_BOUND = r"(?-i:(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z]))"
+
+_SEG = rf"(?:\b|_|{_CAMEL_BOUND})"
+"""Segment edge for a short sensitive term: a word boundary, an underscore, or a case hump."""
+
 # Logfire DEFAULT_PATTERNS (https://github.com/pydantic/logfire/blob/main/logfire/_internal/scrubbing.py)
 _LOGFIRE_SENSITIVE_FRAGMENTS: tuple[str, ...] = (
     "password",
@@ -42,21 +63,22 @@ _LOGFIRE_SENSITIVE_FRAGMENTS: tuple[str, ...] = (
     "social[._ -]?security",
     "credit[._ -]?card",
     "logfire[._ -]?token",
-    r"(?:\b|_)csrf(?:\b|_)",
-    r"(?:\b|_)xsrf(?:\b|_)",
-    r"(?:\b|_)jwt(?:\b|_)",
-    r"(?:\b|_)ssn(?:\b|_)",
+    rf"{_SEG}csrf{_SEG}",
+    rf"{_SEG}xsrf{_SEG}",
+    rf"{_SEG}jwt{_SEG}",
+    rf"{_SEG}ssn{_SEG}",
 )
 
 # Extra key terms for egress/log key masking (not all appear in Logfire defaults).
-# Short fragments are anchored ``(?:\b|_)…(?:\b|_)`` (the csrf/jwt convention above)
-# so ``pwd``/``db_pwd``/``pwd_hash`` match but a mid-token run (``backupwd``) does not.
+# Short fragments are anchored with ``_SEG`` (the csrf/jwt convention above) so
+# ``pwd`` / ``db_pwd`` / ``pwd_hash`` / ``dbPwd`` match but a mid-token run
+# (``backupwd``) does not.
 _FORZE_KEY_EXTRAS: tuple[str, ...] = (
     "token",
     "dsn",
     "uri",
     "authorization",
-    r"(?:\b|_)pwd(?:\b|_)",
+    rf"{_SEG}pwd{_SEG}",
     "passphrase",
 )
 
@@ -92,9 +114,9 @@ _LOG_ASSIGNMENT_TERM_FRAGMENTS: tuple[str, ...] = (
     "password",
     "passwd",
     r"mysql[._ -]?pwd",
-    # Left-bounded like its key-heuristic twin: ``pwd=`` / ``db_pwd=`` match,
-    # a mid-token run (``backupwd=``) stays ordinary text.
-    r"(?:\b|_)pwd",
+    # Left-bounded like its key-heuristic twin: ``pwd=`` / ``db_pwd=`` / ``dbPwd=``
+    # match, a mid-token run (``backupwd=``) stays ordinary text.
+    rf"{_SEG}pwd",
     "passphrase",
     "secret",
     "token",
@@ -137,11 +159,26 @@ _LOG_QUOTED_KEY_TERM_FRAGMENTS: tuple[str, ...] = (
 
 _QUOTED_VALUE = r"""(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,}\]]+)"""
 
+# The bounded compound-name suffix between a sensitive term and its ``=``/``:``.
+#
+# A trailing segment is separator-led (``secret_key=``) **or** a camelCase hump
+# (``secretKey=``). Only the first was recognized, so a compound name leaked its value
+# under camelCase while its snake_case twin was masked — the same separator-only
+# assumption ``_SEG`` fixes on the key side, one layer out.
+#
+# The hump alternative stays case-sensitive (``(?-i:…)``) and must begin with an uppercase
+# letter, which is what keeps the deliberate non-secrets out: ``secretary=`` and
+# ``tokenizer=`` continue past the term in *lowercase*, so neither alternative applies, no
+# suffix is consumed, and the required separator never lines up.
+_COMPOUND_SUFFIX = r"(?:[._-]\w+|(?-i:[A-Z][a-z0-9]*)){0,6}"
+
 _LOG_ASSIGNMENT_FRAGMENTS: tuple[str, ...] = (
-    "(?:" + "|".join(_LOG_ASSIGNMENT_TERM_FRAGMENTS) + r")(?:[._-]\w+){0,6}\s*[=:]\s*\S+",
+    "(?:" + "|".join(_LOG_ASSIGNMENT_TERM_FRAGMENTS) + ")" + _COMPOUND_SUFFIX + r"\s*[=:]\s*\S+",
     "(?:"
     + "|".join(_LOG_QUOTED_KEY_TERM_FRAGMENTS)
-    + r")(?:[._-]\w+){0,6}[\"']\s*[=:]\s*"
+    + ")"
+    + _COMPOUND_SUFFIX
+    + r"[\"']\s*[=:]\s*"
     + _QUOTED_VALUE,
 )
 

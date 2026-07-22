@@ -13,6 +13,8 @@ client-safe ``ToolError`` / ``ResourceError`` at the registering surface (see
 from collections.abc import Mapping
 from typing import Any
 
+from pydantic import ValidationError
+
 from forze.application.execution.context import (
     ExecutionContextFactory,
     InvocationMetadata,
@@ -22,7 +24,9 @@ from forze.application.execution.operations import (
     OperationDescriptor,
     run_operation,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, uuid7
+from forze.base.scrubbing import sanitize_pydantic_errors
 
 from .identity import MCPIdentityResolver
 
@@ -33,12 +37,32 @@ def build_args(
     descriptor: OperationDescriptor | None,
     arguments: Mapping[str, Any],
 ) -> Any:
-    """Validate raw tool arguments into the operation's input DTO (``None`` if no DTO)."""
+    """Validate raw tool arguments into the operation's input DTO (``None`` if no DTO).
+
+    A rejection is translated here rather than left to propagate: Pydantic's own error text
+    embeds the offending ``input_value``, echoing whatever the caller sent — including the
+    secret they mistyped into the wrong field — straight back to the agent. Masking that is
+    the *host* server's setting (``mask_error_details``), which this package only controls
+    on the server it builds itself; a caller who brings their own FastMCP (the documented
+    path for custom auth/transport) gets FastMCP's default, which does not mask.
+
+    So the boundary masks at its own edge, like the realtime WS route: a fixed summary plus
+    field-level errors with the raw values stripped. The result is a ``CoreException``, so
+    the registering surface's translation renders it through the egress-masked envelope.
+    """
 
     if descriptor is None or descriptor.input_type is None:
         return None
 
-    return descriptor.input_type.model_validate(dict(arguments))
+    try:
+        return descriptor.input_type.model_validate(dict(arguments))
+
+    except ValidationError as error:
+        raise exc.validation(
+            "Invalid tool arguments",
+            code="mcp_invalid_arguments",
+            details={"errors": sanitize_pydantic_errors(error.errors())},
+        ) from error
 
 
 # ....................... #

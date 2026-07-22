@@ -1,9 +1,30 @@
 """The three KMS error mappers — every branch of the backend→`CoreException` translation.
 
-A backend failure has to land on the right side of the client/server line: a corrupt or
-foreign wrapped data key is caller-caused (``validation``), while an outage, a denied
-permission, or a disabled key is ``infrastructure``. These paths are hard to provoke
-against a live service, so they are pinned here.
+A backend failure has to land on the right side of two lines. The client/server one: a
+corrupt or foreign wrapped data key is caller-caused (``validation``). And the
+transient/permanent one, which decides whether a consumer retries at all.
+
+That second line runs through the key's *verified* state, not through how the failure
+reads. Only a state the backend names outright — deleted, disabled, destroyed — is
+``configuration`` (non-retryable); retrying one of those forever is what turned a revoked
+key into a consumer that crash-restarted every few seconds while alerting nobody.
+
+Every mapper therefore reads the state out of the failure's own message when one is there —
+AWS's ``KMSInvalidStateException``, a GCP or Yandex Cloud precondition failure — and each
+falls back to ``infrastructure`` when it recognizes nothing.
+
+Everything else stays ``infrastructure``, including two that read permanent but are not:
+
+* a **denied permission** — IAM and key policies propagate, so a freshly granted principal
+  is denied for seconds before it is allowed;
+* a **state message naming nothing terminal** — an unreachable external key manager and a
+  key still being created raise the same codes as a destroyed one.
+
+Ambiguity resolves toward retrying: nothing bounds those retries, but the supervisor
+escalates them to a critical alert, whereas a wrongly-permanent classification strands a
+consumer on an outage that would have fixed itself.
+
+These paths are hard to provoke against a live service, so they are pinned here.
 """
 
 from typing import Any
@@ -18,7 +39,7 @@ import grpc
 from botocore import exceptions as boto_errors
 from google.api_core import exceptions as gcp_errors
 
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind, exception_egress_policy
 from forze_kms.aws.kernel.client.errors import _awskms_eh
 from forze_kms.gcp.kernel.client.errors import _gcpkms_eh
 from forze_kms.yc.kernel.client.errors import _yckms_eh
@@ -28,16 +49,20 @@ from forze_kms.yc.kernel.client.errors import _yckms_eh
 _DETAILS = {"key_id": "cmk"}
 
 
-def _client_error(code: str) -> boto_errors.ClientError:
-    return boto_errors.ClientError({"Error": {"Code": code}}, "Decrypt")
+def _client_error(code: str, message: str = "") -> boto_errors.ClientError:
+    return boto_errors.ClientError({"Error": {"Code": code, "Message": message}}, "Decrypt")
 
 
 class _RpcError(grpc.RpcError):
-    def __init__(self, status: grpc.StatusCode) -> None:
+    def __init__(self, status: grpc.StatusCode, detail: str = "") -> None:
         self._status = status
+        self._detail = detail
 
     def code(self) -> grpc.StatusCode:
         return self._status
+
+    def details(self) -> str:
+        return self._detail
 
 
 # ....................... #
@@ -61,9 +86,7 @@ class TestAwsErrorMapper:
         assert mapped is not None
         assert mapped.kind is ExceptionKind.INFRASTRUCTURE
 
-    @pytest.mark.parametrize(
-        "code", ["InvalidCiphertextException", "IncorrectKeyException"]
-    )
+    @pytest.mark.parametrize("code", ["InvalidCiphertextException", "IncorrectKeyException"])
     def test_a_bad_wrapped_key_is_caller_caused(self, code: str) -> None:
         """A corrupt or foreign blob must not be masked as a server fault."""
 
@@ -76,12 +99,32 @@ class TestAwsErrorMapper:
     @pytest.mark.parametrize(
         "code",
         [
+            "NotFoundException",
+            "DisabledException",
+        ],
+    )
+    def test_permanent_key_faults_are_not_retryable(self, code: str) -> None:
+        """A revoked, deleted or disabled key never comes back on its own.
+
+        Classified as configuration so the egress policy reports it non-retryable: as
+        infrastructure these drove a decrypt loop to crash-restart forever.
+        """
+
+        mapped = _awskms_eh(_client_error(code), site="awskms.decrypt")
+
+        assert mapped is not None
+        assert mapped.kind is ExceptionKind.CONFIGURATION
+        assert exception_egress_policy(mapped.kind).retryable is False
+        # Still an internal fault: never expose key/ARN details to a caller.
+        assert exception_egress_policy(mapped.kind).expose_details is False
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            # IAM / key policies propagate, so a denial can clear on its own.
             "AccessDeniedException",
             "KMSAccessDeniedException",
-            "NotFoundException",
-            "KeyUnavailableException",
-            "DisabledException",
-            "KMSInvalidStateException",
+            "KeyUnavailableException",  # AWS documents this one as retryable
             "ThrottlingException",
             "LimitExceededException",
             "KMSInternalException",
@@ -89,11 +132,55 @@ class TestAwsErrorMapper:
             "SomethingUnmapped",
         ],
     )
-    def test_other_client_errors_are_infrastructure(self, code: str) -> None:
+    def test_transient_faults_stay_retryable(self, code: str) -> None:
         mapped = _awskms_eh(_client_error(code), site="awskms.decrypt")
 
         assert mapped is not None
         assert mapped.kind is ExceptionKind.INFRASTRUCTURE
+        assert exception_egress_policy(mapped.kind).retryable is True
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            # AWS words the state prose-style rather than as the `KeyState` enum, so both
+            # spellings have to land on the same side.
+            "arn:aws:kms:eu-north-1:1:key/k is pending deletion.",
+            "arn:aws:kms:eu-north-1:1:key/k is in state PendingDeletion",
+            "arn:aws:kms:eu-north-1:1:key/k is pending replica deletion.",
+            "arn:aws:kms:eu-north-1:1:key/k is disabled.",
+        ],
+    )
+    def test_an_invalid_state_naming_a_terminal_key_state_is_permanent(self, message: str) -> None:
+        """A key pending deletion is never coming back without an operator.
+
+        Nothing bounds the retries of a retryable classification, so leaving this one
+        ambiguous blocks the uncommitted record behind it for as long as the process lives.
+        """
+
+        mapped = _awskms_eh(_client_error("KMSInvalidStateException", message), site="s")
+
+        assert mapped is not None
+        assert mapped.kind is ExceptionKind.CONFIGURATION
+        assert exception_egress_policy(mapped.kind).retryable is False
+        assert exception_egress_policy(mapped.kind).expose_details is False
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "arn:aws:kms:eu-north-1:1:key/k is in state Creating",
+            "arn:aws:kms:eu-north-1:1:key/k is in state Updating",
+            "arn:aws:kms:eu-north-1:1:key/k is in state Unavailable",
+            "arn:aws:kms:eu-north-1:1:key/k is in state PendingImport",
+            "the key state does not permit this operation",  # names no state
+            "",  # no message at all
+        ],
+    )
+    def test_an_invalid_state_naming_no_terminal_state_stays_retryable(self, message: str) -> None:
+        mapped = _awskms_eh(_client_error("KMSInvalidStateException", message), site="s")
+
+        assert mapped is not None
+        assert mapped.kind is ExceptionKind.INFRASTRUCTURE
+        assert exception_egress_policy(mapped.kind).retryable is True
 
     def test_generic_botocore_error_is_infrastructure(self) -> None:
         mapped = _awskms_eh(boto_errors.BotoCoreError(), site="awskms.decrypt")
@@ -138,10 +225,55 @@ class TestGcpErrorMapper:
     @pytest.mark.parametrize(
         "error",
         [
+            gcp_errors.NotFound("x"),
+            gcp_errors.FailedPrecondition(
+                "Resource p has value DESTROYED in field crypto_key_version.state."
+            ),
+            gcp_errors.FailedPrecondition(
+                "Resource p has value DISABLED in field crypto_key_version.state."
+            ),
+            # Terminal outcomes of a generation/import that will never complete on its own.
+            gcp_errors.FailedPrecondition(
+                "Resource p has value IMPORT_FAILED in field crypto_key_version.state."
+            ),
+            gcp_errors.FailedPrecondition(
+                "Resource p has value GENERATION_FAILED in field crypto_key_version.state."
+            ),
+            gcp_errors.FailedPrecondition(
+                "Resource p has value PENDING_EXTERNAL_DESTRUCTION in field "
+                "crypto_key_version.state."
+            ),
+            gcp_errors.FailedPrecondition(
+                "Resource p has value EXTERNAL_DESTRUCTION_FAILED in field "
+                "crypto_key_version.state."
+            ),
+        ],
+    )
+    def test_permanent_key_faults_are_not_retryable(self, error: BaseException) -> None:
+        mapped = _gcpkms_eh(error, site="gcpkms.decrypt")
+
+        assert mapped is not None
+        assert mapped.kind is ExceptionKind.CONFIGURATION
+        assert exception_egress_policy(mapped.kind).retryable is False
+        assert exception_egress_policy(mapped.kind).expose_details is False
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            # A precondition failure that does not name a dead key-version state: an
+            # unreachable external key manager, or anything unrecognized.
+            gcp_errors.FailedPrecondition("Cannot make request to EKM: connection failed"),
+            gcp_errors.FailedPrecondition("x"),
+            # Mid-generation / mid-import: these clear on their own within seconds.
+            gcp_errors.FailedPrecondition(
+                "Resource p has value PENDING_GENERATION in field crypto_key_version.state."
+            ),
+            gcp_errors.FailedPrecondition(
+                "Resource p has value PENDING_IMPORT in field crypto_key_version.state."
+            ),
+            # IAM bindings propagate, so a denial can clear on its own.
             gcp_errors.PermissionDenied("x"),
             gcp_errors.Unauthenticated("x"),
-            gcp_errors.NotFound("x"),
-            gcp_errors.FailedPrecondition("x"),
             gcp_errors.ResourceExhausted("x"),
             gcp_errors.ServiceUnavailable("x"),
             gcp_errors.DeadlineExceeded("x"),
@@ -149,11 +281,12 @@ class TestGcpErrorMapper:
             gcp_errors.GoogleAPICallError("x"),
         ],
     )
-    def test_backend_failures_are_infrastructure(self, error: BaseException) -> None:
+    def test_transient_faults_stay_retryable(self, error: BaseException) -> None:
         mapped = _gcpkms_eh(error, site="gcpkms.decrypt")
 
         assert mapped is not None
         assert mapped.kind is ExceptionKind.INFRASTRUCTURE
+        assert exception_egress_policy(mapped.kind).retryable is True
 
     def test_an_unrelated_exception_is_not_claimed(self) -> None:
         assert _gcpkms_eh(ValueError("nope"), site="gcpkms.decrypt") is None
@@ -175,28 +308,86 @@ class TestYcErrorMapper:
         assert mapped.code == "core.crypto.wrapped_key_invalid"
 
     @pytest.mark.parametrize(
+        "error",
+        [
+            _RpcError(grpc.StatusCode.NOT_FOUND),
+            # A precondition failure naming a state only an operator can reverse. The
+            # names are the provider's own SymmetricKey / SymmetricKeyVersion statuses.
+            _RpcError(grpc.StatusCode.FAILED_PRECONDITION, "Key is INACTIVE"),
+            _RpcError(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                "Key version is SCHEDULED_FOR_DESTRUCTION",
+            ),
+            _RpcError(grpc.StatusCode.FAILED_PRECONDITION, "Key version is DESTROYED"),
+        ],
+    )
+    def test_permanent_key_faults_are_not_retryable(self, error: BaseException) -> None:
+        mapped = _yckms_eh(error, site="yckms.decrypt")
+
+        assert mapped is not None
+        assert mapped.kind is ExceptionKind.CONFIGURATION
+        assert exception_egress_policy(mapped.kind).retryable is False
+        assert exception_egress_policy(mapped.kind).expose_details is False
+
+    @pytest.mark.parametrize(
         "status",
         [
+            # IAM bindings propagate, so a denial can clear on its own.
             grpc.StatusCode.PERMISSION_DENIED,
             grpc.StatusCode.UNAUTHENTICATED,
-            grpc.StatusCode.NOT_FOUND,
-            grpc.StatusCode.FAILED_PRECONDITION,
             grpc.StatusCode.RESOURCE_EXHAUSTED,
             grpc.StatusCode.UNAVAILABLE,
             grpc.StatusCode.DEADLINE_EXCEEDED,
             grpc.StatusCode.INTERNAL,
         ],
     )
-    def test_backend_failures_are_infrastructure(self, status: Any) -> None:
+    def test_transient_faults_stay_retryable(self, status: Any) -> None:
         mapped = _yckms_eh(_RpcError(status), site="yckms.decrypt")
 
         assert mapped is not None
         assert mapped.kind is ExceptionKind.INFRASTRUCTURE
+        assert exception_egress_policy(mapped.kind).retryable is True
+
+    @pytest.mark.parametrize(
+        "detail",
+        [
+            "Key is CREATING",  # clears by itself in seconds
+            "operation is not allowed",  # names no state at all
+            "",  # no status message
+        ],
+    )
+    def test_a_precondition_naming_no_dead_state_stays_retryable(self, detail: str) -> None:
+        """The half of FAILED_PRECONDITION that clears on its own.
+
+        Unrecognized has to fall on the retryable side: mistaking a key mid-creation for a
+        destroyed one pauses a consumer for good over a state that resolves in seconds,
+        while the reverse only costs restarts the supervisor already escalates.
+        """
+
+        mapped = _yckms_eh(
+            _RpcError(grpc.StatusCode.FAILED_PRECONDITION, detail), site="yckms.decrypt"
+        )
+
+        assert mapped is not None
+        assert mapped.kind is ExceptionKind.INFRASTRUCTURE
+        assert exception_egress_policy(mapped.kind).retryable is True
 
     def test_an_rpc_error_without_a_code_still_maps(self) -> None:
         """`grpc.RpcError` is only *usually* a `Call`; a bare one must not crash."""
 
         mapped = _yckms_eh(grpc.RpcError(), site="yckms.decrypt")
+
+        assert mapped is not None
+        assert mapped.kind is ExceptionKind.INFRASTRUCTURE
+
+    def test_a_precondition_without_details_does_not_crash(self) -> None:
+        """The state check runs on an error that may not be a `Call` at all."""
+
+        class _NoDetails(grpc.RpcError):
+            def code(self) -> grpc.StatusCode:
+                return grpc.StatusCode.FAILED_PRECONDITION
+
+        mapped = _yckms_eh(_NoDetails(), site="yckms.decrypt")
 
         assert mapped is not None
         assert mapped.kind is ExceptionKind.INFRASTRUCTURE

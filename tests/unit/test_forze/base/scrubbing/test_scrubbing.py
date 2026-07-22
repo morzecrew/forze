@@ -1,11 +1,19 @@
 """Unit tests for forze.base.scrubbing."""
 
 from collections.abc import Iterator
+from typing import Literal
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from pydantic import BaseModel, EmailStr, SecretStr, ValidationError
+from pydantic import (
+    BaseModel,
+    EmailStr,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+)
 
 from forze.base.scrubbing import (
     SECRET_PLACEHOLDER,
@@ -101,6 +109,93 @@ class TestSanitizeLog:
         assert "abc123" not in result
         assert "xyz" not in result
         assert "/v1/authn/login" in result  # the path is left intact
+
+
+class TestSeparatorlessNaming:
+    """A credential must mask under camelCase / PascalCase, not only snake_case.
+
+    Both the key heuristic and the value rule were written around separators: the short
+    terms anchored on ``\\b``/``_`` (which camelCase has neither of), and the compound
+    suffix required a separator to start each segment. So ``db_pwd`` masked while
+    ``dbPwd`` leaked, and ``secret_key=`` masked while ``secretKey=`` leaked — the same
+    credential, unmasked purely because of the caller's naming convention. JSON bodies and
+    wire DTOs are overwhelmingly camelCase, so this was the common shape, not the exotic one.
+    """
+
+    @pytest.mark.parametrize(
+        "snake,camel,pascal",
+        [
+            ("db_pwd", "dbPwd", "DbPwd"),
+            ("mysql_pwd", "mysqlPwd", "MysqlPwd"),
+            ("user_ssn", "userSsn", "UserSsn"),
+            ("csrf_value", "csrfValue", "CsrfValue"),
+            ("xsrf_value", "xsrfValue", "XsrfValue"),
+            ("jwt_value", "jwtValue", "JwtValue"),
+            # Longer terms already spanned the hump (optional separator + IGNORECASE);
+            # pinned so a future rewrite of the anchors cannot regress them.
+            ("api_key", "apiKey", "ApiKey"),
+            ("private_key", "privateKey", "PrivateKey"),
+        ],
+    )
+    def test_key_heuristic_masks_every_convention(
+        self, snake: str, camel: str, pascal: str
+    ) -> None:
+        from forze.base.scrubbing.policy import is_sensitive_key
+
+        assert is_sensitive_key(snake)
+        assert is_sensitive_key(camel)
+        assert is_sensitive_key(pascal)
+
+    def test_key_heuristic_masks_an_acronym_led_segment(self) -> None:
+        # ``DBPwd``: the hump is acronym→word, not lower→upper, and needs its own rule.
+        from forze.base.scrubbing.policy import is_sensitive_key
+
+        assert is_sensitive_key("DBPwd")
+        assert is_sensitive_key("dbPWD")
+
+    @pytest.mark.parametrize(
+        "text,secret",
+        [
+            ("dbPwd=hunter2", "hunter2"),
+            ("secretKey=abc123", "abc123"),
+            ("tokenValue=xyz789", "xyz789"),
+            ("csrfValue=deadbeef", "deadbeef"),
+            ("awsSecretAccessKey=AKIAWEAKKEY123", "AKIAWEAKKEY123"),
+            ('{"apiKeyValue":"sk_live_leak"}', "sk_live_leak"),
+            ('{"userSsn":"123-45-6789"}', "123-45-6789"),
+        ],
+    )
+    def test_value_rule_masks_every_convention(self, text: str, secret: str) -> None:
+        result = scrub_log_string(text)
+
+        assert SECRET_PLACEHOLDER in result
+        assert secret not in result
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # The guards the case-hump rules must not weaken: a term buried mid-token, or
+            # continuing in lowercase, is ordinary text — not a credential.
+            "backupwd=notasecret",
+            "Backupwd=notasecret",
+            "secretary=fine",
+            "tokenizer=fine",
+            "authors=me",
+            "the lesson was long",
+            "HELPWDESK ticket 42",  # all-caps run must not split mid-acronym
+        ],
+    )
+    def test_ordinary_text_is_still_left_alone(self, text: str) -> None:
+        assert scrub_log_string(text) == text
+
+    @pytest.mark.parametrize("name", ["backupwd", "Backupwd", "helpwdesk", "HELPWDESK"])
+    def test_mid_token_runs_are_still_not_sensitive_keys(self, name: str) -> None:
+        from forze.base.scrubbing.policy import is_sensitive_key
+
+        assert not is_sensitive_key(name)
+
+
+# ....................... #
 
 
 class TestScrubAssignmentSuffixLeak:
@@ -217,9 +312,7 @@ class TestCredentialFragmentCoverage:
             "crowd",
         ],
     )
-    def test_short_fragment_key_anchoring_has_no_false_positives(
-        self, key: str
-    ) -> None:
+    def test_short_fragment_key_anchoring_has_no_false_positives(self, key: str) -> None:
         assert sanitize({key: "v"}, context="log") == {key: "v"}
 
     @pytest.mark.parametrize(
@@ -336,14 +429,16 @@ class TestFragmentListParity:
 
     # Key-heuristic terms with no *assignment* value-form counterpart, with the
     # reason the value form is handled elsewhere (or inapplicable).
-    _KEY_ONLY_TERMS = frozenset({
-        # The bare value form is owned by the dedicated full-line
-        # ``authorization\s*:\s*[^\r\n]+`` extras pattern: an assignment-term
-        # match would stop at the first token (the scheme word, e.g. ``Basic``)
-        # and leak the credential that follows it. Its quoted-key form *is*
-        # in the vocabulary (a quoted value is bounded), see below.
-        "authorization",
-    })
+    _KEY_ONLY_TERMS = frozenset(
+        {
+            # The bare value form is owned by the dedicated full-line
+            # ``authorization\s*:\s*[^\r\n]+`` extras pattern: an assignment-term
+            # match would stop at the first token (the scheme word, e.g. ``Basic``)
+            # and leak the credential that follows it. Its quoted-key form *is*
+            # in the vocabulary (a quoted value is bounded), see below.
+            "authorization",
+        }
+    )
 
     # Value-form terms with no key-heuristic counterpart.
     _VALUE_ONLY_TERMS: frozenset[str] = frozenset()
@@ -352,9 +447,14 @@ class TestFragmentListParity:
     def _canonical_term(fragment: str) -> str:
         """Collapse a regex fragment to a comparable bare term."""
 
+        from forze.base.scrubbing import policy
+
         term = fragment.lower()
 
-        for regex_noise in (r"(?:\b|_)", r"(?!ors?\b)", r"[._ -]?"):
+        # ``_SEG`` (the short-term segment anchor) is stripped via the constant rather
+        # than a copy of its expansion, so widening it — as the camelCase boundary did —
+        # cannot silently desync this normalizer from the patterns it reads.
+        for regex_noise in (policy._SEG.lower(), r"(?:\b|_)", r"(?!ors?\b)", r"[._ -]?"):
             term = term.replace(regex_noise, "")
 
         term = term.replace("_", "")
@@ -376,8 +476,7 @@ class TestFragmentListParity:
             )
         }
         value_terms = {
-            self._canonical_term(fragment)
-            for fragment in policy._LOG_ASSIGNMENT_TERM_FRAGMENTS
+            self._canonical_term(fragment) for fragment in policy._LOG_ASSIGNMENT_TERM_FRAGMENTS
         }
 
         missing_from_value = key_terms - value_terms
@@ -407,8 +506,7 @@ class TestFragmentListParity:
             )
         }
         quoted_terms = {
-            self._canonical_term(fragment)
-            for fragment in policy._LOG_QUOTED_KEY_TERM_FRAGMENTS
+            self._canonical_term(fragment) for fragment in policy._LOG_QUOTED_KEY_TERM_FRAGMENTS
         }
 
         assert not key_terms - quoted_terms, (
@@ -471,6 +569,86 @@ class TestSanitizePydanticErrors:
         assert "loc" in sanitized[0]
         assert "msg" in sanitized[0]
 
+    def test_replaces_an_application_authored_message(self) -> None:
+        # Dropping the structured `input` is not enough on its own: a validator that raises
+        # ``ValueError`` writes its own message, and writing the rejected value into it is
+        # the ordinary way to do that — which puts caller data straight back into a
+        # client-visible error.
+        secret = "sk-live-51244"
+
+        class M(BaseModel):
+            api_key: str
+
+            @field_validator("api_key")
+            @classmethod
+            def _reject(cls, value: str) -> str:
+                raise ValueError(f"rejected credential {value!r}")
+
+        with pytest.raises(ValidationError) as exc_info:
+            M.model_validate({"api_key": secret})
+
+        [sanitized] = sanitize_pydantic_errors(exc_info.value.errors())
+
+        assert secret not in str(sanitized)
+        assert sanitized["type"] == "value_error"  # still says which rule broke
+        assert sanitized["loc"] == ("api_key",)  # ...and which field
+
+    def test_replaces_a_bare_assert_message(self) -> None:
+        secret = "sk-live-51244"
+
+        class M(BaseModel):
+            api_key: str
+
+            @field_validator("api_key")
+            @classmethod
+            def _reject(cls, value: str) -> str:
+                raise AssertionError(f"rejected credential {value!r}")
+
+        with pytest.raises(ValidationError) as exc_info:
+            M.model_validate({"api_key": secret})
+
+        [sanitized] = sanitize_pydantic_errors(exc_info.value.errors())
+
+        assert secret not in str(sanitized)
+        assert sanitized["type"] == "assertion_error"
+
+    def test_replaces_a_discriminator_message(self) -> None:
+        # Not every Pydantic-authored message is schema-derived: `union_tag_invalid`
+        # interpolates the caller's own tag ("Input tag '…' found using …"), so a client
+        # sending a secret where a discriminator belongs would read it straight back.
+        secret = "sk-live-51244"
+
+        class Cat(BaseModel):
+            kind: Literal["cat"]
+
+        class Dog(BaseModel):
+            kind: Literal["dog"]
+
+        class M(BaseModel):
+            pet: Cat | Dog = Field(discriminator="kind")
+
+        with pytest.raises(ValidationError) as exc_info:
+            M.model_validate({"pet": {"kind": secret}})
+
+        [sanitized] = sanitize_pydantic_errors(exc_info.value.errors())
+
+        assert secret not in str(sanitized)
+        assert sanitized["type"] == "union_tag_invalid"  # still says which rule broke
+
+    def test_keeps_pydantics_own_message(self) -> None:
+        # Built-in messages are derived from the *schema*, so they say what was expected
+        # without repeating what arrived — keeping them is what leaves the error actionable.
+        class M(BaseModel):
+            n: int
+
+        with pytest.raises(ValidationError) as exc_info:
+            M.model_validate({"n": "sk-live-51244"})
+
+        [sanitized] = sanitize_pydantic_errors(exc_info.value.errors())
+
+        assert "sk-live-51244" not in str(sanitized)
+        assert "valid integer" in sanitized["msg"]
+
 
 class TestDumpForErrorContext:
     def test_masks_secret_str_and_plain_password_field(self) -> None:
@@ -490,9 +668,7 @@ class TestDumpBoundArgsForErrors:
 
 @integration_hypothesis_settings
 @given(
-    key=st.text(
-        min_size=1, max_size=12, alphabet=st.characters(blacklist_categories=("Cs",))
-    ),
+    key=st.text(min_size=1, max_size=12, alphabet=st.characters(blacklist_categories=("Cs",))),
     value=st.text(min_size=0, max_size=24),
 )
 def test_sanitize_log_masks_nested_sensitive_keys(key: str, value: str) -> None:
@@ -636,9 +812,7 @@ class TestPrefilterSupersetness:
         sorted(_FRAGMENT_SAMPLES.items()),
         ids=lambda v: repr(v)[:40],
     )
-    def test_prefilter_passes_every_matching_sample(
-        self, fragment: str, sample: str
-    ) -> None:
+    def test_prefilter_passes_every_matching_sample(self, fragment: str, sample: str) -> None:
         import re
 
         from forze.base.scrubbing import policy
@@ -680,9 +854,7 @@ class TestScrubPrefilterBehaviorIdentical:
     def test_matches_raw_regex_substitution(self, text: str) -> None:
         from forze.base.scrubbing import policy
 
-        assert scrub_log_string(text) == policy._log_string_re.sub(
-            SECRET_PLACEHOLDER, text
-        )
+        assert scrub_log_string(text) == policy._log_string_re.sub(SECRET_PLACEHOLDER, text)
 
     def test_no_match_strings_returned_unchanged(self) -> None:
         msg = "order 12345 fulfilled for customer 9876"
@@ -704,10 +876,7 @@ class TestWalkBranches:
         from forze.base.scrubbing.policy import MAX_DEPTH_SENTINEL
 
         walk_value, _ = self._walk()
-        assert (
-            walk_value({"a": 1}, text_scrub=False, depth=5, max_depth=4)
-            == MAX_DEPTH_SENTINEL
-        )
+        assert walk_value({"a": 1}, text_scrub=False, depth=5, max_depth=4) == MAX_DEPTH_SENTINEL
 
     def test_walk_mapping_max_depth_returns_sentinel(self) -> None:
         from forze.base.scrubbing.policy import MAX_DEPTH_SENTINEL
@@ -734,9 +903,7 @@ class TestWalkBranches:
 
     def test_walk_value_sequence_recurses_into_items(self) -> None:
         walk_value, _ = self._walk()
-        out = walk_value(
-            ["plain", {"secret": "s"}], text_scrub=False, depth=0, max_depth=8
-        )
+        out = walk_value(["plain", {"secret": "s"}], text_scrub=False, depth=0, max_depth=8)
         assert out[0] == "plain"
         assert out[1]["secret"] == SECRET_PLACEHOLDER
 

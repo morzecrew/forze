@@ -17,7 +17,7 @@ from forze.application.contracts.stream import (
     StreamSpec,
 )
 from forze.application.execution import DepsRegistry, ExecutionRuntime
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.consumer import (
     CommitStreamGroupConsumer,
@@ -145,6 +145,236 @@ async def test_consume_crash_is_logged_and_restarts_after_backoff() -> None:
     startup = step.startup
     assert isinstance(startup, _CommitStreamConsumerBackgroundStartup)
     assert startup.task is not None and startup.task.done()
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_terminal_configuration_crash_stops_supervision() -> None:
+    # A fault retrying cannot clear — a revoked or deleted KMS key, an unresolvable
+    # route — must not be restarted: doing so hot-loops a critical log forever while
+    # every liveness probe still reads the consumer as "running".
+    calls = 0
+
+    async def _revoked(ctx: Any, **kwargs: Any) -> None:
+        del ctx, kwargs
+        nonlocal calls
+        calls += 1
+        raise exc.configuration("KMS access denied")
+
+    step = _step(restart_backoff=timedelta(milliseconds=10))
+    logger_mock = MagicMock()
+    runtime = _runtime()
+
+    with (
+        patch.object(CommitStreamGroupConsumer, "run", AsyncMock(side_effect=_revoked)),
+        patch(
+            "forze_kits.integrations.consumer.commit_stream_lifecycle.logger",
+            logger_mock,
+        ),
+    ):
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+
+            startup = step.startup
+            assert isinstance(startup, _CommitStreamConsumerBackgroundStartup)
+            assert startup.task is not None
+            await asyncio.wait_for(startup.task, timeout=2.0)
+
+            await step.shutdown(ctx)
+
+    assert calls == 1  # ran once, never restarted
+    logger_mock.critical.assert_called_once()
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_a_hot_loop_escalates_once_and_keeps_retrying() -> None:
+    """A retryable fault that outlasts the threshold gets loud — it does not get abandoned.
+
+    Stopping here would end the background task without exiting the process or failing a
+    probe, leaving the app serving traffic with a dead consumer and an uncommitted record
+    behind it, unrecoverable without an operator even once the dependency came back. The
+    alert is what makes the outage visible; retrying is what makes it survivable.
+    """
+
+    calls = 0
+    escalated = asyncio.Event()
+
+    async def _always_crashes(ctx: Any, **kwargs: Any) -> None:
+        del ctx, kwargs
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("KMS unavailable")
+
+    logger_mock = MagicMock()
+    logger_mock.critical.side_effect = lambda *a, **kw: escalated.set()
+    step = _step(
+        restart_backoff=timedelta(milliseconds=1),
+        crash_alert_after=timedelta(milliseconds=20),
+    )
+    runtime = _runtime()
+
+    with (
+        patch.object(CommitStreamGroupConsumer, "run", AsyncMock(side_effect=_always_crashes)),
+        patch(
+            "forze_kits.integrations.consumer.commit_stream_lifecycle.logger",
+            logger_mock,
+        ),
+    ):
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+
+            startup = step.startup
+            assert isinstance(startup, _CommitStreamConsumerBackgroundStartup)
+            assert startup.task is not None
+
+            await asyncio.wait_for(escalated.wait(), timeout=5.0)
+            calls_at_alert = calls
+
+            # Still supervising, and still restarting, well past the escalation.
+            await asyncio.sleep(0.05)
+            assert not startup.task.done()
+            assert calls > calls_at_alert
+
+            await step.shutdown(ctx)
+
+    # Escalated once for the incident, not once per restart — an alert that repeats every
+    # few milliseconds is one nobody can act on.
+    logger_mock.critical.assert_called_once()
+    # ...and it took more than one crash to get there: the threshold measures a *window*
+    # of unbroken crashing, so a single crash can never trip it however tight the window.
+    assert calls_at_alert > 1
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_a_long_healthy_run_does_not_count_as_crash_looping() -> None:
+    """The threshold measures time spent crashing, never time spent working.
+
+    A consumer that runs healthily for hours and then hits one transient blip must restart
+    quietly. Dating the incident from the *run's* start instead of the failure booked all
+    that healthy uptime as crash-loop time, so the very first crash of a long-lived
+    consumer already exceeded the threshold — inverting the healthy reset, which exists
+    precisely to keep rare blips from accumulating.
+    """
+
+    calls = 0
+    recovered = asyncio.Event()
+    # Run 1 stays up longer than the whole escalation threshold before failing.
+    healthy_for = 0.08
+    window = timedelta(seconds=0.05)
+
+    async def _healthy_then_one_blip(ctx: Any, **kwargs: Any) -> None:
+        del ctx, kwargs
+        nonlocal calls
+        calls += 1
+
+        if calls == 1:
+            await asyncio.sleep(healthy_for)
+            raise RuntimeError("broker connection reset")
+
+        recovered.set()
+        await asyncio.Event().wait()  # behave like consume-forever
+
+    step = _step(restart_backoff=timedelta(milliseconds=1), crash_alert_after=window)
+    logger_mock = MagicMock()
+    runtime = _runtime()
+
+    with (
+        patch.object(
+            CommitStreamGroupConsumer, "run", AsyncMock(side_effect=_healthy_then_one_blip)
+        ),
+        patch(
+            "forze_kits.integrations.consumer.commit_stream_lifecycle.HEALTHY_UPTIME_SECONDS",
+            healthy_for / 2,
+        ),
+        patch(
+            "forze_kits.integrations.consumer.commit_stream_lifecycle.logger",
+            logger_mock,
+        ),
+    ):
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+
+            startup = step.startup
+            assert isinstance(startup, _CommitStreamConsumerBackgroundStartup)
+            assert startup.task is not None
+            await asyncio.wait_for(recovered.wait(), timeout=5.0)
+
+            await step.shutdown(ctx)
+
+    assert calls == 2  # restarted rather than giving up on its first crash
+    logger_mock.critical.assert_not_called()
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_a_slow_clearing_fault_recovers_after_many_restarts() -> None:
+    """Supervision must outlast a fault that needs many restarts to clear.
+
+    A denial during IAM or key-policy propagation is retryable and does clear itself — but
+    only after minutes of failing every single restart. A crash ceiling of ten gave up
+    roughly a minute in, stranding an uncommitted record behind an outage that would have
+    fixed itself; nothing bounds the restarts now, so recovery only needs the dependency
+    to come back.
+    """
+
+    crashes_before_recovery = 25
+    calls = 0
+    recovered = asyncio.Event()
+
+    async def _crashes_then_recovers(ctx: Any, **kwargs: Any) -> None:
+        del ctx, kwargs
+        nonlocal calls
+        calls += 1
+
+        if calls <= crashes_before_recovery:
+            raise RuntimeError("KMS access denied — policy still propagating")
+
+        recovered.set()
+        await asyncio.Event().wait()  # behave like consume-forever
+
+    step = _step(
+        restart_backoff=timedelta(milliseconds=1),
+        crash_alert_after=timedelta(seconds=30),
+    )
+    logger_mock = MagicMock()
+    runtime = _runtime()
+
+    with (
+        patch.object(
+            CommitStreamGroupConsumer, "run", AsyncMock(side_effect=_crashes_then_recovers)
+        ),
+        patch(
+            "forze_kits.integrations.consumer.commit_stream_lifecycle.logger",
+            logger_mock,
+        ),
+    ):
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+
+            startup = step.startup
+            assert isinstance(startup, _CommitStreamConsumerBackgroundStartup)
+            assert startup.task is not None
+            await asyncio.wait_for(recovered.wait(), timeout=5.0)
+
+            await step.shutdown(ctx)
+
+    # Restarted well past the old ten-crash default and reached the healthy run.
+    assert calls == crashes_before_recovery + 1
+    logger_mock.critical.assert_not_called()
 
 
 # ....................... #
@@ -350,6 +580,9 @@ def test_lifecycle_step_rejects_invalid_options() -> None:
 
     with pytest.raises(CoreException, match="max_attempts"):
         _step(max_attempts=0)
+
+    with pytest.raises(CoreException, match="Crash alert threshold"):
+        _step(crash_alert_after=timedelta(0))
 
 
 # ....................... #

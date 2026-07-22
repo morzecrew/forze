@@ -102,12 +102,39 @@ class OutboxSearchSync:
     elsewhere — build it there via :meth:`SearchSyncOutboxWiring.queue_consumer`."""
 
     max_deliveries: int | None = None
-    """Optional poison-parking ceiling forwarded to the consumer."""
+    """Optional poison-parking ceiling forwarded to the consumer (``None`` = unbounded).
 
-    bind_tenant_from_headers: bool = False
-    """Bind the tenant from the relayed headers for the consumer's re-read + apply
-    (opt-in — headers are untrusted; enable only for brokers where every producer is
-    trusted to assert tenancy)."""
+    Unbounded by default, unlike a general queue consumer, because parking is *terminal*
+    here and this marker has no terminal failure to park for. Applying it re-reads the
+    row's committed state, so it converges from any starting point: a missing row deletes
+    the index entry, a live one upserts it. What is left is essentially one failure mode —
+    the index being unreachable — which retrying is exactly the right response to.
+
+    Parking one instead loses the update permanently: this route wires no dead-letter
+    destination, so a parked marker is dropped, and the row stays stale in the index until
+    something writes it again. An index outage that outlasts the ceiling would silently
+    turn into missing search data long after the outage was fixed. Set a ceiling only with
+    a dead-letter route to replay from."""
+
+    bind_tenant_from_headers: bool = True
+    """Bind the tenant the relay stamped, so the consumer's re-read and apply run in the
+    row's own tenant (default ``True``; a multi-tenant app cannot work without it).
+
+    Binding a tenant from headers is opt-**in** on a general queue consumer because any
+    producer with broker access could forge one. This route earns the opposite default: it
+    is a closed loop the framework owns end to end — *its* staging writes the marker inside
+    the business transaction, *its* relay stamps the tenant off the outbox row it just
+    claimed, and *its* consumer applies it. The stamped tenant is as trustworthy as the row
+    it was copied from.
+
+    The blast radius bounds it further even if the queue is reachable: the payload is one
+    document id (never row data), and applying it *re-reads committed state* under the
+    bound tenant. So a forged marker can only make the index re-converge to what the store
+    already says for that tenant — index churn at worst, never a write of attacker-supplied
+    data and never a cross-tenant read, since the re-read is itself tenant-scoped.
+
+    Set ``False`` to keep the strict posture — e.g. the sync queue shares a broker with
+    untrusted producers and you would rather the route stay single-tenant."""
 
     consumer_restart_backoff: timedelta = timedelta(seconds=5)
     """Backoff before the consumer loop restarts after a consume-stream crash."""
@@ -335,6 +362,13 @@ def bind_search_sync_outbox(
     applies the **decrypted** read model to the index, so a field sealed on the document but
     omitted on the search spec reaches the index in clear (see
     :func:`assert_search_encryption_parity`) — durable delivery does not change that.
+
+    The derived outbox route declares ``require_transaction=True``: staging a marker
+    atomically with the write is the guarantee this route exists to provide, so flushing one
+    outside a transaction is refused (``core.outbox.flush_outside_transaction``) rather than
+    silently downgraded to a dual-write. Attach :meth:`~SearchSyncOutboxWiring.stage_on_write`
+    / :meth:`~SearchSyncOutboxWiring.stage_on_target` on a **tx-bound** operation
+    (``bind_tx()``), as :class:`~forze_kits.aggregates.AggregateKit` does.
     """
 
     assert_search_encryption_parity(document=document, search=search)
@@ -350,6 +384,14 @@ def bind_search_sync_outbox(
             name=route,
             codec=codec,
             destination=OutboxDestination.queue(route=route, channel=str(route)),
+            # Atomic in-tx staging *is* this route's reason to exist: it is the whole
+            # difference from the best-effort after-commit sync. Declaring the precondition
+            # makes it checked — a marker staged outside the write's transaction is a
+            # dual-write (the row commits, the marker rolls back or vice versa) that leaves
+            # the index silently diverged with nothing to alert on. Without this a
+            # misattached hook degrades to exactly the delivery guarantee the route was
+            # chosen to replace, and looks identical while doing it.
+            require_transaction=True,
         ),
         queue_spec=QueueSpec(name=route, codec=codec),
         inbox_spec=InboxSpec(name=route),

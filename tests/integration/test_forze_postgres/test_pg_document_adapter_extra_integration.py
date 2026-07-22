@@ -236,7 +236,12 @@ async def test_pg_adapter_cursor_prev_next_desc_before_and_projection(
         sorts=None,
     )
     assert [h.id for h in p_before.hits] == [ids[0]]
-    assert p_before.has_more is False
+    # Flush on the start of the set: nothing behind, but the rows the cursor was anchored
+    # past are still ahead — so ``has_more`` (which reports pages *after* this one) tracks
+    # the forward cursor rather than the empty backward side.
+    assert p_before.prev_cursor is None
+    assert p_before.next_cursor is not None
+    assert p_before.has_more is True
 
     # Over-fetched before window: the cursor sits at ids[3], three rows precede it, and
     # the page must be the two rows NEAREST the cursor ([ids[1], ids[2]]), not the two

@@ -83,6 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Persistence tenancy & fidelity**
 
 - **Counter tenancy (Postgres, Mongo, Firestore)** — counters resolve through the bound tenant, so namespace-tier isolation holds, and the spec route is folded into the stored key so two specs sharing a relation no longer merge sequences. An existing pre-route sequence is carried forward rather than restarting at zero.
+- **A contended Firestore counter no longer surfaces a concurrency error** — allocation retries under a budget sized for counter contention instead of the shared optimistic-concurrency default, which gave up while concurrent callers were still queued. Postgres and Mongo allocate atomically and were unaffected.
 - **Mongo history reads scope by tenant** — snapshots are stamped and reads filter strictly on it, matching Firestore and closing a tagged-tier cross-tenant read. A pre-upgrade snapshot carries no tenant, so it is unowned and invisible to every tenant; backfill it on legacy history rows for strict pre-upgrade concurrency continuity.
 - **Listing a missing bucket can read as empty** — opt-in, so the object-list route and a blob-less export no longer fail outright; the default still raises. Object listing also bounds its per-object HEAD fan-out.
 - **Decimal filter values** — the query caster no longer locale-guesses a comma, and a JSON string is accepted as an exact Decimal or datetime range bound, cast per field against the read model.
@@ -135,6 +136,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A failed rewind could silently skip records** — every rewind failure was treated as a benign rebalance, so a coordinator error with partitions still held left the position past unprocessed records and then committed past them. The two cases are now told apart and an unrestorable consumer is discarded.
 - **A poison marker no longer drops the record's headers** — it now carries the decoded headers and message type, so a forwarded sealed envelope keeps the ids its authenticated data binds to and stays decryptable for dead-letter triage.
+
+**The log scrubber masks camelCase and PascalCase names** — a credential masked as `db_pwd` leaked as `dbPwd`, and `secret_key=` masked while `secretKey=` leaked. The key heuristic and the value rule both recognize a case hump now; mid-token runs like `backupwd` stay unmasked as before.
+
+**A backward keyset page no longer dead-ends navigation** (**behavior change**) — a `before` page landing flush on the start of the set returned no cursor in either direction, stranding the client on a full page with rows still ahead. It now always carries a forward cursor, and `has_more` reports that same forward answer instead of the backward fetch, so the flag and the cursor cannot disagree. Applies to every keyset-paging backend.
+
+**A rejected MCP tool argument no longer echoes the value back** — invalid arguments raise a masked validation error (`mcp_invalid_arguments`) with field-level errors and the raw input stripped, no longer depending on the host server's `mask_error_details` (which a caller-owned FastMCP does not set).
+
+**The search-sync outbox route declares `require_transaction`** — a marker flushed outside a transaction is refused (`core.outbox.flush_outside_transaction`) instead of silently degrading to a dual-write. The kit already stages in-transaction; hand-rolled wiring that attaches the staging hook without `bind_tx()` now fails loudly.
+
+**Durable search sync works multi-tenant out of the box** (**behavior change**) — `OutboxSearchSync.bind_tenant_from_headers` defaults to `True`, so the consumer binds the tenant its own relay stamped rather than nacking forever; set `False` for the strict posture.
+
+**Permanent dependency faults are no longer retried forever**
+
+- **A deleted or disabled KMS key is classified permanent** (**behavior change**) — AWS, GCP and Yandex map a key state they name outright (not-found, disabled, destroyed) to `CONFIGURATION`, so a commit-stream consumer pauses-and-alerts with `failed > 0` instead of crash-restarting forever and a queue consumer parks instead of requeuing endlessly. Where the state is only in the failure's message (AWS `KMSInvalidState`, GCP/Yandex precondition failures) the mapper reads it. Anything ambiguous stays retryable: access-denied, throttling, and any message naming no terminal state.
+- **The commit-stream supervisor escalates instead of giving up** — a `CONFIGURATION`-kind crash is terminal, while a retryable one is retried indefinitely; new `crash_alert_after` (default 5 min, `None` to never escalate) raises one critical log per incident once it has crashed on every restart for that long. Healthy uptime opens a fresh incident.
 
 **Broker delivery integrity (RabbitMQ, draining)**
 
