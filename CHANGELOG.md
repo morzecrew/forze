@@ -9,150 +9,143 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**Inference seam** — typed model invocation behind one port; the physical model (local artifact, served, cloud) is a wiring fact.
+**Inference seam** — typed model invocation behind one port; whether the model is a local artifact, a served endpoint or a cloud runtime is a wiring fact.
 
-- `forze.application.contracts.inference`: `InferenceSpec[In, Out]` + `InferencePort` (`predict` / all-or-nothing `predict_many` / `predict_stream`) + `InferenceCapabilities` (fail-closed `inference_feature_unsupported`) + `InferenceRunOptions`; resolved via `ctx.inference.model(spec)` — read-plane (`QUERY`-usable). Mis-shaped backend responses raise `inference_output_mismatch` at the boundary.
-- Local adapter (`forze.application.integrations.inference`): `LocalInferenceDepsModule(models={route: LocalInferenceConfig(loader=…)})` — loader returns any object with sync `predict_batch`, run under `run_cpu`; `local_inference_lifecycle_step` warms at boot fail-closed; `serialize_calls=True` for non-thread-safe models. Mock: `MockDepsModule(inference=MockInferenceRegistry().on(route, fn))`, unprogrammed routes raise `mock.inference.unprogrammed`.
-- Remote adapters: `forze_inference.http` (extra `inference-http`) — `HttpInferenceDepsModule` + `HttpInferenceConfig(protocol="kserve_v2"|"mlflow", model_name=…)` + `inference_http_lifecycle_step`; JSON-record scope, kserve_v2 requires flat scalar input fields. `forze_inference.sagemaker` (extra `inference-sagemaker`) — `SageMakerInferenceDepsModule` + `SageMakerInferenceConfig(endpoint_name=…, target_variant=…)` + `sagemaker_inference_lifecycle_step`.
-- Remote wiring fails closed without `acknowledge_data_egress=True`; endpoint failures map to `inference_throttled` / `inference_route_mismatch` / `inference_output_mismatch` / `inference_endpoint_unavailable` / `inference_timeout`.
-- Tenancy: `required_tenant_isolation=` on both modules (`none`/`tagged`/`namespace`/`dedicated`). `dedicated` needs a routed client — `RoutedInferenceHttpClient` (`InferenceHttpRoutingCredentials`) or `RoutedSageMakerRuntimeClient` (`SageMakerRoutingCredentials`, static keys required) — plus `routed_inference_http_lifecycle_step` / `routed_sagemaker_inference_lifecycle_step`.
-- Simulation value capture masks every inference input field (`InferenceSpec(capture_inputs=True)` opts out); any spec type may declare `sensitive_capture_fields`.
+- Handlers call `ctx.inference.model(spec)` for single, batch (all-or-nothing) or streaming prediction. It is a read-plane port, so a CQRS query can hold it; a backend response that does not match the declared output type is refused at the boundary rather than handed on.
+- Backends: a local adapter whose loader runs off the event loop and is warmed fail-closed at boot, a programmable mock, and remote adapters for KServe-V2/MLflow over HTTP and for SageMaker (extras `inference-http`, `inference-sagemaker`). Capabilities are declared per backend and unsupported features fail closed.
+- Remote wiring refuses to build until data egress is explicitly acknowledged, and honours all four tenant-isolation tiers — `dedicated` requires a routed client with per-tenant credentials.
+- Simulation value capture masks inference inputs by default; any spec type can now declare its own sensitive capture fields.
 
-**Portability** — `forze_kits.integrations.portability`: carry an application's system-of-record state to any other wired backend.
+**Portability** (`forze_kits.integrations.portability`) — carry an application's system-of-record state to any other wired backend.
 
-- `export_archive(runtime, dest, *, scope=…)` / `import_archive(runtime, src, *, on_conflict="skip"|"fail")` — backend-agnostic archive (JSONL + `manifest.json`) over the document, blob, graph and counter planes; ids preserved (timestamps when `create_cmd` subclasses `ImportTimestamps`), `rev` resets to 1; import fail-closed on version, fingerprint and checksums.
-- `migrate(source_runtime, target_runtime, *, scope=…)` — the same pipelines fused ports-to-ports (no artifact, no plaintext at rest; the target re-seals fields under its own keys).
-- **Scopes:** `TenantScope(tenant_id)` / `FullScope(quiesce=report)`; `consistency: "quiesced"` requires an attested report (`allow_fuzzy=True` opts into `fuzzy`). Per-tenant exports exclude identity/credential specs by default (`include_identity=True` opts in; manifest records `identity_included`).
-- **At rest:** plaintext by construction; `sealer=ArchiveSealer(kms=…, key_ref=…)` seals with a KMS-wrapped per-archive key. `compression=` `gzip` (default) | `zstd` (`forze[zstd]` extra) | `none`.
-- **New public:** `Archive{Exporter,Importer,Migrator}`, `{Export,Import,Migrate}Report`, per-plane `…Export`+`…Import`, `TenantScope` / `FullScope`, `ArchiveSealer` / `ArchiveEncryption`, `Manifest` / `ArchiveFile` / `ScopeManifest` / `FORMAT_VERSION`, `OnConflict`, `run_export_import_roundtrip` + `PORTABILITY_DIVERGENCES`; non-breaking `ExportedEdge` / `GraphEdgeExportAware`.
+- `export_archive` / `import_archive` move the document, blob, graph and counter planes through a backend-agnostic archive. Ids are preserved and revisions reset; import fails closed on version, fingerprint or checksum mismatch.
+- `migrate` fuses the same pipelines port-to-port: no artifact, and the target re-seals fields under its own keys.
+- Scope is declared, never inferred — one tenant or the whole system. Claiming a quiesced export requires an attested quiesce report, and per-tenant exports leave identity and credential specs out unless asked for.
+- Archives are plaintext by construction; passing a sealer encrypts one under a KMS-wrapped per-archive key. Gzip by default, zstd available via the `zstd` extra.
 
 **Export foundations** — every plane an application binds is enumerable, quiescible and streamable; a portable export refuses anything undeclared.
 
-- **Spec inventory** — `forze.application.contracts.inventory`: `SpecRegistry.register(*specs)` infers each spec's plane and disposition; `build_runtime(specs=…)` reconciles it against the wired deps (`allow_unregistered=True` downgrades to a warning); fed by `forze_identity.spec_contributions()` / `AggregateKit.spec_contributions()`.
-- **Inventory fingerprint** — `FrozenSpecRegistry.fingerprint()` / `.spec_fingerprint(plane, name)` hash the app's portable shape (deployment facts excluded); a signal, not a gate. `entry_shape(entry)` exposes the rendering.
-- **Outbox observability** — `ctx.outbox.admin(spec)` (`OutboxAdminPort`, dep key `outbox_admin`; Postgres, Mongo, mock): `has_undrained()` / `depth()` / `oldest_pending_age()`; read-only, so a CQRS `QUERY` can acquire it. `published` is never counted; `failed` is reported apart.
-- **`quiesce()`** — `forze_kits.integrations.quiesce`: stop admission, wait for in-flight work, poll outbox/durable/stream-group planes to rest; `QuiesceReport` with `settled` / `attested` verdicts + `raise_if_unattested()`; `close_gate=False` = health check (cannot attest).
-- **Outbox relay drains on shutdown** *(opt-in)* — `outbox_relay_background_lifecycle_step(drain_on_shutdown=True, shutdown_drain_timeout=…)` (also on `RelayBinding`); rejects a `pubsub` destination at wiring; default behavior unchanged.
-- **Analytics provenance** — `AnalyticsSpec.provenance` (`PROJECTED` / `SYSTEM_OF_RECORD` / `UNDECLARED`, default undeclared; legal at runtime); `assert_exportable(registry)` refuses `REFUSED` planes at export.
-- **Search-index rebuild** — `rebuild_search_index()` / `kit.rebuild_search(ctx)`: keyset-paged, idempotent backfill (live rows upserted, soft-deleted removed). `assert_search_encryption_parity` moves to `forze.application.integrations.search` (still re-exported from `forze_kits.aggregates.search`).
-- **Counter enumeration** — `ctx.counter.admin(spec)` (`CounterAdminPort.list_counters()`, dep key `counter_admin`; Redis, mock) → `CounterEntry(suffix, value)`; import reuses `CounterPort.reset(value, suffix=)`. `RedisClientPort` gains `scan(cursor, *, match, count)`.
-- **Counter backends** — Postgres, Mongo and Firestore adapters for `CounterPort` + `CounterAdminPort` (`counters={route: …Config}`; Postgres needs an app-migrated `(tenant_id, suffix, value)` table). Counter ops never join the caller's transaction via a new `detached()` scope on the three client ports — **breaking** for custom client-port implementations. Mongo `find_one_and_update` gains `upsert=`.
-- **Graph streaming reads** — `find_vertices_stream` / `find_edges_stream` on `GraphQueryPort` (Neo4j, mock): keyset batches bounded by `chunk_size`, behind `GraphReadCapabilities`; fails closed (`graph_streaming_unsupported`). **Breaking** for custom `GraphQueryPort` implementations: two new protocol methods.
-- **Tenant enumeration** — `TenantManagementPort.list_tenants(limit, offset, *, active_only=False)` pages every tenant with the total (not membership-scoped, unlike `list_principal_tenants`).
+- **Spec inventory** — applications register their specs, and `build_runtime` reconciles that inventory against the wired deps so an unbound or unregistered plane surfaces at startup. Identity and aggregate kits contribute their own specs. A registry fingerprint hashes the app's portable shape as a drift signal, not a gate.
+- **Quiesce** — `quiesce()` stops admission, waits for in-flight work, then polls the outbox, durable and stream-group planes to rest, returning settled and attested verdicts. Run without closing the gate it is a health check that cannot attest.
+- **Outbox and counter observability** — read-only admin ports report outbox depth, undrained state and oldest pending age, and enumerate counter partitions; both are safe for a CQRS query to hold.
+- **Counter backends** — Postgres, Mongo and Firestore join Redis. Counter operations never join the caller's transaction, which is **breaking** for custom implementations of the three client ports; Postgres additionally needs an app-migrated counter table.
+- **Graph streaming reads** — capability-gated keyset streaming of vertices and edges (Neo4j, mock), failing closed where unsupported. **Breaking** for custom graph query ports: two new protocol methods.
+- **Search-index rebuild** — an idempotent keyset-paged backfill that upserts live rows and removes soft-deleted ones, available standalone or on an aggregate kit.
+- **Relay drain and provenance** — the outbox relay can opt into draining on shutdown, and analytics specs declare whether they are projected or system-of-record so an export can refuse to carry a plane that cannot be reproduced.
+- **Tenant enumeration** — tenant management pages every tenant with a total, independent of membership.
 
 **Realtime operational hardening** — the egress plane (stream → gateway → Socket.IO) reaches the durable plane's operational bar.
 
-- **Core loop runner** — `BackgroundLoopControl`, `run_supervised(run, stop=…, restart_backoff=…, max_consecutive_crashes=…)`, and `periodic_lifecycle_step` in `forze.application.execution.background`; `arm()` returns the armed event. **Breaking** for imports of `forze_kits.lifecycle.BackgroundLoopControl` (unreleased).
-- **Retention + trim** — `RedisStreamConfig(retention_max_entries=…)` / `MockRouteConfig(stream_retention_max_entries=…)` cap the stream (`DEFAULT_REALTIME_STREAM_MAX_ENTRIES` recommended); `AckStreamGroupAdminPort.trim_acknowledged(stream)` removes only entries every group delivered **and** acked, on a supervised interval via `realtime_stream_trim_lifecycle_step`.
-- **Delivery guards + depth** — `StreamGroupSignalSource.max_deliveries` poison ceiling (default 5, `None` = unbounded); `AckStreamGroupAdminPort.depth(group, stream) -> AckGroupDepth` + `quiesce(ack_streams=…)`; `RedisClientPort` gains `xlen` / `xinfo_groups`.
-- **Observability + inventory** — `RealtimeGatewayStats` + `instrument_realtime_gateway`; the gateway bridges under the producer's `traceparent`; `BackplaneHealth` + `realtime_backplane_heartbeat_lifecycle_step` + `instrument_realtime_backplane`; `RealtimeTransport.spec_contributions()`.
-- **Connection hygiene** — built-in `realtime.reauth` (same principal and tenant only); `InMemoryRealtimeMailbox` per-principal cap (1000).
-- **Crash conformance** — `forze_dst.conformance.run_gateway_crash_delivery` (+ `GatewayCrashPoint`, `GatewayDeliveryOutcome`, `RealtimeBridge`), runnable against the mock or a real Redis stream.
-- **Mailbox retention backstop** — `realtime_mailbox_retention_lifecycle_step(max_age=…, cursor_max_age=…, tenants=…)` age-sweeps mailbox entries and prunes idle device cursors; new `sweep_older_than` / `prune_stale`, `MailboxStats.overflowed`, `MailboxDocumentSpec` / `CursorDocumentSpec`.
-- **Mailbox sealing** — `realtime_mailbox_spec(encryption=…)` seals stored signal bodies at rest; sealing the replay index (`principal` / `event_id` / `hlc`) is refused (`realtime_mailbox_sealed_index`).
-- **WS perimeter** — `attach_realtime_ws_route(allowed_origins=…)` Origin allowlist; `WsConnection.expires_at` enforced continuously (socket closed past expiry; `realtime.reauth` refreshes it).
-- **Egress tenancy fail-closed** — `RealtimeGateway.require_tenant` drops untenanted signals instead of emitting to the global room; new `stats.untenanted_dropped`.
+- **Supervised loops** — a shared background-loop runner with jittered restart backoff and a consecutive-crash ceiling now underpins the realtime loops. **Breaking** for imports of `BackgroundLoopControl`, which moved out of `forze_kits.lifecycle` (unreleased).
+- **Retention and trim** — realtime streams can be capped, and a supervised trim removes only entries every group both delivered and acked.
+- **Delivery guards and depth** — a poison ceiling bounds redelivery of a stuck signal (default 5), and group depth is readable and quiescible.
+- **Mailbox durability** — an age sweep bounds mailbox growth and prunes idle device cursors, stored signal bodies can be sealed at rest (sealing the replay index is refused), and the in-memory mailbox caps entries per principal.
+- **Perimeter and tenancy** — the WebSocket route takes an Origin allowlist and enforces credential expiry continuously, a built-in reauth command refreshes it for the same principal and tenant, and an untenanted signal is dropped rather than broadcast to the global room.
+- **Observability and crash conformance** — gateway and backplane stats with OTel instrumentation, bridging under the producer's trace context, plus a DST conformance run for gateway crash delivery against the mock or a real Redis stream.
 
 **Realtime transports & client contract** — three transports (Socket.IO, SSE, raw WebSocket), one versioned wire contract.
 
-- **Versioned wire protocol** — normative docs page for the `{id, data}` envelope, cumulative ack, and handshake; `protocol: 1` negotiated at connect on every transport (missing = 1; unsupported refused with `realtime_protocol_unsupported`).
-- **Transport-neutral kernel** — `forze.application.integrations.realtime`: mailbox/cursor seams + in-memory impls, replay/ack helpers, client-key ladder, protocol negotiation, `RealtimePresence` / `room_for` / `RealtimeAck` / `RealtimeCommandRoute`; `forze_socketio` re-exports every established name unchanged.
-- **Fail-closed websocket scopes** — the middlewares refuse raw `websocket` scopes; `allowed_websocket_paths` allowlists by exact full mounted path, reconciled at startup by `check_websocket_allowlist`; `allow_raw_websockets=True` opts out app-wide. **Breaking** for apps mounting raw websocket routes behind the middlewares.
-- **SSE egress** — `attach_realtime_sse_route` (`text/event-stream`: replay with `Last-Event-ID`, live tail, `POST …/ack`, `presence=`, fail-closed `?topics=` via `authorize_topics` / `TopicAuthorizer`) + `RealtimeSseHub` and the `realtime_sse_tail` / `realtime_sse_sharded_tail` / `realtime_sse_presence_heartbeat` lifecycle steps.
-- **Raw WebSocket transport** — `attach_realtime_ws_route`: replay + live hub egress, inline `realtime.ack` / `realtime.reauth`, governed `{"type": "cmd"}` dispatch via `RealtimeCommandRoute` + a frozen registry, per-frame `idempotency_key`/`deadline_budget`, in-flight and frame-size bounds.
-- **Pubsub live lane** — `PubSubSignalSource` + `realtime_pubsub_spec` + `build_realtime_pubsub_publisher` (live-only, no `stage`).
-- **AsyncAPI export** — `asyncapi_document(catalog, router, commands=…)`: AsyncAPI 3 with `x-forze-audience-kinds` / `x-forze-offline-delivery` extensions and the built-in `realtime.ack`; `attach_asyncapi_route(router, document=…)` serves it `/openapi.json`-style for client codegen.
+- **Versioned wire protocol** — the envelope, cumulative ack and handshake are now normatively documented, and every transport negotiates a protocol version at connect, refusing one it does not support.
+- **Transport-neutral kernel** — mailbox and cursor seams, replay/ack helpers, the client-key ladder and presence move into the core realtime integration; `forze_socketio` re-exports every established name unchanged.
+- **SSE and raw WebSocket egress** — both offer replay plus live tail; SSE resumes from `Last-Event-ID` and acks over POST, while the WebSocket route adds governed command dispatch with per-frame idempotency, deadline budgets, and in-flight and frame-size bounds. Topic subscriptions are authorized fail-closed.
+- **Fail-closed WebSocket scopes** — the middlewares refuse raw WebSocket scopes unless the exact mounted path is allowlisted, reconciled at startup. **Breaking** for apps mounting raw WebSocket routes behind them.
+- **AsyncAPI export** — the realtime catalog renders as an AsyncAPI 3 document, servable like the OpenAPI one for client codegen.
 
 **Mock field-encryption conformance** — `forze_mock` runs the real field-encryption path on every field plane.
 
-- **Synchronous key seam** — `SyncKeyManagementPort` / `SyncKeyDirectoryPort` / `SyncKeyDirectoryWithPrevious`: opt-in twins for computation-only key backends; `Keyring.encrypt_sync` fills inline, `ensure_unwrapped_sync` keeps the key-ownership guard; implemented by `MockKeyManagement` + shipped directories, never a real KMS. New public `plaintext_graph_codecs`.
-- **Every mock field plane seals** — document, graph, search (incl. hub/federated + snapshots), analytics and procedure factories resolve the same fail-closed encrypting codecs as real backends: envelopes in `MockState`, decrypt-on-read, searchable-equality rewrite, `key_id_unauthorized` cross-tenant. **Behavior change** for mock suites asserting raw stored encrypted values; text queries no longer match sealed content.
+- **Synchronous key seam** — opt-in synchronous twins of the key-management and directory ports, for computation-only key backends. Implemented by the mock and the shipped directories only, never a real KMS, and they keep the same key-ownership guard as the async path.
+- **Every mock field plane seals** — document, graph, search (including hub/federated and snapshots), analytics and procedures resolve the same fail-closed encrypting codecs as real backends, with decrypt-on-read, searchable-equality rewriting and cross-tenant key refusal. **Behavior change** for mock suites asserting raw stored ciphertext; text queries no longer match sealed content.
 
 ### Changed
 
 **Breaking — graph**
 
-- **`identity="endpoints"` enforces the identity it declares** — at most one edge per `(from, to)` pair: `create_edge` raises `conflict` (`graph_edge_endpoints_conflict`) instead of laying a parallel edge. **Migration:** kinds that legitimately allow parallel edges declare `identity="key"` with a `key_field`. `ensure_edge`, `update_edge` and keyed kinds are unaffected.
+- **An edge kind identified by its endpoints now enforces that identity** — at most one edge per endpoint pair, so creating a second one conflicts instead of quietly laying a parallel edge. **Migration:** kinds that legitimately allow parallel edges declare a key field and identify by it. Ensure, update and keyed kinds are unaffected.
 
-- **`GraphModuleSpec` is validated at construction** — `validate_graph_module_spec` runs from `__attrs_post_init__`: a malformed module raises `configuration` at build (duplicate kind name, endpoint naming an unknown node kind, `key_field` absent from its read model, `identity="key"` with no `key_field`).
+- **Graph module specs are validated at construction** — a duplicate kind name, an endpoint naming an unknown node kind, or a key field missing from its read model now fails at build rather than at first use.
 
 **Behavior**
 
-- **Background loops stop gracefully instead of being cancelled** — kits loops register with a new per-scope `ctx.drainables`; `runtime.shutdown()` stops each between units of work; consumers take `stop=` on `run()`; a commit-stream consumer commits processed offsets even when cancelled mid-batch.
+- **Background loops stop gracefully instead of being cancelled** — kits loops register per scope and shutdown stops each between units of work; consumers accept a stop signal, and a commit-stream consumer commits processed offsets even when cancelled mid-batch.
 
-- **The realtime loops join them, supervised** — gateway, presence heartbeat and identity-expiry sweep restart on crash with jittered backoff (`realtime_gateway_lifecycle_step(restart_backoff=…, max_consecutive_crashes=…)`) and register in `ctx.drainables`; `RealtimeGateway.run` / `RealtimeSignalSource.run` take `stop=` (**breaking** for custom sources). `TenantShardedSignalSource` supervises each tenant loop independently.
+- **The realtime loops join them, supervised** — the gateway, presence heartbeat and identity-expiry sweep restart on crash with jittered backoff and register as drainable, and each tenant's loop is supervised independently. **Breaking** for custom signal sources, which must accept a stop signal.
 
-- **Realtime gateway defaults harden** — `emit_timeout` defaults to 5 s (was unbounded; `None` opts back in); a realtime stream route declaring an encryption tier is refused at run start (`realtime_stream_encryption_unsupported`).
+- **Realtime gateway defaults harden** — emits time out after 5 seconds instead of hanging unbounded, and a realtime stream route declaring an encryption tier is refused at start rather than silently unsupported.
 
-- **`pubsub_auto_reconnect` defaults to `True`** — a Redis pub/sub subscriber reconnects after transport errors instead of silently stopping; opt out per client config.
+- **Redis pub/sub subscribers reconnect by default** — after a transport error a subscriber resubscribes instead of silently stopping; opt out per client config.
 
-- **`python-socketio` capped `<6`** — the gateway and server builder depend on 5.x constructor surfaces.
+- **`python-socketio` capped below 6** — the gateway and server builder depend on 5.x constructor surfaces.
 
-- **`OutboxEmit` rejects a relay with no destination** — a `RelayBinding` whose `transport` names a spec it was never given raises `precondition` at construction instead of quietly dropping that route from the inventory.
+- **An outbox relay with no destination is rejected** — naming a transport spec that was never provided now raises at construction instead of quietly dropping that route from the inventory.
 
 ### Fixed
 
 **Persistence tenancy & fidelity**
 
-- **Counter tenancy (Postgres, Mongo, Firestore)** — the relation/collection resolves through the bound tenant (namespace-tier isolation held), and the spec route is folded into the stored key so two specs sharing a relation no longer merge sequences; the allocation path seeds from a pre-route legacy row so an existing sequence continues rather than restarting.
-- **Mongo history reads scope by tenant** — snapshots stamp and reads filter `tenant_id` strictly (matching Firestore), closing a tagged-tier cross-tenant read via `history.read(pk, rev)`. A pre-upgrade snapshot with no `tenant_id` is unowned and invisible to every tenant; backfill `tenant_id` on legacy history rows for strict pre-upgrade OCC continuity.
-- **`StorageQueryPort.list(missing_ok=…)`** — a missing bucket reads as empty for the object-list route and a blob-less export instead of 500/abort; the default still raises. `list` bounds its per-object HEAD fan-out.
-- **Decimal filter values** — the query caster no longer locale-guesses a comma; `Numeric` admits `str` for exact Decimal/datetime range bounds over JSON, cast per field by `coerce_query_ord_operands`. New public: `coerce_query_ord_operands`.
-- **Meilisearch Decimal reads are exact** — an exact-value shadow field restores the precision the f64 index number rounds away.
-- **Mock graph matches Neo4j on four write-path guards** — `delete_vertex` detaches edges, edges require existing endpoints, `create_vertex` conflicts on a duplicate key, unknown kinds raise.
+- **Counter tenancy (Postgres, Mongo, Firestore)** — counters resolve through the bound tenant, so namespace-tier isolation holds, and the spec route is folded into the stored key so two specs sharing a relation no longer merge sequences. An existing pre-route sequence is carried forward rather than restarting at zero.
+- **Mongo history reads scope by tenant** — snapshots are stamped and reads filter strictly on it, matching Firestore and closing a tagged-tier cross-tenant read. A pre-upgrade snapshot carries no tenant, so it is unowned and invisible to every tenant; backfill it on legacy history rows for strict pre-upgrade concurrency continuity.
+- **Listing a missing bucket can read as empty** — opt-in, so the object-list route and a blob-less export no longer fail outright; the default still raises. Object listing also bounds its per-object HEAD fan-out.
+- **Decimal filter values** — the query caster no longer locale-guesses a comma, and a JSON string is accepted as an exact Decimal or datetime range bound, cast per field against the read model.
+- **Meilisearch Decimal reads are exact** — a shadow field restores the precision the f64 index number rounds away.
+- **Mock graph matches Neo4j on four write-path guards** — deleting a vertex detaches its edges, edges require existing endpoints, creating a duplicate key conflicts, and unknown kinds raise.
 
 **Portability, quiesce & inventory**
 
-- **`FullScope` must declare its tenant dimension** (**breaking**) — `FullScope(quiesce=…, tenants=[…] | UNTENANTED)`, no default; a full-system export/migrate walks each declared tenant bound, one archive section per tenant (`tenants/<uuid>/…`, `scope.tenants`, archive format 2) — counters included, so no tenant's sequences restart at zero.
-- **Import confirms the target tenant** (**breaking**) — `import_archive(…, tenant=…)` required for per-tenant archives; the manifest is cross-checked, never trusted, and sealed frames bind the tenant into their AAD, so an edited manifest fails authentication instead of re-homing the payload.
-- **The artifact is cross-checked against the manifest and the target's plan** — an unlisted data file, or a plane the target expects that the manifest never lists, refuses the import (a missing plane no longer imports as an empty one).
-- **Unsealed credential-adjacent exports are refused** — a plan carrying identity specs or field-encrypted specs needs a `sealer` or `acknowledge_plaintext=True`.
-- **Quiesce attests only what it observed** — new `unobserved` plane state blocks attestation: unreadable outbox/stream/durable admins, catalogued queues/locks (no probe exists yet), streams with no named group, and a runtime with no spec inventory never attests.
-- **Inventory registration refuses conflicting metadata** — a re-registration disagreeing on `disposition`/`identity` raises (was silently first-write-wins); an empty registry over bound planes fails reconciliation, and `plan_export` refuses an empty inventory.
+- **A full-system scope must declare its tenant dimension** (**breaking**) — there is no default; a full export or migrate walks each declared tenant bound and writes one archive section per tenant (archive format 2), counters included, so no tenant's sequences restart at zero.
+- **Import confirms the target tenant** (**breaking**) — a per-tenant archive must be imported against an explicit tenant. The manifest is cross-checked rather than trusted, and sealed frames bind the tenant into their authenticated data, so an edited manifest fails authentication instead of re-homing the payload.
+- **The artifact is cross-checked against the manifest and the target's plan** — an unlisted data file, or a plane the target expects that the manifest never lists, refuses the import; a missing plane no longer imports as an empty one.
+- **Unsealed credential-adjacent exports are refused** — carrying identity or field-encrypted specs requires either a sealer or an explicit plaintext acknowledgement.
+- **Quiesce attests only what it observed** — planes it could not read are now recorded as unobserved and block attestation: unreachable admin ports, catalogued queues and locks with no probe, streams with no named group, and a runtime with no spec inventory.
+- **Inventory registration refuses conflicting metadata** — a re-registration that disagrees with the first now raises instead of silently winning, an empty registry over bound planes fails reconciliation, and planning an export against an empty inventory is refused.
 
 **Realtime**
 
-- **An untenanted signal no longer stops the gateway for every tenant** — the tenant-aware-mailbox `tenant_required` rewrap is a per-signal error (parked, bounded by the poison ceiling), no longer a process-terminal configuration verdict.
-- **Cumulative ack could skip — then trim — undelivered mailbox entries** — the replay cap is now a newest-first retention window (a complete suffix, never a truncated prefix), and Socket.IO acks clamp to the replay's delivered floor mid-drain; new `acknowledge_up_to(delivered_floor=…)`.
-- **Node-local presence on a multi-node backplane suppressed every live emit** — the gateway refuses `presence` without `cluster_wide = True` under a pub/sub Socket.IO manager (`realtime_presence_node_local`).
-- **One hostile frame could tear down a WS connection** — a binary frame closes with 1003 instead of an escaping `KeyError`; a non-JSON command ack becomes an error ack (`realtime_ack_unserializable`) instead of a `TypeError` cancelling every in-flight command.
+- **An untenanted signal no longer stops the gateway for every tenant** — it is now a per-signal error, parked and bounded by the poison ceiling, rather than a process-terminal configuration verdict.
+- **Cumulative ack could skip — then trim — undelivered mailbox entries** — the replay cap is now a newest-first retention window, always a complete suffix rather than a truncated prefix, and acks clamp to the replay's delivered floor mid-drain.
+- **Node-local presence on a multi-node backplane suppressed every live emit** — the gateway now refuses node-local presence under a pub/sub Socket.IO manager instead of silently dropping emits.
+- **One hostile frame could tear down a WebSocket connection** — a binary frame closes cleanly, and a command result that cannot be serialized becomes an error ack instead of cancelling every in-flight command.
+- **Redis counter reset returned the previous value, not the new one** (**behavior change** for callers relying on the old return); batch allocation now uniformly accepts a size of one and rejects anything smaller on every backend.
 
-- **`CounterPort.reset` now returns the new value on Redis** (it returned the *previous* value) — **behavior change** for callers relying on the old return; `incr_batch` uniformly accepts `size=1` and rejects `size < 1` as `precondition` on every backend.
+**`Decimal` is a first-class filter and sort value across the query DSL** — the scalar union omitted it, so the parser rejected an explicit `Decimal` operand and a bare shortcut misrouted to a membership test.
 
-**`Decimal` is now a first-class filter and sort value across the query DSL** — the scalar union omitted it, so the parser rejected an explicit `Decimal` operand and a bare `{"field": Decimal(…)}` shortcut misrouted to `$in`.
+- **Postgres** — nested JSON Decimal leaves compared as text, numeric columns round-tripped filter values through `float`, and writing a Decimal into `jsonb` raised; all fixed, and Decimal-annotated array quantifiers now compare numerically for integer and float operands too.
+- **Mongo** — a Decimal filter value was stringified before coercion and so matched nothing (the read-side sibling of the 0.5.0 write fix).
+- **Firestore** — a Decimal field could not be written at all, and UUID and Decimal filter values reached the driver raw; writes and filters now share one coercion.
+- **Mock** — aggregates refused Decimal fields; they now fold in float space.
+- **Meilisearch** — Decimal fields index as JSON numbers, so filters and sorts are numeric rather than lexical (the document plane keeps the exact value). Sealed roots are never converted. Rebuild the index if Decimal fields were indexed from an unreleased build.
+- **Meilisearch filter literals now match the indexed representation** — aware datetimes normalize to UTC on both sides, where a UTC equality filter previously never matched, and an enum operand renders its indexed value.
 
-- **Postgres** — nested JSON `Decimal` leaves filtered/sorted as text (no `::numeric` cast), `numeric` columns coerced filter values through `float`, and a `Decimal` in a `jsonb` write raised `TypeError`; all fixed. `Decimal`-annotated `jsonb` array quantifiers compare numerically for `int`/`float` operands too.
-- **Mongo** — a `Decimal` *filter* value was stringified before the `Decimal128` coercion, matching nothing (read-side sibling of the 0.5.0 write fix).
-- **Firestore** — a `Decimal` field could not be written and `UUID`/`Decimal` filter values reached the driver raw; writes and filters now share one coercion (`UUID`→string, `Decimal`→double).
-- **Mock** — aggregates (`$sum`/`$avg`/percentiles) refused `Decimal` fields; they now fold in float space.
-- **Meilisearch** — `Decimal` fields index as JSON **numbers** (f64-bounded; the document plane keeps the exact value), so `Decimal` filters and sorts are numeric instead of string-indexed (lexical sort, empty range filters). Sealed roots are never converted; `rebuild_search_index()` if `Decimal` fields were indexed from an unreleased build.
-- **Meilisearch filter literals now match the indexed representation** — aware datetimes normalize to UTC-`Z` on both the index and the literal side (a UTC `$eq` previously never matched); an `Enum` operand rendered `str(member)` instead of its indexed value.
+**Streamed object uploads dropped their tags** — multipart completion carries no tagging, so a streamed upload never wrote its tag map while the returned object reported it; tags are now applied after completion.
 
-**Object storage `upload_stream` dropped its tags** — a streamed upload never wrote its tag map (multipart completion carries no tagging), while the returned `StoredObject` reported them; tags are now applied after completion.
+**Sealed fields are refused as filter and sort keys on every backend, including the mock** (**breaking**) — decided from the spec's declaration: filtering a randomized field is refused (searchable fields keep equality), and sorting any sealed field is refused, including a default sort. Such filters and sorts now raise where they previously returned wrong answers.
 
-**Sealed fields are refused as filter and sort keys on every backend, including the mock** — from the spec's *declaration*: filtering a randomized field raises `core.crypto.encrypted_field_not_filterable` (`searchable` keeps equality); sorting any sealed field (incl. `default_sort`) raises `core.crypto.encrypted_sort_field`. New public: `FieldEncryption.sealed`. **Breaking:** such filters and sorts now raise.
+**Mock storage refused to create a missing object on unconditional overwrite** — it raised not-found for any absent key, contradicting the port contract and the real S3/GCS adapters. It now creates-or-replaces, and still answers not-found for a *conditional* overwrite of a vanished object.
 
-**Mock storage `overwrite_stream` now creates a missing object (unconditional)** — it raised `not_found` for any absent key, contradicting the port contract and the real S3/GCS adapters; it now creates-or-replaces when `if_match` is unset, and still answers `not_found` for a *conditional* overwrite of a vanished object.
+**Mongo could not store a document with a UUID or Decimal field** — such a document could be updated but never created; the write coercion now applies on insert too, and reads convert back exactly.
 
-**Mongo could not store a document with a `UUID` or `Decimal` field** — such a document could be *updated* but never *created*; the write coercion now also applies on insert (`UUID`→string, `Decimal`→`Decimal128` exact) and reads convert `Decimal128` back to `Decimal`.
+**JSON-boundary encoding** — four adapters handed Python-mode maps, holding live UUID, datetime and Decimal objects, to JSON serializers and raised on ordinary payloads. The rule is now documented at the seam; Postgres and ClickHouse keep the Python encode on purpose.
 
-**JSON-boundary encoding** — four adapters handed `mode="python"` maps (live `UUID` / `datetime` / `Decimal`) to JSON serializers and raised `TypeError` on ordinary payloads. `ModelCodec.encode_mapping` documents the rule at the seam; `encode_ingest_payloads` takes `mode` from its caller; Postgres and ClickHouse keep the Python encode on purpose.
+- **Transactional outbox** — staging such a payload raised; it now encodes to JSON before any backend sees it.
+- **Meilisearch** — every committed write on a search-synced aggregate raised against a real index, since a standard read model carries a UUID and a datetime.
+- **BigQuery analytics ingest** and **Inngest events** — raised or rejected on any of the three.
 
-- **Transactional outbox** — `stage()` raised `TypeError` on a payload with any of the three; staging now encodes to JSON before any backend sees it.
-- **Meilisearch** — every committed write on an aggregate wired with `AggregateKit(search=…)` or `bind_search_sync` raised `TypeError` against a real index (a standard `ReadDocument` carries `UUID` + `datetime`).
-- **BigQuery analytics ingest** and **Inngest events** — raised/rejected on any of the three.
-
-**Cross-process fingerprints**
-
-- **Sets hashed in iteration order** — `stable_json_bytes` now sorts sets recursively by canonical bytes. **Idempotency was live-broken:** a command model with a `set` field hashed differently per replica, so a byte-identical retry got `conflict("Payload hash mismatch")`. Search-snapshot and federated-cursor fingerprints fixed with it.
+**Cross-process fingerprints: sets hashed in iteration order** — **idempotency was live-broken**, as a command model with a set field hashed differently per replica, so a byte-identical retry was rejected as a payload-hash mismatch. Sets now hash order-independently; search-snapshot and federated-cursor fingerprints are fixed with it.
 
 **Kafka**
 
-- **A failed rewind could silently skip records** — `seek_to_committed` treated every failure as a benign rebalance; a coordinator error with partitions still held left the position past unprocessed records, then committed past them. The cases are now told apart and an unrestorable consumer is discarded (new `KafkaClientPort.discard_consumer`).
+- **A failed rewind could silently skip records** — every rewind failure was treated as a benign rebalance, so a coordinator error with partitions still held left the position past unprocessed records and then committed past them. The two cases are now told apart and an unrestorable consumer is discarded.
+- **A poison marker no longer drops the record's headers** — it now carries the decoded headers and message type, so a forwarded sealed envelope keeps the ids its authenticated data binds to and stays decryptable for dead-letter triage.
+
+**Broker delivery integrity (RabbitMQ, draining)**
+
+- **The RabbitMQ pending map leaked on partial ack and after channel recovery** — a channel reopen purges the stale delivery tags, deliveries read on a channel replaced mid-drain are discarded rather than registered against it, and only confirmed acks and nacks are counted and settled.
+- **Draining no longer parks in-flight messages as poison** — a message refused by the drain gate mid-quiesce is requeued without counting as a delivery attempt and the loop stops, so a rolling deploy cannot drive it to the poison ceiling with no handler defect. Terminal nacks can now opt out of delivery counting where the backend tracks it.
+- **A terminal nack no longer wedges an SQS FIFO message group** (**behavior change**) — on a FIFO queue it now retains a copy on the configured poison queue and deletes, rather than blocking the group forever where no redrive policy would ever trim it. Standard queues are unchanged.
+- **A FIFO poison message is never deleted without being retained** (**behavior change**) — where a retention queue is configured but the copy cannot be sent, the original is kept rather than destroyed and its message group stays blocked until the retention queue recovers. Unconfigured retention still deletes, as before.
 
 **Graph**
 
-- **A kind could seal its own key field, making its vertices unreachable** — a `key_field` named in its own kind's `encryption` policy is refused at spec construction (`graph_sealed_key_field`); encrypting an ordinary property is unaffected.
+- **A kind could seal its own key field, making its vertices unreachable** — a key field named in its own kind's encryption policy is now refused at spec construction; encrypting an ordinary property is unaffected.
 
 ## [0.5.0] - 2026-07-13
 
@@ -220,7 +213,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **KEK replacement with a migration overlap** — a key directory may name a previous key: reads accept current and previous while writes use current, re-encryption sweeps move the data, and dropping the previous key restores the strict guard. Key-version rotation still needs no action.
 
-- **Blob re-encryption sweep (`reencrypt_objects`)** — streams every object of a route down and back under a fresh data key in bounded memory, in place; metadata survives, an object deleted mid-sweep is counted and skipped, and the sweep returns a `ReencryptReport` (rewritten and skipped counts). The rewrite is conditional (`overwrite_stream(if_match=…)` — S3 If-Match, GCS generation match, mock parity), so a concurrent delete stays deleted instead of being resurrected and a concurrent change is retried once from fresh bytes.
+- **Blob re-encryption sweep** — streams every object of a route down and back under a fresh data key, in place and in bounded memory, preserving metadata and reporting rewritten and skipped counts. The rewrite is conditional on the object being unchanged, so a concurrent delete stays deleted rather than being resurrected and a concurrent change is retried once from fresh bytes.
 
 - **Cloud KMS backends (`forze_kms`)** — AWS, GCP and Yandex Cloud envelope-key backends behind the shared `KeyManagementPort` (extras kms-aws / kms-gcp / kms-yc), with transparent key-version rotation and per-tenant KEK provisioning through the same provisioner port as schemas and buckets.
 
@@ -368,7 +361,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A transient KMS failure during consume is retried, not poison** — decrypt failures classify through the egress policy: retryable kinds requeue (queue consumer) or crash for a supervised rewind-and-restart (commit-stream) instead of being dropped; tampering still parks.
 
-- **The e2e-encrypted DLQ copy is decryptable and keeps its identity** — the commit-stream dead-letter path forwarded the decrypted payload back through the producer, re-sealing it tenant-unbound with a fresh id while keeping the old tenant header, so a DLQ consumer's rebuilt AAD failed auth and correlation was severed. The diverted copy is now the original sealed envelope byte-identical (payload and headers, including the event id); sealing with no bound tenant also drops a stale forwarded tenant header so minted headers can never contradict the AAD.
+- **The e2e-encrypted DLQ copy is decryptable and keeps its identity** — the dead-letter path re-sealed the decrypted payload tenant-unbound under a fresh id while keeping the old tenant header, so a DLQ consumer could not authenticate it and correlation was severed. The diverted copy is now the original sealed envelope byte-identical, and sealing without a bound tenant drops a stale tenant header rather than contradicting the envelope.
 
 **Reliability — durability, shutdown, resilience**
 
@@ -494,7 +487,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Vault Transit signer picks up key rotation** — the cached public key re-fetches after a TTL, so a rotated key verifies without a restart.
 
-- **A sealed field cannot reach the external search index in clear** — index sync feeds the search spec the aggregate's *decrypted* read model and re-seals it under the search spec's own policy, so a `SearchSpec` that omitted a field the `DocumentSpec` sealed published that field's plaintext to Meilisearch (and, for in-place search, broke decryption instead). The "same policy on both specs" rule was documented but unenforced; it is now checked wherever the two specs meet — `AggregateKit` construction, `bind_search_sync`, and `bind_search_sync_outbox` — failing closed with `search_encryption_parity_mismatch`.
+- **A sealed field cannot reach the external search index in clear** — index sync re-seals the aggregate's decrypted read model under the search spec's own policy, so a search spec that omitted a field the document spec sealed published that field's plaintext to Meilisearch. The "same policy on both specs" rule was documented but unenforced; it is now checked wherever the two specs meet, failing closed.
 
 **Identity & authorization**
 
@@ -522,13 +515,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Generated FastAPI routes render one 422 shape** — request-validation errors use the shared error envelope; raw ctx/input dropped.
 
-- **A `Range` over a client-side-encrypted object serves the right bytes** — the streaming download route resolved the range against the object's *stored* size, which on an encrypting route is the ciphertext's, so a `bytes=-N` suffix (what media and zip readers ask for first) returned a window shifted by the envelope overhead, under a plausible-looking `Content-Range`; a range past the plaintext end surfaced as a 400 rather than a clean 416. Ranges now resolve against the plaintext total, which only the adapter knows. Adds `RANGE_NOT_SATISFIABLE_CODE`.
+- **A range request over a client-side-encrypted object serves the right bytes** — ranges resolved against the stored ciphertext size, so a suffix range (what media and zip readers ask for first) returned a window shifted by the envelope overhead under a plausible-looking content range, and a range past the plaintext end surfaced as a 400 rather than a 416. Ranges now resolve against the plaintext total.
 
 - **`forze dst replay` survives a bad corpus target** — one unloadable target counts as a failure while the rest of the corpus replays.
 
 **PostgreSQL**
 
-- **Query parameters no longer leak across reads in a caller transaction** — each param-bound read resets its session settings after the fetch; the analytics **and procedure** timeout/search-path settings get the same capture-and-restore inside a caller transaction. (Both issue `SET LOCAL` inside what is a *savepoint* when a caller transaction is already open, and Postgres merges a savepoint's `SET LOCAL` values into the enclosing transaction on release — so a procedure's per-tenant `search_path` and `statement_timeout` would otherwise apply to every statement the caller ran afterwards.) A failed reset never masks the original query error (logged as context; debug-level when the transaction was already aborted, where rollback discards the settings anyway).
+- **Query parameters no longer leak across reads in a caller transaction** — each param-bound read now restores its session settings after the fetch, and analytics and procedure timeout and search-path settings do the same. Previously a procedure's per-tenant search path and statement timeout applied to every statement the caller ran afterwards. A failed restore never masks the original query error.
 
 - **An OCC retry inside a caller transaction can no longer die on the aborted transaction** — on Mongo a write conflict aborts the whole server transaction, so the in-place retry failed with NoSuchTransaction; on Postgres a serialization failure or deadlock did the same, surfacing as masked infrastructure. Both now surface the original clean concurrency error for a whole-scope re-run; Postgres still heals a healthy zero-rows rev conflict in place.
 
@@ -548,15 +541,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A missing S3/GCS object classifies as not_found, not retryable infrastructure** — a caller miss is no longer retried or counted against the breaker, and download routes 404 on real backends as on the mock. Bucket-level 404s stay infrastructure, and the re-encryption sweep confirms the container still lists before counting a skip.
 
-- **Object-storage reads no longer create the bucket** *(behavior change)* — `list` was the only read path calling `ensure_bucket`, so listing a deleted bucket re-created it and answered "empty", making an absent container indistinguishable from an empty one. That also defeated the re-encryption sweep's bucket-vanished guard above: the sweep's re-probe recreated the bucket it went looking for, counted every object as skipped, and returned a "complete" rotation report. Reads (`list`, like `download` / `head`) now raise on a missing bucket; only the write paths (`upload`, `upload_stream`, `presign_upload`, `begin_upload`) create on demand.
+- **Object-storage reads no longer create the bucket** *(behavior change)* — listing was the only read path that created on demand, so listing a deleted bucket re-created it and answered "empty", making an absent container indistinguishable from an empty one and letting the re-encryption sweep report a "complete" rotation it never performed. Reads now raise on a missing bucket; only the write paths create on demand.
 
 - **Meilisearch write path** — a failed task raises instead of reporting success, task waits are bounded, tenant-tagged writes and deletes are scoped, and windows crossing maxTotalHits fail closed with the index provisioned to match.
 
-- **Neo4j keyed-edge identity & quantifier coercion** — a keyed-edge ensure matches on the edge key so distinct keyed edges stay separate; every hop quantifier (including expand) is int-coerced before inlining; a filter key must be a plain identifier — a crafted key could reach query text through the parameter name (`graph_filter_key_invalid`); walk/path params validate their numeric bounds at construction. The mock graph adapter enforces the identical filter-key rule from a shared contracts helper, pinned by a differential conformance case.
+- **Neo4j keyed-edge identity & quantifier coercion** — a keyed-edge ensure now matches on the edge key so distinct keyed edges stay separate, hop quantifiers are integer-coerced before inlining, and walk and path parameters validate their bounds at construction. A filter key must be a plain identifier, since a crafted key could otherwise reach query text through the parameter name; the mock enforces the identical rule from a shared helper.
 
-- **Neo4j transactions honour the per-tenant database** — an enlisted transaction bound to the client's static default and ignored each statement's `database=`, so under the `namespace` tier (a per-tenant database) a tenant's transactional graph writes landed in the shared database and reads cross-contaminated. The transaction's session is now opened by its first statement, binding it to that statement's tenant-resolved database — the transaction manager enlists the scope before any tenant name exists, so nothing earlier can know it. A second, different database inside one transaction is refused (`neo4j_tx_database_conflict`) rather than silently redirected.
+- **Neo4j transactions honour the per-tenant database** — an enlisted transaction bound to the client's static default and ignored the per-statement database, so under the namespace tier a tenant's transactional graph writes landed in the shared database and reads cross-contaminated. The transaction now binds to the tenant-resolved database of its first statement, and a second, different database inside one transaction is refused rather than silently redirected.
 
-- **Credentials in a logged JSON or dict-repr body are masked** — the log scrubber's value rule matched only `key=value` / `key: value`, but in a serialized body the key's closing quote sits between the name and the separator (`{"api_key":"sk_live_…"}`), so every secret term except `private_key` — which had a hand-written rule of its own — went out verbatim wherever a request, response or webhook body was logged. The quoted-key form is now derived from the same term vocabulary as the plain form (plus `authorization`, whose quoted value is bounded), and the mask stops at the value so neighbouring fields survive.
+- **Credentials in a logged JSON or dict-repr body are masked** — the log scrubber matched only unquoted key/value forms, so in a serialized body every secret term but one went out verbatim wherever a request, response or webhook body was logged. Quoted keys are now derived from the same term vocabulary as the plain form, and the mask stops at the value so neighbouring fields survive.
 
 - **Logger-name constants are importable as documented** — `FORZE_POSTGRES_LOGGER_NAMES` / `FORZE_REDIS_LOGGER_NAMES` (and their logger enums) are now re-exported from the package roots for `bootstrap_logging` wiring, matching `forze_http`.
 
@@ -592,21 +585,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Mergeable quantile sketch (`DDSketch`)** — `forze.base.primitives` adds `DDSketch`/`WindowedDDSketch`: a relative-error sketch answering any quantile and mergeable across streams (fleet-wide, multi-quantile latency). Complements `P2Quantile`.
+- **Mergeable quantile sketch** — a relative-error sketch answering any quantile and mergeable across streams, for fleet-wide multi-quantile latency, in windowed and unwindowed forms.
 
-- **Hybrid Logical Clock (`HybridLogicalClock`)** — `forze.base.primitives` adds `HybridLogicalClock`/`HlcTimestamp`: a skew-tolerant causal clock (reading the ambient `TimeSource`) with an optional drift guard.
+- **Hybrid logical clock** — a skew-tolerant causal clock over the ambient time source, with an optional drift guard.
 
-- **Causal outbox ordering** — opt-in `hlc_ordering=True` on the Postgres and Mongo outbox configs stamps events with a hybrid logical clock and claims them in causal order across replicas (drift-guarded). Off by default; Postgres needs a new `hlc` column, and legacy rows fall back to `created_at`.
+- **Causal outbox ordering** — opt-in on the Postgres and Mongo outbox configs: events are stamped with a hybrid logical clock and claimed in causal order across replicas. Off by default; Postgres needs a new column, and legacy rows fall back to their creation time.
 
-- **Fleet-wide adaptive-bulkhead congestion signal** — the AIMD latency-quantile signal flows through a pluggable `LatencyDigestStore` (default in-process windowed-P², behavior-preserving), and `forze_redis` adds a Redis store so the limit reacts to the fleet's p95. Opt-in.
+- **Fleet-wide adaptive-bulkhead congestion signal** — the AIMD latency signal flows through a pluggable digest store, defaulting to the existing in-process one, and Redis-backed storage lets the limit react to the fleet's p95 rather than one replica's. Opt-in.
 
-- **Prioritized load shedding** — opt-in `prioritized=True` on the bulkhead strategies makes the wait queue criticality-aware via a new task-scoped `Criticality` and `bind_criticality`. No-op until enabled; requires a non-zero max queue.
+- **Prioritized load shedding** — opt-in, making the bulkhead wait queue criticality-aware through a task-scoped criticality binding. A no-op until enabled, and requires a bounded queue.
 
-- **Delay-based bulkhead (`GradientBulkheadStrategy`)** — a third bulkhead kind that tunes concurrency from the latency gradient with no latency threshold. Mutually exclusive with the other bulkhead kinds.
+- **Delay-based bulkhead** — a third bulkhead kind tuning concurrency from the latency gradient, needing no latency threshold. Mutually exclusive with the other kinds.
 
 ### Changed
 
-- **Quantile estimators relocated** — `P2Quantile`/`WindowedP2Quantile` moved from the resilience module to `forze.base.primitives` (co-located with `DDSketch`, now public exports). The old module path is removed; internal resilience wiring is unaffected.
+- **Quantile estimators relocated** — the P² estimators moved from the resilience module to the shared primitives, alongside the new sketch, and are now public. The old module path is removed; internal resilience wiring is unaffected.
 
 ### Fixed
 
@@ -616,47 +609,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Envelope-encryption core** — `forze.base.crypto` adds `EncryptedEnvelope`, a `KeyManagementPort` BYOK seam (the KEK stays backend), a `FieldEncryption` policy, and a fail-closed `required_encryption` floor (none < field < envelope). Adds `cryptography` to core dependencies. Opt-in, off by default.
+- **Envelope-encryption core** — an encrypted-envelope primitive, a bring-your-own-key management seam that keeps the key-encryption key in the backend, a field-encryption policy, and a fail-closed minimum-encryption floor ordered none < field < envelope. Adds `cryptography` to core dependencies. Opt-in, off by default.
 
-- **Per-tenant keyring and wiring** — `KeyDirectoryPort` resolves tenant to KEK, `CryptoDepsModule` composes the stack, and `forze_mock` ships a dev-only `MockKeyManagement`.
+- **Per-tenant keyring and wiring** — a directory port resolves a tenant to its key, a deps module composes the stack, and the mock ships a dev-only key backend.
 
-- **At-rest sealing across persistence and transport planes** — each plane takes a `…Spec(encryption=…)` or `encrypt=` policy, fail-closed at wiring and tolerant of legacy plaintext.
+- **At-rest sealing across persistence and transport planes** — each plane takes an encryption policy on its spec, fail-closed at wiring and tolerant of legacy plaintext.
 
-- **Object-storage encryption** — `S3StorageConfig`/`GCSStorageConfig` `encrypt=True`; presigned URLs are refused on encrypting routes.
+- **Object-storage encryption** — opt-in per storage route on S3 and GCS; presigned URLs are refused on an encrypting route.
 
-- **Document-field encryption** — `DocumentSpec(encryption=FieldEncryption(...))`; `binds_record_id=True` binds the record id into AAD (bulk-update of a bound field is refused), and `reencrypt_documents` upgrades legacy ciphertext.
+- **Document-field encryption** — declared per spec. Binding the record id into the authenticated data refuses bulk updates of a bound field, and a re-encrypt pass upgrades legacy ciphertext.
 
-- **Searchable deterministic-field encryption** — `FieldEncryption(searchable={…})` (AES-SIV, no KMS) so equality and membership filters rewrite to ciphertext; root rotation is supported via a previous-root match plus re-encrypt. Trade-off: leaks equality and frequency within a tenant.
+- **Searchable deterministic-field encryption** — AES-SIV, needing no KMS round-trip, so equality and membership filters rewrite to ciphertext; root rotation matches the previous root and re-encrypts. Trade-off: it leaks equality and frequency within a tenant.
 
-- **Encrypted search reads** — `SearchSpec.encryption` (the same policy object as the document spec) decrypts out of results across every read path.
+- **Encrypted search reads** — the same policy object as the document spec, decrypting out of results across every read path.
 
-- **Analytics and graph encryption** — `AnalyticsSpec`/`GraphNodeSpec`/`GraphEdgeSpec` `encryption`; sealed on write and decrypted out of every read and traversal. Encrypted columns are not analyzable or matchable; analytics rejects record-id binding and graph binds the kind's key field.
+- **Analytics and graph encryption** — sealed on write and decrypted out of every read and traversal. Encrypted columns are neither analyzable nor matchable; analytics rejects record-id binding, and graph binds the kind's key field.
 
-- **Outbox and direct-messaging encryption** — `OutboxSpec.encryption` (none/at_rest/end_to_end) and queue, stream, and pubsub spec `encryption` (none/end_to_end); AAD binds tenant and event id. `QueueCommandPort.enqueue_many` gains `message_headers`.
+- **Outbox and direct-messaging encryption** — at-rest or end-to-end for the outbox, end-to-end for queue, stream and pubsub specs, with tenant and event id bound into the authenticated data.
 
-- **Durable-payload encryption** — Temporal (`encrypt_payloads=True`) and Inngest (`encrypt=True`), per-tenant BYOK. A Temporal worker must be built from the same encrypting client to decode.
+- **Durable-payload encryption** — opt-in on Temporal and Inngest with per-tenant keys. A Temporal worker must be built from the same encrypting client to decode.
 
-- **Cache, search-snapshot, and idempotency encryption** — sealed via `IdempotencySpec(encrypt_result=True)` and similar when the underlying route encrypts. The in-process L1 stays plaintext in memory.
+- **Cache, search-snapshot, and idempotency encryption** — sealed when the underlying route encrypts. The in-process L1 cache stays plaintext in memory.
 
-- **Vault Transit KMS (`forze_vault`)** — `VaultTransitKeyManagement` implements `KeyManagementPort` on Transit, and `VaultTransitTenantProvisioner` idempotently creates a tenant's Transit key.
+- **Vault Transit KMS** (`forze_vault`) — key management backed by Vault Transit, plus an idempotent provisioner that creates a tenant's Transit key.
 
-- **BYOK access-token signing and JWKS** — pluggable `SignerPort` (`Hs256Signer` default, plus local-asymmetric and Vault Transit signers); `attach_jwks_route` publishes JWKS. Breaking: `AccessTokenService` now takes a `signer=`, `issue_token`/`verify_token` are awaitable, and `AccessTokenConfig.algorithm` is removed.
+- **BYOK access-token signing and JWKS** — a pluggable signer (HMAC by default, plus local-asymmetric and Vault Transit) and a route publishing JWKS. **Breaking:** the access-token service now takes a signer, issuing and verifying became awaitable, and the algorithm config field is gone.
 
-- **Crypto and signing observability** — `instrument_crypto(...)` and `instrument_signing(...)`, always-on.
+- **Crypto and signing observability** — always-on instrumentation for both.
 
 - **Declared-minimum tenant isolation, fail-closed at wiring** — every deps module accepts `required_tenant_isolation` over none < tagged < namespace < dedicated, enforced per route, and each integration declares its supported ceiling. Additive, with the `None` default unchanged.
 
-- **Neo4j reaches namespace and dedicated isolation** — `Neo4jGraphConfig.database` accepts a per-tenant resolver and a new `RoutedNeo4jClient` resolves per-tenant Bolt URI and credentials (failing closed on partial auth), wired via a routed lifecycle step.
+- **Neo4j reaches namespace and dedicated isolation** — the database accepts a per-tenant resolver, and a routed client resolves per-tenant Bolt URI and credentials, failing closed on partial auth.
 
-- **Tenant infrastructure provisioning** — idempotent `provision`/`deprovision` via `TenantProvisionerPort` on `TenancyDepsModule`, with reference object-storage and Postgres-schema provisioners. Opt-in.
+- **Tenant infrastructure provisioning** — idempotent provision and deprovision behind a port, with reference object-storage and Postgres-schema implementations. Opt-in.
 
 - **Analytics per-tenant namespace routing and advisory binding** — query operations route into the tenant's namespace, and `tenant_aware` routes bind the tenant id and fail closed if unbound. Off by default.
 
-- **Tenant-safe structured graph walk and raw gating** — `GraphQueryPort.scoped_walk(...)` runs an adapter-owned full-path tenant-scoped traversal, and the raw hatch is disabled by default. Breaking: deployments using the raw graph query must set `allow_raw_query=True`.
+- **Tenant-safe structured graph walk and raw gating** — a scoped walk runs an adapter-owned traversal that is tenant-scoped along the full path, and the raw query hatch is now disabled by default. **Breaking:** deployments using raw graph queries must opt back in.
 
-- **Fluent query builder `Q`** — `Q.field("age").gt(18) & Q.field("name").like("a%")` lowers to the same filter AST. New exports `Q`, `QueryCondition`, `FieldRef`. Additive.
+- **Fluent query builder** — `Q.field("age").gt(18) & Q.field("name").like("a%")` lowers to the same filter AST as the mapping form. Additive.
 
-- **Hierarchy operators** — `$descendant_of`/`$ancestor_of` on a `TreePath` field, using Postgres `ltree` or a text-prefix fallback, gated by a capability flag. New exports `TreePath`, `HierarchyOp`, `HierarchyValue`.
+- **Hierarchy operators** — `$descendant_of` and `$ancestor_of` over a tree-path field, using Postgres `ltree` where available and a text-prefix fallback otherwise, gated by a capability flag.
 
 - **Aggregation operators** — `$count_distinct`, `$stddev`, `$var`, `$percentile`, and post-group `$having` on Postgres and Mongo (`$first`/`$last` deferred).
 
@@ -668,67 +661,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Tenant selector self-service** — `GET /tenants`, an activate endpoint that re-mints a tenant-scoped token pair, and a leave endpoint, via the new `attach_tenancy_routes`.
 
-- **Tenant admin** (`forze_kits.aggregates.tenancy_admin`) — create, list-members, invite, remove, and deactivate via `attach_tenancy_admin_routes`. Ships unguarded, so bind authn and authz per op. Breaking for `TenantManagementPort` implementers: adds two listing methods.
+- **Tenant admin** (`forze_kits.aggregates.tenancy_admin`) — create, list members, invite, remove and deactivate. Ships unguarded, so bind authn and authz per op. **Breaking** for tenant-management implementers: two new listing methods.
 
-- **Self-service API-key management** — issue, list, and revoke as `POST`/`GET`/`DELETE /api-keys`, with the secret returned once. Breaking for `ApiKeyLifecyclePort`; the account table gains hint and label columns.
+- **Self-service API-key management** — issue, list and revoke under `/api-keys`, with the secret returned once. **Breaking** for API-key lifecycle implementers; the account table gains hint and label columns.
 
-- **Delegation-aware API keys (user to agent)** — `issue_api_key(actor_principal_id=…)` binds a delegation actor (an RFC 8693 `act` claim). Breaking for `ApiKeyLifecyclePort`; the account table gains an actor-principal column.
+- **Delegation-aware API keys (user to agent)** — a key can bind a delegation actor, carried as an RFC 8693 `act` claim. **Breaking** for API-key lifecycle implementers; the account table gains an actor-principal column.
 
-- **MCP boundary API-key auth** — `ForzeApiKeyVerifier` plus `AccessTokenIdentityResolver` protect a FastMCP server with the forze_identity brain (no OAuth flow), reads-only by default.
+- **MCP boundary API-key auth** — an API-key verifier and identity resolver protect a FastMCP server with the identity plane and no OAuth flow, reads-only by default.
 
-- **OpenAPI security from configured authn** — `apply_openapi_security` derives security schemes from the authn requirement, and principal-requiring ops are flagged.
+- **OpenAPI security from configured authn** — security schemes are derived from the configured authn requirement, and principal-requiring operations are flagged.
 
-- **Authn plane** — `AuthnOrchestrator` with a full mock identity plane and `attach_authn_routes` (login, refresh, logout, change-password, deactivate, reset) plus self-service password reset. `deactivate_principal` ships unguarded.
+- **Authn plane** — an orchestrator with a full mock identity plane and routes for login, refresh, logout, change-password, deactivate and self-service password reset. Principal deactivation ships unguarded.
 
-- **In-process L1 document cache** — `CacheSpec(l1=L1Spec(…))` ahead of the distributed cache: tenant-scoped, pluggable eviction, with Redis invalidation push and `CachePort.exists`. Off by default.
+- **In-process L1 document cache** — sits ahead of the distributed cache, tenant-scoped with pluggable eviction and Redis invalidation push. Off by default.
 
 - **Stampede protection and adaptive freshness** — singleflight on read-through misses, probabilistic early refresh, per-entry age and sliding TTLs, and a keyword `ttl=` on every setter.
 
-- **New resilience strategies** — adaptive bulkhead (AIMD concurrency), adaptive throttle, tail-based hedging, and a token-bucket rate limit; configurable via `ResilienceDepsModule(port_policies=[…])`.
+- **New resilience strategies** — adaptive bulkhead over AIMD concurrency, adaptive throttle, tail-based hedging, and a token-bucket rate limit, all configured as per-port policies.
 
-- **Invocation deadlines** — per-operation budgets via `with_deadline(…)`; expiry raises `exc.timeout` (504).
+- **Invocation deadlines** — per-operation budgets; expiry raises a timeout, surfacing as 504.
 
-- **Distributed rate limits** — a pluggable `RateLimitStore` (`RedisRateLimitStore`, fails open) lets N replicas share one rate; bulkheads and budgets stay process-local.
+- **Distributed rate limits** — a pluggable store, with a fail-open Redis implementation, lets replicas share one rate. Bulkheads and budgets stay process-local.
 
-- **App assembly and deployment** — `build_runtime` plus `runtime_lifespan`, graceful drain (default 10s), and `DeploymentProfile.FLEET`/`SERVERLESS` (the latter rejects long-running ops).
+- **App assembly and deployment** — a runtime builder and ASGI lifespan, graceful drain defaulting to 10s, and fleet and serverless deployment profiles, the latter rejecting long-running operations.
 
-- **Envelope headers and correlation propagation** — messages gain headers and a delivery count, the relay forwards the full envelope, and `process_with_inbox` rebinds correlation and causation across broker hops.
+- **Envelope headers and correlation propagation** — messages gain headers and a delivery count, the relay forwards the full envelope, and the inbox rebinds correlation and causation across broker hops.
 
-- **Outbox ordering key** — per-aggregate ordering (SQS FIFO message group, stream partition key). Requires a new `ordering_key` column.
+- **Outbox ordering key** — per-aggregate ordering, mapping to an SQS FIFO message group or a stream partition key. Requires a new column.
 
-- **Kits queue-consumer runner** — `run_consumer` plus a background lifecycle step: inbox exactly-once, requeue, poison parking, and envelope rebinding.
+- **Kits queue-consumer runner** — a consumer plus background lifecycle step giving inbox exactly-once, requeue, poison parking and envelope rebinding.
 
-- **Stream pending-entry recovery** — `StreamGroupQueryPort.claim` (XAUTOCLAIM) and `pending` (XPENDING). Breaking for port implementers.
+- **Stream pending-entry recovery** — claim and pending inspection over consumer groups. **Breaking** for stream port implementers.
 
-- **Presigned object-storage URLs** — `presign_download` and `presign_upload` (S3 SigV4, GCS V4, mock). Breaking for port implementers, since minting an upload URL is a CQRS write.
+- **Presigned object-storage URLs** — download and upload URLs on S3, GCS and the mock. **Breaking** for port implementers, since minting an upload URL is a CQRS write.
 
-- **Object-storage metadata and access ops** — `head`, ranged download (206), conditional download (304), copy/move, and object tags; generated routes honour `Range` and `If-None-Match`. Breaking for the storage and client ports.
+- **Object-storage metadata and access ops** — head, ranged and conditional download, copy and move, and object tags; generated routes honour range and conditional request headers. **Breaking** for the storage and client ports.
 
-- **Resumable multipart uploads** — `StorageUploadSessionPort` (begin, presign-part, complete, abort), CQRS-write-guarded. Refused on object-encrypting routes.
+- **Resumable multipart uploads** — begin, presign-part, complete and abort behind a session port, guarded as a CQRS write and refused on object-encrypting routes.
 
-- **Storage HTTP edge** — kit ops and generated FastAPI routes for presigned download and upload and the full multipart session. Minting an upload URL is a command op, so bind authn and authz.
+- **Storage HTTP edge** — kit ops and generated routes for presigned download and upload and the full multipart session. Minting an upload URL is a command op, so bind authn and authz.
 
-- **Server-side encryption at rest (SSE/CMEK)** — `S3StorageConfig.sse` and `GCSStorageConfig.kms_key_name`. A separate axis from client-side `encrypt` (it does not satisfy a client-side encryption floor). Off by default.
+- **Server-side encryption at rest (SSE/CMEK)** — configured per storage route. A separate axis from client-side encryption, which it does not satisfy for an encryption floor. Off by default.
 
-- **Catalog and registry ergonomics** — `OperationCatalogEntry` gains idempotency-key and required-permissions facts, duplicate merge keys raise (with an override hatch), and `registry.register(…)` is one step.
+- **Catalog and registry ergonomics** — catalog entries carry idempotency-key and required-permission facts, duplicate merge keys raise with an override hatch, and registration is one step.
 
-- **Generated-route mount ergonomics** — every `attach_*_routes` helper gains `resource=` (mutually exclusive with `ns=`) and `path_overrides=`. Additive.
+- **Generated-route mount ergonomics** — every route-attach helper accepts a resource name (mutually exclusive with a namespace) and per-path overrides. Additive.
 
-- **Scoped, materialized patch authoring** — `registry.patch(selector, namespace=ns)` matches only ops under a namespace, and `materialize_patches` folds patches into per-op plans. Merge now raises when a patch from one registry matches another's ops (breaking only there; pass `cross_registry=True`).
+- **Scoped, materialized patch authoring** — patches can be scoped to a namespace and folded into per-op plans. Merging now raises when a patch from one registry matches another's ops, which is **breaking** only in that case and can be opted out of.
 
 ### Changed
 
-- **Queue consumer and outbox relay are now configurable classes** — `run_consumer(...)` becomes `QueueConsumer(...).run(...)` and the relay helpers become `OutboxRelay(...)` methods. Lifecycle steps keep flat params. Breaking for direct callers of the old functions.
+- **Queue consumer and outbox relay are now configurable classes** — the old module-level runner functions become classes with a run method; lifecycle steps keep flat parameters. **Breaking** for direct callers of the old functions.
 
-- **Tenant-isolation tier model made coherent** — the ladder is none < tagged < namespace < dedicated (the `relation` rung removed), each integration owns its supported ceiling, and namespace resolution is unified. Key and path formats are unchanged.
+- **Tenant-isolation tier model made coherent** — the ladder is none < tagged < namespace < dedicated, dropping the old relation rung; each integration owns its supported ceiling and namespace resolution is unified. Key and path formats are unchanged.
 
-- **Argon2 hashing off the event loop** — `hash_password`, `verify_password`, and the timing dummy are now async on a bounded pool (default concurrency 4); the `*_sync` variants remain.
+- **Argon2 hashing off the event loop** — hashing, verification and the timing dummy are now async on a bounded pool; the synchronous variants remain.
 
-- **Performance (measured)** — engine hot path roughly halved (hookless op 2.5 to 1.2 µs, query −56%, memoized resolve); `Document.update()` copies only changed subtrees; Postgres and Mongo write paths cut round-trips (Mongo outbox claim −90%); lazy error-context and opt-in tracing cut overhead.
+- **Performance (measured)** — the engine hot path roughly halved, document updates copy only changed subtrees, the Postgres and Mongo write paths cut round-trips, and lazy error context with opt-in tracing cut overhead.
 
-- **FastAPI `style="rpc"` uses REST verbs and query params** — e.g. `GET /notes.get?id=`, `PATCH /notes.update?id=&rev=`. Breaking: RPC clients must switch from `POST /<op>`; REST and MCP are unchanged.
+- **RPC-style FastAPI routes use REST verbs and query params** — e.g. `GET /notes.get?id=`. **Breaking:** RPC clients must switch from posting to the operation path; REST and MCP are unchanged.
 
-- **`singleton_lifecycle_step` takes a `DistributedLockSpec`, not a live port** — breaking: pass `spec=DistributedLockSpec(name=...)`.
+- **The singleton lifecycle step takes a lock spec, not a live port** — **breaking** for callers passing a resolved port.
 
 - **Release-coherence sweep** — the relay logs the at-least-once to fire-and-forget downgrade, Temporal query/update/result deserialize into declared types, the API-key prefix is validated, and saga `step_failed` stays a domain error.
 
@@ -744,59 +737,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Generated FastAPI routes** (`attach_document_routes`, `attach_search_routes`, `attach_storage_routes`) — project a frozen registry's operations onto a user's `APIRouter` with a required `style` (rest or rpc), dispatching through `run_operation`. Idempotency is now engine-level.
+- **Generated FastAPI routes** — project a frozen registry's operations onto the app's router in either a REST or an RPC style, which must be chosen explicitly. Idempotency moves to the engine.
 
-- **`forze_mcp`** (`forze[mcp]`) — expose operations as MCP tools (read-only MVP): `register_tools(...)` adds a frozen registry's operations as FastMCP tools, read-only by default (commands need `include_writes=True`).
+- **`forze_mcp`** — expose operations as MCP tools, read-only by default; commands must be opted in.
 
-- **`forze_duckdb`** (`forze[duckdb]`) — in-process DuckDB analytics over object storage (query-only): `AnalyticsQueryPort` over a Parquet/CSV/Iceberg/Delta lake on S3, GCS, or local, with no standing warehouse. Wire with `DuckDbDepsModule`.
+- **`forze_duckdb`** — in-process, query-only analytics over a Parquet, CSV, Iceberg or Delta lake on S3, GCS or local disk, with no standing warehouse.
 
-- **Delegated identity (on-behalf-of, RFC 8693)** — `AuthnIdentity.actor` carries the acting principal, and `AuthzBeforeAuthorize` enforces a least-privilege intersection. Explicit authority via `DelegationPort.may_act`.
+- **Delegated identity (on-behalf-of, RFC 8693)** — the authenticated identity carries an acting principal, authorization enforces a least-privilege intersection, and explicit authority is checked through a delegation port.
 
-- **Operation-level CQRS** (`OperationKind` QUERY/COMMAND) — `as_query()` runs read-only: command ports are unacquirable and the tx opens `READ ONLY` (DB-enforced). Untagged defaults to COMMAND.
+- **Operation-level CQRS** — an operation declared as a query runs read-only: command ports cannot be acquired and the transaction opens read-only, enforced by the database. Untagged operations remain commands.
 
-- **Operation catalog descriptors** — `OperationDescriptor` plus `FrozenOperationRegistry.catalog()`: interface-agnostic request/response-schema metadata for projecting operations onto MCP or HTTP, joined with operation kind.
+- **Operation catalog descriptors** — interface-agnostic request and response schema metadata, joined with the operation kind, for projecting operations onto MCP or HTTP.
 
-- **Queryable-field policy** (`QueryFieldPolicy` on `DocumentSpec`) — per-aggregate filterable, sortable, and aggregatable allow-sets, powering MCP schema discovery and boundary enforcement. Direct port calls are unrestricted.
+- **Queryable-field policy** — per-aggregate filterable, sortable and aggregatable allow-sets, powering schema discovery and boundary enforcement. Direct port calls stay unrestricted.
 
-- **OpenTelemetry traces and metrics** (`instrument_operations`) — wraps every operation in an OTel span plus an operations counter and duration histogram. Opt-in, additive.
+- **OpenTelemetry traces and metrics** — every operation gets a span plus a counter and duration histogram. Opt-in, additive.
 
-- **`@invariant` — declarative domain invariants** — an always-true rule enforced on both create and update, closing the merge-patch bypass of `@model_validator`s.
+- **Declarative domain invariants** — an always-true rule enforced on both create and update, closing the merge-patch bypass that model validators allowed.
 
-- **Saga / process orchestration** — `SagaDefinition` plus an in-process executor for declarative multi-step processes across aggregates, with typed steps and reverse compensation before the pivot. `run_saga(...)` must run outside an enclosing transaction.
+- **Saga / process orchestration** — declarative multi-step processes across aggregates with typed steps and reverse compensation before the pivot, run by an in-process executor outside any enclosing transaction.
 
-- **DDD domain events and aggregate roots to outbox** — `DomainEvent`/`AggregateRoot` buffer events; persisting an aggregate drains and dispatches them in the operation's transaction. Wired via `DomainEventsDepsModule`.
+- **DDD domain events and aggregate roots to outbox** — aggregates buffer domain events, and persisting one drains and dispatches them inside the operation's transaction.
 
 - **End-to-end worked example** (`examples/recipes/order_fulfillment/`) — the first runnable, test-backed example: checkout saga to outbox to relay to inbox to downstream, plus compensation, on `forze_mock`.
 
-- **Deterministic time and ids** (`TimeSource` seam) — `utcnow()`/`uuid7()` read a context-active source, and `bind_time_source(FrozenTimeSource(...))` makes every read deterministic with no call-site changes.
+- **Deterministic time and ids** — the clock and id generator read a context-active time source, so binding a frozen one makes every read deterministic with no call-site changes.
 
-- **Resilience policy pipeline** — composable strategies into a validated `ResiliencePolicy`, run via `ctx.resilience().run(...)` or `ResilienceWrap`. Adds hedging and a distributed breaker (`RedisCircuitBreakerStore`, fails open).
+- **Resilience policy pipeline** — composable strategies validated into one policy and run through the context. Adds hedging and a distributed circuit breaker that fails open.
 
-- **Inbox / consumer-side dedup** — `InboxPort.mark_if_unseen`; `process_with_inbox` marks and runs the handler in one transaction for an exactly-once effect. Adds a Postgres store plus mock.
+- **Inbox / consumer-side dedup** — a mark-if-unseen port, with a helper that marks and runs the handler in one transaction for an exactly-once effect. Adds a Postgres store plus mock.
 
-- **Graph contracts plus `forze_neo4j`** (`forze[neo4j]`) — graph ports via `ctx.graph.query`/`.command`/`.raw`; a Neo4j async Bolt adapter (CRUD, neighbors, expand, shortest path, raw Cypher hatch) and an in-memory mock.
+- **Graph contracts plus `forze_neo4j`** — query, command and raw graph ports, a Neo4j async Bolt adapter covering CRUD, neighbours, expand, shortest path and a raw Cypher hatch, and an in-memory mock.
 
-- **`forze_kits` — consolidated kit package** — kits, aggregates, mapping, DTOs, outbox/notify, secrets, and scopes. Absorbs former `forze_patterns`, several `forze.application.*` modules, and `forze_secrets`.
+- **`forze_kits` — consolidated kit package** — kits, aggregates, mapping, DTOs, outbox/notify, secrets and scopes, absorbing the former patterns and secrets packages and several application modules.
 
-- **`forze_http`** (`forze[http]`) — outbound HTTP: `HttpServiceSpec`/`HttpServicePort`, `HttpClient`/`RoutedHttpClient`, and `HttpDepsModule`; `ctx.http` resolves services by name. httpx-backed.
+- **`forze_http`** — outbound HTTP services declared by spec and resolved by name from the context, backed by httpx, with per-tenant routed clients.
 
-- **`forze_meilisearch`** (`forze[meilisearch]`) — async Meilisearch: offset `SearchQueryPort`, `SearchCommandPort`, and federated search (native or weighted RRF).
+- **`forze_meilisearch`** — async Meilisearch with offset search, index maintenance, and federated search using native or weighted reciprocal-rank fusion.
 
-- **Transactional outbox, notify, and search-command** — `forze.application.contracts.outbox` (`OutboxSpec`, `IntegrationEvent`) with Postgres, Mongo, and mock stores plus relay helpers; a notify kit; and a core `SearchCommandPort` for external-index maintenance.
+- **Transactional outbox, notify, and search-command** — outbox contracts with Postgres, Mongo and mock stores plus relay helpers, a notify kit, and a core search-command port for external-index maintenance.
 
-- **Tenant routing** — declarative per-request backend targets across all integrations, with per-tenant `Routed*Client` variants, routed lifecycle steps, LRU pool dedup, and `TenantClientRegistry`.
+- **Tenant routing** — declarative per-request backend targets across all integrations, with per-tenant client variants, routed lifecycle steps, LRU pool dedup, and a client registry.
 
-- **Identity — IdP presets** (`forze_identity.builtin.idp`) — OIDC presets for Google, VK ID, and Telegram Login; `oidc_bootstrap_identity_deps`; PKCE helpers. Authn adds API-key rotation and single-use password invites.
+- **Identity — IdP presets** — OIDC presets for Google, VK ID and Telegram Login, bootstrap wiring and PKCE helpers. Authn adds API-key rotation and single-use password invites.
 
-- **Execution — freeze/resolve pipeline** — an authoring `DepsRegistry` (freeze to a frozen registry, resolve to `FrozenDeps`) separates registration from per-scope resolution, with a matching `LifecyclePlan`. Per-scope caches default on.
+- **Execution — freeze/resolve pipeline** — an authoring registry freezes, then resolves per scope, separating registration from resolution, with a matching lifecycle plan. Per-scope caches default on.
 
-- **Codecs** — `default_model_codec`, `DocumentCodecs`/`document_codecs_for_spec`/`DocumentSpec.resolved_codecs`, optional read and ingest codecs, and trusted-row read validation.
+- **Codecs** — a default model codec, per-spec document codecs, optional read and ingest codecs, and trusted-row read validation.
 
-- **Postgres / Mongo search** — Postgres strict/trusted read validation, PGroonga plan modes, hub parallel legs plus `SearchOptions`; Mongo `MongoDepsModule.searches` (text, Atlas, vector; offset plus cursor).
+- **Postgres / Mongo search** — Postgres strict and trusted read validation, PGroonga plan modes and hub parallel legs; Mongo text, Atlas and vector search over both offset and cursor paging.
 
-- **Document adapters** — `max_scan_pages`/`max_stream_pages`/`max_chunked_command_pages` (default 100 000, `None` unlimited) with cursor-stall detection.
+- **Document adapters** — page-count ceilings on scan, stream and chunked commands (default 100 000, unlimited on request) with cursor-stall detection.
 
-- **Durable workflow** — `DurableWorkflowRunStatus`/`Description` plus `describe()` on `DurableWorkflowQueryPort` (`forze_temporal`).
+- **Durable workflow** — run status and description types, plus describing a run through the durable workflow query port.
 
 - **`forze_temporal` secure connections** — `TemporalConfig` TLS, API key, RPC metadata, and data-converter override; defaults unchanged.
 
@@ -818,7 +811,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`forze_mock` parity** — strict transactions, queue and idempotency parity, consumer groups with real ack, keyset cursor pagination, and tenancy, dlock, search, durable, and identity adapters.
 
-- **`forze.base` primitives** — `CacheLane`, `SimpleLruRegistry`/`GuardedLruRegistry`, `InflightLane`, `OnceCell`, `frozen_mapping`, and fingerprint helpers.
+- **Shared base primitives** — bounded LRU registries, single-flight and cache lanes, a once-initialized cell, frozen mappings, and fingerprint helpers, all now public.
 
 ### Changed
 

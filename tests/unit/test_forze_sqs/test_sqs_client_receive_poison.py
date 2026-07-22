@@ -229,11 +229,12 @@ async def test_fifo_poison_copy_to_fifo_side_queue_sets_group_and_dedup() -> Non
 
 
 @pytest.mark.asyncio
-async def test_fifo_poison_side_send_failure_still_deletes_and_logs_error(
+async def test_fifo_poison_side_send_failure_does_not_delete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Unblocking the group is the primary duty: a failed side-send never blocks
-    # the delete, but the destruction log is upgraded to ERROR.
+    # Retention was configured and did not happen. Deleting would leave the message on
+    # neither queue, turning a transient outage of the poison queue into permanent data
+    # loss — so the original stays put and the group stays (recoverably) blocked.
     recorder = _Recorder()
     monkeypatch.setattr("forze_sqs.kernel.client.client.logger", recorder)
 
@@ -254,13 +255,11 @@ async def test_fifo_poison_side_send_failure_still_deletes_and_logs_error(
     ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
         msgs = await client.receive("jobs.fifo", limit=10)
 
-    assert msgs == []
-    mock_boto.delete_message.assert_awaited_once_with(
-        QueueUrl="https://sqs/jobs.fifo", ReceiptHandle="r-bad"
-    )
-    destroyed = [e for e in recorder.errors if "https://sqs/poison" in e]
-    assert len(destroyed) == 1
-    assert "bad" in destroyed[0] and "side queue down" in destroyed[0]
+    assert msgs == []  # still never surfaces to the caller
+    mock_boto.delete_message.assert_not_awaited()  # NOT destroyed
+    kept = [e for e in recorder.errors if "https://sqs/poison" in e]
+    assert len(kept) == 1
+    assert "bad" in kept[0] and "side queue down" in kept[0]
 
 
 @pytest.mark.asyncio
@@ -449,12 +448,13 @@ async def test_poison_copy_rejects_a_self_targeted_queue() -> None:
 
 
 @pytest.mark.asyncio
-async def test_self_targeted_poison_queue_still_deletes_and_logs_error(
+async def test_self_targeted_poison_queue_does_not_delete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Through the receive path: the self-target rejection follows the existing
-    # failure ordering — the original is deleted anyway (unblocking the group is
-    # the primary duty) and the loss is logged as an ERROR.
+    # A poison queue pointed at its own source is a misconfiguration, so the copy is
+    # refused. It follows the same rule as any other failed retention: the original is
+    # kept rather than destroyed, and the ERROR tells the operator what to fix. Blocking
+    # the group is recoverable once the config is corrected; destroying the message is not.
     recorder = _Recorder()
     monkeypatch.setattr("forze_sqs.kernel.client.client.logger", recorder)
 
@@ -477,5 +477,5 @@ async def test_self_targeted_poison_queue_still_deletes_and_logs_error(
 
     assert msgs == []
     mock_boto.send_message.assert_not_awaited()  # nothing published to itself
-    mock_boto.delete_message.assert_awaited_once()  # the group is still unblocked
+    mock_boto.delete_message.assert_not_awaited()  # and nothing destroyed either
     assert len(recorder.errors) == 1

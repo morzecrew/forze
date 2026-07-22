@@ -543,3 +543,72 @@ async def test_fifo_poison_retained_on_poison_queue_before_delete(
 
     finally:
         await reader.close()
+
+
+@pytest.mark.asyncio
+async def test_fifo_terminal_nack_unblocks_the_message_group(
+    sqs_client: SQSClient,
+    floci_container,
+) -> None:
+    """A perfectly decodable message the *caller* rules poison (``nack(requeue=False)``,
+    the in-app ``max_deliveries`` disposition) is retained and deleted on a FIFO queue.
+
+    Without the delete it stays at the head of its message group and blocks every later
+    message in that group forever — this queue deliberately has no redrive policy, so
+    nothing else would ever trim it."""
+
+    poison_name = f"forze-nackpoison-{uuid4().hex[:10]}"
+    source = f"forze-nacksrc-{uuid4().hex[:10]}.fifo"
+
+    async with sqs_client.client():
+        poison_url = await sqs_client.create_queue(poison_name)
+        source_url = await sqs_client.create_queue(
+            source,
+            attributes={"FifoQueue": "true", "ContentBasedDeduplication": "false"},
+        )
+
+    reader = SQSClient()
+    await reader.initialize(
+        endpoint=floci_container.get_url(),
+        region_name="us-east-1",
+        access_key_id="test",
+        secret_access_key="test",
+        config=SQSConfig(poison_queue_url=poison_url),
+    )
+
+    try:
+        async with reader.client() as boto:
+            await reader.enqueue(source_url, b"doomed", key="g1")
+            [message] = await _receive_until(reader, source_url)
+            assert message.body == b"doomed"
+
+            # The caller's terminal verdict — nothing to do with decodability.
+            assert await reader.nack(source_url, [message.id], requeue=False) == 1
+
+            copy = None
+            for _ in range(10):
+                resp = await boto.receive_message(
+                    QueueUrl=poison_url,
+                    MaxNumberOfMessages=1,
+                    WaitTimeSeconds=1,
+                    MessageAttributeNames=["All"],
+                )
+                if messages := resp.get("Messages") or []:
+                    copy = messages[0]
+                    break
+
+            assert copy is not None, "nacked poison copy did not land on the poison queue"
+            assert copy["MessageAttributes"]["forze_poison_source_queue"][
+                "StringValue"
+            ] == source_url
+
+        # The head is clear: a later message in the SAME group now delivers. Before the
+        # fix this receive returned nothing — the group was wedged behind the nacked head.
+        async with reader.client():
+            await reader.enqueue(source_url, b"after-nack", key="g1")
+            [nxt] = await _receive_until(reader, source_url)
+            assert nxt.body == b"after-nack"
+            await reader.ack(source_url, [nxt.id])
+
+    finally:
+        await reader.close()

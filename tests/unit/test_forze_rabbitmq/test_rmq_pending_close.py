@@ -20,11 +20,15 @@ from forze_rabbitmq.kernel.client.value_objects import RabbitMQConfig
 class _FakePendingMessage:
     """Stand-in for an unacked aio_pika incoming message."""
 
-    def __init__(self, message_id: str, *, fail_nack: bool = False) -> None:
+    def __init__(
+        self, message_id: str, *, fail_nack: bool = False, fail_ack: bool = False
+    ) -> None:
         self.message_id = message_id
         self.delivery_tag = 1
         self.fail_nack = fail_nack
+        self.fail_ack = fail_ack
         self.nack_calls: list[dict[str, Any]] = []
+        self.ack_calls = 0
 
     async def nack(self, requeue: bool = True) -> None:
         self.nack_calls.append({"requeue": requeue})
@@ -32,15 +36,25 @@ class _FakePendingMessage:
         if self.fail_nack:
             raise RuntimeError("channel gone")
 
+    async def ack(self) -> None:
+        self.ack_calls += 1
+
+        if self.fail_ack:
+            raise RuntimeError("stale delivery tag")
+
 
 class _FakeChannel:
     is_closed = False
 
     def __init__(self) -> None:
         self.closed = False
+        self.qos: int | None = None
 
     async def close(self) -> None:
         self.closed = True
+
+    async def set_qos(self, prefetch_count: int) -> None:
+        self.qos = prefetch_count
 
 
 class _LoggerStub:
@@ -131,6 +145,147 @@ class TestCloseNacksPending:
 # ....................... #
 
 
+class TestAckPartialFailure:
+    """One failed ack must not strand the rest of the batch — nor be reported as done."""
+
+    @pytest.mark.asyncio
+    async def test_partial_ack_failure_settles_only_the_confirmed_entry(self) -> None:
+        good = _FakePendingMessage("good")
+        bad = _FakePendingMessage("bad", fail_ack=True)
+        client, _ = _client_with_pending([good, bad])
+
+        # Bare gather would have raised on ``bad`` and stranded BOTH entries. Only the
+        # confirmed one is counted and dropped; the failed delivery is genuinely still
+        # unsettled, so it stays pending for a retry (the reopen purge clears it if its
+        # channel turns out to be dead).
+        acked = await client.ack("q", ["good", "bad"])
+
+        assert acked == 1
+        assert good.ack_calls == 1 and bad.ack_calls == 1
+        assert set(client._RabbitMQClient__pending) == {"bad"}  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_failed_terminal_nack_is_neither_counted_nor_forgotten(self) -> None:
+        # requeue=False is a poison park. A failed nack leaves the message unacked, so
+        # reporting it parked — or dropping its entry — would hide that it never happened.
+        good = _FakePendingMessage("good")
+        bad = _FakePendingMessage("bad", fail_nack=True)
+        client, _ = _client_with_pending([good, bad])
+
+        nacked = await client.nack("q", ["good", "bad"], requeue=False)
+
+        assert nacked == 1  # not 2: only the one that actually reached the broker
+        assert set(client._RabbitMQClient__pending) == {"bad"}  # type: ignore[attr-defined]
+
+
+# ....................... #
+
+
+class _ReopenConnection:
+    """A fake robust connection that hands out fresh channels on demand."""
+
+    is_closed = False
+
+    def __init__(self) -> None:
+        self.new_channels: list[_FakeChannel] = []
+
+    async def channel(self, publisher_confirms: bool = True) -> _FakeChannel:
+        del publisher_confirms
+        channel = _FakeChannel()
+        self.new_channels.append(channel)
+        return channel
+
+
+class TestReopenPurgesStalePending:
+    """A robust-channel reopen after a blip must purge the now-invalid delivery tags."""
+
+    @pytest.mark.asyncio
+    async def test_reopen_purges_stale_pending_tags(self) -> None:
+        client = RabbitMQClient()
+        connection = _ReopenConnection()
+        client._RabbitMQClient__connection = connection  # type: ignore[attr-defined]
+
+        # A closed pending channel with entries still mapped to its dead tags.
+        closed = _FakeChannel()
+        closed.is_closed = True  # type: ignore[attr-defined]
+        client._RabbitMQClient__pending_channel = closed  # type: ignore[attr-defined]
+        pending = client._RabbitMQClient__pending  # type: ignore[attr-defined]
+        for i in range(3):
+            pending[f"m{i}"] = ("q", _FakePendingMessage(f"m{i}"))
+
+        channel, generation = await client._RabbitMQClient__require_pending_channel()  # type: ignore[attr-defined]
+
+        assert channel is connection.new_channels[-1]  # a fresh channel was installed
+        assert client._RabbitMQClient__pending == {}  # type: ignore[attr-defined]  # stale tags purged
+        assert generation == 1  # bumped, so old-channel deliveries can no longer register
+
+    @pytest.mark.asyncio
+    async def test_first_open_does_not_purge(self) -> None:
+        # A genuine first-time open (no prior channel) must not touch a map that a
+        # concurrent read may have started populating; nothing to purge anyway.
+        client = RabbitMQClient()
+        client._RabbitMQClient__connection = _ReopenConnection()  # type: ignore[attr-defined]
+
+        await client._RabbitMQClient__require_pending_channel()  # type: ignore[attr-defined]
+
+        # No exception, channel installed; pending untouched (empty here).
+        assert client._RabbitMQClient__pending_channel is not None  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_stale_generation_delivery_cannot_reseed_the_purged_map(self) -> None:
+        # The race the generation exists for: a reader still draining the OLD channel
+        # registers its deliveries *after* the reopen purge. Those tags can never be
+        # acked, so admitting them would re-seed exactly what the purge just removed.
+        client = RabbitMQClient()
+        client._RabbitMQClient__connection = _ReopenConnection()  # type: ignore[attr-defined]
+
+        _, old_generation = await client._RabbitMQClient__require_pending_channel()  # type: ignore[attr-defined]
+
+        # The channel dies and is replaced (bumping the generation and purging).
+        client._RabbitMQClient__pending_channel.is_closed = True  # type: ignore[attr-defined]
+        _, new_generation = await client._RabbitMQClient__require_pending_channel()  # type: ignore[attr-defined]
+        assert new_generation != old_generation
+
+        register = client._RabbitMQClient__register_pending_batch  # type: ignore[attr-defined]
+
+        # The late registration from the dead channel is refused outright...
+        assert await register("q", [_FakePendingMessage("stale")], old_generation) is None
+        assert client._RabbitMQClient__pending == {}  # type: ignore[attr-defined]
+
+        # ...while a read on the live channel still registers normally.
+        ids = await register("q", [_FakePendingMessage("live")], new_generation)
+        assert ids is not None and len(ids) == 1
+        assert set(client._RabbitMQClient__pending) == set(ids)  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_batch_from_a_replaced_channel_is_discarded_not_returned(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # receive()'s side of the same race: a batch drained from a channel that was
+        # replaced hands back nothing, so the caller never gets work it cannot settle.
+        stub = _LoggerStub()
+        monkeypatch.setattr("forze_rabbitmq.kernel.client.client.logger", stub)
+
+        client = RabbitMQClient()
+        to_batch = client._RabbitMQClient__to_message_batch  # type: ignore[attr-defined]
+
+        stale = client._RabbitMQClient__pending_generation - 1  # type: ignore[attr-defined]
+        raws = [_FakePendingMessage(f"m{i}") for i in range(2)]
+
+        assert await to_batch("q", raws, stale) == []
+        assert client._RabbitMQClient__pending == {}  # type: ignore[attr-defined]
+        assert any("replaced mid-drain" in entry[0] for entry in stub.warnings)
+
+        # An empty drain is the ordinary "no messages arrived in the window" case, not a
+        # loss: it must not report discarding anything.
+        stub.warnings.clear()
+        assert await to_batch("q", [], stale) == []
+        assert stub.warnings == []
+
+
+# ....................... #
+
+
 class TestPendingWatermark:
     def test_watermark_must_be_positive(self) -> None:
         from forze.base.exceptions import CoreException
@@ -173,8 +328,8 @@ class TestPendingWatermark:
         client = self._client_with_watermark(3)
         register = client._RabbitMQClient__register_pending_batch  # type: ignore[attr-defined]
 
-        await register("q", [_FakePendingMessage(f"m{i}") for i in range(4)])
-        await register("q", [_FakePendingMessage(f"n{i}") for i in range(4)])
+        await register("q", [_FakePendingMessage(f"m{i}") for i in range(4)], 0)
+        await register("q", [_FakePendingMessage(f"n{i}") for i in range(4)], 0)
 
         assert len(stub.warnings) == 1
 
@@ -189,12 +344,12 @@ class TestPendingWatermark:
         register = client._RabbitMQClient__register_pending_batch  # type: ignore[attr-defined]
         drop = client._RabbitMQClient__drop_pending_many  # type: ignore[attr-defined]
 
-        ids = await register("q", [_FakePendingMessage(f"m{i}") for i in range(5)])
+        ids = await register("q", [_FakePendingMessage(f"m{i}") for i in range(5)], 0)
         assert len(stub.warnings) == 1
 
         await drop(ids)  # drains to zero -> re-arms
 
-        await register("q", [_FakePendingMessage(f"n{i}") for i in range(5)])
+        await register("q", [_FakePendingMessage(f"n{i}") for i in range(5)], 0)
         assert len(stub.warnings) == 2
 
     @pytest.mark.asyncio
@@ -207,7 +362,7 @@ class TestPendingWatermark:
         client = self._client_with_watermark(10)
         register = client._RabbitMQClient__register_pending_batch  # type: ignore[attr-defined]
 
-        await register("q", [_FakePendingMessage(f"m{i}") for i in range(10)])
+        await register("q", [_FakePendingMessage(f"m{i}") for i in range(10)], 0)
 
         assert stub.warnings == []
 
@@ -218,6 +373,48 @@ class TestPendingWatermark:
 class TestCloseCountedRequeue:
     """With ``redelivery_counting`` on, close-time requeues go through the counted republish
     path (per queue) so a poison message left pending at shutdown keeps advancing its count."""
+
+    @staticmethod
+    def _counting_client(
+        ids: list[str], outcomes: list[bool]
+    ) -> tuple[RabbitMQClient, list[_FakePendingMessage], Any]:
+        from unittest.mock import AsyncMock
+
+        client = RabbitMQClient()
+        client._RabbitMQClient__config = RabbitMQConfig(  # type: ignore[attr-defined]
+            redelivery_counting=True
+        )
+        messages = [_FakePendingMessage(mid) for mid in ids]
+        pending = client._RabbitMQClient__pending  # type: ignore[attr-defined]
+        for message in messages:
+            pending[message.message_id] = ("q", message)
+
+        counted = AsyncMock(return_value=outcomes)
+        client._RabbitMQClient__requeue_counted = counted  # type: ignore[attr-defined]
+
+        return client, messages, counted
+
+    @pytest.mark.asyncio
+    async def test_counted_nack_settles_every_republished_delivery(self) -> None:
+        client, messages, counted = self._counting_client(["m1", "m2"], [True, True])
+
+        assert await client.nack("q", ["m1", "m2"], requeue=True) == 2
+
+        counted.assert_awaited_once()
+        # The plain broker nack is never taken on this path.
+        assert all(m.nack_calls == [] for m in messages)
+        assert client._RabbitMQClient__pending == {}  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_counted_nack_keeps_a_message_whose_republish_failed(self) -> None:
+        # No copy reached the broker for "m2", so it is still sitting unacked: reporting it
+        # requeued would be false, and dropping its entry would remove the only handle a
+        # retry has. Matches the plain-nack and ack paths.
+        client, _, _ = self._counting_client(["m1", "m2"], [True, False])
+
+        assert await client.nack("q", ["m1", "m2"], requeue=True) == 1
+
+        assert set(client._RabbitMQClient__pending) == {"m2"}  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     async def test_close_routes_pending_through_counted_requeue(self) -> None:

@@ -101,6 +101,16 @@ class RabbitMQClient(RabbitMQClientPort):
         factory=asyncio.Lock,
         init=False,
     )
+    __pending_generation: int = attrs.field(default=0, init=False)
+    """Bumped every time the pending channel is replaced.
+
+    A reader captures the generation with the channel it reads on, and registration
+    refuses a delivery whose generation is stale. Without it, a reader still draining
+    deliveries from a channel that died mid-iteration would register their tags *after*
+    the reopen purge cleared the map, re-seeding exactly the dead tags the purge exists
+    to remove — and those tags can never be acked.
+    """
+
     __pending_watermark_warned: bool = attrs.field(default=False, init=False)
     __dead_letter_ready: bool = attrs.field(default=False, init=False)
     __poison_drop_warned_queues: set[str] = attrs.field(factory=set, init=False)
@@ -481,19 +491,67 @@ class RabbitMQClient(RabbitMQClientPort):
 
     # ....................... #
 
-    async def __require_pending_channel(self) -> AbstractChannel:
+    async def __require_pending_channel(self) -> tuple[AbstractChannel, int]:
+        """The live pending channel and the generation it belongs to.
+
+        Callers must carry the generation through to registration: it is what tells a
+        delivery read on this channel apart from one read on a channel that has since
+        been replaced.
+        """
+
         async with self.__pending_channel_lock:
             if self.__pending_channel is not None and not self.__pending_channel.is_closed:
-                return self.__pending_channel
+                return self.__pending_channel, self.__pending_generation
 
+            # Falling through installs a fresh channel — either the first, or a replacement
+            # after the previous one closed (a robust-channel reopen following a blip). Any
+            # entries still in the pending map were read on the now-defunct channel, so their
+            # delivery tags are invalid: a later ack against them raises, and the broker has
+            # already requeued them for redelivery on the new channel. Purge the stale tags
+            # so post-blip acks don't fail and completed work isn't reprocessed; a genuine
+            # first-time open has nothing pending, so the purge is a no-op there.
+            reopening = self.__pending_channel is not None
             channel = await self.__require_connection().channel(publisher_confirms=False)
 
             if self.__config.prefetch_count > 0:
                 await channel.set_qos(prefetch_count=self.__config.prefetch_count)
 
+            # Bump first, then purge, then publish. Bumping under this lock closes the map
+            # to the old generation before anything is cleared, so a reader still holding
+            # deliveries from the dead channel can no longer re-seed them behind the purge;
+            # publishing last keeps the purge from touching a tag read on the replacement.
+            if reopening:
+                self.__pending_generation += 1
+                await self.__purge_pending_on_reopen()
+
             self.__pending_channel = channel
 
-            return channel
+            return channel, self.__pending_generation
+
+    # ....................... #
+
+    async def __purge_pending_on_reopen(self) -> None:
+        """Drop every pending delivery tag after the pending channel is reopened.
+
+        The tags belong to the closed channel and can no longer be acked; the broker
+        requeues the underlying messages for redelivery on the fresh channel, where a new
+        read re-registers them. Retaining the stale entries would leak the pending map and
+        make every subsequent ack against them fail.
+        """
+
+        async with self.__pending_lock:
+            if not self.__pending:
+                return
+
+            purged = len(self.__pending)
+            self.__pending.clear()
+            self.__pending_watermark_warned = False
+
+        logger.warning(
+            "RabbitMQ: pending channel reopened after a blip; purged %d stale delivery "
+            "tag(s) — the broker will redeliver them on the new channel",
+            purged,
+        )
 
     # ....................... #
 
@@ -635,30 +693,46 @@ class RabbitMQClient(RabbitMQClientPort):
 
     # ....................... #
 
+    def __register_pending_locked(
+        self,
+        queue: str,
+        raw: AbstractIncomingMessage,
+    ) -> str:
+        """Insert one delivery under a free id. Caller holds ``__pending_lock``."""
+
+        base = raw.message_id or (
+            f"{queue}:{raw.delivery_tag}" if raw.delivery_tag is not None else uuid4().hex
+        )
+        candidate = base
+        suffix = 1
+
+        while candidate in self.__pending:
+            suffix += 1
+            candidate = f"{base}:{suffix}"
+
+        self.__pending[candidate] = (queue, raw)
+
+        return candidate
+
+    # ....................... #
+
     async def __register_pending_batch(
         self,
         queue: str,
         raws: list[AbstractIncomingMessage],
-    ) -> list[str]:
-        """Register multiple messages atomically under a single lock acquisition."""
+        generation: int,
+    ) -> list[str] | None:
+        """Register multiple messages atomically under a single lock acquisition.
+
+        ``None`` when *generation* is stale — the deliveries were read on a channel that
+        has since been replaced, so nothing is registered and the caller drops them.
+        """
 
         async with self.__pending_lock:
-            ids: list[str] = []
+            if generation != self.__pending_generation:
+                return None
 
-            for raw in raws:
-                base = raw.message_id or (
-                    f"{queue}:{raw.delivery_tag}" if raw.delivery_tag is not None else uuid4().hex
-                )
-                candidate = base
-                suffix = 1
-
-                while candidate in self.__pending:
-                    suffix += 1
-                    candidate = f"{base}:{suffix}"
-
-                self.__pending[candidate] = (queue, raw)
-                ids.append(candidate)
-
+            ids = [self.__register_pending_locked(queue, raw) for raw in raws]
             self.__check_pending_watermark_locked()
 
             return ids
@@ -669,19 +743,15 @@ class RabbitMQClient(RabbitMQClientPort):
         self,
         queue: str,
         message: AbstractIncomingMessage,
-    ) -> str:
-        base = message.message_id or (
-            f"{queue}:{message.delivery_tag}" if message.delivery_tag is not None else uuid4().hex
-        )
-        candidate = base
-        suffix = 1
+        generation: int,
+    ) -> str | None:
+        """The pending id for one delivery, or ``None`` when *generation* is stale."""
 
         async with self.__pending_lock:
-            while candidate in self.__pending:
-                suffix += 1
-                candidate = f"{base}:{suffix}"
+            if generation != self.__pending_generation:
+                return None
 
-            self.__pending[candidate] = (queue, message)
+            candidate = self.__register_pending_locked(queue, message)
             self.__check_pending_watermark_locked()
 
         return candidate
@@ -692,8 +762,14 @@ class RabbitMQClient(RabbitMQClientPort):
         self,
         queue: str,
         raw: AbstractIncomingMessage,
-    ) -> RabbitMQQueueMessage:
-        message_id = await self.__next_message_id(queue, raw)
+        generation: int,
+    ) -> RabbitMQQueueMessage | None:
+        """The caller-visible message, or ``None`` when the delivery's channel is gone."""
+
+        message_id = await self.__next_message_id(queue, raw, generation)
+
+        if message_id is None:
+            return None
 
         return RabbitMQQueueMessage(
             queue=queue,
@@ -712,8 +788,23 @@ class RabbitMQClient(RabbitMQClientPort):
         self,
         queue: str,
         raws: list[AbstractIncomingMessage],
+        generation: int,
     ) -> list[RabbitMQQueueMessage]:
-        message_ids = await self.__register_pending_batch(queue, raws)
+        message_ids = await self.__register_pending_batch(queue, raws, generation)
+
+        if message_ids is None:
+            # The pending channel was replaced while this batch was being drained, so every
+            # delivery in it is unsettleable. Hand back nothing: the broker requeues them
+            # for the new channel, where a fresh read registers them under live tags.
+            if raws:
+                logger.warning(
+                    "RabbitMQ receive: discarding %d delivery(ies) on queue %s read from a "
+                    "channel that was replaced mid-drain; the broker redelivers them",
+                    len(raws),
+                    queue,
+                )
+
+            return []
 
         rmq_messages: list[RabbitMQQueueMessage] = []
 
@@ -930,7 +1021,7 @@ class RabbitMQClient(RabbitMQClientPort):
         )
         raw_messages: list[AbstractIncomingMessage] = []
 
-        channel = await self.__require_pending_channel()
+        channel, generation = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
         self.__warn_poison_drop_once(queue)
 
@@ -946,7 +1037,7 @@ class RabbitMQClient(RabbitMQClientPort):
                         if len(raw_messages) >= max_messages:
                             break
 
-        return await self.__to_message_batch(queue, raw_messages)
+        return await self.__to_message_batch(queue, raw_messages, generation)
 
     # ....................... #
 
@@ -967,7 +1058,7 @@ class RabbitMQClient(RabbitMQClientPort):
         idle_seconds = (
             timeout.total_seconds() if timeout is not None and timeout.total_seconds() > 0 else None
         )
-        channel = await self.__require_pending_channel()
+        channel, generation = await self.__require_pending_channel()
         declared = await self.__declare_queue(channel, queue)
         self.__warn_poison_drop_once(queue)
 
@@ -981,7 +1072,16 @@ class RabbitMQClient(RabbitMQClientPort):
                 except (StopAsyncIteration, TimeoutError):
                     return
 
-                yield await self.__to_message(queue, raw)
+                message = await self.__to_message(queue, raw, generation)
+
+                # ``None`` means the pending channel was replaced while this iterator was
+                # draining, so the delivery belongs to a dead channel: it can never be
+                # acked, and the broker has already requeued it for the new one. Skipping
+                # it here is what keeps the caller from processing work it cannot settle.
+                if message is None:
+                    return
+
+                yield message
 
     # ....................... #
 
@@ -1029,8 +1129,29 @@ class RabbitMQClient(RabbitMQClientPort):
         if not messages:
             return 0
 
-        await asyncio.gather(*(message.ack() for _, message in messages))
-        acked_ids = [message_id for message_id, _ in messages]
+        # return_exceptions mirrors the sibling gather sites: one failed ack must not abort
+        # the batch and strand the already-acked entries in the pending map. Only the
+        # confirmed ones are dropped and counted — a failed ack leaves the delivery
+        # genuinely unsettled, so its entry stays for a retry while the channel lives, and
+        # the reopen purge clears it if that channel turns out to be dead.
+        results = await asyncio.gather(
+            *(message.ack() for _, message in messages),
+            return_exceptions=True,
+        )
+
+        acked_ids: list[str] = []
+
+        for (message_id, _), result in zip(messages, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "RabbitMQ ack: failed to ack message %s on queue %s; keeping it "
+                    "pending for retry (a dead channel is cleared on reopen): %s",
+                    message_id,
+                    queue,
+                    result,
+                )
+            else:
+                acked_ids.append(message_id)
 
         await self.__drop_pending_many(acked_ids)
 
@@ -1045,6 +1166,7 @@ class RabbitMQClient(RabbitMQClientPort):
         ids: Sequence[str],
         *,
         requeue: bool = True,
+        count: bool = True,
     ) -> int:
         if not ids:
             return 0
@@ -1054,20 +1176,59 @@ class RabbitMQClient(RabbitMQClientPort):
         if not messages:
             return 0
 
-        if requeue and self.__config.redelivery_counting:
-            await self.__requeue_counted(queue, [raw for _, raw in messages])
+        # ``count=False`` requeues without advancing ``x-forze-delivery``: a plain broker
+        # requeue leaves the counter untouched (it stalls at the ``redelivered``-flag ceiling),
+        # so a not-the-message's-fault requeue — the runtime draining mid-message — is never
+        # driven toward ``max_deliveries`` parking. Only the counted branch bumps the header.
+        if requeue and count and self.__config.redelivery_counting:
+            # Only the messages whose copy actually reached the broker are requeued. One
+            # whose republish failed is still sitting unacked with nothing published, so it
+            # is neither counted nor forgotten — keeping it pending is what leaves a retry
+            # possible, matching the plain-nack and ack paths.
+            outcomes = await self.__requeue_counted(queue, [raw for _, raw in messages])
+            disposed_ids: list[str] = [
+                message_id
+                for (message_id, _), republished in zip(messages, outcomes, strict=True)
+                if republished
+            ]
+
         else:
-            await asyncio.gather(*(message.nack(requeue=requeue) for _, message in messages))
+            # return_exceptions mirrors ack(): one failed nack must not strand the rest in
+            # the pending map. Only confirmed dispositions are dropped and counted.
+            results = await asyncio.gather(
+                *(message.nack(requeue=requeue) for _, message in messages),
+                return_exceptions=True,
+            )
 
-        nacked_ids = [message_id for message_id, _ in messages]
+            disposed_ids = []
 
-        await self.__drop_pending_many(nacked_ids)
+            for (message_id, _), result in zip(messages, results, strict=True):
+                if isinstance(result, BaseException):
+                    # Neither counted nor dropped: with requeue=False the caller is parking
+                    # poison, and reporting — or forgetting — a park that did not happen
+                    # would hide the broker requeuing the still-unacked message. The entry
+                    # stays for a retry; the reopen purge clears it if the channel is dead.
+                    logger.warning(
+                        "RabbitMQ nack: failed to nack message %s on queue %s (requeue=%s); "
+                        "keeping it pending for retry: %s",
+                        message_id,
+                        queue,
+                        requeue,
+                        result,
+                    )
 
-        return len(nacked_ids)
+                else:
+                    disposed_ids.append(message_id)
+
+        await self.__drop_pending_many(disposed_ids)
+
+        return len(disposed_ids)
 
     # ....................... #
 
-    async def __requeue_counted(self, queue: str, raws: Sequence[AbstractIncomingMessage]) -> None:
+    async def __requeue_counted(
+        self, queue: str, raws: Sequence[AbstractIncomingMessage]
+    ) -> list[bool]:
         """Requeue by republishing each message with an incremented ``x-forze-delivery`` header,
         then ack the original — so the delivery count survives the requeue (making
         ``max_deliveries`` parking reachable). Publish-then-ack preserves at-least-once: a crash in
@@ -1078,6 +1239,12 @@ class RabbitMQClient(RabbitMQClientPort):
         whose copy actually reached the broker are acked. An original whose republish failed is
         left **unacked** so the broker redelivers it (acking it would drop the message — the copy
         never landed); a duplicate from a partially-published batch is collapsed by inbox dedup.
+
+        :returns: Per-message republish outcome, aligned to *raws*. Keyed on the *publish*, not
+            the follow-up ack: once the copy is on the broker the requeue has happened, and a
+            failed ack only yields a duplicate that inbox dedup collapses. A ``False`` entry is
+            a message still sitting unacked with no copy published, so the caller must keep it
+            pending rather than report it requeued.
         """
 
         delivery_mode = (
@@ -1102,6 +1269,8 @@ class RabbitMQClient(RabbitMQClientPort):
         # Ack only the originals whose republished copy is on the broker; leave a failed-republish
         # original unacked for broker redelivery (never ack it — that would lose the message).
         republished: list[AbstractIncomingMessage] = []
+        outcomes: list[bool] = []
+
         for raw, result in zip(raws, publish_results, strict=True):
             if isinstance(result, BaseException):
                 logger.warning(
@@ -1111,12 +1280,17 @@ class RabbitMQClient(RabbitMQClientPort):
                     queue,
                     result,
                 )
+                outcomes.append(False)
+
             else:
                 republished.append(raw)
+                outcomes.append(True)
 
         # Best-effort acks: a failed ack just redelivers the original (inbox dedup collapses it).
         if republished:
             await asyncio.gather(*(raw.ack() for raw in republished), return_exceptions=True)
+
+        return outcomes
 
     @staticmethod
     def __with_incremented_delivery(

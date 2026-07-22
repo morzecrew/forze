@@ -103,6 +103,26 @@ _RE_MULTI_UNDERSCORE: Pattern[str] = re.compile(r"_+")
 
 
 @final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _RetainedRaw:
+    """The raw wire form of an in-flight FIFO delivery, kept for a poison retention copy.
+
+    A FIFO poison park has to delete the message to unblock its group, and the copy that
+    preserves it must carry the **raw** body/attributes — the same bytes the decode path
+    retains — not the decoded model. Only held while a retention target is configured.
+    """
+
+    body: str
+    """Raw SQS message body, exactly as received (still encoded)."""
+
+    attributes: dict[str, Any] | None = None
+    """Raw ``MessageAttributes`` as received, or ``None`` when the message carried none."""
+
+
+# ....................... #
+
+
+@final
 @attrs.define(slots=True)
 class SQSClient(SQSClientPort):
     __opts: SQSConnectionOpts | None = attrs.field(default=None, init=False)
@@ -135,14 +155,22 @@ class SQSClient(SQSClientPort):
     __poison_queue_url: str | None = attrs.field(default=None, init=False)
     """Retention queue for undecodable FIFO messages (``SQSConfig.poison_queue_url``)."""
 
-    __pending: dict[str, tuple[str, str]] = attrs.field(factory=dict, init=False)
-    """In-flight deliveries: message id -> (queue, receipt handle).
+    __pending: dict[str, tuple[str, str, _RetainedRaw | None]] = attrs.field(
+        factory=dict, init=False
+    )
+    """In-flight deliveries: message id -> (queue, receipt handle, retained raw).
 
     Mirrors the RabbitMQ client's pending map so callers ack/nack with the
     message ``id`` exposed on :class:`SQSQueueMessage` while the client
     resolves the per-delivery ``ReceiptHandle`` internally. A redelivered
     message (same ``MessageId``) overwrites its entry — only the latest
     receipt handle is valid.
+
+    The third slot is the raw ``(body, attributes)`` a FIFO poison park needs to retain a
+    copy before deleting the message off the head of its group. It is kept **only** when
+    the queue is FIFO *and* ``poison_queue_url`` is configured — the one case where the
+    copy can actually be sent — so the memory is spent solely where retention was opted
+    into; it is ``None`` everywhere else.
     """
 
     __pending_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
@@ -671,9 +699,9 @@ class SQSClient(SQSClientPort):
 
     @staticmethod
     def __chunked_pending(
-        pending: Sequence[tuple[str, str]],
+        pending: Sequence[tuple[str, str, _RetainedRaw | None]],
         size: int = 10,
-    ) -> list[list[tuple[str, str]]]:
+    ) -> list[list[tuple[str, str, _RetainedRaw | None]]]:
         return [list(pending[i : i + size]) for i in range(0, len(pending), size)]
 
     # ....................... #
@@ -1103,6 +1131,118 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
+    async def __retain_and_delete_fifo_poison(
+        self,
+        *,
+        queue: str,
+        queue_url: str,
+        message_id: str,
+        receipt: str,
+        raw: _RetainedRaw | None,
+        reason: str,
+    ) -> None:
+        """Retain a raw copy of a FIFO poison message, then delete it to unblock its group.
+
+        A FIFO message that is discarded but never deleted stays at the head of its message
+        group and blocks every later message in that group until the visibility timeout,
+        then redelivers at the head again — a permanent deadlock when no redrive policy
+        trims it. Deleting is the only thing that frees the group.
+
+        **The delete is conditional on the message being safe.** It happens when the copy
+        reached the retention queue, or when no retention queue is configured and
+        destruction was therefore accepted at wiring time. If retention *was* configured
+        and the copy could not be sent, the original is left in place: deleting would put
+        the message on neither queue, turning a transient outage of the retention queue
+        into permanent data loss. The group stays blocked in that case, which is
+        recoverable — the message reappears after its visibility timeout and the next
+        attempt retries the copy — where destruction is not.
+
+        The delete itself is best-effort: a failure only leaves the group blocked until
+        redrive/visibility, no worse than before. Callers put the (bounded, non-secret)
+        *why* in *reason* — never the raw body, which can carry production data into
+        central error logs.
+
+        :param raw: Wire form to copy, or ``None`` when nothing was retained for this
+            delivery.
+        :param reason: Short phrase describing why the message is poison, for the logs.
+        """
+
+        if self.__poison_queue_url is None:
+            # No retention target: destruction was accepted at configuration time, and the
+            # log names the knob that would have prevented it.
+            logger.warning(
+                "SQS FIFO message %s on queue %s %s; deleting to unblock its message group "
+                "— the message is destroyed (set SQSConfig(poison_queue_url=...) to retain "
+                "a raw copy)",
+                message_id,
+                queue,
+                reason,
+            )
+
+        elif raw is None:
+            logger.error(
+                "SQS FIFO message %s on queue %s %s, but no raw copy was retained for it, "
+                "so none can be sent to %s; leaving it in place — its message group stays "
+                "blocked until the message is retried or the queue's redrive policy trims it",
+                message_id,
+                queue,
+                reason,
+                self.__poison_queue_url,
+            )
+
+            return
+
+        else:
+            try:
+                await self.__send_poison_copy(
+                    source_queue=queue,
+                    source_queue_url=queue_url,
+                    message_id=message_id,
+                    body=raw.body,
+                    attributes=raw.attributes,
+                )
+
+            except Exception as send_err:
+                # Retention was configured and did not happen. Deleting now would put the
+                # message on neither queue, turning a throttled or unavailable poison queue
+                # into permanent data loss — so the group stays blocked instead. This is
+                # self-healing: the message becomes visible again, and the next attempt
+                # retries the copy once the retention queue recovers.
+                logger.error(
+                    "SQS FIFO message %s on queue %s %s and its raw copy could not be sent "
+                    "to %s (%s); leaving it in place rather than destroying it — its message "
+                    "group stays blocked until the retention queue recovers",
+                    message_id,
+                    queue,
+                    reason,
+                    self.__poison_queue_url,
+                    send_err,
+                )
+
+                return
+
+            logger.warning(
+                "SQS FIFO message %s on queue %s %s; raw copy retained on %s; deleting "
+                "the original to unblock its message group",
+                message_id,
+                queue,
+                reason,
+                self.__poison_queue_url,
+            )
+
+        try:
+            await self.__require_client().delete_message(QueueUrl=queue_url, ReceiptHandle=receipt)
+
+        except Exception as del_err:
+            logger.warning(
+                "SQS FIFO poison delete failed for message %s on queue %s: %s",
+                message_id,
+                queue,
+                del_err,
+            )
+
+    # ....................... #
+
     @exc_interceptor.coroutine("sqs.receive")  # type: ignore[untyped-decorator]
     async def receive(
         self,
@@ -1134,6 +1274,13 @@ class SQSClient(SQSClientPort):
         )
         raw_messages = resp.get("Messages") or []
         out: list[SQSQueueMessage] = []
+
+        # Wire form kept per delivery so a later FIFO poison park can retain a copy before
+        # it deletes the message off the head of its group. Only a FIFO queue can reach that
+        # path, and only a configured retention target gives the copy somewhere to go — so
+        # outside that pair nothing is held and the map stays empty.
+        retain_raw = is_fifo and self.__poison_queue_url is not None
+        retained: dict[str, _RetainedRaw] = {}
 
         for raw in raw_messages:
             receipt = raw.get("ReceiptHandle")
@@ -1181,71 +1328,22 @@ class SQSClient(SQSClientPort):
                     continue
 
                 # FIFO queue: a skipped-but-undeleted message stays at the head of its message
-                # group and blocks every later message in that group until the visibility timeout,
-                # then redelivers at the head again — a hard deadlock when no redrive policy trims
-                # it. So the message is deleted to unblock the group — after retaining a raw copy
-                # on the configured poison queue, when one is set; without one this is the only
-                # place the framework destroys a poison message with no retained copy, so the log
-                # names the knob. The raw body is NOT logged: a malformed/attacker-supplied
-                # payload can carry production data, and this lands in central error logs — only
-                # its size and the (bounded) decode error are recorded. The delete is best-effort:
-                # a failure only leaves the group blocked until redrive/visibility, no worse than
-                # before. A failed copy-send never blocks the delete (unblocking the group is the
-                # primary duty) but upgrades the log to ERROR.
-                if self.__poison_queue_url is None:
-                    logger.warning(
-                        "SQS FIFO message %s on queue %s could not be decoded (body %d "
-                        "bytes); deleting to unblock its message group — the message is "
-                        "destroyed (set SQSConfig(poison_queue_url=...) to retain a raw "
-                        "copy): %s",
-                        message_id,
-                        queue,
-                        len(body),
-                        e,
-                    )
-                else:
-                    try:
-                        await self.__send_poison_copy(
-                            source_queue=queue,
-                            source_queue_url=queue_url,
-                            message_id=message_id,
-                            body=body,
-                            attributes=attrs_,
-                        )
-                        logger.warning(
-                            "SQS FIFO message %s on queue %s could not be decoded (body "
-                            "%d bytes); raw copy retained on %s; deleting the original "
-                            "to unblock its message group: %s",
-                            message_id,
-                            queue,
-                            len(body),
-                            self.__poison_queue_url,
-                            e,
-                        )
-                    except Exception as send_err:
-                        logger.error(
-                            "SQS FIFO message %s on queue %s could not be decoded (body "
-                            "%d bytes) and its raw copy could not be sent to %s (%s); "
-                            "deleting anyway to unblock the message group — the message "
-                            "is destroyed: %s",
-                            message_id,
-                            queue,
-                            len(body),
-                            self.__poison_queue_url,
-                            send_err,
-                            e,
-                        )
-
-                try:
-                    await c.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt)
-                except Exception as del_err:
-                    logger.warning(
-                        "SQS FIFO poison delete failed for message %s on queue %s: %s",
-                        message_id,
-                        queue,
-                        del_err,
-                    )
+                # group and blocks every later message in that group. The raw body is NOT
+                # logged (a malformed/attacker-supplied payload can carry production data and
+                # this lands in central error logs) — only its size and the bounded decode
+                # error ride along in the reason.
+                await self.__retain_and_delete_fifo_poison(
+                    queue=queue,
+                    queue_url=queue_url,
+                    message_id=message_id,
+                    receipt=receipt,
+                    raw=_RetainedRaw(body=body, attributes=attrs_),  # type: ignore[arg-type]
+                    reason=f"could not be decoded (body {len(body)} bytes): {e}",
+                )
                 continue
+
+            if retain_raw:
+                retained[message_id] = _RetainedRaw(body=body, attributes=attrs_)  # type: ignore[arg-type]
 
             out.append(message)
 
@@ -1254,7 +1352,11 @@ class SQSClient(SQSClientPort):
                 for message in out:
                     # A redelivery (same MessageId) supersedes the previous
                     # receipt handle; the latest one is the only valid one.
-                    self.__pending[message.id] = (queue, message.receipt_handle)
+                    self.__pending[message.id] = (
+                        queue,
+                        message.receipt_handle,
+                        retained.get(message.id),
+                    )
 
         return out
 
@@ -1342,11 +1444,16 @@ class SQSClient(SQSClientPort):
         self,
         queue: str,
         ids: Sequence[str],
-    ) -> list[tuple[str, str]]:
-        """Resolve message ids to ``(id, receipt handle)`` pairs for *queue*."""
+    ) -> list[tuple[str, str, _RetainedRaw | None]]:
+        """Resolve message ids to ``(id, receipt handle, retained raw)`` for *queue*.
+
+        The retained raw rides along under the same lock acquisition so a FIFO poison park
+        cannot race an ack that drops the entry between resolving the receipt and reading
+        the copy it is about to send.
+        """
 
         async with self.__pending_lock:
-            out: list[tuple[str, str]] = []
+            out: list[tuple[str, str, _RetainedRaw | None]] = []
 
             for message_id in ids:
                 entry = self.__pending.get(message_id)
@@ -1354,12 +1461,12 @@ class SQSClient(SQSClientPort):
                 if entry is None:
                     continue
 
-                pending_queue, receipt = entry
+                pending_queue, receipt, retained = entry
 
                 if pending_queue != queue:
                     continue
 
-                out.append((message_id, receipt))
+                out.append((message_id, receipt, retained))
 
             return out
 
@@ -1394,7 +1501,7 @@ class SQSClient(SQSClientPort):
 
         for chunk in self.__chunked_pending(pending):
             entries = [
-                {"Id": f"m{i}", "ReceiptHandle": receipt} for i, (_, receipt) in enumerate(chunk)
+                {"Id": f"m{i}", "ReceiptHandle": receipt} for i, (_, receipt, _) in enumerate(chunk)
             ]
 
             resp = await c.delete_message_batch(
@@ -1407,11 +1514,43 @@ class SQSClient(SQSClientPort):
 
                 raise exc.internal(f"SQS delete_message_batch has failed entries: {failed_ids}")
 
-            acked_ids.extend(message_id for message_id, _ in chunk)
+            acked_ids.extend(message_id for message_id, _, _ in chunk)
 
         await self.__drop_pending_many(acked_ids)
 
         return len(acked_ids)
+
+    # ....................... #
+
+    async def __park_poison(
+        self,
+        queue: str,
+        pending: Sequence[tuple[str, str, _RetainedRaw | None]],
+    ) -> None:
+        """Terminal disposition for ``nack(requeue=False)``.
+
+        On a **standard** queue this is deliberately a no-op: leaving the message invisible
+        is what lets SQS's redrive policy count the receive and dead-letter it natively.
+
+        On a **FIFO** queue that would block the message group forever, so each message is
+        retained (when a target is configured) and deleted instead — see
+        :meth:`__retain_and_delete_fifo_poison`.
+        """
+
+        queue_url = await self.__resolve_queue_url(queue)
+
+        if not self.__is_fifo_target(queue, queue_url):
+            return
+
+        for message_id, receipt, retained in pending:
+            await self.__retain_and_delete_fifo_poison(
+                queue=queue,
+                queue_url=queue_url,
+                message_id=message_id,
+                receipt=receipt,
+                raw=retained,
+                reason="was nacked as poison by the consumer",
+            )
 
     # ....................... #
 
@@ -1427,11 +1566,19 @@ class SQSClient(SQSClientPort):
 
         When ``requeue`` is ``True``, the visibility timeout is reset to ``0``
         (best effort — a failed reset is logged and the message still
-        redelivers once its original visibility timeout lapses). When
-        ``False``, the message is **not** deleted: it stays invisible until
-        its visibility timeout lapses, so the queue's redrive policy counts
-        the receive and eventually dead-letters it (SQS's native DLQ
-        mechanism).
+        redelivers once its original visibility timeout lapses).
+
+        When ``False`` on a **standard** queue the message is *not* deleted: it stays
+        invisible until its visibility timeout lapses, so the queue's redrive policy counts
+        the receive and eventually dead-letters it (SQS's native DLQ mechanism).
+
+        When ``False`` on a **FIFO** queue that same treatment would wedge the queue: an
+        undeleted message sits at the head of its message group and blocks every later
+        message in it, redelivering at the head forever when no redrive policy trims it —
+        exactly the in-app ``max_deliveries`` shape, where the caller has already decided
+        the message is poison and nothing else will ever remove it. So a FIFO poison nack
+        takes the same path the undecodable-message branch of ``receive`` does: retain a raw
+        copy on ``poison_queue_url`` when configured, then delete to free the group.
 
         *ids* are message ids as exposed on :class:`SQSQueueMessage`; ids
         without a pending delivery on this client are skipped.
@@ -1444,9 +1591,12 @@ class SQSClient(SQSClientPort):
         if not pending:
             return 0
 
-        nacked_ids = [message_id for message_id, _ in pending]
+        nacked_ids = [message_id for message_id, _, _ in pending]
 
-        if requeue:
+        if not requeue:
+            await self.__park_poison(queue, pending)
+
+        else:
             queue_url = await self.__resolve_queue_url(queue)
             c = self.__require_client()
 
@@ -1457,7 +1607,7 @@ class SQSClient(SQSClientPort):
                         "ReceiptHandle": receipt,
                         "VisibilityTimeout": 0,
                     }
-                    for i, (_, receipt) in enumerate(chunk)
+                    for i, (_, receipt, _) in enumerate(chunk)
                 ]
 
                 try:

@@ -232,6 +232,7 @@ class RabbitMQQueueAdapter[M: BaseModel](
         ids: Sequence[str],
         *,
         requeue: bool = True,
+        count: bool = True,
     ) -> int:
         physical_queue = await self.__queue_name(queue)
-        return await self.client.nack(physical_queue, ids, requeue=requeue)
+        return await self.client.nack(physical_queue, ids, requeue=requeue, count=count)

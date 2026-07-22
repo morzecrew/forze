@@ -81,12 +81,16 @@ async def test_partial_publish_failure_acks_only_republished_originals() -> None
     good, bad = _FakeRaw("good", b"good"), _FakeRaw("bad", b"bad")
 
     # Must not raise despite one publish failing.
-    await client._RabbitMQClient__requeue_counted("q", [good, bad])  # type: ignore[attr-defined]
+    outcomes = await client._RabbitMQClient__requeue_counted("q", [good, bad])  # type: ignore[attr-defined]
 
     # Both were attempted; only the successfully-republished original is acked.
     assert set(exchange.published) == {b"good", b"bad"}
     assert good.acked is True
     assert bad.acked is False  # left unacked -> broker redelivers it (no loss)
+
+    # Reported per message and aligned to the input, so nack() can settle only the first
+    # and keep the second pending instead of claiming both were requeued.
+    assert outcomes == [True, False]
 
 
 @pytest.mark.asyncio
@@ -95,6 +99,7 @@ async def test_all_publish_success_acks_every_original() -> None:
     client = _client(exchange)
 
     raws = [_FakeRaw(f"m{i}", f"m{i}".encode()) for i in range(3)]
-    await client._RabbitMQClient__requeue_counted("q", raws)  # type: ignore[attr-defined]
+    outcomes = await client._RabbitMQClient__requeue_counted("q", raws)  # type: ignore[attr-defined]
 
     assert all(raw.acked for raw in raws)
+    assert outcomes == [True, True, True]

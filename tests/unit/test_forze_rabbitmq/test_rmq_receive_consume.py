@@ -215,6 +215,25 @@ class TestConsumeIdleTimeout:
         assert queue.iterator_kwargs["timeout"] == 2.0
 
     @pytest.mark.asyncio
+    async def test_consume_stops_when_its_channel_is_replaced_mid_drain(self) -> None:
+        """A delivery from a superseded channel is never yielded.
+
+        Its tag died with the channel, so the caller could receive but never settle it —
+        and the broker has already requeued it for the replacement.
+        """
+
+        client, _ = _client_with_queue([_FakeIncoming("m1"), _FakeIncoming("m2")])
+        received = []
+
+        async for msg in client.consume("q", timeout=timedelta(seconds=2)):
+            received.append(msg.id)
+            # Stand in for the pending channel being replaced mid-iteration.
+            client._RabbitMQClient__pending_generation += 1  # type: ignore[attr-defined]
+
+        assert received == ["m1"]  # m2 belongs to the dead channel; the generator ends
+        assert client._RabbitMQClient__pending  # type: ignore[attr-defined]  # m1 still settleable
+
+    @pytest.mark.asyncio
     async def test_immediate_idle_timeout_yields_nothing(self) -> None:
         """A consumer idle for the whole window stops without an error."""
         client, _ = _client_with_queue(["timeout"])
