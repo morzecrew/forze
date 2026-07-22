@@ -170,7 +170,17 @@ _QUOTED_VALUE = r"""(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,}\]]+)"""
 # letter, which is what keeps the deliberate non-secrets out: ``secretary=`` and
 # ``tokenizer=`` continue past the term in *lowercase*, so neither alternative applies, no
 # suffix is consumed, and the required separator never lines up.
-_COMPOUND_SUFFIX = r"(?:[._-]\w+|(?-i:[A-Z][a-z0-9]*)){0,6}"
+#
+# Atomic (``(?>…)``): the suffix is matched once, greedily, and never re-split. The
+# segment alternatives overlap (``\w`` covers ``_`` and uppercase runs, which the
+# separator and hump branches can also start), so with backtracking allowed a sensitive
+# term followed by attacker text that never reaches ``=``/``:`` explores every way to
+# partition the tail across up to six segments — polynomial blow-up, minute-scale CPU at
+# a few hundred characters, on the path every logged string value takes. Atomicity is
+# free here: segments consume only ``\w``/``[._-]`` characters while the required
+# ``\s*[=:]`` (or closing quote) can begin with none of them, so a shorter munch can
+# never turn a failed match into a successful one.
+_COMPOUND_SUFFIX = r"(?>(?:[._-]\w+|(?-i:[A-Z][a-z0-9]*)){0,6})"
 
 _LOG_ASSIGNMENT_FRAGMENTS: tuple[str, ...] = (
     "(?:" + "|".join(_LOG_ASSIGNMENT_TERM_FRAGMENTS) + ")" + _COMPOUND_SUFFIX + r"\s*[=:]\s*\S+",

@@ -34,7 +34,7 @@ from forze.application.contracts.queue import (
 from forze.application.contracts.resilience import ResilienceExecutorDepKey
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import StrKey
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.consumer import ConsumerRunResult, QueueConsumer
@@ -541,6 +541,33 @@ async def test_tampered_decrypt_failure_still_parked_as_poison() -> None:
     assert cipher.calls == 1
     assert result == ConsumerRunResult(parked=1)
     assert stub.nacked == [("m-1", False)]  # parked as poison
+    assert stub.acked == []
+
+
+# ....................... #
+
+
+async def test_permanent_kms_decrypt_failure_aborts_without_touching_the_backlog() -> None:
+    # A disabled / pending-deletion KMS key is a deployment-wide, *reversible* operator
+    # action surfacing as a configuration-kind decrypt failure. It must never take the
+    # per-message poison branch: nack(requeue=False) once per message would destroy the
+    # whole encrypted backlog at consume speed (deleted outright on SQS FIFO without a
+    # retention queue, dropped on DLX-less RabbitMQ). The loop aborts with the message
+    # left unacked, so broker redelivery preserves it until the key is restored.
+    cipher = _FailingCipher(error=exc.configuration("AWS KMS key is disabled."))
+    stub = _ScriptedQueue(script=[_encrypted_message("m-1"), _encrypted_message("m-2")])
+    ctx = _plain_ctx(state=MockState(), queue_port=stub, cipher=cipher)
+
+    async def handler(msg: QueueMessage[_Payload]) -> None:  # pragma: no cover
+        del msg
+        raise AssertionError("handler must not run on an undecrypted message")
+
+    with pytest.raises(CoreException) as excinfo:
+        await _run(ctx, handler)
+
+    assert excinfo.value.kind is ExceptionKind.CONFIGURATION
+    assert cipher.calls == 1  # aborted on the first message
+    assert stub.nacked == []  # no disposition: nothing parked, nothing dropped
     assert stub.acked == []
 
 

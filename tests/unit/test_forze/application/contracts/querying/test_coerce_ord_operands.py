@@ -103,6 +103,26 @@ def test_unparseable_decimal_string_is_refused() -> None:
         coerce_query_ord_operands(_f("price", "not-a-number"), _Model)
 
 
+@pytest.mark.parametrize("bound", ["NaN", "nan", "sNaN", "Infinity", "-Infinity", "inf"])
+def test_non_finite_string_bound_is_refused(bound: str) -> None:
+    # "NaN"/"Infinity" parse as Decimal, but a non-finite range bound diverges per
+    # backend: Postgres sorts 'NaN'::numeric above every number, so `$lt "NaN"` fails
+    # open and matches every row, while the in-memory Decimal comparison raises.
+    with pytest.raises(CoreException, match="Non-finite"):
+        coerce_query_ord_operands(_f("price", bound, op="$lt"), _Model)
+
+
+@pytest.mark.parametrize(
+    "bound",
+    [Decimal("NaN"), Decimal("sNaN"), Decimal("Infinity"), float("nan"), float("inf")],
+)
+def test_non_finite_native_bound_is_refused(bound: object) -> None:
+    # A native non-finite operand skips the string cast; the seam must refuse it too,
+    # or backends diverge (Postgres fails open / errors, the matcher matches nothing).
+    with pytest.raises(CoreException, match="Non-finite"):
+        coerce_query_ord_operands(_f("price", bound, op="$lt"), _Model)
+
+
 def test_boolean_nodes_recurse_into_children() -> None:
     node = QueryAnd(
         (

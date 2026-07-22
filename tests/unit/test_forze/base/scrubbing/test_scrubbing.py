@@ -1,5 +1,6 @@
 """Unit tests for forze.base.scrubbing."""
 
+import time
 from collections.abc import Iterator
 from typing import Literal
 
@@ -263,6 +264,42 @@ class TestScrubAssignmentSuffixLeak:
     )
     def test_leaves_non_secret_strings_untouched(self, text: str) -> None:
         assert scrub_log_string(text) == text
+
+
+class TestScrubCompoundSuffixLinearTime:
+    """The compound-suffix rule must not backtrack: scrub cost stays flat on hostile text.
+
+    ``\\w`` covers ``_`` and uppercase runs, which the separator-led and hump branches can
+    also start, so before the suffix was made atomic a sensitive literal followed by
+    attacker text that never reaches ``=``/``:`` explored every partition of the tail
+    across up to six segments — roughly 2.6× per four characters, minute-scale at a couple
+    hundred — on the path every logged string value takes (a remotely triggerable
+    event-loop stall). Atomicity cannot change what matches (the required separator or
+    closing quote can never begin with a segment character), so the semantic pins live in
+    the classes above; this class pins the cost.
+    """
+
+    @pytest.mark.parametrize(
+        "tail",
+        [
+            "_ab",  # snake segments: separator branch vs `\\w+` swallowing the separator
+            ".ab",  # dot segments
+            "-ab",  # dash segments
+            "Aa",  # camel humps: hump branch vs `\\w+` swallowing the hump
+            "_Ab",  # mixed: every branch applicable at every boundary
+        ],
+    )
+    def test_adversarial_suffix_completes_fast(self, tail: str) -> None:
+        # ~420 chars with no `=`/`:` ever arriving: pre-fix this ran for minutes,
+        # post-fix it is ~1 ms — the 1 s bound discriminates even on slow CI.
+        attack = "secret" + tail * (420 // len(tail))
+
+        started = time.perf_counter()
+        result = scrub_log_string(attack)
+        elapsed = time.perf_counter() - started
+
+        assert result == attack  # no assignment shape → nothing masked
+        assert elapsed < 1.0
 
 
 class TestCredentialFragmentCoverage:

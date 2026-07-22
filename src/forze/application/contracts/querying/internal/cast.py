@@ -1,3 +1,4 @@
+import math
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
@@ -84,59 +85,76 @@ class QueryValueCaster:
 
     @staticmethod
     def as_float(v: Any) -> float:
-        """Cast a value to float; rejects bool."""
+        """Cast a value to float; rejects bool and non-finite values (NaN, ±Infinity)."""
         if isinstance(v, bool):
             raise exc.precondition("Expected float, got bool")
 
-        if isinstance(v, (int, float)):
-            return float(v)
+        if isinstance(v, (int, float, Decimal)):
+            result = float(v)
 
-        if isinstance(v, Decimal):
-            return float(v)
-
-        if isinstance(v, str):
+        elif isinstance(v, str):
             # No locale guessing: "1,234" is ambiguous (thousands separator vs decimal
             # comma), and silently reading it as 1.234 is a factor-1000 error that raises
             # nothing. A comma string is refused; the caller sends the canonical form.
             s = v.strip()
 
             try:
-                return float(s)
+                result = float(s)
 
             except Exception as e:
                 raise exc.precondition(f"Invalid float: {v!r}") from e
 
-        raise exc.precondition(f"Invalid float: {v!r}")
+        else:
+            raise exc.precondition(f"Invalid float: {v!r}")
+
+        # Finite only (see as_decimal): NaN/Infinity parse, but as a filter operand
+        # they compare differently on every backend — fail-open, not just wrong.
+        if not math.isfinite(result):
+            raise exc.precondition(f"Non-finite float not allowed: {v!r}")
+
+        return result
 
     # ....................... #
 
     @staticmethod
     def as_decimal(v: Any) -> Decimal:
-        """Cast a value to Decimal without going through binary float; rejects bool."""
+        """Cast a value to Decimal without going through binary float; rejects bool
+        and non-finite values (NaN, sNaN, ±Infinity)."""
         if isinstance(v, bool):
             raise exc.precondition("Expected numeric, got bool")
 
         if isinstance(v, Decimal):
-            return v
+            result = v
 
-        if isinstance(v, int):
-            return Decimal(v)
+        elif isinstance(v, int):
+            result = Decimal(v)
 
-        if isinstance(v, float):
-            return Decimal(str(v))
+        elif isinstance(v, float):
+            result = Decimal(str(v))
 
-        if isinstance(v, str):
+        elif isinstance(v, str):
             # No locale guessing (see as_float): a thousands-separator comma read as a
             # decimal point turns 1,234 into 1.234 with nothing raised. Refused instead.
             s = v.strip()
 
             try:
-                return Decimal(s)
+                result = Decimal(s)
 
             except Exception as e:
                 raise exc.precondition(f"Invalid numeric: {v!r}") from e
 
-        raise exc.precondition(f"Invalid numeric: {v!r}")
+        else:
+            raise exc.precondition(f"Invalid numeric: {v!r}")
+
+        # ``Decimal`` parses "NaN"/"Infinity", but a non-finite value is not a range
+        # bound: Postgres sorts ``'NaN'::numeric`` above every number (``$lt "NaN"``
+        # matches all rows — fail-open on a money filter), while the same comparison
+        # in-process raises ``InvalidOperation``. Refuse it once here so every
+        # backend sees the same precondition instead of diverging.
+        if not result.is_finite():
+            raise exc.precondition(f"Non-finite numeric not allowed: {v!r}")
+
+        return result
 
     # ....................... #
 

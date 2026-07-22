@@ -20,20 +20,19 @@ from forze.application.contracts.queue import (
     QueueSpec,
 )
 from forze.application.execution.context import ExecutionContext
-from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
 from forze.application.integrations.outbox import decrypt_consumed_payload
-from forze.base.exceptions import CoreException, exc, exception_egress_policy
+from forze.base.exceptions import (
+    CoreException,
+    ExceptionKind,
+    exc,
+    exception_egress_policy,
+)
 from forze.base.primitives import StrKey
 from forze_kits.integrations._logger import logger
 
 from ..inbox import process_with_inbox
 
 # ----------------------- #
-
-# Single source of truth (was "core.outbox.payload_cipher_missing" before the payload
-# primitive moved to the shared crypto plane — unreleased, so no external break).
-_CIPHER_MISSING_CODE = PAYLOAD_CIPHER_MISSING_CODE
-"""Decrypt config error (no keyring): a deployment fault, not a poison message."""
 
 _DRAINING_CODE = "draining"
 """Drain-gate refusal code (``THROTTLED``/``code="draining"``): the runtime is quiescing,
@@ -252,11 +251,14 @@ class QueueConsumer[M]:
        (dead-letter/redrive per broker), so a decode-poison message never reaches the loop.
     2. **Decrypt** — an end-to-end ciphertext envelope is decrypted to the typed model
        (see :func:`_decrypt_message`). Decrypt failures are classified by exception
-       kind: a **retryable** kind (the keyring's KMS dependency unavailable or
-       throttled while unwrapping a cold data key) is nacked back (``requeue=True``)
-       for redelivery, a non-retryable kind (tampering, unknown key, malformed
-       envelope) is parked as poison, and a missing-keyring config error aborts the
-       loop (a deployment fault, not per-message).
+       kind: a **configuration** kind (missing keyring, KMS key disabled or pending
+       deletion) aborts the loop — the fault is deployment-wide and hits every
+       message alike, so parking per message would destroy the backlog over a
+       reversible operator action; a **retryable** kind (the keyring's KMS dependency
+       unavailable or throttled while unwrapping a cold data key) is nacked back
+       (``requeue=True``) for redelivery; the remaining non-retryable kinds
+       (tampering, unknown key, malformed envelope) are per-message poison and are
+       parked.
     3. **Park** — when ``max_deliveries`` is set and the message's ``delivery_count``
        exceeds it, the message is parked with ``nack(requeue=False)`` **without** running
        the handler (handler-poison). When the backend can't report a count, parking never
@@ -375,8 +377,18 @@ class QueueConsumer[M]:
                     raise
 
                 except CoreException as e:
-                    if e.code == _CIPHER_MISSING_CODE:
-                        raise  # deployment fault — abort, don't dead-letter every message
+                    # A configuration-kind failure is a deployment-wide fault, never a
+                    # per-message one: the keyring is missing, or the KMS key behind
+                    # *every* message on this queue is disabled / pending deletion — a
+                    # reversible operator action. It must never reach the per-message
+                    # poison branch below: nack(requeue=False) once per message would
+                    # destroy the whole backlog at consume speed (deleted outright on
+                    # SQS FIFO without a retention queue, dropped on DLX-less
+                    # RabbitMQ). Abort instead — the message stays unacked for broker
+                    # redelivery and the supervised loop restarts with backoff until
+                    # an operator restores the key.
+                    if e.kind is ExceptionKind.CONFIGURATION:
+                        raise
 
                     # Decrypt runs through the KMS-backed keyring, so a transient
                     # dependency fault (KMS unavailable/throttled on a cold data

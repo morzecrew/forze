@@ -46,6 +46,20 @@ def test_match_ordering_and_type_error_falls_false() -> None:
     assert _match_field({"n": 1}, QueryField("n", "$lte", 1)) is True
 
 
+def test_match_ordering_decimal_nan_falls_false_instead_of_raising() -> None:
+    # Decimal NaN ordered comparisons raise InvalidOperation (an ArithmeticError,
+    # not a TypeError) where float NaN merely returns False. Incomparable must read
+    # as "no match" on every path, never escape as an uncaught 500. The coercion
+    # seam refuses non-finite *operands*, so the live case is a stored row value.
+    from decimal import Decimal
+
+    nan = Decimal("NaN")
+
+    for op in ("$gt", "$gte", "$lt", "$lte"):
+        assert _match_field({"n": nan}, QueryField("n", op, Decimal("5"))) is False
+        assert _match_field({"n": Decimal("5")}, QueryField("n", op, nan)) is False
+
+
 def test_match_null_and_empty() -> None:
     assert _match_field({}, QueryField("x", "$null", True)) is True
     assert _match_field({"x": None}, QueryField("x", "$null", True)) is True

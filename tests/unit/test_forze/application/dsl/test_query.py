@@ -37,6 +37,21 @@ class TestValueCaster:
         u = UUID("550e8400-e29b-41d4-a716-446655440000")
         assert QueryValueCaster.as_uuid(str(u)) == u
 
+    def test_as_decimal_rejects_non_finite(self) -> None:
+        # "NaN"/"Infinity" parse as Decimal but are not filter operands: Postgres
+        # sorts 'NaN'::numeric above every number (a $lt bound fails open), while
+        # the in-memory Decimal comparison raises InvalidOperation.
+        from decimal import Decimal
+
+        for value in ("NaN", "nan", "sNaN", "Infinity", "-inf", Decimal("NaN"), float("nan")):
+            with pytest.raises(CoreException, match="Non-finite"):
+                QueryValueCaster.as_decimal(value)
+
+    def test_as_float_rejects_non_finite(self) -> None:
+        for value in ("nan", "inf", "-Infinity", float("nan"), float("inf")):
+            with pytest.raises(CoreException, match="Non-finite"):
+                QueryValueCaster.as_float(value)
+
 class TestFilterExpressionParser:
     """Tests for FilterExpressionParser."""
 
