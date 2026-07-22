@@ -53,8 +53,8 @@ def _names_a_dead_key(error: grpc.RpcError) -> bool:
     The status carries no structured state field, so this is necessarily a text check over
     the status message, and an unrecognized one is treated as **transient** by the caller.
     That is the safe direction for a heuristic: a key that really is gone still gets
-    escalated by the supervisor, whereas guessing "permanent" pauses a consumer for good
-    over a key that was merely mid-creation or propagating a change.
+    escalated to a critical alert by the supervisor, whereas guessing "permanent" pauses a
+    consumer for good over a key that was merely mid-creation or propagating a change.
     """
 
     detail = _status_detail(error).upper()
@@ -92,8 +92,8 @@ def _yckms_eh(
     # Access denied stays retryable, unlike the key-state errors below: IAM bindings
     # propagate eventually, so a freshly granted principal is denied for seconds before it
     # is allowed. Non-retryable here would pause the consumer on a grant already on its
-    # way. A permanent denial still terminates — it exhausts the supervisor's
-    # consecutive-crash ceiling.
+    # way. A permanent denial keeps retrying, but the supervisor escalates it to a
+    # critical alert once it stops looking transient.
     if code in _ACCESS_DENIED:
         return CoreException.infrastructure(
             "Yandex Cloud KMS access denied.",

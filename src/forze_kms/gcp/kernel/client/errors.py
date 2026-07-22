@@ -49,9 +49,9 @@ def _is_dead_key_version(error: gcp_errors.FailedPrecondition) -> bool:
     other reason does not qualify.
 
     Unrecognized is treated as **transient** by the caller, which is the safe direction for
-    a heuristic: if GCP reworded this message, the failure degrades to retrying (bounded by
-    the supervisor's crash ceiling) instead of permanently stopping a consumer over an
-    outage that would have cleared.
+    a heuristic: if GCP reworded this message, the failure degrades to retrying (which the
+    supervisor escalates to a critical alert) instead of permanently stopping a consumer
+    over an outage that would have cleared.
     """
 
     message = (getattr(error, "message", None) or str(error)).upper()
@@ -94,8 +94,8 @@ def _gcpkms_eh(
         # Access denied stays retryable, unlike the key-state errors below: IAM bindings
         # propagate eventually, so a freshly granted principal is denied for seconds
         # before it is allowed. Non-retryable here would pause the consumer on a grant
-        # already on its way. A permanent denial still terminates — it exhausts the
-        # supervisor's consecutive-crash ceiling.
+        # already on its way. A permanent denial keeps retrying, but the supervisor
+        # escalates it to a critical alert once it stops looking transient.
         case gcp_errors.PermissionDenied() | gcp_errors.Unauthenticated():
             return CoreException.infrastructure(
                 "GCP KMS access denied.",

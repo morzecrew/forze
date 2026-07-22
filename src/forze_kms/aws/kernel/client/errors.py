@@ -19,6 +19,32 @@ from forze.base.primitives import JsonDict
 
 # ----------------------- #
 
+_TERMINAL_KEY_STATES = ("PENDINGDELETION", "PENDINGREPLICADELETION", "DISABLED")
+"""``KeyState`` values only an operator can reverse, matched separator-insensitively.
+
+The names are AWS's own. Absent are the states that clear by themselves — ``Creating``,
+``Updating``, ``Unavailable``, ``PendingImport`` — and ``Enabled``, which is a substring of
+``Disabled`` and would match it.
+"""
+
+
+def _names_a_terminal_key_state(message: str) -> bool:
+    """Whether a ``KMSInvalidStateException`` names a key state retrying cannot clear.
+
+    The state is only in the message, and AWS words it prose-style ("... is pending
+    deletion.") rather than as the enum, so the comparison drops everything but letters
+    and digits to match either spelling.
+
+    An unrecognized message is treated as **transient**, which is the safe direction for a
+    heuristic: mistaking a key mid-creation for a deleted one parks a consumer for good
+    over a state that resolves on its own, while the reverse only costs restarts that the
+    supervisor already escalates.
+    """
+
+    squashed = "".join(ch for ch in message.upper() if ch.isalnum())
+
+    return any(state in squashed for state in _TERMINAL_KEY_STATES)
+
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
 def _awskms_eh(
@@ -80,8 +106,9 @@ def _awskms_eh(
             # freshly rotated) principal is denied for seconds before it is allowed —
             # non-retryable here would pause the consumer on a grant that is already on
             # its way, and the uncommitted record would sit blocked until an operator
-            # restarted the worker. A denial that is genuinely permanent still terminates:
-            # it exhausts the supervisor's consecutive-crash ceiling instead.
+            # restarted the worker. A denial that is genuinely permanent keeps retrying,
+            # but the supervisor escalates it to a critical alert once it stops looking
+            # transient.
             if code in {"AccessDeniedException", "KMSAccessDeniedException"}:
                 return CoreException.infrastructure(
                     "AWS KMS access denied.",
@@ -106,15 +133,26 @@ def _awskms_eh(
                     details=details,
                 )
 
+            # ``KMSInvalidStateException`` says only that the key's state forbids the call,
+            # which covers ``Creating`` / ``Updating`` / ``Unavailable`` (they clear on
+            # their own) as much as ``PendingDeletion`` (it does not), so it turns on the
+            # state the message names. Nothing bounds the retries of a non-configuration
+            # fault, so a terminal state left retryable here blocks the record forever.
+            if code == "KMSInvalidStateException":
+                if _names_a_terminal_key_state(str(err.get("Message") or "")):
+                    return CoreException.configuration(
+                        "AWS KMS key is disabled or pending deletion.",
+                        details=details,
+                    )
+
+                return CoreException.infrastructure(
+                    "AWS KMS key is not currently usable.",
+                    details=details,
+                )
+
             # Transient: the key exists and access is granted, the request just could not
-            # be served now. ``KMSInvalidStateException`` is *ambiguous* rather than
-            # permanent — it reports only that the key's state does not permit the call,
-            # and that covers ``Creating`` / ``Updating`` / ``Unavailable`` (which clear on
-            # their own) as much as ``PendingDeletion`` (which does not). Only the states
-            # AWS names explicitly are classified permanent; an ambiguous one retries, and
-            # a genuinely terminal state still stops by exhausting the supervisor's
-            # consecutive-crash ceiling.
-            if code in {"KeyUnavailableException", "KMSInvalidStateException"}:
+            # be served now. AWS documents this one as retryable outright.
+            if code == "KeyUnavailableException":
                 return CoreException.infrastructure(
                     "AWS KMS key is not currently usable.",
                     details=details,

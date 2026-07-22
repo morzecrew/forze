@@ -9,20 +9,20 @@ reads. Only a state the backend names outright — deleted, disabled, destroyed 
 ``configuration`` (non-retryable); retrying one of those forever is what turned a revoked
 key into a consumer that crash-restarted every few seconds while alerting nobody.
 
-Everything else stays ``infrastructure``, including three that read permanent but are not:
+Every mapper therefore reads the state out of the failure's own message when one is there —
+AWS's ``KMSInvalidStateException``, a GCP or Yandex Cloud precondition failure — and each
+falls back to ``infrastructure`` when it recognizes nothing.
+
+Everything else stays ``infrastructure``, including two that read permanent but are not:
 
 * a **denied permission** — IAM and key policies propagate, so a freshly granted principal
   is denied for seconds before it is allowed;
-* AWS **KMSInvalidStateException** — it reports only that the state forbids the call, which
-  covers ``Creating`` / ``Updating`` as much as ``PendingDeletion``;
-* a **precondition failure** that does not name a dead key state — an unreachable external
-  key manager raises the same code, as does a key still being created. Both GCP and Yandex
-  Cloud name the state in the status message when there is one, so each mapper reads it and
-  falls back to retryable when it recognizes nothing.
+* a **state message naming nothing terminal** — an unreachable external key manager and a
+  key still being created raise the same codes as a destroyed one.
 
-Ambiguity resolves toward retrying: a fault that never clears still terminates by
-exhausting the supervisor's crash ceiling, whereas a wrongly-permanent classification
-strands a consumer on an outage that would have fixed itself.
+Ambiguity resolves toward retrying: nothing bounds those retries, but the supervisor
+escalates them to a critical alert, whereas a wrongly-permanent classification strands a
+consumer on an outage that would have fixed itself.
 
 These paths are hard to provoke against a live service, so they are pinned here.
 """
@@ -49,8 +49,8 @@ from forze_kms.yc.kernel.client.errors import _yckms_eh
 _DETAILS = {"key_id": "cmk"}
 
 
-def _client_error(code: str) -> boto_errors.ClientError:
-    return boto_errors.ClientError({"Error": {"Code": code}}, "Decrypt")
+def _client_error(code: str, message: str = "") -> boto_errors.ClientError:
+    return boto_errors.ClientError({"Error": {"Code": code, "Message": message}}, "Decrypt")
 
 
 class _RpcError(grpc.RpcError):
@@ -125,8 +125,6 @@ class TestAwsErrorMapper:
             "AccessDeniedException",
             "KMSAccessDeniedException",
             "KeyUnavailableException",  # AWS documents this one as retryable
-            # Ambiguous: also covers Creating / Updating / Unavailable, which self-clear.
-            "KMSInvalidStateException",
             "ThrottlingException",
             "LimitExceededException",
             "KMSInternalException",
@@ -136,6 +134,49 @@ class TestAwsErrorMapper:
     )
     def test_transient_faults_stay_retryable(self, code: str) -> None:
         mapped = _awskms_eh(_client_error(code), site="awskms.decrypt")
+
+        assert mapped is not None
+        assert mapped.kind is ExceptionKind.INFRASTRUCTURE
+        assert exception_egress_policy(mapped.kind).retryable is True
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            # AWS words the state prose-style rather than as the `KeyState` enum, so both
+            # spellings have to land on the same side.
+            "arn:aws:kms:eu-north-1:1:key/k is pending deletion.",
+            "arn:aws:kms:eu-north-1:1:key/k is in state PendingDeletion",
+            "arn:aws:kms:eu-north-1:1:key/k is pending replica deletion.",
+            "arn:aws:kms:eu-north-1:1:key/k is disabled.",
+        ],
+    )
+    def test_an_invalid_state_naming_a_terminal_key_state_is_permanent(self, message: str) -> None:
+        """A key pending deletion is never coming back without an operator.
+
+        Nothing bounds the retries of a retryable classification, so leaving this one
+        ambiguous blocks the uncommitted record behind it for as long as the process lives.
+        """
+
+        mapped = _awskms_eh(_client_error("KMSInvalidStateException", message), site="s")
+
+        assert mapped is not None
+        assert mapped.kind is ExceptionKind.CONFIGURATION
+        assert exception_egress_policy(mapped.kind).retryable is False
+        assert exception_egress_policy(mapped.kind).expose_details is False
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "arn:aws:kms:eu-north-1:1:key/k is in state Creating",
+            "arn:aws:kms:eu-north-1:1:key/k is in state Updating",
+            "arn:aws:kms:eu-north-1:1:key/k is in state Unavailable",
+            "arn:aws:kms:eu-north-1:1:key/k is in state PendingImport",
+            "the key state does not permit this operation",  # names no state
+            "",  # no message at all
+        ],
+    )
+    def test_an_invalid_state_naming_no_terminal_state_stays_retryable(self, message: str) -> None:
+        mapped = _awskms_eh(_client_error("KMSInvalidStateException", message), site="s")
 
         assert mapped is not None
         assert mapped.kind is ExceptionKind.INFRASTRUCTURE
