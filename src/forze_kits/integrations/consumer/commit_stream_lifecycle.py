@@ -144,9 +144,14 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
                     # A run that stayed up past the healthy threshold before crashing opens
                     # a fresh incident rather than extending the current one — otherwise a
                     # consumer that recovers for hours between rare blips would still trip
-                    # the ceiling.
-                    if crashing_since is None or clock.time() - started >= HEALTHY_UPTIME_SECONDS:
-                        crashing_since = started
+                    # the ceiling. The incident starts at the *failure*, never at the run's
+                    # start: dating it from the start of a run that was healthy for hours
+                    # would book those healthy hours as crash-looping and trip the window
+                    # on that incident's very first crash.
+                    failed_at = clock.time()
+
+                    if crashing_since is None or failed_at - started >= HEALTHY_UPTIME_SECONDS:
+                        crashing_since = failed_at
 
                     # Crash-loop ceiling: a fault still failing every restart this long
                     # after the first one is not the transient blip a restart is for. Stop
@@ -154,7 +159,7 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
                     # with nobody alerted. The window has to outlast the slowest fault that
                     # *does* clear itself — IAM and key-policy propagation run minutes, and
                     # they surface here as a retryable denial on every restart.
-                    crashing_for = clock.time() - crashing_since
+                    crashing_for = failed_at - crashing_since
 
                     if (
                         self.max_crash_window is not None

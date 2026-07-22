@@ -239,6 +239,70 @@ async def test_crash_ceiling_stops_a_hot_loop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_long_healthy_run_does_not_count_as_crash_looping() -> None:
+    """The window measures time spent crashing, never time spent working.
+
+    A consumer that runs healthily for hours and then hits one transient blip must restart.
+    Dating the incident from the *run's* start instead of the failure booked all that
+    healthy uptime as crash-loop time, so the very first crash of a long-lived consumer
+    already exceeded the window and stopped supervision for good — inverting the healthy
+    reset, which exists precisely to keep rare blips from accumulating.
+    """
+
+    calls = 0
+    recovered = asyncio.Event()
+    # Run 1 stays up longer than the whole crash window before failing.
+    healthy_for = 0.08
+    window = timedelta(seconds=0.05)
+
+    async def _healthy_then_one_blip(ctx: Any, **kwargs: Any) -> None:
+        del ctx, kwargs
+        nonlocal calls
+        calls += 1
+
+        if calls == 1:
+            await asyncio.sleep(healthy_for)
+            raise RuntimeError("broker connection reset")
+
+        recovered.set()
+        await asyncio.Event().wait()  # behave like consume-forever
+
+    step = _step(restart_backoff=timedelta(milliseconds=1), max_crash_window=window)
+    logger_mock = MagicMock()
+    runtime = _runtime()
+
+    with (
+        patch.object(
+            CommitStreamGroupConsumer, "run", AsyncMock(side_effect=_healthy_then_one_blip)
+        ),
+        patch(
+            "forze_kits.integrations.consumer.commit_stream_lifecycle.HEALTHY_UPTIME_SECONDS",
+            healthy_for / 2,
+        ),
+        patch(
+            "forze_kits.integrations.consumer.commit_stream_lifecycle.logger",
+            logger_mock,
+        ),
+    ):
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+
+            startup = step.startup
+            assert isinstance(startup, _CommitStreamConsumerBackgroundStartup)
+            assert startup.task is not None
+            await asyncio.wait_for(recovered.wait(), timeout=5.0)
+
+            await step.shutdown(ctx)
+
+    assert calls == 2  # restarted rather than giving up on its first crash
+    logger_mock.critical.assert_not_called()
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
 async def test_a_slow_clearing_fault_outlives_the_restart_count() -> None:
     """The ceiling must not stop a fault that needs many restarts to clear.
 

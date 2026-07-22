@@ -15,8 +15,10 @@ Everything else stays ``infrastructure``, including three that read permanent bu
   is denied for seconds before it is allowed;
 * AWS **KMSInvalidStateException** — it reports only that the state forbids the call, which
   covers ``Creating`` / ``Updating`` as much as ``PendingDeletion``;
-* a GCP **precondition failure** that does not name a dead key-version state — an
-  unreachable external key manager raises the same code.
+* a **precondition failure** that does not name a dead key-version state — an unreachable
+  external key manager raises the same code, as does a key still being created. Only GCP
+  names the state at all; Yandex Cloud's status carries no discriminator, so every
+  precondition failure there stays retryable.
 
 Ambiguity resolves toward retrying: a fault that never clears still terminates by
 exhausting the supervisor's crash ceiling, whereas a wrongly-permanent classification
@@ -185,6 +187,21 @@ class TestGcpErrorMapper:
             gcp_errors.FailedPrecondition(
                 "Resource p has value DISABLED in field crypto_key_version.state."
             ),
+            # Terminal outcomes of a generation/import that will never complete on its own.
+            gcp_errors.FailedPrecondition(
+                "Resource p has value IMPORT_FAILED in field crypto_key_version.state."
+            ),
+            gcp_errors.FailedPrecondition(
+                "Resource p has value GENERATION_FAILED in field crypto_key_version.state."
+            ),
+            gcp_errors.FailedPrecondition(
+                "Resource p has value PENDING_EXTERNAL_DESTRUCTION in field "
+                "crypto_key_version.state."
+            ),
+            gcp_errors.FailedPrecondition(
+                "Resource p has value EXTERNAL_DESTRUCTION_FAILED in field "
+                "crypto_key_version.state."
+            ),
         ],
     )
     def test_permanent_key_faults_are_not_retryable(self, error: BaseException) -> None:
@@ -202,6 +219,13 @@ class TestGcpErrorMapper:
             # unreachable external key manager, or anything unrecognized.
             gcp_errors.FailedPrecondition("Cannot make request to EKM: connection failed"),
             gcp_errors.FailedPrecondition("x"),
+            # Mid-generation / mid-import: these clear on their own within seconds.
+            gcp_errors.FailedPrecondition(
+                "Resource p has value PENDING_GENERATION in field crypto_key_version.state."
+            ),
+            gcp_errors.FailedPrecondition(
+                "Resource p has value PENDING_IMPORT in field crypto_key_version.state."
+            ),
             # IAM bindings propagate, so a denial can clear on its own.
             gcp_errors.PermissionDenied("x"),
             gcp_errors.Unauthenticated("x"),
@@ -238,13 +262,7 @@ class TestYcErrorMapper:
         assert mapped.kind is ExceptionKind.VALIDATION
         assert mapped.code == "core.crypto.wrapped_key_invalid"
 
-    @pytest.mark.parametrize(
-        "status",
-        [
-            grpc.StatusCode.NOT_FOUND,
-            grpc.StatusCode.FAILED_PRECONDITION,
-        ],
-    )
+    @pytest.mark.parametrize("status", [grpc.StatusCode.NOT_FOUND])
     def test_permanent_key_faults_are_not_retryable(self, status: Any) -> None:
         mapped = _yckms_eh(_RpcError(status), site="yckms.decrypt")
 
@@ -259,6 +277,9 @@ class TestYcErrorMapper:
             # IAM bindings propagate, so a denial can clear on its own.
             grpc.StatusCode.PERMISSION_DENIED,
             grpc.StatusCode.UNAUTHENTICATED,
+            # Ambiguous: the status names no state, so this covers a key still being
+            # created or propagating a change as much as a disabled one.
+            grpc.StatusCode.FAILED_PRECONDITION,
             grpc.StatusCode.RESOURCE_EXHAUSTED,
             grpc.StatusCode.UNAVAILABLE,
             grpc.StatusCode.DEADLINE_EXCEEDED,

@@ -1,11 +1,19 @@
 """Unit tests for forze.base.scrubbing."""
 
 from collections.abc import Iterator
+from typing import Literal
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from pydantic import BaseModel, EmailStr, SecretStr, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    EmailStr,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+)
 
 from forze.base.scrubbing import (
     SECRET_PLACEHOLDER,
@@ -603,6 +611,29 @@ class TestSanitizePydanticErrors:
 
         assert secret not in str(sanitized)
         assert sanitized["type"] == "assertion_error"
+
+    def test_replaces_a_discriminator_message(self) -> None:
+        # Not every Pydantic-authored message is schema-derived: `union_tag_invalid`
+        # interpolates the caller's own tag ("Input tag '…' found using …"), so a client
+        # sending a secret where a discriminator belongs would read it straight back.
+        secret = "sk-live-51244"
+
+        class Cat(BaseModel):
+            kind: Literal["cat"]
+
+        class Dog(BaseModel):
+            kind: Literal["dog"]
+
+        class M(BaseModel):
+            pet: Cat | Dog = Field(discriminator="kind")
+
+        with pytest.raises(ValidationError) as exc_info:
+            M.model_validate({"pet": {"kind": secret}})
+
+        [sanitized] = sanitize_pydantic_errors(exc_info.value.errors())
+
+        assert secret not in str(sanitized)
+        assert sanitized["type"] == "union_tag_invalid"  # still says which rule broke
 
     def test_keeps_pydantics_own_message(self) -> None:
         # Built-in messages are derived from the *schema*, so they say what was expected

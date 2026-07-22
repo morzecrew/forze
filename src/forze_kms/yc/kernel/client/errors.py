@@ -70,9 +70,16 @@ def _yckms_eh(
             details=details,
         )
 
+    # --- transient again: a precondition failure does not say *which* state ---
+    # The status carries no state discriminator (unlike GCP, which names the key-version
+    # state field in the message), so this covers a key still being created or propagating
+    # a state change just as much as a disabled one. Ambiguity resolves toward retrying:
+    # a key that is never coming back still terminates by exhausting the supervisor's
+    # crash window, whereas calling this permanent strands a consumer for good on a state
+    # that clears itself in seconds.
     if code is grpc.StatusCode.FAILED_PRECONDITION:
-        return CoreException.configuration(
-            "Yandex Cloud KMS key is disabled or in an invalid state.",
+        return CoreException.infrastructure(
+            "Yandex Cloud KMS key is not currently usable.",
             details=details,
         )
 

@@ -25,7 +25,18 @@ malformed key ring / key id on a key-administration call."""
 _KEY_VERSION_STATE_FIELD = "crypto_key_version.state"
 """Field GCP names when a precondition failed because of the key version's own state."""
 
-_DEAD_KEY_VERSION_STATES = ("DISABLED", "DESTROYED", "DESTROY_SCHEDULED")
+_DEAD_KEY_VERSION_STATES = (
+    "DISABLED",
+    "DESTROYED",
+    "DESTROY_SCHEDULED",
+    # Terminal outcomes of a generation/import that will never complete on its own. Their
+    # *pending* counterparts (PENDING_GENERATION, PENDING_IMPORT) are deliberately absent:
+    # those clear by themselves within seconds and must stay retryable.
+    "IMPORT_FAILED",
+    "GENERATION_FAILED",
+    "EXTERNAL_DESTRUCTION_FAILED",
+    "PENDING_EXTERNAL_DESTRUCTION",
+)
 """Key-version states an operator must reverse; nothing else about them is transient."""
 
 
