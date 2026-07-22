@@ -15,10 +15,10 @@ Everything else stays ``infrastructure``, including three that read permanent bu
   is denied for seconds before it is allowed;
 * AWS **KMSInvalidStateException** — it reports only that the state forbids the call, which
   covers ``Creating`` / ``Updating`` as much as ``PendingDeletion``;
-* a **precondition failure** that does not name a dead key-version state — an unreachable
-  external key manager raises the same code, as does a key still being created. Only GCP
-  names the state at all; Yandex Cloud's status carries no discriminator, so every
-  precondition failure there stays retryable.
+* a **precondition failure** that does not name a dead key state — an unreachable external
+  key manager raises the same code, as does a key still being created. Both GCP and Yandex
+  Cloud name the state in the status message when there is one, so each mapper reads it and
+  falls back to retryable when it recognizes nothing.
 
 Ambiguity resolves toward retrying: a fault that never clears still terminates by
 exhausting the supervisor's crash ceiling, whereas a wrongly-permanent classification
@@ -54,11 +54,15 @@ def _client_error(code: str) -> boto_errors.ClientError:
 
 
 class _RpcError(grpc.RpcError):
-    def __init__(self, status: grpc.StatusCode) -> None:
+    def __init__(self, status: grpc.StatusCode, detail: str = "") -> None:
         self._status = status
+        self._detail = detail
 
     def code(self) -> grpc.StatusCode:
         return self._status
+
+    def details(self) -> str:
+        return self._detail
 
 
 # ....................... #
@@ -262,9 +266,22 @@ class TestYcErrorMapper:
         assert mapped.kind is ExceptionKind.VALIDATION
         assert mapped.code == "core.crypto.wrapped_key_invalid"
 
-    @pytest.mark.parametrize("status", [grpc.StatusCode.NOT_FOUND])
-    def test_permanent_key_faults_are_not_retryable(self, status: Any) -> None:
-        mapped = _yckms_eh(_RpcError(status), site="yckms.decrypt")
+    @pytest.mark.parametrize(
+        "error",
+        [
+            _RpcError(grpc.StatusCode.NOT_FOUND),
+            # A precondition failure naming a state only an operator can reverse. The
+            # names are the provider's own SymmetricKey / SymmetricKeyVersion statuses.
+            _RpcError(grpc.StatusCode.FAILED_PRECONDITION, "Key is INACTIVE"),
+            _RpcError(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                "Key version is SCHEDULED_FOR_DESTRUCTION",
+            ),
+            _RpcError(grpc.StatusCode.FAILED_PRECONDITION, "Key version is DESTROYED"),
+        ],
+    )
+    def test_permanent_key_faults_are_not_retryable(self, error: BaseException) -> None:
+        mapped = _yckms_eh(error, site="yckms.decrypt")
 
         assert mapped is not None
         assert mapped.kind is ExceptionKind.CONFIGURATION
@@ -277,9 +294,6 @@ class TestYcErrorMapper:
             # IAM bindings propagate, so a denial can clear on its own.
             grpc.StatusCode.PERMISSION_DENIED,
             grpc.StatusCode.UNAUTHENTICATED,
-            # Ambiguous: the status names no state, so this covers a key still being
-            # created or propagating a change as much as a disabled one.
-            grpc.StatusCode.FAILED_PRECONDITION,
             grpc.StatusCode.RESOURCE_EXHAUSTED,
             grpc.StatusCode.UNAVAILABLE,
             grpc.StatusCode.DEADLINE_EXCEEDED,
@@ -293,10 +307,46 @@ class TestYcErrorMapper:
         assert mapped.kind is ExceptionKind.INFRASTRUCTURE
         assert exception_egress_policy(mapped.kind).retryable is True
 
+    @pytest.mark.parametrize(
+        "detail",
+        [
+            "Key is CREATING",  # clears by itself in seconds
+            "operation is not allowed",  # names no state at all
+            "",  # no status message
+        ],
+    )
+    def test_a_precondition_naming_no_dead_state_stays_retryable(self, detail: str) -> None:
+        """The half of FAILED_PRECONDITION that clears on its own.
+
+        Unrecognized has to fall on the retryable side: mistaking a key mid-creation for a
+        destroyed one pauses a consumer for good over a state that resolves in seconds,
+        while the reverse only costs restarts the supervisor already escalates.
+        """
+
+        mapped = _yckms_eh(
+            _RpcError(grpc.StatusCode.FAILED_PRECONDITION, detail), site="yckms.decrypt"
+        )
+
+        assert mapped is not None
+        assert mapped.kind is ExceptionKind.INFRASTRUCTURE
+        assert exception_egress_policy(mapped.kind).retryable is True
+
     def test_an_rpc_error_without_a_code_still_maps(self) -> None:
         """`grpc.RpcError` is only *usually* a `Call`; a bare one must not crash."""
 
         mapped = _yckms_eh(grpc.RpcError(), site="yckms.decrypt")
+
+        assert mapped is not None
+        assert mapped.kind is ExceptionKind.INFRASTRUCTURE
+
+    def test_a_precondition_without_details_does_not_crash(self) -> None:
+        """The state check runs on an error that may not be a `Call` at all."""
+
+        class _NoDetails(grpc.RpcError):
+            def code(self) -> grpc.StatusCode:
+                return grpc.StatusCode.FAILED_PRECONDITION
+
+        mapped = _yckms_eh(_NoDetails(), site="yckms.decrypt")
 
         assert mapped is not None
         assert mapped.kind is ExceptionKind.INFRASTRUCTURE
