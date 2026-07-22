@@ -204,7 +204,10 @@ async def test_crash_ceiling_stops_a_hot_loop() -> None:
         calls += 1
         raise RuntimeError("KMS unavailable")
 
-    step = _step(restart_backoff=timedelta(milliseconds=1), max_consecutive_crashes=3)
+    step = _step(
+        restart_backoff=timedelta(milliseconds=1),
+        max_crash_window=timedelta(milliseconds=20),
+    )
     logger_mock = MagicMock()
     runtime = _runtime()
 
@@ -226,8 +229,71 @@ async def test_crash_ceiling_stops_a_hot_loop() -> None:
 
             await step.shutdown(ctx)
 
-    assert calls == 3  # stopped at the ceiling instead of restarting forever
+    # It restarted at least once before giving up: the ceiling measures a *window* of
+    # unbroken crashing, so a single crash can never trip it however tight the window.
+    assert calls > 1
     logger_mock.critical.assert_called_once()
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_a_slow_clearing_fault_outlives_the_restart_count() -> None:
+    """The ceiling must not stop a fault that needs many restarts to clear.
+
+    A denial during IAM or key-policy propagation is retryable and does clear itself — but
+    only after minutes of failing every single restart. While the ceiling counted restarts
+    over a constant backoff, patience was ``count * restart_backoff``: the shipped default
+    of ten gave up roughly a minute in, stranding an uncommitted record behind an outage
+    that would have fixed itself. A window has no such ceiling on restarts.
+    """
+
+    crashes_before_recovery = 25
+    calls = 0
+    recovered = asyncio.Event()
+
+    async def _crashes_then_recovers(ctx: Any, **kwargs: Any) -> None:
+        del ctx, kwargs
+        nonlocal calls
+        calls += 1
+
+        if calls <= crashes_before_recovery:
+            raise RuntimeError("KMS access denied — policy still propagating")
+
+        recovered.set()
+        await asyncio.Event().wait()  # behave like consume-forever
+
+    step = _step(
+        restart_backoff=timedelta(milliseconds=1),
+        max_crash_window=timedelta(seconds=30),
+    )
+    logger_mock = MagicMock()
+    runtime = _runtime()
+
+    with (
+        patch.object(
+            CommitStreamGroupConsumer, "run", AsyncMock(side_effect=_crashes_then_recovers)
+        ),
+        patch(
+            "forze_kits.integrations.consumer.commit_stream_lifecycle.logger",
+            logger_mock,
+        ),
+    ):
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+
+            startup = step.startup
+            assert isinstance(startup, _CommitStreamConsumerBackgroundStartup)
+            assert startup.task is not None
+            await asyncio.wait_for(recovered.wait(), timeout=5.0)
+
+            await step.shutdown(ctx)
+
+    # Restarted well past the old ten-crash default and reached the healthy run.
+    assert calls == crashes_before_recovery + 1
+    logger_mock.critical.assert_not_called()
 
 
 # ....................... #
@@ -434,8 +500,8 @@ def test_lifecycle_step_rejects_invalid_options() -> None:
     with pytest.raises(CoreException, match="max_attempts"):
         _step(max_attempts=0)
 
-    with pytest.raises(CoreException, match="[Cc]rash ceiling"):
-        _step(max_consecutive_crashes=0)
+    with pytest.raises(CoreException, match="Crash window"):
+        _step(max_crash_window=timedelta(0))
 
 
 # ....................... #

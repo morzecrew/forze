@@ -150,7 +150,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Permanent dependency faults are no longer retried forever**
 
 - **A deleted or disabled KMS key is classified permanent** (**behavior change**) — AWS, GCP and Yandex map a key state they name outright (not-found, disabled, destroyed) to `CONFIGURATION`, so a commit-stream consumer pauses-and-alerts with `failed > 0` instead of crash-restarting forever and a queue consumer parks instead of requeuing endlessly. Anything ambiguous stays retryable: access-denied, throttling, AWS `KMSInvalidState`, and a GCP precondition failure that does not name a dead key version.
-- **The commit-stream supervisor bounds its restarts** — a `CONFIGURATION`-kind crash is terminal, and new `max_consecutive_crashes` (default 10, `None` unbounded) stops a hot-loop with a critical log; healthy uptime resets the streak.
+- **The commit-stream supervisor bounds its restarts** — a `CONFIGURATION`-kind crash is terminal, and new `max_crash_window` (default 30 min, `None` unbounded) stops a hot-loop with a critical log once it has crashed on every restart for that long; healthy uptime opens a fresh incident.
 
 **Broker delivery integrity (RabbitMQ, draining)**
 
