@@ -28,9 +28,13 @@ class _FakeSqs:
         self.messages = messages or []
         self.receive_calls: list[dict[str, Any]] = []
         self.delete_calls: list[dict[str, Any]] = []
+        self.single_delete_calls: list[dict[str, Any]] = []
+        self.send_calls: list[dict[str, Any]] = []
         self.visibility_calls: list[dict[str, Any]] = []
         self.visibility_error: Exception | None = None
         self.visibility_failed_entries: list[dict[str, str]] = []
+        self.send_error: Exception | None = None
+        self.single_delete_error: Exception | None = None
 
     async def receive_message(self, **kwargs: Any) -> dict[str, Any]:
         self.receive_calls.append(kwargs)
@@ -43,6 +47,22 @@ class _FakeSqs:
             "Successful": [{"Id": e["Id"]} for e in entries],
             "Failed": [],
         }
+
+    async def delete_message(self, **kwargs: Any) -> dict[str, Any]:
+        self.single_delete_calls.append(kwargs)
+
+        if self.single_delete_error is not None:
+            raise self.single_delete_error
+
+        return {}
+
+    async def send_message(self, **kwargs: Any) -> dict[str, Any]:
+        self.send_calls.append(kwargs)
+
+        if self.send_error is not None:
+            raise self.send_error
+
+        return {"MessageId": f"copy-{len(self.send_calls)}"}
 
     async def change_message_visibility_batch(self, **kwargs: Any) -> dict[str, Any]:
         self.visibility_calls.append(kwargs)
@@ -247,6 +267,116 @@ class TestNack:
         # The local delivery is settled; a follow-up ack is a no-op.
         assert await client.ack(_QUEUE, [message.id]) == 0
         assert fake.delete_calls == []
+
+
+# ....................... #
+
+
+_FIFO_QUEUE = "jobs.fifo"
+_FIFO_QUEUE_URL = "https://sqs.local/1/jobs.fifo"
+
+
+class TestNackUncounted:
+    """``nack(requeue=True, count=False)``: a redelivery that is not the message's fault.
+
+    A standard queue replaces the message with a byte-identical copy (fresh broker
+    ``MessageId``, receive count zero) and deletes the original, so an outage's requeue
+    cycles can never creep toward the redrive policy's ``maxReceiveCount`` and
+    dead-letter a healthy message. FIFO cannot honor it — a copy would re-enter at the
+    back of its message group — so the counted visibility reset stays.
+    """
+
+    @pytest.mark.asyncio
+    async def test_standard_queue_requeues_a_copy_and_deletes_the_original(self) -> None:
+        client = SQSClient()
+        attributes = {"forze_type": {"StringValue": "T", "DataType": "String"}}
+        fake = _FakeSqs(
+            [
+                {
+                    "MessageId": "mid-1",
+                    "ReceiptHandle": "receipt-1",
+                    "Body": "hello",
+                    "MessageAttributes": attributes,
+                }
+            ]
+        )
+        _bind(client, fake)
+
+        message = (await client.receive(_QUEUE, limit=1))[0]
+
+        assert await client.nack(_QUEUE, [message.id], requeue=True, count=False) == 1
+
+        # A byte-identical copy went back onto the same queue…
+        assert len(fake.send_calls) == 1
+        sent = fake.send_calls[0]
+        assert sent["QueueUrl"] == _QUEUE_URL
+        assert sent["MessageBody"] == "hello"
+        assert sent["MessageAttributes"] == attributes
+        # …the original was deleted, and no counted visibility reset happened.
+        assert fake.single_delete_calls == [
+            {"QueueUrl": _QUEUE_URL, "ReceiptHandle": "receipt-1"}
+        ]
+        assert fake.visibility_calls == []
+
+    @pytest.mark.asyncio
+    async def test_failed_copy_falls_back_to_counted_reset_without_deleting(self) -> None:
+        # Copy first, delete only after the copy is on the queue: a failed send must
+        # leave the original untouched (visibility reset — counted, but never lossy).
+        client = SQSClient()
+        fake = _FakeSqs([_raw_message("mid-1", "receipt-1")])
+        fake.send_error = RuntimeError("send throttled")
+        _bind(client, fake)
+
+        message = (await client.receive(_QUEUE, limit=1))[0]
+
+        assert await client.nack(_QUEUE, [message.id], requeue=True, count=False) == 1
+        assert fake.single_delete_calls == []  # the original survives
+        assert len(fake.visibility_calls) == 1  # degraded to the counted requeue
+
+    @pytest.mark.asyncio
+    async def test_failed_delete_after_copy_is_best_effort(self) -> None:
+        # Send succeeded, delete failed: the original redelivers alongside its copy and
+        # the consumer-side inbox dedup absorbs the duplicate — logged, never raised.
+        client = SQSClient()
+        fake = _FakeSqs([_raw_message("mid-1", "receipt-1")])
+        fake.single_delete_error = RuntimeError("delete failed")
+        _bind(client, fake)
+
+        message = (await client.receive(_QUEUE, limit=1))[0]
+
+        assert await client.nack(_QUEUE, [message.id], requeue=True, count=False) == 1
+        assert len(fake.send_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_fifo_queue_keeps_the_counted_visibility_reset(self) -> None:
+        # An uncounted FIFO requeue would re-enter at the back of its message group,
+        # breaking order — the receive stays counted there.
+        client = SQSClient()
+        fake = _FakeSqs([_raw_message("mid-1", "receipt-1")])
+        client._SQSClient__queue_url_cache[_FIFO_QUEUE] = _FIFO_QUEUE_URL  # type: ignore[attr-defined]
+        client._SQSClient__ctx_client.set(fake)  # type: ignore[attr-defined]
+        client._SQSClient__ctx_depth.set(1)  # type: ignore[attr-defined]
+
+        message = (await client.receive(_FIFO_QUEUE, limit=1))[0]
+
+        assert await client.nack(_FIFO_QUEUE, [message.id], requeue=True, count=False) == 1
+        assert fake.send_calls == []
+        assert fake.single_delete_calls == []
+        assert len(fake.visibility_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_counted_requeue_never_sends_a_copy(self) -> None:
+        # The default path is untouched: count=True is the plain visibility reset.
+        client = SQSClient()
+        fake = _FakeSqs([_raw_message("mid-1", "receipt-1")])
+        _bind(client, fake)
+
+        message = (await client.receive(_QUEUE, limit=1))[0]
+
+        assert await client.nack(_QUEUE, [message.id], requeue=True) == 1
+        assert fake.send_calls == []
+        assert fake.single_delete_calls == []
+        assert len(fake.visibility_calls) == 1
 
 
 # ....................... #

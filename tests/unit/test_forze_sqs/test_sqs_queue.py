@@ -219,4 +219,4 @@ async def test_queue_adapter_ack_and_nack_use_namespaced_queue() -> None:
     assert acked == 1
     assert nacked == 1
     client.ack.assert_awaited_once_with("ns-jobs", ["receipt-1"])
-    client.nack.assert_awaited_once_with("ns-jobs", ["receipt-1"], requeue=False)
+    client.nack.assert_awaited_once_with("ns-jobs", ["receipt-1"], requeue=False, count=True)

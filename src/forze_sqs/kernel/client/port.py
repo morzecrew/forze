@@ -91,4 +91,5 @@ class SQSClientPort(Protocol):
         ids: Sequence[str],
         *,
         requeue: bool = True,
+        count: bool = True,
     ) -> Awaitable[int]: ...  # pragma: no cover

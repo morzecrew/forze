@@ -58,11 +58,11 @@ nothing more."""
 _CONFIG_FAULT_PAUSE_SECONDS = 5.0
 """Length of each throttle pause once the configuration-fault streak is crossed.
 
-Also the receive-rate bound during an outage on backends whose delivery count is
-broker-managed (the SQS receive tally): ``count=False`` cannot suppress it, so each
-redelivery cycle still counts toward the queue's redrive policy — the pause keeps that
-growth to at most one receive per message per backlog pass. See the requeue branch in
-:meth:`QueueConsumer.run`."""
+Also the receive-rate bound during an outage on backends that cannot suppress a
+broker-managed delivery count (SQS FIFO, where an uncounted requeue would break
+message-group order): there each redelivery cycle still counts toward the queue's
+redrive policy, and the pause keeps that growth to at most one receive per message per
+backlog pass. See the requeue branch in :meth:`QueueConsumer.run`."""
 
 _DRAINING_CODE = "draining"
 """Drain-gate refusal code (``THROTTLED``/``code="draining"``): the runtime is quiescing,
@@ -455,13 +455,14 @@ class QueueConsumer[M]:
                     # an unbroken streak says nothing is decrypting, pace the loop with a
                     # stop-responsive pause instead of spinning on broker redelivery.
                     #
-                    # ``count=False`` is a hint, honored only where the app tracks its own
-                    # delivery count. On SQS the receive tally is broker-managed and every
-                    # redelivery still counts toward the redrive policy, so a prolonged
-                    # outage can dead-letter affected messages to the DLQ — retention, not
-                    # loss (they move back with a redrive task once the key returns). The
-                    # pause bounds that growth to one receive per message per backlog
-                    # pass; size DLQ retention for the key-restore window it must cover.
+                    # ``count=False`` is honored per backend as best it can: app-tracked
+                    # counts skip the increment, and standard SQS requeues a fresh copy
+                    # (broker receive count resets, so the redrive policy cannot
+                    # dead-letter a message over an outage it did not cause). FIFO SQS
+                    # cannot honor it — a copy would break message-group order — so
+                    # there a prolonged outage still lands affected messages on the
+                    # redrive DLQ: retention, not loss (they move back with a redrive
+                    # task once the key returns); size DLQ retention for that window.
                     if e.kind is ExceptionKind.CONFIGURATION:
                         config_fault_streak += 1
 
