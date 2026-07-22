@@ -22,6 +22,7 @@ from forze.application.contracts.document import DocumentSpec, DocumentWriteType
 from forze.application.contracts.invariants import ReadSet, SumOf, SystemInvariant
 from forze.application.contracts.queue import QueueMessage
 from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import CreateDocumentCmd, ReadDocument
@@ -40,7 +41,7 @@ from forze_kits.domain.soft_deletion import (
     UpdateCmdWithSoftDeletion,
 )
 from forze_kits.integrations.outbox import OutboxRelay, RelayBinding
-from forze_mock import MockDepsModule, MockStateDepKey
+from forze_mock import MockDepsModule, MockRouteConfig, MockStateDepKey
 from forze_mock.adapters import MockSearchCommandAdapter
 
 # ----------------------- #
@@ -201,6 +202,44 @@ class TestInTxStaging:
 
             claims = await ctx.outbox.query(kit.search_sync_wiring().outbox_spec).claim_pending()
             assert claims == []  # the staged marker rolled back with the write
+
+    async def test_multi_tenant_sync_converges_without_opting_into_anything(self) -> None:
+        # The relay stamps the tenant off the outbox row it claimed; the consumer must bind
+        # it or the tenant-scoped re-read fails and the marker requeues forever. That was the
+        # default, so durable sync was simply broken for every multi-tenant app.
+        #
+        # The document/index routes are tenant-aware; the sync outbox is deliberately NOT —
+        # the background relay is tenant-global and cannot read a tenant-aware outbox, which
+        # is exactly why the tenant has to travel as row data and then as a header.
+        tenant = uuid4()
+        kit = _kit()
+        runtime = build_runtime(
+            MockDepsModule(
+                strict_tx=True,
+                routes={
+                    "gizmos": MockRouteConfig(tenant_aware=True),
+                    "gizmos_index": MockRouteConfig(tenant_aware=True),
+                },
+            )
+        )
+        reg = kit.registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+                row = await _create(reg, ctx, "alpha")
+
+            # Relay + consumer run tenant-globally, as the background steps do.
+            result = await _drain(kit, ctx)
+
+            assert result.processed == 1
+            assert result.failed == 0  # not nacked back onto the queue
+
+            with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+                hits = await ctx.search.query(GIZMO_INDEX).search("alpha")
+
+        assert [hit.id for hit in hits.hits] == [row.id]
 
     def test_the_route_declares_its_atomicity_precondition(self) -> None:
         # Staging atomically with the write is the whole difference between this route and

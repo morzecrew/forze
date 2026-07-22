@@ -101,13 +101,34 @@ class OutboxSearchSync:
     """Run the in-process consumer lifecycle step. ``False`` when the consumer runs
     elsewhere — build it there via :meth:`SearchSyncOutboxWiring.queue_consumer`."""
 
-    max_deliveries: int | None = None
-    """Optional poison-parking ceiling forwarded to the consumer."""
+    max_deliveries: int | None = 10
+    """Poison-parking ceiling forwarded to the consumer (``None`` = unbounded).
 
-    bind_tenant_from_headers: bool = False
-    """Bind the tenant from the relayed headers for the consumer's re-read + apply
-    (opt-in — headers are untrusted; enable only for brokers where every producer is
-    trusted to assert tenancy)."""
+    Bounded by default: every failure mode on this route is either transient (a flaky
+    index) or permanent (a tenant that no longer exists, a spec the consumer cannot read),
+    and a permanent one with no ceiling requeues forever — consuming broker capacity while
+    reading as healthy. A ceiling parks it instead, which is a state an operator can alert
+    on."""
+
+    bind_tenant_from_headers: bool = True
+    """Bind the tenant the relay stamped, so the consumer's re-read and apply run in the
+    row's own tenant (default ``True``; a multi-tenant app cannot work without it).
+
+    Binding a tenant from headers is opt-**in** on a general queue consumer because any
+    producer with broker access could forge one. This route earns the opposite default: it
+    is a closed loop the framework owns end to end — *its* staging writes the marker inside
+    the business transaction, *its* relay stamps the tenant off the outbox row it just
+    claimed, and *its* consumer applies it. The stamped tenant is as trustworthy as the row
+    it was copied from.
+
+    The blast radius bounds it further even if the queue is reachable: the payload is one
+    document id (never row data), and applying it *re-reads committed state* under the
+    bound tenant. So a forged marker can only make the index re-converge to what the store
+    already says for that tenant — index churn at worst, never a write of attacker-supplied
+    data and never a cross-tenant read, since the re-read is itself tenant-scoped.
+
+    Set ``False`` to keep the strict posture — e.g. the sync queue shares a broker with
+    untrusted producers and you would rather the route stay single-tenant."""
 
     consumer_restart_backoff: timedelta = timedelta(seconds=5)
     """Backoff before the consumer loop restarts after a consume-stream crash."""
