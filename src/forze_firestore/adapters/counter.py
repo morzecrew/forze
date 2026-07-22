@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import timedelta
 from typing import Final, final
 from uuid import UUID
 
@@ -15,13 +16,20 @@ from forze.application.contracts.counter import (
     CounterEntry,
     CounterPort,
 )
-from forze.application.contracts.resilience import ResilienceExecutorPort
+from forze.application.contracts.resilience import (
+    BackoffStrategy,
+    ResilienceExecutorPort,
+    ResiliencePolicy,
+    RetryStrategy,
+)
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.execution.resilience import (
-    default_resilience_executor,
+    OCC_POLICY,
+    InProcessResilienceExecutor,
+    builtin_default_policies,
     occ_retry,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze_firestore.execution.deps.configs import FirestoreCounterConfig
 from forze_firestore.kernel.client import FirestoreClientPort
@@ -36,6 +44,59 @@ _UNSUFFIXED_DOC_ID: Final[str] = "_"
 
 _SUFFIX_DOC_PREFIX: Final[str] = "s:"
 """Prefix for suffixed counter ids, so no suffix can collide with the unsuffixed id."""
+
+_COUNTER_OCC_ATTEMPTS: Final[int] = 8
+"""Retry budget for a contended allocation.
+
+The shared ``occ`` default (3) is sized for a *document revision* conflict — an anomaly,
+where two writers happened to touch the same row. A counter inverts that: every caller
+targets the same document by definition, so conflict is the steady state, not the
+exception. With N concurrent allocations the last writer to win can be aborted N-1 times,
+so a budget of 3 starts surfacing ``core.concurrency`` to callers at N=4 — contradicting
+this adapter's own contract that every caller receives a distinct value.
+
+Sized for the contention a single process realistically generates, not unbounded N; past
+that the documented answer is still ``incr_batch`` (one allocation for many values) or a
+Redis-backed counter. Only Firestore needs this: Postgres allocates with
+``INSERT … ON CONFLICT … RETURNING`` and Mongo with ``$inc`` + ``find_one_and_update`` —
+single atomic statements that never contend at this layer.
+"""
+
+
+def _counter_resilience_executor() -> ResilienceExecutorPort:
+    """A resilience executor whose ``occ`` retry is sized for counter contention.
+
+    Deliberately not the process default: raising the shared budget would lengthen the
+    retry tail of every optimistic-concurrency path in the framework to fix one adapter
+    whose contention profile is genuinely different. Everything else in the policy set is
+    inherited unchanged.
+
+    Built per adapter rather than memoized process-wide. The default executor is cached
+    *per event loop* because bulkhead waiter futures are loop-affine, and a single shared
+    instance would resolve a waiter on a foreign or closed loop; an instance that never
+    outlives the adapter holding it cannot cross loops in the first place. These policies
+    carry no bulkhead today, but caching one process-wide would silently depend on that
+    staying true.
+    """
+
+    policies = dict(builtin_default_policies())
+    policies[OCC_POLICY] = ResiliencePolicy(
+        name=OCC_POLICY,
+        strategies=(
+            RetryStrategy(
+                max_attempts=_COUNTER_OCC_ATTEMPTS,
+                backoff=BackoffStrategy(
+                    base=timedelta(milliseconds=50),
+                    max=timedelta(seconds=2),
+                    jitter="decorrelated",
+                ),
+                retry_on=frozenset({ExceptionKind.CONCURRENCY}),
+            ),
+        ),
+    )
+
+    return InProcessResilienceExecutor(policies=policies)
+
 
 # ....................... #
 
@@ -119,7 +180,7 @@ class FirestoreCounterAdapter(_FirestoreCounterBase, CounterPort):
     amortize the ceiling, or route high-rate counters to a Redis-backed adapter.
     """
 
-    resilience: ResilienceExecutorPort = attrs.field(factory=default_resilience_executor)
+    resilience: ResilienceExecutorPort = attrs.field(factory=_counter_resilience_executor)
 
     # ....................... #
 

@@ -83,6 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Persistence tenancy & fidelity**
 
 - **Counter tenancy (Postgres, Mongo, Firestore)** — counters resolve through the bound tenant, so namespace-tier isolation holds, and the spec route is folded into the stored key so two specs sharing a relation no longer merge sequences. An existing pre-route sequence is carried forward rather than restarting at zero.
+- **A contended Firestore counter no longer surfaces a concurrency error** — allocation retries under a budget sized for counter contention instead of the shared optimistic-concurrency default, which gave up while concurrent callers were still queued. Postgres and Mongo allocate atomically and were unaffected.
 - **Mongo history reads scope by tenant** — snapshots are stamped and reads filter strictly on it, matching Firestore and closing a tagged-tier cross-tenant read. A pre-upgrade snapshot carries no tenant, so it is unowned and invisible to every tenant; backfill it on legacy history rows for strict pre-upgrade concurrency continuity.
 - **Listing a missing bucket can read as empty** — opt-in, so the object-list route and a blob-less export no longer fail outright; the default still raises. Object listing also bounds its per-object HEAD fan-out.
 - **Decimal filter values** — the query caster no longer locale-guesses a comma, and a JSON string is accepted as an exact Decimal or datetime range bound, cast per field against the read model.
