@@ -145,11 +145,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **The search-sync outbox route declares `require_transaction`** — a marker flushed outside a transaction is refused (`core.outbox.flush_outside_transaction`) instead of silently degrading to a dual-write. The kit already stages in-transaction; hand-rolled wiring that attaches the staging hook without `bind_tx()` now fails loudly.
 
-**Durable search sync works multi-tenant out of the box** (**behavior change**) — `OutboxSearchSync.bind_tenant_from_headers` defaults to `True`, so the consumer binds the tenant its own relay stamped rather than nacking forever; set `False` for the strict posture. `max_deliveries` defaults to 10 (was unbounded), so a permanently-failing marker parks instead of requeuing silently.
+**Durable search sync works multi-tenant out of the box** (**behavior change**) — `OutboxSearchSync.bind_tenant_from_headers` defaults to `True`, so the consumer binds the tenant its own relay stamped rather than nacking forever; set `False` for the strict posture.
 
 **Permanent dependency faults are no longer retried forever**
 
-- **A revoked, deleted or disabled KMS key is classified permanent** (**behavior change**) — AWS, GCP and Yandex adapters map access-denied, key-not-found and disabled/pending-deletion to `CONFIGURATION` rather than `INFRASTRUCTURE`, making them non-retryable: a commit-stream consumer pauses-and-alerts with `failed > 0` instead of crash-restarting forever, and a queue consumer parks instead of requeuing endlessly. Throttling, internal errors and AWS `KeyUnavailable` stay retryable.
+- **A deleted or disabled KMS key is classified permanent** (**behavior change**) — AWS, GCP and Yandex map key-not-found and disabled/pending-deletion to `CONFIGURATION`, so a commit-stream consumer pauses-and-alerts with `failed > 0` instead of crash-restarting forever and a queue consumer parks instead of requeuing endlessly. Access-denied, throttling and internal errors stay retryable.
 - **The commit-stream supervisor bounds its restarts** — a `CONFIGURATION`-kind crash is terminal, and new `max_consecutive_crashes` (default 10, `None` unbounded) stops a hot-loop with a critical log; healthy uptime resets the streak.
 
 **Broker delivery integrity (RabbitMQ, draining)**

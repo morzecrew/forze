@@ -2,10 +2,16 @@
 
 A backend failure has to land on the right side of two lines. The client/server one: a
 corrupt or foreign wrapped data key is caller-caused (``validation``). And the
-transient/permanent one, which decides whether a consumer retries at all: an outage or a
-throttle is ``infrastructure`` (retryable), while a denied permission or a deleted or
-disabled key is ``configuration`` (not) — retrying those forever is what turned a revoked
-key into a consumer that crash-restarted every few seconds while alerting nobody.
+transient/permanent one, which decides whether a consumer retries at all.
+
+That second line runs through the *key's state*, not through how the failure reads. A
+deleted or disabled key is ``configuration`` (non-retryable) — retrying one forever is
+what turned a revoked key into a consumer that crash-restarted every few seconds while
+alerting nobody. An outage, a throttle, and — less obviously — a **denied permission**
+stay ``infrastructure``: IAM and key policies propagate, so a freshly granted principal is
+denied for seconds before it is allowed, and refusing to retry would strand a consumer on
+a grant already on its way. A denial that never clears terminates by exhausting the
+supervisor's crash ceiling instead.
 
 These paths are hard to provoke against a live service, so they are pinned here.
 """
@@ -78,8 +84,6 @@ class TestAwsErrorMapper:
     @pytest.mark.parametrize(
         "code",
         [
-            "AccessDeniedException",
-            "KMSAccessDeniedException",
             "NotFoundException",
             "DisabledException",
             "KMSInvalidStateException",
@@ -103,6 +107,9 @@ class TestAwsErrorMapper:
     @pytest.mark.parametrize(
         "code",
         [
+            # IAM / key policies propagate, so a denial can clear on its own.
+            "AccessDeniedException",
+            "KMSAccessDeniedException",
             "KeyUnavailableException",  # AWS documents this one as retryable
             "ThrottlingException",
             "LimitExceededException",
@@ -161,8 +168,6 @@ class TestGcpErrorMapper:
     @pytest.mark.parametrize(
         "error",
         [
-            gcp_errors.PermissionDenied("x"),
-            gcp_errors.Unauthenticated("x"),
             gcp_errors.NotFound("x"),
             gcp_errors.FailedPrecondition("x"),  # key version disabled / destroyed
         ],
@@ -178,6 +183,9 @@ class TestGcpErrorMapper:
     @pytest.mark.parametrize(
         "error",
         [
+            # IAM bindings propagate, so a denial can clear on its own.
+            gcp_errors.PermissionDenied("x"),
+            gcp_errors.Unauthenticated("x"),
             gcp_errors.ResourceExhausted("x"),
             gcp_errors.ServiceUnavailable("x"),
             gcp_errors.DeadlineExceeded("x"),
@@ -214,8 +222,6 @@ class TestYcErrorMapper:
     @pytest.mark.parametrize(
         "status",
         [
-            grpc.StatusCode.PERMISSION_DENIED,
-            grpc.StatusCode.UNAUTHENTICATED,
             grpc.StatusCode.NOT_FOUND,
             grpc.StatusCode.FAILED_PRECONDITION,
         ],
@@ -231,6 +237,9 @@ class TestYcErrorMapper:
     @pytest.mark.parametrize(
         "status",
         [
+            # IAM bindings propagate, so a denial can clear on its own.
+            grpc.StatusCode.PERMISSION_DENIED,
+            grpc.StatusCode.UNAUTHENTICATED,
             grpc.StatusCode.RESOURCE_EXHAUSTED,
             grpc.StatusCode.UNAVAILABLE,
             grpc.StatusCode.DEADLINE_EXCEEDED,

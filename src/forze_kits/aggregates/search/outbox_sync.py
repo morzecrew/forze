@@ -101,14 +101,20 @@ class OutboxSearchSync:
     """Run the in-process consumer lifecycle step. ``False`` when the consumer runs
     elsewhere — build it there via :meth:`SearchSyncOutboxWiring.queue_consumer`."""
 
-    max_deliveries: int | None = 10
-    """Poison-parking ceiling forwarded to the consumer (``None`` = unbounded).
+    max_deliveries: int | None = None
+    """Optional poison-parking ceiling forwarded to the consumer (``None`` = unbounded).
 
-    Bounded by default: every failure mode on this route is either transient (a flaky
-    index) or permanent (a tenant that no longer exists, a spec the consumer cannot read),
-    and a permanent one with no ceiling requeues forever — consuming broker capacity while
-    reading as healthy. A ceiling parks it instead, which is a state an operator can alert
-    on."""
+    Unbounded by default, unlike a general queue consumer, because parking is *terminal*
+    here and this marker has no terminal failure to park for. Applying it re-reads the
+    row's committed state, so it converges from any starting point: a missing row deletes
+    the index entry, a live one upserts it. What is left is essentially one failure mode —
+    the index being unreachable — which retrying is exactly the right response to.
+
+    Parking one instead loses the update permanently: this route wires no dead-letter
+    destination, so a parked marker is dropped, and the row stays stale in the index until
+    something writes it again. An index outage that outlasts the ceiling would silently
+    turn into missing search data long after the outage was fixed. Set a ceiling only with
+    a dead-letter route to replay from."""
 
     bind_tenant_from_headers: bool = True
     """Bind the tenant the relay stamped, so the consumer's re-read and apply run in the

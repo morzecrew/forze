@@ -49,17 +49,21 @@ def _yckms_eh(
             details=details,
         )
 
+    # Access denied stays retryable, unlike the key-state errors below: IAM bindings
+    # propagate eventually, so a freshly granted principal is denied for seconds before it
+    # is allowed. Non-retryable here would pause the consumer on a grant already on its
+    # way. A permanent denial still terminates — it exhausts the supervisor's
+    # consecutive-crash ceiling.
+    if code in _ACCESS_DENIED:
+        return CoreException.infrastructure(
+            "Yandex Cloud KMS access denied.",
+            details=details,
+        )
+
     # --- permanent: retrying never clears these, an operator must act ---
     # Configuration rather than infrastructure so the egress policy reports them
     # non-retryable: as infrastructure they drove a decrypt loop to crash-restart
     # forever on a key that is never coming back. Details stay hidden either way.
-    if code in _ACCESS_DENIED:
-        return CoreException.configuration(
-            "Yandex Cloud KMS access denied — the deployment's credentials lack access "
-            "to this key.",
-            details=details,
-        )
-
     if code is grpc.StatusCode.NOT_FOUND:
         return CoreException.configuration(
             "Yandex Cloud KMS key not found — it is missing or has been deleted.",

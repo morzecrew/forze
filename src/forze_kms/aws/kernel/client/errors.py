@@ -75,19 +75,25 @@ def _awskms_eh(
                     details=details,
                 )
 
+            # Access denied is *not* classified permanent, unlike the key-state errors
+            # below. IAM and key policies propagate eventually, so a freshly granted (or
+            # freshly rotated) principal is denied for seconds before it is allowed —
+            # non-retryable here would pause the consumer on a grant that is already on
+            # its way, and the uncommitted record would sit blocked until an operator
+            # restarted the worker. A denial that is genuinely permanent still terminates:
+            # it exhausts the supervisor's consecutive-crash ceiling instead.
+            if code in {"AccessDeniedException", "KMSAccessDeniedException"}:
+                return CoreException.infrastructure(
+                    "AWS KMS access denied.",
+                    details=details,
+                )
+
             # --- permanent: retrying never clears these, an operator must act ---
             # Classified as *configuration*, not infrastructure, because the egress
             # policy's ``retryable`` is what every consumer keys off: as infrastructure
             # these drove a decrypt loop to crash-restart forever on a key that is never
             # coming back. Configuration is non-retryable, so the consumer ladders
-            # straight to pause-and-alert (and a supervised loop stops instead of
-            # hot-looping). Details stay hidden — same egress posture as infrastructure.
-            if code in {"AccessDeniedException", "KMSAccessDeniedException"}:
-                return CoreException.configuration(
-                    "AWS KMS access denied — the deployment's credentials lack access to this key.",
-                    details=details,
-                )
-
+            # straight to pause-and-alert. Details stay hidden either way.
             if code == "NotFoundException":
                 return CoreException.configuration(
                     "AWS KMS key not found — it is missing or has been deleted.",

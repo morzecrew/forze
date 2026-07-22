@@ -5,7 +5,7 @@ from collections.abc import Iterator
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from pydantic import BaseModel, EmailStr, SecretStr, ValidationError
+from pydantic import BaseModel, EmailStr, SecretStr, ValidationError, field_validator
 
 from forze.base.scrubbing import (
     SECRET_PLACEHOLDER,
@@ -560,6 +560,63 @@ class TestSanitizePydanticErrors:
         assert "ctx" not in sanitized[0]
         assert "loc" in sanitized[0]
         assert "msg" in sanitized[0]
+
+    def test_replaces_an_application_authored_message(self) -> None:
+        # Dropping the structured `input` is not enough on its own: a validator that raises
+        # ``ValueError`` writes its own message, and writing the rejected value into it is
+        # the ordinary way to do that — which puts caller data straight back into a
+        # client-visible error.
+        secret = "sk-live-51244"
+
+        class M(BaseModel):
+            api_key: str
+
+            @field_validator("api_key")
+            @classmethod
+            def _reject(cls, value: str) -> str:
+                raise ValueError(f"rejected credential {value!r}")
+
+        with pytest.raises(ValidationError) as exc_info:
+            M.model_validate({"api_key": secret})
+
+        [sanitized] = sanitize_pydantic_errors(exc_info.value.errors())
+
+        assert secret not in str(sanitized)
+        assert sanitized["type"] == "value_error"  # still says which rule broke
+        assert sanitized["loc"] == ("api_key",)  # ...and which field
+
+    def test_replaces_a_bare_assert_message(self) -> None:
+        secret = "sk-live-51244"
+
+        class M(BaseModel):
+            api_key: str
+
+            @field_validator("api_key")
+            @classmethod
+            def _reject(cls, value: str) -> str:
+                raise AssertionError(f"rejected credential {value!r}")
+
+        with pytest.raises(ValidationError) as exc_info:
+            M.model_validate({"api_key": secret})
+
+        [sanitized] = sanitize_pydantic_errors(exc_info.value.errors())
+
+        assert secret not in str(sanitized)
+        assert sanitized["type"] == "assertion_error"
+
+    def test_keeps_pydantics_own_message(self) -> None:
+        # Built-in messages are derived from the *schema*, so they say what was expected
+        # without repeating what arrived — keeping them is what leaves the error actionable.
+        class M(BaseModel):
+            n: int
+
+        with pytest.raises(ValidationError) as exc_info:
+            M.model_validate({"n": "sk-live-51244"})
+
+        [sanitized] = sanitize_pydantic_errors(exc_info.value.errors())
+
+        assert "sk-live-51244" not in str(sanitized)
+        assert "valid integer" in sanitized["msg"]
 
 
 class TestDumpForErrorContext:
