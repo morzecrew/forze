@@ -136,6 +136,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A failed rewind could silently skip records** — every rewind failure was treated as a benign rebalance, so a coordinator error with partitions still held left the position past unprocessed records and then committed past them. The two cases are now told apart and an unrestorable consumer is discarded.
 - **A poison marker no longer drops the record's headers** — it now carries the decoded headers and message type, so a forwarded sealed envelope keeps the ids its authenticated data binds to and stays decryptable for dead-letter triage.
 
+**A rejected MCP tool argument no longer echoes the value back** — invalid arguments raise a masked validation error (`mcp_invalid_arguments`) with field-level errors and the raw input stripped, no longer depending on the host server's `mask_error_details` (which a caller-owned FastMCP does not set).
+
 **The search-sync outbox route declares `require_transaction`** — a marker flushed outside a transaction is refused (`core.outbox.flush_outside_transaction`) instead of silently degrading to a dual-write. The kit already stages in-transaction; hand-rolled wiring that attaches the staging hook without `bind_tx()` now fails loudly.
 
 **Durable search sync works multi-tenant out of the box** (**behavior change**) — `OutboxSearchSync.bind_tenant_from_headers` defaults to `True`, so the consumer binds the tenant its own relay stamped rather than nacking forever; set `False` for the strict posture. `max_deliveries` defaults to 10 (was unbounded), so a permanently-failing marker parks instead of requeuing silently.

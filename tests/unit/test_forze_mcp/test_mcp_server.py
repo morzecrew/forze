@@ -20,8 +20,9 @@ from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.domain.models import BaseDTO, ReadDocument
+from forze_mcp._errors import client_safe_error
 from forze_mcp.dispatch import build_args, invoke_operation
 from forze_mcp.identity import DelegatedIdentityResolver, StaticIdentityResolver
 from forze_mcp.projection import exposed_operations
@@ -122,6 +123,42 @@ class TestDispatch:
 
         assert isinstance(args, _In)
         assert args.n == 3
+
+    def test_rejected_arguments_never_echo_the_offending_value(self) -> None:
+        # Pydantic's own error text embeds the input it rejected, so letting a
+        # ValidationError propagate hands the caller's value back to the agent. Whether that
+        # is masked is the *host* server's mask_error_details — which this package only sets
+        # on the server it builds itself, not on a caller's own FastMCP. So the boundary
+        # translates it here instead of relying on the host being configured correctly.
+        descriptor = _registry().catalog()["calc.double"].descriptor
+        secret = "sk-live-not-an-int-51244"
+
+        with pytest.raises(CoreException) as caught:
+            build_args(descriptor, {"n": secret})
+
+        error = caught.value
+        assert error.kind is ExceptionKind.VALIDATION  # caller-caused, not a 500
+        assert error.code == "mcp_invalid_arguments"
+        assert secret not in str(error)
+        assert secret not in str(error.details)
+
+        # Still actionable: the agent learns which field failed and why, without the value.
+        [field_error] = error.details["errors"]
+        assert field_error["loc"] == ("n",)
+        assert "input" not in field_error and "ctx" not in field_error
+
+    def test_the_rejection_reaches_the_agent_egress_masked(self) -> None:
+        # End of the path: a validation rejection renders through the same masked envelope
+        # every other boundary error does, so it is a ToolError rather than a raw traceback.
+        descriptor = _registry().catalog()["calc.double"].descriptor
+
+        with pytest.raises(CoreException) as caught:
+            build_args(descriptor, {"n": "sk-live-nope"})
+
+        rendered = str(client_safe_error(caught.value, ToolError))
+
+        assert "mcp_invalid_arguments" in rendered
+        assert "sk-live-nope" not in rendered
 
     async def test_invoke_runs_through_pipeline(self) -> None:
         reg = _registry()
