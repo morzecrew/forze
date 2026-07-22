@@ -17,7 +17,7 @@ from forze.application.contracts.stream import (
     StreamSpec,
 )
 from forze.application.execution import DepsRegistry, ExecutionRuntime
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.consumer import (
     CommitStreamGroupConsumer,
@@ -145,6 +145,89 @@ async def test_consume_crash_is_logged_and_restarts_after_backoff() -> None:
     startup = step.startup
     assert isinstance(startup, _CommitStreamConsumerBackgroundStartup)
     assert startup.task is not None and startup.task.done()
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_terminal_configuration_crash_stops_supervision() -> None:
+    # A fault retrying cannot clear — a revoked or deleted KMS key, an unresolvable
+    # route — must not be restarted: doing so hot-loops a critical log forever while
+    # every liveness probe still reads the consumer as "running".
+    calls = 0
+
+    async def _revoked(ctx: Any, **kwargs: Any) -> None:
+        del ctx, kwargs
+        nonlocal calls
+        calls += 1
+        raise exc.configuration("KMS access denied")
+
+    step = _step(restart_backoff=timedelta(milliseconds=10))
+    logger_mock = MagicMock()
+    runtime = _runtime()
+
+    with (
+        patch.object(CommitStreamGroupConsumer, "run", AsyncMock(side_effect=_revoked)),
+        patch(
+            "forze_kits.integrations.consumer.commit_stream_lifecycle.logger",
+            logger_mock,
+        ),
+    ):
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+
+            startup = step.startup
+            assert isinstance(startup, _CommitStreamConsumerBackgroundStartup)
+            assert startup.task is not None
+            await asyncio.wait_for(startup.task, timeout=2.0)
+
+            await step.shutdown(ctx)
+
+    assert calls == 1  # ran once, never restarted
+    logger_mock.critical.assert_called_once()
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_crash_ceiling_stops_a_hot_loop() -> None:
+    # A transient-looking fault that never clears would otherwise restart every few
+    # seconds indefinitely. The ceiling turns "quietly down forever" into one loud stop.
+    calls = 0
+
+    async def _always_crashes(ctx: Any, **kwargs: Any) -> None:
+        del ctx, kwargs
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("KMS unavailable")
+
+    step = _step(restart_backoff=timedelta(milliseconds=1), max_consecutive_crashes=3)
+    logger_mock = MagicMock()
+    runtime = _runtime()
+
+    with (
+        patch.object(CommitStreamGroupConsumer, "run", AsyncMock(side_effect=_always_crashes)),
+        patch(
+            "forze_kits.integrations.consumer.commit_stream_lifecycle.logger",
+            logger_mock,
+        ),
+    ):
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+
+            startup = step.startup
+            assert isinstance(startup, _CommitStreamConsumerBackgroundStartup)
+            assert startup.task is not None
+            await asyncio.wait_for(startup.task, timeout=5.0)
+
+            await step.shutdown(ctx)
+
+    assert calls == 3  # stopped at the ceiling instead of restarting forever
+    logger_mock.critical.assert_called_once()
 
 
 # ....................... #
@@ -350,6 +433,9 @@ def test_lifecycle_step_rejects_invalid_options() -> None:
 
     with pytest.raises(CoreException, match="max_attempts"):
         _step(max_attempts=0)
+
+    with pytest.raises(CoreException, match="[Cc]rash ceiling"):
+        _step(max_consecutive_crashes=0)
 
 
 # ....................... #

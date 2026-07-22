@@ -24,7 +24,9 @@ from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.stream import StreamMessage, StreamSpec
 from forze.application.execution.background import (
     DEFAULT_STOP_GRACE_SECONDS,
+    HEALTHY_UPTIME_SECONDS,
     BackgroundLoopControl,
+    is_terminal_crash,
 )
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
@@ -45,6 +47,9 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
     """The configured consumer; carries all consume options (validated on build)."""
 
     restart_backoff: timedelta
+
+    max_consecutive_crashes: int | None
+    """Crash-loop ceiling; ``None`` restarts forever."""
 
     # ....................... #
 
@@ -95,11 +100,19 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
         if self.restart_backoff.total_seconds() <= 0:
             raise exc.configuration("Restart backoff must be positive")
 
+        if self.max_consecutive_crashes is not None and self.max_consecutive_crashes <= 0:
+            raise exc.configuration("Crash ceiling must be positive")
+
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
         async def _loop() -> None:
+            clock = asyncio.get_running_loop()
+            crashes = 0
+
             while True:
+                started = clock.time()
+
                 try:
                     # timeout=None: consume forever. Poison / per-message failures
                     # are absorbed inside the runner's decision ladder (which already
@@ -111,7 +124,41 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
                 except asyncio.CancelledError:
                     raise
 
-                except Exception:
+                except Exception as error:
+                    # Terminal: a fault retrying cannot clear — a revoked or deleted KMS
+                    # key, a route that will not resolve. Restarting only hot-loops a
+                    # critical log until a human intervenes, so stop and say so once.
+                    if is_terminal_crash(error):
+                        logger.critical(
+                            "Commit-stream consumer for %s hit a configuration error; "
+                            "supervision stopped — it cannot fix itself, fix it and "
+                            "restart the process",
+                            self.consumer.topics,
+                            exc_info=error,
+                        )
+                        return
+
+                    # A run that stayed up past the healthy threshold before crashing is a
+                    # fresh incident, not the next strike — otherwise a consumer that
+                    # recovers for hours between rare blips would still trip the ceiling.
+                    crashes = 1 if clock.time() - started >= HEALTHY_UPTIME_SECONDS else crashes + 1
+
+                    # Crash-loop ceiling: repeated crashes mean the fault is not the
+                    # transient blip a restart is for. Stop loudly rather than stay a
+                    # quieter kind of down, restarting forever with nobody alerted.
+                    if (
+                        self.max_consecutive_crashes is not None
+                        and crashes >= self.max_consecutive_crashes
+                    ):
+                        logger.critical(
+                            "Commit-stream consumer for %s crashed %d consecutive times; "
+                            "supervision stopped — the fault is not transient",
+                            self.consumer.topics,
+                            crashes,
+                            exc_info=error,
+                        )
+                        return
+
                     logger.exception(
                         "Commit-stream consumer for %s crashed; restarting after backoff",
                         self.consumer.topics,
@@ -211,6 +258,7 @@ def commit_stream_consumer_background_lifecycle_step(
     dlq_stream: str | None = None,
     batch_limit: int | None = None,
     restart_backoff: timedelta = timedelta(seconds=5),
+    max_consecutive_crashes: int | None = 10,
     step_id: StrKey | None = None,
 ) -> LifecycleStep:
     """Build a lifecycle step that runs a :class:`~forze_kits.integrations.consumer.CommitStreamGroupConsumer` in the background.
@@ -228,6 +276,14 @@ def commit_stream_consumer_background_lifecycle_step(
     jittered *restart_backoff***, first rewinding the group to its committed offset so
     no uncommitted record is skipped on restart; unprocessed offsets are redelivered
     and deduped by the inbox.
+
+    **Restarting is bounded.** A crash that retrying cannot clear — a revoked or deleted
+    KMS key, an unresolvable route: any ``CONFIGURATION``-kind failure — is terminal, and
+    otherwise *max_consecutive_crashes* consecutive crashes (default 10, ``None`` for
+    unbounded) stop supervision with a critical log. A run that stays up past the healthy
+    threshold resets the streak, so rare blips hours apart never accumulate. Without a
+    ceiling a permanently broken dependency restarts every few seconds forever, which
+    reads as "running" to every liveness probe while nothing is consumed.
 
     One step consumes one consumer's topics within one group. For more consumers —
     or more members across processes — register multiple steps with distinct
@@ -259,6 +315,7 @@ def commit_stream_consumer_background_lifecycle_step(
     startup = _CommitStreamConsumerBackgroundStartup(
         consumer=runner,
         restart_backoff=restart_backoff,
+        max_consecutive_crashes=max_consecutive_crashes,
     )
     shutdown = _CommitStreamConsumerBackgroundShutdown(startup=startup)
 

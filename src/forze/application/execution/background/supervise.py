@@ -33,6 +33,24 @@ from forze.base.primitives import current_entropy_source
 
 # ----------------------- #
 
+
+def is_terminal_crash(error: BaseException) -> bool:
+    """Whether *error* means restarting the loop is pointless.
+
+    A ``CONFIGURATION``-kind :class:`CoreException` is the framework's marker for a fault
+    that retrying cannot clear — bad wiring, but also a dependency the deployment is not
+    allowed to use or that no longer exists (a revoked or deleted KMS key). Restarting on
+    one of those hot-loops a critical log until a human intervenes.
+
+    Shared so every supervisor agrees on what "terminal" means: :func:`run_supervised` and
+    the consumers that run their own restart loop must not drift apart on this.
+    """
+
+    return isinstance(error, CoreException) and error.kind is ExceptionKind.CONFIGURATION
+
+
+# ....................... #
+
 HEALTHY_UPTIME_SECONDS: Final[float] = 30.0
 """A run that survives this long resets the consecutive-crash streak.
 
@@ -103,7 +121,7 @@ async def run_supervised(
             raise
 
         except Exception as error:
-            if isinstance(error, CoreException) and error.kind is ExceptionKind.CONFIGURATION:
+            if is_terminal_crash(error):
                 logger.critical(
                     "Background loop %s hit a configuration error; supervision stopped — "
                     "wiring does not fix itself, fix it and restart the process",

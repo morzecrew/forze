@@ -136,6 +136,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A failed rewind could silently skip records** — every rewind failure was treated as a benign rebalance, so a coordinator error with partitions still held left the position past unprocessed records and then committed past them. The two cases are now told apart and an unrestorable consumer is discarded.
 - **A poison marker no longer drops the record's headers** — it now carries the decoded headers and message type, so a forwarded sealed envelope keeps the ids its authenticated data binds to and stays decryptable for dead-letter triage.
 
+**Permanent dependency faults are no longer retried forever**
+
+- **A revoked, deleted or disabled KMS key is classified permanent** (**behavior change**) — AWS, GCP and Yandex adapters map access-denied, key-not-found and disabled/pending-deletion to `CONFIGURATION` rather than `INFRASTRUCTURE`, making them non-retryable: a commit-stream consumer pauses-and-alerts with `failed > 0` instead of crash-restarting forever, and a queue consumer parks instead of requeuing endlessly. Throttling, internal errors and AWS `KeyUnavailable` stay retryable.
+- **The commit-stream supervisor bounds its restarts** — a `CONFIGURATION`-kind crash is terminal, and new `max_consecutive_crashes` (default 10, `None` unbounded) stops a hot-loop with a critical log; healthy uptime resets the streak.
+
 **Broker delivery integrity (RabbitMQ, draining)**
 
 - **The RabbitMQ pending map leaked on partial ack and after channel recovery** — a channel reopen purges the stale delivery tags, deliveries read on a channel replaced mid-drain are discarded rather than registered against it, and only confirmed acks and nacks are counted and settled.

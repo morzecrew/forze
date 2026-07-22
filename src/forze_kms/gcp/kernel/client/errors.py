@@ -52,21 +52,25 @@ def _gcpkms_eh(
                 details=details,
             )
 
+        # --- permanent: retrying never clears these, an operator must act ---
+        # Configuration rather than infrastructure so the egress policy reports them
+        # non-retryable: as infrastructure they drove a decrypt loop to crash-restart
+        # forever on a key that is never coming back. Details stay hidden either way.
         case gcp_errors.PermissionDenied() | gcp_errors.Unauthenticated():
-            return CoreException.infrastructure(
-                "GCP KMS access denied.",
+            return CoreException.configuration(
+                "GCP KMS access denied — the deployment's credentials lack access to this key.",
                 details=details,
             )
 
         case gcp_errors.NotFound():
-            return CoreException.infrastructure(
-                "GCP KMS key not found.",
+            return CoreException.configuration(
+                "GCP KMS key not found — it is missing or has been destroyed.",
                 details=details,
             )
 
         case gcp_errors.FailedPrecondition():
-            return CoreException.infrastructure(
-                "GCP KMS key is disabled or in an invalid state.",
+            return CoreException.configuration(
+                "GCP KMS key version is disabled or destroyed.",
                 details=details,
             )
 

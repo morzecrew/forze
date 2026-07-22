@@ -75,21 +75,36 @@ def _awskms_eh(
                     details=details,
                 )
 
+            # --- permanent: retrying never clears these, an operator must act ---
+            # Classified as *configuration*, not infrastructure, because the egress
+            # policy's ``retryable`` is what every consumer keys off: as infrastructure
+            # these drove a decrypt loop to crash-restart forever on a key that is never
+            # coming back. Configuration is non-retryable, so the consumer ladders
+            # straight to pause-and-alert (and a supervised loop stops instead of
+            # hot-looping). Details stay hidden — same egress posture as infrastructure.
             if code in {"AccessDeniedException", "KMSAccessDeniedException"}:
-                return CoreException.infrastructure(
-                    "AWS KMS access denied.",
+                return CoreException.configuration(
+                    "AWS KMS access denied — the deployment's credentials lack access to this key.",
                     details=details,
                 )
 
-            if code in {"NotFoundException", "KeyUnavailableException"}:
-                return CoreException.infrastructure(
-                    "AWS KMS key not found or unavailable.",
+            if code == "NotFoundException":
+                return CoreException.configuration(
+                    "AWS KMS key not found — it is missing or has been deleted.",
                     details=details,
                 )
 
             if code in {"DisabledException", "KMSInvalidStateException"}:
+                return CoreException.configuration(
+                    "AWS KMS key is disabled or pending deletion.",
+                    details=details,
+                )
+
+            # Transient by AWS's own contract: the key exists and access is granted, the
+            # request just could not be served now. Stays retryable.
+            if code == "KeyUnavailableException":
                 return CoreException.infrastructure(
-                    "AWS KMS key is disabled or in an invalid state.",
+                    "AWS KMS key is temporarily unavailable.",
                     details=details,
                 )
 

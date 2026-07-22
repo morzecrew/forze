@@ -101,9 +101,7 @@ def _tamper_stored_headers(state: MockState) -> None:
 
     log = state.streams[_TOPIC][_TOPIC]
     stored = log[0]
-    log[0] = attrs.evolve(
-        stored, headers={**stored.headers, "forze_event_id": "tampered-id"}
-    )
+    log[0] = attrs.evolve(stored, headers={**stored.headers, "forze_event_id": "tampered-id"})
 
 
 @pytest.mark.asyncio
@@ -190,6 +188,56 @@ async def test_transient_decrypt_failure_raises_for_restart_not_pause(
     result = await restarted.run(ctx, timeout=_IDLE)
 
     assert (result.processed, seen) == (1, ["secret"])
+
+
+@pytest.mark.asyncio
+async def test_permanent_decrypt_failure_pauses_and_alerts_instead_of_crash_looping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The counterpart of the blip above: a revoked or deleted CMK (AccessDenied, disabled
+    # key) is *permanent*. Classified as retryable it made the run raise, so the supervisor
+    # restarted it every few seconds forever — and because totals.failed is only bumped on
+    # the pause path, the documented ``failed > 0`` alert could never fire, leaving a
+    # consumer that reads as "running" while nothing is ever consumed.
+    ctx, admin, _state = _harness()
+    await admin.ensure_group("g", [_TOPIC], start=OffsetReset.EARLIEST)
+    command = ctx.deps.resolve_configurable(
+        ctx, StreamCommandDepKey, _ENC_SPEC, route=_ENC_SPEC.name
+    )
+    await command.append(_TOPIC, _Payload(value="secret"))
+
+    from forze_kits.integrations.consumer import commit_stream_runner as _runner
+
+    async def _revoked_key(*_args: Any, **_kwargs: Any) -> Any:
+        # What the KMS adapters now raise for AccessDenied / disabled / deleted keys.
+        raise exc.configuration("KMS access denied")
+
+    monkeypatch.setattr(_runner, "decrypt_consumed_payload", _revoked_key)
+
+    async def blocked_handler(_msg: StreamMessage[_Payload]) -> None:  # pragma: no cover
+        raise AssertionError("handler must not run on an undecrypted message")
+
+    # Returns instead of raising, so the supervisor stops rather than restarting...
+    result = await _consumer(blocked_handler).run(ctx, timeout=_IDLE)
+
+    # ...and the alert the docstring promises can actually fire.
+    assert result.failed == 1
+    assert result.processed == 0
+
+    # The offset stays uncommitted: once an operator restores the key, a restarted
+    # consumer still gets the message. Pausing must never skip it.
+    monkeypatch.undo()
+
+    seen: list[str] = []
+
+    async def handler(msg: StreamMessage[_Payload]) -> None:
+        seen.append(msg.payload.value)
+
+    restarted = _consumer(handler)
+    await restarted.reset_to_committed(ctx)
+
+    assert (await restarted.run(ctx, timeout=_IDLE)).processed == 1
+    assert seen == ["secret"]
 
 
 @pytest.mark.asyncio

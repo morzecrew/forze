@@ -49,20 +49,25 @@ def _yckms_eh(
             details=details,
         )
 
+    # --- permanent: retrying never clears these, an operator must act ---
+    # Configuration rather than infrastructure so the egress policy reports them
+    # non-retryable: as infrastructure they drove a decrypt loop to crash-restart
+    # forever on a key that is never coming back. Details stay hidden either way.
     if code in _ACCESS_DENIED:
-        return CoreException.infrastructure(
-            "Yandex Cloud KMS access denied.",
+        return CoreException.configuration(
+            "Yandex Cloud KMS access denied — the deployment's credentials lack access "
+            "to this key.",
             details=details,
         )
 
     if code is grpc.StatusCode.NOT_FOUND:
-        return CoreException.infrastructure(
-            "Yandex Cloud KMS key not found.",
+        return CoreException.configuration(
+            "Yandex Cloud KMS key not found — it is missing or has been deleted.",
             details=details,
         )
 
     if code is grpc.StatusCode.FAILED_PRECONDITION:
-        return CoreException.infrastructure(
+        return CoreException.configuration(
             "Yandex Cloud KMS key is disabled or in an invalid state.",
             details=details,
         )
