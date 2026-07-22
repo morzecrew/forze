@@ -48,11 +48,11 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
 
     restart_backoff: timedelta
 
-    max_crash_window: timedelta | None
-    """How long an unbroken crash-loop may run before supervision gives up; ``None`` never
-    gives up. A duration, not a crash count: *transient* is a claim about time, and the
-    backoff here is constant, so a count would bound tolerance to ``count * backoff`` —
-    retune the backoff and the ceiling silently moves with it."""
+    crash_alert_after: timedelta | None
+    """How long an unbroken crash-loop runs before it escalates to a critical alert;
+    ``None`` never escalates. A duration, not a crash count: *transient* is a claim about
+    time, and the backoff here is constant, so a count would tie the threshold to
+    ``count * backoff`` — retune the backoff and it silently moves with it."""
 
     # ....................... #
 
@@ -103,8 +103,8 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
         if self.restart_backoff.total_seconds() <= 0:
             raise exc.configuration("Restart backoff must be positive")
 
-        if self.max_crash_window is not None and self.max_crash_window.total_seconds() <= 0:
-            raise exc.configuration("Crash window must be positive")
+        if self.crash_alert_after is not None and self.crash_alert_after.total_seconds() <= 0:
+            raise exc.configuration("Crash alert threshold must be positive")
 
     # ....................... #
 
@@ -112,6 +112,7 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
         async def _loop() -> None:
             clock = asyncio.get_running_loop()
             crashing_since: float | None = None
+            alerted = False
 
             while True:
                 started = clock.time()
@@ -143,36 +144,44 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
 
                     # A run that stayed up past the healthy threshold before crashing opens
                     # a fresh incident rather than extending the current one — otherwise a
-                    # consumer that recovers for hours between rare blips would still trip
-                    # the ceiling. The incident starts at the *failure*, never at the run's
+                    # consumer that recovers for hours between rare blips would keep
+                    # escalating. The incident starts at the *failure*, never at the run's
                     # start: dating it from the start of a run that was healthy for hours
-                    # would book those healthy hours as crash-looping and trip the window
-                    # on that incident's very first crash.
+                    # would book those healthy hours as crash-looping and escalate on that
+                    # incident's very first crash.
                     failed_at = clock.time()
 
                     if crashing_since is None or failed_at - started >= HEALTHY_UPTIME_SECONDS:
                         crashing_since = failed_at
+                        alerted = False
 
-                    # Crash-loop ceiling: a fault still failing every restart this long
-                    # after the first one is not the transient blip a restart is for. Stop
-                    # loudly rather than stay a quieter kind of down, restarting forever
-                    # with nobody alerted. The window has to outlast the slowest fault that
-                    # *does* clear itself — IAM and key-policy propagation run minutes, and
-                    # they surface here as a retryable denial on every restart.
+                    # A fault still failing every restart this long after the first one is
+                    # not the transient blip a restart is for, so say so at a severity that
+                    # pages someone — once per incident, not once per restart.
+                    #
+                    # Escalating is all this does. Retrying is never abandoned, because a
+                    # fault that reached this branch was classified *retryable* (a terminal
+                    # one already returned above) and the only thing that ends it is the
+                    # dependency coming back. Giving up cannot make that happen sooner: the
+                    # task would simply end, leaving the process serving traffic with a
+                    # dead consumer — the "reads as running while nothing is consumed" state
+                    # this alert exists to break, made permanent and no longer self-healing.
                     crashing_for = failed_at - crashing_since
 
                     if (
-                        self.max_crash_window is not None
-                        and crashing_for >= self.max_crash_window.total_seconds()
+                        not alerted
+                        and self.crash_alert_after is not None
+                        and crashing_for >= self.crash_alert_after.total_seconds()
                     ):
+                        alerted = True
                         logger.critical(
                             "Commit-stream consumer for %s has crashed on every restart for "
-                            "%.0fs; supervision stopped — the fault is not transient",
+                            "%.0fs; still retrying, but the fault is not transient — it needs "
+                            "an operator",
                             self.consumer.topics,
                             crashing_for,
                             exc_info=error,
                         )
-                        return
 
                     logger.exception(
                         "Commit-stream consumer for %s crashed; restarting after backoff",
@@ -273,7 +282,7 @@ def commit_stream_consumer_background_lifecycle_step(
     dlq_stream: str | None = None,
     batch_limit: int | None = None,
     restart_backoff: timedelta = timedelta(seconds=5),
-    max_crash_window: timedelta | None = timedelta(minutes=30),
+    crash_alert_after: timedelta | None = timedelta(minutes=5),
     step_id: StrKey | None = None,
 ) -> LifecycleStep:
     """Build a lifecycle step that runs a :class:`~forze_kits.integrations.consumer.CommitStreamGroupConsumer` in the background.
@@ -292,20 +301,26 @@ def commit_stream_consumer_background_lifecycle_step(
     no uncommitted record is skipped on restart; unprocessed offsets are redelivered
     and deduped by the inbox.
 
-    **Restarting is bounded.** A crash that retrying cannot clear — a revoked or deleted
-    KMS key, an unresolvable route: any ``CONFIGURATION``-kind failure — is terminal, and
-    otherwise crashing on *every* restart for longer than *max_crash_window* (default 30
-    minutes, ``None`` for unbounded) stops supervision with a critical log. A run that
-    stays up past the healthy threshold opens a fresh incident, so rare blips hours apart
-    never accumulate. Without a ceiling a permanently broken dependency restarts every few
-    seconds forever, which reads as "running" to every liveness probe while nothing is
-    consumed.
+    **Only an unfixable crash is terminal.** A crash that retrying cannot clear — a revoked
+    or deleted KMS key, an unresolvable route: any ``CONFIGURATION``-kind failure — stops
+    supervision with a critical log, since nothing but an operator will change the outcome.
+    A **retryable** crash is retried for as long as it lasts; crashing on *every* restart
+    for longer than *crash_alert_after* (default 5 minutes, ``None`` to never escalate)
+    raises one critical log per incident and **keeps retrying**. A run that stays up past
+    the healthy threshold opens a fresh incident, so rare blips hours apart never
+    accumulate and never escalate.
 
-    The window is a duration rather than a crash count because the faults it must *not*
-    trip on are slow: a denial during IAM or key-policy propagation is retryable and
-    clears on its own, but only after minutes of failing every restart. Counting restarts
-    over a constant backoff would have bounded patience at ``count * restart_backoff``,
-    tying it to a knob tuned for something else entirely.
+    Giving up on a retryable fault would be strictly worse than staying noisy: stopping
+    ends the background task without exiting the process or failing a probe, so the app
+    goes on serving traffic with a dead consumer and an uncommitted record behind it —
+    exactly the "reads as running while nothing is consumed" state the alert exists to
+    break, except permanent. An outage that outlasts any window a default could pick (IAM
+    propagation, a KMS incident) recovers on its own this way; a misclassified permanent
+    fault stays loud until someone acts, which is all stopping ever bought.
+
+    The escalation threshold is a duration rather than a crash count because the faults it
+    must *not* fire on are slow. Counting restarts over a constant backoff would have tied
+    it to ``count * restart_backoff`` — a knob tuned for something else entirely.
 
     One step consumes one consumer's topics within one group. For more consumers —
     or more members across processes — register multiple steps with distinct
@@ -337,7 +352,7 @@ def commit_stream_consumer_background_lifecycle_step(
     startup = _CommitStreamConsumerBackgroundStartup(
         consumer=runner,
         restart_backoff=restart_backoff,
-        max_crash_window=max_crash_window,
+        crash_alert_after=crash_alert_after,
     )
     shutdown = _CommitStreamConsumerBackgroundShutdown(startup=startup)
 
