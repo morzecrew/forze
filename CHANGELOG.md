@@ -136,6 +136,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A failed rewind could silently skip records** — every rewind failure was treated as a benign rebalance, so a coordinator error with partitions still held left the position past unprocessed records and then committed past them. The two cases are now told apart and an unrestorable consumer is discarded.
 - **A poison marker no longer drops the record's headers** — it now carries the decoded headers and message type, so a forwarded sealed envelope keeps the ids its authenticated data binds to and stays decryptable for dead-letter triage.
 
+**The search-sync outbox route declares `require_transaction`** — a marker flushed outside a transaction is refused (`core.outbox.flush_outside_transaction`) instead of silently degrading to a dual-write. The kit already stages in-transaction; hand-rolled wiring that attaches the staging hook without `bind_tx()` now fails loudly.
+
 **Permanent dependency faults are no longer retried forever**
 
 - **A revoked, deleted or disabled KMS key is classified permanent** (**behavior change**) — AWS, GCP and Yandex adapters map access-denied, key-not-found and disabled/pending-deletion to `CONFIGURATION` rather than `INFRASTRUCTURE`, making them non-retryable: a commit-stream consumer pauses-and-alerts with `failed > 0` instead of crash-restarting forever, and a queue consumer parks instead of requeuing endlessly. Throttling, internal errors and AWS `KeyUnavailable` stay retryable.

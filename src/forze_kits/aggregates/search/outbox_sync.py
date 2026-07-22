@@ -335,6 +335,13 @@ def bind_search_sync_outbox(
     applies the **decrypted** read model to the index, so a field sealed on the document but
     omitted on the search spec reaches the index in clear (see
     :func:`assert_search_encryption_parity`) — durable delivery does not change that.
+
+    The derived outbox route declares ``require_transaction=True``: staging a marker
+    atomically with the write is the guarantee this route exists to provide, so flushing one
+    outside a transaction is refused (``core.outbox.flush_outside_transaction``) rather than
+    silently downgraded to a dual-write. Attach :meth:`~SearchSyncOutboxWiring.stage_on_write`
+    / :meth:`~SearchSyncOutboxWiring.stage_on_target` on a **tx-bound** operation
+    (``bind_tx()``), as :class:`~forze_kits.aggregates.AggregateKit` does.
     """
 
     assert_search_encryption_parity(document=document, search=search)
@@ -350,6 +357,14 @@ def bind_search_sync_outbox(
             name=route,
             codec=codec,
             destination=OutboxDestination.queue(route=route, channel=str(route)),
+            # Atomic in-tx staging *is* this route's reason to exist: it is the whole
+            # difference from the best-effort after-commit sync. Declaring the precondition
+            # makes it checked — a marker staged outside the write's transaction is a
+            # dual-write (the row commits, the marker rolls back or vice versa) that leaves
+            # the index silently diverged with nothing to alert on. Without this a
+            # misattached hook degrades to exactly the delivery guarantee the route was
+            # chosen to replace, and looks identical while doing it.
+            require_transaction=True,
         ),
         queue_spec=QueueSpec(name=route, codec=codec),
         inbox_spec=InboxSpec(name=route),

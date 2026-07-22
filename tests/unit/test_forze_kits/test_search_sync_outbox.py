@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -29,7 +29,11 @@ from forze_kits.aggregates import AggregateKit
 from forze_kits.aggregates.document import DocumentIdDTO, DocumentUpdateDTO
 from forze_kits.aggregates.document.dto import DocumentIdRevDTO
 from forze_kits.aggregates.document.operations import DocumentKernelOp
-from forze_kits.aggregates.search import OutboxSearchSync, SearchSyncMarker
+from forze_kits.aggregates.search import (
+    SEARCH_SYNC_EVENT_TYPE,
+    OutboxSearchSync,
+    SearchSyncMarker,
+)
 from forze_kits.aggregates.soft_deletion import SoftDeletionKernelOp
 from forze_kits.domain.soft_deletion import (
     DocWithSoftDeletion,
@@ -197,6 +201,35 @@ class TestInTxStaging:
 
             claims = await ctx.outbox.query(kit.search_sync_wiring().outbox_spec).claim_pending()
             assert claims == []  # the staged marker rolled back with the write
+
+    def test_the_route_declares_its_atomicity_precondition(self) -> None:
+        # Staging atomically with the write is the whole difference between this route and
+        # the best-effort after-commit sync, so the route must *declare* that rather than
+        # merely happen to get it from how the kit wires the hook.
+        assert _kit().search_sync_wiring().outbox_spec.require_transaction is True
+
+    async def test_staging_outside_a_transaction_is_refused_not_silently_dual_written(
+        self,
+    ) -> None:
+        # A hook attached without bind_tx() flushes after the write has already committed.
+        # That is a dual-write: the row is durable, the marker is not covered by it, and the
+        # index can diverge with nothing to alert on. It must fail loudly instead.
+        kit = _kit()
+        runtime = build_runtime(MockDepsModule(strict_tx=True))
+        wiring = kit.search_sync_wiring()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            command = ctx.outbox.command(wiring.outbox_spec)
+            await command.stage(
+                SEARCH_SYNC_EVENT_TYPE,
+                SearchSyncMarker(document_id=str(uuid4())),
+            )
+
+            with pytest.raises(CoreException) as caught:
+                await command.flush()  # no open transaction
+
+        assert caught.value.code == "core.outbox.flush_outside_transaction"
 
 
 # ....................... #
