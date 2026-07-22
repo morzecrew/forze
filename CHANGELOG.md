@@ -139,7 +139,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **The log scrubber masks camelCase and PascalCase names** — a credential masked as `db_pwd` leaked as `dbPwd`, and `secret_key=` masked while `secretKey=` leaked. The key heuristic and the value rule both recognize a case hump now; mid-token runs like `backupwd` stay unmasked as before.
 
-**A backward keyset page no longer dead-ends navigation** — a `before` page landing flush on the start of the set returned no cursor in either direction, stranding the client on a full page with rows still ahead. A `before` page now always carries a forward cursor. Applies to every keyset-paging backend.
+**A backward keyset page no longer dead-ends navigation** (**behavior change**) — a `before` page landing flush on the start of the set returned no cursor in either direction, stranding the client on a full page with rows still ahead. It now always carries a forward cursor, and `has_more` reports that same forward answer instead of the backward fetch, so the flag and the cursor cannot disagree. Applies to every keyset-paging backend.
 
 **A rejected MCP tool argument no longer echoes the value back** — invalid arguments raise a masked validation error (`mcp_invalid_arguments`) with field-level errors and the raw input stripped, no longer depending on the host server's `mask_error_details` (which a caller-owned FastMCP does not set).
 

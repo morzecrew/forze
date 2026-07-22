@@ -257,7 +257,12 @@ async def test_adapter_find_cursor_pages_forward_and_back(
     # Exactly ``limit`` rows precede the anchor here, so the page is unambiguous.
     back = await query.find_cursor(None, cursor={"limit": 2, "before": p2.prev_cursor})
     assert [d.id for d in back.hits] == _IDS[:2]
-    assert back.has_more is False
+    # Flush on the start of the set: nothing behind, but the rows the cursor was anchored
+    # past are still ahead — so ``has_more`` (which reports pages *after* this one) tracks
+    # the forward cursor rather than the empty backward side.
+    assert back.prev_cursor is None
+    assert back.next_cursor is not None
+    assert back.has_more is True
 
     # Over-fetched before window: three rows precede this anchor, so the page must be
     # the two rows NEAREST the cursor (_IDS[1:3]), not the two farthest (_IDS[0:2]).
