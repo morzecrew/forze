@@ -38,17 +38,31 @@ from ..inbox import process_with_inbox
 _CIPHER_MISSING_CODE = PAYLOAD_CIPHER_MISSING_CODE
 """Decrypt config error (no keyring): a deployment fault, not a poison message."""
 
-_CONFIG_FAULT_ABORT_STREAK = 25
-"""Consecutive configuration-kind decrypt failures after which the run aborts.
+_CONFIG_FAULT_PAUSE_STREAK = 25
+"""Consecutive configuration-kind decrypt failures after which the loop starts pausing.
 
 A key-specific fault (one tenant's CMK disabled on a multi-key queue) interleaves with
 messages that still decrypt, resetting the streak — the queue keeps flowing while the
-affected messages cycle through requeue until their key returns. A deployment-wide fault
-(the only key disabled, every message sealed under it) fails everything and hits this
-ceiling within one redelivery burst, handing the loop to the supervisor's restart backoff
-instead of hot-spinning against the broker. Aborting is never lossy — the message in hand
-stays unacked — so a false positive (25 same-key messages in a row on a multi-key queue)
-only costs a restart that resumes exactly where it left off."""
+affected messages cycle through requeue until their key returns. When *nothing* decrypts
+(the only key disabled), the streak crosses this ceiling within one redelivery burst and
+every further failure pauses :data:`_CONFIG_FAULT_PAUSE_SECONDS` before consuming on.
+
+Pause, never abort: a ``CONFIGURATION``-kind raise is a **terminal** crash to the
+supervisor (``is_terminal_crash``), so aborting here would permanently stop the consumer
+on what may be one tenant's key — blocking every other key's messages until an operator
+restarts the process. The pause bounds the redelivery spin to one failure per interval
+while the loop stays live, and the first successful decrypt lifts it. A false positive
+(25 same-key messages in a row on a multi-key queue) costs a few seconds' added latency,
+nothing more."""
+
+_CONFIG_FAULT_PAUSE_SECONDS = 5.0
+"""Length of each throttle pause once the configuration-fault streak is crossed.
+
+Also the receive-rate bound during an outage on backends whose delivery count is
+broker-managed (the SQS receive tally): ``count=False`` cannot suppress it, so each
+redelivery cycle still counts toward the queue's redrive policy — the pause keeps that
+growth to at most one receive per message per backlog pass. See the requeue branch in
+:meth:`QueueConsumer.run`."""
 
 _DRAINING_CODE = "draining"
 """Drain-gate refusal code (``THROTTLED``/``code="draining"``): the runtime is quiescing,
@@ -203,6 +217,27 @@ async def _decrypt_message[M](
 # ....................... #
 
 
+async def _pause_or_stop(stop: asyncio.Event | None, delay: float) -> bool:
+    """Sleep *delay* seconds, ending early when *stop* fires; ``True`` = stop requested.
+
+    The throttle pause of the configuration-fault branch: it must not outlive a shutdown
+    request, so with a *stop* event the sleep is a bounded wait on it. Cancelling an
+    ``Event.wait`` on timeout is side-effect free.
+    """
+
+    if stop is None:
+        await asyncio.sleep(delay)
+        return False
+
+    with suppress(TimeoutError):
+        await asyncio.wait_for(stop.wait(), delay)
+
+    return stop.is_set()
+
+
+# ....................... #
+
+
 async def _next_or_stop(
     messages: AsyncIterator[QueueMessage[Any]],
     stop: asyncio.Event | None,
@@ -271,10 +306,11 @@ class QueueConsumer[M]:
        decrypt); a **configuration** kind (KMS key disabled / pending deletion / not
        found — operator-actionable and reversible) is requeued **without** counting
        toward the poison ceiling and the loop keeps consuming, so on a multi-key
-       queue one key's outage never blocks or destroys the rest — only an unbroken
-       streak of such failures (:data:`_CONFIG_FAULT_ABORT_STREAK`; nothing
-       decrypting at all, i.e. deployment-wide) aborts for supervised restart; a
-       **retryable** kind (the keyring's KMS dependency unavailable or throttled
+       queue one key's outage never blocks or destroys the rest — an unbroken
+       streak of such failures (:data:`_CONFIG_FAULT_PAUSE_STREAK`; nothing
+       decrypting at all) paces the loop with a stop-responsive pause per failure
+       rather than spinning or stopping, and the first successful decrypt lifts it;
+       a **retryable** kind (the keyring's KMS dependency unavailable or throttled
        while unwrapping a cold data key) is nacked back (``requeue=True``) for
        redelivery; the remaining non-retryable kinds (tampering, unknown key,
        malformed envelope) are per-message poison and are parked.
@@ -375,7 +411,7 @@ class QueueConsumer[M]:
         failed = 0
 
         # Consecutive configuration-kind decrypt failures; reset by any message that
-        # decrypts. See _CONFIG_FAULT_ABORT_STREAK.
+        # decrypts. See _CONFIG_FAULT_PAUSE_STREAK.
         config_fault_streak = 0
 
         # Warn once if a poison ceiling was requested but this backend cannot report a
@@ -412,37 +448,53 @@ class QueueConsumer[M]:
                     # backlog at consume speed (deleted outright on SQS FIFO without a
                     # retention queue, dropped on DLX-less RabbitMQ). But it is not
                     # necessarily deployment-wide either: on a multi-key queue (per-tenant
-                    # CMKs) only that key's messages are affected, and aborting here would
-                    # block every other key's messages behind them. So requeue without
-                    # counting (an outage must not drive the message toward
-                    # ``max_deliveries``) and keep consuming; only an unbroken streak of
-                    # these — no message decrypting at all — reads as deployment-wide and
-                    # aborts, trading a hot redelivery spin for the supervisor's restart
-                    # backoff. Either way the message survives on the broker.
+                    # CMKs) only that key's messages are affected, and stopping the loop
+                    # would block every other key's messages behind them — a
+                    # ``CONFIGURATION`` raise is a *terminal* crash to the supervisor, so
+                    # it would not even restart. So requeue and keep consuming, and once
+                    # an unbroken streak says nothing is decrypting, pace the loop with a
+                    # stop-responsive pause instead of spinning on broker redelivery.
+                    #
+                    # ``count=False`` is a hint, honored only where the app tracks its own
+                    # delivery count. On SQS the receive tally is broker-managed and every
+                    # redelivery still counts toward the redrive policy, so a prolonged
+                    # outage can dead-letter affected messages to the DLQ — retention, not
+                    # loss (they move back with a redrive task once the key returns). The
+                    # pause bounds that growth to one receive per message per backlog
+                    # pass; size DLQ retention for the key-restore window it must cover.
                     if e.kind is ExceptionKind.CONFIGURATION:
                         config_fault_streak += 1
 
-                        if config_fault_streak >= _CONFIG_FAULT_ABORT_STREAK:
+                        if config_fault_streak == _CONFIG_FAULT_PAUSE_STREAK:
                             logger.error(
                                 "Queue consumer on %s: %s consecutive configuration-kind "
-                                "decrypt failures — no message is decrypting, treating "
-                                "the fault as deployment-wide and aborting for "
-                                "supervised restart",
+                                "decrypt failures — nothing is decrypting (deployment-"
+                                "wide fault, e.g. the KMS key is disabled); continuing "
+                                "with a %.1fs pause per failure until decryption "
+                                "recovers",
                                 queue,
                                 config_fault_streak,
+                                _CONFIG_FAULT_PAUSE_SECONDS,
                             )
-                            raise
 
-                        logger.warning(
-                            "Queue consumer could not decrypt message %s on queue %s "
-                            "(configuration fault, e.g. a disabled KMS key); "
-                            "nack(requeue=True, count=False) and continuing",
-                            message.id,
-                            queue,
-                            exc_info=True,
-                        )
+                        else:
+                            logger.warning(
+                                "Queue consumer could not decrypt message %s on queue %s "
+                                "(configuration fault, e.g. a disabled KMS key); "
+                                "nack(requeue=True, count=False) and continuing",
+                                message.id,
+                                queue,
+                                exc_info=True,
+                            )
+
                         await _dispose(port, queue, message.id, requeue=True, count=False)
                         failed += 1
+
+                        if config_fault_streak >= _CONFIG_FAULT_PAUSE_STREAK and (
+                            await _pause_or_stop(stop, _CONFIG_FAULT_PAUSE_SECONDS)
+                        ):
+                            break  # shutdown requested mid-pause
+
                         continue
 
                     # Decrypt runs through the KMS-backed keyring, so a transient

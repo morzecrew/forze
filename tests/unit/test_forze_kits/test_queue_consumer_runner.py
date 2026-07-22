@@ -571,42 +571,65 @@ async def test_key_fault_decrypt_failure_requeues_uncounted_and_keeps_consuming(
     assert stub.acked == []
 
 
-async def test_key_fault_streak_aborts_as_deployment_wide() -> None:
+async def test_key_fault_streak_throttles_without_stopping_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # An unbroken streak of configuration-kind decrypt failures means nothing on the
-    # queue decrypts — deployment-wide, not key-specific. The loop aborts for the
-    # supervisor's restart backoff instead of hot-spinning on broker redelivery; the
-    # message in hand stays unacked, so nothing is lost.
-    from forze_kits.integrations.consumer.runner import _CONFIG_FAULT_ABORT_STREAK
+    # queue decrypts. The loop must NOT raise — a CONFIGURATION-kind crash is terminal
+    # to the supervisor, which would stop the consumer for good over what may be one
+    # tenant's key. Instead it keeps consuming with a pause per failure past the
+    # ceiling, requeueing everything, and completes normally.
+    from forze_kits.integrations.consumer import runner as runner_module
 
+    monkeypatch.setattr(runner_module, "_CONFIG_FAULT_PAUSE_SECONDS", 0.01)
+
+    ceiling = runner_module._CONFIG_FAULT_PAUSE_STREAK
+    total = ceiling + 5
     cipher = _FailingCipher(error=exc.configuration("AWS KMS key is disabled."))
-    stub = _ScriptedQueue(
-        script=[_encrypted_message(f"m-{i}") for i in range(_CONFIG_FAULT_ABORT_STREAK + 5)]
-    )
+    stub = _ScriptedQueue(script=[_encrypted_message(f"m-{i}") for i in range(total)])
     ctx = _plain_ctx(state=MockState(), queue_port=stub, cipher=cipher)
 
     async def handler(msg: QueueMessage[_Payload]) -> None:  # pragma: no cover
         del msg
         raise AssertionError("handler must not run on an undecrypted message")
 
-    with pytest.raises(CoreException) as excinfo:
-        await _run(ctx, handler)
+    result = await _run(ctx, handler)
 
-    assert excinfo.value.kind is ExceptionKind.CONFIGURATION
-    assert cipher.calls == _CONFIG_FAULT_ABORT_STREAK  # aborted at the ceiling
-    # Every message before the ceiling was requeued; the one in hand was left unacked.
-    assert len(stub.nacked) == _CONFIG_FAULT_ABORT_STREAK - 1
+    assert cipher.calls == total  # every message attempted: the run never stopped
+    assert result == ConsumerRunResult(failed=total)
+    assert len(stub.nacked) == total  # all requeued, none parked, none abandoned
     assert all(requeued for _, requeued in stub.nacked)
+    assert all(not counted for _, counted in stub.nack_counts)
     assert stub.acked == []
+
+
+async def test_config_fault_pause_ends_early_on_stop() -> None:
+    # The throttle pause must not outlive a shutdown request: with the stop event set
+    # mid-pause the wait returns True immediately, and without a stop it just sleeps.
+    from forze_kits.integrations.consumer.runner import _pause_or_stop
+
+    stop = asyncio.Event()
+
+    async def fire() -> None:
+        await asyncio.sleep(0.01)
+        stop.set()
+
+    task = asyncio.ensure_future(fire())
+    assert await _pause_or_stop(stop, delay=30.0) is True  # returns in ~10ms, not 30s
+    await task
+
+    assert await _pause_or_stop(asyncio.Event(), delay=0.01) is False  # timed out
+    assert await _pause_or_stop(None, delay=0.01) is False  # no stop wired
 
 
 async def test_decrypt_success_resets_the_key_fault_streak() -> None:
     # Key-specific outage shape: failing and decryptable messages interleave (different
     # tenants' keys). Each success proves the fault is not deployment-wide, so the
     # streak resets and the run outlives any number of per-key failures.
-    from forze_kits.integrations.consumer.runner import _CONFIG_FAULT_ABORT_STREAK
+    from forze_kits.integrations.consumer.runner import _CONFIG_FAULT_PAUSE_STREAK
 
     cipher = _FailingCipher(error=exc.configuration("AWS KMS key is disabled."))
-    rounds = _CONFIG_FAULT_ABORT_STREAK + 5
+    rounds = _CONFIG_FAULT_PAUSE_STREAK + 5
     script: list[QueueMessage[Any]] = []
 
     for i in range(rounds):
