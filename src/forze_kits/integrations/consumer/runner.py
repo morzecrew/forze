@@ -20,6 +20,7 @@ from forze.application.contracts.queue import (
     QueueSpec,
 )
 from forze.application.execution.context import ExecutionContext
+from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
 from forze.application.integrations.outbox import decrypt_consumed_payload
 from forze.base.exceptions import (
     CoreException,
@@ -33,6 +34,21 @@ from forze_kits.integrations._logger import logger
 from ..inbox import process_with_inbox
 
 # ----------------------- #
+
+_CIPHER_MISSING_CODE = PAYLOAD_CIPHER_MISSING_CODE
+"""Decrypt config error (no keyring): a deployment fault, not a poison message."""
+
+_CONFIG_FAULT_ABORT_STREAK = 25
+"""Consecutive configuration-kind decrypt failures after which the run aborts.
+
+A key-specific fault (one tenant's CMK disabled on a multi-key queue) interleaves with
+messages that still decrypt, resetting the streak — the queue keeps flowing while the
+affected messages cycle through requeue until their key returns. A deployment-wide fault
+(the only key disabled, every message sealed under it) fails everything and hits this
+ceiling within one redelivery burst, handing the loop to the supervisor's restart backoff
+instead of hot-spinning against the broker. Aborting is never lossy — the message in hand
+stays unacked — so a false positive (25 same-key messages in a row on a multi-key queue)
+only costs a restart that resumes exactly where it left off."""
 
 _DRAINING_CODE = "draining"
 """Drain-gate refusal code (``THROTTLED``/``code="draining"``): the runtime is quiescing,
@@ -66,7 +82,7 @@ class ConsumerRunResult:
     """Poison messages parked via ``nack(requeue=False)`` after exceeding *max_deliveries*."""
 
     failed: int = 0
-    """Handler failures and transient decrypt failures nacked back
+    """Handler failures and transient or key-fault decrypt failures nacked back
     (``requeue=True``) for redelivery."""
 
 
@@ -251,14 +267,17 @@ class QueueConsumer[M]:
        (dead-letter/redrive per broker), so a decode-poison message never reaches the loop.
     2. **Decrypt** — an end-to-end ciphertext envelope is decrypted to the typed model
        (see :func:`_decrypt_message`). Decrypt failures are classified by exception
-       kind: a **configuration** kind (missing keyring, KMS key disabled or pending
-       deletion) aborts the loop — the fault is deployment-wide and hits every
-       message alike, so parking per message would destroy the backlog over a
-       reversible operator action; a **retryable** kind (the keyring's KMS dependency
-       unavailable or throttled while unwrapping a cold data key) is nacked back
-       (``requeue=True``) for redelivery; the remaining non-retryable kinds
-       (tampering, unknown key, malformed envelope) are per-message poison and are
-       parked.
+       kind: a missing keyring aborts the loop outright (nothing on the queue can
+       decrypt); a **configuration** kind (KMS key disabled / pending deletion / not
+       found — operator-actionable and reversible) is requeued **without** counting
+       toward the poison ceiling and the loop keeps consuming, so on a multi-key
+       queue one key's outage never blocks or destroys the rest — only an unbroken
+       streak of such failures (:data:`_CONFIG_FAULT_ABORT_STREAK`; nothing
+       decrypting at all, i.e. deployment-wide) aborts for supervised restart; a
+       **retryable** kind (the keyring's KMS dependency unavailable or throttled
+       while unwrapping a cold data key) is nacked back (``requeue=True``) for
+       redelivery; the remaining non-retryable kinds (tampering, unknown key,
+       malformed envelope) are per-message poison and are parked.
     3. **Park** — when ``max_deliveries`` is set and the message's ``delivery_count``
        exceeds it, the message is parked with ``nack(requeue=False)`` **without** running
        the handler (handler-poison). When the backend can't report a count, parking never
@@ -355,6 +374,10 @@ class QueueConsumer[M]:
         parked = 0
         failed = 0
 
+        # Consecutive configuration-kind decrypt failures; reset by any message that
+        # decrypts. See _CONFIG_FAULT_ABORT_STREAK.
+        config_fault_streak = 0
+
         # Warn once if a poison ceiling was requested but this backend cannot report a
         # delivery count — the parking branch below can then never fire, so the broker's
         # dead-letter / redrive policy is the only ceiling.
@@ -377,18 +400,50 @@ class QueueConsumer[M]:
                     raise
 
                 except CoreException as e:
-                    # A configuration-kind failure is a deployment-wide fault, never a
-                    # per-message one: the keyring is missing, or the KMS key behind
-                    # *every* message on this queue is disabled / pending deletion — a
-                    # reversible operator action. It must never reach the per-message
-                    # poison branch below: nack(requeue=False) once per message would
-                    # destroy the whole backlog at consume speed (deleted outright on
-                    # SQS FIFO without a retention queue, dropped on DLX-less
-                    # RabbitMQ). Abort instead — the message stays unacked for broker
-                    # redelivery and the supervised loop restarts with backoff until
-                    # an operator restores the key.
-                    if e.kind is ExceptionKind.CONFIGURATION:
+                    # No keyring at all: *nothing* on this queue can decrypt, so churning
+                    # through messages would requeue every one of them for no progress.
+                    # Abort outright — a deployment fault, not per-message.
+                    if e.code == _CIPHER_MISSING_CODE:
                         raise
+
+                    # A configuration-kind failure (KMS key disabled / pending deletion /
+                    # not found) is operator-actionable and reversible — never per-message
+                    # poison: nack(requeue=False) once per message would destroy the
+                    # backlog at consume speed (deleted outright on SQS FIFO without a
+                    # retention queue, dropped on DLX-less RabbitMQ). But it is not
+                    # necessarily deployment-wide either: on a multi-key queue (per-tenant
+                    # CMKs) only that key's messages are affected, and aborting here would
+                    # block every other key's messages behind them. So requeue without
+                    # counting (an outage must not drive the message toward
+                    # ``max_deliveries``) and keep consuming; only an unbroken streak of
+                    # these — no message decrypting at all — reads as deployment-wide and
+                    # aborts, trading a hot redelivery spin for the supervisor's restart
+                    # backoff. Either way the message survives on the broker.
+                    if e.kind is ExceptionKind.CONFIGURATION:
+                        config_fault_streak += 1
+
+                        if config_fault_streak >= _CONFIG_FAULT_ABORT_STREAK:
+                            logger.error(
+                                "Queue consumer on %s: %s consecutive configuration-kind "
+                                "decrypt failures — no message is decrypting, treating "
+                                "the fault as deployment-wide and aborting for "
+                                "supervised restart",
+                                queue,
+                                config_fault_streak,
+                            )
+                            raise
+
+                        logger.warning(
+                            "Queue consumer could not decrypt message %s on queue %s "
+                            "(configuration fault, e.g. a disabled KMS key); "
+                            "nack(requeue=True, count=False) and continuing",
+                            message.id,
+                            queue,
+                            exc_info=True,
+                        )
+                        await _dispose(port, queue, message.id, requeue=True, count=False)
+                        failed += 1
+                        continue
 
                     # Decrypt runs through the KMS-backed keyring, so a transient
                     # dependency fault (KMS unavailable/throttled on a cold data
@@ -429,6 +484,11 @@ class QueueConsumer[M]:
                     await _dispose(port, queue, message.id, requeue=False)
                     parked += 1
                     continue
+
+                # This message decrypted (or was plaintext): whatever key it used is
+                # live, so the configuration faults seen so far are key-specific,
+                # not deployment-wide.
+                config_fault_streak = 0
 
                 # -- Warn once: poison ceiling requested but unsupported by backend. - #
                 if (

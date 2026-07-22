@@ -547,15 +547,41 @@ async def test_tampered_decrypt_failure_still_parked_as_poison() -> None:
 # ....................... #
 
 
-async def test_permanent_kms_decrypt_failure_aborts_without_touching_the_backlog() -> None:
-    # A disabled / pending-deletion KMS key is a deployment-wide, *reversible* operator
-    # action surfacing as a configuration-kind decrypt failure. It must never take the
-    # per-message poison branch: nack(requeue=False) once per message would destroy the
-    # whole encrypted backlog at consume speed (deleted outright on SQS FIFO without a
-    # retention queue, dropped on DLX-less RabbitMQ). The loop aborts with the message
-    # left unacked, so broker redelivery preserves it until the key is restored.
+async def test_key_fault_decrypt_failure_requeues_uncounted_and_keeps_consuming() -> None:
+    # A disabled / pending-deletion KMS key is an operator-actionable, *reversible*
+    # fault surfacing as a configuration-kind decrypt failure. It must never take the
+    # per-message poison branch (nack(requeue=False) would destroy the backlog at
+    # consume speed — deleted outright on SQS FIFO without a retention queue), and on
+    # a multi-key queue it must not stop the loop either: the affected messages are
+    # requeued without counting toward max_deliveries and consumption continues.
     cipher = _FailingCipher(error=exc.configuration("AWS KMS key is disabled."))
     stub = _ScriptedQueue(script=[_encrypted_message("m-1"), _encrypted_message("m-2")])
+    ctx = _plain_ctx(state=MockState(), queue_port=stub, cipher=cipher)
+
+    async def handler(msg: QueueMessage[_Payload]) -> None:  # pragma: no cover
+        del msg
+        raise AssertionError("handler must not run on an undecrypted message")
+
+    result = await _run(ctx, handler)
+
+    assert cipher.calls == 2  # both messages attempted: the loop kept consuming
+    assert result == ConsumerRunResult(failed=2)
+    assert stub.nacked == [("m-1", True), ("m-2", True)]  # requeued, never parked
+    assert stub.nack_counts == [("m-1", False), ("m-2", False)]  # outage never counts
+    assert stub.acked == []
+
+
+async def test_key_fault_streak_aborts_as_deployment_wide() -> None:
+    # An unbroken streak of configuration-kind decrypt failures means nothing on the
+    # queue decrypts — deployment-wide, not key-specific. The loop aborts for the
+    # supervisor's restart backoff instead of hot-spinning on broker redelivery; the
+    # message in hand stays unacked, so nothing is lost.
+    from forze_kits.integrations.consumer.runner import _CONFIG_FAULT_ABORT_STREAK
+
+    cipher = _FailingCipher(error=exc.configuration("AWS KMS key is disabled."))
+    stub = _ScriptedQueue(
+        script=[_encrypted_message(f"m-{i}") for i in range(_CONFIG_FAULT_ABORT_STREAK + 5)]
+    )
     ctx = _plain_ctx(state=MockState(), queue_port=stub, cipher=cipher)
 
     async def handler(msg: QueueMessage[_Payload]) -> None:  # pragma: no cover
@@ -566,8 +592,56 @@ async def test_permanent_kms_decrypt_failure_aborts_without_touching_the_backlog
         await _run(ctx, handler)
 
     assert excinfo.value.kind is ExceptionKind.CONFIGURATION
-    assert cipher.calls == 1  # aborted on the first message
-    assert stub.nacked == []  # no disposition: nothing parked, nothing dropped
+    assert cipher.calls == _CONFIG_FAULT_ABORT_STREAK  # aborted at the ceiling
+    # Every message before the ceiling was requeued; the one in hand was left unacked.
+    assert len(stub.nacked) == _CONFIG_FAULT_ABORT_STREAK - 1
+    assert all(requeued for _, requeued in stub.nacked)
+    assert stub.acked == []
+
+
+async def test_decrypt_success_resets_the_key_fault_streak() -> None:
+    # Key-specific outage shape: failing and decryptable messages interleave (different
+    # tenants' keys). Each success proves the fault is not deployment-wide, so the
+    # streak resets and the run outlives any number of per-key failures.
+    from forze_kits.integrations.consumer.runner import _CONFIG_FAULT_ABORT_STREAK
+
+    cipher = _FailingCipher(error=exc.configuration("AWS KMS key is disabled."))
+    rounds = _CONFIG_FAULT_ABORT_STREAK + 5
+    script: list[QueueMessage[Any]] = []
+
+    for i in range(rounds):
+        script.append(_encrypted_message(f"enc-{i}"))
+        script.append(_message(f"plain-{i}", f"evt-{i}", delivery_count=1))
+
+    stub = _ScriptedQueue(script=script)
+    ctx = _plain_ctx(state=MockState(), queue_port=stub, cipher=cipher)
+    seen: list[str] = []
+
+    async def handler(msg: QueueMessage[_Payload]) -> None:
+        seen.append(msg.id)
+
+    result = await _run(ctx, handler)
+
+    assert result == ConsumerRunResult(processed=rounds, failed=rounds)  # never aborted
+    assert len(seen) == rounds  # every plaintext message still processed
+    assert all(requeued for _, requeued in stub.nacked)
+
+
+async def test_missing_keyring_aborts_on_the_first_encrypted_message() -> None:
+    # No keyring wired at all: *nothing* on the queue can decrypt, so the streak
+    # heuristic is pointless churn — the loop aborts outright on the first envelope.
+    stub = _ScriptedQueue(script=[_encrypted_message("m-1"), _encrypted_message("m-2")])
+    ctx = _plain_ctx(state=MockState(), queue_port=stub)  # cipher deliberately absent
+
+    async def handler(msg: QueueMessage[_Payload]) -> None:  # pragma: no cover
+        del msg
+        raise AssertionError("handler must not run on an undecrypted message")
+
+    with pytest.raises(CoreException) as excinfo:
+        await _run(ctx, handler)
+
+    assert excinfo.value.kind is ExceptionKind.CONFIGURATION
+    assert stub.nacked == []  # aborted immediately: no disposition at all
     assert stub.acked == []
 
 
