@@ -14,7 +14,10 @@ projection free of any logger dependency.
 """
 
 import json
+from datetime import date, datetime, time
+from decimal import Decimal
 from typing import Any, Final, cast
+from uuid import UUID
 
 import attrs
 
@@ -93,6 +96,24 @@ class ErrorEnvelope:
 # ....................... #
 
 
+_RENDERABLE_LEAVES = (UUID, datetime, date, time, Decimal)
+"""The non-JSON value types the envelope renders as strings — the closed set handlers
+idiomatically put in ``details``. Closed on purpose: a blanket ``default=str`` would
+stringify **arbitrary** objects *after* sanitization, minting fresh text the scrubber
+never saw (a client object's repr can carry a DSN); anything outside this set drops
+the whole context instead."""
+
+
+def _render_leaf(value: object) -> str:
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+
+    if isinstance(value, _RENDERABLE_LEAVES):
+        return str(value)
+
+    raise TypeError(f"context value of type {type(value).__name__} is not renderable")
+
+
 def _jsonable(context: JsonDict) -> JsonDict:
     """Coerce sanitized context to values ``json.dumps`` can actually encode.
 
@@ -102,14 +123,16 @@ def _jsonable(context: JsonDict) -> JsonDict:
     TypeError escalates far past one error: a WS control frame that fails to serialize
     matches neither ``except*`` clause and unwinds the connection's whole task group.
     Coercing here keeps the envelope's contract true for every renderer at once:
-    whatever it exposes IS renderable. Non-JSON leaves render as their ``str`` form.
+    whatever it exposes IS renderable — and only the :data:`_RENDERABLE_LEAVES` types
+    render at all (see there for why this is not ``default=str``).
     """
 
     try:
-        return cast(JsonDict, json.loads(json.dumps(context, default=str)))
+        return cast(JsonDict, json.loads(json.dumps(context, default=_render_leaf)))
 
     except (TypeError, ValueError):
-        # circular or otherwise hostile details: keep the error, drop the context
+        # an unknown object leaf, a non-str key, a circular shape: keep the error,
+        # drop the context — never raise out of a transport's serializer
         return {"context_unrenderable": True}
 
 

@@ -330,9 +330,11 @@ async def _stop_in_process_loops(ctx: ExecutionContext, *, deadline: float) -> i
     follows, quiesce would halt the very relay it then waits on: the outbox plane it polls
     could never move, the whole budget would burn, and the plane would report residual on a
     backlog the (still-running) relay would have delivered. So after ``stop_all``, every
-    stopped loop that exposes ``flush`` is asked to publish what is claimable now — the
-    consumers have already finished and committed the batch in hand during the stop, and
-    every plane below is finite from that moment.
+    loop that **confirmed a clean stop** and exposes ``flush`` is asked to publish what is
+    claimable now — the consumers have already finished and committed the batch in hand
+    during the stop, and every plane below is finite from that moment. A loop that timed
+    out or was cancelled mid-unit is NOT flushed (the drain assumes nothing else in this
+    process is claiming the route); its plane reports residual instead.
 
     An **external** relay — a cron job, a worker in another process, the shape production
     usually takes — is not here to be stopped or flushed. Nothing in-process can reach it,
@@ -354,7 +356,11 @@ async def _stop_in_process_loops(ctx: ExecutionContext, *, deadline: float) -> i
         grace=max(0.0, deadline - asyncio.get_running_loop().time())
     )
 
-    for loop in loops:
+    # Only loops that CONFIRMED a clean stop are flushed: the drain assumes nothing
+    # else in this process is claiming the route, and a loop that timed out or was
+    # cancelled mid-unit may still be unwinding — flushing it would race its own
+    # tick for the same rows. An unflushed backlog reports residual instead.
+    for loop in stopped.clean:
         flush = getattr(loop, "flush", None)
 
         if flush is None:
@@ -370,7 +376,7 @@ async def _stop_in_process_loops(ctx: ExecutionContext, *, deadline: float) -> i
             # a failed flush must not hide the sweep: the plane reports residual instead
             logger.exception("Quiesce flush failed for loop", loop=loop.loop_name)
 
-    return stopped
+    return stopped.count
 
 
 # ....................... #

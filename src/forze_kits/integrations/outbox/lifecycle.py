@@ -547,28 +547,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         if not self.drain_on_shutdown or self.scope_ctx is None or self.drained:
             return stopped
 
-        self.drained = True
-
-        try:
-            async with asyncio.timeout_at(budget):
-                await self.drain_for_shutdown(self.scope_ctx, deadline=budget)
-
-        except TimeoutError:
-            # Admission control should end the drain before this fires. That it did means a
-            # batch was cut mid-flight, so its claimed rows sit ``processing`` — invisible to
-            # every replica — until ``reclaim_stale_after`` elapses.
-            logger.error(
-                "Outbox relay shutdown drain exceeded its %.1fs budget and was cut "
-                "mid-batch; claimed rows may sit in 'processing' until reclaim",
-                self.shutdown_drain_timeout.total_seconds(),
-            )
-            # Re-arm the once-guard: this pass did not finish, and holding the guard
-            # would make the next ask (the step's own shutdown hook, with a fresh
-            # budget) a silent no-op that strands the untouched remainder for another
-            # process. A near-immediate retry cannot re-claim what this pass
-            # rescheduled — those rows sit out their backoff — and a strict pass ends
-            # on the first reschedule it does hit.
-            self.drained = False
+        if not await self._bounded_drain(self.scope_ctx, deadline=budget, label="shutdown drain"):
             return False
 
         return stopped
@@ -604,23 +583,42 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         if self.scope_ctx is None or self.drained:
             return
 
+        await self._bounded_drain(self.scope_ctx, deadline=deadline, label="flush")
+
+    # ....................... #
+
+    async def _bounded_drain(self, ctx: ExecutionContext, *, deadline: float, label: str) -> bool:
+        """Claim the once-guard and run the strict drain inside the budget.
+
+        Returns whether the pass completed. A pass cut by its budget logs (its cut
+        batch's claimed rows sit ``processing`` — invisible to every replica — until
+        ``reclaim_stale_after`` elapses) and **re-arms the guard**: holding it would
+        make the next ask — the step's own shutdown hook, with a fresh budget — a
+        silent no-op that strands the untouched remainder for another process. The
+        retry is safe: it cannot re-claim what the cut pass rescheduled (those rows
+        sit out their backoff), and a strict pass ends on the first reschedule it
+        does hit.
+        """
+
         self.drained = True
         clock = asyncio.get_running_loop()
         budget = min(deadline, clock.time() + self.shutdown_drain_timeout.total_seconds())
 
         try:
             async with asyncio.timeout_at(budget):
-                await self.drain_for_shutdown(self.scope_ctx, deadline=budget)
+                await self.drain_for_shutdown(ctx, deadline=budget)
 
         except TimeoutError:
             logger.error(
-                "Outbox relay flush exceeded its budget and was cut mid-batch; claimed "
-                "rows may sit in 'processing' until reclaim"
+                "Outbox relay %s exceeded its %.1fs budget and was cut mid-batch; "
+                "claimed rows may sit in 'processing' until reclaim",
+                label,
+                self.shutdown_drain_timeout.total_seconds(),
             )
-            # Re-arm the once-guard (see ``stop``): a cut pass must not turn the later
-            # ``drain_on_shutdown`` teardown into a silent no-op — the rows it
-            # rescheduled sit out their backoff, so the retry drains the remainder.
             self.drained = False
+            return False
+
+        return True
 
     # ....................... #
 

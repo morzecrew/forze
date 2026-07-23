@@ -140,3 +140,17 @@ def test_unrenderable_context_is_dropped_not_raised() -> None:
 
     assert envelope.context == {"context_unrenderable": True}
     json.dumps(envelope.context)
+
+
+def test_arbitrary_object_leaves_drop_the_context_instead_of_stringifying() -> None:
+    # NOT ``default=str``: stringifying an arbitrary object AFTER sanitization mints
+    # fresh text the scrubber never saw — a client object's repr can carry a DSN.
+    # Only the closed set of idiomatic value types renders; anything else drops the
+    # whole context (the error itself still reaches the client).
+    class _Conn:
+        def __repr__(self) -> str:
+            return "Conn(dsn=postgres://user:hunter2@db.internal)"
+
+    envelope = error_envelope(exc.validation("bad", details={"conn": _Conn()}))
+
+    assert envelope.context == {"context_unrenderable": True}

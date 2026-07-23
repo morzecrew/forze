@@ -778,3 +778,45 @@ async def test_quiesce_flushes_the_in_process_relay_it_stopped() -> None:
 
     assert [row.status for row in rows] == [OutboxStatus.PUBLISHED] * 2
     assert report.attested
+
+
+@pytest.mark.asyncio
+async def test_a_loop_that_did_not_stop_cleanly_is_not_flushed() -> None:
+    # The flush drains rows on the assumption that nothing else in this process is
+    # claiming the route; a loop that timed out or refused to stop may still be
+    # mid-unit, and flushing it would race its own tick for the same rows. Only a
+    # CONFIRMED clean stop earns a flush — the wedged loop's plane goes residual.
+    flushed: list[str] = []
+
+    class _Loop:
+        def __init__(self, name: str, *, stops_cleanly: bool) -> None:
+            self._name = name
+            self._clean = stops_cleanly
+
+        @property
+        def loop_name(self) -> str:
+            return self._name
+
+        async def stop(self, *, deadline: float) -> bool:
+            del deadline
+            return self._clean
+
+        async def flush(self, *, deadline: float) -> None:
+            del deadline
+            flushed.append(self._name)
+
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        ctx.drainables.register(_Loop("clean", stops_cleanly=True))
+        ctx.drainables.register(_Loop("wedged", stops_cleanly=False))
+
+        await quiesce(
+            runtime,
+            outboxes=[OUTBOX],
+            timeout=timedelta(milliseconds=150),
+            poll=timedelta(milliseconds=10),
+        )
+
+    assert flushed == ["clean"]

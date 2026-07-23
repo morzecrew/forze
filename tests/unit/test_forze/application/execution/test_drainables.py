@@ -61,7 +61,9 @@ async def test_every_registered_loop_is_stopped() -> None:
     for one in loops:
         registry.register(one)
 
-    assert await registry.stop_all(grace=1.0) == 3
+    result = await registry.stop_all(grace=1.0)
+    assert result.count == 3
+    assert result.clean == tuple(loops)  # WHICH loops, not merely how many
     assert [one.stops for one in loops] == [1, 1, 1]
 
 
@@ -99,7 +101,7 @@ async def test_loops_stop_concurrently_not_one_after_another() -> None:
     assert fast.stops == 1
 
     release.set()
-    assert await sweep == 2
+    assert (await sweep).count == 2
 
 
 @pytest.mark.asyncio
@@ -114,7 +116,8 @@ async def test_a_wedged_loop_is_cancelled_and_the_others_still_stop() -> None:
 
     stopped = await registry.stop_all(grace=0.05)
 
-    assert stopped == 1  # only the healthy one stopped cleanly
+    assert stopped.count == 1  # only the healthy one stopped cleanly
+    assert stopped.clean == (healthy,)  # the wedged loop is NOT reported clean
     assert wedged.stops == 1  # it was asked
 
 
@@ -132,14 +135,15 @@ async def test_a_failing_loop_is_isolated_and_never_silent() -> None:
     with patch("forze.application.execution.context.drainable.logger", logger_mock):
         stopped = await registry.stop_all(grace=1.0)
 
-    assert stopped == 1  # the healthy loop is unaffected by the broken one
+    assert stopped.count == 1  # the healthy loop is unaffected by the broken one
+    assert stopped.clean == (healthy,)
     assert healthy.stops == 1
     logger_mock.error.assert_called_once()  # ...and the failure is reported, not swallowed
 
 
 @pytest.mark.asyncio
 async def test_an_empty_registry_costs_nothing() -> None:
-    assert await Drainables().stop_all(grace=1.0) == 0
+    assert (await Drainables().stop_all(grace=1.0)).count == 0
 
 
 @pytest.mark.asyncio
