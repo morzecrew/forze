@@ -222,13 +222,15 @@ class DurableSagaExecutor:
                 # count (as the tx scope's own conversion does), so the journal write
                 # below can land and the run still terminates — with ``step_ambiguous``
                 # — instead of wedging the drain.
-                if not commit_started():
-                    raise
-
                 task = asyncio.current_task()
 
-                if task is not None:
-                    task.uncancel()
+                # ``task is None`` folds into the re-raise (as the tx scope's own
+                # conversion does): outside a task there is no cancel count to
+                # balance, so the raw cancellation propagates.
+                if not commit_started() or task is None:
+                    raise
+
+                task.uncancel()
 
                 return {
                     _STEP_FAILURE_KEY: (

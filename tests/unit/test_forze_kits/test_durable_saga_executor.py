@@ -295,6 +295,97 @@ class TestDurableSagaExecutor:
         assert result.trail == ["a", "b"]
         assert effects == ["do:a", "do:b", "do:b"]  # only b re-ran; a came from the journal
 
+    async def test_named_retry_and_compensation_policies_are_honoured(self) -> None:
+        # The named-policy branches: a step with retry_policy runs under the resolved
+        # resilience executor (a transient blip retries in place), and its
+        # compensation runs under compensation_policy during the rollback.
+        ctx = context_from_modules(MockDepsModule(resilience="real"))
+        effects: list[str] = []
+        attempts = {"n": 0}
+
+        async def flaky(_ctx: ExecutionContext, state: OrderCtx) -> OrderCtx:
+            attempts["n"] += 1
+
+            if attempts["n"] == 1:
+                raise exc.concurrency("transient conflict")
+
+            return OrderCtx(trail=[*state.trail, "flaky"])
+
+        async def comp(_ctx: ExecutionContext, _state: OrderCtx) -> None:
+            effects.append("undo:flaky")
+
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                SagaStep(
+                    name="flaky",
+                    action=flaky,
+                    compensation=comp,
+                    tx_route="mock",
+                    retry_policy="occ",
+                    compensation_policy="occ",
+                    idempotent=True,
+                ),
+                _step("boom", effects, fail=True),
+            ),
+        )
+
+        token = _bound()
+        try:
+            with pytest.raises(CoreException) as ei:
+                await DurableSagaExecutor().run(ctx, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert ei.value.kind is ExceptionKind.DOMAIN  # compensated cleanly
+        assert attempts["n"] == 2  # the blip retried under the named policy
+        assert effects == ["do:boom", "undo:flaky"]  # compensation ran under its policy
+
+    async def test_non_core_failure_journals_without_code_and_replays_step_failed(
+        self,
+    ) -> None:
+        # A failure that is not a CoreException (no code to preserve) journals as a
+        # bare message and must classify identically on the live pass and on replay:
+        # DOMAIN step_failed, compensated once, the failed body never re-run.
+        state = MockState()
+        effects: list[str] = []
+
+        def _plain_boom(name: str) -> SagaStep[OrderCtx]:
+            async def action(_ctx: ExecutionContext, _state: OrderCtx) -> OrderCtx:
+                effects.append(f"do:{name}")
+                raise RuntimeError("plain boom")
+
+            return SagaStep(name=name, action=action, compensation=None, tx_route="mock")
+
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(_step("a", effects), _plain_boom("b")),
+        )
+        executor = DurableSagaExecutor()
+
+        ctx1 = context_from_modules(MockDepsModule(state=state))
+        token = _bound()
+        try:
+            with pytest.raises(CoreException) as live:
+                await executor.run(ctx1, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert live.value.kind is ExceptionKind.DOMAIN
+        assert live.value.code == "saga.step_failed"
+        assert effects == ["do:a", "do:b", "undo:a"]
+
+        ctx2 = context_from_modules(MockDepsModule(state=state))
+        token = _bound()
+        try:
+            with pytest.raises(CoreException) as replayed:
+                await executor.run(ctx2, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert replayed.value.code == "saga.step_failed"
+        assert effects == ["do:a", "do:b", "undo:a"]  # body and compensation not re-run
+
     async def test_outside_a_durable_run_is_rejected(self) -> None:
         ctx = context_from_modules(MockDepsModule())
         effects: list[str] = []

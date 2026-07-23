@@ -106,6 +106,29 @@ async def test_ambiguous_step_commit_is_non_retryable_and_compensates_nothing() 
     assert compensated == []  # nothing rolled back around the unknown outcome
 
 
+async def test_step_without_compensation_is_skipped_during_rollback() -> None:
+    # A completed step that registered no compensation is simply skipped by the
+    # rollback pass — not an error, and the steps that did register still run.
+    saga = TemporalSaga(name="checkout")
+    compensated: list[str] = []
+
+    await saga.step("audit", lambda: _ok("a"))  # nothing to undo
+
+    async def _comp() -> None:
+        compensated.append("reserve")
+
+    await saga.step("reserve", lambda: _ok("r"), compensation=_comp)
+
+    async def _boom() -> str:
+        raise exc.validation("bad charge", code="charge.invalid")
+
+    with pytest.raises(ApplicationError) as ei:
+        await saga.step("charge", _boom)
+
+    assert ei.value.type == "saga.step_failed"
+    assert compensated == ["reserve"]  # the compensation-less step was skipped
+
+
 async def test_happy_path_returns_step_result() -> None:
     saga = TemporalSaga(name="checkout")
     assert await saga.step("s", lambda: _ok(42)) == 42
