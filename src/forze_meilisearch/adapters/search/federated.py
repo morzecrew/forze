@@ -45,14 +45,19 @@ from forze.application.contracts.search import (
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     build_federated_highlight_index,
+    decrypt_search_rows,
     execute_federated_thin_offset,
     federated_highlights_for_hits,
     federated_snapshot_rehydrator,
     federated_thin_eligible,
     federated_thin_format,
+    reject_encrypted_sort_fields,
 )
 from forze.base.exceptions import exc
 from forze.base.serialization import default_model_codec
+from forze_meilisearch.adapters.search._offset_run import (
+    _MEILI_DEFAULT_SEARCH_LIMIT,  # pyright: ignore[reportPrivateUsage]
+)
 from forze_meilisearch.adapters.search._port import MeilisearchSearchPortMixin
 from forze_meilisearch.adapters.search._search_params import (
     attributes_to_search_on,
@@ -338,12 +343,20 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         index_to_member = await self._index_to_member()
 
         queries: list[SearchParams] = []
+        leg_caps: list[int] = []
 
         for i, (name, adapter) in enumerate(self.legs):
             weight = member_weights[i]
 
             if weight <= 0.0:
                 continue
+
+            # The same sealed-sort refusal the rrf legs get from the shared offset
+            # executor — native federation renders its sorts here, before that seam.
+            reject_encrypted_sort_fields(
+                sorts, encryption=adapter.spec.encryption, spec_name=adapter.spec.name
+            )
+            leg_caps.append(adapter.config.max_total_hits)
 
             member_spec = next(m for m in self.federated_spec.members if m.name == name)
             filter_str = adapter.build_filter(filters)
@@ -385,6 +398,25 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
 
         offset = int((pagination or {}).get("offset") or 0)
         limit = (pagination or {}).get("limit")
+
+        # Each leg contributes at most its index's maxTotalHits: a fused window
+        # reaching past the smallest leg cap comes back silently short (the capped
+        # leg just stops contributing rows it actually has). Fail closed, mirroring
+        # the single-index offset guard.
+        effective_limit = int(limit) if limit is not None else _MEILI_DEFAULT_SEARCH_LIMIT
+        far_edge = offset + effective_limit
+        min_cap = min(leg_caps)
+
+        if far_edge > min_cap:
+            raise exc.precondition(
+                f"Requested federated window (offset {offset} + limit {effective_limit}) "
+                f"exceeds the smallest member's maxTotalHits ({min_cap}); Meilisearch "
+                "would silently truncate that member's contribution. Narrow the query "
+                "or raise the member indexes' maxTotalHits and their routes' "
+                "max_total_hits.",
+                code="core.search.max_total_hits_exceeded",
+            )
+
         federation: dict[str, Any] = {"offset": offset}
 
         if limit is not None:
@@ -398,7 +430,10 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             or len(hits_raw)
         )
 
-        out_hits: list[FederatedSearchReadModel[M]] = []
+        # Map each fused hit to its member and logical row first, preserving the
+        # federation's ranking order.
+        member_of: list[str] = []
+        row_of: list[dict[str, Any]] = []
 
         for raw in hits_raw:
             hit = dict(raw)
@@ -416,9 +451,29 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                         break
 
             logical = next(a for n, a in self.legs if n == member)
-            row = logical.from_hit(hit)
-            model = logical.spec.model_type.model_validate(row)
-            out_hits.append(FederatedSearchReadModel(hit=model, member=member))
+            member_of.append(member)
+            row_of.append(logical.from_hit(hit))
+
+        # Decrypt once per member (each leg seals under its own codec/policy) and
+        # decode with the unwrapped codec — the same decrypt-before-decode seam every
+        # other search read path goes through. A sealed value is a base64 string, so
+        # a direct ``model_validate`` would silently hand ciphertext to the caller.
+        models: list[Any] = [None] * len(row_of)
+
+        for member in dict.fromkeys(member_of):
+            logical = next(a for n, a in self.legs if n == member)
+            indices = [i for i, m in enumerate(member_of) if m == member]
+            rows, codec = await decrypt_search_rows(
+                logical.spec.resolved_read_codec, [row_of[i] for i in indices]
+            )
+
+            for i, model in zip(indices, codec.decode_mapping_many(rows), strict=True):
+                models[i] = model
+
+        out_hits: list[FederatedSearchReadModel[M]] = [
+            FederatedSearchReadModel(hit=model, member=member)
+            for member, model in zip(member_of, models, strict=True)
+        ]
 
         return await self._finalize_page(
             out_hits,

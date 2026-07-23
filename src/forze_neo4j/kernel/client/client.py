@@ -50,6 +50,12 @@ class _TxScope:
     session: AsyncSession | None = None
     tx: AsyncTransaction | None = None
 
+    lock: asyncio.Lock = attrs.field(factory=asyncio.Lock)
+    """Serializes the lazy open: without it two statements under one ``asyncio.gather``
+    both see ``opened`` unset, both begin a transaction, and the second overwrites the
+    first — whose transaction is never committed and whose session leaks to the server
+    timeout."""
+
 
 # ----------------------- #
 
@@ -166,27 +172,40 @@ class Neo4jClient(Neo4jClientPort):
 
         target = self._database(database)
 
-        if scope.opened:
-            if target is not None and target != scope.database:
-                raise self._tx_database_conflict(target, scope.database)
+        if not scope.opened:
+            # The open is serialized: ``opened`` flips only under the lock, so two
+            # statements racing here (one asyncio.gather, one scope) resolve to one
+            # session/transaction — the loser re-checks and joins the winner's.
+            async with scope.lock:
+                if not scope.opened:
+                    if scope.database is None:
+                        scope.database = target
 
-            if scope.tx is None:  # pragma: no cover - opened implies tx
-                raise exc.internal("Neo4j transaction scope is open without a transaction")
+                    elif target is not None and target != scope.database:
+                        raise self._tx_database_conflict(target, scope.database)
 
-            return scope.tx
+                    session = self._require_driver.session(  # pyright: ignore[reportUnknownMemberType]
+                        database=scope.database
+                    )
 
-        if scope.database is None:
-            scope.database = target
+                    try:
+                        tx = await session.begin_transaction()
 
-        elif target is not None and target != scope.database:
+                    except BaseException:
+                        # A half-open scope must not leak the session to the server
+                        # timeout; ``opened`` stays False so a retry can re-open.
+                        await session.close()
+                        raise
+
+                    scope.session = session
+                    scope.tx = tx
+                    scope.opened = True
+
+        if target is not None and target != scope.database:
             raise self._tx_database_conflict(target, scope.database)
 
-        session = self._require_driver.session(  # pyright: ignore[reportUnknownMemberType]
-            database=scope.database
-        )
-        scope.session = session
-        scope.tx = await session.begin_transaction()
-        scope.opened = True
+        if scope.tx is None:  # pragma: no cover - opened implies tx
+            raise exc.internal("Neo4j transaction scope is open without a transaction")
 
         return scope.tx
 

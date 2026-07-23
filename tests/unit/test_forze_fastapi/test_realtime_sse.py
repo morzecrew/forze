@@ -177,6 +177,52 @@ class TestReplay:
         # no cursor either — the whole backlog replays; the client dedups by id
         assert [f["id"] for f in _frames(response.text)] == ids
 
+    async def test_last_event_id_inside_an_equal_hlc_run_resumes_the_siblings(self) -> None:
+        # A stream torn mid-run: the client's last received id shares its HLC with
+        # undelivered siblings. A strict-greater resume from that HLC would skip
+        # them on EVERY automatic reconnect; the id-anchored resume replays the run
+        # and drops only the covered prefix and the resumed id itself.
+        mailbox = InMemoryRealtimeMailbox()
+        await mailbox.store(
+            principal=str(_PRINCIPAL), event_id="e1", hlc=_hlc(1), signal=_signal(1)
+        )
+
+        for sibling in ("s1", "s2", "s3"):  # one shared position, distinct entries
+            await mailbox.store(
+                principal=str(_PRINCIPAL), event_id=sibling, hlc=_hlc(2), signal=_signal(2)
+            )
+
+        client = _build_client(mailbox=mailbox, cursors=InMemoryMailboxCursors())
+
+        response = client.get("/realtime/sse", headers={"Last-Event-ID": "s1"})
+
+        # e1 (below the anchor) and s1 itself are dropped; the siblings resume
+        assert [f["id"] for f in _frames(response.text)] == ["s2", "s3"]
+
+    async def test_anchored_resume_starts_from_the_device_cursor(self) -> None:
+        # With an acked cursor below the anchor, the replay starts there — the
+        # prefix between the cursor and the anchor is re-read but dropped, so the
+        # anchored resume costs reads, never duplicate frames below the anchor.
+        mailbox = InMemoryRealtimeMailbox()
+        cursors = InMemoryMailboxCursors()
+        await mailbox.store(
+            principal=str(_PRINCIPAL), event_id="e1", hlc=_hlc(1), signal=_signal(1)
+        )
+
+        for sibling in ("s1", "s2"):
+            await mailbox.store(
+                principal=str(_PRINCIPAL), event_id=sibling, hlc=_hlc(2), signal=_signal(2)
+            )
+
+        client = _build_client(mailbox=mailbox, cursors=cursors)
+        client.post("/realtime/sse/ack", json={"up_to": "e1"}, params={"device_id": "d1"})
+
+        response = client.get(
+            "/realtime/sse", params={"device_id": "d1"}, headers={"Last-Event-ID": "s1"}
+        )
+
+        assert [f["id"] for f in _frames(response.text)] == ["s2"]
+
 
 class TestAck:
     async def test_ack_advances_the_cursor_for_the_next_replay(self) -> None:
@@ -185,11 +231,11 @@ class TestAck:
         ids = await _seed(mailbox)
         client = _build_client(mailbox=mailbox, cursors=cursors)
 
-        acked = client.post("/realtime/sse/ack", json={"up_to": ids[1]})
+        acked = client.post("/realtime/sse/ack", json={"up_to": ids[1]}, params={"device_id": "d1"})
         assert acked.status_code == 200
         assert acked.json() == {"acked": True}
 
-        response = client.get("/realtime/sse")
+        response = client.get("/realtime/sse", params={"device_id": "d1"})
         assert [f["id"] for f in _frames(response.text)] == [ids[2]]
 
     async def test_ack_of_an_unretained_id_reports_false(self) -> None:
@@ -197,8 +243,74 @@ class TestAck:
         await _seed(mailbox)
         client = _build_client(mailbox=mailbox, cursors=InMemoryMailboxCursors())
 
-        acked = client.post("/realtime/sse/ack", json={"up_to": "gone"})
+        acked = client.post("/realtime/sse/ack", json={"up_to": "gone"}, params={"device_id": "d1"})
         assert acked.json() == {"acked": False}
+
+    async def test_truncated_replay_ends_the_stream_instead_of_entering_live(self) -> None:
+        # A replay whose drain cannot be confirmed — here the window cuts inside an
+        # equal-HLC run at least ``cap`` long, so a strict-greater re-fetch can never
+        # see the remaining sibling: entering the live tail would skip that
+        # undelivered entry, and a later unclamped ack would let the trim delete it.
+        # The stream ends instead — the browser reconnects with Last-Event-ID and
+        # continues from exactly here. (Without the guard this request would hang in
+        # the live tail. A confirmably drained replay proceeds to the live tail,
+        # which the sync TestClient cannot drive — that classification is pinned by
+        # the shared ``iter_backlog`` tests and the Socket.IO clamp tests.)
+        inner = InMemoryRealtimeMailbox()
+        await inner.store(principal=str(_PRINCIPAL), event_id="e1", hlc=_hlc(1), signal=_signal(1))
+
+        for sibling in ("s1", "s2", "s3"):  # one shared position, distinct entries
+            await inner.store(
+                principal=str(_PRINCIPAL), event_id=sibling, hlc=_hlc(2), signal=_signal(2)
+            )
+
+        class _CapTruncatedMailbox:
+            cap = 2  # the replay window always ends inside the s1..s3 run
+
+            async def replay_since(self, *, principal: str, since: Any) -> Any:
+                from contextlib import aclosing
+
+                delivered = 0
+
+                # aclosing: the early cap-return must close the inner stream
+                # deterministically, mirroring iter_replay one level up.
+                async with aclosing(
+                    inner.replay_since(principal=principal, since=since)
+                ) as entries:
+                    async for entry in entries:
+                        if delivered >= self.cap:
+                            return
+
+                        delivered += 1
+                        yield entry
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(inner, name)
+
+        hub = RealtimeSseHub()
+        hub.ready.set()
+        client = _build_client(
+            mailbox=_CapTruncatedMailbox(),  # type: ignore[arg-type]
+            cursors=InMemoryMailboxCursors(),
+            hub=hub,
+        )
+
+        response = client.get("/realtime/sse")  # completes despite the wired live hub
+
+        assert [f["id"] for f in _frames(response.text)] == ["e1", "s1", "s2"]
+
+    async def test_device_less_ack_is_refused(self) -> None:
+        # Device-less streams share one per-principal fallback cursor: a cumulative ack
+        # from one tab would advance the shared trim floor over another tab's
+        # undelivered backlog, which the all-device trim hard-deletes. Fail closed.
+        mailbox = InMemoryRealtimeMailbox()
+        ids = await _seed(mailbox)
+        client = _build_client(mailbox=mailbox, cursors=InMemoryMailboxCursors())
+
+        response = client.post("/realtime/sse/ack", json={"up_to": ids[0]})
+
+        assert response.status_code == 422
+        assert "requires ?device_id" in response.text
 
     async def test_device_scoped_cursor_via_query_param(self) -> None:
         mailbox = InMemoryRealtimeMailbox()
@@ -229,9 +341,7 @@ class TestHandshake:
         assert client.post("/realtime/sse/ack", json={"up_to": "x"}).status_code == 401
 
     def test_unsupported_protocol_is_refused(self) -> None:
-        client = _build_client(
-            mailbox=InMemoryRealtimeMailbox(), cursors=InMemoryMailboxCursors()
-        )
+        client = _build_client(mailbox=InMemoryRealtimeMailbox(), cursors=InMemoryMailboxCursors())
 
         response = client.get("/realtime/sse", params={"protocol": "2"})
 
@@ -239,9 +349,7 @@ class TestHandshake:
         assert response.headers[ERROR_CODE_HEADER] == "realtime_protocol_unsupported"
 
     def test_missing_or_current_protocol_accepted(self) -> None:
-        client = _build_client(
-            mailbox=InMemoryRealtimeMailbox(), cursors=InMemoryMailboxCursors()
-        )
+        client = _build_client(mailbox=InMemoryRealtimeMailbox(), cursors=InMemoryMailboxCursors())
 
         assert client.get("/realtime/sse").status_code == 200
         assert client.get("/realtime/sse", params={"protocol": "1"}).status_code == 200

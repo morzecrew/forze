@@ -17,7 +17,7 @@ require_socketio()
 # ....................... #
 
 from collections.abc import Awaitable, Callable, Mapping
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, aclosing
 from datetime import datetime
 from inspect import isawaitable
 from typing import (
@@ -35,16 +35,17 @@ from forze.application.contracts.realtime import Audience
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.application.integrations.realtime import (
+    BacklogDrain,
+    acknowledge_up_to,
+    iter_backlog,
+    negotiate_realtime_protocol,
+    resolve_client_key,
+)
+from forze.application.integrations.realtime import (
     InMemoryRealtimePresence as InMemoryRealtimePresence,  # re-export: established home
 )
 from forze.application.integrations.realtime import (
     RealtimePresence as RealtimePresence,  # re-export: established home
-)
-from forze.application.integrations.realtime import (
-    acknowledge_up_to,
-    iter_replay,
-    negotiate_realtime_protocol,
-    resolve_client_key,
 )
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import HlcTimestamp, utcnow
@@ -264,23 +265,46 @@ class _ConnectionLifecycle:
                 if progress is not None and since is not None:
                     progress.floor = since  # the already-acked prefix counts as delivered
 
-                async for entry in iter_replay(
-                    mailbox, principal=connection.principal, since=since
-                ):
-                    await self.sio.emit(
-                        entry.event,
-                        {"id": entry.event_id, "data": entry.payload},
-                        to=sid,
-                        namespace=self.namespace,
-                    )
+                outcome = BacklogDrain(claim_floor=since)
 
-                    if progress is not None:
-                        progress.floor = entry.hlc
+                # ``iter_backlog`` drains past a bounded replay window in rounds
+                # (a cap-filled pass is ambiguous: drained, a live arrival, or a
+                # truncated remainder) and reports whether the drain confirmably
+                # completed. ``aclosing``: a raise mid-drain (an emit failure, a
+                # cancel) must close the paged stream deterministically.
+                async with aclosing(
+                    iter_backlog(
+                        mailbox, principal=connection.principal, since=since, outcome=outcome
+                    )
+                ) as entries:
+                    async for entry in entries:
+                        await self.sio.emit(
+                            entry.event,
+                            {"id": entry.event_id, "data": entry.payload},
+                            to=sid,
+                            namespace=self.namespace,
+                        )
+
+                        if progress is not None:
+                            # The floor an ack may claim mid-drain is the drain's
+                            # RUN-PROVEN position, not this entry's own: a claim
+                            # trims the whole equal-HLC run, and this entry's run
+                            # may still have undelivered siblings in flight — an
+                            # ack claiming it would delete them from the store
+                            # before the replay reaches them.
+                            progress.floor = outcome.claim_floor
 
         if progress is not None:
-            # only a fully-drained replay lifts the ack clamp — a replay that raised
-            # leaves ``complete`` False, so later acks stay bounded by what was sent
-            progress.complete = True
+            # The claim floor lands on the final run only once the drain confirmed
+            # it complete; otherwise it stays one proven run behind, and the clamp
+            # holds there until the device reconnects and replays from the cursor.
+            progress.floor = outcome.claim_floor
+
+            if outcome.complete:
+                # Only a confirmed drain — that did not raise — lifts the clamp: a
+                # live frame acked past an undelivered middle would advance the
+                # cursor over it and the all-device trim would hard-delete it.
+                progress.complete = True
 
     # ....................... #
 

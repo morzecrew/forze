@@ -374,7 +374,7 @@ def test_decimal_valued_plain_enum_indexes_as_number() -> None:
 # The exact-Decimal shadow: filtering reads the f64 number, reads stay exact
 
 
-from forze_meilisearch.adapters.search.base import (  # noqa: E402
+from forze_meilisearch.adapters.search.base import (
     _DECIMAL_EXACT_FIELD,
     _extract_exact_shadow,
 )

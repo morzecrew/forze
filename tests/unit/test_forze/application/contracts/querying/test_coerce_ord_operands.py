@@ -8,7 +8,7 @@ recursion and array-element-quantifier branches are each pinned.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -38,7 +38,7 @@ class _Line(BaseModel):
 class _Model(BaseModel):
     name: str
     price: Decimal = Decimal("0")
-    created_at: datetime = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    created_at: datetime = datetime(2020, 1, 1, tzinfo=UTC)
     born_on: date = date(2020, 1, 1)
     ref: UUID = UUID(int=0)
     tags: list[Decimal] = []

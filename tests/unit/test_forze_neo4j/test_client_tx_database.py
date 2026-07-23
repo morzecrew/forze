@@ -11,6 +11,7 @@ Multi-database is a Neo4j Enterprise feature, so this is proved against a fake d
 which database each session is opened on — the one fact the bug turned on.
 """
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -179,3 +180,106 @@ class TestTransactionBindsTheStatementsDatabase:
 
         assert driver.sessions[1].closed
         assert driver.transactions[1].rolled_back
+
+
+# ....................... #
+# Concurrent statements in one scope must share ONE session/transaction.
+
+
+class _SlowBeginSession(_FakeSession):
+    async def begin_transaction(self) -> _FakeTx:
+        await asyncio.sleep(0)  # a real begin suspends — this is the race window
+        return await super().begin_transaction()
+
+
+class _SlowBeginDriver(_FakeDriver):
+    def session(self, *, database: str | None = None) -> _FakeSession:
+        session = _SlowBeginSession(self, database)
+        self.sessions.append(session)
+        return session
+
+
+class TestConcurrentStatementsShareOneTransaction:
+    async def test_gathered_statements_open_exactly_one_session(self) -> None:
+        # The un-serialized lazy open let two statements under one asyncio.gather both
+        # begin a transaction: the second overwrote the first, whose transaction was
+        # never committed and whose session leaked to the server timeout.
+        client, _ = _client()
+        driver = _SlowBeginDriver()
+        client._driver = driver  # pyright: ignore[reportPrivateUsage]
+
+        async with client.transaction():
+            await asyncio.gather(
+                client.run("CREATE (n:A)"),
+                client.run("CREATE (n:B)"),
+            )
+
+        assert len(driver.sessions) == 1  # one session, one transaction — no leak
+        assert len(driver.transactions) == 1
+        assert driver.transactions[0].committed
+        assert {q for q, _db in driver.executed} == {"CREATE (n:A)", "CREATE (n:B)"}
+
+
+# ....................... #
+# A routed transaction scope must not silently span tenants.
+
+
+class TestRoutedTransactionTenantPin:
+    async def test_tenant_change_mid_scope_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The routed client re-resolves the tenant per call: switched mid-scope, a
+        # later statement would run auto-committed on the OTHER tenant's client while
+        # the outer scope commits only the first tenant's work. The direct client
+        # fails closed on the equivalent drift (database conflict); the routed one
+        # must too, instead of splitting silently.
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock, MagicMock
+        from uuid import UUID
+
+        from forze_neo4j.kernel.client import RoutedNeo4jClient
+
+        tenant_a, tenant_b = UUID(int=1), UUID(int=2)
+        current = {"tenant": tenant_a}
+
+        inner = MagicMock(spec=Neo4jClient)
+        inner.run = AsyncMock(return_value=[])
+
+        @asynccontextmanager
+        async def _fake_tx(*, database: str | None = None):
+            yield
+
+        inner.transaction = _fake_tx
+
+        @asynccontextmanager
+        async def _fake_scope(self: object):
+            yield inner
+
+        monkeypatch.setattr(RoutedNeo4jClient, "_client_scope", _fake_scope)
+
+        routed = RoutedNeo4jClient(
+            secrets=MagicMock(),
+            secret_ref_for_tenant={},
+            tenant_provider=lambda: current["tenant"],
+        )
+
+        async with routed.transaction():
+            await routed.run("RETURN 1")  # same tenant: routed to the pinned client
+
+            current["tenant"] = tenant_b  # the org-switcher flips mid-scope
+
+            with pytest.raises(CoreException) as ei:
+                await routed.run("RETURN 1")
+
+            assert ei.value.code == "neo4j_tx_tenant_conflict"
+
+            # is_in_transaction must fail closed too: peeking the OTHER tenant's
+            # client would answer False for a caller inside an open transaction.
+            with pytest.raises(CoreException) as ei_probe:
+                routed.is_in_transaction()
+
+            assert ei_probe.value.code == "neo4j_tx_tenant_conflict"
+
+            current["tenant"] = tenant_a  # let the scope close cleanly
+
+        assert inner.run.await_count == 1  # the drifted statement never executed

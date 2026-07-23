@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import cast, final
 from uuid import UUID
 
@@ -57,6 +58,18 @@ class RoutedNeo4jClient(
         init=False,
     )
 
+    _tx_tenant: ContextVar[UUID | None] = attrs.field(
+        factory=lambda: ContextVar("neo4j_routed_tx_tenant", default=None),
+        init=False,
+    )
+    """The tenant the active :meth:`transaction` scope is bound to (``None`` outside one).
+
+    Every call re-resolves the ambient tenant to a client, so without this pin a tenant
+    change mid-scope silently routes later statements to a *different* tenant's client —
+    executed auto-committed there, while the outer scope commits only the first tenant's
+    work. The direct client fails closed on the equivalent drift (its database-conflict
+    guard); the routed client must too."""
+
     # ....................... #
 
     def credential_fingerprint(self, creds: BaseModel) -> str:
@@ -107,6 +120,33 @@ class RoutedNeo4jClient(
 
     # ....................... #
 
+    def _require_tx_tenant_unchanged(self) -> None:
+        """Fail closed when the ambient tenant drifted inside a transaction scope.
+
+        Silently continuing would resolve a different tenant's client — with no open
+        transaction there, the statement would run auto-committed against the wrong
+        tenant while the scope commits only the first tenant's work.
+        """
+
+        pinned = self._tx_tenant.get()
+
+        if pinned is None:
+            return
+
+        current = self.tenant_provider()
+
+        if current != pinned:
+            raise exc.configuration(
+                f"The active Neo4j transaction scope is bound to tenant {pinned} but "
+                f"the ambient tenant is now {current}. A routed transaction cannot "
+                "span tenants: statements would execute auto-committed on the other "
+                "tenant's client while this scope commits only the first tenant's "
+                "work. Keep one tenant bound for the whole scope.",
+                code="neo4j_tx_tenant_conflict",
+            )
+
+    # ....................... #
+
     async def run(
         self,
         query: str,
@@ -114,12 +154,21 @@ class RoutedNeo4jClient(
         *,
         database: str | None = None,
     ) -> list[JsonDict]:
+        self._require_tx_tenant_unchanged()
+
         async with self._client_scope() as inner:
             return await inner.run(query, params, database=database)
 
     # ....................... #
 
     def is_in_transaction(self) -> bool:
+        # The same fail-closed pin as run(): with the ambient tenant drifted away
+        # from the scope's, peeking the *other* tenant's client would answer False
+        # for a caller that is, in fact, inside an open transaction — and a caller
+        # keying transactional behavior off that answer would act on the wrong
+        # tenant's state.
+        self._require_tx_tenant_unchanged()
+
         tid = self.tenant_provider()
 
         if tid is None:
@@ -137,5 +186,13 @@ class RoutedNeo4jClient(
         *,
         database: str | None = None,
     ) -> AsyncGenerator[None]:
-        async with self._client_scope() as inner, inner.transaction(database=database):
-            yield
+        # Pin the scope's tenant: every statement inside must resolve to this client
+        # (see _require_tx_tenant_unchanged; a None tenant fails in _client_scope).
+        token = self._tx_tenant.set(self.tenant_provider())
+
+        try:
+            async with self._client_scope() as inner, inner.transaction(database=database):
+                yield
+
+        finally:
+            self._tx_tenant.reset(token)
