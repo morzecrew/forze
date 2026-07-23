@@ -40,9 +40,9 @@ from forze_kits.integrations.portability import (
     import_archive,
     migrate,
 )
-from forze_kits.integrations.quiesce import QuiesceReport
 from forze_mock import MockDepsModule
 from forze_mock.state import MockState
+from tests.support.quiesce import attested_report
 
 # ----------------------- #
 
@@ -101,7 +101,7 @@ SOCIAL = GraphModuleSpec(
     ),
 )
 
-_ATTESTED = QuiesceReport(planes=(), admission_held=True)
+_ATTESTED = attested_report()
 
 
 def _runtime(state: MockState, spec: GraphModuleSpec = SOCIAL) -> ExecutionRuntime:
@@ -128,7 +128,9 @@ async def _seed(runtime: ExecutionRuntime) -> None:
 
 async def _export(runtime: ExecutionRuntime, dest: Path) -> ExportReport:
     async with runtime.scope():
-        return await export_archive(runtime, dest, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
+        return await export_archive(
+            runtime, dest, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
+        )
 
 
 async def _import(runtime: ExecutionRuntime, src: Path) -> ImportReport:
@@ -234,7 +236,9 @@ async def test_graph_migrate_carries_the_plane(tmp_path: Path) -> None:
 
     target = _runtime(MockState())
     async with source.scope(), target.scope():
-        report = await migrate(source, target, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
+        report = await migrate(
+            source, target, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
+        )
 
     assert report.total_vertices == 3
     assert report.total_edges == 3

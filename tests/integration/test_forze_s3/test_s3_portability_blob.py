@@ -27,10 +27,10 @@ from forze_kits.integrations.portability import (
     ArchiveImporter,
     FullScope,
 )
-from forze_kits.integrations.quiesce import QuiesceReport
 from forze_s3.execution.deps.configs import S3StorageConfig
 from forze_s3.execution.deps.module import S3DepsModule
 from forze_s3.kernel.client import S3Client
+from tests.support.quiesce import attested_report
 
 # ----------------------- #
 
@@ -38,7 +38,7 @@ from forze_s3.kernel.client import S3Client
 # physical bucket, so source and target agree while pointing at different buckets.
 _ROUTE = "attachments"
 _SPEC = StorageSpec(name=_ROUTE)
-_ATTESTED = QuiesceReport(planes=(), admission_held=True)
+_ATTESTED = attested_report()
 
 _CORPUS: list[tuple[bytes, dict[str, str]]] = [
     (b"%PDF-1.4 a real pdf-ish blob", {"kind": "invoice"}),

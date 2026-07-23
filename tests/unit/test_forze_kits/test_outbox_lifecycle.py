@@ -48,9 +48,7 @@ async def test_background_lifecycle_starts_and_stops_task() -> None:
     )
 
     relay_mock = AsyncMock()
-    runtime = ExecutionRuntime(
-        deps=DepsRegistry.from_modules(MockDepsModule()).freeze()
-    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
 
     with patch.object(OutboxRelay, "to_queue", relay_mock):
         async with runtime.scope():
@@ -98,9 +96,7 @@ async def _run_tick(
     startup: _OutboxRelayBackgroundStartup,
     relay_mock: AsyncMock,
 ) -> None:
-    runtime = ExecutionRuntime(
-        deps=DepsRegistry.from_modules(MockDepsModule()).freeze()
-    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
 
     with patch.object(OutboxRelay, "to_queue", relay_mock):
         async with runtime.scope():
@@ -110,9 +106,7 @@ async def _run_tick(
 @pytest.mark.asyncio
 async def test_relay_once_drains_backlog_until_short_claim() -> None:
     startup = _startup(limit=10)
-    relay_mock = AsyncMock(
-        side_effect=[_result(10), _result(10), _result(10), _result(3)]
-    )
+    relay_mock = AsyncMock(side_effect=[_result(10), _result(10), _result(10), _result(3)])
 
     await _run_tick(startup, relay_mock)
 
@@ -144,9 +138,7 @@ async def test_relay_once_empty_backlog_claims_exactly_once() -> None:
 async def test_relay_once_reclaims_only_with_first_batch() -> None:
     reclaim = timedelta(minutes=5)
     startup = _startup(limit=10, reclaim_stale_after=reclaim)
-    runtime = ExecutionRuntime(
-        deps=DepsRegistry.from_modules(MockDepsModule()).freeze()
-    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
 
     # autospec passes ``self`` → each batch builds a fresh OutboxRelay carrying that
     # batch's reclaim policy (first batch reclaims, the rest do not).
@@ -220,7 +212,9 @@ async def _drain_capturing_tenants(startup: _OutboxRelayBackgroundStartup) -> li
 
     seen: list[UUID | None] = []
 
-    async def _capture(self: Any, ctx: Any, queue_spec: Any, *, limit: Any = None) -> OutboxRelayResult:
+    async def _capture(
+        self: Any, ctx: Any, queue_spec: Any, *, limit: Any = None
+    ) -> OutboxRelayResult:
         tenant = ctx.inv_ctx.get_tenant()
         seen.append(tenant.tenant_id if tenant is not None else None)
         return _result(0)
@@ -262,7 +256,9 @@ async def test_drain_tick_isolates_a_failing_tenant() -> None:
     logger_mock = MagicMock()
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
 
-    with patch.object(_OutboxRelayBackgroundStartup, "_relay_once", autospec=True, side_effect=_once):
+    with patch.object(
+        _OutboxRelayBackgroundStartup, "_relay_once", autospec=True, side_effect=_once
+    ):
         with patch("forze_kits.integrations.outbox.lifecycle.logger", logger_mock):
             async with runtime.scope():
                 await startup._drain_tick(runtime.get_context(), [_T1, _T2])
@@ -449,7 +445,9 @@ async def test_shutdown_drain_covers_each_assigned_tenant_bound() -> None:
     startup.tenant_shard = [_T1, _T2]  # normally frozen at startup
     seen: list[UUID | None] = []
 
-    async def _capture(self: Any, ctx: Any, queue_spec: Any, *, limit: Any = None) -> OutboxRelayResult:
+    async def _capture(
+        self: Any, ctx: Any, queue_spec: Any, *, limit: Any = None
+    ) -> OutboxRelayResult:
         tenant = ctx.inv_ctx.get_tenant()
         seen.append(tenant.tenant_id if tenant is not None else None)
         return _result(0)
@@ -555,3 +553,85 @@ def test_drain_step_carries_its_ordering_edge() -> None:
     step = _drain_step(requires=("postgres_client",))
 
     assert step.requires == ("postgres_client",)
+
+
+# ....................... #
+# The quiesce-time flush
+
+
+@pytest.mark.asyncio
+async def test_flush_publishes_rows_with_drain_on_shutdown_off() -> None:
+    # The quiesce order is stop → flush: stopping the loop ends its ticks, and with
+    # ``drain_on_shutdown`` at its default (off) nothing else would ever move the
+    # backlog the sweep then polls. ``flush`` publishes what is claimable regardless
+    # of that setting — the pair of asserts is the whole fix.
+    startup = _startup()  # drain_on_shutdown defaults off; interval=1h never ticks
+    rows = [_outbox_row(index=i) for i in range(3)]
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await startup(ctx)
+        await asyncio.sleep(0.02)
+
+        ctx.deps.provide(MockStateDepKey).outbox_rows["events"] = rows
+        deadline = asyncio.get_running_loop().time() + 5.0
+
+        await startup.stop(deadline=deadline)
+        assert [row.status for row in rows] == [OutboxStatus.PENDING] * 3  # stop alone: frozen
+
+        await startup.flush(deadline=deadline)
+        assert [row.status for row in rows] == [OutboxStatus.PUBLISHED] * 3
+
+
+@pytest.mark.asyncio
+async def test_flush_runs_at_most_once_and_shares_the_drain_guard() -> None:
+    # The flush and the shutdown drain share the once-per-startup guard: whichever
+    # runs first claims it, so a later ``drain_on_shutdown`` teardown cannot re-claim
+    # (and burn a second delivery attempt on) rows the flush just rescheduled.
+    startup = _startup()
+    rows = [_outbox_row(index=0)]
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await startup(ctx)
+        await asyncio.sleep(0.02)
+
+        ctx.deps.provide(MockStateDepKey).outbox_rows["events"] = rows
+        deadline = asyncio.get_running_loop().time() + 5.0
+        await startup.stop(deadline=deadline)
+        await startup.flush(deadline=deadline)
+
+        with patch.object(OutboxRelay, "to_queue", AsyncMock()) as second:
+            await startup.flush(deadline=deadline)  # guarded: no second claim
+            await startup.stop(deadline=deadline)  # nor from a later teardown stop
+
+    second.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_flush_skips_a_pubsub_destination() -> None:
+    # Pubsub is at-most-once past the broker — the same reason ``drain_on_shutdown``
+    # refuses it at wiring. The flush leaves the rows pending; the quiesce plane then
+    # reports residual honestly instead of losing a delayed delivery.
+    codec = PydanticModelCodec(_Payload)
+    startup = _startup(
+        transport="pubsub",
+        queue_spec=None,
+        pubsub_spec=PubSubSpec(name="topic", codec=codec),
+    )
+    rows = [_outbox_row(index=0)]
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await startup(ctx)
+        await asyncio.sleep(0.02)
+
+        ctx.deps.provide(MockStateDepKey).outbox_rows["events"] = rows
+        deadline = asyncio.get_running_loop().time() + 5.0
+        await startup.stop(deadline=deadline)
+        await startup.flush(deadline=deadline)
+
+    assert [row.status for row in rows] == [OutboxStatus.PENDING]

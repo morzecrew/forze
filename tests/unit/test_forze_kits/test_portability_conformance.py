@@ -30,7 +30,6 @@ from forze_kits.integrations.portability.conformance import (
     RoundTripOutcome,
     run_export_import_roundtrip,
 )
-from forze_kits.integrations.quiesce import QuiesceReport
 from forze_mock.state import MockState
 from tests.support.portability_corpus import (
     mock_runtime,
@@ -39,10 +38,11 @@ from tests.support.portability_corpus import (
     seed_attachments,
     seed_orders,
 )
+from tests.support.quiesce import attested_report
 
 # ----------------------- #
 
-_ATTESTED = QuiesceReport(planes=(), admission_held=True)
+_ATTESTED = attested_report()
 
 Seed = Callable[[ExecutionContext], Awaitable[None]]
 

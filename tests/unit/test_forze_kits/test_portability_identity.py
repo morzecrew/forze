@@ -33,14 +33,14 @@ from forze_kits.integrations.portability import (
     import_archive,
     migrate,
 )
-from forze_kits.integrations.quiesce import QuiesceReport
 from forze_mock import MockDepsModule
 from forze_mock.state import MockState
 from tests.support.portability_corpus import ORDER_SPEC, order_corpus, read_orders, seed_orders
+from tests.support.quiesce import attested_report
 
 # ----------------------- #
 
-_ATTESTED = QuiesceReport(planes=(), admission_held=True)
+_ATTESTED = attested_report()
 
 # The 19 identity document files a full export writes and a per-tenant export must not.
 _IDENTITY_FILES = {f"{entry.name}.jsonl.gz" for entry in spec_contributions().freeze().entries}
@@ -90,7 +90,10 @@ async def test_full_system_export_includes_identity(tmp_path: Path) -> None:
     archive = tmp_path / "archive"
 
     await _export(
-        runtime, archive, FullScope(quiesce=_ATTESTED, tenants=UNTENANTED), acknowledge_plaintext=True
+        runtime,
+        archive,
+        FullScope(quiesce=_ATTESTED, tenants=UNTENANTED),
+        acknowledge_plaintext=True,
     )
 
     files = _doc_files(archive)

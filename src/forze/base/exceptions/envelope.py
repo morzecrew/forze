@@ -13,7 +13,8 @@ log a server-side error from :attr:`ErrorEnvelope.server_error`, keeping the
 projection free of any logger dependency.
 """
 
-from typing import Any, Final
+import json
+from typing import Any, Final, cast
 
 import attrs
 
@@ -92,6 +93,26 @@ class ErrorEnvelope:
 # ....................... #
 
 
+def _jsonable(context: JsonDict) -> JsonDict:
+    """Coerce sanitized context to values ``json.dumps`` can actually encode.
+
+    ``CoreException.details`` is typed as JSON but not enforced — handlers idiomatically
+    pass UUIDs, datetimes or Decimals — and every transport renders this context with a
+    plain ``json.dumps`` (an HTTP response, a Socket.IO ack, a WebSocket frame). There a
+    TypeError escalates far past one error: a WS control frame that fails to serialize
+    matches neither ``except*`` clause and unwinds the connection's whole task group.
+    Coercing here keeps the envelope's contract true for every renderer at once:
+    whatever it exposes IS renderable. Non-JSON leaves render as their ``str`` form.
+    """
+
+    try:
+        return cast(JsonDict, json.loads(json.dumps(context, default=str)))
+
+    except (TypeError, ValueError):
+        # circular or otherwise hostile details: keep the error, drop the context
+        return {"context_unrenderable": True}
+
+
 def error_envelope(exc: CoreException) -> ErrorEnvelope:
     """Project a :class:`CoreException` into a client-safe :class:`ErrorEnvelope`.
 
@@ -106,7 +127,7 @@ def error_envelope(exc: CoreException) -> ErrorEnvelope:
 
     context: JsonDict | None = None
     if exc.details and policy.expose_details and not server_error:
-        context = sanitize(exc.details, context="egress")
+        context = _jsonable(sanitize(exc.details, context="egress"))
 
     return ErrorEnvelope(
         code=exc.code,

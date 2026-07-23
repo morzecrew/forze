@@ -454,7 +454,33 @@ def attach_realtime_ws_route(
                 await websocket.send_text(payload)
 
         async def _send_json(payload: dict[str, Any]) -> None:
-            await _send(json.dumps(payload, separators=(",", ":")))
+            # Serialization backstop for every control frame (error frames included —
+            # ``error_envelope`` coerces its context to JSON-safe values, this guards
+            # whatever else rides a frame): an unguarded TypeError here matches
+            # neither ``except*`` clause and unwinds the whole task group, cancelling
+            # every in-flight command on the socket. It must cost this frame only.
+            try:
+                raw = json.dumps(payload, separators=(",", ":"))
+
+            except (TypeError, ValueError) as error:
+                _logger.critical_exception(
+                    "WebSocket control frame is not JSON-serializable", exc=error
+                )
+                fallback: dict[str, Any] = {
+                    key: payload[key] for key in ("type", "cid") if key in payload
+                }
+                # provably serializable: a masked internal envelope carries no context
+                fallback["error"] = _render_error(
+                    error_envelope(
+                        exc.internal(
+                            "Frame could not be serialized",
+                            code="realtime_frame_unserializable",
+                        )
+                    )
+                )
+                raw = json.dumps(fallback, separators=(",", ":"))
+
+            await _send(raw)
 
         async def _send_error(message: str) -> None:
             await _send_json(

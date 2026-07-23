@@ -15,6 +15,7 @@ from forze.application.contracts.stream import AckStreamGroupAdminDepKey, Stream
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionRuntime
 from forze.application.execution.context import ExecutionContext
+from forze.base.primitives import utcnow
 from forze_kits.integrations._logger import logger
 from forze_kits.integrations.durable import resolve_durable_run_admin
 
@@ -322,17 +323,20 @@ async def _ack_stream_plane(
 
 
 async def _stop_in_process_loops(ctx: ExecutionContext, *, deadline: float) -> int:
-    """Stop the background loops this process owns, so the planes they feed stop moving.
+    """Stop the loops this process owns, then ask each one that can to flush.
 
-    Quiesce still does not *relay* — it waits for whatever does. But when the relay is the
-    in-process background step, waiting for it to notice on its own means waiting out a whole
-    tick ``interval`` (30s by default) with the gate already shut. Stopping the loops runs
-    their drains now instead: the outbox relay publishes what it can, the consumers finish the
-    message or batch in hand and commit it, and every plane below is finite from that moment.
+    Stopping a relay ends its ticks — and its ``stop`` only drains on its own when
+    ``drain_on_shutdown`` is set, which defaults **off**. Without the explicit flush that
+    follows, quiesce would halt the very relay it then waits on: the outbox plane it polls
+    could never move, the whole budget would burn, and the plane would report residual on a
+    backlog the (still-running) relay would have delivered. So after ``stop_all``, every
+    stopped loop that exposes ``flush`` is asked to publish what is claimable now — the
+    consumers have already finished and committed the batch in hand during the stop, and
+    every plane below is finite from that moment.
 
     An **external** relay — a cron job, a worker in another process, the shape production
-    usually takes — is not here to be stopped. Nothing in-process can reach it, and quiesce
-    goes back to doing the only thing it can: waiting and reporting.
+    usually takes — is not here to be stopped or flushed. Nothing in-process can reach it,
+    and quiesce goes back to doing the only thing it can: waiting and reporting.
     """
 
     loops = ctx.drainables.loops
@@ -346,9 +350,27 @@ async def _stop_in_process_loops(ctx: ExecutionContext, *, deadline: float) -> i
         loops=[one.loop_name for one in loops],
     )
 
-    return await ctx.drainables.stop_all(
+    stopped = await ctx.drainables.stop_all(
         grace=max(0.0, deadline - asyncio.get_running_loop().time())
     )
+
+    for loop in loops:
+        flush = getattr(loop, "flush", None)
+
+        if flush is None:
+            continue
+
+        try:
+            await flush(deadline=deadline)
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception:
+            # a failed flush must not hide the sweep: the plane reports residual instead
+            logger.exception("Quiesce flush failed for loop", loop=loop.loop_name)
+
+    return stopped
 
 
 # ....................... #
@@ -521,12 +543,17 @@ async def quiesce(
     was empty when it was read can be filled the moment the sweep looks away. Use it for a
     health check; do not build an export on it.
 
-    **It stops this process's loops; it does not relay.** With *close_gate*, quiesce stops the
-    background loops the runtime owns (``ctx.drainables``) before it starts watching — so the
-    relay drains *now* rather than on its next tick, and the consumers finish and commit what
-    they have in hand. It still relays nothing itself. An outbox fed by an **external** worker
-    — a cron job, another process, the shape production usually takes — cannot be reached from
-    here at all: closing the gate makes its backlog finite, but if nothing drains it the plane
+    **It stops this process's loops, then asks them to flush.** With *close_gate*, quiesce
+    stops the background loops the runtime owns (``ctx.drainables``) before it starts
+    watching — the consumers finish and commit what they have in hand — and then explicitly
+    asks each stopped loop that can flush (the outbox relay) to publish what is claimable
+    now, regardless of its ``drain_on_shutdown`` setting: stopping ended the ticks, so
+    without the flush the sweep would wait on a backlog nothing drains. A relay feeding a
+    **pubsub** destination is the exception (at-most-once past the broker — publishing
+    right before a shutdown or an export loses what lands after subscribers leave); its
+    plane reports ``residual`` honestly. An outbox fed by an **external** worker — a cron
+    job, another process, the shape production usually takes — cannot be reached from here
+    at all: closing the gate makes its backlog finite, but if nothing drains it the plane
     is reported ``residual``, with the age of the oldest pending row to say so.
 
     Stopping the loops is one-way, like the gate. ``close_gate=False`` leaves them running.
@@ -626,8 +653,15 @@ async def quiesce(
     )
 
     # Read the gate rather than trusting *close_gate*: a scope already going down was holding
-    # the door before this sweep started, and that counts.
-    report = QuiesceReport(planes=tuple(planes), admission_held=ctx.drain_gate.draining)
+    # the door before this sweep started, and that counts. The stamp and the probed tenant
+    # set are the report's cross-checkable facts — a scoped consumer (the export gate)
+    # verifies its tenant set against ``tenants`` instead of trusting a bare boolean.
+    report = QuiesceReport(
+        planes=tuple(planes),
+        admission_held=ctx.drain_gate.draining,
+        taken_at=utcnow(),
+        tenants=tuple(tenants) if tenants is not None else None,
+    )
 
     if report.attested:
         logger.info("Runtime quiesced", planes=len(report.planes))

@@ -612,6 +612,8 @@ def _attestation_json(report: QuiesceReport) -> dict[str, Any]:
         "attested": report.attested,
         "settled": report.settled,
         "admission_held": report.admission_held,
+        "taken_at": report.taken_at.isoformat(),
+        "tenants": (None if report.tenants is None else [str(tenant) for tenant in report.tenants]),
         "planes": [
             {"name": plane.name, "state": plane.state, "detail": plane.detail}
             for plane in report.planes

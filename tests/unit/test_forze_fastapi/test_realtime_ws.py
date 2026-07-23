@@ -60,6 +60,10 @@ async def _create_note(args: _CreateNote) -> _NoteAck:
     if args.text == "boom":
         raise exc.precondition("Note text is cursed", code="note_cursed")
 
+    if args.text == "uuid-details":
+        # the idiomatic shape: details carrying live objects (UUIDs) rather than JSON
+        raise exc.validation("Order not payable", code="note_order", details={"order_id": uuid4()})
+
     return _NoteAck(note_id=f"note:{args.text}")
 
 
@@ -456,6 +460,40 @@ class TestCommands:
         assert ack["type"] == "ack" and ack["cid"] == "c2"
         assert ack["error"]["code"] == "note_cursed"
         assert ack["error"]["kind"] == "precondition"
+
+    def test_non_json_error_details_cost_one_ack_never_the_socket(self) -> None:
+        # exc.validation(details={"order_id": UUID}) — the idiomatic handler shape.
+        # Unhandled, the error frame's json.dumps raised a TypeError that matched
+        # neither except* clause and unwound the task group, cancelling every
+        # in-flight command on the socket. It must render (coerced) and the
+        # connection must keep serving.
+        client, _ = _build(with_commands=True)
+
+        with client.websocket_connect("/realtime/ws") as ws:
+            ws.send_json(
+                {
+                    "type": "cmd",
+                    "event": "note.create",
+                    "cid": "c-uuid",
+                    "payload": {"text": "uuid-details"},
+                }
+            )
+            ack = ws.receive_json()
+
+            assert ack["type"] == "ack" and ack["cid"] == "c-uuid"
+            assert ack["error"]["code"] == "note_order"
+            # the UUID rendered as its string form, not a teardown
+            assert isinstance(ack["error"]["context"]["order_id"], str)
+
+            # the connection survived — the next command is still served
+            ws.send_json(
+                {"type": "cmd", "event": "note.create", "cid": "c-next", "payload": {"text": "ok"}}
+            )
+            assert ws.receive_json() == {
+                "type": "ack",
+                "cid": "c-next",
+                "data": {"note_id": "note:ok"},
+            }
 
     def test_invalid_payload_is_a_sanitized_validation_ack(self) -> None:
         client, _ = _build(with_commands=True)

@@ -128,9 +128,7 @@ async def test_pending_counts_rows_parked_for_a_future_retry() -> None:
 
     async with runtime.scope():
         ctx = runtime.get_context()
-        ctx.deps.provide(MockStateDepKey).outbox_rows["events"] = [
-            _row(available_at=future)
-        ]
+        ctx.deps.provide(MockStateDepKey).outbox_rows["events"] = [_row(available_at=future)]
 
         admin = ctx.outbox.admin(OUTBOX)
 
@@ -327,9 +325,7 @@ async def test_a_named_outbox_with_no_admin_read_is_unobserved_and_blocks() -> N
     )
 
     async with runtime.scope():
-        report = await quiesce(
-            runtime, outboxes=[OUTBOX], timeout=timedelta(milliseconds=50)
-        )
+        report = await quiesce(runtime, outboxes=[OUTBOX], timeout=timedelta(milliseconds=50))
 
     plane = next(p for p in report.planes if p.name == "outbox:events")
 
@@ -344,9 +340,7 @@ async def test_a_named_outbox_with_no_admin_read_is_unobserved_and_blocks() -> N
 async def test_a_runtime_without_an_inventory_never_attests() -> None:
     # Zero probed routes must never add up to an attested report: without an inventory the
     # sweep cannot enumerate the outbox/queue/stream/lock surface at all.
-    runtime = ExecutionRuntime(
-        deps=DepsRegistry.from_modules(MockDepsModule()).freeze()
-    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
 
     async with runtime.scope():
         report = await quiesce(runtime, timeout=timedelta(milliseconds=50))
@@ -520,12 +514,8 @@ async def test_ack_stream_plane_probes_each_tenant() -> None:
 
         # only the busy tenant's per-tenant stream key holds an undelivered signal
         with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=busy)):
-            command = ctx.deps.resolve_configurable(
-                ctx, StreamCommandDepKey, spec, route=spec.name
-            )
-            await command.append(
-                str(spec.name), RealtimeSignal.of(Audience.topic("t"), "e", {})
-            )
+            command = ctx.deps.resolve_configurable(ctx, StreamCommandDepKey, spec, route=spec.name)
+            await command.append(str(spec.name), RealtimeSignal.of(Audience.topic("t"), "e", {}))
 
         report = await quiesce(
             runtime,
@@ -573,9 +563,7 @@ async def test_ack_stream_plane_not_wired_and_trimmed_unknown_details() -> None:
     # a capped route that evicted undelivered entries → residual with the unknown marker
     capped = ExecutionRuntime(
         deps=DepsRegistry.from_modules(
-            MockDepsModule(
-                routes={str(spec.name): MockRouteConfig(stream_retention_max_entries=1)}
-            )
+            MockDepsModule(routes={str(spec.name): MockRouteConfig(stream_retention_max_entries=1)})
         ).freeze()
     )
     async with capped.scope():
@@ -612,9 +600,7 @@ async def test_a_catalogued_outbox_excluded_from_the_sweep_is_unobserved() -> No
     )
 
     async with runtime.scope():
-        report = await quiesce(
-            runtime, outboxes=[OUTBOX], timeout=timedelta(milliseconds=50)
-        )
+        report = await quiesce(runtime, outboxes=[OUTBOX], timeout=timedelta(milliseconds=50))
 
     states = {plane.name: plane.state for plane in report.planes}
 
@@ -754,3 +740,41 @@ async def test_a_named_commit_stream_group_with_no_admin_is_unobserved() -> None
 
     assert plane.state == "unobserved"
     assert not report.attested
+
+
+@pytest.mark.asyncio
+async def test_quiesce_flushes_the_in_process_relay_it_stopped() -> None:
+    # The realistic default wiring, un-faked: a background relay step with
+    # ``drain_on_shutdown`` at its default (off) and a tick interval far past the
+    # sweep budget. Quiesce stops the loop before watching — which ends its ticks —
+    # so without the explicit flush the sweep would poll a depth nothing drains,
+    # burn its whole budget, and report residual on a backlog the relay it halted
+    # would have delivered.
+    from forze.application.contracts.queue import QueueSpec
+    from forze_kits.integrations.outbox import outbox_relay_background_lifecycle_step
+
+    codec = PydanticModelCodec(_Payload)
+    step = outbox_relay_background_lifecycle_step(
+        outbox_spec=OUTBOX,
+        queue_spec=QueueSpec(name="jobs", codec=codec),
+        interval=timedelta(hours=1),  # never ticks on its own within the sweep
+    )
+    rows = [_row(index=0), _row(index=1)]
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await step.startup(ctx)
+        await asyncio.sleep(0.02)
+
+        ctx.deps.provide(MockStateDepKey).outbox_rows["events"] = rows
+
+        report = await quiesce(
+            runtime,
+            outboxes=[OUTBOX],
+            timeout=timedelta(seconds=2),
+            poll=timedelta(milliseconds=10),
+        )
+
+    assert [row.status for row in rows] == [OutboxStatus.PUBLISHED] * 2
+    assert report.attested

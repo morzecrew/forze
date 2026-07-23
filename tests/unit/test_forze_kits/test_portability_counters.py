@@ -29,14 +29,14 @@ from forze_kits.integrations.portability import (
     import_archive,
     migrate,
 )
-from forze_kits.integrations.quiesce import QuiesceReport
 from forze_mock import MockDepsModule
 from forze_mock.state import MockState
+from tests.support.quiesce import attested_report
 
 # ----------------------- #
 
 SPEC = CounterSpec(name="invoices")
-_ATTESTED = QuiesceReport(planes=(), admission_held=True)
+_ATTESTED = attested_report()
 
 # The unsuffixed counter (suffix=None) is a real, distinct partition most apps actually use.
 _EXPECTED = {(None, 100), ("eu", 50), ("us", 7)}
@@ -65,7 +65,9 @@ async def _partitions(runtime: ExecutionRuntime) -> set[tuple[str | None, int]]:
 
 async def _export(runtime: ExecutionRuntime, dest: Path) -> ExportReport:
     async with runtime.scope():
-        return await export_archive(runtime, dest, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
+        return await export_archive(
+            runtime, dest, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
+        )
 
 
 async def _import(runtime: ExecutionRuntime, src: Path) -> ImportReport:
@@ -121,7 +123,9 @@ async def test_counter_migrate_carries_the_plane(tmp_path: Path) -> None:
 
     target = _runtime(MockState())
     async with source.scope(), target.scope():
-        report = await migrate(source, target, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
+        report = await migrate(
+            source, target, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
+        )
 
     assert report.total_counters == 3
     assert await _partitions(target) == _EXPECTED

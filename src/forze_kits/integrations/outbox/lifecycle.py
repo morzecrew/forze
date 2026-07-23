@@ -563,6 +563,49 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
     # ....................... #
 
+    async def flush(self, *, deadline: float) -> None:
+        """Publish what is claimable right now — the quiesce-time drain.
+
+        Quiesce stops this loop before it watches the outbox plane, which ends the ticks:
+        without an explicit flush, the backlog it then polls can never move (the stop-side
+        drain only runs when ``drain_on_shutdown`` is set, and it defaults off), so the
+        sweep burns its whole budget on a depth nothing is draining. This runs the same
+        strict, reclaim-free drain the shutdown path uses, under the same once-per-startup
+        guard — a later ``drain_on_shutdown`` teardown cannot re-claim (and burn a second
+        delivery attempt on) the rows this pass just rescheduled.
+
+        A ``pubsub`` destination is skipped for the same reason ``drain_on_shutdown``
+        refuses it at wiring: pubsub is at-most-once past the broker, and quiesce precedes
+        a shutdown or an export — publishing right as subscribers go away turns a delayed
+        delivery into a silent loss. Its plane then reports residual honestly.
+        """
+
+        if self.transport == "pubsub":
+            logger.info(
+                "Outbox relay flush skipped for a pubsub destination; rows stay pending "
+                "for the next process's relay"
+            )
+            return
+
+        if self.scope_ctx is None or self.drained:
+            return
+
+        self.drained = True
+        clock = asyncio.get_running_loop()
+        budget = min(deadline, clock.time() + self.shutdown_drain_timeout.total_seconds())
+
+        try:
+            async with asyncio.timeout_at(budget):
+                await self.drain_for_shutdown(self.scope_ctx, deadline=budget)
+
+        except TimeoutError:
+            logger.error(
+                "Outbox relay flush exceeded its budget and was cut mid-batch; claimed "
+                "rows may sit in 'processing' until reclaim"
+            )
+
+    # ....................... #
+
     async def __call__(self, ctx: ExecutionContext) -> None:
         if self.control.running:
             # The runtime invokes startup once per scope; a direct double call

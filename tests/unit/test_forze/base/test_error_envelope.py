@@ -94,3 +94,49 @@ def test_unhandled_envelope_is_generic() -> None:
     assert envelope.kind is ExceptionKind.INTERNAL
     assert envelope.detail == GENERIC_INTERNAL_DETAIL
     assert envelope.context is None
+
+
+# ....................... #
+
+
+def test_context_is_coerced_to_json_renderable_values() -> None:
+    # ``details`` is typed as JSON but not enforced — handlers idiomatically pass
+    # UUIDs, datetimes, Decimals — and every transport renders the context with a
+    # plain ``json.dumps`` (an HTTP response, a Socket.IO ack, a WS frame, where a
+    # TypeError unwinds the whole connection). The envelope must expose only what
+    # every renderer can actually serialize.
+    import json
+    from datetime import UTC, datetime
+    from decimal import Decimal
+    from uuid import UUID
+
+    order_id = UUID("11111111-1111-1111-1111-111111111111")
+    error = exc.validation(
+        "Order is not payable",
+        details={
+            "order_id": order_id,
+            "created": datetime(2026, 1, 1, tzinfo=UTC),
+            "total": Decimal("19.90"),
+            "count": 3,
+        },
+    )
+
+    envelope = error_envelope(error)
+
+    assert envelope.context is not None
+    json.dumps(envelope.context)  # the whole point: renderable everywhere
+    assert envelope.context["order_id"] == str(order_id)
+    assert envelope.context["count"] == 3  # already-JSON values pass through untouched
+
+
+def test_unrenderable_context_is_dropped_not_raised() -> None:
+    # ``default=`` never applies to dict KEYS, so a non-str key defeats the coercion
+    # (cycles don't get this far: sanitize depth-caps them). The error must still
+    # render, minus its context — never raise out of a transport's serializer.
+    import json
+    from uuid import uuid4
+
+    envelope = error_envelope(exc.validation("bad", details={"ids": {uuid4(): 1}}))
+
+    assert envelope.context == {"context_unrenderable": True}
+    json.dumps(envelope.context)
