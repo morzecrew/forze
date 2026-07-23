@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from forze.application.contracts.saga import SagaDefinition, SagaStep, SagaStepKind
+from forze.application.contracts.transaction import COMMIT_AMBIGUOUS_CODE
 from forze.application.execution import ExecutionContext, run_saga
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_mock import MockDepsModule
@@ -142,6 +145,177 @@ class TestSagaExecutor:
 
         assert result == ["flaky"]
         assert attempts["n"] == 2  # retried once via the occ policy
+
+
+class TestAmbiguousCommit:
+    """An interruption at a step's own commit is indeterminacy, not failure."""
+
+    @staticmethod
+    def _ambiguous_step(
+        name: str,
+        rec: list[str],
+        *,
+        kind: SagaStepKind = SagaStepKind.COMPENSATABLE,
+    ) -> SagaStep[State]:
+        async def action(_ctx: ExecutionContext, state: State) -> State:
+            rec.append(f"do:{name}")
+            # The exact error the tx scope raises when a drain-timeout cancel lands
+            # at the commit: the step MAY be committed.
+            raise exc.internal(
+                "Cancelled at or after the transaction commit",
+                code=COMMIT_AMBIGUOUS_CODE,
+            )
+
+        return SagaStep(
+            name=name,
+            action=action,
+            compensation=None,
+            kind=kind,
+            tx_route="mock",
+            idempotent=kind is SagaStepKind.RETRYABLE,
+        )
+
+    async def test_ambiguous_step_commit_compensates_nothing(self) -> None:
+        # If B may be committed, compensating A would roll the saga back *around* a
+        # live effect (split-brain), and DOMAIN ``saga.step_failed`` would falsely
+        # certify "completed steps were compensated". Nothing is compensated and the
+        # raised error names the indeterminacy for the operator.
+        rec: list[str] = []
+        ctx = context_from_modules(MockDepsModule())
+        saga: SagaDefinition[State] = SagaDefinition(
+            name="s",
+            steps=(_step("a", rec), self._ambiguous_step("b", rec)),
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await run_saga(ctx, saga, [])
+
+        assert ei.value.code == "saga.step_ambiguous"
+        assert ei.value.kind is ExceptionKind.INFRASTRUCTURE  # never a "consistent" DOMAIN
+        assert rec == ["do:a", "do:b"]  # a's compensation never ran
+
+    async def test_ambiguous_commit_after_pivot_still_reports_indeterminacy(self) -> None:
+        # Past the pivot the failure path is forward-incomplete; ambiguity still wins:
+        # "could not complete forward" presumes the step failed, which is unknown here.
+        rec: list[str] = []
+        ctx = context_from_modules(MockDepsModule())
+        saga: SagaDefinition[State] = SagaDefinition(
+            name="s",
+            steps=(
+                _step("a", rec, kind=SagaStepKind.PIVOT),
+                self._ambiguous_step("b", rec, kind=SagaStepKind.RETRYABLE),
+            ),
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await run_saga(ctx, saga, [])
+
+        assert ei.value.code == "saga.step_ambiguous"
+        assert rec == ["do:a", "do:b"]
+
+    async def test_raw_cancel_at_commit_outside_an_operation_reports_indeterminacy(
+        self,
+    ) -> None:
+        # Outside an operation-owned task the tx scope re-raises a cancellation RAW
+        # (its commit_ambiguous conversion is operation-only), bypassing ``except
+        # Exception``: the caller would get a plain cancellation it could retry into
+        # a duplicate of the possibly-committed step. The executor must classify it.
+        from forze.application.execution.context.commit_state import mark_commit_started
+
+        rec: list[str] = []
+        ctx = context_from_modules(MockDepsModule())
+
+        async def cancelled_at_commit(_ctx: ExecutionContext, _state: State) -> State:
+            rec.append("do:b")
+            # The tx scope sets this mark right before the driver commit runs; the
+            # cancel then lands inside that commit and reaches us raw (no operation).
+            mark_commit_started()
+            raise asyncio.CancelledError
+
+        saga: SagaDefinition[State] = SagaDefinition(
+            name="s",
+            steps=(
+                _step("a", rec),
+                SagaStep(name="b", action=cancelled_at_commit, compensation=None, tx_route="mock"),
+            ),
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await run_saga(ctx, saga, [])
+
+        assert ei.value.code == "saga.step_ambiguous"
+        assert rec == ["do:a", "do:b"]  # a's compensation never ran
+
+    async def test_raw_cancel_before_commit_stays_a_cancellation(self) -> None:
+        # A cancel in the step BODY rolled back cleanly: crash-shaped, propagated as a
+        # cancellation. Step a's committed transaction leaves the task's commit mark
+        # set, so this also pins the per-step reset — without it, b's pre-commit
+        # cancel would misread as ambiguous.
+        rec: list[str] = []
+        ctx = context_from_modules(MockDepsModule())
+
+        async def cancelled_in_body(_ctx: ExecutionContext, _state: State) -> State:
+            rec.append("do:b")
+            raise asyncio.CancelledError
+
+        saga: SagaDefinition[State] = SagaDefinition(
+            name="s",
+            steps=(
+                _step("a", rec),
+                SagaStep(name="b", action=cancelled_in_body, compensation=None, tx_route="mock"),
+            ),
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await run_saga(ctx, saga, [])
+
+        assert rec == ["do:a", "do:b"]  # unwound crash-shaped: no compensation, no wrap
+
+    async def test_inside_an_operation_the_mark_is_left_to_the_boundary(self) -> None:
+        # Operation-owned tasks rely on the tx scope's own conversion (exercised above
+        # via the coded CoreException). The executor must not touch the commit mark
+        # there — the invocation boundary reads it to classify a deadline that tore a
+        # commit — and a raw cancel passes through untouched for the scope/boundary
+        # pair to handle.
+        from forze.application.execution.context.active_operation import (
+            active_operation_var,
+        )
+        from forze.application.execution.context.commit_state import (
+            commit_started,
+            mark_commit_started,
+            reset_commit_started,
+        )
+
+        rec: list[str] = []
+        ctx = context_from_modules(MockDepsModule())
+
+        async def cancelled_at_commit(_ctx: ExecutionContext, _state: State) -> State:
+            rec.append("do:b")
+            mark_commit_started()
+            raise asyncio.CancelledError
+
+        saga: SagaDefinition[State] = SagaDefinition(
+            name="s",
+            steps=(
+                SagaStep(name="b", action=cancelled_at_commit, compensation=None, tx_route="mock"),
+            ),
+        )
+
+        task = asyncio.current_task()
+        assert task is not None
+        token = active_operation_var.set(task)
+        reset_commit_started()
+
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await run_saga(ctx, saga, [])
+
+            # The mark set at the torn commit survives for the boundary to read.
+            assert commit_started()
+
+        finally:
+            active_operation_var.reset(token)
+            reset_commit_started()
 
 
 class TestPivotSemantics:

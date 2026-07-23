@@ -80,3 +80,24 @@ class TestSagaProgress:
 
         assert err.kind is ExceptionKind.INFRASTRUCTURE
         assert "forward_incomplete" in (err.code or "")
+
+    def test_step_ambiguous_error_is_infrastructure_and_says_not_compensated(self) -> None:
+        # The commit outcome is unknown: never the DOMAIN "compensated, consistent"
+        # claim, and the message must say compensation did NOT run.
+        p = _progress()
+        err = p.step_ambiguous_error(2, RuntimeError("cancelled at commit"))
+
+        assert err.kind is ExceptionKind.INFRASTRUCTURE
+        assert err.code == "saga.step_ambiguous"
+        assert "NOT compensated" in err.summary
+
+    def test_saga_step_outcome_unknown_matches_only_the_ambiguous_commit(self) -> None:
+        from forze.application.contracts.saga import saga_step_outcome_unknown
+        from forze.application.contracts.transaction import COMMIT_AMBIGUOUS_CODE
+        from forze.base.exceptions import exc
+
+        ambiguous = exc.internal("cancelled at commit", code=COMMIT_AMBIGUOUS_CODE)
+
+        assert saga_step_outcome_unknown(ambiguous)
+        assert not saga_step_outcome_unknown(exc.internal("plain internal"))
+        assert not saga_step_outcome_unknown(RuntimeError("not a CoreException"))

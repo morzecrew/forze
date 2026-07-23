@@ -13,9 +13,34 @@ import attrs
 
 from forze.base.exceptions import CoreException, exc
 
+from ..transaction import COMMIT_AMBIGUOUS_CODE
 from .value_objects import SagaStepKind, validate_saga_order
 
 # ----------------------- #
+
+SAGA_STEP_AMBIGUOUS_CODE = "saga.step_ambiguous"
+"""Error code of :meth:`SagaProgress.step_ambiguous_error` — an indeterminate saga.
+
+Infrastructure-kind (an operator must act), but unlike its kind's default it must
+never be blind-retried: the interrupted step may have committed, so a retry re-runs
+the saga into a possible double-execution. Drivers whose retry semantics key on more
+than the kind (the Temporal ``ApplicationError`` mapping) pin this code non-retryable
+explicitly."""
+
+
+def saga_step_outcome_unknown(error: BaseException) -> bool:
+    """Whether a failed step's *commit outcome* is unknown (it may have committed).
+
+    A cancellation landing at a step's transaction commit — an ordinary drain timeout —
+    surfaces as a ``commit_ambiguous`` error. Reading it as a step *failure* would run
+    the compensation pass against an outcome nobody knows: the step may be committed
+    (leaving it standing while its predecessors are rolled back — split-brain) and the
+    resulting ``saga.step_failed`` would assert a consistency that does not hold. Every
+    driver must check this **before** its failure handling and raise
+    :meth:`SagaProgress.step_ambiguous_error` instead, compensating nothing.
+    """
+
+    return isinstance(error, CoreException) and error.code == COMMIT_AMBIGUOUS_CODE
 
 
 @final
@@ -131,6 +156,40 @@ class SagaProgress:
             f"Saga {self.saga_name!r} failed at step {step_name!r}; completed steps "
             "were compensated.",
             code="saga.step_failed",
+            details={
+                "saga": self.saga_name,
+                "step": step_name,
+                "cause": str(error),
+            },
+        )
+
+    # ....................... #
+
+    def step_ambiguous_error(
+        self,
+        index: int,
+        error: BaseException,
+    ) -> CoreException:
+        """Build the failure raised when a step's commit outcome is unknown.
+
+        INFRASTRUCTURE, like ``saga.compensation_failed``: the system may be
+        inconsistent and an operator must act. Nothing was compensated — with the
+        step's outcome unknown, compensating the completed steps would roll them back
+        around an effect that may be committed, and compensating the ambiguous step
+        itself could undo work that never happened. Deliberately **not** DOMAIN: the
+        consistency claim ``saga.step_failed`` carries ("completed steps were
+        compensated") cannot be made here, and a durable journal must not record this
+        saga as a cleanly rolled-back business outcome.
+        """
+
+        step_name = self._names[index]
+
+        return exc.infrastructure(
+            f"Saga {self.saga_name!r} was interrupted at step {step_name!r} and the "
+            "step's commit outcome is unknown (it may have committed); completed "
+            "steps were NOT compensated. Reconcile the step's effect manually "
+            "before re-running.",
+            code=SAGA_STEP_AMBIGUOUS_CODE,
             details={
                 "saga": self.saga_name,
                 "step": step_name,

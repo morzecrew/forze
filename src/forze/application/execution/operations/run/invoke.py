@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.durable.function import DurableFunctionSpec
 from forze.application.contracts.execution import Handler, OnSuccess, TwoPhaseHandler
-from forze.application.contracts.transaction import AfterCommitPort
+from forze.application.contracts.transaction import COMMIT_AMBIGUOUS_CODE, AfterCommitPort
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
 
@@ -111,7 +111,7 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
                         "transaction commit; the commit outcome is ambiguous (it may "
                         "have committed). Surfaced as non-retryable so a retry cannot "
                         "double-execute — reconcile before re-running.",
-                        code="commit_ambiguous",
+                        code=COMMIT_AMBIGUOUS_CODE,
                     ) from error
 
                 raise exc.timeout(

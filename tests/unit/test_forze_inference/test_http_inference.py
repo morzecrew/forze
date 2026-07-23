@@ -229,6 +229,71 @@ class TestErrorTaxonomy:
             await port.predict(_Features())
         assert ei.value.code == "inference_endpoint_unavailable"
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [401, 403])
+    async def test_upstream_auth_refusal_is_infrastructure_not_caller_error(
+        self, status: int
+    ) -> None:
+        # An expired service credential or a WAF rule is a deployment fault: as a
+        # caller error it would be a permanent 422 with no 5xx alert and no retry.
+        port = await self._port_answering(status)
+        with pytest.raises(CoreException) as ei:
+            await port.predict(_Features())
+        assert ei.value.code == "inference_endpoint_unavailable"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [400, 401, 403, 422, 500])
+    async def test_upstream_body_is_never_embedded_in_the_error(self, status: int) -> None:
+        # A model server's error body can echo the offending feature values or a
+        # container traceback — on the plane declared PII-dense by construction, and
+        # into a summary the API caller sees verbatim below 500. Logged, never raised.
+        leaked = "rejected feature ssn=078-05-1120"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(status, text=leaked)
+
+        port = _ctx(await _client(handler), _config()).inference.model(_spec())
+
+        with pytest.raises(CoreException) as ei:
+            await port.predict(_Features())
+
+        assert "078-05-1120" not in ei.value.summary
+        assert "078-05-1120" not in str(ei.value.details or {})
+
+    @pytest.mark.asyncio
+    async def test_upstream_body_is_never_logged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The log scrubber recognizes credential-shaped patterns, not arbitrary PII —
+        # so the body must be withheld from the log line itself, not entrusted to it.
+        # Only the status and the body's size are recorded.
+        from forze_inference.http.kernel import client as client_module
+
+        class _Recorder:
+            def __init__(self) -> None:
+                self.lines: list[str] = []
+
+            def warning(self, msg: str, *args: object, **kwargs: object) -> None:
+                del kwargs
+                self.lines.append(str(msg) % args if args else str(msg))
+
+        recorder = _Recorder()
+        monkeypatch.setattr(client_module, "logger", recorder)
+
+        leaked = "rejected feature ssn=078-05-1120"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(422, text=leaked)
+
+        port = _ctx(await _client(handler), _config()).inference.model(_spec())
+
+        with pytest.raises(CoreException):
+            await port.predict(_Features())
+
+        assert recorder.lines  # the failure is still observable...
+        assert all("078-05-1120" not in line for line in recorder.lines)
+        assert any(str(len(leaked)) in line for line in recorder.lines)  # ...by size
+
 
 # ....................... #
 

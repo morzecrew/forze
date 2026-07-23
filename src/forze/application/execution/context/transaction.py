@@ -8,6 +8,7 @@ import attrs
 
 from forze.application._logger import logger
 from forze.application.contracts.transaction import (
+    COMMIT_AMBIGUOUS_CODE,
     IsolationAware,
     IsolationLevel,
     TransactionallyEnlistable,
@@ -504,7 +505,7 @@ class TransactionContext:
                 f"{route_name!r}; the commit outcome is ambiguous (it may have "
                 "committed). Surfaced as non-retryable so a retry cannot "
                 "double-execute — reconcile before re-running.",
-                code="commit_ambiguous",
+                code=COMMIT_AMBIGUOUS_CODE,
             ) from error
 
     # ....................... #

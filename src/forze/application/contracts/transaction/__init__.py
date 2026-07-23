@@ -2,6 +2,7 @@
 
 from .deps import TransactionDeps, TransactionManagerDepKey, TransactionManagerDepPort
 from .ports import (
+    COMMIT_AMBIGUOUS_CODE,
     AfterCommitPort,
     IsolationAware,
     IsolationLevel,
@@ -15,6 +16,7 @@ from .ports import (
 # ----------------------- #
 
 __all__ = [
+    "COMMIT_AMBIGUOUS_CODE",
     "AfterCommitPort",
     "IsolationAware",
     "IsolationLevel",

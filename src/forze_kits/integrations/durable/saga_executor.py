@@ -27,7 +27,14 @@ from forze.application.contracts.saga import (
     SagaDefinition,
     SagaProgress,
     SagaStep,
+    saga_step_outcome_unknown,
 )
+from forze.application.contracts.transaction import COMMIT_AMBIGUOUS_CODE
+from forze.application.execution.context.commit_state import (
+    commit_started,
+    reset_commit_started,
+)
+from forze.base.asyncio import run_to_completion
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
 
 from .._logger import logger
@@ -46,13 +53,25 @@ _STEP_FAILURE_KEY = "__saga_step_failed__"
 (instead of a state dict), so a replay re-raises the failure rather than re-running the
 action — the failed body is not re-run on replay, like a completed step's."""
 
+_STEP_FAILURE_CODE_KEY = "__saga_step_failed_code__"
+"""The failed step's :class:`CoreException` code, journaled beside the message.
+
+The journal must preserve every error attribute the ``run`` ladder *branches* on, or a
+replayed failure decides differently than the live one did. Today that is the
+``commit_ambiguous`` code: flattened to a bare message, an ambiguous step commit would
+re-raise as an ordinary failure, be compensated around a possibly-committed effect, and
+journal DOMAIN ``saga.step_failed`` as a consistent rollback — permanently."""
+
 
 @final
 class _JournaledStepFailure(Exception):
     """A step-action failure re-raised from the journal on replay (never re-runs the action).
 
     Carries the recorded message so the saga coordinator wraps it exactly as it wrapped the
-    original failure; it is always caught inside :meth:`DurableSagaExecutor.run`.
+    original failure; it is always caught inside :meth:`DurableSagaExecutor.run`. An
+    **ambiguous** journaled failure is not re-raised as this type — it is rebuilt as a
+    ``commit_ambiguous`` :class:`CoreException` so the ladder's ambiguity check fires on
+    the live pass and on every replay alike.
     """
 
 
@@ -141,6 +160,13 @@ class DurableSagaExecutor:
                 )
 
             except Exception as error:
+                # An ambiguous step commit (a drain-timeout cancel at the commit) is
+                # NOT a step failure: the step may be committed, so compensating would
+                # split-brain and ``saga.step_failed`` would journal a false
+                # "compensated, consistent" outcome that replay never revisits.
+                if saga_step_outcome_unknown(error):
+                    raise progress.step_ambiguous_error(index, error) from error
+
                 if progress.committed:
                     # Past the pivot: complete forward (manually), never compensate.
                     raise progress.forward_incomplete_error(index, error) from error
@@ -172,6 +198,16 @@ class DurableSagaExecutor:
 
             return cast("BaseModel", new_state).model_dump(mode="json")
 
+        def _ambiguous_outcome() -> JsonDict:
+            return {
+                _STEP_FAILURE_KEY: (
+                    f"Saga step {step.name!r} was cancelled at or after its "
+                    "transaction commit; the commit outcome is ambiguous "
+                    "(it may have committed)."
+                ),
+                _STEP_FAILURE_CODE_KEY: COMMIT_AMBIGUOUS_CODE,
+            }
+
         async def _journaled() -> JsonDict:
             try:
                 if step.retry_policy is not None:
@@ -179,21 +215,103 @@ class DurableSagaExecutor:
 
                 return await self._retry_transient(str(step.name), _act)
 
+            except asyncio.CancelledError:
+                # The runner's task is not operation-owned, so the transaction scope
+                # re-raises a cancellation raw (its commit_ambiguous conversion is
+                # operation-only) — and ``except Exception`` below never sees it.
+                #
+                # Before the commit the cancel is crash-shaped: nothing committed, no
+                # journal row, and replay safely re-runs the body — re-raise. At or
+                # after it the outcome is unknown: left unjournaled, replay would
+                # re-run a possibly-committed body (duplicate effects), so journal the
+                # ambiguity instead. Absorbing the cancel balances the task's cancel
+                # count (as the tx scope's own conversion does), so the journal write
+                # below can land and the run still terminates — with ``step_ambiguous``
+                # — instead of wedging the drain.
+                task = asyncio.current_task()
+
+                # ``task is None`` folds into the re-raise (as the tx scope's own
+                # conversion does): outside a task there is no cancel count to
+                # balance, so the raw cancellation propagates.
+                if not commit_started() or task is None:
+                    raise
+
+                task.uncancel()
+
+                return _ambiguous_outcome()
+
             except Exception as error:
                 # Record the failure as this step's journaled outcome so a re-invocation of
                 # the same durable run (crash recovery / replay) re-raises it instead of
                 # re-running the action's body. Only genuine failures reach here: a
                 # retryable-classified one was already retried in place (by the step's own
                 # policy or the executor's bounded default) and exhausted its attempts.
-                return {_STEP_FAILURE_KEY: str(error)}
+                record: JsonDict = {_STEP_FAILURE_KEY: str(error)}
+
+                # The code rides along (see _STEP_FAILURE_CODE_KEY): the run ladder
+                # branches on it, so a journal that drops it rewrites the outcome.
+                if isinstance(error, CoreException) and error.code:
+                    record[_STEP_FAILURE_CODE_KEY] = error.code
+
+                return record
+
+        # Fresh commit mark for THIS step, set before the whole step-port boundary:
+        # the runner's task crosses no invocation boundary between steps, so a
+        # previous step's committed transaction would otherwise leave the mark set
+        # and misread a pre-commit cancel in either handler.
+        reset_commit_started()
 
         # Journaled: a completed step returns its recorded context on replay and its action
         # is not re-run; a failed step records its failure and re-raises it on replay (never
         # re-running the action). Transient failures are retried before anything journals.
-        encoded = await step_port.run(str(step.name), _journaled)
+        try:
+            encoded = await step_port.run(str(step.name), _journaled)
+
+        except asyncio.CancelledError:
+            # The cancel landed inside the step-port boundary itself — around the
+            # journal lookup or the outcome write, outside _journaled's own handler.
+            # Before this step's commit nothing is at stake: propagate raw (crash-
+            # shaped; replay re-runs the body). At/after it the step's effect may be
+            # committed while its journal row may not have landed — replay would
+            # re-run a committed body. Absorb the cancel and journal the ambiguity
+            # under the port's first-write-wins: if the success row DID land, that
+            # row wins and the step is truthfully complete; if it did not, replay
+            # raises ``step_ambiguous`` for reconciliation.
+            task = asyncio.current_task()
+
+            if not commit_started() or task is None:
+                raise
+
+            task.uncancel()
+
+            async def _record_ambiguous() -> JsonDict:
+                return _ambiguous_outcome()
+
+            async def _write_ambiguous() -> JsonDict:
+                return await step_port.run(str(step.name), _record_ambiguous)
+
+            # A further cancellation must not tear THIS write — lost, resume would
+            # re-run the possibly-committed body. run_to_completion finishes the
+            # write under repeated cancels and only then re-raises the pending
+            # cancellation: the row is already down, so resume reconciles either way.
+            encoded = await run_to_completion(_write_ambiguous())
+
+            if _STEP_FAILURE_KEY not in encoded:
+                # The success row had already landed — the journal is truthful and the
+                # step is complete. The run still stops now: a drain asked it to, and
+                # resume replays the success and continues from here.
+                raise asyncio.CancelledError from None
 
         if _STEP_FAILURE_KEY in encoded:
-            raise _JournaledStepFailure(str(encoded[_STEP_FAILURE_KEY]))
+            message = str(encoded[_STEP_FAILURE_KEY])
+
+            # An ambiguous step commit is rebuilt with its code intact — as a bare
+            # _JournaledStepFailure the ladder would compensate around a possibly
+            # committed effect and journal a false "compensated, consistent" outcome.
+            if encoded.get(_STEP_FAILURE_CODE_KEY) == COMMIT_AMBIGUOUS_CODE:
+                raise exc.internal(message, code=COMMIT_AMBIGUOUS_CODE)
+
+            raise _JournaledStepFailure(message)
 
         return ctx_model.model_validate(encoded)
 
