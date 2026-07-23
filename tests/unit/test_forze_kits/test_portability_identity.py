@@ -20,8 +20,8 @@ import pytest
 
 from forze import build_runtime
 from forze.application.contracts.inventory import SpecRegistry
-from forze.base.exceptions import CoreException
 from forze.application.execution import ExecutionRuntime
+from forze.base.exceptions import CoreException
 from forze_identity.inventory import spec_contributions
 from forze_kits.integrations.portability import (
     UNTENANTED,

@@ -54,6 +54,7 @@ def _setup_logging(level: LogLevel) -> None:
 
 # --8<-- [start:setup]
 BOB = UUID("22222222-2222-2222-2222-222222222222")  # the authenticated principal
+DEVICE = "laptop"  # a stable per-device id: the stream and the ack share one cursor
 
 
 class _BindPrincipal:
@@ -126,7 +127,7 @@ def connect(client: TestClient, *, last_event_id: str | None = None) -> list[dic
     """The browser's EventSource connect: drain the replay into ``{id, event, data}`` frames."""
 
     headers = {"Last-Event-ID": last_event_id} if last_event_id else {}
-    response = client.get("/realtime/sse", headers=headers)
+    response = client.get("/realtime/sse", params={"device_id": DEVICE}, headers=headers)
     response.raise_for_status()
 
     frames: list[dict[str, Any]] = []
@@ -147,9 +148,16 @@ def connect(client: TestClient, *, last_event_id: str | None = None) -> list[dic
 
 
 def ack(client: TestClient, *, up_to: str) -> bool:
-    """The cumulative ack — SSE has no upstream channel, so it rides a plain POST."""
+    """The cumulative ack — SSE has no upstream channel, so it rides a plain POST.
 
-    response = client.post("/realtime/sse/ack", json={"up_to": up_to})
+    The ``device_id`` is required: without one every tab of the principal would share a
+    single cursor, and one tab's cumulative ack could let the trim delete another tab's
+    undelivered backlog. The stream passes the same id so both address the same cursor.
+    """
+
+    response = client.post(
+        "/realtime/sse/ack", json={"up_to": up_to}, params={"device_id": DEVICE}
+    )
     response.raise_for_status()
 
     return bool(response.json()["acked"])

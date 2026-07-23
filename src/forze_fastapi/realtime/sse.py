@@ -231,11 +231,20 @@ async def _resolve_since(
 
 
 async def _replay_frames(
-    mailbox: RealtimeMailbox, *, principal: str, since: HlcTimestamp | None
+    mailbox: RealtimeMailbox,
+    *,
+    principal: str,
+    since: HlcTimestamp | None,
+    delivered: list[int],
 ) -> AsyncIterator[str]:
-    """The backlog past *since*, as SSE frames (oldest-first, ids anchor the resume)."""
+    """The backlog past *since*, as SSE frames (oldest-first, ids anchor the resume).
+
+    *delivered* (a one-cell box, since a generator cannot return) counts the yielded
+    frames so the caller can tell a drained tail from a cap-filled stream.
+    """
 
     async for entry in iter_replay(mailbox, principal=principal, since=since):
+        delivered[0] += 1
         yield _sse_frame(event=entry.event, event_id=entry.event_id, payload=entry.payload)
 
 
@@ -383,11 +392,26 @@ def attach_realtime_sse_route(
                     last_event_id=last_event_id,
                 )
 
-                async for frame in _replay_frames(mailbox, principal=principal, since=since):
+                replayed = [0]
+
+                async for frame in _replay_frames(
+                    mailbox, principal=principal, since=since, delivered=replayed
+                ):
                     yield frame
 
                 if subscription is None:
                     return  # catch-up mode: the browser reconnects with Last-Event-ID
+
+                # A replay that filled the mailbox cap may have stopped short of the
+                # retained tail; entering the live tail would skip that undelivered
+                # middle, and a later unclamped ack would advance the cursor over it
+                # (the all-device trim then hard-deletes it). End the stream instead:
+                # the browser reconnects with Last-Event-ID and the next replay
+                # continues from exactly here until the backlog is drained.
+                cap = getattr(mailbox, "cap", None)
+
+                if cap is not None and replayed[0] >= int(cap):
+                    return
 
                 async for frame in _live_frames(
                     subscription, keepalive_interval=keepalive_interval
@@ -417,6 +441,21 @@ def attach_realtime_sse_route(
     ) -> RealtimeAckResult:
         ctx = ctx_dep()
         principal = _authenticated_principal(ctx)
+
+        if not device_id:
+            # Device-less streams share ONE per-principal fallback cursor: a cumulative
+            # ack on that multi-writer cursor lets one browser tab advance the trim
+            # floor over another tab's undelivered backlog, which the all-device trim
+            # then hard-deletes. Streams stay device-less-friendly (Last-Event-ID
+            # resumes each tab precisely); the durable cursor needs a device identity.
+            raise exc.validation(
+                "The SSE ack requires ?device_id=... — without one every tab of this "
+                "principal shares a single cursor, and one tab's cumulative ack would "
+                "let the trim delete another tab's undelivered backlog. Pass a stable "
+                "per-device id (on the stream endpoint too), or skip acks and rely on "
+                "Last-Event-ID resume.",
+                code="realtime_ack_requires_device",
+            )
 
         position = await acknowledge_up_to(
             mailbox_factory(ctx),

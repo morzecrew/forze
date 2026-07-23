@@ -12,6 +12,7 @@ require_inference_sagemaker()
 
 import aioboto3
 import attrs
+from botocore.config import Config as AioConfig
 from botocore.exceptions import BotoCoreError, ClientError
 from pydantic import SecretStr
 
@@ -24,6 +25,16 @@ from .port import SageMakerRuntimeClientPort
 # ----------------------- #
 
 logger = get_logger("forze_inference.sagemaker")
+
+_SINGLE_ATTEMPT_CONFIG = AioConfig(retries={"max_attempts": 1, "mode": "standard"})
+"""Botocore retries pinned OFF (one attempt total) unless the caller opts in.
+
+``invoke_endpoint`` is metered and non-idempotent: a generative endpoint that completes
+the work and then fails on the response write would be silently re-invoked — charged and
+side-effected 2–3× — by botocore's default retry mode, while the framework's own
+resilience plane observes exactly one call. Retrying is the application's decision, made
+where it is visible and bounded: a resilience policy, or an explicit ``config`` whose
+``retries`` the client honors untouched."""
 
 _THROTTLED_CODES = frozenset(
     {"ThrottlingException", "TooManyRequestsException", "ThrottledException"}
@@ -112,10 +123,28 @@ class SageMakerRuntimeClient(SageMakerRuntimeClientPort):
         endpoint_url: str | None = None,
         access_key_id: str | None = None,
         secret_access_key: SecretStr | None = None,
+        config: AioConfig | None = None,
     ) -> None:
+        """Open the runtime client.
+
+        :param config: Optional botocore configuration. Whatever is passed, botocore
+            retries stay pinned to a single attempt unless the config sets ``retries``
+            explicitly (see ``_SINGLE_ATTEMPT_CONFIG`` — ``invoke_endpoint`` is metered
+            and non-idempotent, so silent transport-level retries are opt-in only).
+        """
+
         async def setup() -> None:
             session = aioboto3.Session()
-            client_kwargs: dict[str, Any] = {}
+
+            effective_config = config if config is not None else _SINGLE_ATTEMPT_CONFIG
+
+            # botocore sets Config attributes dynamically, so read via getattr.
+            if getattr(effective_config, "retries", None) is None:
+                # A caller config without explicit retries keeps the no-retry pin
+                # (merge only fills the retries slot; every set option is preserved).
+                effective_config = effective_config.merge(_SINGLE_ATTEMPT_CONFIG)
+
+            client_kwargs: dict[str, Any] = {"config": effective_config}
 
             if region_name is not None:
                 client_kwargs["region_name"] = region_name

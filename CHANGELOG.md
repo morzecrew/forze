@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Inference seam** — typed model invocation behind one port; whether the model is a local artifact, a served endpoint or a cloud runtime is a wiring fact.
 
 - Handlers call `ctx.inference.model(spec)` for single, batch (all-or-nothing) or streaming prediction. It is a read-plane port, so a CQRS query can hold it; a backend response that does not match the declared output type is refused at the boundary rather than handed on.
-- Backends: a local adapter whose loader runs off the event loop and is warmed fail-closed at boot, a programmable mock, and remote adapters for KServe-V2/MLflow over HTTP and for SageMaker (extras `inference-http`, `inference-sagemaker`). Capabilities are declared per backend and unsupported features fail closed. Upstream error bodies are withheld from raised errors and from logs (only status, size, and the container's log pointer are recorded); an upstream 401/403 and a failing model container classify as infrastructure, not caller errors.
+- Backends: a local adapter whose loader runs off the event loop and is warmed fail-closed at boot, a programmable mock, and remote adapters for KServe-V2/MLflow over HTTP and for SageMaker (extras `inference-http`, `inference-sagemaker`). Capabilities are declared per backend and unsupported features fail closed.
+- Upstream error bodies are withheld from raised errors and from logs (only status, size, and the container's log pointer are recorded); an upstream 401/403 and a failing model container classify as infrastructure, not caller errors. SageMaker pins botocore retries to a single attempt unless configured explicitly (`invoke_endpoint` is metered and non-idempotent); the `config` knob is on the client and lifecycle hook.
 - Remote wiring refuses to build until data egress is explicitly acknowledged, and honours all four tenant-isolation tiers — `dedicated` requires a routed client with per-tenant credentials.
 - Simulation value capture masks inference inputs by default; any spec type can now declare its own sensitive capture fields.
 
@@ -107,6 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **One hostile frame could tear down a WebSocket connection** — a binary frame closes cleanly, and a command result that cannot be serialized becomes an error ack instead of cancelling every in-flight command.
 - **Redis counter reset returned the previous value, not the new one** (**behavior change** for callers relying on the old return); batch allocation now uniformly accepts a size of one and rejects anything smaller on every backend.
 - **A principal in two orgs could wedge the ack path forever** — the per-device cursor id now includes the tenant (it collided across tenants on the shared-table shape, looping find-miss/create-conflict unboundedly), and the compare-and-advance loop is bounded, raising `realtime_cursor_advance_stalled` instead of spinning.
+- **A cap-filled replay no longer lifts the ack clamp** — a replay that stopped at the mailbox cap could let a live-frame ack advance the cursor over the undelivered middle, which the trim then hard-deleted. Socket.IO keeps the delivered-floor clamp until a reconnect drains further; SSE ends the stream instead of entering the live tail, and `Last-Event-ID` resumes it.
+- **SSE acks require `?device_id=...`** (**behavior change**) — the device-less fallback cursor is shared by every tab of a principal, so one tab's cumulative ack could trim another tab's undelivered backlog. Device-less streams still work via `Last-Event-ID` resume.
 
 **A saga step interrupted at its own commit no longer reports a consistent rollback** — a drain-timeout cancel at a step's transaction commit (`commit_ambiguous`) was read as a step failure: earlier steps were compensated around a possibly-committed step and DOMAIN `saga.step_failed` falsely certified consistency. All three drivers (in-process, durable, Temporal) now compensate nothing and raise infrastructure-kind `saga.step_ambiguous` for operator reconciliation (pinned non-retryable in the Temporal mapping); the durable journal keeps the classification across crash recovery and replay.
 
@@ -166,6 +169,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Graph**
 
 - **A kind could seal its own key field, making its vertices unreachable** — a key field named in its own kind's encryption policy is now refused at spec construction; encrypting an ordinary property is unaffected.
+- **Neo4j: concurrent statements in one transaction no longer race the lazy open** — two statements under one `asyncio.gather` could each begin a transaction, the second orphaning the first (never committed; its session leaked); a scope now opens exactly one transaction.
+- **Neo4j: a routed transaction refuses a tenant change mid-scope** — later statements would run auto-committed on the other tenant's client while the scope committed only the first tenant's work; now fails closed (`neo4j_tx_tenant_conflict`), matching the direct client's database guard.
+
+**Meilisearch federation returned ciphertext for sealed fields** — `merge="federation"` now decrypts sealed fields through the same seam as every other read path (the same query returned plaintext under `merge="rrf"`), refuses sealed sort keys, and fails closed when the fused window exceeds the smallest member's `maxTotalHits`.
 
 ## [0.5.0] - 2026-07-13
 

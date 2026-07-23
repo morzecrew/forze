@@ -248,6 +248,8 @@ class _ConnectionLifecycle:
 
         client_key = connection.client_key(sid)
         progress = self._replay_progress.get(sid)
+        delivered = 0
+        cap: Any = None
 
         # Stream the backlog page-by-page inside the scope and emit as we go, so peak
         # memory is one page rather than the whole (up to ``cap``) backlog per
@@ -259,6 +261,7 @@ class _ConnectionLifecycle:
             with _bind_connection(ctx, connection):  # connection identity — fresh scope is empty
                 mailbox = self.mailbox_factory(ctx)  # ports resolved for this unit of work
                 cursors = self.cursors_factory(ctx)
+                cap = getattr(mailbox, "cap", None)
                 since = await cursors.get(principal=connection.principal, client_key=client_key)
 
                 if progress is not None and since is not None:
@@ -274,12 +277,21 @@ class _ConnectionLifecycle:
                         namespace=self.namespace,
                     )
 
+                    delivered += 1
+
                     if progress is not None:
                         progress.floor = entry.hlc
 
-        if progress is not None:
-            # only a fully-drained replay lifts the ack clamp — a replay that raised
-            # leaves ``complete`` False, so later acks stay bounded by what was sent
+        # A replay that filled the mailbox cap may have stopped short of the retained
+        # tail (``replay_since`` exits identically drained-vs-capped), so it must NOT
+        # lift the clamp: a live frame acked past the undelivered middle would advance
+        # the cursor over it and the all-device trim would hard-delete it. The clamp
+        # then holds at the replayed floor until the device reconnects and the next
+        # replay continues from there. Only a replay that provably drained (below the
+        # cap) — and did not raise — lifts it.
+        truncated = cap is not None and delivered >= int(cap)
+
+        if progress is not None and not truncated:
             progress.complete = True
 
     # ....................... #

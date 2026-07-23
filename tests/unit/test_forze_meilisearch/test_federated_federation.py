@@ -42,6 +42,8 @@ def _leg(name: str, index_uid: str) -> MagicMock:
     leg.field_map = {}
     leg.build_filter = MagicMock(return_value=None)
     leg.from_hit = lambda raw: dict(raw)
+    leg.config = MagicMock()
+    leg.config.max_total_hits = 1000
     return leg
 
 
@@ -437,3 +439,105 @@ async def test_federation_snapshot_read_miss_then_searches_and_writes() -> None:
     )
     assert stored is not None
     assert len(stored) == 1
+
+
+# ....................... #
+# Sealed fields, sealed sorts, and the maxTotalHits window — the guards every other
+# read path applies must hold under native federation too.
+
+
+@pytest.mark.asyncio
+async def test_federation_decrypts_rows_through_the_shared_seam(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Native federation used to model_validate raw hits: a sealed value is a base64
+    # string, so validation succeeded silently and the caller got ciphertext — while
+    # the same query under merge='rrf' (which decodes per leg) returned plaintext.
+    from forze_meilisearch.adapters.search import federated as federated_module
+
+    seam_codecs: list[object] = []
+
+    async def _fake_decrypt(codec: object, rows: list[dict[str, object]]) -> tuple[
+        list[dict[str, object]], object
+    ]:
+        seam_codecs.append(codec)
+        return [{**row, "label": "PLAIN"} for row in rows], codec
+
+    monkeypatch.setattr(federated_module, "decrypt_search_rows", _fake_decrypt)
+
+    client = MagicMock()
+    client.multi_search = AsyncMock(
+        return_value=MagicMock(
+            hits=[{"id": "1", "label": "U0VBTEVE", "_federation": {"indexUid": "idx_a"}}],
+            estimated_total_hits=1,
+        )
+    )
+
+    adapter = MeilisearchFederatedSearchAdapter(
+        federated_spec=FederatedSearchSpec(name="fed_seal", members=(_mem("a"), _mem("b"))),
+        legs=(("a", _leg("a", "idx_a")), ("b", _leg("b", "idx_b"))),
+        client=client,
+        merge="federation",
+    )
+
+    page = await adapter.search_page("q")
+
+    assert page.hits[0].hit.label == "PLAIN"  # decoded from the decrypted row, not raw
+    assert seam_codecs  # the leg's read codec went through the shared seam
+
+
+@pytest.mark.asyncio
+async def test_federation_refuses_a_sealed_sort_key() -> None:
+    # merge='rrf' legs get this refusal from the shared offset executor; native
+    # federation renders its own sorts and must apply the same guard.
+    from forze.application.contracts.crypto import FieldEncryption
+
+    class _SealedHit(BaseModel):
+        id: str
+        label: str = ""
+        secret: str = ""
+
+    sealed_leg = _leg("a", "idx_a")
+    sealed_leg.spec = SearchSpec(
+        name="a",
+        model_type=_SealedHit,
+        fields=["label"],
+        encryption=FieldEncryption(encrypted=frozenset({"secret"})),
+    )
+
+    client = MagicMock()
+    adapter = MeilisearchFederatedSearchAdapter(
+        federated_spec=FederatedSearchSpec(name="fed_sort", members=(_mem("a"), _mem("b"))),
+        legs=(("a", sealed_leg), ("b", _leg("b", "idx_b"))),
+        client=client,
+        merge="federation",
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.search_page("q", sorts={"secret": "asc"})
+
+    assert ei.value.code == "core.search.encrypted_sort_field"
+    client.multi_search.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_federation_deep_window_fails_closed_on_max_total_hits() -> None:
+    # Each leg contributes at most its index's maxTotalHits; a fused window past the
+    # smallest cap comes back silently short. Refuse, mirroring the single-index guard.
+    client = MagicMock()
+    adapter = MeilisearchFederatedSearchAdapter(
+        federated_spec=FederatedSearchSpec(name="fed_cap", members=(_mem("a"), _mem("b"))),
+        legs=(("a", _leg("a", "idx_a")), ("b", _leg("b", "idx_b"))),
+        client=client,
+        merge="federation",
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.search_page("q", pagination={"offset": 995, "limit": 10})
+
+    assert ei.value.code == "core.search.max_total_hits_exceeded"
+    client.multi_search.assert_not_called()
+
+    # A missing limit still reads Meilisearch's default page — it counts toward the window.
+    with pytest.raises(CoreException):
+        await adapter.search_page("q", pagination={"offset": 990})

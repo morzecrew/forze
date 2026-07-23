@@ -205,6 +205,42 @@ async def test_mid_replay_ack_of_a_live_frame_is_clamped_to_the_delivered_floor(
     assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(3)
 
 
+async def test_cap_filled_replay_keeps_the_ack_clamp() -> None:
+    # A replay that filled the mailbox cap may have stopped short of the retained
+    # tail — ``replay_since`` exits identically drained-vs-capped. Lifting the clamp
+    # would let a live-frame ack advance the cursor over the undelivered middle,
+    # which the all-device trim then hard-deletes. The clamp must hold at the
+    # replayed floor until a reconnect drains further.
+    sio, cursors = _StubSio(), InMemoryMailboxCursors()
+    mailbox = InMemoryRealtimeMailbox(cap=2)
+
+    for n in (1, 2):
+        await mailbox.store(
+            principal=_PRINCIPAL_STR, event_id=f"e{n}", hlc=_hlc(n), signal=_signal(str(n))
+        )
+
+    attach_realtime_connection(
+        sio,  # pyright: ignore[reportArgumentType]
+        resolve=_resolver(_connection()),
+        mailbox_factory=lambda _ctx: mailbox,
+        cursors_factory=lambda _ctx: cursors,
+        runtime=_runtime(),
+    )
+
+    await sio.handlers["connect"]("sid-1", {}, None)  # replay yields exactly cap entries
+
+    # A signal stored after the replay window closed — on the mailboxed path its live
+    # emit is deliberately swallowed, so nothing has delivered it yet.
+    await mailbox.store(principal=_PRINCIPAL_STR, event_id="e3", hlc=_hlc(3), signal=_signal("3"))
+
+    await sio.handlers["realtime.ack"]("sid-1", {"up_to": "e3"})
+
+    # Clamped to the replayed floor: the cap-filled replay did not lift the clamp.
+    assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(2)
+    retained = [e.event_id for e in await mailbox.read_since(principal=_PRINCIPAL_STR, since=None)]
+    assert "e3" in retained  # the undelivered entry survives the trim
+
+
 async def test_ack_before_anything_is_delivered_is_ignored() -> None:
     # a fresh device (no cursor row) acking a live frame before the replay has
     # delivered anything has no delivered prefix to stand on — the cursor must not

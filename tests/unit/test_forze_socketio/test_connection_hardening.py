@@ -230,6 +230,6 @@ def test_naive_expires_at_is_refused_at_construction() -> None:
     from forze.base.exceptions import CoreException
 
     with pytest.raises(CoreException) as caught:
-        _conn(expires_at=datetime(2026, 1, 1))  # noqa: DTZ001 — the refusal under test
+        _conn(expires_at=datetime(2026, 1, 1))
 
     assert caught.value.code == "realtime_expiry_naive"

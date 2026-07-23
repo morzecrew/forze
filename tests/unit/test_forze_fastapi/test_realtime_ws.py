@@ -13,6 +13,7 @@ same frozen-registry discipline as HTTP.
 from __future__ import annotations
 
 import json
+from datetime import UTC
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -63,11 +64,11 @@ async def _create_note(args: _CreateNote) -> _NoteAck:
 
 
 async def _note_when(_args: _CreateNote) -> Any:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     # an untyped ack (ack_type=None) passes through parse_ack verbatim — a datetime
     # here is exactly the non-JSON value the serialization guard must contain
-    return {"at": datetime(2026, 1, 1, tzinfo=timezone.utc)}
+    return {"at": datetime(2026, 1, 1, tzinfo=UTC)}
 
 
 def _registry() -> Any:
@@ -605,9 +606,8 @@ class TestOriginAllowlist:
 
         with client.websocket_connect(
             "/realtime/ws", headers={"Origin": "https://evil.example"}
-        ) as ws:
-            with pytest.raises(WebSocketDisconnect) as caught:
-                ws.receive_json()
+        ) as ws, pytest.raises(WebSocketDisconnect) as caught:
+            ws.receive_json()
 
         assert caught.value.code == 1008
         assert "Origin" in str(caught.value.reason)
@@ -666,7 +666,7 @@ class TestCredentialExpiry:
         with pytest.raises(CoreException) as caught:
             WsConnection(
                 authn=AuthnIdentity(principal_id=_PRINCIPAL),
-                expires_at=datetime(2026, 1, 1),  # noqa: DTZ001 — the refusal under test
+                expires_at=datetime(2026, 1, 1),
             )
 
         assert caught.value.code == "realtime_expiry_naive"

@@ -109,6 +109,62 @@ def _client_error(
 # ....................... #
 
 
+class TestRetryPinning:
+    """Botocore retries stay off unless a caller config sets them explicitly.
+
+    ``invoke_endpoint`` is metered and non-idempotent: botocore's default retry mode
+    would silently re-invoke (and re-bill) a generative endpoint that completed the
+    work and failed on the response write, invisible to the resilience plane.
+    """
+
+    @pytest.mark.asyncio
+    async def test_default_config_pins_botocore_retries_to_one_attempt(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session = _fake_aws(monkeypatch, _FakeRuntime())
+        client = SageMakerRuntimeClient()
+
+        await client.initialize()
+
+        cfg = session.client_kwargs["config"]
+        assert cfg.retries == {"max_attempts": 1, "mode": "standard"}
+
+        await client.close()
+
+    @pytest.mark.asyncio
+    async def test_caller_config_without_retries_keeps_the_pin_and_its_options(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from botocore.config import Config
+
+        session = _fake_aws(monkeypatch, _FakeRuntime())
+        client = SageMakerRuntimeClient()
+
+        await client.initialize(config=Config(read_timeout=5))
+
+        cfg = session.client_kwargs["config"]
+        assert cfg.retries == {"max_attempts": 1, "mode": "standard"}
+        assert cfg.read_timeout == 5  # the caller's options survive the merge
+
+        await client.close()
+
+    @pytest.mark.asyncio
+    async def test_explicit_retries_are_the_callers_choice(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from botocore.config import Config
+
+        session = _fake_aws(monkeypatch, _FakeRuntime())
+        client = SageMakerRuntimeClient()
+
+        await client.initialize(config=Config(retries={"max_attempts": 4, "mode": "adaptive"}))
+
+        cfg = session.client_kwargs["config"]
+        assert cfg.retries == {"max_attempts": 4, "mode": "adaptive"}
+
+        await client.close()
+
+
 class TestErrorTranslation:
     """Every AWS failure class maps onto the port's taxonomy — the table a caller's
     retry policy keys off, so a wrong mapping silently changes retry behavior."""
@@ -225,7 +281,8 @@ class TestRuntimeClient:
 
         try:
             assert session.service == "sagemaker-runtime"
-            assert session.client_kwargs == {
+            # ``config`` always rides along (the no-retry pin); credentials exactly as given.
+            assert {k: v for k, v in session.client_kwargs.items() if k != "config"} == {
                 "region_name": "eu-west-1",
                 "endpoint_url": "http://local",
                 "aws_access_key_id": "AKIA",
@@ -247,7 +304,8 @@ class TestRuntimeClient:
         await client.initialize()
 
         try:
-            assert session.client_kwargs == {}
+            # Only the no-retry config pin: no credential/region kwargs at all.
+            assert set(session.client_kwargs) == {"config"}
         finally:
             await client.close()
 
@@ -484,7 +542,9 @@ class TestLifecycleSteps:
         await step.startup(ctx)
 
         try:
-            assert session.client_kwargs == {"region_name": "eu-west-1"}
+            assert {k: v for k, v in session.client_kwargs.items() if k != "config"} == {
+                "region_name": "eu-west-1"
+            }
         finally:
             await step.shutdown(ctx)
 

@@ -185,11 +185,13 @@ class TestAck:
         ids = await _seed(mailbox)
         client = _build_client(mailbox=mailbox, cursors=cursors)
 
-        acked = client.post("/realtime/sse/ack", json={"up_to": ids[1]})
+        acked = client.post(
+            "/realtime/sse/ack", json={"up_to": ids[1]}, params={"device_id": "d1"}
+        )
         assert acked.status_code == 200
         assert acked.json() == {"acked": True}
 
-        response = client.get("/realtime/sse")
+        response = client.get("/realtime/sse", params={"device_id": "d1"})
         assert [f["id"] for f in _frames(response.text)] == [ids[2]]
 
     async def test_ack_of_an_unretained_id_reports_false(self) -> None:
@@ -197,8 +199,39 @@ class TestAck:
         await _seed(mailbox)
         client = _build_client(mailbox=mailbox, cursors=InMemoryMailboxCursors())
 
-        acked = client.post("/realtime/sse/ack", json={"up_to": "gone"})
+        acked = client.post(
+            "/realtime/sse/ack", json={"up_to": "gone"}, params={"device_id": "d1"}
+        )
         assert acked.json() == {"acked": False}
+
+    async def test_cap_filled_replay_ends_the_stream_instead_of_entering_live(self) -> None:
+        # A replay that filled the mailbox cap may have stopped short of the retained
+        # tail; entering the live tail would skip that undelivered middle, and a later
+        # unclamped ack would let the trim delete it. The stream ends instead — the
+        # browser reconnects with Last-Event-ID and continues from exactly here.
+        # (Without the guard this request would hang in the live tail.)
+        mailbox = InMemoryRealtimeMailbox(cap=3)
+        ids = await _seed(mailbox)  # exactly cap retained entries
+        hub = RealtimeSseHub()
+        hub.ready.set()
+        client = _build_client(mailbox=mailbox, cursors=InMemoryMailboxCursors(), hub=hub)
+
+        response = client.get("/realtime/sse")  # completes despite the wired live hub
+
+        assert [f["id"] for f in _frames(response.text)] == ids
+
+    async def test_device_less_ack_is_refused(self) -> None:
+        # Device-less streams share one per-principal fallback cursor: a cumulative ack
+        # from one tab would advance the shared trim floor over another tab's
+        # undelivered backlog, which the all-device trim hard-deletes. Fail closed.
+        mailbox = InMemoryRealtimeMailbox()
+        ids = await _seed(mailbox)
+        client = _build_client(mailbox=mailbox, cursors=InMemoryMailboxCursors())
+
+        response = client.post("/realtime/sse/ack", json={"up_to": ids[0]})
+
+        assert response.status_code == 422
+        assert "requires ?device_id" in response.text
 
     async def test_device_scoped_cursor_via_query_param(self) -> None:
         mailbox = InMemoryRealtimeMailbox()

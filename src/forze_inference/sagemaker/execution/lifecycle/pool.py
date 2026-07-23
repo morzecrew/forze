@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING, Any, final
 
 import attrs
+from botocore.config import Config as AioConfig
 from pydantic import SecretStr
 
 from forze.application.contracts.deps import DepKey
@@ -44,6 +45,11 @@ class SageMakerInferenceStartupHook(LifecycleHook):
     )
     """Secret key; ``None`` defers to the default botocore credential chain."""
 
+    config: AioConfig | None = attrs.field(default=None, repr=False)
+    """Optional botocore configuration. Botocore retries stay pinned to a single
+    attempt unless ``retries`` is set here explicitly — ``invoke_endpoint`` is metered
+    and non-idempotent, so silent transport-level retries are opt-in only."""
+
     # ....................... #
 
     async def __call__(self, ctx: "ExecutionContext") -> None:
@@ -57,6 +63,7 @@ class SageMakerInferenceStartupHook(LifecycleHook):
             endpoint_url=self.endpoint_url,
             access_key_id=self.access_key_id,
             secret_access_key=self.secret_access_key,
+            config=self.config,
         )
 
 

@@ -177,7 +177,7 @@ async def test_counter_export_import_continuity(
 # Tenancy + route isolation (the differential leg — the mock cannot show these)
 
 
-from forze.application.contracts.tenancy import TenantIdentity  # noqa: E402
+from forze.application.contracts.tenancy import TenantIdentity
 
 
 @pytest.mark.asyncio

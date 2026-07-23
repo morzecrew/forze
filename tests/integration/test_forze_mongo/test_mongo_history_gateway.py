@@ -178,7 +178,7 @@ async def test_history_write_many_bulk_and_empty_noop(
 # Tagged-tier tenant isolation on the history read path
 
 
-from forze.application.contracts.tenancy import TenantIdentity  # noqa: E402
+from forze.application.contracts.tenancy import TenantIdentity
 
 
 async def _tenant_gw(
