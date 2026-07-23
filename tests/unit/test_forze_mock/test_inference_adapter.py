@@ -102,9 +102,65 @@ class TestMockInferenceAdapter:
         assert seen == [[2.0], [4.0, 6.0]]
 
     @pytest.mark.asyncio
-    async def test_mock_is_canonical_capability_superset(self) -> None:
+    async def test_mock_is_canonical_capability_superset_by_default(self) -> None:
         ctx = _mock_ctx(MockInferenceRegistry().on("doubler", _double))
         assert ctx.inference.model(_spec()).inference_capabilities == FULL_INFERENCE_CAPABILITIES
+
+    @pytest.mark.asyncio
+    async def test_registered_capabilities_replace_the_full_default(self) -> None:
+        # A route mirroring a specific backend pins that backend's declared surface,
+        # so a capability gate fails against the oracle exactly where production would
+        # — instead of the mock silently out-capabling the adapter it stands in for.
+        from forze.application.contracts.inference import InferenceCapabilities
+
+        declared = InferenceCapabilities(max_batch_size=2, supports_stream=False)
+        ctx = _mock_ctx(
+            MockInferenceRegistry().on("doubler", _double, capabilities=declared)
+        )
+        port = ctx.inference.model(_spec())
+
+        assert port.inference_capabilities == declared
+
+    @pytest.mark.asyncio
+    async def test_registered_batch_cap_is_enforced_like_a_real_backend(self) -> None:
+        from forze.application.contracts.inference import InferenceCapabilities
+
+        ctx = _mock_ctx(
+            MockInferenceRegistry().on(
+                "doubler", _double, capabilities=InferenceCapabilities(max_batch_size=2)
+            )
+        )
+        port = ctx.inference.model(_spec())
+
+        # within the mirrored cap: served
+        out = await port.predict_many([_Features(x=1.0), _Features(x=2.0)])
+        assert [o.y for o in out] == [2.0, 4.0]
+
+        # over it: refused whole, exactly like the mirrored backend would
+        with pytest.raises(CoreException) as ei:
+            await port.predict_many([_Features(x=float(n)) for n in range(3)])
+
+        assert ei.value.code == "inference_feature_unsupported"
+
+    @pytest.mark.asyncio
+    async def test_registered_no_stream_capability_refuses_up_front(self) -> None:
+        from forze.application.contracts.inference import InferenceCapabilities
+
+        ctx = _mock_ctx(
+            MockInferenceRegistry().on(
+                "doubler", _double, capabilities=InferenceCapabilities(supports_stream=False)
+            )
+        )
+        port = ctx.inference.model(_spec())
+
+        async def _chunks():  # type: ignore[no-untyped-def]
+            yield [_Features(x=1.0)]
+
+        with pytest.raises(CoreException) as ei:
+            async for _ in port.predict_stream(_chunks()):
+                pass  # pragma: no cover — refused before the first chunk
+
+        assert ei.value.code == "inference_feature_unsupported"
 
 
 # ....................... #

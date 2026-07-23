@@ -220,6 +220,66 @@ class TestLocalInferenceAdapter:
         await asyncio.gather(*(port.predict(_Features(x=1.0)) for _ in range(5)))
         assert overlaps and not any(overlaps)
 
+    @pytest.mark.asyncio
+    async def test_serialized_waiter_parks_on_the_loop_not_in_the_cpu_pool(self) -> None:
+        # serialize_calls used to acquire a threading.Lock INSIDE the run_cpu worker:
+        # a waiting prediction blocked a thread in the process-wide bounded executor
+        # (the pool Argon2 hashing and codec work share), the deadline could not free
+        # it, and once the lock came free the abandoned thread still ran the model.
+        # The lock now lives on the loop before dispatch, so a cancelled waiter has
+        # consumed no pool slot and its batch never runs. A real thread pool is bound
+        # (the default test context runs run_cpu inline, which cannot exhibit this).
+        import asyncio
+        from contextlib import suppress
+
+        from forze.base.primitives.cpu import ThreadPoolCpuExecutor, bind_cpu_executor
+
+        entered = threading.Event()
+        release = threading.Event()
+        entries: list[float] = []
+
+        class _BlockingModel:
+            def predict_batch(self, instances: Sequence[_Features]) -> Sequence[_Score]:
+                entries.append(instances[0].x)
+                entered.set()
+                release.wait(timeout=5.0)
+                return [_Score(y=i.x) for i in instances]
+
+        module = LocalInferenceDepsModule(
+            models={
+                "doubler": LocalInferenceConfig(
+                    loader=_CountingLoader(_BlockingModel()),
+                    serialize_calls=True,
+                ),
+            },
+        )
+        port = _ctx(module).inference.model(_spec())
+        executor = ThreadPoolCpuExecutor(max_workers=2)
+
+        try:
+            with bind_cpu_executor(executor):
+                first = asyncio.ensure_future(port.predict(_Features(x=1.0)))
+                second = asyncio.ensure_future(port.predict(_Features(x=2.0)))
+
+                await asyncio.to_thread(entered.wait, 5.0)  # first holds a worker
+                await asyncio.sleep(0.05)  # give second every chance to (wrongly) dispatch
+
+                # A loop-side waiter cancels cleanly; a thread parked in the pool could not.
+                second.cancel()
+
+                with suppress(asyncio.CancelledError):
+                    await second
+
+                release.set()
+                assert (await first).y == 1.0
+
+                await asyncio.sleep(0.1)  # an abandoned worker (the old bug) would run now
+
+            assert entries == [1.0]  # the cancelled waiter never entered the model/pool
+
+        finally:
+            executor.close()
+
 
 # ....................... #
 

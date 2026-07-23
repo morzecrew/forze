@@ -11,12 +11,12 @@ owner, inside the loader.
 Thread safety: ``run_cpu``'s shared executor means concurrent calls hit the same model
 object from multiple worker threads. A :class:`LocalModel` must therefore be thread-safe
 (sklearn and ONNX Runtime sessions generally are); for one that is not, set
-``serialize_calls=True`` on the config to route every call through a per-route lock —
-correctness over throughput.
+``serialize_calls=True`` on the config to serialize the route's calls — correctness over
+throughput. The serialization happens **on the loop, before dispatch**: waiters park as
+coroutines, never as blocked worker threads inside the shared CPU pool.
 """
 
 import asyncio
-import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from typing import Any, Protocol, final
 
@@ -74,9 +74,10 @@ class LocalInferenceConfig:
     come up. ``False`` defers loading to the first call."""
 
     serialize_calls: bool = False
-    """Route every prediction through a per-route lock for a model that is not
-    thread-safe. Default off: the model is expected to tolerate concurrent worker-thread
-    calls."""
+    """Serialize the route's predictions for a model that is not thread-safe. Default
+    off: the model is expected to tolerate concurrent worker-thread calls. The lock is
+    awaited on the loop before dispatching to the CPU pool, so a waiting prediction
+    never occupies a worker-thread slot."""
 
     deterministic: bool = False
     """Declare that the model returns the same output for the same input (advertised via
@@ -112,7 +113,14 @@ class LocalModelHost:
         init=False,
     )
     _load_guard: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
-    _call_lock: threading.Lock = attrs.field(factory=threading.Lock, init=False)
+
+    _serialize_guard: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    """The ``serialize_calls`` lock — an ``asyncio.Lock`` held across the dispatch, never
+    a ``threading.Lock`` inside the worker. A thread-side lock made every *waiting*
+    prediction occupy a slot in the process-wide bounded executor (the same pool Argon2
+    hashing and codec work depend on), and a parked thread cannot be cancelled — so the
+    invocation deadline could not free the slots either. An awaiting coroutine costs no
+    slot and cancels cleanly."""
 
     # ....................... #
 
@@ -141,16 +149,33 @@ class LocalModelHost:
 
     # ....................... #
 
-    def invoke(
+    async def run(
         self,
         model: LocalModel[Any, Any],
         instances: Sequence[Any],
     ) -> Sequence[Any]:
-        """Run one prediction batch (called on a worker thread via ``run_cpu``)."""
+        """Dispatch one prediction batch to the CPU pool, serialized when configured.
 
-        if self.config.serialize_calls:
-            with self._call_lock:
-                return model.predict_batch(instances)
+        With ``serialize_calls`` the lock is acquired **here, on the loop, before the
+        dispatch** — a waiter is a parked coroutine, not a worker thread blocked inside
+        the shared executor (see ``_serialize_guard``). The worker thread only ever runs
+        the model call itself.
+        """
+
+        if not self.config.serialize_calls:
+            return await run_cpu(self._invoke, model, instances)
+
+        async with self._serialize_guard:
+            return await run_cpu(self._invoke, model, instances)
+
+    # ....................... #
+
+    @staticmethod
+    def _invoke(
+        model: LocalModel[Any, Any],
+        instances: Sequence[Any],
+    ) -> Sequence[Any]:
+        """The worker-thread body: exactly the model call, nothing that can park."""
 
         return model.predict_batch(instances)
 
@@ -203,7 +228,7 @@ class LocalInferenceAdapter[In: BaseModel, Out: BaseModel](InferencePort[In, Out
         model = await self.host.model()
 
         with bind_run_options(options):
-            raw = await run_cpu(self.host.invoke, model, prepared)
+            raw = await self.host.run(model, prepared)
 
         return shape_outputs(
             self.spec,
