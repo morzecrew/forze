@@ -31,6 +31,7 @@ from forze_socketio import (
     RealtimeConnection,
     attach_realtime_connection,
 )
+from forze_socketio.connection import _MAX_REPLAY_ROUNDS
 from forze_socketio.routing import SocketIOConnect
 
 # ----------------------- #
@@ -234,15 +235,18 @@ class _CapTruncatedMailbox:
 
 
 async def test_truncated_replay_keeps_the_ack_clamp() -> None:
-    # A replay that stopped at the mailbox cap with entries still retained past it:
-    # lifting the clamp would let a live-frame ack advance the cursor over the
-    # undelivered middle, which the all-device trim then hard-deletes. The clamp
-    # must hold at the replayed floor until a reconnect drains further.
+    # A backlog so deep the round budget cannot drain it: entries stay retained past
+    # the delivered prefix, so lifting the clamp would let a live-frame ack advance
+    # the cursor over the undelivered middle, which the all-device trim then
+    # hard-deletes. The clamp must hold at the replayed floor until a reconnect
+    # drains further.
     sio, cursors = _StubSio(), InMemoryMailboxCursors()
     inner = InMemoryRealtimeMailbox()
-    mailbox = _CapTruncatedMailbox(inner, cap=2)
+    mailbox = _CapTruncatedMailbox(inner, cap=1)  # one entry per round
 
-    for n in (1, 2, 3):
+    total = _MAX_REPLAY_ROUNDS + 2  # two entries the round budget cannot reach
+
+    for n in range(1, total + 1):
         await inner.store(
             principal=_PRINCIPAL_STR, event_id=f"e{n}", hlc=_hlc(n), signal=_signal(str(n))
         )
@@ -255,14 +259,70 @@ async def test_truncated_replay_keeps_the_ack_clamp() -> None:
         runtime=_runtime(),
     )
 
-    await sio.handlers["connect"]("sid-1", {}, None)  # replay stops at cap: e1, e2
+    await sio.handlers["connect"]("sid-1", {}, None)  # rounds exhaust before the tail
 
-    await sio.handlers["realtime.ack"]("sid-1", {"up_to": "e3"})  # a live-frame ack
+    # a live-frame ack past the undelivered tail
+    await sio.handlers["realtime.ack"]("sid-1", {"up_to": f"e{total}"})
 
-    # Clamped to the replayed floor: the truncated replay did not lift the clamp.
-    assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(2)
+    # Clamped to the replayed floor: the still-truncated replay did not lift it.
+    assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(
+        _MAX_REPLAY_ROUNDS
+    )
     retained = [e.event_id for e in await inner.read_since(principal=_PRINCIPAL_STR, since=None)]
-    assert "e3" in retained  # the undelivered entry survives the trim
+    assert retained == [f"e{total - 1}", f"e{total}"]  # the undelivered tail survives
+
+
+class _LiveArrivalMailbox(_CapTruncatedMailbox):
+    """Stores a live entry the moment the first replay round exhausts — landing it in
+    the race window between that round's drain and the cap probe."""
+
+    def __init__(self, inner: InMemoryRealtimeMailbox, cap: int) -> None:
+        super().__init__(inner, cap)
+        self.rounds = 0
+
+    async def replay_since(self, *, principal: str, since: HlcTimestamp | None) -> Any:
+        self.rounds += 1
+        first = self.rounds == 1
+
+        async with aclosing(super().replay_since(principal=principal, since=since)) as entries:
+            async for entry in entries:
+                yield entry
+
+        if first:
+            await self.inner.store(
+                principal=principal, event_id="e-live", hlc=_hlc(99), signal=_signal("live")
+            )
+
+
+async def test_live_arrival_after_a_drained_cap_replay_does_not_keep_the_clamp() -> None:
+    # An entry stored between a cap-filled-but-drained replay and the probe is a
+    # LIVE arrival, not evidence of truncation. The follow-up round drains it, so
+    # the clamp lifts — read as truncation instead, acks would stay pinned to the
+    # replayed floor until a reconnect that may never come.
+    sio, cursors = _StubSio(), InMemoryMailboxCursors()
+    inner = InMemoryRealtimeMailbox()
+    mailbox = _LiveArrivalMailbox(inner, cap=2)
+
+    for n in (1, 2):  # exactly cap entries: the first round fills the cap AND drains
+        await inner.store(
+            principal=_PRINCIPAL_STR, event_id=f"e{n}", hlc=_hlc(n), signal=_signal(str(n))
+        )
+
+    attach_realtime_connection(
+        sio,  # pyright: ignore[reportArgumentType]
+        resolve=_resolver(_connection()),
+        mailbox_factory=lambda _ctx: mailbox,  # pyright: ignore[reportArgumentType]
+        cursors_factory=lambda _ctx: cursors,
+        runtime=_runtime(),
+    )
+
+    await sio.handlers["connect"]("sid-1", {}, None)
+
+    # the follow-up round delivered the live arrival instead of declaring truncation
+    assert [e["data"]["id"] for e in sio.emits] == ["e1", "e2", "e-live"]
+
+    await sio.handlers["realtime.ack"]("sid-1", {"up_to": "e-live"})
+    assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(99)  # unclamped
 
 
 async def test_exactly_drained_cap_replay_lifts_the_clamp() -> None:
