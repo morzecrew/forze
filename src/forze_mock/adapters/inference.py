@@ -88,6 +88,11 @@ class MockInferenceRegistry:
         if capabilities is not None:
             self._capabilities[str(route)] = capabilities
 
+        else:
+            # Re-registering without capabilities restores the documented full-surface
+            # default — a stale earlier declaration must not silently linger.
+            self._capabilities.pop(str(route), None)
+
         return self
 
     def predictor_for(self, route: str) -> MockInferencePredict | None:

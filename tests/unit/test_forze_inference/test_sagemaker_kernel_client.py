@@ -127,7 +127,7 @@ class TestRetryPinning:
         await client.initialize()
 
         cfg = session.client_kwargs["config"]
-        assert cfg.retries == {"max_attempts": 1, "mode": "standard"}
+        assert cfg.retries == {"total_max_attempts": 1, "mode": "standard"}
 
         await client.close()
 
@@ -143,7 +143,7 @@ class TestRetryPinning:
         await client.initialize(config=Config(read_timeout=5))
 
         cfg = session.client_kwargs["config"]
-        assert cfg.retries == {"max_attempts": 1, "mode": "standard"}
+        assert cfg.retries == {"total_max_attempts": 1, "mode": "standard"}
         assert cfg.read_timeout == 5  # the caller's options survive the merge
 
         await client.close()

@@ -280,6 +280,67 @@ class TestLocalInferenceAdapter:
         finally:
             executor.close()
 
+    @pytest.mark.asyncio
+    async def test_cancelled_holder_keeps_the_guard_until_the_worker_exits(self) -> None:
+        # Cancelling the caller abandons the worker thread mid-predict (run_cpu cannot
+        # kill it); releasing the lock on that cancellation would let the next
+        # serialized call enter the non-thread-safe model while the abandoned thread
+        # is still inside predict_batch. The guard must be held until the worker
+        # actually exits.
+        import asyncio
+        from contextlib import suppress
+
+        from forze.base.primitives.cpu import ThreadPoolCpuExecutor, bind_cpu_executor
+
+        entered = threading.Event()
+        release = threading.Event()
+        busy = threading.Event()
+        overlaps: list[bool] = []
+
+        class _NonThreadSafeBlockingModel:
+            def predict_batch(self, instances: Sequence[_Features]) -> Sequence[_Score]:
+                overlaps.append(busy.is_set())
+                busy.set()
+                entered.set()
+                release.wait(timeout=5.0)
+                busy.clear()
+                return [_Score(y=i.x) for i in instances]
+
+        module = LocalInferenceDepsModule(
+            models={
+                "doubler": LocalInferenceConfig(
+                    loader=_CountingLoader(_NonThreadSafeBlockingModel()),
+                    serialize_calls=True,
+                ),
+            },
+        )
+        port = _ctx(module).inference.model(_spec())
+        executor = ThreadPoolCpuExecutor(max_workers=2)
+
+        try:
+            with bind_cpu_executor(executor):
+                first = asyncio.ensure_future(port.predict(_Features(x=1.0)))
+                await asyncio.to_thread(entered.wait, 5.0)  # the worker is in the model
+
+                first.cancel()  # the abandoned worker keeps running predict_batch
+
+                second = asyncio.ensure_future(port.predict(_Features(x=2.0)))
+                await asyncio.sleep(0.05)  # give second every chance to (wrongly) enter
+
+                assert len(overlaps) == 1  # the guard held: second never entered
+
+                release.set()
+
+                with suppress(asyncio.CancelledError):
+                    await first  # the cancel re-raises only after the worker exited
+
+                assert (await second).y == 2.0
+
+            assert overlaps == [False, False]  # never concurrent inside the model
+
+        finally:
+            executor.close()
+
 
 # ....................... #
 

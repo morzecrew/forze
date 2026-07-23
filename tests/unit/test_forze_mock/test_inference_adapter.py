@@ -122,6 +122,19 @@ class TestMockInferenceAdapter:
         assert port.inference_capabilities == declared
 
     @pytest.mark.asyncio
+    async def test_reregistering_without_capabilities_restores_the_full_default(self) -> None:
+        # A stale earlier declaration must not silently outlive its registration.
+        from forze.application.contracts.inference import InferenceCapabilities
+
+        registry = MockInferenceRegistry().on(
+            "doubler", _double, capabilities=InferenceCapabilities(supports_stream=False)
+        )
+        registry.on("doubler", _double)  # replaced, capabilities omitted
+
+        ctx = _mock_ctx(registry)
+        assert ctx.inference.model(_spec()).inference_capabilities == FULL_INFERENCE_CAPABILITIES
+
+    @pytest.mark.asyncio
     async def test_registered_batch_cap_is_enforced_like_a_real_backend(self) -> None:
         from forze.application.contracts.inference import InferenceCapabilities
 

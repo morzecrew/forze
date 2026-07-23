@@ -162,6 +162,13 @@ class RoutedNeo4jClient(
     # ....................... #
 
     def is_in_transaction(self) -> bool:
+        # The same fail-closed pin as run(): with the ambient tenant drifted away
+        # from the scope's, peeking the *other* tenant's client would answer False
+        # for a caller that is, in fact, inside an open transaction — and a caller
+        # keying transactional behavior off that answer would act on the wrong
+        # tenant's state.
+        self._require_tx_tenant_unchanged()
+
         tid = self.tenant_provider()
 
         if tid is None:

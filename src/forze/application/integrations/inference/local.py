@@ -30,6 +30,7 @@ from forze.application.contracts.inference import (
     InferenceRunOptions,
     InferenceSpec,
 )
+from forze.base.asyncio import run_to_completion
 from forze.base.exceptions import exc
 from forze.base.primitives import OnceCell, run_cpu
 
@@ -160,13 +161,20 @@ class LocalModelHost:
         dispatch** — a waiter is a parked coroutine, not a worker thread blocked inside
         the shared executor (see ``_serialize_guard``). The worker thread only ever runs
         the model call itself.
+
+        The dispatch runs under :func:`run_to_completion`: a cancelled caller cannot
+        kill the worker thread — ``run_cpu`` only abandons it — so releasing the guard
+        on cancellation would let the next serialized call enter the non-thread-safe
+        model while the abandoned thread is still inside ``predict_batch``. The guard
+        is therefore held until the worker actually exits; the pending cancellation
+        (or deadline) re-raises right after, with the model provably idle again.
         """
 
         if not self.config.serialize_calls:
             return await run_cpu(self._invoke, model, instances)
 
         async with self._serialize_guard:
-            return await run_cpu(self._invoke, model, instances)
+            return await run_to_completion(run_cpu(self._invoke, model, instances))
 
     # ....................... #
 

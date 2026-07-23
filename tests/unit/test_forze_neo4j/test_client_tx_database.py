@@ -273,6 +273,13 @@ class TestRoutedTransactionTenantPin:
 
             assert ei.value.code == "neo4j_tx_tenant_conflict"
 
+            # is_in_transaction must fail closed too: peeking the OTHER tenant's
+            # client would answer False for a caller inside an open transaction.
+            with pytest.raises(CoreException) as ei_probe:
+                routed.is_in_transaction()
+
+            assert ei_probe.value.code == "neo4j_tx_tenant_conflict"
+
             current["tenant"] = tenant_a  # let the scope close cleanly
 
         assert inner.run.await_count == 1  # the drifted statement never executed

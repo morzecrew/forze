@@ -26,8 +26,12 @@ from .port import SageMakerRuntimeClientPort
 
 logger = get_logger("forze_inference.sagemaker")
 
-_SINGLE_ATTEMPT_CONFIG = AioConfig(retries={"max_attempts": 1, "mode": "standard"})
+_SINGLE_ATTEMPT_CONFIG = AioConfig(retries={"total_max_attempts": 1, "mode": "standard"})
 """Botocore retries pinned OFF (one attempt total) unless the caller opts in.
+
+``total_max_attempts``, not ``max_attempts``: in the client config the latter means
+*retry* attempts, which botocore normalizes to ``total_max_attempts = value + 1`` — so
+``max_attempts=1`` would still permit one silent retry.
 
 ``invoke_endpoint`` is metered and non-idempotent: a generative endpoint that completes
 the work and then fails on the response write would be silently re-invoked — charged and
