@@ -96,6 +96,37 @@ class TestHasEntriesAfter:
         assert await has_entries_after(mailbox, principal="p1", since=_hlc(2)) is True
         assert await has_entries_after(mailbox, principal="p1", since=None) is True
 
+    async def test_probe_closes_the_nested_replay_stream(self) -> None:
+        # Closing the probe's outer iter_replay must deterministically close the
+        # mailbox's own replay_since generator — an ``async for`` does not close its
+        # iterator on early exit, so without propagation the nested generator stays
+        # suspended until the event loop's asyncgen finalizer acloses it at some
+        # later tick (never, under a torn-down loop).
+        from forze.application.integrations.realtime import has_entries_after
+
+        closed: list[bool] = []
+
+        class _TrackedMailbox:
+            async def replay_since(self, *, principal: str, since: HlcTimestamp | None):  # type: ignore[no-untyped-def]
+                try:
+                    yield MailboxEntry(event_id="a", hlc=_hlc(1), event="e", payload={})
+                    yield MailboxEntry(event_id="b", hlc=_hlc(2), event="e", payload={})
+
+                finally:
+                    closed.append(True)
+
+            async def read_since(self, *, principal: str, since: HlcTimestamp | None):  # type: ignore[no-untyped-def]
+                return []  # pragma: no cover — replay_since is preferred
+
+        probe = await has_entries_after(
+            _TrackedMailbox(),  # type: ignore[arg-type]
+            principal="p1",
+            since=None,
+        )
+
+        assert probe is True
+        assert closed == [True]  # cleanup ran synchronously with the probe's exit
+
     async def test_equal_hlc_entries_count_as_delivered(self) -> None:
         # Cursor/trim granularity: a cumulative position claims its whole equal-HLC
         # run (the trim deletes `<= floor`), so the probe must not resurface it.

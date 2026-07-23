@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from typing import Any
 from uuid import UUID
 
@@ -217,12 +217,17 @@ class _CapTruncatedMailbox:
     async def replay_since(self, *, principal: str, since: HlcTimestamp | None) -> Any:
         delivered = 0
 
-        async for entry in self.inner.replay_since(principal=principal, since=since):
-            if delivered >= self.cap:
-                return
+        # aclosing: the early cap-return must close the inner stream deterministically
+        # (the same closure propagation iter_replay applies one level up).
+        async with aclosing(
+            self.inner.replay_since(principal=principal, since=since)
+        ) as entries:
+            async for entry in entries:
+                if delivered >= self.cap:
+                    return
 
-            delivered += 1
-            yield entry
+                delivered += 1
+                yield entry
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.inner, name)

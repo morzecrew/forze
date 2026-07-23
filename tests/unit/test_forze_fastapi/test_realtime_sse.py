@@ -220,14 +220,21 @@ class TestAck:
             cap = 2  # the replay window stops here, one entry short of the tail
 
             async def replay_since(self, *, principal: str, since: Any) -> Any:
+                from contextlib import aclosing
+
                 delivered = 0
 
-                async for entry in inner.replay_since(principal=principal, since=since):
-                    if delivered >= self.cap:
-                        return
+                # aclosing: the early cap-return must close the inner stream
+                # deterministically, mirroring iter_replay one level up.
+                async with aclosing(
+                    inner.replay_since(principal=principal, since=since)
+                ) as entries:
+                    async for entry in entries:
+                        if delivered >= self.cap:
+                            return
 
-                    delivered += 1
-                    yield entry
+                        delivered += 1
+                        yield entry
 
             def __getattr__(self, name: str) -> Any:
                 return getattr(inner, name)

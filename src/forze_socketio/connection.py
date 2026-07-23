@@ -17,7 +17,7 @@ require_socketio()
 # ....................... #
 
 from collections.abc import Awaitable, Callable, Mapping
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, aclosing
 from datetime import datetime
 from inspect import isawaitable
 from typing import (
@@ -269,21 +269,25 @@ class _ConnectionLifecycle:
                 if progress is not None and since is not None:
                     progress.floor = since  # the already-acked prefix counts as delivered
 
-                async for entry in iter_replay(
-                    mailbox, principal=connection.principal, since=since
-                ):
-                    await self.sio.emit(
-                        entry.event,
-                        {"id": entry.event_id, "data": entry.payload},
-                        to=sid,
-                        namespace=self.namespace,
-                    )
+                # ``aclosing``: a raise mid-drain (an emit failure, a cancel) must
+                # close the mailbox's paged stream deterministically, not leave it
+                # to GC finalization.
+                async with aclosing(
+                    iter_replay(mailbox, principal=connection.principal, since=since)
+                ) as entries:
+                    async for entry in entries:
+                        await self.sio.emit(
+                            entry.event,
+                            {"id": entry.event_id, "data": entry.payload},
+                            to=sid,
+                            namespace=self.namespace,
+                        )
 
-                    delivered += 1
-                    last_hlc = entry.hlc
+                        delivered += 1
+                        last_hlc = entry.hlc
 
-                    if progress is not None:
-                        progress.floor = entry.hlc
+                        if progress is not None:
+                            progress.floor = entry.hlc
 
                 # A replay that filled the mailbox cap is ambiguous — ``replay_since``
                 # exits identically drained-vs-capped — so one probe past the last

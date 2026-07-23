@@ -8,6 +8,7 @@ genuinely transport-specific — sessions, framing, and how the handshake arrive
 """
 
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 
 from forze.application.contracts.authn import ClientIdentity
 from forze.application.contracts.realtime import MailboxEntry
@@ -57,8 +58,13 @@ async def iter_replay(
     stream = getattr(mailbox, "replay_since", None)
 
     if stream is not None:
-        async for entry in stream(principal=principal, since=since):
-            yield entry
+        # ``async for`` does not close its iterator on early exit: when THIS generator
+        # is aclosed (the one-entry probe, a torn SSE response), the nested
+        # ``replay_since`` would stay suspended until GC finalizes it asynchronously.
+        # ``aclosing`` propagates the closure deterministically.
+        async with aclosing(stream(principal=principal, since=since)) as entries:
+            async for entry in entries:
+                yield entry
 
         return
 

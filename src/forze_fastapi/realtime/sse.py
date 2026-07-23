@@ -32,6 +32,7 @@ require_fastapi()
 import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import aclosing
 from datetime import timedelta
 from typing import Annotated, Any, final
 from uuid import UUID
@@ -251,10 +252,14 @@ async def _replay_frames(
 ) -> AsyncIterator[str]:
     """The backlog past *since*, as SSE frames (oldest-first, ids anchor the resume)."""
 
-    async for entry in iter_replay(mailbox, principal=principal, since=since):
-        tally.count += 1
-        tally.last = entry.hlc
-        yield _sse_frame(event=entry.event, event_id=entry.event_id, payload=entry.payload)
+    # This generator is aclosed when the response tears mid-replay; ``aclosing``
+    # propagates that closure into ``iter_replay`` (and through it into the
+    # mailbox's paged stream) instead of leaving them to GC finalization.
+    async with aclosing(iter_replay(mailbox, principal=principal, since=since)) as entries:
+        async for entry in entries:
+            tally.count += 1
+            tally.last = entry.hlc
+            yield _sse_frame(event=entry.event, event_id=entry.event_id, payload=entry.payload)
 
 
 async def _live_frames(
