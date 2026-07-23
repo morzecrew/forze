@@ -23,6 +23,7 @@ from uuid import UUID
 from forze.application.contracts.authn import AuthnIdentity, ClientIdentity
 from forze.application.contracts.realtime import Audience, MailboxEntry, RealtimeSignal
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
+from forze.application.integrations.realtime.replay import _MAX_BACKLOG_ROUNDS
 from forze.base.primitives import HlcTimestamp
 from forze_mock import MockDepsModule
 from forze_socketio import (
@@ -31,7 +32,6 @@ from forze_socketio import (
     RealtimeConnection,
     attach_realtime_connection,
 )
-from forze_socketio.connection import _MAX_REPLAY_ROUNDS
 from forze_socketio.routing import SocketIOConnect
 
 # ----------------------- #
@@ -220,9 +220,7 @@ class _CapTruncatedMailbox:
 
         # aclosing: the early cap-return must close the inner stream deterministically
         # (the same closure propagation iter_replay applies one level up).
-        async with aclosing(
-            self.inner.replay_since(principal=principal, since=since)
-        ) as entries:
+        async with aclosing(self.inner.replay_since(principal=principal, since=since)) as entries:
             async for entry in entries:
                 if delivered >= self.cap:
                     return
@@ -238,13 +236,15 @@ async def test_truncated_replay_keeps_the_ack_clamp() -> None:
     # A backlog so deep the round budget cannot drain it: entries stay retained past
     # the delivered prefix, so lifting the clamp would let a live-frame ack advance
     # the cursor over the undelivered middle, which the all-device trim then
-    # hard-deletes. The clamp must hold at the replayed floor until a reconnect
+    # hard-deletes. The clamp must hold at the claimable floor until a reconnect
     # drains further.
     sio, cursors = _StubSio(), InMemoryMailboxCursors()
     inner = InMemoryRealtimeMailbox()
-    mailbox = _CapTruncatedMailbox(inner, cap=1)  # one entry per round
+    mailbox = _CapTruncatedMailbox(inner, cap=2)
 
-    total = _MAX_REPLAY_ROUNDS + 2  # two entries the round budget cannot reach
+    # round 1 delivers two entries, every later round re-fetches one and delivers one
+    # more — so the budget drains ``rounds + 1`` entries; seed comfortably past that
+    total = _MAX_BACKLOG_ROUNDS + 4
 
     for n in range(1, total + 1):
         await inner.store(
@@ -264,12 +264,48 @@ async def test_truncated_replay_keeps_the_ack_clamp() -> None:
     # a live-frame ack past the undelivered tail
     await sio.handlers["realtime.ack"]("sid-1", {"up_to": f"e{total}"})
 
-    # Clamped to the replayed floor: the still-truncated replay did not lift it.
-    assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(
-        _MAX_REPLAY_ROUNDS
-    )
+    # Clamped to the last proven-complete position (the newest delivered entry's run
+    # is unproven, so the floor sits one position behind the delivered prefix).
+    assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(_MAX_BACKLOG_ROUNDS)
     retained = [e.event_id for e in await inner.read_since(principal=_PRINCIPAL_STR, since=None)]
-    assert retained == [f"e{total - 1}", f"e{total}"]  # the undelivered tail survives
+    # the undelivered tail survives the trim (e{rounds+1} was delivered but unclaimed)
+    assert retained == [f"e{n}" for n in range(_MAX_BACKLOG_ROUNDS + 1, total + 1)]
+
+
+async def test_split_equal_hlc_run_keeps_the_clamp_and_its_siblings() -> None:
+    # The replay window cuts INSIDE an equal-HLC run whose length reaches the cap:
+    # a strict-greater re-fetch can never see the remaining sibling, so the drain
+    # stays unconfirmed and the floor retreats BELOW the run — were the run claimed,
+    # an ack would trim it whole and hard-delete the never-delivered sibling.
+    sio, cursors = _StubSio(), InMemoryMailboxCursors()
+    inner = InMemoryRealtimeMailbox()
+    mailbox = _CapTruncatedMailbox(inner, cap=2)
+
+    await inner.store(principal=_PRINCIPAL_STR, event_id="e1", hlc=_hlc(1), signal=_signal("1"))
+
+    for sibling in ("s1", "s2", "s3"):  # one shared position, distinct entries
+        await inner.store(
+            principal=_PRINCIPAL_STR, event_id=sibling, hlc=_hlc(2), signal=_signal(sibling)
+        )
+
+    attach_realtime_connection(
+        sio,  # pyright: ignore[reportArgumentType]
+        resolve=_resolver(_connection()),
+        mailbox_factory=lambda _ctx: mailbox,  # pyright: ignore[reportArgumentType]
+        cursors_factory=lambda _ctx: cursors,
+        runtime=_runtime(),
+    )
+
+    await sio.handlers["connect"]("sid-1", {}, None)
+
+    assert [e["data"]["id"] for e in sio.emits] == ["e1", "s1", "s2"]  # s3 unreachable
+
+    # acking a DELIVERED sibling must not claim the run: the trim would delete s3
+    await sio.handlers["realtime.ack"]("sid-1", {"up_to": "s2"})
+
+    assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(1)
+    retained = [e.event_id for e in await inner.read_since(principal=_PRINCIPAL_STR, since=None)]
+    assert retained == ["s1", "s2", "s3"]  # the whole run survives, s3 included
 
 
 class _LiveArrivalMailbox(_CapTruncatedMailbox):

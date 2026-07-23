@@ -185,9 +185,7 @@ class TestAck:
         ids = await _seed(mailbox)
         client = _build_client(mailbox=mailbox, cursors=cursors)
 
-        acked = client.post(
-            "/realtime/sse/ack", json={"up_to": ids[1]}, params={"device_id": "d1"}
-        )
+        acked = client.post("/realtime/sse/ack", json={"up_to": ids[1]}, params={"device_id": "d1"})
         assert acked.status_code == 200
         assert acked.json() == {"acked": True}
 
@@ -199,25 +197,29 @@ class TestAck:
         await _seed(mailbox)
         client = _build_client(mailbox=mailbox, cursors=InMemoryMailboxCursors())
 
-        acked = client.post(
-            "/realtime/sse/ack", json={"up_to": "gone"}, params={"device_id": "d1"}
-        )
+        acked = client.post("/realtime/sse/ack", json={"up_to": "gone"}, params={"device_id": "d1"})
         assert acked.json() == {"acked": False}
 
     async def test_truncated_replay_ends_the_stream_instead_of_entering_live(self) -> None:
-        # A replay that stopped at the mailbox cap with entries still retained past
-        # it: entering the live tail would skip that undelivered middle, and a later
-        # unclamped ack would let the trim delete it. The stream ends instead — the
-        # browser reconnects with Last-Event-ID and continues from exactly here.
-        # (Without the guard this request would hang in the live tail. An
-        # exactly-drained cap-filled replay proceeds to the live tail, which the sync
-        # TestClient cannot drive — that classification is pinned by the shared
-        # probe's tests and the Socket.IO clamp tests.)
+        # A replay whose drain cannot be confirmed — here the window cuts inside an
+        # equal-HLC run at least ``cap`` long, so a strict-greater re-fetch can never
+        # see the remaining sibling: entering the live tail would skip that
+        # undelivered entry, and a later unclamped ack would let the trim delete it.
+        # The stream ends instead — the browser reconnects with Last-Event-ID and
+        # continues from exactly here. (Without the guard this request would hang in
+        # the live tail. A confirmably drained replay proceeds to the live tail,
+        # which the sync TestClient cannot drive — that classification is pinned by
+        # the shared ``iter_backlog`` tests and the Socket.IO clamp tests.)
         inner = InMemoryRealtimeMailbox()
-        ids = await _seed(inner)  # 3 entries retained
+        await inner.store(principal=str(_PRINCIPAL), event_id="e1", hlc=_hlc(1), signal=_signal(1))
+
+        for sibling in ("s1", "s2", "s3"):  # one shared position, distinct entries
+            await inner.store(
+                principal=str(_PRINCIPAL), event_id=sibling, hlc=_hlc(2), signal=_signal(2)
+            )
 
         class _CapTruncatedMailbox:
-            cap = 2  # the replay window stops here, one entry short of the tail
+            cap = 2  # the replay window always ends inside the s1..s3 run
 
             async def replay_since(self, *, principal: str, since: Any) -> Any:
                 from contextlib import aclosing
@@ -249,7 +251,7 @@ class TestAck:
 
         response = client.get("/realtime/sse")  # completes despite the wired live hub
 
-        assert [f["id"] for f in _frames(response.text)] == ids[:2]
+        assert [f["id"] for f in _frames(response.text)] == ["e1", "s1", "s2"]
 
     async def test_device_less_ack_is_refused(self) -> None:
         # Device-less streams share one per-principal fallback cursor: a cumulative ack
@@ -293,9 +295,7 @@ class TestHandshake:
         assert client.post("/realtime/sse/ack", json={"up_to": "x"}).status_code == 401
 
     def test_unsupported_protocol_is_refused(self) -> None:
-        client = _build_client(
-            mailbox=InMemoryRealtimeMailbox(), cursors=InMemoryMailboxCursors()
-        )
+        client = _build_client(mailbox=InMemoryRealtimeMailbox(), cursors=InMemoryMailboxCursors())
 
         response = client.get("/realtime/sse", params={"protocol": "2"})
 
@@ -303,9 +303,7 @@ class TestHandshake:
         assert response.headers[ERROR_CODE_HEADER] == "realtime_protocol_unsupported"
 
     def test_missing_or_current_protocol_accepted(self) -> None:
-        client = _build_client(
-            mailbox=InMemoryRealtimeMailbox(), cursors=InMemoryMailboxCursors()
-        )
+        client = _build_client(mailbox=InMemoryRealtimeMailbox(), cursors=InMemoryMailboxCursors())
 
         assert client.get("/realtime/sse").status_code == 200
         assert client.get("/realtime/sse", params={"protocol": "1"}).status_code == 200

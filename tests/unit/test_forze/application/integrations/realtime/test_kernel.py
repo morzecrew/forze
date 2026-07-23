@@ -9,6 +9,8 @@ the SSE route both consume these helpers, so their delivery semantics cannot dri
 
 from __future__ import annotations
 
+from contextlib import aclosing
+
 import pytest
 
 from forze.application.contracts.authn import ClientIdentity
@@ -16,9 +18,11 @@ from forze.application.contracts.realtime import Audience, MailboxEntry, Realtim
 from forze.application.integrations.realtime import (
     REALTIME_PROTOCOL_VERSION,
     SUPPORTED_REALTIME_PROTOCOLS,
+    BacklogDrain,
     InMemoryMailboxCursors,
     InMemoryRealtimeMailbox,
     acknowledge_up_to,
+    iter_backlog,
     iter_replay,
     negotiate_realtime_protocol,
     resolve_client_key,
@@ -75,35 +79,128 @@ class TestIterReplay:
         assert got == ids
 
 
-class TestHasEntriesAfter:
-    """The one-entry probe that settles a cap-filled replay: drained or truncated."""
+class _WindowedMailbox:
+    """A mailbox whose replay window stops at ``cap`` while more entries may remain —
+    the durable-store shape. ``InMemoryRealtimeMailbox``'s own cap EVICTS instead of
+    bounding the window, so it cannot reproduce truncation."""
 
-    async def test_false_when_the_backlog_is_drained(self) -> None:
+    def __init__(self, inner: InMemoryRealtimeMailbox, cap: int) -> None:
+        self.inner = inner
+        self.cap = cap
+
+    async def replay_since(self, *, principal: str, since: HlcTimestamp | None):  # type: ignore[no-untyped-def]
+        fetched = 0
+
+        async with aclosing(self.inner.replay_since(principal=principal, since=since)) as entries:
+            async for entry in entries:
+                if fetched >= self.cap:
+                    return
+
+                fetched += 1
+                yield entry
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.inner, name)
+
+
+async def _store(mailbox: InMemoryRealtimeMailbox, event_id: str, ms: int) -> None:
+    await mailbox.store(principal="p1", event_id=event_id, hlc=_hlc(ms), signal=_signal(ms))
+
+
+class TestIterBacklog:
+    """The multi-round drain that settles a cap-filled replay window safely."""
+
+    async def _drain(self, mailbox: object, **kwargs: object) -> tuple[list[str], BacklogDrain]:
+        outcome = BacklogDrain()
+        got = [
+            e.event_id
+            async for e in iter_backlog(
+                mailbox,  # type: ignore[arg-type]
+                principal="p1",
+                since=None,
+                outcome=outcome,
+                **kwargs,  # type: ignore[arg-type]
+            )
+        ]
+
+        return got, outcome
+
+    async def test_uncapped_mailbox_drains_in_one_pass(self) -> None:
         mailbox = InMemoryRealtimeMailbox()
-        await _seed(mailbox)
+        ids = await _seed(mailbox)
 
-        # Nothing past the newest entry: an exactly-drained replay reads as complete.
-        from forze.application.integrations.realtime import has_entries_after
+        got, outcome = await self._drain(mailbox)
 
-        assert await has_entries_after(mailbox, principal="p1", since=_hlc(3)) is False
+        assert got == ids
+        assert outcome.complete is True
+        assert outcome.claim_floor == _hlc(3)
 
-    async def test_true_when_entries_remain(self) -> None:
-        from forze.application.integrations.realtime import has_entries_after
+    async def test_cap_filled_but_drained_backlog_confirms_via_a_refetch(self) -> None:
+        # Exactly ``cap`` retained entries fill the window; the follow-up pass from
+        # the last complete run underfills it, proving the drain (no duplicates out).
+        inner = InMemoryRealtimeMailbox()
+        await _store(inner, "a", 1)
+        await _store(inner, "b", 2)
 
-        mailbox = InMemoryRealtimeMailbox()
-        await _seed(mailbox)
+        got, outcome = await self._drain(_WindowedMailbox(inner, cap=2))
 
-        assert await has_entries_after(mailbox, principal="p1", since=_hlc(2)) is True
-        assert await has_entries_after(mailbox, principal="p1", since=None) is True
+        assert got == ["a", "b"]
+        assert outcome.complete is True
+        assert outcome.claim_floor == _hlc(2)
 
-    async def test_probe_closes_the_nested_replay_stream(self) -> None:
-        # Closing the probe's outer iter_replay must deterministically close the
-        # mailbox's own replay_since generator — an ``async for`` does not close its
-        # iterator on early exit, so without propagation the nested generator stays
-        # suspended until the event loop's asyncgen finalizer acloses it at some
-        # later tick (never, under a torn-down loop).
-        from forze.application.integrations.realtime import has_entries_after
+    async def test_split_equal_hlc_run_is_recovered(self) -> None:
+        # The cap boundary lands inside an equal-HLC run: strict-greater resume from
+        # the run's HLC would skip its undelivered sibling forever. The re-fetch from
+        # the last COMPLETE run re-reads the split run and delivers the remainder
+        # exactly once.
+        inner = InMemoryRealtimeMailbox()
+        await _store(inner, "a", 1)
+        await _store(inner, "b", 2)
+        await _store(inner, "c", 2)  # the window (cap=3) cuts between "c" and "d"
+        await _store(inner, "d", 3)
+        await _store(inner, "f", 4)
 
+        got, outcome = await self._drain(_WindowedMailbox(inner, cap=3))
+
+        assert got == ["a", "b", "c", "d", "f"]  # nothing skipped, nothing duplicated
+        assert outcome.complete is True
+        assert outcome.claim_floor == _hlc(4)
+
+    async def test_unresolvable_equal_hlc_run_stays_unclaimed(self) -> None:
+        # A run at least ``cap`` long can never be fully seen through a
+        # strict-greater window: the drain stops, stays incomplete, and the claim
+        # floor holds BELOW the run — claiming it would trim the unseen sibling.
+        inner = InMemoryRealtimeMailbox()
+        await _store(inner, "a", 1)
+        await _store(inner, "s1", 2)
+        await _store(inner, "s2", 2)
+        await _store(inner, "s3", 2)  # unreachable: the window always ends at s2
+
+        got, outcome = await self._drain(_WindowedMailbox(inner, cap=2))
+
+        assert got == ["a", "s1", "s2"]
+        assert outcome.complete is False
+        assert outcome.claim_floor == _hlc(1)  # never the partially delivered run
+
+    async def test_round_budget_leaves_the_drain_unconfirmed(self) -> None:
+        inner = InMemoryRealtimeMailbox()
+
+        for n in range(1, 7):
+            await _store(inner, f"e{n}", n)
+
+        got, outcome = await self._drain(_WindowedMailbox(inner, cap=2), max_rounds=2)
+
+        # round 1: e1,e2; round 2 re-fetches e2, delivers e3 — then the budget ends
+        assert got == ["e1", "e2", "e3"]
+        assert outcome.complete is False
+        assert outcome.claim_floor == _hlc(2)  # e3's run is not proven complete
+
+    async def test_closing_the_drain_closes_the_nested_replay_stream(self) -> None:
+        # Closing iter_backlog early must deterministically close the mailbox's own
+        # replay_since generator — an ``async for`` does not close its iterator on
+        # early exit, so without propagation the nested generator stays suspended
+        # until the event loop's asyncgen finalizer acloses it at some later tick
+        # (never, under a torn-down loop).
         closed: list[bool] = []
 
         class _TrackedMailbox:
@@ -118,25 +215,16 @@ class TestHasEntriesAfter:
             async def read_since(self, *, principal: str, since: HlcTimestamp | None):  # type: ignore[no-untyped-def]
                 return []  # pragma: no cover — replay_since is preferred
 
-        probe = await has_entries_after(
+        stream = iter_backlog(
             _TrackedMailbox(),  # type: ignore[arg-type]
             principal="p1",
             since=None,
+            outcome=BacklogDrain(),
         )
+        assert (await anext(stream)).event_id == "a"
+        await stream.aclose()
 
-        assert probe is True
-        assert closed == [True]  # cleanup ran synchronously with the probe's exit
-
-    async def test_equal_hlc_entries_count_as_delivered(self) -> None:
-        # Cursor/trim granularity: a cumulative position claims its whole equal-HLC
-        # run (the trim deletes `<= floor`), so the probe must not resurface it.
-        from forze.application.integrations.realtime import has_entries_after
-
-        mailbox = InMemoryRealtimeMailbox()
-        await mailbox.store(principal="p1", event_id="a", hlc=_hlc(1), signal=_signal(1))
-        await mailbox.store(principal="p1", event_id="b", hlc=_hlc(1), signal=_signal(2))
-
-        assert await has_entries_after(mailbox, principal="p1", since=_hlc(1)) is False
+        assert closed == [True]  # cleanup ran synchronously with the aclose
 
     async def test_falls_back_to_read_since(self) -> None:
         class _BufferedOnly:

@@ -9,6 +9,9 @@ genuinely transport-specific — sessions, framing, and how the handshake arrive
 
 from collections.abc import AsyncGenerator
 from contextlib import aclosing
+from typing import final
+
+import attrs
 
 from forze.application.contracts.authn import ClientIdentity
 from forze.application.contracts.realtime import MailboxEntry
@@ -21,7 +24,8 @@ from .mailbox import MailboxCursors, RealtimeMailbox
 __all__ = [
     "resolve_client_key",
     "iter_replay",
-    "has_entries_after",
+    "BacklogDrain",
+    "iter_backlog",
     "acknowledge_up_to",
 ]
 
@@ -59,9 +63,9 @@ async def iter_replay(
 
     if stream is not None:
         # ``async for`` does not close its iterator on early exit: when THIS generator
-        # is aclosed (the one-entry probe, a torn SSE response), the nested
-        # ``replay_since`` would stay suspended until GC finalizes it asynchronously.
-        # ``aclosing`` propagates the closure deterministically.
+        # is aclosed (a torn SSE response, an ``iter_backlog`` pass boundary), the
+        # nested ``replay_since`` would stay suspended until GC finalizes it
+        # asynchronously. ``aclosing`` propagates the closure deterministically.
         async with aclosing(stream(principal=principal, since=since)) as entries:
             async for entry in entries:
                 yield entry
@@ -75,39 +79,95 @@ async def iter_replay(
 # ....................... #
 
 
-async def has_entries_after(
+_MAX_BACKLOG_ROUNDS = 8
+"""Backlog-drain round budget: a cap-filled pass is followed by another pass from the
+last fully delivered position, so a mid-drain live arrival or a window-bound remainder
+is drained rather than misread as truncation. Bounded so a producer writing faster
+than the drain cannot hold a connection in replay forever."""
+
+
+@final
+@attrs.define(slots=True)
+class BacklogDrain:
+    """Out-box for :func:`iter_backlog` (a generator cannot return a value)."""
+
+    claim_floor: HlcTimestamp | None = None
+    """The highest position a cumulative ack may safely claim: every entry at or
+    before it was delivered. A claimed position claims its **whole** equal-HLC run
+    (the trim deletes ``<= floor``), so this only ever advances across runs proven
+    complete — never onto a run the drain may have left partially delivered."""
+
+    complete: bool = False
+    """The retained backlog confirmably drained — nothing undelivered remains, so
+    cumulative acks past *claim_floor* are safe without any clamp."""
+
+
+async def iter_backlog(
     mailbox: RealtimeMailbox,
     *,
     principal: str,
     since: HlcTimestamp | None,
-) -> bool:
-    """Whether any mailbox entry remains past *since* — a single-entry probe.
+    outcome: BacklogDrain,
+    max_rounds: int = _MAX_BACKLOG_ROUNDS,
+) -> AsyncGenerator[MailboxEntry]:
+    """Drain the backlog past *since*, yielding each entry once; report what's claimable.
 
-    Lets a transport tell a replay that merely **filled** its cap from one that
-    drained the backlog at exactly the cap: the delivered count alone cannot
-    (``replay_since`` exits identically either way), and misreading an
-    exactly-drained replay as truncated keeps the ack clamp engaged (Socket.IO) or
-    ends the stream before its live tail (SSE) for no reason. Only the first entry
-    is pulled, so the drained case costs one empty query.
-
-    Granularity matches the cursor/trim semantics: entries sharing the *since* HLC
-    count as delivered — a cumulative ack at that position claims the whole
-    equal-HLC run, and the trim deletes it.
+    A mailbox whose replay window is bounded (``cap``) exits identically
+    drained-vs-capped, and the strict-greater ``since`` cannot resume **inside** an
+    equal-HLC run — resuming from the last delivered HLC would silently skip its
+    undelivered siblings, and a later ack would let the all-device trim hard-delete
+    them. So a cap-filled pass re-fetches from the last position whose run is proven
+    complete (a strictly greater entry was seen past it), skipping already-yielded
+    entries by id, until a pass underfills the cap (the retained end: drained) or
+    yields nothing new (the trailing run is at least ``cap`` long — unreachable
+    through a strict-greater window, so it stays unclaimed) or the round budget runs
+    out. *outcome* is only meaningful once the generator finishes on its own; a
+    consumer that stops early must treat the drain as incomplete.
     """
 
-    stream = iter_replay(mailbox, principal=principal, since=since)
+    cap = getattr(mailbox, "cap", None)
+    run_hlc: HlcTimestamp | None = None  # the trailing run: highest HLC yielded so far
+    run_ids: set[str] = set()  # entries already yielded at ``run_hlc``
+    resume = since  # the last position with a proven-complete run
 
-    try:
-        await anext(stream)
+    for _ in range(max_rounds):
+        fetched = 0
+        progressed = False
 
-    except StopAsyncIteration:
-        return False
+        async with aclosing(iter_replay(mailbox, principal=principal, since=resume)) as entries:
+            async for entry in entries:
+                fetched += 1
 
-    else:
-        return True
+                if run_hlc is None or entry.hlc > run_hlc:
+                    if run_hlc is not None:
+                        # a strictly greater entry proves the previous run complete
+                        outcome.claim_floor = run_hlc
+                        resume = run_hlc
+                        run_ids.clear()
 
-    finally:
-        await stream.aclose()
+                    run_hlc = entry.hlc
+
+                elif entry.event_id in run_ids:
+                    continue  # re-fetched: yielded before the previous pass's boundary
+
+                run_ids.add(entry.event_id)
+                progressed = True
+
+                yield entry
+
+        if cap is None or fetched < int(cap):
+            # The window undershot the cap: it reached the retained end, so the
+            # trailing run is complete and the backlog is drained.
+            if run_hlc is not None:
+                outcome.claim_floor = run_hlc
+
+            outcome.complete = True
+            return
+
+        if not progressed:
+            return  # a full window of already-yielded entries: no way further
+
+    # round budget exhausted while still cap-filled: not complete
 
 
 # ....................... #

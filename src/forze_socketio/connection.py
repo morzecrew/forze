@@ -35,17 +35,17 @@ from forze.application.contracts.realtime import Audience
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.application.integrations.realtime import (
+    BacklogDrain,
+    acknowledge_up_to,
+    iter_backlog,
+    negotiate_realtime_protocol,
+    resolve_client_key,
+)
+from forze.application.integrations.realtime import (
     InMemoryRealtimePresence as InMemoryRealtimePresence,  # re-export: established home
 )
 from forze.application.integrations.realtime import (
     RealtimePresence as RealtimePresence,  # re-export: established home
-)
-from forze.application.integrations.realtime import (
-    acknowledge_up_to,
-    has_entries_after,
-    iter_replay,
-    negotiate_realtime_protocol,
-    resolve_client_key,
 )
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import HlcTimestamp, utcnow
@@ -65,12 +65,6 @@ from .routing import IDENTITY_SESSION_KEY, SocketIOConnect
 
 CONNECTION_SESSION_KEY = "forze.realtime_connection"
 """Session key holding the :class:`RealtimeConnection` for disconnect presence."""
-
-_MAX_REPLAY_ROUNDS = 8
-"""Connect-time replay round budget: a cap-filled round is followed by another round
-from the last delivered position, so a live arrival or a window-bound remainder is
-drained rather than pinning the ack clamp. Bounded so a producer writing faster than
-the drain cannot hold the connect handler in replay forever."""
 
 # ....................... #
 
@@ -255,7 +249,6 @@ class _ConnectionLifecycle:
 
         client_key = connection.client_key(sid)
         progress = self._replay_progress.get(sid)
-        truncated = False
 
         # Stream the backlog page-by-page inside the scope and emit as we go, so peak
         # memory is one page rather than the whole (up to ``cap``) backlog per
@@ -267,66 +260,48 @@ class _ConnectionLifecycle:
             with _bind_connection(ctx, connection):  # connection identity — fresh scope is empty
                 mailbox = self.mailbox_factory(ctx)  # ports resolved for this unit of work
                 cursors = self.cursors_factory(ctx)
-                cap = getattr(mailbox, "cap", None)
                 since = await cursors.get(principal=connection.principal, client_key=client_key)
-                last_hlc = since
 
                 if progress is not None and since is not None:
                     progress.floor = since  # the already-acked prefix counts as delivered
 
-                # A replay that fills the mailbox cap is ambiguous — ``replay_since``
-                # exits identically drained-vs-capped — and a positive probe past the
-                # last delivered position cannot settle it alone: an entry stored
-                # between the drain and the probe (a live arrival) would read as
-                # truncation and pin the ack clamp until a reconnect that may never
-                # come. So a cap-filled round is followed by another round from the
-                # last delivered position — a live arrival or a window-bound
-                # remainder is simply drained — and only a backlog still cap-filled
-                # after the round budget keeps the clamp.
-                for _ in range(_MAX_REPLAY_ROUNDS):
-                    round_delivered = 0
+                outcome = BacklogDrain(claim_floor=since)
 
-                    # ``aclosing``: a raise mid-drain (an emit failure, a cancel)
-                    # must close the mailbox's paged stream deterministically, not
-                    # leave it to GC finalization.
-                    async with aclosing(
-                        iter_replay(mailbox, principal=connection.principal, since=since)
-                    ) as entries:
-                        async for entry in entries:
-                            await self.sio.emit(
-                                entry.event,
-                                {"id": entry.event_id, "data": entry.payload},
-                                to=sid,
-                                namespace=self.namespace,
-                            )
-
-                            round_delivered += 1
-                            last_hlc = entry.hlc
-
-                            if progress is not None:
-                                progress.floor = entry.hlc
-
-                    if cap is None or round_delivered < int(cap):
-                        truncated = False  # an underfilled round proves the drain
-                        break
-
-                    truncated = await has_entries_after(
-                        mailbox, principal=connection.principal, since=last_hlc
+                # ``iter_backlog`` drains past a bounded replay window in rounds
+                # (a cap-filled pass is ambiguous: drained, a live arrival, or a
+                # truncated remainder) and reports whether the drain confirmably
+                # completed. ``aclosing``: a raise mid-drain (an emit failure, a
+                # cancel) must close the paged stream deterministically.
+                async with aclosing(
+                    iter_backlog(
+                        mailbox, principal=connection.principal, since=since, outcome=outcome
                     )
+                ) as entries:
+                    async for entry in entries:
+                        await self.sio.emit(
+                            entry.event,
+                            {"id": entry.event_id, "data": entry.payload},
+                            to=sid,
+                            namespace=self.namespace,
+                        )
 
-                    if not truncated:
-                        break  # exactly drained: nothing past the last delivery
+                        if progress is not None:
+                            progress.floor = entry.hlc
 
-                    since = last_hlc  # entries remain — drain them in another round
+        if progress is not None:
+            if outcome.complete:
+                # Only a confirmed drain — that did not raise — lifts the clamp: a
+                # live frame acked past an undelivered middle would advance the
+                # cursor over it and the all-device trim would hard-delete it.
+                progress.complete = True
 
-        # A replay still cap-filled after the round budget must NOT lift the clamp:
-        # a live frame acked past the undelivered middle would advance the cursor
-        # over it and the all-device trim would hard-delete it. The clamp then holds
-        # at the replayed floor until the device reconnects and the next replay
-        # continues from there. Only a replay that drained — and did not raise —
-        # lifts it.
-        if progress is not None and not truncated:
-            progress.complete = True
+            else:
+                # An unconfirmed drain must not claim its trailing equal-HLC run
+                # either — the strict-greater replay window may have split it, and a
+                # claim trims the WHOLE run. Retreat to the last proven-complete
+                # position; the clamp holds there until the device reconnects and
+                # the next replay continues from the cursor.
+                progress.floor = outcome.claim_floor
 
     # ....................... #
 

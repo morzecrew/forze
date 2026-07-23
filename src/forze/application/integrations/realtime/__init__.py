@@ -23,7 +23,13 @@ from .protocol import (
     RealtimeAck,
     negotiate_realtime_protocol,
 )
-from .replay import acknowledge_up_to, has_entries_after, iter_replay, resolve_client_key
+from .replay import (
+    BacklogDrain,
+    acknowledge_up_to,
+    iter_backlog,
+    iter_replay,
+    resolve_client_key,
+)
 from .rooms import room_for
 
 # ----------------------- #
@@ -42,7 +48,8 @@ __all__ = [
     "RealtimeCommandRoute",
     "negotiate_realtime_protocol",
     "acknowledge_up_to",
-    "has_entries_after",
+    "BacklogDrain",
+    "iter_backlog",
     "iter_replay",
     "resolve_client_key",
     "room_for",

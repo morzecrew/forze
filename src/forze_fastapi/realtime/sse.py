@@ -34,10 +34,9 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from datetime import timedelta
-from typing import Annotated, Any, final
+from typing import Annotated, Any
 from uuid import UUID
 
-import attrs
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -46,13 +45,13 @@ from forze.application.contracts.authn import ClientIdentity
 from forze.application.execution import ExecutionContext
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.integrations.realtime import (
+    BacklogDrain,
     MailboxCursors,
     RealtimeAck,
     RealtimeMailbox,
     RealtimePresence,
     acknowledge_up_to,
-    has_entries_after,
-    iter_replay,
+    iter_backlog,
     negotiate_realtime_protocol,
     resolve_client_key,
 )
@@ -233,32 +232,26 @@ async def _resolve_since(
     return await cursors.get(principal=principal, client_key=client_key)
 
 
-@final
-@attrs.define(slots=True)
-class _ReplayTally:
-    """Out-box for :func:`_replay_frames` (a generator cannot return): the yielded
-    count and the last delivered position, for the caller's cap-truncation probe."""
-
-    count: int = 0
-    last: HlcTimestamp | None = None
-
-
 async def _replay_frames(
     mailbox: RealtimeMailbox,
     *,
     principal: str,
     since: HlcTimestamp | None,
-    tally: _ReplayTally,
+    outcome: BacklogDrain,
 ) -> AsyncIterator[str]:
-    """The backlog past *since*, as SSE frames (oldest-first, ids anchor the resume)."""
+    """The backlog past *since*, as SSE frames (oldest-first, ids anchor the resume).
+
+    *outcome* reports whether the backlog confirmably drained — only then may the
+    stream proceed to its live tail (see the caller).
+    """
 
     # This generator is aclosed when the response tears mid-replay; ``aclosing``
-    # propagates that closure into ``iter_replay`` (and through it into the
+    # propagates that closure into ``iter_backlog`` (and through it into the
     # mailbox's paged stream) instead of leaving them to GC finalization.
-    async with aclosing(iter_replay(mailbox, principal=principal, since=since)) as entries:
+    async with aclosing(
+        iter_backlog(mailbox, principal=principal, since=since, outcome=outcome)
+    ) as entries:
         async for entry in entries:
-            tally.count += 1
-            tally.last = entry.hlc
             yield _sse_frame(event=entry.event, event_id=entry.event_id, payload=entry.payload)
 
 
@@ -406,31 +399,23 @@ def attach_realtime_sse_route(
                     last_event_id=last_event_id,
                 )
 
-                tally = _ReplayTally(last=since)
+                outcome = BacklogDrain(claim_floor=since)
 
                 async for frame in _replay_frames(
-                    mailbox, principal=principal, since=since, tally=tally
+                    mailbox, principal=principal, since=since, outcome=outcome
                 ):
                     yield frame
 
                 if subscription is None:
                     return  # catch-up mode: the browser reconnects with Last-Event-ID
 
-                # A replay that filled the mailbox cap is ambiguous — it may have
-                # stopped short of the retained tail, and entering the live tail would
-                # skip that undelivered middle (a later unclamped ack would advance
-                # the cursor over it; the all-device trim then hard-deletes it). One
-                # probe past the last delivered position settles it: an
-                # exactly-drained replay proceeds to its live tail, a truncated one
-                # ends the stream — the browser reconnects with Last-Event-ID and the
-                # next replay continues from exactly here until the backlog drains.
-                cap = getattr(mailbox, "cap", None)
-
-                if (
-                    cap is not None
-                    and tally.count >= int(cap)
-                    and await has_entries_after(mailbox, principal=principal, since=tally.last)
-                ):
+                # Entering the live tail is only safe after a CONFIRMED drain: a
+                # backlog still cap-filled after ``iter_backlog``'s rounds may hold
+                # an undelivered middle, and a later unclamped ack would advance the
+                # cursor over it (the all-device trim then hard-deletes it). An
+                # unconfirmed drain ends the stream instead — the browser reconnects
+                # with Last-Event-ID and the next replay continues from there.
+                if not outcome.complete:
                     return
 
                 async for frame in _live_frames(
