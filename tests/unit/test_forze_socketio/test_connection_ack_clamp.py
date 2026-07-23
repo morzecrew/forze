@@ -205,12 +205,65 @@ async def test_mid_replay_ack_of_a_live_frame_is_clamped_to_the_delivered_floor(
     assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(3)
 
 
-async def test_cap_filled_replay_keeps_the_ack_clamp() -> None:
-    # A replay that filled the mailbox cap may have stopped short of the retained
-    # tail — ``replay_since`` exits identically drained-vs-capped. Lifting the clamp
-    # would let a live-frame ack advance the cursor over the undelivered middle,
-    # which the all-device trim then hard-deletes. The clamp must hold at the
-    # replayed floor until a reconnect drains further.
+class _CapTruncatedMailbox:
+    """A mailbox whose replay window stops at ``cap`` while more entries exist —
+    the durable-store shape (``DocumentRealtimeMailbox``) the in-memory mailbox
+    cannot reproduce, since its cap *evicts* instead of bounding the window."""
+
+    def __init__(self, inner: InMemoryRealtimeMailbox, cap: int) -> None:
+        self.inner = inner
+        self.cap = cap
+
+    async def replay_since(self, *, principal: str, since: HlcTimestamp | None) -> Any:
+        delivered = 0
+
+        async for entry in self.inner.replay_since(principal=principal, since=since):
+            if delivered >= self.cap:
+                return
+
+            delivered += 1
+            yield entry
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+
+async def test_truncated_replay_keeps_the_ack_clamp() -> None:
+    # A replay that stopped at the mailbox cap with entries still retained past it:
+    # lifting the clamp would let a live-frame ack advance the cursor over the
+    # undelivered middle, which the all-device trim then hard-deletes. The clamp
+    # must hold at the replayed floor until a reconnect drains further.
+    sio, cursors = _StubSio(), InMemoryMailboxCursors()
+    inner = InMemoryRealtimeMailbox()
+    mailbox = _CapTruncatedMailbox(inner, cap=2)
+
+    for n in (1, 2, 3):
+        await inner.store(
+            principal=_PRINCIPAL_STR, event_id=f"e{n}", hlc=_hlc(n), signal=_signal(str(n))
+        )
+
+    attach_realtime_connection(
+        sio,  # pyright: ignore[reportArgumentType]
+        resolve=_resolver(_connection()),
+        mailbox_factory=lambda _ctx: mailbox,  # pyright: ignore[reportArgumentType]
+        cursors_factory=lambda _ctx: cursors,
+        runtime=_runtime(),
+    )
+
+    await sio.handlers["connect"]("sid-1", {}, None)  # replay stops at cap: e1, e2
+
+    await sio.handlers["realtime.ack"]("sid-1", {"up_to": "e3"})  # a live-frame ack
+
+    # Clamped to the replayed floor: the truncated replay did not lift the clamp.
+    assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(2)
+    retained = [e.event_id for e in await inner.read_since(principal=_PRINCIPAL_STR, since=None)]
+    assert "e3" in retained  # the undelivered entry survives the trim
+
+
+async def test_exactly_drained_cap_replay_lifts_the_clamp() -> None:
+    # A backlog of exactly ``cap`` entries fills the count but IS fully drained: the
+    # one-entry probe finds nothing past the last delivered position, so the clamp
+    # lifts like any complete replay — a later live-frame ack advances normally.
     sio, cursors = _StubSio(), InMemoryMailboxCursors()
     mailbox = InMemoryRealtimeMailbox(cap=2)
 
@@ -227,18 +280,13 @@ async def test_cap_filled_replay_keeps_the_ack_clamp() -> None:
         runtime=_runtime(),
     )
 
-    await sio.handlers["connect"]("sid-1", {}, None)  # replay yields exactly cap entries
+    await sio.handlers["connect"]("sid-1", {}, None)  # exactly cap entries, all drained
 
-    # A signal stored after the replay window closed — on the mailboxed path its live
-    # emit is deliberately swallowed, so nothing has delivered it yet.
+    # A later live frame, delivered and acked after the complete replay.
     await mailbox.store(principal=_PRINCIPAL_STR, event_id="e3", hlc=_hlc(3), signal=_signal("3"))
-
     await sio.handlers["realtime.ack"]("sid-1", {"up_to": "e3"})
 
-    # Clamped to the replayed floor: the cap-filled replay did not lift the clamp.
-    assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(2)
-    retained = [e.event_id for e in await mailbox.read_since(principal=_PRINCIPAL_STR, since=None)]
-    assert "e3" in retained  # the undelivered entry survives the trim
+    assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(3)  # unclamped
 
 
 async def test_ack_before_anything_is_delivered_is_ignored() -> None:

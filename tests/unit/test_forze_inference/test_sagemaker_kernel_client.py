@@ -549,6 +549,33 @@ class TestLifecycleSteps:
             await step.shutdown(ctx)
 
     @pytest.mark.asyncio
+    async def test_step_factory_routes_the_botocore_config(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The exported factory is how applications opt into retries or other
+        # botocore settings — it must accept and forward `config`, not force the
+        # single-attempt default behind an unreachable knob.
+        from botocore.config import Config
+
+        from forze.testing import context_from_modules
+
+        session = _fake_aws(monkeypatch, _FakeRuntime())
+        client = SageMakerRuntimeClient()
+        module = self._module(client)
+        ctx = context_from_modules(module)
+        step = sagemaker_inference_lifecycle_step(
+            config=Config(retries={"max_attempts": 4, "mode": "adaptive"}),
+        )
+
+        await step.startup(ctx)
+
+        try:
+            cfg = session.client_kwargs["config"]
+            assert getattr(cfg, "retries") == {"max_attempts": 4, "mode": "adaptive"}
+        finally:
+            await step.shutdown(ctx)
+
+    @pytest.mark.asyncio
     async def test_startup_leaves_a_custom_port_implementation_alone(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

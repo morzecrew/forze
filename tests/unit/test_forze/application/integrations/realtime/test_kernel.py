@@ -74,6 +74,39 @@ class TestIterReplay:
         got = [e.event_id async for e in iter_replay(mailbox, principal="p1", since=None)]
         assert got == ids
 
+
+class TestHasEntriesAfter:
+    """The one-entry probe that settles a cap-filled replay: drained or truncated."""
+
+    async def test_false_when_the_backlog_is_drained(self) -> None:
+        mailbox = InMemoryRealtimeMailbox()
+        await _seed(mailbox)
+
+        # Nothing past the newest entry: an exactly-drained replay reads as complete.
+        from forze.application.integrations.realtime import has_entries_after
+
+        assert await has_entries_after(mailbox, principal="p1", since=_hlc(3)) is False
+
+    async def test_true_when_entries_remain(self) -> None:
+        from forze.application.integrations.realtime import has_entries_after
+
+        mailbox = InMemoryRealtimeMailbox()
+        await _seed(mailbox)
+
+        assert await has_entries_after(mailbox, principal="p1", since=_hlc(2)) is True
+        assert await has_entries_after(mailbox, principal="p1", since=None) is True
+
+    async def test_equal_hlc_entries_count_as_delivered(self) -> None:
+        # Cursor/trim granularity: a cumulative position claims its whole equal-HLC
+        # run (the trim deletes `<= floor`), so the probe must not resurface it.
+        from forze.application.integrations.realtime import has_entries_after
+
+        mailbox = InMemoryRealtimeMailbox()
+        await mailbox.store(principal="p1", event_id="a", hlc=_hlc(1), signal=_signal(1))
+        await mailbox.store(principal="p1", event_id="b", hlc=_hlc(1), signal=_signal(2))
+
+        assert await has_entries_after(mailbox, principal="p1", since=_hlc(1)) is False
+
     async def test_falls_back_to_read_since(self) -> None:
         class _BufferedOnly:
             """A mailbox without ``replay_since`` — the optional-protocol fallback."""

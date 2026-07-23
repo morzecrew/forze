@@ -87,10 +87,16 @@ def sagemaker_inference_lifecycle_step(
     endpoint_url: str | None = None,
     access_key_id: str | None = None,
     secret_access_key: SecretStr | str | None = None,
+    config: AioConfig | None = None,
     name: StrKey = "sagemaker_inference_client",
     depends_on: tuple[StrKey, ...] = (),
 ) -> LifecycleStep:
-    """Lifecycle step initializing and closing the SageMaker runtime client."""
+    """Lifecycle step initializing and closing the SageMaker runtime client.
+
+    :param config: Optional botocore configuration, forwarded to the client. Botocore
+        retries stay pinned to a single attempt unless ``retries`` is set here
+        explicitly (``invoke_endpoint`` is metered and non-idempotent).
+    """
 
     return LifecycleStep(
         id=name,
@@ -100,6 +106,7 @@ def sagemaker_inference_lifecycle_step(
             endpoint_url=endpoint_url,
             access_key_id=access_key_id,
             secret_access_key=secret_access_key,  # type: ignore[arg-type]
+            config=config,
         ),
         shutdown=SageMakerInferenceShutdownHook(),
     )

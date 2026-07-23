@@ -7,7 +7,7 @@ The transport edge (Socket.IO connection layer, SSE route) owns only what is
 genuinely transport-specific — sessions, framing, and how the handshake arrives.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 
 from forze.application.contracts.authn import ClientIdentity
 from forze.application.contracts.realtime import MailboxEntry
@@ -20,6 +20,7 @@ from .mailbox import MailboxCursors, RealtimeMailbox
 __all__ = [
     "resolve_client_key",
     "iter_replay",
+    "has_entries_after",
     "acknowledge_up_to",
 ]
 
@@ -45,7 +46,7 @@ async def iter_replay(
     *,
     principal: str,
     since: HlcTimestamp | None,
-) -> AsyncIterator[MailboxEntry]:
+) -> AsyncGenerator[MailboxEntry]:
     """Stream a mailbox's backlog, preferring the paged ``replay_since`` when present.
 
     ``replay_since`` is optional on the :class:`RealtimeMailbox` protocol, so a mailbox
@@ -63,6 +64,44 @@ async def iter_replay(
 
     for entry in await mailbox.read_since(principal=principal, since=since):
         yield entry
+
+
+# ....................... #
+
+
+async def has_entries_after(
+    mailbox: RealtimeMailbox,
+    *,
+    principal: str,
+    since: HlcTimestamp | None,
+) -> bool:
+    """Whether any mailbox entry remains past *since* — a single-entry probe.
+
+    Lets a transport tell a replay that merely **filled** its cap from one that
+    drained the backlog at exactly the cap: the delivered count alone cannot
+    (``replay_since`` exits identically either way), and misreading an
+    exactly-drained replay as truncated keeps the ack clamp engaged (Socket.IO) or
+    ends the stream before its live tail (SSE) for no reason. Only the first entry
+    is pulled, so the drained case costs one empty query.
+
+    Granularity matches the cursor/trim semantics: entries sharing the *since* HLC
+    count as delivered — a cumulative ack at that position claims the whole
+    equal-HLC run, and the trim deletes it.
+    """
+
+    stream = iter_replay(mailbox, principal=principal, since=since)
+
+    try:
+        await anext(stream)
+
+    except StopAsyncIteration:
+        return False
+
+    else:
+        return True
+
+    finally:
+        await stream.aclose()
 
 
 # ....................... #

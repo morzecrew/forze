@@ -204,21 +204,45 @@ class TestAck:
         )
         assert acked.json() == {"acked": False}
 
-    async def test_cap_filled_replay_ends_the_stream_instead_of_entering_live(self) -> None:
-        # A replay that filled the mailbox cap may have stopped short of the retained
-        # tail; entering the live tail would skip that undelivered middle, and a later
+    async def test_truncated_replay_ends_the_stream_instead_of_entering_live(self) -> None:
+        # A replay that stopped at the mailbox cap with entries still retained past
+        # it: entering the live tail would skip that undelivered middle, and a later
         # unclamped ack would let the trim delete it. The stream ends instead — the
         # browser reconnects with Last-Event-ID and continues from exactly here.
-        # (Without the guard this request would hang in the live tail.)
-        mailbox = InMemoryRealtimeMailbox(cap=3)
-        ids = await _seed(mailbox)  # exactly cap retained entries
+        # (Without the guard this request would hang in the live tail. An
+        # exactly-drained cap-filled replay proceeds to the live tail, which the sync
+        # TestClient cannot drive — that classification is pinned by the shared
+        # probe's tests and the Socket.IO clamp tests.)
+        inner = InMemoryRealtimeMailbox()
+        ids = await _seed(inner)  # 3 entries retained
+
+        class _CapTruncatedMailbox:
+            cap = 2  # the replay window stops here, one entry short of the tail
+
+            async def replay_since(self, *, principal: str, since: Any) -> Any:
+                delivered = 0
+
+                async for entry in inner.replay_since(principal=principal, since=since):
+                    if delivered >= self.cap:
+                        return
+
+                    delivered += 1
+                    yield entry
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(inner, name)
+
         hub = RealtimeSseHub()
         hub.ready.set()
-        client = _build_client(mailbox=mailbox, cursors=InMemoryMailboxCursors(), hub=hub)
+        client = _build_client(
+            mailbox=_CapTruncatedMailbox(),  # type: ignore[arg-type]
+            cursors=InMemoryMailboxCursors(),
+            hub=hub,
+        )
 
         response = client.get("/realtime/sse")  # completes despite the wired live hub
 
-        assert [f["id"] for f in _frames(response.text)] == ids
+        assert [f["id"] for f in _frames(response.text)] == ids[:2]
 
     async def test_device_less_ack_is_refused(self) -> None:
         # Device-less streams share one per-principal fallback cursor: a cumulative ack
