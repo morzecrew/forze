@@ -140,6 +140,59 @@ class TestDurableSagaExecutor:
         assert ei.value.kind is ExceptionKind.DOMAIN  # consistent: compensated
         assert effects == ["do:a", "do:b", "do:c", "undo:b", "undo:a"]
 
+    async def test_ambiguous_step_commit_survives_the_journal_and_replay(self) -> None:
+        # A drain-timeout cancel at a step's commit journals like any failure — but the
+        # journal must keep the ``commit_ambiguous`` code: flattened to a message, the
+        # replayed failure would be compensated around a possibly-committed effect and
+        # recorded as DOMAIN "compensated, consistent", permanently. Live pass and
+        # replay must both refuse to compensate and raise ``saga.step_ambiguous``.
+        from forze.application.contracts.transaction import COMMIT_AMBIGUOUS_CODE
+
+        state = MockState()
+        effects: list[str] = []
+
+        def _ambiguous(name: str) -> SagaStep[OrderCtx]:
+            async def action(_ctx: ExecutionContext, _state: OrderCtx) -> OrderCtx:
+                effects.append(f"do:{name}")
+                raise exc.internal(
+                    "Cancelled at or after the transaction commit",
+                    code=COMMIT_AMBIGUOUS_CODE,
+                )
+
+            return SagaStep(name=name, action=action, compensation=None, tx_route="mock")
+
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(_step("a", effects), _ambiguous("b")),
+        )
+        executor = DurableSagaExecutor()
+
+        ctx1 = context_from_modules(MockDepsModule(state=state))
+        token = _bound()
+        try:
+            with pytest.raises(CoreException) as live:
+                await executor.run(ctx1, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert live.value.code == "saga.step_ambiguous"
+        assert live.value.kind is ExceptionKind.INFRASTRUCTURE
+        assert effects == ["do:a", "do:b"]  # a's compensation never ran
+
+        # Replay under the same run: the failed body is not re-run, and the journaled
+        # outcome keeps its classification instead of degrading to step_failed.
+        ctx2 = context_from_modules(MockDepsModule(state=state))
+        token = _bound()
+        try:
+            with pytest.raises(CoreException) as replayed:
+                await executor.run(ctx2, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert replayed.value.code == "saga.step_ambiguous"
+        assert replayed.value.kind is ExceptionKind.INFRASTRUCTURE
+        assert effects == ["do:a", "do:b"]  # nothing re-ran, nothing compensated
+
     async def test_outside_a_durable_run_is_rejected(self) -> None:
         ctx = context_from_modules(MockDepsModule())
         effects: list[str] = []

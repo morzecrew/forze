@@ -29,14 +29,20 @@ DEFAULT_REQUEST_TIMEOUT_S = 30.0
 def _translate_status(status: int, body: str) -> Exception:
     """Map an endpoint's HTTP status to the inference error taxonomy.
 
-    The upstream *body* is **logged** (truncated, through the scrubbing pipeline),
-    never embedded in the raised error: an error summary renders verbatim to the API
-    caller for every kind below 500, and this is the plane declared PII-dense by
-    construction — a model server that echoes the offending feature, or a container
-    traceback, must never reach the caller.
+    The upstream *body* is withheld everywhere — not embedded in the raised error (a
+    summary renders verbatim to the API caller for every kind below 500) and **not
+    logged either**: a model server's error echoes the offending feature values or a
+    container traceback, and the log scrubber recognizes credential-shaped patterns,
+    not arbitrary PII, on the plane declared PII-dense by construction. Only the
+    status and the body's size are recorded; the content lives in the model server's
+    own logs.
     """
 
-    logger.warning("Inference endpoint returned HTTP %s: %s", status, body[:500])
+    logger.warning(
+        "Inference endpoint returned HTTP %s (%d-byte error body withheld from logs)",
+        status,
+        len(body),
+    )
 
     if status == 429:
         return exc.throttled(

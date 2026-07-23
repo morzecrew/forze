@@ -34,18 +34,26 @@ _ROUTE_CODES = frozenset({"ValidationError", "ValidationException"})
 def _translate_client_error(error: ClientError) -> Exception:
     """Map a SageMaker runtime error to the inference error taxonomy.
 
-    The upstream message is **logged** (truncated, through the scrubbing pipeline),
-    never embedded in the raised error: an error summary renders verbatim to the API
-    caller for every kind below 500, and a ``ModelError`` message carries whatever the
-    model container wrote — the offending feature values, a traceback — on the plane
-    declared PII-dense by construction.
+    The upstream message is withheld everywhere — not embedded in the raised error (a
+    summary renders verbatim to the API caller for every kind below 500) and **not
+    logged either**: a ``ModelError`` message carries whatever the model container
+    wrote — the offending feature values, a traceback — and the log scrubber
+    recognizes credential-shaped patterns, not arbitrary PII, on the plane declared
+    PII-dense by construction. The log records the AWS error code, the message's
+    size, and the container's ``LogStreamArn`` — a *pointer* to where the content
+    already lives, instead of a copy of it.
     """
 
     response = error.response or {}
     code = str(response.get("Error", {}).get("Code", ""))
-    detail = str(response.get("Error", {}).get("Message", ""))[:500]
+    message = str(response.get("Error", {}).get("Message", ""))
 
-    logger.warning("SageMaker endpoint error %s: %s", code or "<no code>", detail)
+    logger.warning(
+        "SageMaker endpoint error %s (%d-char message withheld from logs; container logs: %s)",
+        code or "<no code>",
+        len(message),
+        response.get("LogStreamArn") or "<no log stream>",
+    )
 
     if code in _THROTTLED_CODES:
         return exc.throttled(

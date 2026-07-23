@@ -29,6 +29,7 @@ from forze.application.contracts.saga import (
     SagaStep,
     saga_step_outcome_unknown,
 )
+from forze.application.contracts.transaction import COMMIT_AMBIGUOUS_CODE
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
 
 from .._logger import logger
@@ -47,13 +48,25 @@ _STEP_FAILURE_KEY = "__saga_step_failed__"
 (instead of a state dict), so a replay re-raises the failure rather than re-running the
 action — the failed body is not re-run on replay, like a completed step's."""
 
+_STEP_FAILURE_CODE_KEY = "__saga_step_failed_code__"
+"""The failed step's :class:`CoreException` code, journaled beside the message.
+
+The journal must preserve every error attribute the ``run`` ladder *branches* on, or a
+replayed failure decides differently than the live one did. Today that is the
+``commit_ambiguous`` code: flattened to a bare message, an ambiguous step commit would
+re-raise as an ordinary failure, be compensated around a possibly-committed effect, and
+journal DOMAIN ``saga.step_failed`` as a consistent rollback — permanently."""
+
 
 @final
 class _JournaledStepFailure(Exception):
     """A step-action failure re-raised from the journal on replay (never re-runs the action).
 
     Carries the recorded message so the saga coordinator wraps it exactly as it wrapped the
-    original failure; it is always caught inside :meth:`DurableSagaExecutor.run`.
+    original failure; it is always caught inside :meth:`DurableSagaExecutor.run`. An
+    **ambiguous** journaled failure is not re-raised as this type — it is rebuilt as a
+    ``commit_ambiguous`` :class:`CoreException` so the ladder's ambiguity check fires on
+    the live pass and on every replay alike.
     """
 
 
@@ -193,7 +206,14 @@ class DurableSagaExecutor:
                 # re-running the action's body. Only genuine failures reach here: a
                 # retryable-classified one was already retried in place (by the step's own
                 # policy or the executor's bounded default) and exhausted its attempts.
-                return {_STEP_FAILURE_KEY: str(error)}
+                record: JsonDict = {_STEP_FAILURE_KEY: str(error)}
+
+                # The code rides along (see _STEP_FAILURE_CODE_KEY): the run ladder
+                # branches on it, so a journal that drops it rewrites the outcome.
+                if isinstance(error, CoreException) and error.code:
+                    record[_STEP_FAILURE_CODE_KEY] = error.code
+
+                return record
 
         # Journaled: a completed step returns its recorded context on replay and its action
         # is not re-run; a failed step records its failure and re-raises it on replay (never
@@ -201,7 +221,15 @@ class DurableSagaExecutor:
         encoded = await step_port.run(str(step.name), _journaled)
 
         if _STEP_FAILURE_KEY in encoded:
-            raise _JournaledStepFailure(str(encoded[_STEP_FAILURE_KEY]))
+            message = str(encoded[_STEP_FAILURE_KEY])
+
+            # An ambiguous step commit is rebuilt with its code intact — as a bare
+            # _JournaledStepFailure the ladder would compensate around a possibly
+            # committed effect and journal a false "compensated, consistent" outcome.
+            if encoded.get(_STEP_FAILURE_CODE_KEY) == COMMIT_AMBIGUOUS_CODE:
+                raise exc.internal(message, code=COMMIT_AMBIGUOUS_CODE)
+
+            raise _JournaledStepFailure(message)
 
         return ctx_model.model_validate(encoded)
 

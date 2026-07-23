@@ -260,6 +260,40 @@ class TestErrorTaxonomy:
         assert "078-05-1120" not in ei.value.summary
         assert "078-05-1120" not in str(ei.value.details or {})
 
+    @pytest.mark.asyncio
+    async def test_upstream_body_is_never_logged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The log scrubber recognizes credential-shaped patterns, not arbitrary PII —
+        # so the body must be withheld from the log line itself, not entrusted to it.
+        # Only the status and the body's size are recorded.
+        from forze_inference.http.kernel import client as client_module
+
+        class _Recorder:
+            def __init__(self) -> None:
+                self.lines: list[str] = []
+
+            def warning(self, msg: str, *args: object, **kwargs: object) -> None:
+                del kwargs
+                self.lines.append(str(msg) % args if args else str(msg))
+
+        recorder = _Recorder()
+        monkeypatch.setattr(client_module, "logger", recorder)
+
+        leaked = "rejected feature ssn=078-05-1120"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(422, text=leaked)
+
+        port = _ctx(await _client(handler), _config()).inference.model(_spec())
+
+        with pytest.raises(CoreException):
+            await port.predict(_Features())
+
+        assert recorder.lines  # the failure is still observable...
+        assert all("078-05-1120" not in line for line in recorder.lines)
+        assert any(str(len(leaked)) in line for line in recorder.lines)  # ...by size
+
 
 # ....................... #
 

@@ -158,8 +158,8 @@ class TestErrorTranslation:
 
     def test_upstream_message_is_never_embedded(self) -> None:
         # The container's message can carry the offending feature values or its
-        # traceback, on the plane declared PII-dense by construction; it is logged
-        # server-side, never placed in the summary the API caller sees verbatim.
+        # traceback, on the plane declared PII-dense by construction; it is never
+        # placed in the summary the API caller sees verbatim.
         leaked = "Traceback: rejected feature ssn=078-05-1120"
 
         for error in (
@@ -173,6 +173,35 @@ class TestErrorTranslation:
             assert isinstance(translated, CoreException)
             assert "078-05-1120" not in translated.summary
             assert "078-05-1120" not in str(translated.details or {})
+
+    def test_upstream_message_is_never_logged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The log scrubber recognizes credential-shaped patterns, not arbitrary PII —
+        # the message is withheld from the log line itself. The log carries the AWS
+        # error code, the message's size, and the container's LogStreamArn (a pointer
+        # to where the content already lives).
+        class _Recorder:
+            def __init__(self) -> None:
+                self.lines: list[str] = []
+
+            def warning(self, msg: str, *args: object, **kwargs: object) -> None:
+                del kwargs
+                self.lines.append(str(msg) % args if args else str(msg))
+
+        recorder = _Recorder()
+        monkeypatch.setattr(client_module, "logger", recorder)
+
+        leaked = "Traceback: rejected feature ssn=078-05-1120"
+        response: dict[str, Any] = {
+            "Error": {"Code": "ModelError", "Message": leaked},
+            "OriginalStatusCode": 422,
+            "LogStreamArn": "arn:aws:logs:x:1:log-group:/sm/endpoint",
+        }
+
+        _translate_client_error(ClientError(response, "InvokeEndpoint"))
+
+        assert recorder.lines
+        assert all("078-05-1120" not in line for line in recorder.lines)
+        assert any("arn:aws:logs" in line for line in recorder.lines)  # the pointer survives
 
 
 # ....................... #
