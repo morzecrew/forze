@@ -211,13 +211,18 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     calls without one."""
 
     drained: bool = attrs.field(default=False, init=False)
-    """Whether the shutdown drain has already run this startup.
+    """Whether a drain (shutdown or quiesce-time flush) **completed** this startup.
 
     :meth:`stop` is asked twice by design — once by the runtime before teardown, once by this
     step's own shutdown hook — and the drain must not be the part that repeats. A second pass
     would **re-claim the rows the first one just rescheduled** (they return to the head of the
     claim order once their backoff elapses), burning a second delivery attempt on each and
-    dead-lettering a backlog the next process would have delivered."""
+    dead-lettering a backlog the next process would have delivered.
+
+    Only a pass that ran to completion claims the guard: one cut by its budget re-arms it,
+    so the next ask retries the untouched remainder instead of silently stranding it — safe
+    because a near-immediate retry cannot claim the rows the cut pass rescheduled (their
+    backoff has not elapsed), and a strict pass ends on the first reschedule it does hit."""
 
     # ....................... #
 
@@ -557,6 +562,13 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                 "mid-batch; claimed rows may sit in 'processing' until reclaim",
                 self.shutdown_drain_timeout.total_seconds(),
             )
+            # Re-arm the once-guard: this pass did not finish, and holding the guard
+            # would make the next ask (the step's own shutdown hook, with a fresh
+            # budget) a silent no-op that strands the untouched remainder for another
+            # process. A near-immediate retry cannot re-claim what this pass
+            # rescheduled — those rows sit out their backoff — and a strict pass ends
+            # on the first reschedule it does hit.
+            self.drained = False
             return False
 
         return stopped
@@ -572,7 +584,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         sweep burns its whole budget on a depth nothing is draining. This runs the same
         strict, reclaim-free drain the shutdown path uses, under the same once-per-startup
         guard — a later ``drain_on_shutdown`` teardown cannot re-claim (and burn a second
-        delivery attempt on) the rows this pass just rescheduled.
+        delivery attempt on) the rows this pass just rescheduled. Only a **completed**
+        pass claims the guard: a flush cut by its budget re-arms it, so the teardown
+        drain retries the untouched remainder instead of silently stranding it.
 
         A ``pubsub`` destination is skipped for the same reason ``drain_on_shutdown``
         refuses it at wiring: pubsub is at-most-once past the broker, and quiesce precedes
@@ -603,6 +617,10 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                 "Outbox relay flush exceeded its budget and was cut mid-batch; claimed "
                 "rows may sit in 'processing' until reclaim"
             )
+            # Re-arm the once-guard (see ``stop``): a cut pass must not turn the later
+            # ``drain_on_shutdown`` teardown into a silent no-op — the rows it
+            # rescheduled sit out their backoff, so the retry drains the remainder.
+            self.drained = False
 
     # ....................... #
 

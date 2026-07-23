@@ -635,3 +635,70 @@ async def test_flush_skips_a_pubsub_destination() -> None:
         await startup.flush(deadline=deadline)
 
     assert [row.status for row in rows] == [OutboxStatus.PENDING]
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_flush_leaves_the_shutdown_drain_armed() -> None:
+    # A flush cut by the quiesce budget did NOT drain: were the once-guard claimed
+    # anyway, the later drain_on_shutdown teardown would be a silent no-op and the
+    # untouched backlog would strand for another process. The retry is safe: rows
+    # the cut pass rescheduled sit out their backoff, so a near-immediate second
+    # pass claims only what was never attempted.
+    startup = _startup(drain_on_shutdown=True)
+    rows = [_outbox_row(index=i) for i in range(2)]
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async def _stall(*_args: Any, **_kwargs: Any) -> Any:
+        await asyncio.sleep(0.5)  # far past the flush deadline below
+        return _result(0)
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await startup(ctx)
+        await asyncio.sleep(0.02)
+
+        ctx.deps.provide(MockStateDepKey).outbox_rows["events"] = rows
+        clock = asyncio.get_running_loop()
+
+        with patch.object(OutboxRelay, "to_queue", _stall):
+            await startup.control.stop(deadline=clock.time() + 1.0)
+            await startup.flush(deadline=clock.time() + 0.05)  # cut mid-drain
+
+        assert startup.drained is False  # the guard re-armed
+        assert [row.status for row in rows] == [OutboxStatus.PENDING] * 2
+
+        # the teardown drain, with its own fresh budget, retries the remainder
+        await startup.stop(deadline=clock.time() + 5.0)
+
+    assert [row.status for row in rows] == [OutboxStatus.PUBLISHED] * 2
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_stop_drain_leaves_the_second_ask_armed() -> None:
+    # The same re-arm on the stop side: a tight first budget (quiesce's stop_all
+    # under a short sweep timeout) cuts the drain; the second ask — the step's own
+    # shutdown hook, with a fresh budget — must retry instead of skipping.
+    startup = _startup(drain_on_shutdown=True, shutdown_drain_timeout=timedelta(seconds=5))
+    rows = [_outbox_row(index=0)]
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async def _stall(*_args: Any, **_kwargs: Any) -> Any:
+        await asyncio.sleep(0.5)
+        return _result(0)
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await startup(ctx)
+        await asyncio.sleep(0.02)
+
+        ctx.deps.provide(MockStateDepKey).outbox_rows["events"] = rows
+        clock = asyncio.get_running_loop()
+
+        with patch.object(OutboxRelay, "to_queue", _stall):
+            assert await startup.stop(deadline=clock.time() + 0.05) is False  # cut
+
+        assert startup.drained is False
+
+        await startup.stop(deadline=clock.time() + 5.0)
+
+    assert [row.status for row in rows] == [OutboxStatus.PUBLISHED]
