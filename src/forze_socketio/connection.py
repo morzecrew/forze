@@ -286,22 +286,25 @@ class _ConnectionLifecycle:
                         )
 
                         if progress is not None:
-                            progress.floor = entry.hlc
+                            # The floor an ack may claim mid-drain is the drain's
+                            # RUN-PROVEN position, not this entry's own: a claim
+                            # trims the whole equal-HLC run, and this entry's run
+                            # may still have undelivered siblings in flight — an
+                            # ack claiming it would delete them from the store
+                            # before the replay reaches them.
+                            progress.floor = outcome.claim_floor
 
         if progress is not None:
+            # The claim floor lands on the final run only once the drain confirmed
+            # it complete; otherwise it stays one proven run behind, and the clamp
+            # holds there until the device reconnects and replays from the cursor.
+            progress.floor = outcome.claim_floor
+
             if outcome.complete:
                 # Only a confirmed drain — that did not raise — lifts the clamp: a
                 # live frame acked past an undelivered middle would advance the
                 # cursor over it and the all-device trim would hard-delete it.
                 progress.complete = True
-
-            else:
-                # An unconfirmed drain must not claim its trailing equal-HLC run
-                # either — the strict-greater replay window may have split it, and a
-                # claim trims the WHOLE run. Retreat to the last proven-complete
-                # position; the clamp holds there until the device reconnects and
-                # the next replay continues from the cursor.
-                progress.floor = outcome.claim_floor
 
     # ....................... #
 

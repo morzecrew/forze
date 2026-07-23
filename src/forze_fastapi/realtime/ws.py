@@ -33,6 +33,7 @@ import asyncio
 import json
 import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import aclosing
 from datetime import datetime
 from inspect import isawaitable
 from typing import Any, cast, final
@@ -51,12 +52,13 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import FrozenOperationRegistry, run_operation
 from forze.application.integrations.realtime import (
+    BacklogDrain,
     MailboxCursors,
     RealtimeCommandRoute,
     RealtimeMailbox,
     RealtimePresence,
     acknowledge_up_to,
-    iter_replay,
+    iter_backlog,
     negotiate_realtime_protocol,
     resolve_client_key,
 )
@@ -69,7 +71,7 @@ from forze.base.exceptions import (
     guard_frame,
 )
 from forze.base.logging import Logger
-from forze.base.primitives import utcnow, uuid7
+from forze.base.primitives import HlcTimestamp, utcnow, uuid7
 from forze.base.scrubbing import sanitize_pydantic_errors
 
 from .._logging import ForzeFastAPILogger
@@ -99,6 +101,12 @@ WS_POLICY_CLOSE = 1008
 
 WS_TOO_BIG_CLOSE = 1009
 """Close code for an oversized inbound frame."""
+
+WS_RECONNECT_CLOSE = 1012
+"""Close code ("service restart") when the replay could not confirmably drain the
+backlog: the client reconnects with ``last_event_id`` and continues from there —
+entering the live tail instead would skip the undelivered middle, and a later ack
+would let the all-device trim hard-delete it."""
 
 WS_UNSUPPORTED_DATA_CLOSE = 1003
 """Close code for a non-text (binary) inbound frame — the protocol is JSON text."""
@@ -284,6 +292,11 @@ class _WsSession:
 
     connection: WsConnection
 
+    replay: BacklogDrain = attrs.field(factory=BacklogDrain)
+    """The connect-time replay's progress: while it is not ``complete``, acks clamp
+    to its run-proven ``claim_floor`` (an ack of a frame whose equal-HLC siblings
+    are still draining would otherwise claim — and trim — the whole run)."""
+
 
 # ----------------------- #
 
@@ -461,7 +474,7 @@ def attach_realtime_ws_route(
             with _bind(ctx, session.connection):
                 mailbox = mailbox_factory(ctx)
                 cursors = cursors_factory(ctx)
-                since = await _resolve_since(
+                resume = await _resolve_since(
                     mailbox,
                     cursors,
                     principal=session.connection.principal,
@@ -469,17 +482,40 @@ def attach_realtime_ws_route(
                     last_event_id=websocket.query_params.get("last_event_id"),
                 )
 
-                async for entry in iter_replay(
-                    mailbox, principal=session.connection.principal, since=since
-                ):
-                    await _send(
-                        _egress_frame(
-                            event=entry.event, event_id=entry.event_id, payload=entry.payload
-                        )
+                session.replay.claim_floor = resume.since
+
+                # ``iter_backlog`` drains past a bounded replay window in rounds and
+                # reports whether the drain confirmably completed; ``aclosing``
+                # closes the paged stream deterministically on a raise mid-drain.
+                async with aclosing(
+                    iter_backlog(
+                        mailbox,
+                        principal=session.connection.principal,
+                        since=resume.since,
+                        outcome=session.replay,
                     )
+                ) as entries:
+                    async for entry in entries:
+                        if not resume.admits(entry):
+                            continue  # delivered before the tear (see _resolve_since)
+
+                        await _send(
+                            _egress_frame(
+                                event=entry.event, event_id=entry.event_id, payload=entry.payload
+                            )
+                        )
 
             if subscription is None:
                 return  # replay + acks only; the socket stays open for the ingress half
+
+            if not session.replay.complete:
+                # See WS_RECONNECT_CLOSE: the live tail after an unconfirmed drain
+                # would skip the undelivered middle. The ack clamp stays engaged
+                # (``session.replay`` never completed) until the reconnect replay.
+                await websocket.close(
+                    code=WS_RECONNECT_CLOSE, reason="replay incomplete — reconnect to resume"
+                )
+                return
 
             while True:
                 signal, event_id = await subscription.queue.get()
@@ -493,6 +529,17 @@ def attach_realtime_ws_route(
             # Contained like reauth and dispatch: a flaky cursor store must cost one
             # ack (surfaced as an error frame), never the whole connection.
             async def _unit() -> None:
+                delivered_floor: HlcTimestamp | None = None
+
+                if not session.replay.complete:
+                    if session.replay.claim_floor is None:
+                        return  # nothing run-proven delivered yet — nothing to claim
+
+                    # Mid-replay, the cumulative claim stops at the run-proven floor:
+                    # the acked frame's own equal-HLC run may still have undelivered
+                    # siblings in flight, and a claim trims the whole run.
+                    delivered_floor = session.replay.claim_floor
+
                 with _bind(ctx, session.connection):
                     await acknowledge_up_to(
                         mailbox_factory(ctx),
@@ -500,6 +547,7 @@ def attach_realtime_ws_route(
                         principal=session.connection.principal,
                         client_key=_client_key(),
                         event_id=event_id,
+                        delivered_floor=delivered_floor,
                     )
 
             outcome = await guard_frame(_unit, on_server_error=_log_server_error)

@@ -34,14 +34,16 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from datetime import timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, final
 from uuid import UUID
 
+import attrs
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from forze.application.contracts.authn import ClientIdentity
+from forze.application.contracts.realtime import MailboxEntry
 from forze.application.execution import ExecutionContext
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.integrations.realtime import (
@@ -209,6 +211,33 @@ async def _await_hub_ready(hub: RealtimeSseHub) -> None:
         )
 
 
+@final
+@attrs.define(slots=True, frozen=True)
+class _ReplayResume:
+    """Where a replay starts, plus the id anchor that makes a mid-run resume lossless."""
+
+    since: HlcTimestamp | None
+    """The replay's strict-greater start position."""
+
+    anchor_hlc: HlcTimestamp | None = None
+    """The resumed entry's position: replayed entries strictly below it were
+    delivered before the tear and are dropped instead of framed."""
+
+    anchor_id: str | None = None
+    """The resumed entry itself — the one id at ``anchor_hlc`` known delivered."""
+
+    # ....................... #
+
+    def admits(self, entry: MailboxEntry) -> bool:
+        """Whether a replayed entry is new to the resuming client (see
+        :func:`_resolve_since` — the covered prefix and the resumed id drop)."""
+
+        if self.anchor_hlc is None:
+            return True
+
+        return entry.hlc >= self.anchor_hlc and entry.event_id != self.anchor_id
+
+
 async def _resolve_since(
     mailbox: RealtimeMailbox,
     cursors: MailboxCursors,
@@ -216,30 +245,41 @@ async def _resolve_since(
     principal: str,
     client_key: str,
     last_event_id: str | None,
-) -> HlcTimestamp | None:
+) -> _ReplayResume:
     """The replay start: ``Last-Event-ID`` (browser resume) beats the stored cursor.
 
-    An id no longer retained falls back to the cursor — the client dedups by
-    envelope id either way.
+    A resumed id cannot become the start position directly: distinct entries can
+    share one HLC, and the strict-greater replay would then skip the resumed
+    entry's undelivered equal-HLC siblings on every reconnect. So the replay
+    starts from the stored cursor (whose position claims its whole run) and the
+    resumed id becomes an **anchor**: the already-delivered prefix below it is
+    dropped, its own id is dropped, and everything else — the siblings included —
+    is framed. Siblings delivered before the tear re-send; the client dedups by
+    envelope id either way, as it must (a durable signal can also arrive twice
+    through the mailbox + live races).
+
+    An id no longer retained falls back to the cursor alone.
     """
+
+    cursor = await cursors.get(principal=principal, client_key=client_key)
 
     if last_event_id:
         position = await mailbox.position_of(principal=principal, event_id=last_event_id)
 
-        if position is not None:
-            return position
+        if position is not None and (cursor is None or cursor < position):
+            return _ReplayResume(since=cursor, anchor_hlc=position, anchor_id=last_event_id)
 
-    return await cursors.get(principal=principal, client_key=client_key)
+    return _ReplayResume(since=cursor)
 
 
 async def _replay_frames(
     mailbox: RealtimeMailbox,
     *,
     principal: str,
-    since: HlcTimestamp | None,
+    resume: _ReplayResume,
     outcome: BacklogDrain,
 ) -> AsyncIterator[str]:
-    """The backlog past *since*, as SSE frames (oldest-first, ids anchor the resume).
+    """The backlog past the resume position, as SSE frames (oldest-first).
 
     *outcome* reports whether the backlog confirmably drained — only then may the
     stream proceed to its live tail (see the caller).
@@ -249,9 +289,12 @@ async def _replay_frames(
     # propagates that closure into ``iter_backlog`` (and through it into the
     # mailbox's paged stream) instead of leaving them to GC finalization.
     async with aclosing(
-        iter_backlog(mailbox, principal=principal, since=since, outcome=outcome)
+        iter_backlog(mailbox, principal=principal, since=resume.since, outcome=outcome)
     ) as entries:
         async for entry in entries:
+            if not resume.admits(entry):
+                continue  # delivered before the tear (see _resolve_since)
+
             yield _sse_frame(event=entry.event, event_id=entry.event_id, payload=entry.payload)
 
 
@@ -391,7 +434,7 @@ def attach_realtime_sse_route(
                     # the client's next reconnect.
                     await _await_hub_ready(hub)
 
-                since = await _resolve_since(
+                resume = await _resolve_since(
                     mailbox,
                     cursors,
                     principal=principal,
@@ -399,10 +442,10 @@ def attach_realtime_sse_route(
                     last_event_id=last_event_id,
                 )
 
-                outcome = BacklogDrain(claim_floor=since)
+                outcome = BacklogDrain(claim_floor=resume.since)
 
                 async for frame in _replay_frames(
-                    mailbox, principal=principal, since=since, outcome=outcome
+                    mailbox, principal=principal, resume=resume, outcome=outcome
                 ):
                     yield frame
 

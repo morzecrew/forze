@@ -293,9 +293,7 @@ class TestReplayAndAck:
 
             # rotate the client identity in place, then ack — the cursor must
             # belong to the refreshed device, not the connect-time closure
-            ws.send_json(
-                {"type": "realtime.reauth", "cid": "r", "auth": {"device_id": "d2"}}
-            )
+            ws.send_json({"type": "realtime.reauth", "cid": "r", "auth": {"device_id": "d2"}})
             assert ws.receive_json()["data"] == {"ok": True}
             ws.send_json({"type": "realtime.ack", "up_to": ids[0]})
 
@@ -335,6 +333,86 @@ class TestReplayAndAck:
 
         with client.websocket_connect(f"/realtime/ws?last_event_id={ids[0]}") as ws:
             assert [ws.receive_json()["id"] for _ in range(2)] == ids[1:]
+
+    def test_last_event_id_inside_an_equal_hlc_run_resumes_the_siblings(self) -> None:
+        # A socket torn mid-run: the resumed id shares its HLC with undelivered
+        # siblings. A strict-greater resume from that HLC would skip them on every
+        # reconnect; the id-anchored resume replays the run and drops only the
+        # covered prefix and the resumed id itself.
+        mailbox = InMemoryRealtimeMailbox()
+        client, _ = _build(mailbox=mailbox)
+        import asyncio
+
+        async def _seed_run() -> None:
+            signal = RealtimeSignal.of(Audience.principal(str(_PRINCIPAL)), "e", {})
+            await mailbox.store(
+                principal=str(_PRINCIPAL), event_id="e1", hlc=_hlc(1), signal=signal
+            )
+
+            for sibling in ("s1", "s2", "s3"):  # one shared position, distinct entries
+                await mailbox.store(
+                    principal=str(_PRINCIPAL), event_id=sibling, hlc=_hlc(2), signal=signal
+                )
+
+        asyncio.run(_seed_run())
+
+        with client.websocket_connect("/realtime/ws?last_event_id=s1") as ws:
+            assert [ws.receive_json()["id"] for _ in range(2)] == ["s2", "s3"]
+
+    def test_unconfirmed_drain_closes_instead_of_entering_live(self) -> None:
+        # The replay window cuts inside an equal-HLC run at least ``cap`` long, so
+        # the drain cannot be confirmed: entering the live tail would skip the
+        # undelivered sibling, and a later ack would let the trim hard-delete it.
+        # The socket closes with the reconnect code instead — ``last_event_id``
+        # resumes precisely.
+        from contextlib import aclosing
+
+        from forze_fastapi.realtime.ws import WS_RECONNECT_CLOSE
+
+        inner = InMemoryRealtimeMailbox()
+
+        class _CapTruncatedMailbox:
+            cap = 2  # the replay window always ends inside the s1..s3 run
+
+            async def replay_since(self, *, principal: str, since: Any) -> Any:
+                delivered = 0
+
+                async with aclosing(
+                    inner.replay_since(principal=principal, since=since)
+                ) as entries:
+                    async for entry in entries:
+                        if delivered >= self.cap:
+                            return
+
+                        delivered += 1
+                        yield entry
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(inner, name)
+
+        hub = RealtimeSseHub()
+        hub.ready.set()
+        client, _ = _build(mailbox=_CapTruncatedMailbox(), hub=hub)  # type: ignore[arg-type]
+        import asyncio
+
+        async def _seed_run() -> None:
+            signal = RealtimeSignal.of(Audience.principal(str(_PRINCIPAL)), "e", {})
+            await inner.store(principal=str(_PRINCIPAL), event_id="e1", hlc=_hlc(1), signal=signal)
+
+            for sibling in ("s1", "s2", "s3"):
+                await inner.store(
+                    principal=str(_PRINCIPAL), event_id=sibling, hlc=_hlc(2), signal=signal
+                )
+
+        asyncio.run(_seed_run())
+
+        with client.websocket_connect("/realtime/ws") as ws:
+            assert [ws.receive_json()["id"] for _ in range(3)] == ["e1", "s1", "s2"]
+
+            with pytest.raises(WebSocketDisconnect) as caught:
+                ws.receive_json()
+
+            assert caught.value.code == WS_RECONNECT_CLOSE
 
 
 class TestLiveLeg:
@@ -604,9 +682,12 @@ class TestOriginAllowlist:
     def test_disallowed_origin_is_refused_with_policy_close(self) -> None:
         client, _ = _build(allowed_origins=["https://app.example.com"])
 
-        with client.websocket_connect(
-            "/realtime/ws", headers={"Origin": "https://evil.example"}
-        ) as ws, pytest.raises(WebSocketDisconnect) as caught:
+        with (
+            client.websocket_connect(
+                "/realtime/ws", headers={"Origin": "https://evil.example"}
+            ) as ws,
+            pytest.raises(WebSocketDisconnect) as caught,
+        ):
             ws.receive_json()
 
         assert caught.value.code == 1008

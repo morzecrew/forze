@@ -102,6 +102,55 @@ class BacklogDrain:
     cumulative acks past *claim_floor* are safe without any clamp."""
 
 
+@final
+@attrs.define(slots=True)
+class _RunTracker:
+    """Per-pass entry classification for :func:`iter_backlog` — tracks the trailing
+    equal-HLC run so a re-fetch can skip what an earlier pass already yielded, and
+    advances the claimable floor only across runs proven complete."""
+
+    outcome: BacklogDrain
+    resume: HlcTimestamp | None
+    """Where the next pass re-fetches from: the last proven-complete run."""
+
+    run_hlc: HlcTimestamp | None = None
+    """The trailing run: the highest HLC yielded so far."""
+
+    run_ids: set[str] = attrs.field(factory=set)
+    """Entries already yielded at ``run_hlc``."""
+
+    # ....................... #
+
+    def admit(self, entry: MailboxEntry) -> bool:
+        """Whether *entry* is new (yield it) or a re-fetched duplicate (skip it)."""
+
+        if self.run_hlc is None or entry.hlc > self.run_hlc:
+            if self.run_hlc is not None:
+                # a strictly greater entry proves the previous run complete
+                self.outcome.claim_floor = self.run_hlc
+                self.resume = self.run_hlc
+                self.run_ids.clear()
+
+            self.run_hlc = entry.hlc
+
+        elif entry.event_id in self.run_ids:
+            return False  # yielded before the previous pass's boundary
+
+        self.run_ids.add(entry.event_id)
+
+        return True
+
+    # ....................... #
+
+    def seal(self) -> None:
+        """A pass reached the retained end: the trailing run is complete, drained."""
+
+        if self.run_hlc is not None:
+            self.outcome.claim_floor = self.run_hlc
+
+        self.outcome.complete = True
+
+
 async def iter_backlog(
     mailbox: RealtimeMailbox,
     *,
@@ -122,46 +171,33 @@ async def iter_backlog(
     yields nothing new (the trailing run is at least ``cap`` long — unreachable
     through a strict-greater window, so it stays unclaimed) or the round budget runs
     out. *outcome* is only meaningful once the generator finishes on its own; a
-    consumer that stops early must treat the drain as incomplete.
+    consumer that stops early must treat the drain as incomplete — though
+    ``outcome.claim_floor`` is safe to read at any point (it trails delivery by the
+    unproven run, which is exactly what makes it claimable mid-drain).
     """
 
     cap = getattr(mailbox, "cap", None)
-    run_hlc: HlcTimestamp | None = None  # the trailing run: highest HLC yielded so far
-    run_ids: set[str] = set()  # entries already yielded at ``run_hlc``
-    resume = since  # the last position with a proven-complete run
+    tracker = _RunTracker(outcome=outcome, resume=since)
 
     for _ in range(max_rounds):
         fetched = 0
         progressed = False
 
-        async with aclosing(iter_replay(mailbox, principal=principal, since=resume)) as entries:
+        async with aclosing(
+            iter_replay(mailbox, principal=principal, since=tracker.resume)
+        ) as entries:
             async for entry in entries:
                 fetched += 1
 
-                if run_hlc is None or entry.hlc > run_hlc:
-                    if run_hlc is not None:
-                        # a strictly greater entry proves the previous run complete
-                        outcome.claim_floor = run_hlc
-                        resume = run_hlc
-                        run_ids.clear()
+                if not tracker.admit(entry):
+                    continue
 
-                    run_hlc = entry.hlc
-
-                elif entry.event_id in run_ids:
-                    continue  # re-fetched: yielded before the previous pass's boundary
-
-                run_ids.add(entry.event_id)
                 progressed = True
 
                 yield entry
 
         if cap is None or fetched < int(cap):
-            # The window undershot the cap: it reached the retained end, so the
-            # trailing run is complete and the backlog is drained.
-            if run_hlc is not None:
-                outcome.claim_floor = run_hlc
-
-            outcome.complete = True
+            tracker.seal()  # the window undershot the cap: the retained end, drained
             return
 
         if not progressed:

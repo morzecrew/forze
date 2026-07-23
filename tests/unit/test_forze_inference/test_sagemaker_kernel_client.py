@@ -164,6 +164,44 @@ class TestRetryPinning:
 
         await client.close()
 
+    @pytest.mark.asyncio
+    async def test_routed_client_forwards_its_config_to_each_tenant_client(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A tenant-routed deployment configures botocore once on the routed client;
+        # every lazily-built per-tenant client applies it (without this, routed
+        # clients were stuck on the single-attempt default with no override seam).
+        from botocore.config import Config
+
+        from forze_inference.sagemaker.kernel.routing_credentials import (
+            SageMakerRoutingCredentials,
+        )
+
+        session = _fake_aws(monkeypatch, _FakeRuntime())
+        routed = RoutedSageMakerRuntimeClient(
+            secrets=object(),  # type: ignore[arg-type] — initialize_client is called directly
+            secret_ref_for_tenant={},
+            tenant_provider=lambda: _T1,
+            config=Config(retries={"max_attempts": 4, "mode": "adaptive"}, read_timeout=7),
+        )
+
+        client = await routed.initialize_client(
+            _T1,
+            SageMakerRoutingCredentials(
+                region_name="eu-west-1",
+                access_key_id="AKIA",
+                secret_access_key=SecretStr("secret"),
+            ),
+        )
+
+        try:
+            cfg = session.client_kwargs["config"]
+            assert cfg.retries == {"max_attempts": 4, "mode": "adaptive"}
+            assert cfg.read_timeout == 7
+
+        finally:
+            await client.close()
+
 
 class TestErrorTranslation:
     """Every AWS failure class maps onto the port's taxonomy — the table a caller's
@@ -571,7 +609,7 @@ class TestLifecycleSteps:
 
         try:
             cfg = session.client_kwargs["config"]
-            assert getattr(cfg, "retries") == {"max_attempts": 4, "mode": "adaptive"}
+            assert cfg.retries == {"max_attempts": 4, "mode": "adaptive"}
         finally:
             await step.shutdown(ctx)
 

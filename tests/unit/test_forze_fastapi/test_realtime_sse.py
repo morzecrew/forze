@@ -177,6 +177,52 @@ class TestReplay:
         # no cursor either — the whole backlog replays; the client dedups by id
         assert [f["id"] for f in _frames(response.text)] == ids
 
+    async def test_last_event_id_inside_an_equal_hlc_run_resumes_the_siblings(self) -> None:
+        # A stream torn mid-run: the client's last received id shares its HLC with
+        # undelivered siblings. A strict-greater resume from that HLC would skip
+        # them on EVERY automatic reconnect; the id-anchored resume replays the run
+        # and drops only the covered prefix and the resumed id itself.
+        mailbox = InMemoryRealtimeMailbox()
+        await mailbox.store(
+            principal=str(_PRINCIPAL), event_id="e1", hlc=_hlc(1), signal=_signal(1)
+        )
+
+        for sibling in ("s1", "s2", "s3"):  # one shared position, distinct entries
+            await mailbox.store(
+                principal=str(_PRINCIPAL), event_id=sibling, hlc=_hlc(2), signal=_signal(2)
+            )
+
+        client = _build_client(mailbox=mailbox, cursors=InMemoryMailboxCursors())
+
+        response = client.get("/realtime/sse", headers={"Last-Event-ID": "s1"})
+
+        # e1 (below the anchor) and s1 itself are dropped; the siblings resume
+        assert [f["id"] for f in _frames(response.text)] == ["s2", "s3"]
+
+    async def test_anchored_resume_starts_from_the_device_cursor(self) -> None:
+        # With an acked cursor below the anchor, the replay starts there — the
+        # prefix between the cursor and the anchor is re-read but dropped, so the
+        # anchored resume costs reads, never duplicate frames below the anchor.
+        mailbox = InMemoryRealtimeMailbox()
+        cursors = InMemoryMailboxCursors()
+        await mailbox.store(
+            principal=str(_PRINCIPAL), event_id="e1", hlc=_hlc(1), signal=_signal(1)
+        )
+
+        for sibling in ("s1", "s2"):
+            await mailbox.store(
+                principal=str(_PRINCIPAL), event_id=sibling, hlc=_hlc(2), signal=_signal(2)
+            )
+
+        client = _build_client(mailbox=mailbox, cursors=cursors)
+        client.post("/realtime/sse/ack", json={"up_to": "e1"}, params={"device_id": "d1"})
+
+        response = client.get(
+            "/realtime/sse", params={"device_id": "d1"}, headers={"Last-Event-ID": "s1"}
+        )
+
+        assert [f["id"] for f in _frames(response.text)] == ["s2"]
+
 
 class TestAck:
     async def test_ack_advances_the_cursor_for_the_next_replay(self) -> None:

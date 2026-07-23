@@ -5,6 +5,7 @@ from typing import Any, cast, final
 from uuid import UUID
 
 import attrs
+from botocore.config import Config as AioConfig
 from pydantic import BaseModel
 
 from forze.application.contracts.secrets import SecretRef, SecretsPort
@@ -37,6 +38,11 @@ class RoutedSageMakerRuntimeClient(
     secrets: SecretsPort
     secret_ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef]
     max_cached_tenants: int = 100
+    config: AioConfig | None = attrs.field(default=None, repr=False)
+    """Optional botocore configuration, applied to **every** tenant's client (retries,
+    timeouts, proxies). Botocore retries stay pinned to a single attempt unless
+    ``retries`` is set here explicitly — ``invoke_endpoint`` is metered and
+    non-idempotent, so silent transport-level retries are opt-in only."""
     creds_type: type[BaseModel] = attrs.field(
         default=SageMakerRoutingCredentials,
         init=False,
@@ -66,6 +72,7 @@ class RoutedSageMakerRuntimeClient(
             endpoint_url=creds.endpoint_url,
             access_key_id=creds.access_key_id,
             secret_access_key=creds.secret_access_key,
+            config=self.config,
         )
 
         return client

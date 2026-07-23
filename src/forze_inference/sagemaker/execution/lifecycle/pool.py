@@ -123,7 +123,10 @@ def routed_sagemaker_inference_lifecycle_step(
     """Lifecycle step for a tenant-routed runtime client (``dedicated`` isolation).
 
     Unlike the single-client step there are no ambient credentials here — each tenant's AWS
-    identity comes from its own secret, resolved on first use.
+    identity comes from its own secret, resolved on first use. Botocore configuration
+    (retries, timeouts, proxies) is likewise not a parameter of this step: set it as
+    ``RoutedSageMakerRuntimeClient(config=...)`` when constructing *client*, and it
+    applies to every tenant's client.
     """
 
     return routed_client_lifecycle_step(str(name), client=client)
