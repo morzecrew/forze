@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, final
 
@@ -16,6 +17,8 @@ from forze.application.contracts.saga import (
 )
 from forze.base.exceptions import exc
 
+from ..context.active_operation import active_operation_var
+from ..context.commit_state import commit_started, reset_commit_started
 from ..resilience import resolve_resilience_executor
 from ..tracing import record
 
@@ -58,9 +61,35 @@ class InProcessSagaExecutor:
         state = initial
         states: dict[int, Ctx] = {}  # context as of each completed step, by index
 
+        # Inside an operation-owned task the transaction scope converts a cancellation
+        # at a commit into ``commit_ambiguous`` (an ordinary exception, handled below),
+        # and the commit mark belongs to the invocation boundary — leave it alone.
+        # Outside one the scope re-raises the cancellation RAW, so the executor must
+        # classify it itself; the mark is then exclusively this run's to reset per step.
+        operation_owned = active_operation_var.get() is asyncio.current_task()
+
         for index, step in enumerate(definition.steps):
+            if not operation_owned:
+                reset_commit_started()
+
             try:
                 state = await self._run_step(ctx, step, state)
+
+            except asyncio.CancelledError as error:
+                # Raw cancellation (bypasses ``except Exception``). Before this step's
+                # commit it is crash-shaped — nothing committed, propagate untouched.
+                # At/after it the step may be committed: absorb the cancel (balancing
+                # the task's cancel count, as the scope's own conversion does) and
+                # surface the same indeterminacy verdict, so an at-least-once caller
+                # cannot retry the plain cancellation into a duplicate execution.
+                task = asyncio.current_task()
+
+                if operation_owned or not commit_started() or task is None:
+                    raise
+
+                task.uncancel()
+                self._emit("step_ambiguous", definition, step)
+                raise progress.step_ambiguous_error(index, error) from error
 
             except Exception as error:
                 # An interruption at the step's own commit (a drain-timeout cancel

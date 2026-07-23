@@ -295,6 +295,124 @@ class TestDurableSagaExecutor:
         assert result.trail == ["a", "b"]
         assert effects == ["do:a", "do:b", "do:b"]  # only b re-ran; a came from the journal
 
+    async def test_cancel_during_the_journal_write_after_success_journals_ambiguity(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The step's action returned and its transaction committed, but the cancel
+        # tore the journal write inside the step-port boundary — outside _journaled's
+        # own handler. Unrecorded, resume would re-run the committed body. The
+        # executor must absorb the cancel and journal the ambiguity itself.
+        from forze_kits.integrations.durable import saga_executor as saga_executor_module
+
+        state = MockState()
+        effects: list[str] = []
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(_step("a", effects), _step("b", effects)),
+        )
+
+        class _TornWritePort:
+            def __init__(self, inner: Any) -> None:
+                self.inner = inner
+                self.torn = False
+
+            async def run(self, step_id: str, fn: Any) -> Any:
+                if step_id == "b" and not self.torn:
+                    self.torn = True
+                    await fn()  # the action runs; its transaction commits...
+                    raise asyncio.CancelledError  # ...but the outcome write is torn
+
+                return await self.inner.run(step_id, fn)
+
+        ctx1 = context_from_modules(MockDepsModule(state=state))
+        real_port = resolve_durable_step(ctx1)
+        monkeypatch.setattr(
+            saga_executor_module,
+            "resolve_durable_step",
+            lambda _ctx: _TornWritePort(real_port),
+        )
+
+        token = _bound()
+        try:
+            with pytest.raises(CoreException) as live:
+                await DurableSagaExecutor().run(ctx1, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert live.value.code == "saga.step_ambiguous"
+        assert effects == ["do:a", "do:b"]  # no compensation around the unknown outcome
+
+        # Resume with a healthy port: the recorded verdict replays, b's body not re-run.
+        monkeypatch.setattr(saga_executor_module, "resolve_durable_step", lambda _ctx: real_port)
+        ctx2 = context_from_modules(MockDepsModule(state=state))
+        token = _bound()
+        try:
+            with pytest.raises(CoreException) as replayed:
+                await DurableSagaExecutor().run(ctx2, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert replayed.value.code == "saga.step_ambiguous"
+        assert effects == ["do:a", "do:b"]
+
+    async def test_cancel_after_the_journal_write_landed_keeps_the_success(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The outcome write actually landed before the cancel arrived: first-write-wins
+        # hands the success row back to the executor's ambiguity retry, so the journal
+        # stays truthful — the run stops as a cancellation (the drain asked it to) and
+        # resume completes the saga from the journal without re-running the body.
+        from forze_kits.integrations.durable import saga_executor as saga_executor_module
+
+        state = MockState()
+        effects: list[str] = []
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(_step("a", effects), _step("b", effects)),
+        )
+
+        class _LateCancelPort:
+            def __init__(self, inner: Any) -> None:
+                self.inner = inner
+                self.cancelled = False
+
+            async def run(self, step_id: str, fn: Any) -> Any:
+                if step_id == "b" and not self.cancelled:
+                    self.cancelled = True
+                    await self.inner.run(step_id, fn)  # the success row lands...
+                    raise asyncio.CancelledError  # ...the cancel arrives after it
+
+                return await self.inner.run(step_id, fn)
+
+        ctx1 = context_from_modules(MockDepsModule(state=state))
+        real_port = resolve_durable_step(ctx1)
+        monkeypatch.setattr(
+            saga_executor_module,
+            "resolve_durable_step",
+            lambda _ctx: _LateCancelPort(real_port),
+        )
+
+        token = _bound()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await DurableSagaExecutor().run(ctx1, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert effects == ["do:a", "do:b"]
+
+        # Resume: both steps replay from the journal; the saga completes cleanly.
+        monkeypatch.setattr(saga_executor_module, "resolve_durable_step", lambda _ctx: real_port)
+        ctx2 = context_from_modules(MockDepsModule(state=state))
+        token = _bound()
+        try:
+            result = await DurableSagaExecutor().run(ctx2, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert result.trail == ["a", "b"]
+        assert effects == ["do:a", "do:b"]  # nothing re-ran
+
     async def test_named_retry_and_compensation_policies_are_honoured(self) -> None:
         # The named-policy branches: a step with retry_policy runs under the resolved
         # resilience executor (a transient blip retries in place), and its

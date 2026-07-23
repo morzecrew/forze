@@ -197,12 +197,17 @@ class DurableSagaExecutor:
 
             return cast("BaseModel", new_state).model_dump(mode="json")
 
-        async def _journaled() -> JsonDict:
-            # Fresh commit mark for THIS step: the runner's task crosses no invocation
-            # boundary between steps, so a previous step's committed transaction would
-            # otherwise leave the mark set and misread a pre-commit cancel below.
-            reset_commit_started()
+        def _ambiguous_outcome() -> JsonDict:
+            return {
+                _STEP_FAILURE_KEY: (
+                    f"Saga step {step.name!r} was cancelled at or after its "
+                    "transaction commit; the commit outcome is ambiguous "
+                    "(it may have committed)."
+                ),
+                _STEP_FAILURE_CODE_KEY: COMMIT_AMBIGUOUS_CODE,
+            }
 
+        async def _journaled() -> JsonDict:
             try:
                 if step.retry_policy is not None:
                     return await ctx.resilience().run(_act, policy=step.retry_policy)
@@ -232,14 +237,7 @@ class DurableSagaExecutor:
 
                 task.uncancel()
 
-                return {
-                    _STEP_FAILURE_KEY: (
-                        f"Saga step {step.name!r} was cancelled at or after its "
-                        "transaction commit; the commit outcome is ambiguous "
-                        "(it may have committed)."
-                    ),
-                    _STEP_FAILURE_CODE_KEY: COMMIT_AMBIGUOUS_CODE,
-                }
+                return _ambiguous_outcome()
 
             except Exception as error:
                 # Record the failure as this step's journaled outcome so a re-invocation of
@@ -256,10 +254,45 @@ class DurableSagaExecutor:
 
                 return record
 
+        # Fresh commit mark for THIS step, set before the whole step-port boundary:
+        # the runner's task crosses no invocation boundary between steps, so a
+        # previous step's committed transaction would otherwise leave the mark set
+        # and misread a pre-commit cancel in either handler.
+        reset_commit_started()
+
         # Journaled: a completed step returns its recorded context on replay and its action
         # is not re-run; a failed step records its failure and re-raises it on replay (never
         # re-running the action). Transient failures are retried before anything journals.
-        encoded = await step_port.run(str(step.name), _journaled)
+        try:
+            encoded = await step_port.run(str(step.name), _journaled)
+
+        except asyncio.CancelledError:
+            # The cancel landed inside the step-port boundary itself — around the
+            # journal lookup or the outcome write, outside _journaled's own handler.
+            # Before this step's commit nothing is at stake: propagate raw (crash-
+            # shaped; replay re-runs the body). At/after it the step's effect may be
+            # committed while its journal row may not have landed — replay would
+            # re-run a committed body. Absorb the cancel and journal the ambiguity
+            # under the port's first-write-wins: if the success row DID land, that
+            # row wins and the step is truthfully complete; if it did not, replay
+            # raises ``step_ambiguous`` for reconciliation.
+            task = asyncio.current_task()
+
+            if not commit_started() or task is None:
+                raise
+
+            task.uncancel()
+
+            async def _record_ambiguous() -> JsonDict:
+                return _ambiguous_outcome()
+
+            encoded = await step_port.run(str(step.name), _record_ambiguous)
+
+            if _STEP_FAILURE_KEY not in encoded:
+                # The success row had already landed — the journal is truthful and the
+                # step is complete. The run still stops now: a drain asked it to, and
+                # resume replays the success and continues from here.
+                raise asyncio.CancelledError from None
 
         if _STEP_FAILURE_KEY in encoded:
             message = str(encoded[_STEP_FAILURE_KEY])

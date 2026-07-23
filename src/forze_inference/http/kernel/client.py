@@ -26,7 +26,7 @@ DEFAULT_REQUEST_TIMEOUT_S = 30.0
 """Client-level request timeout when no invocation deadline tightens it."""
 
 
-def _translate_status(status: int, body: str) -> Exception:
+def _translate_status(status: int, body_bytes: int) -> Exception:
     """Map an endpoint's HTTP status to the inference error taxonomy.
 
     The upstream *body* is withheld everywhere — not embedded in the raised error (a
@@ -41,7 +41,7 @@ def _translate_status(status: int, body: str) -> Exception:
     logger.warning(
         "Inference endpoint returned HTTP %s (%d-byte error body withheld from logs)",
         status,
-        len(body),
+        body_bytes,
     )
 
     if status == 429:
@@ -154,7 +154,7 @@ class InferenceHttpClient(InferenceHttpClientPort):
             ) from e
 
         if response.status_code >= 400:
-            raise _translate_status(response.status_code, response.text)
+            raise _translate_status(response.status_code, len(response.content))
 
         try:
             payload: Any = response.json()
