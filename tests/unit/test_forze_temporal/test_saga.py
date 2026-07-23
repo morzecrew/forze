@@ -76,6 +76,36 @@ async def test_forward_failure_after_pivot_raises_retryable_application_error() 
     assert err.non_retryable is False  # an infrastructure failure stays retryable
 
 
+async def test_ambiguous_step_commit_is_non_retryable_and_compensates_nothing() -> None:
+    # ``saga.step_ambiguous`` is infrastructure-kind, whose per-kind policy is
+    # retryable — but the interrupted step may have committed, so the mapping pins it
+    # non-retryable: a Temporal retry would re-run the saga into a possible
+    # double-execution. Reconcile before re-running.
+    from forze.application.contracts.transaction import COMMIT_AMBIGUOUS_CODE
+
+    saga = TemporalSaga(name="checkout")
+    compensated: list[str] = []
+
+    async def _comp() -> None:
+        compensated.append("reserve")
+
+    await saga.step("reserve", lambda: _ok("r"), compensation=_comp)
+
+    async def _ambiguous() -> str:
+        raise exc.internal(
+            "Cancelled at or after the transaction commit",
+            code=COMMIT_AMBIGUOUS_CODE,
+        )
+
+    with pytest.raises(ApplicationError) as ei:
+        await saga.step("charge", _ambiguous)
+
+    err = ei.value
+    assert err.type == "saga.step_ambiguous"
+    assert err.non_retryable is True  # pinned, despite the retryable infrastructure kind
+    assert compensated == []  # nothing rolled back around the unknown outcome
+
+
 async def test_happy_path_returns_step_result() -> None:
     saga = TemporalSaga(name="checkout")
     assert await saga.step("s", lambda: _ok(42)) == 42

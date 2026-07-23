@@ -18,6 +18,15 @@ from .value_objects import SagaStepKind, validate_saga_order
 
 # ----------------------- #
 
+SAGA_STEP_AMBIGUOUS_CODE = "saga.step_ambiguous"
+"""Error code of :meth:`SagaProgress.step_ambiguous_error` — an indeterminate saga.
+
+Infrastructure-kind (an operator must act), but unlike its kind's default it must
+never be blind-retried: the interrupted step may have committed, so a retry re-runs
+the saga into a possible double-execution. Drivers whose retry semantics key on more
+than the kind (the Temporal ``ApplicationError`` mapping) pin this code non-retryable
+explicitly."""
+
 
 def saga_step_outcome_unknown(error: BaseException) -> bool:
     """Whether a failed step's *commit outcome* is unknown (it may have committed).
@@ -180,7 +189,7 @@ class SagaProgress:
             "step's commit outcome is unknown (it may have committed); completed "
             "steps were NOT compensated. Reconcile the step's effect manually "
             "before re-running.",
-            code="saga.step_ambiguous",
+            code=SAGA_STEP_AMBIGUOUS_CODE,
             details={
                 "saga": self.saga_name,
                 "step": step_name,

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, final
 import attrs
 
 from forze.application.contracts.saga import (
+    SAGA_STEP_AMBIGUOUS_CODE,
     SagaProgress,
     SagaStepKind,
     saga_step_outcome_unknown,
@@ -39,16 +40,23 @@ def _as_application_error(error: CoreException) -> "ApplicationError":
     Temporal retries forever — the workflow never reaches ``FAILED``); an ``ApplicationError``
     fails the *workflow*. ``non_retryable`` follows the framework's per-kind retryability policy,
     so a deterministic saga failure (e.g. ``saga.step_failed`` = ``domain``) is marked
-    non-retryable while an infrastructure failure stays retryable. Imported lazily so this module
-    still loads without ``temporalio`` (the failure path only runs inside a workflow).
+    non-retryable while an infrastructure failure stays retryable — except
+    ``saga.step_ambiguous``, infrastructure-kind but pinned non-retryable: the interrupted
+    step may have committed, so a retry re-runs the saga into a possible double-execution
+    (reconcile before re-running). Imported lazily so this module still loads without
+    ``temporalio`` (the failure path only runs inside a workflow).
     """
 
     from temporalio.exceptions import ApplicationError
 
+    non_retryable = (
+        error.code == SAGA_STEP_AMBIGUOUS_CODE or not exception_egress_policy(error.kind).retryable
+    )
+
     return ApplicationError(
         error.summary,
         type=error.code,
-        non_retryable=not exception_egress_policy(error.kind).retryable,
+        non_retryable=non_retryable,
     )
 
 
