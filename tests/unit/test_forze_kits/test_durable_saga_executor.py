@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from typing import Any, cast
 
@@ -192,6 +193,107 @@ class TestDurableSagaExecutor:
         assert replayed.value.code == "saga.step_ambiguous"
         assert replayed.value.kind is ExceptionKind.INFRASTRUCTURE
         assert effects == ["do:a", "do:b"]  # nothing re-ran, nothing compensated
+
+    async def test_cancel_at_step_commit_journals_ambiguity_not_a_rerun(self) -> None:
+        # The runner's task is not operation-owned, so a drain cancel at a step's
+        # commit reaches the executor as a RAW CancelledError (the tx scope's
+        # commit_ambiguous conversion is operation-only) — bypassing ``except
+        # Exception``. Unjournaled, replay would re-run the possibly-committed body
+        # (duplicate effects). The executor must journal the ambiguity itself.
+        from forze.application.execution.context.commit_state import mark_commit_started
+
+        state = MockState()
+        effects: list[str] = []
+
+        def _cancelled_at_commit(name: str) -> SagaStep[OrderCtx]:
+            async def action(_ctx: ExecutionContext, _state: OrderCtx) -> OrderCtx:
+                effects.append(f"do:{name}")
+                # The tx scope sets this mark right before the driver commit runs;
+                # the cancel then lands inside that commit.
+                mark_commit_started()
+                raise asyncio.CancelledError
+
+            return SagaStep(name=name, action=action, compensation=None, tx_route="mock")
+
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(_step("a", effects), _cancelled_at_commit("b")),
+        )
+        executor = DurableSagaExecutor()
+
+        ctx1 = context_from_modules(MockDepsModule(state=state))
+        token = _bound()
+        try:
+            with pytest.raises(CoreException) as live:
+                await executor.run(ctx1, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert live.value.code == "saga.step_ambiguous"
+        assert effects == ["do:a", "do:b"]  # no compensation around the unknown outcome
+
+        # Replay: the journaled ambiguity is re-raised; the body is NOT re-run.
+        ctx2 = context_from_modules(MockDepsModule(state=state))
+        token = _bound()
+        try:
+            with pytest.raises(CoreException) as replayed:
+                await executor.run(ctx2, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert replayed.value.code == "saga.step_ambiguous"
+        assert effects == ["do:a", "do:b"]  # unchanged: no duplicate effect on replay
+
+    async def test_cancel_before_step_commit_stays_crash_shaped_and_resumable(self) -> None:
+        # A cancel landing in the step BODY rolled back cleanly: nothing committed, so
+        # it must propagate as a cancellation (no journal row, no false ambiguity) and
+        # the run must resume by re-running the body — the durable plane's crash
+        # contract. Step a's own committed transaction leaves the task's commit mark
+        # set, so this also pins the per-step mark reset: without it, b's pre-commit
+        # cancel would misread as ambiguous.
+        state = MockState()
+        effects: list[str] = []
+        cancelled_once = False
+
+        def _cancelled_in_body(name: str) -> SagaStep[OrderCtx]:
+            async def action(_ctx: ExecutionContext, state_: OrderCtx) -> OrderCtx:
+                nonlocal cancelled_once
+                effects.append(f"do:{name}")
+
+                if not cancelled_once:
+                    cancelled_once = True
+                    raise asyncio.CancelledError
+
+                return OrderCtx(trail=[*state_.trail, name])
+
+            return SagaStep(name=name, action=action, compensation=None, tx_route="mock")
+
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(_step("a", effects), _cancelled_in_body("b")),
+        )
+        executor = DurableSagaExecutor()
+
+        ctx1 = context_from_modules(MockDepsModule(state=state))
+        token = _bound()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await executor.run(ctx1, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert effects == ["do:a", "do:b"]
+
+        # Resume: a replays from the journal, b's body re-runs and completes.
+        ctx2 = context_from_modules(MockDepsModule(state=state))
+        token = _bound()
+        try:
+            result = await executor.run(ctx2, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert result.trail == ["a", "b"]
+        assert effects == ["do:a", "do:b", "do:b"]  # only b re-ran; a came from the journal
 
     async def test_outside_a_durable_run_is_rejected(self) -> None:
         ctx = context_from_modules(MockDepsModule())

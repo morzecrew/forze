@@ -30,6 +30,10 @@ from forze.application.contracts.saga import (
     saga_step_outcome_unknown,
 )
 from forze.application.contracts.transaction import COMMIT_AMBIGUOUS_CODE
+from forze.application.execution.context.commit_state import (
+    commit_started,
+    reset_commit_started,
+)
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
 
 from .._logger import logger
@@ -194,11 +198,46 @@ class DurableSagaExecutor:
             return cast("BaseModel", new_state).model_dump(mode="json")
 
         async def _journaled() -> JsonDict:
+            # Fresh commit mark for THIS step: the runner's task crosses no invocation
+            # boundary between steps, so a previous step's committed transaction would
+            # otherwise leave the mark set and misread a pre-commit cancel below.
+            reset_commit_started()
+
             try:
                 if step.retry_policy is not None:
                     return await ctx.resilience().run(_act, policy=step.retry_policy)
 
                 return await self._retry_transient(str(step.name), _act)
+
+            except asyncio.CancelledError:
+                # The runner's task is not operation-owned, so the transaction scope
+                # re-raises a cancellation raw (its commit_ambiguous conversion is
+                # operation-only) — and ``except Exception`` below never sees it.
+                #
+                # Before the commit the cancel is crash-shaped: nothing committed, no
+                # journal row, and replay safely re-runs the body — re-raise. At or
+                # after it the outcome is unknown: left unjournaled, replay would
+                # re-run a possibly-committed body (duplicate effects), so journal the
+                # ambiguity instead. Absorbing the cancel balances the task's cancel
+                # count (as the tx scope's own conversion does), so the journal write
+                # below can land and the run still terminates — with ``step_ambiguous``
+                # — instead of wedging the drain.
+                if not commit_started():
+                    raise
+
+                task = asyncio.current_task()
+
+                if task is not None:
+                    task.uncancel()
+
+                return {
+                    _STEP_FAILURE_KEY: (
+                        f"Saga step {step.name!r} was cancelled at or after its "
+                        "transaction commit; the commit outcome is ambiguous "
+                        "(it may have committed)."
+                    ),
+                    _STEP_FAILURE_CODE_KEY: COMMIT_AMBIGUOUS_CODE,
+                }
 
             except Exception as error:
                 # Record the failure as this step's journaled outcome so a re-invocation of
