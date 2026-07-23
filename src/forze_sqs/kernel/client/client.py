@@ -8,6 +8,7 @@ require_sqs()
 
 import asyncio
 import base64
+import json
 import math
 import re
 from collections.abc import AsyncGenerator, Mapping, Sequence
@@ -121,6 +122,18 @@ class _RetainedRaw:
     attributes: dict[str, Any] | None = None
     """Raw ``MessageAttributes`` as received, or ``None`` when the message carried none."""
 
+    receive_count: int | None = None
+    """Broker ``ApproximateReceiveCount`` at this delivery, or ``None`` if unreported.
+
+    Read by the FIFO uncounted requeue to copy-back only when one more counted receive
+    would make the message eligible for the queue's redrive DLQ."""
+
+    group_id: str | None = None
+    """FIFO ``MessageGroupId``, or ``None`` on a standard queue.
+
+    A FIFO copy must re-enter under its original group or it loses group affinity
+    entirely; without it the copy-back path is refused and the counted reset is used."""
+
 
 # ....................... #
 
@@ -169,12 +182,17 @@ class SQSClient(SQSClientPort):
     message (same ``MessageId``) overwrites its entry — only the latest
     receipt handle is valid.
 
-    The third slot is the raw ``(body, attributes)`` a FIFO poison park needs to retain a
-    copy before deleting the message off the head of its group. It is kept **only** when
-    the queue is FIFO *and* ``poison_queue_url`` is configured — the one case where the
-    copy can actually be sent — so the memory is spent solely where retention was opted
-    into; it is ``None`` everywhere else.
+    The third slot is the raw wire form (body, attributes, receive count, group id) kept
+    for every path that may re-send the delivery: a FIFO poison park and the uncounted
+    requeue (see :class:`_RetainedRaw`).
     """
+
+    __redrive_max_cache: dict[str, int | None] = attrs.field(factory=dict, init=False)
+    """queue URL -> the redrive policy's ``maxReceiveCount``, ``None`` when unset.
+
+    Populated lazily by the FIFO uncounted requeue (one ``GetQueueAttributes`` per queue
+    per client lifetime); a fetch failure is not cached, so a transient error cannot
+    permanently disable the near-threshold copy-back."""
 
     __pending_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
     __enqueue_batch_concurrency: int = attrs.field(
@@ -1273,17 +1291,16 @@ class SQSClient(SQSClientPort):
             MaxNumberOfMessages=max_messages,
             WaitTimeSeconds=wait_time,
             MessageAttributeNames=["All"],
-            AttributeNames=["SentTimestamp", "ApproximateReceiveCount"],
+            AttributeNames=["SentTimestamp", "ApproximateReceiveCount", "MessageGroupId"],
         )
         raw_messages = resp.get("Messages") or []
         out: list[SQSQueueMessage] = []
 
-        # Wire form kept per delivery. Two consumers: a FIFO poison park retains a copy
-        # before deleting the message off the head of its group (needs a configured
-        # retention target), and a standard-queue uncounted requeue (nack with
-        # ``count=False``) re-sends the copy so the broker's receive count resets. Held
-        # only while the delivery is in flight, so the cost is bounded by the batch size.
-        retain_raw = not is_fifo or self.__poison_queue_url is not None
+        # Wire form kept per delivery, for every path that may re-send it: a FIFO poison
+        # park (copy to the retention queue before deleting off the group head), and an
+        # uncounted requeue (``count=False``) — every delivery on a standard queue, and a
+        # FIFO delivery whose receive count nears the redrive threshold. Held only while
+        # the delivery is in flight, so the cost is bounded by the batch size.
         retained: dict[str, _RetainedRaw] = {}
 
         for raw in raw_messages:
@@ -1346,8 +1363,13 @@ class SQSClient(SQSClientPort):
                 )
                 continue
 
-            if retain_raw:
-                retained[message_id] = _RetainedRaw(body=body, attributes=attrs_)  # type: ignore[arg-type]
+            group_id = (system_attrs or {}).get("MessageGroupId")
+            retained[message_id] = _RetainedRaw(
+                body=body,  # type: ignore[arg-type]
+                attributes=attrs_,  # type: ignore[arg-type]
+                receive_count=message.delivery_count,
+                group_id=group_id if isinstance(group_id, str) else None,
+            )
 
             out.append(message)
 
@@ -1611,14 +1633,59 @@ class SQSClient(SQSClientPort):
 
     # ....................... #
 
+    async def __max_receive_count(self, queue_url: str) -> int | None:
+        """The queue's redrive ``maxReceiveCount``, or ``None`` without a redrive policy.
+
+        Cached per queue URL on success; a fetch failure returns ``None`` for this call
+        without caching, so the near-threshold copy-back degrades to the plain reset for
+        one cycle instead of being disabled for the client's lifetime.
+        """
+
+        if queue_url in self.__redrive_max_cache:
+            return self.__redrive_max_cache[queue_url]
+
+        try:
+            resp = await self.__require_client().get_queue_attributes(
+                QueueUrl=queue_url,
+                AttributeNames=["RedrivePolicy"],
+            )
+            policy = (resp.get("Attributes") or {}).get("RedrivePolicy")
+            max_rc = int(json.loads(policy)["maxReceiveCount"]) if policy else None
+
+        except Exception as e:
+            logger.warning(
+                "SQS could not read the redrive policy for %s (%s); treating it as "
+                "absent for this nack",
+                queue_url,
+                e,
+            )
+            return None
+
+        self.__redrive_max_cache[queue_url] = max_rc
+        return max_rc
+
+    # ....................... #
+
+    @staticmethod
+    def __nears_redrive(retained: _RetainedRaw | None, max_rc: int | None) -> bool:
+        """Whether one more counted receive could make this delivery DLQ-eligible."""
+
+        if max_rc is None or retained is None or retained.receive_count is None:
+            return False
+
+        return retained.receive_count >= max(1, max_rc - 1)
+
+    # ....................... #
+
     async def __requeue_uncounted(
         self,
         *,
         queue: str,
         queue_url: str,
         pending: Sequence[tuple[str, str, _RetainedRaw | None]],
+        fifo: bool = False,
     ) -> None:
-        """Requeue standard-queue deliveries as fresh copies so the receive count resets.
+        """Requeue deliveries as fresh copies so the broker receive count resets.
 
         The receive tally is broker-managed and grows on every receive no matter why the
         message went back, so enough uncounted requeues (a prolonged KMS key outage, many
@@ -1630,18 +1697,23 @@ class SQSClient(SQSClientPort):
         Copy first, delete only after the copy is on the queue. A failed copy falls back
         to a plain visibility reset: the counted requeue, degraded but never lossy. A
         failed delete after a successful copy leaves a duplicate, which the consumer-side
-        inbox dedup absorbs (its identity headers ride in the copied attributes). FIFO
-        queues never take this path — a copy would re-enter at the back of its message
-        group, breaking order — so the caller keeps the visibility reset there.
+        inbox dedup absorbs (its identity headers ride in the copied attributes).
+
+        A FIFO copy re-enters at the back of its message group — the caller only sends a
+        FIFO delivery here when its receive count nears the redrive threshold, where the
+        broker was about to break group order anyway by dead-lettering the head. The copy
+        keeps the original ``MessageGroupId`` (group affinity survives) and carries a
+        deterministic ``MessageDeduplicationId`` derived from the original id and receive
+        count, so a retried copy after a failed delete dedups instead of duplicating.
         """
 
         c = self.__require_client()
 
         for message_id, receipt, retained in pending:
-            if retained is None:
-                # No raw copy held for this delivery — the counted fallback keeps the
-                # message safe.
-                await self.__reset_visibility(queue, queue_url, [(message_id, receipt, None)])
+            if retained is None or (fifo and retained.group_id is None):
+                # No raw copy (or a FIFO delivery whose group is unknown, which a copy
+                # would detach) — the counted fallback keeps the message safe.
+                await self.__reset_visibility(queue, queue_url, [(message_id, receipt, retained)])
                 continue
 
             payload: dict[str, Any] = {
@@ -1651,6 +1723,10 @@ class SQSClient(SQSClientPort):
 
             if retained.attributes:
                 payload["MessageAttributes"] = retained.attributes
+
+            if fifo:
+                payload["MessageGroupId"] = retained.group_id
+                payload["MessageDeduplicationId"] = f"{message_id}-r{retained.receive_count or 0}"
 
             try:
                 await c.send_message(**payload)
@@ -1702,10 +1778,14 @@ class SQSClient(SQSClientPort):
         key) — a **standard** queue requeues a byte-identical *copy* and deletes the
         original, so the receive count genuinely resets and the redrive policy cannot
         dead-letter a message over an outage it did not cause (a failed copy falls back
-        to the counted reset). A **FIFO** queue cannot honor this — a copy would re-enter
-        at the back of its message group, breaking order — so the receive stays counted
-        there and a prolonged outage lands affected messages on the redrive DLQ, which
-        retains them for a later redrive task.
+        to the counted reset). A **FIFO** queue keeps the order-preserving visibility
+        reset while it safely can, and switches to the copy — same ``MessageGroupId``,
+        re-entering at the back of its group — only when one more counted receive could
+        cross the redrive policy's ``maxReceiveCount``: at that point the broker was
+        about to break group order anyway by dead-lettering the head, and the copy keeps
+        the message on the queue instead. A FIFO queue with no redrive policy always
+        resets (no DLQ exists to protect against, and blocking the group head preserves
+        order outright).
 
         When ``requeue`` is ``False`` on a **standard** queue the message is *not*
         deleted: it stays invisible until its visibility timeout lapses, so the queue's
@@ -1739,19 +1819,26 @@ class SQSClient(SQSClientPort):
         else:
             queue_url = await self.__resolve_queue_url(queue)
 
-            if not count and not self.__is_fifo_target(queue, queue_url):
+            if count:
+                await self.__reset_visibility(queue, queue_url, pending)
+
+            elif not self.__is_fifo_target(queue, queue_url):
                 await self.__requeue_uncounted(queue=queue, queue_url=queue_url, pending=pending)
 
             else:
-                if not count:
-                    logger.debug(
-                        "SQS FIFO queue %s cannot requeue uncounted (a copy would "
-                        "break message-group order); the receive counts toward the "
-                        "redrive policy",
-                        queue,
-                    )
+                # FIFO: reset while order-preservation is free; copy-back only the
+                # deliveries one counted receive away from the redrive DLQ.
+                max_rc = await self.__max_receive_count(queue_url)
+                near = [p for p in pending if self.__nears_redrive(p[2], max_rc)]
+                rest = [p for p in pending if not self.__nears_redrive(p[2], max_rc)]
 
-                await self.__reset_visibility(queue, queue_url, pending)
+                if rest:
+                    await self.__reset_visibility(queue, queue_url, rest)
+
+                if near:
+                    await self.__requeue_uncounted(
+                        queue=queue, queue_url=queue_url, pending=near, fifo=True
+                    )
 
         await self.__drop_pending_many(nacked_ids)
 

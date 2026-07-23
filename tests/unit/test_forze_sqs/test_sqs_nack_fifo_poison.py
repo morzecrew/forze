@@ -176,9 +176,10 @@ async def test_failed_retention_does_not_delete_the_original(
 async def test_retention_configured_after_receive_does_not_delete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The delivery was read while no retention queue was configured, so no raw copy was
-    # kept for it; retention was turned on afterwards. There is nothing to send, and the
-    # operator has asked for retention — so the original is kept rather than destroyed.
+    # A delivery holding no raw copy (the shape a pre-upgrade in-flight delivery had —
+    # today's receive always retains one) meets a configured retention queue. There is
+    # nothing to send, and the operator has asked for retention — so the original is
+    # kept rather than destroyed.
     recorder = _Recorder()
     monkeypatch.setattr("forze_sqs.kernel.client.client.logger", recorder)
 
@@ -195,7 +196,11 @@ async def test_retention_configured_after_receive_does_not_delete(
     ), patch.object(client, "_SQSClient__require_client", return_value=mock_boto):
         assert [m.id for m in await client.receive("jobs.fifo", limit=10)] == ["m1"]
 
-        # Retention switched on only now — the in-flight delivery has no retained body.
+        # Drop the retained raw, simulating the pre-upgrade in-flight shape.
+        pending = client._SQSClient__pending  # type: ignore[attr-defined]
+        queue_name, receipt, _ = pending["m1"]
+        pending["m1"] = (queue_name, receipt, None)
+
         client._SQSClient__poison_queue_url = "https://sqs/poison"  # type: ignore[attr-defined]
 
         assert await client.nack("jobs.fifo", ["m1"], requeue=False) == 1

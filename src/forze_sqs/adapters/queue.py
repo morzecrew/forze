@@ -263,11 +263,11 @@ class SQSQueueAdapter[M: BaseModel](
         requeue: bool = True,
         count: bool = True,
     ) -> int:
-        # ``count=False`` on a standard queue requeues a byte-identical copy and deletes
-        # the original, so the broker's receive tally genuinely resets (a drain refusal
-        # or key-outage redelivery cannot creep toward the redrive policy's DLQ). FIFO
-        # queues cannot honor it — a copy would break message-group order — so there the
-        # receive stays counted; see ``SQSClient.nack``.
+        # ``count=False`` requeues a byte-identical copy so the broker's receive tally
+        # resets — always on a standard queue, on FIFO once the tally nears the redrive
+        # threshold (the order-preserving reset is kept while it is safe) — so a drain
+        # refusal or key-outage redelivery cannot creep into the redrive DLQ; see
+        # ``SQSClient.nack``.
         physical_queue = await self.__queue_name(queue)
 
         async with self.client.client():
