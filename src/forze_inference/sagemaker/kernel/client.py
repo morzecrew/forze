@@ -16,11 +16,14 @@ from botocore.exceptions import BotoCoreError, ClientError
 from pydantic import SecretStr
 
 from forze.base.exceptions import exc
+from forze.base.logging import get_logger
 from forze.base.primitives import GuardedLifecycle
 
 from .port import SageMakerRuntimeClientPort
 
 # ----------------------- #
+
+logger = get_logger("forze_inference.sagemaker")
 
 _THROTTLED_CODES = frozenset(
     {"ThrottlingException", "TooManyRequestsException", "ThrottledException"}
@@ -29,32 +32,53 @@ _ROUTE_CODES = frozenset({"ValidationError", "ValidationException"})
 
 
 def _translate_client_error(error: ClientError) -> Exception:
-    """Map a SageMaker runtime error to the inference error taxonomy."""
+    """Map a SageMaker runtime error to the inference error taxonomy.
 
-    code = str(error.response.get("Error", {}).get("Code", ""))
-    detail = str(error.response.get("Error", {}).get("Message", ""))[:500]
+    The upstream message is **logged** (truncated, through the scrubbing pipeline),
+    never embedded in the raised error: an error summary renders verbatim to the API
+    caller for every kind below 500, and a ``ModelError`` message carries whatever the
+    model container wrote — the offending feature values, a traceback — on the plane
+    declared PII-dense by construction.
+    """
+
+    response = error.response or {}
+    code = str(response.get("Error", {}).get("Code", ""))
+    detail = str(response.get("Error", {}).get("Message", ""))[:500]
+
+    logger.warning("SageMaker endpoint error %s: %s", code or "<no code>", detail)
 
     if code in _THROTTLED_CODES:
         return exc.throttled(
-            f"SageMaker endpoint throttled the request: {detail}",
+            "SageMaker endpoint throttled the request.",
             code="inference_throttled",
         )
 
     if code == "ModelError":
-        # The model container rejected or failed on the payload.
-        return exc.validation(
-            f"SageMaker model error: {detail}",
-            code="inference_output_mismatch",
+        # A ModelError wraps whatever the container returned, classified by the
+        # container's own status: a 4xx is a payload the model rejects (caller-shaped),
+        # while a 5xx — or no status at all — is the container *failing*, which as a
+        # caller error would be a permanent 422 with no alert and no retry.
+        original_status = response.get("OriginalStatusCode")
+
+        if isinstance(original_status, int) and 400 <= original_status < 500:
+            return exc.validation(
+                f"SageMaker model rejected the payload ({original_status}).",
+                code="inference_output_mismatch",
+            )
+
+        return exc.infrastructure(
+            "SageMaker model container failed.",
+            code="inference_endpoint_unavailable",
         )
 
     if code in _ROUTE_CODES:
         return exc.configuration(
-            f"SageMaker endpoint not found or invalid: {detail}",
+            "SageMaker endpoint not found or invalid.",
             code="inference_route_mismatch",
         )
 
     return exc.infrastructure(
-        f"SageMaker endpoint failed ({code}): {detail}",
+        f"SageMaker endpoint failed ({code}).",
         code="inference_endpoint_unavailable",
     )
 

@@ -12,6 +12,7 @@ from forze.application.contracts.saga import (
     SagaProgress,
     SagaStep,
     SagaStepKind,
+    saga_step_outcome_unknown,
 )
 from forze.base.exceptions import exc
 
@@ -62,6 +63,15 @@ class InProcessSagaExecutor:
                 state = await self._run_step(ctx, step, state)
 
             except Exception as error:
+                # An interruption at the step's own commit (a drain-timeout cancel
+                # surfacing as ``commit_ambiguous``) is NOT a step failure: the step
+                # may be committed, so compensating the earlier steps would roll them
+                # back around a live effect, and ``saga.step_failed`` would falsely
+                # certify consistency. Compensate nothing; surface the indeterminacy.
+                if saga_step_outcome_unknown(error):
+                    self._emit("step_ambiguous", definition, step)
+                    raise progress.step_ambiguous_error(index, error) from error
+
                 self._emit("step_failed", definition, step)
 
                 if progress.committed:

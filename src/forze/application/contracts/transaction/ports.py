@@ -13,6 +13,17 @@ import attrs
 
 # ----------------------- #
 
+COMMIT_AMBIGUOUS_CODE = "commit_ambiguous"
+"""Error code marking an interruption at or after a transaction's commit point.
+
+The commit may have (or has) landed — the outcome is unknown. Anything that reacts to a
+failed transaction by *undoing* work (a retry, a saga's compensation pass) must treat this
+code as "outcome unknown", never as "did not happen": acting on either guess can
+double-execute or roll back around a change that is actually committed.
+"""
+
+# ....................... #
+
 
 @final
 class IsolationLevel(IntEnum):

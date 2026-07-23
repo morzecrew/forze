@@ -13,40 +13,62 @@ import attrs
 import httpx
 
 from forze.base.exceptions import exc
+from forze.base.logging import get_logger
 from forze.base.primitives import GuardedLifecycle
 
 from .port import InferenceHttpClientPort
 
 # ----------------------- #
 
+logger = get_logger("forze_inference.http")
+
 DEFAULT_REQUEST_TIMEOUT_S = 30.0
 """Client-level request timeout when no invocation deadline tightens it."""
 
 
-def _translate_status(status: int, detail: str) -> Exception:
-    """Map an endpoint's HTTP status to the inference error taxonomy."""
+def _translate_status(status: int, body: str) -> Exception:
+    """Map an endpoint's HTTP status to the inference error taxonomy.
+
+    The upstream *body* is **logged** (truncated, through the scrubbing pipeline),
+    never embedded in the raised error: an error summary renders verbatim to the API
+    caller for every kind below 500, and this is the plane declared PII-dense by
+    construction — a model server that echoes the offending feature, or a container
+    traceback, must never reach the caller.
+    """
+
+    logger.warning("Inference endpoint returned HTTP %s: %s", status, body[:500])
 
     if status == 429:
         return exc.throttled(
-            f"Inference endpoint throttled the request: {detail}",
+            "Inference endpoint throttled the request.",
             code="inference_throttled",
         )
 
     if status == 404:
         return exc.configuration(
-            f"Inference endpoint or model not found: {detail}",
+            "Inference endpoint or model not found.",
             code="inference_route_mismatch",
+        )
+
+    if status in {401, 403}:
+        # An upstream auth/perimeter refusal (expired service credential, a WAF rule)
+        # is a deployment fault: classified as a caller error it would surface as a
+        # permanent 422 — no 5xx alert, no retry — for something an operator must fix.
+        return exc.infrastructure(
+            f"Inference endpoint refused the request ({status}); upstream "
+            "authentication or perimeter failure.",
+            code="inference_endpoint_unavailable",
         )
 
     if 400 <= status < 500:
         # The server rejected the payload — the wire encoding does not fit the model.
         return exc.validation(
-            f"Inference endpoint rejected the request ({status}): {detail}",
+            f"Inference endpoint rejected the request ({status}).",
             code="inference_output_mismatch",
         )
 
     return exc.infrastructure(
-        f"Inference endpoint failed ({status}): {detail}",
+        f"Inference endpoint failed ({status}).",
         code="inference_endpoint_unavailable",
     )
 
@@ -126,7 +148,7 @@ class InferenceHttpClient(InferenceHttpClientPort):
             ) from e
 
         if response.status_code >= 400:
-            raise _translate_status(response.status_code, response.text[:500])
+            raise _translate_status(response.status_code, response.text)
 
         try:
             payload: Any = response.json()

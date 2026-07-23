@@ -38,10 +38,11 @@ async def test_cursor_row_uses_the_deterministic_id() -> None:
 
         row = await query.find(filters={"$values": {"principal": "u1", "client_key": "dev"}})
 
-        # the id is derived from (principal, client_key), NOT a random uuid7 — so a concurrent
-        # first-ack hits the same id and ensure is idempotent (one row, never a duplicate)
+        # the id is derived from (tenant, principal, client_key), NOT a random uuid7 — so a
+        # concurrent first-ack hits the same id and ensure is idempotent (one row, never a
+        # duplicate); untenanted here, so the tenant part is empty
         assert row is not None
-        assert row.id == _cursor_id("u1", "dev")
+        assert row.id == _cursor_id(None, "u1", "dev")
 
 
 async def test_second_ack_advances_the_same_row_not_a_duplicate() -> None:
@@ -77,3 +78,63 @@ async def test_concurrent_first_acks_keep_the_higher_position() -> None:
         rows = await query.find_many(filters={"$values": {"principal": "u1", "client_key": "dev"}})
         assert len(rows.hits) == 1  # converged on the deterministic id, never duplicated
         assert await cursors.get(principal="u1", client_key="dev") == HlcTimestamp(physical_ms=9, logical=0)
+
+
+def test_cursor_id_includes_the_tenant() -> None:
+    # On the tagged-tenancy table shape the kit recommends, every tenant shares one
+    # physical primary-key space while the lookup is tenant-scoped. A tenant-blind id
+    # collides for a principal present in two orgs (the org-switcher flow): the other
+    # tenant's row is invisible to _find yet holds the PK, so the first ack loops on
+    # find-miss/create-conflict forever. The tenant must be part of the derivation.
+    from uuid import UUID
+
+    from forze.application.contracts.tenancy import TenantIdentity
+
+    org_a = TenantIdentity(tenant_id=UUID(int=1))
+    org_b = TenantIdentity(tenant_id=UUID(int=2))
+
+    ids = {
+        _cursor_id(org_a, "u1", "dev"),
+        _cursor_id(org_b, "u1", "dev"),
+        _cursor_id(None, "u1", "dev"),
+    }
+
+    assert len(ids) == 3  # same device, three scopes, three distinct ids
+    # ...and the derivation stays deterministic per scope.
+    assert _cursor_id(org_a, "u1", "dev") == _cursor_id(org_a, "u1", "dev")
+
+
+async def test_unreachable_cursor_row_fails_bounded_instead_of_spinning() -> None:
+    # Backstop for any residual id collision (e.g. a pre-upgrade tenant-blind row):
+    # find-miss + create-conflict must surface a real error after a bounded number of
+    # attempts, never pin the scope in a tight retry loop on the user-facing ack path.
+    import pytest
+
+    from forze.base.exceptions import CoreException, exc
+    from forze_kits.integrations.realtime.mailbox import _MAX_ADVANCE_ATTEMPTS
+
+    class _AlwaysConflictCommand:
+        def __init__(self) -> None:
+            self.create_calls = 0
+
+        async def create(self, cmd: object, *, id: object, return_new: bool) -> None:
+            self.create_calls += 1
+            raise exc.conflict("a foreign row holds this id")
+
+    class _NeverFindsQuery:
+        async def find(self, filters: object) -> None:
+            return None
+
+    command = _AlwaysConflictCommand()
+    cursors = DocumentMailboxCursors(
+        command=command,  # type: ignore[arg-type]
+        query=_NeverFindsQuery(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await cursors.advance(
+            principal="u1", client_key="dev", up_to=HlcTimestamp(physical_ms=3, logical=0)
+        )
+
+    assert ei.value.code == "realtime_cursor_advance_stalled"
+    assert command.create_calls == _MAX_ADVANCE_ATTEMPTS  # bounded, then surfaced

@@ -17,7 +17,11 @@ from typing import TYPE_CHECKING, final
 
 import attrs
 
-from forze.application.contracts.saga import SagaProgress, SagaStepKind
+from forze.application.contracts.saga import (
+    SagaProgress,
+    SagaStepKind,
+    saga_step_outcome_unknown,
+)
 from forze.base.exceptions import CoreException, exception_egress_policy
 
 from .execution._logger import logger
@@ -105,6 +109,14 @@ class TemporalSaga:
             result = await run()
 
         except Exception as error:
+            # An ambiguous step commit (interrupted at the commit itself) is NOT a
+            # step failure: the step may be committed, so compensating would
+            # split-brain and ``saga.step_failed`` would falsely certify consistency.
+            if saga_step_outcome_unknown(error):
+                raise _as_application_error(
+                    self._progress.step_ambiguous_error(index, error)
+                ) from error
+
             if self._progress.committed:
                 raise _as_application_error(
                     self._progress.forward_incomplete_error(index, error)

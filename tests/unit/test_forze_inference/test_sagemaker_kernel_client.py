@@ -95,8 +95,15 @@ def _fake_aws(monkeypatch: pytest.MonkeyPatch, runtime: _FakeRuntime) -> _FakeSe
     return session
 
 
-def _client_error(code: str, message: str = "boom") -> ClientError:
-    return ClientError({"Error": {"Code": code, "Message": message}}, "InvokeEndpoint")
+def _client_error(
+    code: str, message: str = "boom", *, original_status: int | None = None
+) -> ClientError:
+    response: dict[str, Any] = {"Error": {"Code": code, "Message": message}}
+
+    if original_status is not None:
+        response["OriginalStatusCode"] = original_status
+
+    return ClientError(response, "InvokeEndpoint")
 
 
 # ....................... #
@@ -112,7 +119,6 @@ class TestErrorTranslation:
             ("ThrottlingException", "inference_throttled"),
             ("TooManyRequestsException", "inference_throttled"),
             ("ThrottledException", "inference_throttled"),
-            ("ModelError", "inference_output_mismatch"),
             ("ValidationError", "inference_route_mismatch"),
             ("ValidationException", "inference_route_mismatch"),
             ("ServiceUnavailable", "inference_endpoint_unavailable"),
@@ -125,19 +131,48 @@ class TestErrorTranslation:
         assert isinstance(translated, CoreException)
         assert translated.code == expected
 
-    def test_throttling_is_retryable_and_validation_is_not(self) -> None:
+    def test_model_error_is_classified_by_the_container_status(self) -> None:
+        # A ModelError wraps whatever the container returned. Only a container 4xx is
+        # a payload the model rejects (caller-shaped); a 5xx — or no status at all —
+        # is the container *failing*, which as a caller error would surface as a
+        # permanent 422 with no 5xx alert and no retry.
+        rejected = _translate_client_error(_client_error("ModelError", original_status=422))
+        crashed = _translate_client_error(_client_error("ModelError", original_status=500))
+        bare = _translate_client_error(_client_error("ModelError"))
+
+        assert isinstance(rejected, CoreException)
+        assert rejected.code == "inference_output_mismatch"
+        assert isinstance(crashed, CoreException)
+        assert crashed.code == "inference_endpoint_unavailable"
+        assert isinstance(bare, CoreException)
+        assert bare.code == "inference_endpoint_unavailable"
+
+    def test_throttling_is_retryable_and_model_rejection_is_not(self) -> None:
         from forze.base.exceptions.egress import exception_egress_policy
 
         throttled = _translate_client_error(_client_error("ThrottlingException"))
-        model_error = _translate_client_error(_client_error("ModelError"))
+        rejected = _translate_client_error(_client_error("ModelError", original_status=400))
 
         assert exception_egress_policy(throttled.kind).retryable  # type: ignore[attr-defined]
-        assert not exception_egress_policy(model_error.kind).retryable  # type: ignore[attr-defined]
+        assert not exception_egress_policy(rejected.kind).retryable  # type: ignore[attr-defined]
 
-    def test_long_provider_message_is_truncated(self) -> None:
-        translated = _translate_client_error(_client_error("ModelError", "x" * 2000))
+    def test_upstream_message_is_never_embedded(self) -> None:
+        # The container's message can carry the offending feature values or its
+        # traceback, on the plane declared PII-dense by construction; it is logged
+        # server-side, never placed in the summary the API caller sees verbatim.
+        leaked = "Traceback: rejected feature ssn=078-05-1120"
 
-        assert len(translated.summary) < 700  # type: ignore[attr-defined]
+        for error in (
+            _client_error("ModelError", leaked, original_status=422),
+            _client_error("ModelError", leaked),
+            _client_error("ThrottlingException", leaked),
+            _client_error("ServiceUnavailable", leaked),
+        ):
+            translated = _translate_client_error(error)
+
+            assert isinstance(translated, CoreException)
+            assert "078-05-1120" not in translated.summary
+            assert "078-05-1120" not in str(translated.details or {})
 
 
 # ....................... #

@@ -27,6 +27,7 @@ from forze.application.contracts.saga import (
     SagaDefinition,
     SagaProgress,
     SagaStep,
+    saga_step_outcome_unknown,
 )
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
 
@@ -141,6 +142,13 @@ class DurableSagaExecutor:
                 )
 
             except Exception as error:
+                # An ambiguous step commit (a drain-timeout cancel at the commit) is
+                # NOT a step failure: the step may be committed, so compensating would
+                # split-brain and ``saga.step_failed`` would journal a false
+                # "compensated, consistent" outcome that replay never revisits.
+                if saga_step_outcome_unknown(error):
+                    raise progress.step_ambiguous_error(index, error) from error
+
                 if progress.committed:
                     # Past the pivot: complete forward (manually), never compensate.
                     raise progress.forward_incomplete_error(index, error) from error

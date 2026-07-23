@@ -9,10 +9,11 @@ socket.io edge), only the shared ``MailboxEntry`` / ``RealtimeSignal`` VOs from 
 misrouted spec fails at wiring, not on first emit, and a write-side build is refused in a
 read-only (QUERY) operation. **Tenancy is the document store's concern** — wire the
 mailbox/cursor collections ``tenant_aware`` and the adapter scopes every row by the
-ambient tenant; this kit carries **zero** tenant code. The mailbox doc's key is the
-durable event's own id (already a ``UUID``); a cursor's key is a **deterministic** id
-derived from ``(principal, client_key)`` (``uuid5``), so concurrent first-acks converge on
-one row. Ordering/cursor values are the HLC the durable path carries, stored
+ambient tenant; the kit's one tenant touchpoint is the cursor id derivation, which must
+share the store's notion of uniqueness. The mailbox doc's key is the durable event's own
+id (already a ``UUID``); a cursor's key is a **deterministic** id derived from
+``(tenant, principal, client_key)`` (``uuid5``), so concurrent first-acks converge on
+one row and one principal's cursors never collide across tenants. Ordering/cursor values are the HLC the durable path carries, stored
 packed (monotonic int, range-queryable). Encryption is whatever the app sets on the spec —
 ``realtime_mailbox_spec(encryption=...)`` seals the stored signal bodies at rest.
 """
@@ -33,6 +34,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.realtime import MailboxEntry, RealtimeSignal
+from forze.application.contracts.tenancy import TenantIdentity, TenantProviderPort
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import HlcTimestamp
@@ -55,20 +57,37 @@ _CURSOR_NS: Final = UUID("1d3e0b5a-7c9f-4e2a-8b6d-0a1c2e4f6a8b")
 _PRUNE_PAGE_SIZE: Final = 500
 """Rows deleted per page by the stale-cursor sweep (id-only projection)."""
 
+_MAX_ADVANCE_ATTEMPTS: Final = 8
+"""Retry budget for the cursor compare-and-advance loop.
+
+Legitimate contention (a concurrent first-ack winning the insert, a concurrent advance
+bumping the rev) converges within a round or two; exhausting this budget means the row
+is unreachable — e.g. a foreign row holding the derived id outside the current tenant's
+scope — and continuing would spin unboundedly on the user-facing ack path."""
+
 # ....................... #
 
 
-def _cursor_id(principal: str, client_key: str) -> UUID:
+def _cursor_id(tenant: TenantIdentity | None, principal: str, client_key: str) -> UUID:
     """A deterministic cursor id, so concurrent first-acks for one device converge on a
     single row (the losing insert reconciles via a monotonic update) instead of racing
     two inserts.
+
+    The **tenant is part of the derivation**: on the tagged-tenancy table shape this kit
+    recommends, every tenant's rows share one physical primary-key space while the
+    lookup is tenant-scoped. A tenant-blind id collides for a principal present in two
+    tenants (the org-switcher flow): ``_find`` misses — the other tenant's row is
+    invisible — while the create hits the other tenant's row on the PK, an insert that
+    can never succeed. The id and the lookup must agree on their notion of uniqueness.
 
     ``uuid5`` is a SHA-1 hash of its inputs — no clock or entropy — so it needs no
     ``base.primitives`` seam (used directly, like ``hashlib``) and is byte-identical
     under simulation.
     """
 
-    return uuid5(_CURSOR_NS, f"{principal}\x00{client_key}")
+    tenant_part = str(tenant.tenant_id) if tenant is not None else ""
+
+    return uuid5(_CURSOR_NS, f"{tenant_part}\x00{principal}\x00{client_key}")
 
 
 # ....................... #
@@ -500,9 +519,10 @@ class DocumentMailboxCursors:
     """Per-device read cursors over a document collection.
 
     Built via :func:`build_realtime_cursors`. A cursor is found by ``(principal, client_key)``
-    and created under a **deterministic** id derived from them (:func:`_cursor_id`), so
-    concurrent first-acks converge on one row — the loser reconciles via a monotonic update
-    rather than racing two inserts.
+    (tenant-scoped by the store) and created under a **deterministic** id derived from
+    ``(tenant, principal, client_key)`` (:func:`_cursor_id`), so concurrent first-acks
+    converge on one row — the loser reconciles via a monotonic update rather than racing
+    two inserts — and a principal present in two tenants never collides on the id.
     """
 
     command: DocumentCommandPort[_CursorRead, _CursorDoc, _CursorCreate, _CursorUpdate]
@@ -510,6 +530,13 @@ class DocumentMailboxCursors:
 
     query: DocumentQueryPort[_CursorRead]
     """The document query port for reading cursor rows."""
+
+    tenant_provider: TenantProviderPort = lambda: None
+    """Reads the ambient tenant at ack time — part of the cursor id derivation.
+
+    The store scopes rows by tenant, so the deterministic id must too (see
+    :func:`_cursor_id`); wired to ``ctx.inv_ctx.get_tenant`` by
+    :func:`build_realtime_cursors`."""
 
     # ....................... #
 
@@ -543,14 +570,16 @@ class DocumentMailboxCursors:
         # id; a concurrent first-ack that loses the insert hits a conflict and retries
         # via the update path — otherwise the loser's (possibly higher) position would
         # be silently dropped. The counter moves only after a write actually lands.
-        while True:
+        # Bounded: legitimate races converge in a round or two, so exhausting the
+        # budget means the row is unreachable and looping would pin the scope.
+        for _ in range(_MAX_ADVANCE_ATTEMPTS):
             row = await self._find(principal, client_key)
 
             if row is None:
                 try:
                     await self.command.create(
                         _CursorCreate(principal=principal, client_key=client_key, hlc=target),
-                        id=_cursor_id(principal, client_key),
+                        id=_cursor_id(self.tenant_provider(), principal, client_key),
                         return_new=False,
                     )
                 except CoreException as error:
@@ -575,6 +604,14 @@ class DocumentMailboxCursors:
 
             self._acked += 1
             return
+
+        raise exc.internal(
+            f"Realtime cursor advance for principal {principal!r} did not converge "
+            f"after {_MAX_ADVANCE_ATTEMPTS} attempts: the cursor row is invisible to "
+            "this scope yet its id conflicts on insert (a foreign row is holding the "
+            "derived id — check the collection's tenancy wiring).",
+            code="realtime_cursor_advance_stalled",
+        )
 
     # ....................... #
 
@@ -665,4 +702,5 @@ def build_realtime_cursors(
     return DocumentMailboxCursors(
         command=ctx.document.command(resolved),
         query=ctx.document.query(resolved),
+        tenant_provider=ctx.inv_ctx.get_tenant,
     )

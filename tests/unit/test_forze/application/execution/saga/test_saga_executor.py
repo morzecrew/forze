@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from forze.application.contracts.saga import SagaDefinition, SagaStep, SagaStepKind
+from forze.application.contracts.transaction import COMMIT_AMBIGUOUS_CODE
 from forze.application.execution import ExecutionContext, run_saga
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_mock import MockDepsModule
@@ -142,6 +143,73 @@ class TestSagaExecutor:
 
         assert result == ["flaky"]
         assert attempts["n"] == 2  # retried once via the occ policy
+
+
+class TestAmbiguousCommit:
+    """An interruption at a step's own commit is indeterminacy, not failure."""
+
+    @staticmethod
+    def _ambiguous_step(
+        name: str,
+        rec: list[str],
+        *,
+        kind: SagaStepKind = SagaStepKind.COMPENSATABLE,
+    ) -> SagaStep[State]:
+        async def action(_ctx: ExecutionContext, state: State) -> State:
+            rec.append(f"do:{name}")
+            # The exact error the tx scope raises when a drain-timeout cancel lands
+            # at the commit: the step MAY be committed.
+            raise exc.internal(
+                "Cancelled at or after the transaction commit",
+                code=COMMIT_AMBIGUOUS_CODE,
+            )
+
+        return SagaStep(
+            name=name,
+            action=action,
+            compensation=None,
+            kind=kind,
+            tx_route="mock",
+            idempotent=kind is SagaStepKind.RETRYABLE,
+        )
+
+    async def test_ambiguous_step_commit_compensates_nothing(self) -> None:
+        # If B may be committed, compensating A would roll the saga back *around* a
+        # live effect (split-brain), and DOMAIN ``saga.step_failed`` would falsely
+        # certify "completed steps were compensated". Nothing is compensated and the
+        # raised error names the indeterminacy for the operator.
+        rec: list[str] = []
+        ctx = context_from_modules(MockDepsModule())
+        saga: SagaDefinition[State] = SagaDefinition(
+            name="s",
+            steps=(_step("a", rec), self._ambiguous_step("b", rec)),
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await run_saga(ctx, saga, [])
+
+        assert ei.value.code == "saga.step_ambiguous"
+        assert ei.value.kind is ExceptionKind.INFRASTRUCTURE  # never a "consistent" DOMAIN
+        assert rec == ["do:a", "do:b"]  # a's compensation never ran
+
+    async def test_ambiguous_commit_after_pivot_still_reports_indeterminacy(self) -> None:
+        # Past the pivot the failure path is forward-incomplete; ambiguity still wins:
+        # "could not complete forward" presumes the step failed, which is unknown here.
+        rec: list[str] = []
+        ctx = context_from_modules(MockDepsModule())
+        saga: SagaDefinition[State] = SagaDefinition(
+            name="s",
+            steps=(
+                _step("a", rec, kind=SagaStepKind.PIVOT),
+                self._ambiguous_step("b", rec, kind=SagaStepKind.RETRYABLE),
+            ),
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await run_saga(ctx, saga, [])
+
+        assert ei.value.code == "saga.step_ambiguous"
+        assert rec == ["do:a", "do:b"]
 
 
 class TestPivotSemantics:
