@@ -355,6 +355,81 @@ class TestDurableSagaExecutor:
         assert replayed.value.code == "saga.step_ambiguous"
         assert effects == ["do:a", "do:b"]
 
+    async def test_second_cancel_during_the_ambiguity_write_still_lands_the_row(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A drain that keeps cancelling: the first cancel tears the outcome write
+        # (absorbed, ambiguity retried), and a SECOND cancel arrives while the
+        # ambiguity row is being written. That write must still complete — lost, the
+        # journal is empty and resume re-runs the committed body. The run then ends
+        # as a cancellation (re-raised after the write), and resume finds the row.
+        from forze_kits.integrations.durable import saga_executor as saga_executor_module
+
+        state = MockState()
+        effects: list[str] = []
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(_step("a", effects), _step("b", effects)),
+        )
+
+        outer_task = asyncio.current_task()
+        assert outer_task is not None
+
+        class _DoubleCancelPort:
+            def __init__(self, inner: Any) -> None:
+                self.inner = inner
+                self.calls_for_b = 0
+
+            async def run(self, step_id: str, fn: Any) -> Any:
+                if step_id != "b":
+                    return await self.inner.run(step_id, fn)
+
+                self.calls_for_b += 1
+
+                if self.calls_for_b == 1:
+                    await fn()  # the action commits...
+                    raise asyncio.CancelledError  # ...first cancel tears the write
+
+                if self.calls_for_b == 2:
+                    # The ambiguity retry: a second drain cancel arrives mid-write.
+                    # (This coroutine runs shielded, so the cancel hits the executor's
+                    # task while the write below still completes.)
+                    outer_task.cancel()
+
+                return await self.inner.run(step_id, fn)
+
+        ctx1 = context_from_modules(MockDepsModule(state=state))
+        real_port = resolve_durable_step(ctx1)
+        monkeypatch.setattr(
+            saga_executor_module,
+            "resolve_durable_step",
+            lambda _ctx: _DoubleCancelPort(real_port),
+        )
+
+        token = _bound()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await DurableSagaExecutor().run(ctx1, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+            outer_task.uncancel()  # clean the test task's cancel state
+
+        assert effects == ["do:a", "do:b"]  # no compensation, body ran once
+
+        # Resume with a healthy port: the ambiguity row landed despite the second
+        # cancel — the verdict replays and the body is NOT re-run.
+        monkeypatch.setattr(saga_executor_module, "resolve_durable_step", lambda _ctx: real_port)
+        ctx2 = context_from_modules(MockDepsModule(state=state))
+        token = _bound()
+        try:
+            with pytest.raises(CoreException) as replayed:
+                await DurableSagaExecutor().run(ctx2, saga, OrderCtx())
+        finally:
+            reset_durable_run(token)
+
+        assert replayed.value.code == "saga.step_ambiguous"
+        assert effects == ["do:a", "do:b"]
+
     async def test_cancel_after_the_journal_write_landed_keeps_the_success(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -34,6 +34,7 @@ from forze.application.execution.context.commit_state import (
     commit_started,
     reset_commit_started,
 )
+from forze.base.asyncio import run_to_completion
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
 
 from .._logger import logger
@@ -286,7 +287,14 @@ class DurableSagaExecutor:
             async def _record_ambiguous() -> JsonDict:
                 return _ambiguous_outcome()
 
-            encoded = await step_port.run(str(step.name), _record_ambiguous)
+            async def _write_ambiguous() -> JsonDict:
+                return await step_port.run(str(step.name), _record_ambiguous)
+
+            # A further cancellation must not tear THIS write — lost, resume would
+            # re-run the possibly-committed body. run_to_completion finishes the
+            # write under repeated cancels and only then re-raises the pending
+            # cancellation: the row is already down, so resume reconciles either way.
+            encoded = await run_to_completion(_write_ambiguous())
 
             if _STEP_FAILURE_KEY not in encoded:
                 # The success row had already landed — the journal is truthful and the

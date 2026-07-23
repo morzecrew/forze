@@ -23,6 +23,7 @@ from forze.application.contracts.saga import (
     SagaStepKind,
     saga_step_outcome_unknown,
 )
+from forze.application.contracts.transaction import COMMIT_AMBIGUOUS_CODE
 from forze.base.exceptions import CoreException, exception_egress_policy
 
 from .execution._logger import logger
@@ -58,6 +59,52 @@ def _as_application_error(error: CoreException) -> "ApplicationError":
         type=error.code,
         non_retryable=non_retryable,
     )
+
+
+_MAX_CAUSE_HOPS = 16
+"""Bound on the failure-cause walk in :func:`_step_outcome_unknown` (chains are short;
+the bound only guards against a pathological cycle)."""
+
+
+def _step_outcome_unknown(error: BaseException) -> bool:
+    """:func:`saga_step_outcome_unknown`, extended across Temporal's failure wrappers.
+
+    An activity that dies at its transaction commit raises the ``commit_ambiguous``
+    :class:`CoreException` *inside the activity*; the workflow receives it wrapped —
+    an ``ActivityError`` whose cause is the ``ApplicationError`` the failure converter
+    built. Two wrapped shapes carry the code: a converter that maps the code into the
+    error ``type``, and the default converter's ``type="CoreException"`` whose message
+    keeps the parenthesized code from ``CoreException.__str__``. Checked lazily so the
+    module still imports without ``temporalio``.
+    """
+
+    from temporalio.exceptions import ApplicationError
+
+    marker = f"({COMMIT_AMBIGUOUS_CODE})"
+    cursor: BaseException | None = error
+
+    for _ in range(_MAX_CAUSE_HOPS):
+        if cursor is None:
+            return False
+
+        if saga_step_outcome_unknown(cursor):
+            return True
+
+        if isinstance(cursor, ApplicationError) and (
+            cursor.type == COMMIT_AMBIGUOUS_CODE
+            or (cursor.type == "CoreException" and marker in (cursor.message or ""))
+        ):
+            return True
+
+        nxt: BaseException | None = cursor.__cause__
+
+        if nxt is None:
+            candidate = getattr(cursor, "cause", None)
+            nxt = candidate if isinstance(candidate, BaseException) else None
+
+        cursor = nxt
+
+    return False
 
 
 @final
@@ -120,7 +167,9 @@ class TemporalSaga:
             # An ambiguous step commit (interrupted at the commit itself) is NOT a
             # step failure: the step may be committed, so compensating would
             # split-brain and ``saga.step_failed`` would falsely certify consistency.
-            if saga_step_outcome_unknown(error):
+            # Checked through Temporal's failure wrappers — an activity's
+            # CoreException reaches the workflow as an ActivityError chain.
+            if _step_outcome_unknown(error):
                 raise _as_application_error(
                     self._progress.step_ambiguous_error(index, error)
                 ) from error
