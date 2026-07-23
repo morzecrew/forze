@@ -86,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A contended Firestore counter no longer surfaces a concurrency error** — allocation retries under a budget sized for counter contention instead of the shared optimistic-concurrency default, which gave up while concurrent callers were still queued. Postgres and Mongo allocate atomically and were unaffected.
 - **Mongo history reads scope by tenant** — snapshots are stamped and reads filter strictly on it, matching Firestore and closing a tagged-tier cross-tenant read. A pre-upgrade snapshot carries no tenant, so it is unowned and invisible to every tenant; backfill it on legacy history rows for strict pre-upgrade concurrency continuity.
 - **Listing a missing bucket can read as empty** — opt-in, so the object-list route and a blob-less export no longer fail outright; the default still raises. Object listing also bounds its per-object HEAD fan-out.
-- **Decimal filter values** — the query caster no longer locale-guesses a comma, and a JSON string is accepted as an exact Decimal or datetime range bound, cast per field against the read model.
+- **Decimal filter values** — the query caster no longer locale-guesses a comma, and a JSON string is accepted as an exact Decimal or datetime range bound, cast per field against the read model; non-finite bounds (`"NaN"`/`"Infinity"`, string or native) are refused on every backend.
 - **Meilisearch Decimal reads are exact** — a shadow field restores the precision the f64 index number rounds away.
 - **Mock graph matches Neo4j on four write-path guards** — deleting a vertex detaches its edges, edges require existing endpoints, creating a duplicate key conflicts, and unknown kinds raise.
 
@@ -137,7 +137,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A failed rewind could silently skip records** — every rewind failure was treated as a benign rebalance, so a coordinator error with partitions still held left the position past unprocessed records and then committed past them. The two cases are now told apart and an unrestorable consumer is discarded.
 - **A poison marker no longer drops the record's headers** — it now carries the decoded headers and message type, so a forwarded sealed envelope keeps the ids its authenticated data binds to and stays decryptable for dead-letter triage.
 
-**The log scrubber masks camelCase and PascalCase names** — a credential masked as `db_pwd` leaked as `dbPwd`, and `secret_key=` masked while `secretKey=` leaked. The key heuristic and the value rule both recognize a case hump now; mid-token runs like `backupwd` stay unmasked as before.
+**The log scrubber masks camelCase and PascalCase names** — a credential masked as `db_pwd` leaked as `dbPwd`, and `secret_key=` masked while `secretKey=` leaked. The key heuristic and the value rule both recognize a case hump now; mid-token runs like `backupwd` stay unmasked as before, and compound-suffix matching is linear-time on hostile text.
 
 **A backward keyset page no longer dead-ends navigation** (**behavior change**) — a `before` page landing flush on the start of the set returned no cursor in either direction, stranding the client on a full page with rows still ahead. It now always carries a forward cursor, and `has_more` reports that same forward answer instead of the backward fetch, so the flag and the cursor cannot disagree. Applies to every keyset-paging backend.
 
@@ -149,7 +149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Permanent dependency faults are no longer retried forever**
 
-- **A deleted or disabled KMS key is classified permanent** (**behavior change**) — AWS, GCP and Yandex map a key state they name outright (not-found, disabled, destroyed) to `CONFIGURATION`, so a commit-stream consumer pauses-and-alerts with `failed > 0` instead of crash-restarting forever and a queue consumer parks instead of requeuing endlessly. Where the state is only in the failure's message (AWS `KMSInvalidState`, GCP/Yandex precondition failures) the mapper reads it. Anything ambiguous stays retryable: access-denied, throttling, and any message naming no terminal state.
+- **A deleted or disabled KMS key is classified permanent** (**behavior change**) — AWS, GCP and Yandex map a key state they name outright (not-found, disabled, destroyed) to `CONFIGURATION`, so a commit-stream consumer pauses-and-alerts with `failed > 0` instead of crash-restarting forever, and a queue consumer requeues the affected messages uncounted and keeps consuming (throttled while nothing decrypts), instead of parking the encrypted backlog as poison. Anything ambiguous stays retryable: access-denied, throttling, and any state naming no terminal condition.
 - **The commit-stream supervisor escalates instead of giving up** — a `CONFIGURATION`-kind crash is terminal, while a retryable one is retried indefinitely; new `crash_alert_after` (default 5 min, `None` to never escalate) raises one critical log per incident once it has crashed on every restart for that long. Healthy uptime opens a fresh incident.
 
 **Broker delivery integrity (RabbitMQ, draining)**
@@ -157,6 +157,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The RabbitMQ pending map leaked on partial ack and after channel recovery** — a channel reopen purges the stale delivery tags, deliveries read on a channel replaced mid-drain are discarded rather than registered against it, and only confirmed acks and nacks are counted and settled.
 - **Draining no longer parks in-flight messages as poison** — a message refused by the drain gate mid-quiesce is requeued without counting as a delivery attempt and the loop stops, so a rolling deploy cannot drive it to the poison ceiling with no handler defect. Terminal nacks can now opt out of delivery counting where the backend tracks it.
 - **A terminal nack no longer wedges an SQS FIFO message group** (**behavior change**) — on a FIFO queue it now retains a copy on the configured poison queue and deletes, rather than blocking the group forever where no redrive policy would ever trim it. Standard queues are unchanged.
+- **SQS honors an uncounted requeue** — `nack(requeue=True, count=False)` replaces the message with a byte-identical copy whose receive count restarts, keeping drain refusals and key-outage redeliveries away from the redrive DLQ. A FIFO queue keeps the order-preserving reset until the count nears its redrive threshold, then copies back under the same message group; without a redrive policy it always resets.
 - **A FIFO poison message is never deleted without being retained** (**behavior change**) — where a retention queue is configured but the copy cannot be sent, the original is kept rather than destroyed and its message group stays blocked until the retention queue recovers. Unconfigured retention still deletes, as before.
 
 **Graph**

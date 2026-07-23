@@ -14,9 +14,11 @@ Numeric = int | float | Decimal | datetime | date | UUID | str
 ``str`` is the JSON carrier for values JSON numbers cannot express exactly — an exact
 ``Decimal`` range bound on a money column, an ISO datetime — and is validated per field at
 render time by the backend caster (``as_decimal`` / ``as_datetime`` / …), which refuses a
-string the field's type cannot parse. Ordering on *text* fields stays refused by the
-field-type gate (see ``field_types``), so admitting ``str`` here never legalizes
-``name $gt "x"``."""
+string the field's type cannot parse **and any non-finite numeric** ("NaN"/"Infinity"
+parse as ``Decimal`` but are not range bounds: Postgres sorts ``'NaN'::numeric`` above
+every number, so a ``$lt "NaN"`` filter would fail open and match every row). Ordering on
+*text* fields stays refused by the field-type gate (see ``field_types``), so admitting
+``str`` here never legalizes ``name $gt "x"``."""
 
 Scalar = Numeric | bool | str
 """Scalar value types for filter expressions."""

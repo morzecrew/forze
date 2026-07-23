@@ -147,9 +147,14 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
         case "$gt":
             if value is _MISSING:
                 return False
+            # Incomparable operands read as "no match", never as an error. TypeError
+            # covers mixed types; ArithmeticError covers Decimal NaN, whose ordered
+            # comparisons raise InvalidOperation where float NaN merely returns False
+            # (the caster refuses non-finite operands, but a native Decimal("NaN")
+            # reaches here without passing through it).
             try:
                 return value > field.value
-            except TypeError:
+            except (TypeError, ArithmeticError):
                 return False
 
         case "$gte":
@@ -157,7 +162,7 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
                 return False
             try:
                 return value >= field.value
-            except TypeError:
+            except (TypeError, ArithmeticError):
                 return False
 
         case "$lt":
@@ -165,7 +170,7 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
                 return False
             try:
                 return value < field.value
-            except TypeError:
+            except (TypeError, ArithmeticError):
                 return False
 
         case "$lte":
@@ -173,7 +178,7 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
                 return False
             try:
                 return value <= field.value
-            except TypeError:
+            except (TypeError, ArithmeticError):
                 return False
 
         case "$null":
@@ -260,7 +265,7 @@ def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
                 return False
             try:
                 return left_value > right_value
-            except TypeError:
+            except (TypeError, ArithmeticError):
                 return False
 
         case "$gte":
@@ -268,7 +273,7 @@ def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
                 return False
             try:
                 return left_value >= right_value
-            except TypeError:
+            except (TypeError, ArithmeticError):
                 return False
 
         case "$lt":
@@ -276,7 +281,7 @@ def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
                 return False
             try:
                 return left_value < right_value
-            except TypeError:
+            except (TypeError, ArithmeticError):
                 return False
 
         case "$lte":
@@ -284,7 +289,7 @@ def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
                 return False
             try:
                 return left_value <= right_value
-            except TypeError:
+            except (TypeError, ArithmeticError):
                 return False
 
 

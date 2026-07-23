@@ -110,3 +110,27 @@ async def test_unparseable_string_bound_on_decimal_is_refused() -> None:
     # A string that is not a number is refused by the cast, not silently matched to nothing.
     with pytest.raises(CoreException):
         await adapter.find_many({"$values": {"price": {"$gt": "not-a-number"}}})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bound", ["NaN", "nan", "sNaN", "Infinity", "-inf"])
+async def test_non_finite_string_bound_on_decimal_is_refused(bound: str) -> None:
+    adapter = _mock()
+    await _seed(adapter, ["1", "2"])
+
+    # "NaN" parses as Decimal but is not a range bound: Postgres sorts 'NaN'::numeric
+    # above every number, so a `$lt "NaN"` money filter would fail open and match every
+    # row, while the in-memory Decimal comparison raises. Refused once at the cast.
+    with pytest.raises(CoreException, match="Non-finite"):
+        await adapter.find_many({"$values": {"price": {"$lt": bound}}})
+
+
+@pytest.mark.asyncio
+async def test_non_finite_native_decimal_bound_is_refused() -> None:
+    adapter = _mock()
+    await _seed(adapter, ["1", "2"])
+
+    # A native Decimal("NaN") skips the string cast; the coercion seam still refuses it,
+    # keeping the mock aligned with Postgres (whose render cast raises the same way).
+    with pytest.raises(CoreException, match="Non-finite"):
+        await adapter.find_many({"$values": {"price": {"$lt": Decimal("NaN")}}})

@@ -263,11 +263,12 @@ class SQSQueueAdapter[M: BaseModel](
         requeue: bool = True,
         count: bool = True,
     ) -> int:
-        # ``count`` is ignored: SQS delivery counting is the queue's own receive tally under
-        # its redrive policy, which the client cannot suppress. A draining requeue still resets
-        # visibility for immediate redelivery; the receive it incurs is inherent to SQS.
-        _ = count
+        # ``count=False`` requeues a byte-identical copy so the broker's receive tally
+        # resets — always on a standard queue, on FIFO once the tally nears the redrive
+        # threshold (the order-preserving reset is kept while it is safe) — so a drain
+        # refusal or key-outage redelivery cannot creep into the redrive DLQ; see
+        # ``SQSClient.nack``.
         physical_queue = await self.__queue_name(queue)
 
         async with self.client.client():
-            return await self.client.nack(physical_queue, ids, requeue=requeue)
+            return await self.client.nack(physical_queue, ids, requeue=requeue, count=count)

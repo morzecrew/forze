@@ -217,8 +217,9 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
         ids: Sequence[str],
         *,
         requeue: bool = True,
+        count: bool = True,
     ) -> int:
         inner = await self._get_client()
 
         async with inner.client():
-            return await inner.nack(queue, ids, requeue=requeue)
+            return await inner.nack(queue, ids, requeue=requeue, count=count)

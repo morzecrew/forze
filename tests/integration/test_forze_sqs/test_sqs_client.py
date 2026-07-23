@@ -76,6 +76,47 @@ async def test_client_nack_requeue_then_ack(
 
 
 @pytest.mark.asyncio
+async def test_client_uncounted_requeue_resets_the_receive_count(
+    sqs_client: SQSClient,
+    sqs_queue_url: str,
+) -> None:
+    """``nack(requeue=True, count=False)`` on a standard queue replaces the message with
+    a byte-identical copy — fresh broker ``MessageId``, receive count back to one — so an
+    outage's requeue cycles can never creep toward the redrive policy's
+    ``maxReceiveCount`` and dead-letter a healthy message."""
+
+    async with sqs_client.client():
+        await sqs_client.enqueue(
+            sqs_queue_url, b'{"value":"uncounted"}', type="created", key="k1"
+        )
+
+        first = (await _receive_until(sqs_client, sqs_queue_url))[0]
+        assert first.delivery_count == 1
+
+        assert (
+            await sqs_client.nack(sqs_queue_url, [first.id], requeue=True, count=False)
+            == 1
+        )
+
+        second = (await _receive_until(sqs_client, sqs_queue_url))[0]
+        # The payload and routing context survive byte-identically…
+        assert second.body == b'{"value":"uncounted"}'
+        assert second.type == "created"
+        assert second.key == "k1"
+        # …under a fresh broker identity whose receive count restarted.
+        assert second.id != first.id
+        assert second.delivery_count == 1
+
+        # A counted requeue, by contrast, raises the tally on redelivery.
+        assert await sqs_client.nack(sqs_queue_url, [second.id], requeue=True) == 1
+        third = (await _receive_until(sqs_client, sqs_queue_url))[0]
+        assert third.id == second.id
+        assert third.delivery_count == 2
+
+        assert await sqs_client.ack(sqs_queue_url, [third.id]) == 1
+
+
+@pytest.mark.asyncio
 async def test_client_message_id_stable_across_redeliveries(
     sqs_client: SQSClient,
 ) -> None:

@@ -20,6 +20,7 @@ do resolve.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -464,7 +465,23 @@ def coerce_query_ord_operands(
     hints = field_type_hints or {}
 
     def _coerced_value(op: str, ann: Any, value: Any) -> Any:
-        if op not in _ORD_OPS or not isinstance(value, str):
+        if op not in _ORD_OPS:
+            return value
+
+        # Finiteness is established here, at the shared seam, not per backend: a
+        # native ``Decimal("NaN")`` / ``float("inf")`` bound skips the string cast
+        # below, and met raw the backends diverge — Postgres sorts NaN above every
+        # number (a ``$lt`` fails open and matches all rows) while the in-memory
+        # matcher treats it as incomparable and matches nothing. Refuse once so
+        # every backend gives the same precondition. (String bounds are covered by
+        # the caster's own non-finite refusal.)
+        if isinstance(value, Decimal) and not value.is_finite():
+            raise exc.precondition(f"Non-finite numeric not allowed: {value!r}")
+
+        if isinstance(value, float) and not math.isfinite(value):
+            raise exc.precondition(f"Non-finite float not allowed: {value!r}")
+
+        if not isinstance(value, str):
             return value
 
         cls = _classify(ann)
