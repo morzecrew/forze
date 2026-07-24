@@ -424,3 +424,43 @@ async def test_rejects_bad_config() -> None:
 
     with pytest.raises(CoreException):
         _consumer(handler, topics=[])
+
+
+@pytest.mark.asyncio
+async def test_draining_refusal_stops_without_dead_lettering() -> None:
+    # A rolling deploy flips the drain gate before the loop's stop event: the
+    # handler's dispatch is refused with THROTTLED/code="draining". That is a
+    # shutdown artifact, not a handler defect — burning max_attempts on the one-way
+    # gate and dead-lettering would park a HEALTHY message as poison and commit the
+    # offset past an effect that never ran. The runner must stop instead, leaving
+    # the offset uncommitted for redelivery (the queue twin requeues uncounted for
+    # exactly this case).
+    from forze.base.exceptions import exc
+
+    ctx, producer, admin, query, state = _harness()
+    await admin.ensure_group("g", [_TOPIC], start=OffsetReset.EARLIEST)
+    await _seed(producer, 3)
+
+    calls: list[str] = []
+
+    async def handler(msg: StreamMessage[_Payload]) -> None:
+        calls.append(msg.payload.value)
+
+        if msg.payload.value == "1":
+            raise exc.throttled("Runtime is draining", code="draining")
+
+    result = await _consumer(handler, dlq_stream="orders.dlq", max_attempts=3).run(
+        ctx, timeout=_IDLE
+    )
+
+    # message 0 processed and committed; the refusal stopped the run
+    assert result.processed == 1
+    assert result.dead_lettered == 0
+    assert "orders.dlq" not in state.streams.get(_TOPIC, {})
+
+    # not a delivery attempt: the refusal did not burn retries
+    assert calls == ["0", "1"]
+
+    # the refused message and the tail stay uncommitted — a fresh run redelivers
+    redelivered = await query.read("g", "c", [_TOPIC])
+    assert [m.payload.value for m in redelivered] == ["1", "2"]

@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncGenerator, Sequence
 from datetime import timedelta
-from typing import Any, TypeVar, cast, final
+from typing import Any, TypeVar, final
 from uuid import UUID
 
 import attrs
@@ -40,6 +40,7 @@ from forze.application.integrations.analytics.adapter_common import (
     dry_run_enabled,
     dry_run_offset_page,
     execute_analytics_offset_page,
+    parse_analytics_cursor_limit,
     parse_count_row,
     validate_fetch_batch_size,
     validated_params,
@@ -206,13 +207,9 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         cursor: CursorPaginationExpression | None,
     ) -> tuple[str | None, int]:
         c = dict(cursor or {})
-        lim_raw = c.get("limit")
-        lim = int(cast(Any, lim_raw)) if lim_raw is not None else 10
-        if lim < 1:
-            raise exc.validation("Cursor pagination 'limit' must be positive")
-
-        if c.get("after") and c.get("before"):
-            raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
+        # the shared hardened parse: coerced, clamped, and the after/before guard —
+        # a fork here previously sent an unclamped ``int(limit)`` straight to BigQuery
+        lim = parse_analytics_cursor_limit(cursor)
 
         if c.get("after"):
             try:

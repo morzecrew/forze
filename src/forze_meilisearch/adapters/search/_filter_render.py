@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 import attrs
+from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
     ALL_VALUE_OPS,
@@ -24,7 +25,9 @@ from forze.application.contracts.querying import (
     QueryFilterLimits,
     QueryNot,
     QueryOr,
+    coerce_query_ord_operands,
     validate_query_capabilities,
+    validate_query_field_types,
 )
 from forze.base.exceptions import exc
 
@@ -181,6 +184,17 @@ class MeilisearchFilterRenderer:
     field_map: dict[str, str] = attrs.field(factory=dict)
     """Logical field name → Meilisearch attribute."""
 
+    read_model: type[BaseModel] | None = None
+    """The searchable read model, for operator–type validation and operand coercion.
+
+    Meilisearch is the one query surface that does not run through the shared
+    persistence gateway seam, so without this the renderer would compile what every
+    other backend rejects or casts: ``{"price": {"$lt": "5"}}`` rendered as a quoted
+    string compares **lexically** (``"9" > "10"``), ``$gt`` on a text field is
+    accepted, and a ``"NaN"`` bound sails through as a harmless-looking literal.
+    ``None`` skips the model-aware half (capability validation still runs) — for
+    callers that genuinely have no model, never as an optimization."""
+
     parser: QueryFilterExpressionParser = attrs.field(
         factory=lambda: QueryFilterExpressionParser(limits=QueryFilterLimits()),
     )
@@ -201,6 +215,15 @@ class MeilisearchFilterRenderer:
 
         expr = self.parser.parse(filters)
         validate_query_capabilities(expr, MEILISEARCH_QUERY_CAPABILITIES, backend="meilisearch")
+
+        if self.read_model is not None:
+            # The same order as the shared gateway seam: validate operator–type fit,
+            # then cast string ordering bounds to the field's scalar family (with its
+            # finiteness guard) so this backend renders the same typed operand as
+            # every other instead of meeting the raw string at its own syntax.
+            validate_query_field_types(expr, self.read_model)
+            expr = coerce_query_ord_operands(expr, self.read_model)
+
         rendered = self._render_expr(expr)
 
         if not rendered:

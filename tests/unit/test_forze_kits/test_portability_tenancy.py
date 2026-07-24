@@ -544,3 +544,115 @@ async def test_a_manifest_with_duplicate_tenant_sections_is_refused(tmp_path: Pa
     async with target.scope():
         with pytest.raises(CoreException, match="duplicate tenant sections"):
             await import_archive(target, archive)
+
+
+# ....................... #
+# The expect_tenants anchor: the manifest's section list is a claim, not an authority
+
+
+def _drop_tenant_section(archive: Path, tenant: UUID) -> None:
+    """The tamper the anchor exists for: delete one tenant's section CONSISTENTLY.
+
+    Removing the tenant from ``scope.tenants``, its files from ``manifest.files`` and
+    the ``tenants/<uuid>/`` tree together leaves every archive-internal check passing —
+    checksums, coverage, and the unlisted-file sweep all scope themselves to what the
+    manifest still declares."""
+
+    import json as _json
+    import shutil
+
+    manifest_path = archive / "manifest.json"
+    doc = _json.loads(manifest_path.read_text())
+    prefix = f"tenants/{tenant}/"
+
+    doc["scope"]["tenants"] = [t for t in doc["scope"]["tenants"] if t != str(tenant)]
+    doc["files"] = [f for f in doc["files"] if not f["path"].startswith(prefix)]
+    manifest_path.write_text(_json.dumps(doc))
+    shutil.rmtree(archive / "tenants" / str(tenant))
+
+
+@pytest.mark.asyncio
+async def test_deleted_tenant_section_imports_as_success_without_the_anchor(
+    tmp_path: Path,
+) -> None:
+    # The documented gap the anchor closes: with no independent tenant set, the
+    # tampered archive is internally consistent and the import cannot know better.
+    source = _runtime(MockState())
+    seeded = await _seed(source)
+
+    archive = tmp_path / "archive"
+    async with source.scope():
+        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2]))
+
+    _drop_tenant_section(archive, _T2)
+
+    target = _runtime(MockState())
+    async with target.scope():
+        result = await import_archive(target, archive)  # no expect_tenants: trusting
+
+    assert result.total_imported == len(seeded[_T1])  # T2 silently gone
+
+
+@pytest.mark.asyncio
+async def test_expect_tenants_refuses_a_deleted_tenant_section(tmp_path: Path) -> None:
+    source = _runtime(MockState())
+    await _seed(source)
+
+    archive = tmp_path / "archive"
+    async with source.scope():
+        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2]))
+
+    _drop_tenant_section(archive, _T2)
+
+    target = _runtime(MockState())
+    async with target.scope():
+        with pytest.raises(CoreException, match=str(_T2)):
+            await import_archive(target, archive, expect_tenants=(_T1, _T2))
+
+
+@pytest.mark.asyncio
+async def test_expect_tenants_passes_an_untampered_archive(tmp_path: Path) -> None:
+    source = _runtime(MockState())
+    seeded = await _seed(source)
+
+    archive = tmp_path / "archive"
+    async with source.scope():
+        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2]))
+
+    target = _runtime(MockState())
+    async with target.scope():
+        result = await import_archive(target, archive, expect_tenants=(_T2, _T1))  # order-free
+
+    assert result.total_imported == len(seeded[_T1]) + len(seeded[_T2])
+
+
+@pytest.mark.asyncio
+async def test_expect_tenants_refuses_an_unexpected_extra_section(tmp_path: Path) -> None:
+    # the mirror tamper: a section ADDED to smuggle rows into a tenant the target
+    # does not know
+    source = _runtime(MockState())
+    await _seed(source)
+
+    archive = tmp_path / "archive"
+    async with source.scope():
+        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2]))
+
+    target = _runtime(MockState())
+    async with target.scope():
+        with pytest.raises(CoreException, match="not expected by the target"):
+            await import_archive(target, archive, expect_tenants=(_T1,))
+
+
+@pytest.mark.asyncio
+async def test_expect_tenants_untenanted_refuses_tenant_sections(tmp_path: Path) -> None:
+    source = _runtime(MockState())
+    await _seed(source)
+
+    archive = tmp_path / "archive"
+    async with source.scope():
+        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2]))
+
+    target = _runtime(MockState())
+    async with target.scope():
+        with pytest.raises(CoreException, match="untenanted"):
+            await import_archive(target, archive, expect_tenants="untenanted")

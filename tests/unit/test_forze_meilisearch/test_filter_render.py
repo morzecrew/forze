@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime
 from uuid import UUID
 
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
     UNSUPPORTED_QUERY_FEATURE_CODE,
@@ -217,3 +218,40 @@ def test_physical_field_map() -> None:
         {"$values": {"logical": {"$eq": "x"}}},
     )
     assert r._render_expr(expr) == 'indexed = "x"'
+
+
+class TestModelAwareTyping:
+    """With a read model bound, the renderer runs the SAME operator-type validation
+    and ordering-operand coercion seam as every other backend — Meilisearch is the
+    one query surface outside the shared persistence gateway, so without this it
+    compiled what the rest reject or cast."""
+
+    class _Hit(BaseModel):
+        name: str
+        price: float
+
+    def _renderer(self) -> MeilisearchFilterRenderer:
+        return MeilisearchFilterRenderer(read_model=self._Hit)
+
+    def test_string_bound_on_a_numeric_field_renders_numeric(self) -> None:
+        # unquoted 5, not "5": a quoted bound compares LEXICALLY ("9" > "10")
+        out = self._renderer().render_filters({"$values": {"price": {"$lt": "5"}}})
+
+        assert out == "price < 5.0"  # cast to the field's float family, unquoted
+
+    def test_ordering_on_a_text_field_is_rejected(self) -> None:
+        with pytest.raises(CoreException) as caught:
+            self._renderer().render_filters({"$values": {"name": {"$gt": "abc"}}})
+
+        assert caught.value.code == "query_operator_type_mismatch"
+
+    def test_non_finite_bound_is_rejected(self) -> None:
+        # the finiteness guard lives in the shared coercion seam; skipping the seam
+        # let "NaN" through as a harmless-looking quoted literal
+        with pytest.raises(CoreException):
+            self._renderer().render_filters({"$values": {"price": {"$lt": "NaN"}}})
+
+    def test_without_a_model_capability_validation_still_runs(self) -> None:
+        renderer = MeilisearchFilterRenderer()
+
+        assert renderer.render_filters({"$values": {"price": {"$lt": "5"}}}) == 'price < "5"'

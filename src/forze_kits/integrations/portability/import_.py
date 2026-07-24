@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import UUID
 
 import attrs
@@ -84,6 +84,16 @@ class ArchiveImporter:
     resolve the manifest's ``key_id``; the wrapping KEK never has to leave that KMS. Ignored (harmless)
     for a plaintext archive. The importer needs no ``key_ref`` — the archive names its own KEK."""
 
+    expect_tenants: Sequence[UUID] | Literal["untenanted"] | None = None
+    """The tenant set a **full-system** archive must declare — the out-of-band anchor for the
+    same reason :attr:`tenant` exists on per-tenant archives. The manifest's section list is a
+    plaintext claim: deleting one tenant's entry AND its ``tenants/<uuid>/`` files leaves every
+    checksum and completeness sweep passing (the section simply vanishes), and the import reports
+    success minus a tenant. Pass the set the target expects (from the source's tenant registry —
+    the same list the export's ``FullScope`` was built from), or ``"untenanted"`` for a deployment
+    declared tenant-free; import refuses any mismatch, missing and extra alike. ``None`` skips
+    the cross-check; refused for a per-tenant archive (its anchor is :attr:`tenant`)."""
+
     # ....................... #
 
     async def __call__(
@@ -108,6 +118,7 @@ class ArchiveImporter:
         manifest = _load_manifest(src)
         _assert_compatible(manifest, registry)
         _assert_scope_confirmed(manifest, self.tenant)
+        _assert_tenants_expected(manifest, self.expect_tenants)
         _verify_files(src, manifest)
 
         sections = _manifest_sections(manifest, self.tenant)
@@ -526,6 +537,7 @@ async def import_archive(
     on_conflict: OnConflict = "skip",
     tenant: UUID | None = None,
     sealer: ArchiveSealer | None = None,
+    expect_tenants: Sequence[UUID] | Literal["untenanted"] | None = None,
 ) -> ImportReport:
     """Convenience over :class:`ArchiveImporter`: pull the registry and the active context off
     *runtime* and import.
@@ -537,15 +549,17 @@ async def import_archive(
 
     A **per-tenant** archive requires *tenant* — the out-of-band confirmation of whose partition
     the payload lands in; the manifest names a tenant but is plaintext and unauthenticated, so it
-    is cross-checked, never trusted. Pass a *sealer* to read an encrypted archive (RFC §9); import
-    fails closed without one when the manifest says the archive is sealed.
+    is cross-checked, never trusted. *expect_tenants* is the same confirmation for a
+    **full-system** archive's section list (a deleted section otherwise vanishes with every
+    archive-internal check passing). Pass a *sealer* to read an encrypted archive (RFC §9);
+    import fails closed without one when the manifest says the archive is sealed.
     """
 
     registry = require_registry(runtime)
 
-    return await ArchiveImporter(on_conflict=on_conflict, tenant=tenant, sealer=sealer)(
-        runtime.get_context(), registry, src
-    )
+    return await ArchiveImporter(
+        on_conflict=on_conflict, tenant=tenant, sealer=sealer, expect_tenants=expect_tenants
+    )(runtime.get_context(), registry, src)
 
 
 # ....................... #
@@ -624,6 +638,63 @@ def _assert_scope_confirmed(manifest: Manifest, tenant: UUID | None) -> None:
         raise exc.precondition(
             "Archive is a full-system export; tenant= confirms per-tenant archives only. Its "
             "tenant sections restore into the tenants recorded in their own paths."
+        )
+
+
+# ....................... #
+
+
+def _assert_tenants_expected(
+    manifest: Manifest,
+    expected: Sequence[UUID] | Literal["untenanted"] | None,
+) -> None:
+    """Cross-check a full-system archive's declared tenant sections against the caller's anchor.
+
+    Every archive-internal check is scoped to the sections the manifest itself declares —
+    a tenant deleted from ``scope.tenants`` *and* from ``tenants/<uuid>/`` leaves checksums,
+    coverage, and the unlisted-file sweep all passing, and the import reports success with a
+    tenant silently gone. Only a set the target holds independently can catch that.
+    """
+
+    if expected is None:
+        return
+
+    if manifest.scope.kind == "tenant":
+        raise exc.precondition(
+            "expect_tenants= anchors a full-system archive's tenant sections; this archive is "
+            "a per-tenant export — its out-of-band confirmation is tenant=…"
+        )
+
+    declared = manifest.scope.tenants
+
+    if expected == "untenanted":
+        if declared is not None:
+            raise exc.precondition(
+                f"Archive declares {len(declared)} tenant section(s), but the import expected an "
+                f"untenanted deployment. A tenant section this target does not know cannot be "
+                f"silently restored."
+            )
+
+        return
+
+    declared_set = set(declared or ())
+    expected_set = set(expected)
+    missing = sorted(str(t) for t in expected_set - declared_set)
+    extra = sorted(str(t) for t in declared_set - expected_set)
+
+    if declared is None or missing or extra:
+        raise exc.precondition(
+            "Archive tenant sections do not match the expected tenant set"
+            + (f"; missing from the archive: {missing}" if missing else "")
+            + (f"; not expected by the target: {extra}" if extra else "")
+            + (
+                "; the archive declares no tenant sections at all (untenanted layout)"
+                if declared is None
+                else ""
+            )
+            + ". The manifest's section list is a plaintext claim — a deleted section leaves "
+            "every archive-internal check passing — so the import refuses whenever it "
+            "disagrees with the set the target expects."
         )
 
 

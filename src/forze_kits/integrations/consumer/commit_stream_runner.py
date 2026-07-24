@@ -30,6 +30,7 @@ from forze.base.primitives import StrKey
 
 from .._logger import logger
 from ..inbox import process_with_inbox
+from .runner import _DRAINING_CODE  # pyright: ignore[reportPrivateUsage]
 
 # ----------------------- #
 
@@ -429,7 +430,32 @@ class CommitStreamGroupConsumer[M]:
                     return await _pause()
 
                 # -- Process: dedup mark + handler in one transaction, up to N tries. -- #
-                outcome = await self._process_one(ctx, message, executor=executor)
+                try:
+                    outcome = await self._process_one(ctx, message, executor=executor)
+
+                except CoreException as e:
+                    if e.code != _DRAINING_CODE:
+                        raise
+
+                    # -- Draining: shutdown artifact, not a handler defect. ---- #
+                    # The drain gate closed under us (the runtime is quiescing) and
+                    # refused admission before the loop's stop signal arrived. A log
+                    # cannot requeue one message, but it can decline to move past it:
+                    # commit the offsets already earned, rewind so this message and
+                    # the tail are re-fetched, and stop — the gate is one-way, so
+                    # continuing would just re-refuse every remaining message. The
+                    # queue twin requeues without counting for exactly this case;
+                    # dead-lettering here would park a healthy message as poison and
+                    # commit past an effect that never ran.
+                    logger.info(
+                        "Commit-stream consumer draining: message %s on %s refused by "
+                        "the drain gate; leaving its offset uncommitted and stopping",
+                        message.id,
+                        message.stream,
+                    )
+                    await _flush()
+                    await port.seek_to_committed(self.group, list(self.topics))
+                    return False
 
                 if outcome is None:
                     # Exhausted max_attempts — poison.
@@ -508,7 +534,13 @@ class CommitStreamGroupConsumer[M]:
             except asyncio.CancelledError:
                 raise
 
-            except Exception:
+            except Exception as e:
+                if isinstance(e, CoreException) and e.code == _DRAINING_CODE:
+                    # A drain-gate refusal is a shutdown artifact, not a delivery
+                    # attempt: retrying burns attempts against a one-way gate and
+                    # ends in a bogus poison. The batch loop stops the run instead.
+                    raise
+
                 logger.warning(
                     "Commit-stream consumer handler failed for %s on %s (attempt %s/%s)",
                     message.id,

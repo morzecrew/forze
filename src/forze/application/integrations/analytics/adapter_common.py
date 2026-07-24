@@ -18,6 +18,7 @@ from forze.application.contracts.base import (
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
+    resolved_cursor_limit,
 )
 from forze.application.integrations.crypto import decrypt_rows
 from forze.application.integrations.tenancy_sql import (
@@ -334,20 +335,20 @@ def parse_count_row(rows: list[JsonDict], *, column: str = "forze_cnt") -> int:
 def parse_analytics_cursor_limit(
     cursor: CursorPaginationExpression | None,
 ) -> int:
-    """Return a positive page size from a cursor expression."""
+    """Return a positive page size from a cursor expression.
+
+    Delegates to the same hardened clamp every keyset path uses: the limit is
+    client-controlled, so a non-integer must be a clean validation error (not a 500
+    from a bare ``int('abc')``) and an over-large value is clamped instead of landing
+    as ``LIMIT 10**20`` in the analytics engine.
+    """
 
     c = dict(cursor or {})
 
     if c.get("after") and c.get("before"):
         raise exc.validation("Cursor pagination: pass at most one of 'after' or 'before'")
 
-    lim_raw = c.get("limit")
-    lim = int(cast(Any, lim_raw)) if lim_raw is not None else 10
-
-    if lim < 1:
-        raise exc.validation("Cursor pagination 'limit' must be positive")
-
-    return lim
+    return resolved_cursor_limit(c)
 
 
 # ....................... #

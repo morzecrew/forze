@@ -440,7 +440,7 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
 
     @property
     def filter_renderer(self) -> MeilisearchFilterRenderer:
-        return MeilisearchFilterRenderer(field_map=self.field_map)
+        return MeilisearchFilterRenderer(field_map=self.field_map, read_model=self.spec.model_type)
 
     # ....................... #
 
