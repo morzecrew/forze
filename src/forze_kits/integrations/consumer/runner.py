@@ -32,6 +32,7 @@ from forze.base.primitives import StrKey
 from forze_kits.integrations._logger import logger
 
 from ..inbox import process_with_inbox
+from ._draining import is_draining_refusal
 
 # ----------------------- #
 
@@ -61,11 +62,6 @@ _CONFIG_FAULT_PAUSE_SECONDS = 5.0
 Also paces broker receives during an outage: an SQS receive tally still climbs between
 uncounted copy-backs, and the pause keeps that to at most one receive per message per
 backlog pass. See the requeue branch in :meth:`QueueConsumer.run`."""
-
-_DRAINING_CODE = "draining"
-"""Drain-gate refusal code (``THROTTLED``/``code="draining"``): the runtime is quiescing,
-not a handler defect — the message must requeue **without** counting toward the poison
-ceiling. Kept in sync with ``DrainGate.admit`` in the execution plane."""
 
 
 # ....................... #
@@ -608,7 +604,7 @@ class QueueConsumer[M]:
                     # message toward max_deliveries on every replica of a rolling deploy and
                     # park it as poison with no defect. Then stop: the gate is one-way, so
                     # continuing would just re-refuse every remaining message.
-                    if isinstance(e, CoreException) and e.code == _DRAINING_CODE:
+                    if is_draining_refusal(e):
                         logger.info(
                             "Queue consumer draining: message %s on queue %s refused by the "
                             "drain gate; nack(requeue=True, count=False) and stopping the loop",

@@ -456,3 +456,130 @@ async def test_facetable_boolean_supports_soft_delete_exclusion(
 
     assert page.count == 1
     assert page.hits[0].id == "1"
+
+
+class _PriceOnly(BaseModel):
+    id: str
+    price: Decimal
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_projected_select_keeps_decimal_exact(meilisearch_client) -> None:
+    """A PROJECTED read must return the same exact Decimal an unprojected one does:
+    the exact-value shadow rides ``attributes_to_retrieve``, or a money field is
+    silently f64-rounded through exactly one read path."""
+
+    index_uid = "products_decimal_projected_it"
+    spec = SearchSpec(name="products", model_type=PricedProduct, fields=["title"])
+    cfg = MeilisearchSearchConfig(index_uid=index_uid, filterable_attributes=["price"])
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MeilisearchClientDepKey: meilisearch_client,
+                SearchQueryDepKey: ConfigurableMeilisearchSearch(config=cfg),
+                SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(config=cfg),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(config=cfg),
+            },
+        ),
+    )
+
+    exact = Decimal("123.456789012345678901")  # 21 significant digits — f64 rounds this
+    mgmt = ctx.search.management(spec)
+    await mgmt.ensure_index()
+    await mgmt.delete_all()
+    await ctx.search.command(spec).upsert(
+        [PricedProduct(id="1", title="Precise apple", price=exact)]
+    )
+
+    page = await ctx.search.query(spec).select_search(
+        _PriceOnly, "apple", pagination={"offset": 0, "limit": 10}
+    )
+
+    assert len(page.hits) == 1
+    assert page.hits[0].price == exact  # exact through the projection too
+
+
+class TitledDoc(BaseModel):
+    id: str
+    title: str
+    body: str
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_exact_count_respects_the_searched_fields(meilisearch_client) -> None:
+    """The exact total must count what the rows query matches: without the same
+    ``attributes_to_search_on`` narrowing, a term matching only an unsearched field
+    counted while the page returned nothing."""
+
+    index_uid = "docs_exact_count_it"
+    spec = SearchSpec(name="docs", model_type=TitledDoc, fields=["title", "body"])
+    cfg = MeilisearchSearchConfig(index_uid=index_uid, exact_total_count=True)
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MeilisearchClientDepKey: meilisearch_client,
+                SearchQueryDepKey: ConfigurableMeilisearchSearch(config=cfg),
+                SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(config=cfg),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(config=cfg),
+            },
+        ),
+    )
+
+    mgmt = ctx.search.management(spec)
+    await mgmt.ensure_index()
+    await mgmt.delete_all()
+    await ctx.search.command(spec).upsert(
+        [TitledDoc(id="1", title="quarterly report", body="the zebra appendix")]
+    )
+
+    # "zebra" lives only in body; searching title alone must find — and COUNT — nothing
+    page = await ctx.search.query(spec).search_page(
+        "zebra",
+        pagination={"offset": 0, "limit": 10},
+        options={"fields": ["title"]},
+    )
+
+    assert len(page.hits) == 0
+    assert page.count == 0  # the count honors the same field narrowing as the rows
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_string_bound_on_a_numeric_field_filters_numerically(meilisearch_client) -> None:
+    """The shared coercion seam on a REAL index: a JSON string bound on a Decimal
+    field casts to the numeric family — rendered unquoted, it range-filters
+    numerically instead of comparing lexically ("9.5" > "10.5" as strings)."""
+
+    index_uid = "products_string_bound_it"
+    spec = SearchSpec(name="products", model_type=PricedProduct, fields=["title"])
+    cfg = MeilisearchSearchConfig(index_uid=index_uid, filterable_attributes=["price"])
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MeilisearchClientDepKey: meilisearch_client,
+                SearchQueryDepKey: ConfigurableMeilisearchSearch(config=cfg),
+                SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(config=cfg),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(config=cfg),
+            },
+        ),
+    )
+
+    mgmt = ctx.search.management(spec)
+    await mgmt.ensure_index()
+    await mgmt.delete_all()
+    await ctx.search.command(spec).upsert(
+        [
+            PricedProduct(id="1", title="Apple cheap", price=Decimal("9.5")),
+            PricedProduct(id="2", title="Apple dear", price=Decimal("10.5")),
+        ],
+    )
+
+    page = await ctx.search.query(spec).search_page(
+        "apple",
+        filters={"$values": {"price": {"$lt": "10.5"}}},  # a string, as JSON callers send
+        pagination={"offset": 0, "limit": 10},
+    )
+
+    assert [h.id for h in page.hits] == ["1"]  # lexical comparison would have matched both

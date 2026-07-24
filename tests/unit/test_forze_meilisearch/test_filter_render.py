@@ -22,7 +22,7 @@ from forze_meilisearch.adapters.search._filter_render import (
 
 
 def test_eq_filter() -> None:
-    r = MeilisearchFilterRenderer()
+    r = MeilisearchFilterRenderer(read_model=None)
     expr = QueryFilterExpressionParser.parse(
         {"$values": {"status": {"$eq": "open"}}},
     )
@@ -30,7 +30,7 @@ def test_eq_filter() -> None:
 
 
 def test_and_filter() -> None:
-    r = MeilisearchFilterRenderer()
+    r = MeilisearchFilterRenderer(read_model=None)
     expr = QueryFilterExpressionParser.parse(
         {
             "$and": [
@@ -45,7 +45,7 @@ def test_and_filter() -> None:
 
 
 def test_like_unsupported() -> None:
-    r = MeilisearchFilterRenderer()
+    r = MeilisearchFilterRenderer(read_model=None)
     expr = QueryFilterExpressionParser.parse(
         {"$values": {"title": {"$like": "%foo%"}}},
     )
@@ -72,7 +72,7 @@ class TestCapabilityRejectionViaRenderFilters:
         ],
     )
     def test_unsupported_features_rejected_clean(self, filters: dict) -> None:
-        r = MeilisearchFilterRenderer()
+        r = MeilisearchFilterRenderer(read_model=None)
 
         with pytest.raises(CoreException) as ei:
             r.render_filters(filters)
@@ -82,7 +82,7 @@ class TestCapabilityRejectionViaRenderFilters:
         assert "meilisearch" in str(ei.value)
 
     def test_supported_filter_still_renders(self) -> None:
-        r = MeilisearchFilterRenderer()
+        r = MeilisearchFilterRenderer(read_model=None)
 
         out = r.render_filters(
             {"$and": [{"$values": {"age": {"$gte": 18}}}, {"$values": {"city": "NYC"}}]}
@@ -104,7 +104,7 @@ def test_safe_attribute_rejects_injection_payloads() -> None:
 
 def test_filter_rejects_injected_field_name() -> None:
     # A user-controlled filter key cannot inject filter-expression fragments.
-    r = MeilisearchFilterRenderer()
+    r = MeilisearchFilterRenderer(read_model=None)
     expr = QueryFilterExpressionParser.parse(
         {"$values": {"id = 1 OR _geoRadius(0,0,9e9)": {"$eq": "x"}}},
     )
@@ -173,7 +173,7 @@ def test_format_array_requires_sequence() -> None:
 
 
 def test_or_not_and_comparison_operators() -> None:
-    r = MeilisearchFilterRenderer(field_map={"status": "cat"})
+    r = MeilisearchFilterRenderer(field_map={"status": "cat"}, read_model=None)
     expr = QueryFilterExpressionParser.parse(
         {
             "$or": [
@@ -189,7 +189,7 @@ def test_or_not_and_comparison_operators() -> None:
 
 
 def test_in_nin_null_operators() -> None:
-    r = MeilisearchFilterRenderer()
+    r = MeilisearchFilterRenderer(read_model=None)
     expr = QueryFilterExpressionParser.parse(
         {
             "$and": [
@@ -208,12 +208,12 @@ def test_in_nin_null_operators() -> None:
 
 
 def test_render_filters_returns_none_for_empty_tree() -> None:
-    r = MeilisearchFilterRenderer()
+    r = MeilisearchFilterRenderer(read_model=None)
     assert r.render_filters(None) is None
 
 
 def test_physical_field_map() -> None:
-    r = MeilisearchFilterRenderer(field_map={"logical": "indexed"})
+    r = MeilisearchFilterRenderer(field_map={"logical": "indexed"}, read_model=None)
     expr = QueryFilterExpressionParser.parse(
         {"$values": {"logical": {"$eq": "x"}}},
     )
@@ -262,6 +262,88 @@ class TestModelAwareTyping:
         assert out == 'created >= "2026-01-01T00:00:00Z"'
 
     def test_without_a_model_capability_validation_still_runs(self) -> None:
-        renderer = MeilisearchFilterRenderer()
+        renderer = MeilisearchFilterRenderer(read_model=None)
 
         assert renderer.render_filters({"$values": {"price": {"$lt": "5"}}}) == 'price < "5"'
+
+
+class TestSharedSeamParity:
+    """The renderer rejects exactly what the shared persistence seam rejects.
+
+    The seam was already centralized once; Meilisearch was the caller that bypassed
+    it. Parity here — the SAME filter dict, the SAME rejection code, on the mock
+    document gateway and on the Meili renderer — pins that a future divergence on
+    either side fails a test instead of shipping a backend-shaped behavior split.
+    """
+
+    class _Fields(BaseModel):
+        name: str
+        price: float
+
+    def _meili_reject_code(self, filters: dict) -> str | None:  # type: ignore[type-arg]
+        renderer = MeilisearchFilterRenderer(read_model=self._Fields)
+
+        try:
+            renderer.render_filters(filters)
+
+        except CoreException as error:
+            return error.code
+
+        return None
+
+    async def _mock_reject_code(self, filters: dict) -> str | None:  # type: ignore[type-arg]
+        from typing import Any
+
+        from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+        from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
+        from forze_mock.adapters import MockDocumentAdapter, MockState
+
+        class _Create(CreateDocumentCmd, self._Fields):  # type: ignore[misc, name-defined]
+            pass
+
+        class _Doc(Document, self._Fields):  # type: ignore[misc, name-defined]
+            pass
+
+        class _Read(ReadDocument, self._Fields):  # type: ignore[misc, name-defined]
+            pass
+
+        adapter: MockDocumentAdapter[Any, Any, Any, Any] = MockDocumentAdapter(
+            spec=DocumentSpec(
+                name="t", read=_Read, write=DocumentWriteTypes(domain=_Doc, create_cmd=_Create)
+            ),
+            state=MockState(),
+            namespace="t",
+            read_model=_Read,
+            domain_model=_Doc,
+        )
+
+        try:
+            await adapter.find_many(filters=filters, pagination={"limit": 10})
+
+        except CoreException as error:
+            return error.code
+
+        return None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "filters",
+        [
+            {"$values": {"name": {"$gt": "abc"}}},  # ordering on a text field
+            {"$values": {"price": {"$lt": "NaN"}}},  # non-finite bound
+            {"$values": {"price": {"$lt": "abc"}}},  # uncastable bound
+        ],
+    )
+    async def test_rejections_agree_across_backends(self, filters: dict) -> None:  # type: ignore[type-arg]
+        meili = self._meili_reject_code(filters)
+        mock = await self._mock_reject_code(filters)
+
+        assert meili is not None, "the renderer must reject what the shared seam rejects"
+        assert meili == mock  # same filter, same code — one seam, no drift
+
+    @pytest.mark.asyncio
+    async def test_accepted_filters_agree_too(self) -> None:
+        accepted = {"$values": {"price": {"$lt": "5"}}}  # castable string bound
+
+        assert self._meili_reject_code(accepted) is None
+        assert await self._mock_reject_code(accepted) is None
