@@ -329,3 +329,47 @@ async def test_rrf_snapshot_read_miss_then_merges_and_writes() -> None:
     )
     assert stored is not None
     assert len(stored) == 2
+
+
+# ....................... #
+# RRF sorts are tie-breakers under the fused score — on BOTH merge paths.
+
+
+def _leg(name: str, hits: list[_Hit]) -> MagicMock:
+    leg = MagicMock()
+    leg.index_uid = f"idx_{name}"
+    leg.spec = _mem(name)
+    leg.config.max_total_hits = 1000
+    leg.search = AsyncMock(
+        return_value=page_from_limit_offset(hits, {"offset": 0, "limit": 100}, total=None)
+    )
+    return leg
+
+
+@pytest.mark.asyncio
+async def test_rrf_legs_stay_in_relevance_order_under_a_sort() -> None:
+    # The merge="rrf" contract: the fused RRF score is the primary order and sorts
+    # only break score ties (order_federated_full_merge) — identical to the thin
+    # path, whose _thin_fetch also fetches relevance-ordered. Pushing the sort into
+    # a leg would make its RRF ranks encode the sort instead of relevance, silently
+    # changing fusion semantics and splitting the two paths' results.
+    leg_a = _leg("a", [_Hit(id="1", label="beta")])
+    leg_b = _leg("b", [_Hit(id="2", label="alpha")])
+
+    adapter = MeilisearchFederatedSearchAdapter(
+        federated_spec=FederatedSearchSpec(name="fed_rrf", members=(_mem("a"), _mem("b"))),
+        legs=(("a", leg_a), ("b", leg_b)),
+        client=MagicMock(),
+        merge="rrf",
+        rrf_k=60,
+        rrf_per_leg_limit=100,
+    )
+
+    page = await adapter.search_page(
+        "alpha", sorts={"label": "asc"}, pagination={"offset": 0, "limit": 5}
+    )
+
+    for leg in (leg_a, leg_b):
+        assert leg.search.await_args.args[3] is None  # relevance-ordered, never sorted
+
+    assert len(page.hits) == 2  # the sort still tie-breaks the fused page

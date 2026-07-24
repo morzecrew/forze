@@ -102,7 +102,17 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
     MeilisearchSearchPortMixin[FederatedSearchReadModel[M]],
     SearchQueryPort[FederatedSearchReadModel[M]],
 ):
-    """Search multiple Meilisearch indexes with federation or weighted RRF."""
+    """Search multiple Meilisearch indexes with federation or weighted RRF.
+
+    **Sorts differ by merge mode, on purpose.** ``merge="federation"`` renders a
+    requested sort into every leg — sort-primary results. ``merge="rrf"`` is
+    relevance fusion: legs are fetched in relevance order, the fused RRF score is
+    the primary order, and ``sorts`` only break ties among equal-score hits — the
+    same contract on the full-fetch and thin (id-only) paths, so the two produce
+    identical order. A caller that needs a sort-primary federated result should use
+    ``merge="federation"`` (or sort the page it received); pushing a sort into RRF
+    legs would silently turn the fusion ranks into sort ranks.
+    """
 
     federated_spec: FederatedSearchSpec[M]
     legs: Sequence[tuple[str, MeilisearchSimpleSearchAdapter[M]]]
@@ -648,6 +658,14 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 query,
                 filters,
                 leg_page,
+                # Legs stay in RELEVANCE order — deliberately no ``sorts``. On
+                # ``merge="rrf"`` the sorts contract is score-primary with sorts as
+                # tie-breakers (``order_federated_full_merge``), identical to the
+                # thin path (``_thin_fetch`` fetches relevance-ordered too). Pushing
+                # the sort into a leg would make its RRF ranks encode the sort
+                # instead of relevance — silently changing fusion semantics AND
+                # diverging from the thin path. A sort-PRIMARY federated search is
+                # ``merge="federation"``, which renders sorts per leg.
                 None,
                 options=leg_opts,
             )

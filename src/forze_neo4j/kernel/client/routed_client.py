@@ -70,6 +70,22 @@ class RoutedNeo4jClient(
     work. The direct client fails closed on the equivalent drift (its database-conflict
     guard); the routed client must too."""
 
+    _tx_client: ContextVar[Neo4jClient | None] = attrs.field(
+        factory=lambda: ContextVar("neo4j_routed_tx_client", default=None),
+        init=False,
+    )
+    """The client the active :meth:`transaction` scope opened on (``None`` outside one).
+
+    The tenant pin above guards one drift axis; this guards its twin: a **credential
+    rotation** mid-scope changes the access fingerprint, and a per-statement
+    re-resolution would evict the pooled client and build a fresh one — the statement
+    would then run **auto-committed** on the fresh client while the scope commits only
+    what the opening client saw. Statements inside a scope therefore bind to the client
+    that opened it, with no re-resolution at all: the pool lease held for the scope's
+    lifetime keeps a concurrently-detected rotation from disposing it (the guarded
+    registry drains it after release), so the transaction completes on the pinned
+    client and the rotation takes effect from the next scope."""
+
     # ....................... #
 
     def credential_fingerprint(self, creds: BaseModel) -> str:
@@ -155,6 +171,14 @@ class RoutedNeo4jClient(
         database: str | None = None,
     ) -> list[JsonDict]:
         self._require_tx_tenant_unchanged()
+        pinned = self._tx_client.get()
+
+        if pinned is not None:
+            # Inside a transaction scope: the statement runs on the client that
+            # opened it, never a re-resolved one — re-resolving would refresh the
+            # access fingerprint, and a rotation would swap in a fresh client whose
+            # session has NO open transaction (see ``_tx_client``).
+            return await pinned.run(query, params, database=database)
 
         async with self._client_scope() as inner:
             return await inner.run(query, params, database=database)
@@ -168,6 +192,14 @@ class RoutedNeo4jClient(
         # keying transactional behavior off that answer would act on the wrong
         # tenant's state.
         self._require_tx_tenant_unchanged()
+
+        pinned = self._tx_client.get()
+
+        if pinned is not None:
+            # The scope's own client, not a pool peek: a rotation detected by a
+            # concurrent call rebuilds the pooled entry, and peeking would read the
+            # FRESH client's (transactionless) state while this scope's tx is open.
+            return pinned.is_in_transaction()
 
         tid = self.tenant_provider()
 
@@ -186,13 +218,36 @@ class RoutedNeo4jClient(
         *,
         database: str | None = None,
     ) -> AsyncGenerator[None]:
-        # Pin the scope's tenant: every statement inside must resolve to this client
-        # (see _require_tx_tenant_unchanged; a None tenant fails in _client_scope).
-        token = self._tx_tenant.set(self.tenant_provider())
+        pinned = self._tx_client.get()
 
-        try:
-            async with self._client_scope() as inner, inner.transaction(database=database):
+        if pinned is not None:
+            # A nested scope stays on the opening client: re-resolving here could
+            # land a rotated fingerprint's fresh client and silently split the
+            # transaction across two connections. The inner client owns whatever
+            # nested-transaction semantics apply.
+            self._require_tx_tenant_unchanged()
+
+            async with pinned.transaction(database=database):
                 yield
 
+            return
+
+        # Pin the scope's tenant AND its resolved client: every statement inside must
+        # run on this exact client (see _require_tx_tenant_unchanged / _tx_client; a
+        # None tenant fails in _client_scope). The pool lease below spans the whole
+        # scope, so a rotation-driven eviction drains the client only after exit.
+        token_tenant = self._tx_tenant.set(self.tenant_provider())
+
+        try:
+            async with self._client_scope() as inner:
+                token_client = self._tx_client.set(inner)
+
+                try:
+                    async with inner.transaction(database=database):
+                        yield
+
+                finally:
+                    self._tx_client.reset(token_client)
+
         finally:
-            self._tx_tenant.reset(token)
+            self._tx_tenant.reset(token_tenant)

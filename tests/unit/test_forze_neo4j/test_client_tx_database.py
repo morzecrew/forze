@@ -283,3 +283,108 @@ class TestRoutedTransactionTenantPin:
             current["tenant"] = tenant_a  # let the scope close cleanly
 
         assert inner.run.await_count == 1  # the drifted statement never executed
+
+
+class TestRoutedTransactionClientPin:
+    async def test_credential_rotation_mid_scope_stays_on_the_opening_client(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The tenant pin guards one drift axis; this is its twin. A rotation changes
+        # the access fingerprint, and a per-statement re-resolution would evict the
+        # pooled client and build a fresh one — the statement then runs
+        # AUTO-COMMITTED on the fresh client (no open transaction there) while the
+        # scope commits only what the opening client saw. Statements inside a scope
+        # must bind to the client that opened it; the rotation takes effect from the
+        # next scope.
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock, MagicMock
+        from uuid import UUID
+
+        from forze_neo4j.kernel.client import RoutedNeo4jClient
+
+        def _inner(name: str) -> MagicMock:
+            client = MagicMock(spec=Neo4jClient, name=name)
+            client.run = AsyncMock(return_value=[])
+            client.is_in_transaction = MagicMock(return_value=True)
+
+            @asynccontextmanager
+            async def _fake_tx(*, database: str | None = None):
+                yield
+
+            client.transaction = _fake_tx
+            return client
+
+        before, after = _inner("before-rotation"), _inner("after-rotation")
+        resolutions: list[MagicMock] = [before, after]  # each scope entry re-resolves
+
+        @asynccontextmanager
+        async def _fake_scope(self: object):
+            yield resolutions[0] if len(resolutions) == 2 else after
+
+        monkeypatch.setattr(RoutedNeo4jClient, "_client_scope", _fake_scope)
+
+        routed = RoutedNeo4jClient(
+            secrets=MagicMock(),
+            secret_ref_for_tenant={},
+            tenant_provider=lambda: UUID(int=1),
+        )
+
+        async with routed.transaction():
+            await routed.run("CREATE (n:A)")  # on the opening client
+
+            resolutions.pop(0)  # the secret rotates: a re-resolution now yields `after`
+
+            await routed.run("CREATE (n:B)")  # MUST stay on the opening client
+            assert routed.is_in_transaction() is True  # read from the pinned client
+
+        assert before.run.await_count == 2  # both statements on the opening client
+        assert after.run.await_count == 0  # nothing auto-committed on the fresh one
+        after.is_in_transaction.assert_not_called()
+
+        # the rotation takes effect from the NEXT call/scope
+        await routed.run("RETURN 1")
+        assert after.run.await_count == 1
+
+    async def test_nested_scope_reuses_the_pinned_client(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A nested transaction() must not re-resolve either: between the outer and
+        # inner entry a rotation would land the inner scope on a fresh client and
+        # silently split the transaction across two connections.
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock, MagicMock
+        from uuid import UUID
+
+        from forze_neo4j.kernel.client import RoutedNeo4jClient
+
+        opening = MagicMock(spec=Neo4jClient)
+        opening.run = AsyncMock(return_value=[])
+        tx_entries = {"n": 0}
+
+        @asynccontextmanager
+        async def _fake_tx(*, database: str | None = None):
+            tx_entries["n"] += 1
+            yield
+
+        opening.transaction = _fake_tx
+        scope_entries = {"n": 0}
+
+        @asynccontextmanager
+        async def _fake_scope(self: object):
+            scope_entries["n"] += 1
+            yield opening
+
+        monkeypatch.setattr(RoutedNeo4jClient, "_client_scope", _fake_scope)
+
+        routed = RoutedNeo4jClient(
+            secrets=MagicMock(),
+            secret_ref_for_tenant={},
+            tenant_provider=lambda: UUID(int=1),
+        )
+
+        async with routed.transaction(), routed.transaction():
+            await routed.run("RETURN 1")
+
+        assert scope_entries["n"] == 1  # one resolution for the whole nested scope
+        assert tx_entries["n"] == 2  # the inner client owns nested-tx semantics
+        assert opening.run.await_count == 1

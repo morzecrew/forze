@@ -30,7 +30,7 @@ from forze.base.primitives import StrKey
 
 from .._logger import logger
 from ..inbox import process_with_inbox
-from .runner import _DRAINING_CODE  # pyright: ignore[reportPrivateUsage]
+from ._draining import is_draining_refusal
 
 # ----------------------- #
 
@@ -434,7 +434,7 @@ class CommitStreamGroupConsumer[M]:
                     outcome = await self._process_one(ctx, message, executor=executor)
 
                 except CoreException as e:
-                    if e.code != _DRAINING_CODE:
+                    if not is_draining_refusal(e):
                         raise
 
                     # -- Draining: shutdown artifact, not a handler defect. ---- #
@@ -535,7 +535,7 @@ class CommitStreamGroupConsumer[M]:
                 raise
 
             except Exception as e:
-                if isinstance(e, CoreException) and e.code == _DRAINING_CODE:
+                if is_draining_refusal(e):
                     # A drain-gate refusal is a shutdown artifact, not a delivery
                     # attempt: retrying burns attempts against a one-way gate and
                     # ends in a bogus poison. The batch loop stops the run instead.

@@ -346,3 +346,64 @@ class TestProtocolNegotiation:
 
         assert caught.value.code == "realtime_protocol_unsupported"
         assert caught.value.details == {"supported": sorted(SUPPORTED_REALTIME_PROTOCOLS)}
+
+
+class TestFrameEncoding:
+    """The one serialization boundary every transport frame crosses — never raises."""
+
+    def test_plain_payload_passes_through(self) -> None:
+        from forze.application.integrations.realtime import encode_frame
+
+        assert encode_frame({"type": "ack", "cid": 1, "data": {"ok": True}}) == (
+            '{"type":"ack","cid":1,"data":{"ok":true}}'
+        )
+
+    @pytest.mark.parametrize(
+        # the leaves that idiomatically leak into payloads — plus a hostile object
+        "poison",
+        [
+            __import__("uuid").uuid4(),
+            __import__("datetime").datetime(2026, 1, 1),
+            __import__("decimal").Decimal("1.5"),
+            object(),
+            {"nested": {object()}},
+        ],
+    )
+    def test_never_raises_and_preserves_correlation(self, poison: object) -> None:
+        import json
+
+        from forze.application.integrations.realtime import (
+            FRAME_UNSERIALIZABLE_CODE,
+            encode_frame,
+        )
+
+        frame = json.loads(encode_frame({"type": "ack", "cid": 7, "data": poison}))
+
+        assert frame["type"] == "ack"
+        assert frame["cid"] == 7  # any JSON scalar cid survives, ints included
+        assert frame["error"]["code"] == FRAME_UNSERIALIZABLE_CODE
+        assert frame["error"]["kind"] == "internal"
+        assert "data" not in frame  # the poisoned value never reaches the wire
+
+    def test_fallback_code_is_overridable(self) -> None:
+        import json
+
+        from forze.application.integrations.realtime import encode_frame
+
+        frame = json.loads(
+            encode_frame(
+                {"type": "ack", "cid": "c1", "data": object()},
+                fallback_code="realtime_ack_unserializable",
+            )
+        )
+
+        assert frame["error"]["code"] == "realtime_ack_unserializable"
+
+    def test_jsonable_frame_is_the_dict_twin(self) -> None:
+        from forze.application.integrations.realtime import jsonable_frame
+
+        ok = jsonable_frame({"error": {"detail": "bad", "code": "x", "kind": "validation"}})
+        assert ok == {"error": {"detail": "bad", "code": "x", "kind": "validation"}}
+
+        broken = jsonable_frame({"error": {"context": object()}})
+        assert broken["error"]["kind"] == "internal"  # replaced, never raised

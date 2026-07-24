@@ -26,6 +26,7 @@ require_socketio()
 
 # ....................... #
 
+from forze.application.integrations.realtime import jsonable_frame
 from forze.base.exceptions import (
     GENERIC_INTERNAL_DETAIL,
     INTERNAL_ERROR_CODE,
@@ -105,7 +106,10 @@ def render_error_ack(envelope: ErrorEnvelope) -> JsonDict:
     if envelope.context is not None:
         payload["context"] = envelope.context
 
-    return {"error": payload}
+    # The shared boundary, dict-shaped: python-socketio serializes ack dicts itself,
+    # so an unencodable value would move the TypeError into the library's emit path.
+    # The envelope already coerces its context — this is the backstop.
+    return jsonable_frame({"error": payload})
 
 
 # ....................... #

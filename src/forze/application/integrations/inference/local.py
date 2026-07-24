@@ -80,7 +80,14 @@ class LocalInferenceConfig:
     """Serialize the route's predictions for a model that is not thread-safe. Default
     off: the model is expected to tolerate concurrent worker-thread calls. The lock is
     awaited on the loop before dispatching to the CPU pool, so a waiting prediction
-    never occupies a worker-thread slot."""
+    never occupies a worker-thread slot.
+
+    The guarantee holds under **cancellation and deadlines alike** — it is keyed to
+    the worker thread actually exiting, not to the dispatch coroutine returning: a
+    cancelled caller holds the guard until the worker exits, and a deadline-abandoned
+    worker (``run_cpu`` raises while the thread runs on) arms a completion signal the
+    next dispatch waits out, bounded by its own deadline. No wiring-time restriction
+    against combining this with invocation deadlines is needed for that reason."""
 
     deterministic: bool = False
     """Declare that the model returns the same output for the same input (advertised via
