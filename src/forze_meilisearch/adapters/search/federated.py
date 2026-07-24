@@ -102,7 +102,17 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
     MeilisearchSearchPortMixin[FederatedSearchReadModel[M]],
     SearchQueryPort[FederatedSearchReadModel[M]],
 ):
-    """Search multiple Meilisearch indexes with federation or weighted RRF."""
+    """Search multiple Meilisearch indexes with federation or weighted RRF.
+
+    **Sorts differ by merge mode, on purpose.** ``merge="federation"`` renders a
+    requested sort into every leg — sort-primary results. ``merge="rrf"`` is
+    relevance fusion: legs are fetched in relevance order, the fused RRF score is
+    the primary order, and ``sorts`` only break ties among equal-score hits — the
+    same contract on the full-fetch and thin (id-only) paths, so the two produce
+    identical order. A caller that needs a sort-primary federated result should use
+    ``merge="federation"`` (or sort the page it received); pushing a sort into RRF
+    legs would silently turn the fusion ranks into sort ranks.
+    """
 
     federated_spec: FederatedSearchSpec[M]
     legs: Sequence[tuple[str, MeilisearchSimpleSearchAdapter[M]]]
@@ -639,26 +649,6 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 write_snapshot=snapshot_write,
             )
 
-        if sorts is not None:
-            # A global sort over cap-truncated relevance pools is silently wrong: the
-            # row that leads under the sort can sit past ``leg_cap`` in its leg and
-            # never enter the fused pool. Pushing the sort into every leg makes the
-            # union of per-leg top-``leg_cap`` provably contain the global top-
-            # ``leg_cap`` — so a window inside that bound is exact, and one beyond
-            # it is refused instead of quietly missing rows.
-            requested_end = None if limit is None else offset + int(limit)
-
-            if requested_end is None or requested_end > leg_cap:
-                raise exc.precondition(
-                    f"A sorted merge='rrf' window must fit inside rrf_per_leg_limit "
-                    f"({leg_cap}): each leg contributes its top-{leg_cap} rows under "
-                    f"the sort, so rows past that bound may be missing from the fused "
-                    f"pool. Request offset+limit <= {leg_cap} (got "
-                    f"{'unbounded' if requested_end is None else requested_end}), "
-                    f"raise rrf_per_leg_limit, or drop the sort.",
-                    code="core.search.sorted_window_exceeds_leg_cap",
-                )
-
         async def _run_leg(
             name: str,
             port: MeilisearchSimpleSearchAdapter[M],
@@ -668,10 +658,15 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 query,
                 filters,
                 leg_page,
-                # The global sort rides into every leg (see the window guard above);
-                # without it a leg's cap keeps relevance-ranked rows and drops the
-                # sort's leaders.
-                sorts,
+                # Legs stay in RELEVANCE order — deliberately no ``sorts``. On
+                # ``merge="rrf"`` the sorts contract is score-primary with sorts as
+                # tie-breakers (``order_federated_full_merge``), identical to the
+                # thin path (``_thin_fetch`` fetches relevance-ordered too). Pushing
+                # the sort into a leg would make its RRF ranks encode the sort
+                # instead of relevance — silently changing fusion semantics AND
+                # diverging from the thin path. A sort-PRIMARY federated search is
+                # ``merge="federation"``, which renders sorts per leg.
+                None,
                 options=leg_opts,
             )
             return name, page, weight
