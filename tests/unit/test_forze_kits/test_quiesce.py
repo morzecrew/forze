@@ -820,3 +820,83 @@ async def test_a_loop_that_did_not_stop_cleanly_is_not_flushed() -> None:
         )
 
     assert flushed == ["clean"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_flush_is_isolated_and_flushless_loops_are_skipped() -> None:
+    # One loop has no flush (a consumer), one's flush raises, one flushes fine:
+    # the failure is logged, not raised — the sweep must go on to report the plane
+    # residual — and the healthy loop still gets its flush.
+    flushed: list[str] = []
+
+    class _Loop:
+        def __init__(self, name: str) -> None:
+            self._name = name
+
+        @property
+        def loop_name(self) -> str:
+            return self._name
+
+        async def stop(self, *, deadline: float) -> bool:
+            del deadline
+            return True
+
+    class _Broken(_Loop):
+        async def flush(self, *, deadline: float) -> None:
+            del deadline
+            raise RuntimeError("store down")
+
+    class _Good(_Loop):
+        async def flush(self, *, deadline: float) -> None:
+            del deadline
+            flushed.append(self.loop_name)
+
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        ctx.drainables.register(_Loop("flushless"))
+        ctx.drainables.register(_Broken("broken"))
+        ctx.drainables.register(_Good("good"))
+
+        report = await quiesce(
+            runtime,
+            outboxes=[OUTBOX],
+            timeout=timedelta(milliseconds=150),
+            poll=timedelta(milliseconds=10),
+        )
+
+    assert flushed == ["good"]
+    assert report.attested  # nothing was pending, so the failed flush cost nothing
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_flush_propagates_instead_of_being_swallowed() -> None:
+    # Cancellation is the caller tearing quiesce down — it must not be absorbed
+    # into the "failed flush" log-and-continue path.
+    class _Cancelled:
+        @property
+        def loop_name(self) -> str:
+            return "cancelled"
+
+        async def stop(self, *, deadline: float) -> bool:
+            del deadline
+            return True
+
+        async def flush(self, *, deadline: float) -> None:
+            del deadline
+            raise asyncio.CancelledError
+
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        ctx.drainables.register(_Cancelled())
+
+        with pytest.raises(asyncio.CancelledError):
+            await quiesce(
+                runtime,
+                outboxes=[OUTBOX],
+                timeout=timedelta(milliseconds=150),
+                poll=timedelta(milliseconds=10),
+            )

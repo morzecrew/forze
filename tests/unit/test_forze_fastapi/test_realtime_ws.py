@@ -12,6 +12,7 @@ same frozen-registry discipline as HTTP.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC
 from typing import Any
@@ -874,3 +875,113 @@ class TestMalformedText:
             # the socket survived — the next frame is still served
             ws.send_text(json.dumps({"type": "mystery"}))
             assert ws.receive_json()["error"]["code"] == "realtime_invalid_frame"
+
+
+class TestControlFrameBackstop:
+    def test_an_unserializable_control_frame_costs_one_frame_not_the_socket(self) -> None:
+        # The envelope coerces its context, so through the public API every control
+        # frame serializes — this backstop is for whatever regresses that next. A
+        # poisoned renderer stands in for the regression: the first error frame's
+        # payload cannot serialize, and the guard must swap in the masked fallback
+        # (which never carries context) instead of letting the TypeError unwind the
+        # task group and cancel the socket.
+        from unittest.mock import patch
+
+        from forze_fastapi.realtime import ws as ws_module
+
+        real = ws_module._render_error
+        calls = {"n": 0}
+
+        def _poisoned(envelope: Any) -> dict[str, Any]:
+            calls["n"] += 1
+
+            if calls["n"] == 1:
+                return {"bad": object()}  # json.dumps chokes: the backstop must eat it
+
+            return real(envelope)
+
+        client, _ = _build()
+
+        with patch.object(ws_module, "_render_error", _poisoned):
+            with client.websocket_connect("/realtime/ws") as ws:
+                ws.send_json({"type": "mystery"})  # → error frame → poisoned render
+                frame = ws.receive_json()
+
+                assert frame["type"] == "error"
+                assert frame["error"]["code"] == "realtime_frame_unserializable"
+
+                # the connection survived — the next frame is still served, and the
+                # renderer is healthy again
+                ws.send_json({"type": "mystery"})
+                assert ws.receive_json()["error"]["code"] == "realtime_invalid_frame"
+
+
+class _GatedWsMailbox:
+    """Parks the replay stream before yielding entry ``hold_after + 1``, releasing it
+    once an ack's trim lands — so a test can ack mid-drain deterministically."""
+
+    def __init__(self, inner: InMemoryRealtimeMailbox, *, hold_after: int) -> None:
+        self.inner = inner
+        self.hold_after = hold_after
+        self.gate = asyncio.Event()
+        self.trimmed: list[list[str]] = []  # retained snapshot after each trim
+
+    async def replay_since(self, *, principal: str, since: Any) -> Any:
+        delivered = 0
+
+        async for entry in self.inner.replay_since(principal=principal, since=since):
+            if delivered >= self.hold_after:
+                await self.gate.wait()
+
+            yield entry
+            delivered += 1
+
+    async def trim(self, *, principal: str, before: Any) -> None:
+        await self.inner.trim(principal=principal, before=before)
+        rows = await self.inner.read_since(principal=principal, since=None)
+        self.trimmed.append([e.event_id for e in rows])
+        self.gate.set()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+
+class TestMidReplayAckClamp:
+    def test_mid_replay_ack_is_clamped_to_the_run_proven_floor(self) -> None:
+        # The socket acks e2 while e3 is still draining: the cumulative claim must
+        # stop at the run-proven floor (e1 — proven when e2 drained past it), so the
+        # trim removes only e1. Unclamped, the cursor would land on e2 and the trim
+        # would delete deeper into the undrained backlog.
+        inner = InMemoryRealtimeMailbox()
+        ids = asyncio.run(_seed(inner))
+        mailbox = _GatedWsMailbox(inner, hold_after=2)  # parks before e3
+        client, _ = _build(mailbox=mailbox)  # type: ignore[arg-type]
+
+        with client.websocket_connect("/realtime/ws?device_id=d1") as ws:
+            assert [ws.receive_json()["id"] for _ in range(2)] == ids[:2]
+
+            ws.send_json({"type": "realtime.ack", "up_to": ids[1]})  # e2, mid-drain
+
+            # the trim releases the gate, so receiving e3 proves the ack landed
+            assert ws.receive_json()["id"] == ids[2]
+
+        assert mailbox.trimmed[0] == [ids[1], ids[2]]  # only e1 claimed — clamped
+
+    def test_ack_before_anything_is_proven_claims_nothing(self) -> None:
+        # Parked before the first entry: nothing is run-proven delivered, so an ack
+        # has no floor to stand on — it must not move the cursor or trim at all
+        # (moving it would freeze a bogus floor AND let the trim eat the backlog).
+        import time
+
+        inner = InMemoryRealtimeMailbox()
+        ids = asyncio.run(_seed(inner))
+        mailbox = _GatedWsMailbox(inner, hold_after=0)  # parks before e1
+        client, _ = _build(mailbox=mailbox)  # type: ignore[arg-type]
+
+        with client.websocket_connect("/realtime/ws?device_id=d1") as ws:
+            ws.send_json({"type": "realtime.ack", "up_to": ids[0]})
+            time.sleep(0.15)  # let the ack frame be processed while the drain is parked
+
+        assert mailbox.trimmed == []  # the refused ack never reached the trim
+        retained = asyncio.run(inner.read_since(principal=str(_PRINCIPAL), since=None))
+        assert [e.event_id for e in retained] == ids  # backlog intact
