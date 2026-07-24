@@ -229,6 +229,7 @@ class TestModelAwareTyping:
     class _Hit(BaseModel):
         name: str
         price: float
+        created: datetime
 
     def _renderer(self) -> MeilisearchFilterRenderer:
         return MeilisearchFilterRenderer(read_model=self._Hit)
@@ -250,6 +251,15 @@ class TestModelAwareTyping:
         # let "NaN" through as a harmless-looking quoted literal
         with pytest.raises(CoreException):
             self._renderer().render_filters({"$values": {"price": {"$lt": "NaN"}}})
+
+    def test_string_bound_on_a_datetime_field_coerces_and_normalizes(self) -> None:
+        # a JSON string bound casts to the field's datetime family, then renders in
+        # the indexed representation (UTC "Z" form) like a native datetime operand
+        out = self._renderer().render_filters(
+            {"$values": {"created": {"$gte": "2026-01-01T00:00:00+00:00"}}}
+        )
+
+        assert out == 'created >= "2026-01-01T00:00:00Z"'
 
     def test_without_a_model_capability_validation_still_runs(self) -> None:
         renderer = MeilisearchFilterRenderer()

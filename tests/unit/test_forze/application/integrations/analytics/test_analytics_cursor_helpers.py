@@ -108,6 +108,13 @@ class TestCursorLimitHardening:
 
         assert parse_analytics_cursor_limit({"limit": 10**20}) == MAX_CURSOR_LIMIT
 
+    def test_non_positive_limit_is_a_clean_validation_error(self) -> None:
+        for bad in (0, -1):
+            with pytest.raises(CoreException) as caught:
+                parse_analytics_cursor_limit({"limit": bad})
+
+            assert caught.value.kind is ExceptionKind.VALIDATION
+
     def test_non_finite_limit_is_a_clean_validation_error(self) -> None:
         with pytest.raises(CoreException) as caught:
             parse_analytics_cursor_limit({"limit": float("inf")})

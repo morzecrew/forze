@@ -677,25 +677,37 @@ def _assert_tenants_expected(
 
         return
 
+    _assert_tenant_sets_match(declared=declared, expected=expected)
+
+
+def _assert_tenant_sets_match(
+    *,
+    declared: Sequence[UUID] | None,
+    expected: Sequence[UUID],
+) -> None:
+    """Refuse when the archive's declared tenant sections differ from the expected set."""
+
     declared_set = set(declared or ())
     expected_set = set(expected)
     missing = sorted(str(t) for t in expected_set - declared_set)
     extra = sorted(str(t) for t in declared_set - expected_set)
 
-    if declared is None or missing or extra:
-        raise exc.precondition(
-            "Archive tenant sections do not match the expected tenant set"
-            + (f"; missing from the archive: {missing}" if missing else "")
-            + (f"; not expected by the target: {extra}" if extra else "")
-            + (
-                "; the archive declares no tenant sections at all (untenanted layout)"
-                if declared is None
-                else ""
-            )
-            + ". The manifest's section list is a plaintext claim — a deleted section leaves "
-            "every archive-internal check passing — so the import refuses whenever it "
-            "disagrees with the set the target expects."
+    if declared is not None and not missing and not extra:
+        return
+
+    raise exc.precondition(
+        "Archive tenant sections do not match the expected tenant set"
+        + (f"; missing from the archive: {missing}" if missing else "")
+        + (f"; not expected by the target: {extra}" if extra else "")
+        + (
+            "; the archive declares no tenant sections at all (untenanted layout)"
+            if declared is None
+            else ""
         )
+        + ". The manifest's section list is a plaintext claim — a deleted section leaves "
+        "every archive-internal check passing — so the import refuses whenever it "
+        "disagrees with the set the target expects."
+    )
 
 
 # ....................... #

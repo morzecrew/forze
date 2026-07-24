@@ -191,7 +191,7 @@ def _split_section(path: str) -> tuple[str, str]:
 async def _archive_projection(archive: Path) -> _ArchiveProjection:
     """Reduce an archive to its comparable projection — every carryable plane, per section.
 
-    Keyed by id / key rather than compared by file position, so ``find_stream`` /​ ``list`` ordering
+    Keyed by id / key rather than compared by file position, so ``find_stream`` / ``list`` ordering
     differences across backends (the ``stream-order-normalized`` divergence) cannot surface as a
     false loss. Counter and graph rows carry no single natural id, so they key by their own
     canonical serialization — equality as multisets of rows (identical duplicates collapse).

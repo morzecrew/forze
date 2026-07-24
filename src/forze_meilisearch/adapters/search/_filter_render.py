@@ -184,6 +184,12 @@ class MeilisearchFilterRenderer:
     field_map: dict[str, str] = attrs.field(factory=dict)
     """Logical field name → Meilisearch attribute."""
 
+    parser: QueryFilterExpressionParser = attrs.field(
+        factory=lambda: QueryFilterExpressionParser(limits=QueryFilterLimits()),
+    )
+
+    # After ``parser``, so the pre-existing positional binding
+    # ``MeilisearchFilterRenderer(field_map, parser)`` keeps meaning what it says.
     read_model: type[BaseModel] | None = None
     """The searchable read model, for operator–type validation and operand coercion.
 
@@ -194,10 +200,6 @@ class MeilisearchFilterRenderer:
     accepted, and a ``"NaN"`` bound sails through as a harmless-looking literal.
     ``None`` skips the model-aware half (capability validation still runs) — for
     callers that genuinely have no model, never as an optimization."""
-
-    parser: QueryFilterExpressionParser = attrs.field(
-        factory=lambda: QueryFilterExpressionParser(limits=QueryFilterLimits()),
-    )
 
     # ....................... #
 
