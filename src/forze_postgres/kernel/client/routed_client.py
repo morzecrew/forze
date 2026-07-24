@@ -126,7 +126,7 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
         return client
 
     async def health(self) -> tuple[str, bool]:
-        async with self._client_scope() as inner:
+        async with self.client_scope() as inner:
             return await inner.health()
 
     # ....................... #
@@ -210,7 +210,7 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
 
     @asynccontextmanager
     async def bound_connection(self) -> AsyncGenerator[AsyncConnection]:
-        async with self._client_scope() as inner, inner.bound_connection() as conn:
+        async with self.client_scope() as inner, inner.bound_connection() as conn:
             yield conn
 
     # ....................... #
@@ -222,7 +222,7 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
         options: PostgresTransactionOptions | None = None,
     ) -> AsyncGenerator[AsyncConnection | None]:
         async with (
-            self._client_scope() as inner,
+            self.client_scope() as inner,
             inner.transaction(options=options) as conn,
         ):
             yield conn
@@ -231,7 +231,7 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
 
     @asynccontextmanager
     async def detached(self) -> AsyncGenerator[None]:
-        async with self._client_scope() as inner, inner.detached():
+        async with self.client_scope() as inner, inner.detached():
             yield
 
     # ....................... #
@@ -261,7 +261,7 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
         *,
         return_rowcount: bool = False,
     ) -> int | None:
-        async with self._client_scope() as inner:
+        async with self.client_scope() as inner:
             if return_rowcount:
                 return await inner.execute(query, params, return_rowcount=True)
 
@@ -276,7 +276,7 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
         query: QueryNoTemplate,
         params: Sequence[Params],
     ) -> None:
-        async with self._client_scope() as inner:
+        async with self.client_scope() as inner:
             await inner.execute_many(query, params)
 
     # ....................... #
@@ -309,7 +309,7 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
         row_factory: RowFactory = "dict",
         commit: bool = False,
     ) -> list[JsonDict] | list[tuple[Any, ...]]:
-        async with self._client_scope() as inner:
+        async with self.client_scope() as inner:
             return await inner.fetch_all(
                 query,
                 params,
@@ -328,7 +328,7 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
         row_factory: RowFactory = "dict",
         commit: bool = False,
     ) -> AsyncGenerator[list[JsonDict] | list[tuple[Any, ...]]]:
-        async with self._client_scope() as inner:
+        async with self.client_scope() as inner:
             async for chunk in inner.fetch_all_batched(
                 query,
                 params,
@@ -368,7 +368,7 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
         row_factory: RowFactory = "dict",
         commit: bool = False,
     ) -> JsonDict | tuple[Any, ...] | None:
-        async with self._client_scope() as inner:
+        async with self.client_scope() as inner:
             return await inner.fetch_one(
                 query,
                 params,
@@ -385,5 +385,5 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
         *,
         default: Any = None,
     ) -> Any:
-        async with self._client_scope() as inner:
+        async with self.client_scope() as inner:
             return await inner.fetch_value(query, params, default=default)

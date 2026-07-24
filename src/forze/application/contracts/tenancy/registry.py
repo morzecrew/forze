@@ -216,10 +216,20 @@ class TenantClientRegistry[C, R]:
     # ....................... #
 
     async def get(self, tenant_id: UUID) -> C:
+        """Unleased access to *tenant_id*'s client (simple registries only).
+
+        A guarded registry exists to drain a client only after its scopes exit;
+        handing out an unleased reference would defeat that, so use :meth:`use`
+        (which works in **both** modes) instead.
+        """
+
         self.require_started()
 
         if isinstance(self.__registry, GuardedLruRegistry):
-            raise exc.internal("Get is not supported for guarded registry")
+            raise exc.internal(
+                "Unleased get() would bypass the guarded registry's eviction "
+                "lease; use use() instead (it works in both registry modes)",
+            )
 
         return await self.__registry.get_or_create(tenant_id)
 
@@ -227,10 +237,21 @@ class TenantClientRegistry[C, R]:
 
     @asynccontextmanager
     async def use(self, tenant_id: UUID) -> AsyncGenerator[C]:
+        """Scoped access to *tenant_id*'s client — works in **both** registry modes.
+
+        On a guarded registry the scope holds a lease: a concurrent eviction
+        (rotation signal, LRU overflow) drains the client only after the scope
+        exits. On a simple registry there is no lease — the client is handed out
+        as-is, and a concurrent eviction disposes it mid-use, exactly the exposure
+        :meth:`get` already has. Callers that need the lease opt in with
+        ``guarded=True``; the access pattern stays the same either way.
+        """
+
         self.require_started()
 
         if isinstance(self.__registry, SimpleLruRegistry):
-            raise exc.internal("Use is not supported for simple registry")
+            yield await self.__registry.get_or_create(tenant_id)
+            return
 
         async with self.__registry.use(tenant_id) as client:
             yield client

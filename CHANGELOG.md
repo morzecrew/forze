@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`AuthnDepsModule(eligibility="allow_all")`** — the declared opt-out of the policy-principal gate for token-only deployments with no authz plane; the default routed registration was previously non-overridable.
 - **Canonical identity-plane DDL** — a new docs recipe ("Provision identity tables on Postgres") ships the exact DDL the startup schema validation enforces, so migrations are copied, not reverse-engineered; the backend-agnostic spec modules point at it instead of embedding one backend's DDL.
 - **Self-hosted durable→registry bridge** — `operation_durable_handler` / `register_operation_functions` give `DurableFunctionSpec.operation` the same auto-bridging on the self-hosted tier that Inngest already had: stored JSON validated into the args type, dispatched through `run_operation`, malformed records a clean precondition.
+- **Routed-client ergonomics** — the tenant-scoped accessor is now public (`client_scope()`, replacing the protected `_client_scope`) and works in both registry modes (no more runtime "Use is not supported for simple registry"); `RoutedNeo4jClient` pins `guarded=True`; docs cover the rotating-credential pattern (fingerprint stable identity only, fetch short-lived tokens via a client callback).
 
 **Inference seam** — typed model invocation behind one port; whether the model is a local artifact, a served endpoint or a cloud runtime is a wiring fact.
 

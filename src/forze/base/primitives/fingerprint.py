@@ -168,8 +168,11 @@ def build_routing_fingerprint(
     is reduced to a one-way tag via :func:`secret_dedup_fingerprint` and concatenated on
     via :func:`combine_fingerprint`, so secret material never reaches a fast hash. Routed
     clients should build ``credential_fingerprint`` with this rather than hand-assembling
-    hashes: declaring **every** credential field (including secrets) keeps rotation
-    detection correct, since a changed secret then changes the key.
+    hashes: declaring every credential field the client captures at build time
+    (including secrets) keeps rotation detection correct, since a changed secret then
+    changes the key. Credentials the client re-reads dynamically (a token callback for
+    an auto-rotating provider) belong **out** of the fingerprint — see the routed
+    client base's rotation contract.
     """
 
     return combine_fingerprint(

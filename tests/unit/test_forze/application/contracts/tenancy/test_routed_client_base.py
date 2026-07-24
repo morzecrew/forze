@@ -50,6 +50,38 @@ async def test_routed_base_evict_clears_fingerprint() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("guarded", [False, True])
+async def test_client_scope_is_public_and_mode_agnostic(guarded: bool) -> None:
+  # Regression: the only scoped accessor was the protected ``_client_scope``, and
+  # it required ``guarded=True`` (a simple-registry ``use()`` raised at runtime).
+  # ``client_scope()`` is the public seam and must work in both registry modes.
+  tid = uuid4()
+
+  @attrs.define(slots=True, kw_only=True)
+  class _Routed(RoutedTenantClientBase[_Client]):
+      async def resolve_credentials(self, tenant_id):
+          return "creds"
+
+      async def initialize_client(self, tenant_id, creds):
+          return _Client()
+
+      async def ensure_access_fingerprint(self, tenant_id) -> None:
+          self._pool.set_fingerprint(tenant_id, "fp")
+
+  routed = _Routed(
+      secrets=MagicMock(),
+      secret_ref_for_tenant={},
+      tenant_provider=lambda: tid,
+      guarded=guarded,
+  )
+  await routed.startup()
+
+  async with routed.client_scope() as first, routed.client_scope() as second:
+      assert isinstance(first, _Client)
+      assert first is second  # one pooled client per tenant, either mode
+
+
+@pytest.mark.asyncio
 async def test_dsn_routed_sets_fingerprint_before_create() -> None:
   tid = uuid4()
   secrets = MagicMock()
