@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/recipes/tenant-selector-and-admin/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/recipes/provision-identity-postgres/">
       
       
-        <link rel="prev" href="../password-reset/">
+        <link rel="prev" href="../authn-authz-tenancy-fastapi/">
       
       
-        <link rel="next" href="../local-identity/">
+        <link rel="next" href="../password-reset/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Tenant selector & administration - Forze</title>
+        <title>Provision identity tables on Postgres - Forze</title>
       
     
     
@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#tenant-selector-switch-organization" class="md-skip">
+        <a href="#authn" class="md-skip">
           Skip to content
         </a>
       
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Tenant selector & administration
+              Provision identity tables on Postgres
             
           </span>
         </div>
@@ -4078,10 +4078,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../provision-identity-postgres/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Provision identity tables on Postgres
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -4098,6 +4124,58 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#authn" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Authn
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authz" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Authz
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trust-but-verify" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Trust but verify
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4136,36 +4214,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-building-2" viewBox="0 0 24 24"><path d="M10 12h4M10 8h4M14 21v-3a2 2 0 0 0-4 0v3"/><path d="M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2"/><path d="M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Tenant selector & administration
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../tenant-selector-and-admin/" class="md-nav__link">
         
   
   
@@ -4182,69 +4234,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#tenant-selector-switch-organization" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Tenant selector ("switch organization")
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#tenant-administration" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Tenant administration
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#enumerating-every-tenant" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Enumerating every tenant
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Notes
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -5607,10 +5596,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#tenant-selector-switch-organization" class="md-nav__link">
+  <a href="#authn" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Tenant selector ("switch organization")
+        Authn
       </span>
     </span>
   </a>
@@ -5618,10 +5607,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#tenant-administration" class="md-nav__link">
+  <a href="#authz" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Tenant administration
+        Authz
       </span>
     </span>
   </a>
@@ -5629,21 +5618,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#enumerating-every-tenant" class="md-nav__link">
+  <a href="#trust-but-verify" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Enumerating every tenant
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Notes
+        Trust but verify
       </span>
     </span>
   </a>
@@ -5754,99 +5732,151 @@
   
 
 
-  <h1 id="__skip">Tenant selector & administration</h1>
+  <h1 id="__skip">Provision identity tables on Postgres</h1>
 
-<p>When a principal belongs to several tenants, two jobs appear: letting a user
-<strong>switch</strong> between their own organizations, and letting an admin <strong>manage</strong>
-organizations and their members. Both are projector-driven route sets that sit on
-top of the <a href="../authn-authz-tenancy-fastapi/">authn, authz &amp; tenancy wiring</a> — no
-custom handler code. The tenancy model itself is in
-<a href="../../identity-tenancy-enc/multi-tenancy/">Multi-tenancy</a>.</p>
-<h2 id="tenant-selector-switch-organization">Tenant selector ("switch organization")<a class="headerlink" href="#tenant-selector-switch-organization" title="Permanent link">&para;</a></h2>
-<p>Ship a switcher with one extra projector. <code>build_tenancy_registry(spec)</code> reuses
-the same authn <code>spec</code> (so it can re-mint tokens through that route's lifecycle)
-and gives two operations that <code>attach_tenancy_routes</code> projects:</p>
-<ul>
-<li><code>GET /tenants</code> — the principal's active memberships (<code>tenant_id</code>, <code>tenant_key</code>, <code>is_current</code>).</li>
-<li><code>POST /tenants/{id}/activate</code> — validates the choice against membership via the
-  <code>TenantResolverPort</code>, then returns a <strong>new token pair scoped to the selected tenant</strong> (the
-  same body as <code>/login</code>); the client swaps to the new token.</li>
-<li><code>DELETE /tenants/{id}</code> — leave a tenant. Keyed on the bound principal, so a caller can only
-  drop their <em>own</em> membership; leaving the tenant on the current token makes its <code>tid</code> stop
-  matching a live membership, so the next request fails closed (switch or re-authenticate).</li>
-</ul>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_tenancy_routes</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.aggregates.tenancy</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_tenancy_registry</span>
-
-<span class="n">attach_tenancy_routes</span><span class="p">(</span>
-    <span class="n">router</span><span class="p">,</span>
-    <span class="n">registry</span><span class="o">=</span><span class="n">build_tenancy_registry</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span><span class="o">.</span><span class="n">freeze</span><span class="p">(),</span>
-    <span class="n">ns</span><span class="o">=</span><span class="n">spec</span><span class="o">.</span><span class="n">default_namespace</span><span class="p">,</span>
-    <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx_dep</span><span class="p">,</span>
-<span class="p">)</span>
+<p>The identity plane stores its documents through the ordinary document plane, so
+the specs are backend-agnostic: the same models run on Postgres, Mongo, or the
+mock. What <em>is</em> backend-specific is provisioning — on Postgres you write the
+tables yourself, and at startup the schema validation checks every mapped column
+against the model (type family and nullability, exactly). This recipe is the DDL
+that passes that check, so migrations are copied, not reverse-engineered from
+the models.</p>
+<p>The mapping rule behind it is mechanical, and it is what the validator enforces
+on every backend that has a schema:</p>
+<table>
+<thead>
+<tr>
+<th>Model field</th>
+<th>Column</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>UUID</code></td>
+<td><code>uuid</code></td>
+</tr>
+<tr>
+<td><code>str</code></td>
+<td><code>text</code> (or <code>varchar</code>/<code>char</code>/<code>citext</code>)</td>
+</tr>
+<tr>
+<td><code>bool</code></td>
+<td><code>boolean</code></td>
+</tr>
+<tr>
+<td><code>int</code></td>
+<td><code>int2</code> / <code>int4</code> / <code>int8</code></td>
+</tr>
+<tr>
+<td><code>datetime</code></td>
+<td><code>timestamptz</code> (or <code>timestamp</code>)</td>
+</tr>
+<tr>
+<td><code>Decimal</code></td>
+<td><code>numeric</code></td>
+</tr>
+<tr>
+<td>nested model / <code>dict</code> / <code>list</code></td>
+<td><code>jsonb</code></td>
+</tr>
+<tr>
+<td><code>T \| None</code></td>
+<td>the same family, nullable</td>
+</tr>
+<tr>
+<td>required field</td>
+<td><code>NOT NULL</code></td>
+</tr>
+</tbody>
+</table>
+<p>Table names are yours — the spec binds by route configuration, not by name.
+Indexes beyond the primary key are yours too; the ones shown are the minimum
+the access patterns want.</p>
+<h2 id="authn">Authn<a class="headerlink" href="#authn" title="Permanent link">&para;</a></h2>
+<p>Password accounts (<code>password_account_spec</code>):</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authn_password_accounts</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
+<span class="w">    </span><span class="n">rev</span><span class="w"> </span><span class="nb">integer</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">last_update_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">principal_id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">username</span><span class="w"> </span><span class="nb">text</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">email</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">password_hash</span><span class="w"> </span><span class="nb">text</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">is_active</span><span class="w"> </span><span class="nb">boolean</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">true</span>
+<span class="p">);</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">authn_password_accounts</span><span class="w"> </span><span class="p">(</span><span class="n">username</span><span class="p">);</span>
 </code></pre></div>
-<p>The active tenant rides the signed <code>tid</code> claim and is re-validated against live membership on
-every request, so removing a principal from a tenant invalidates their scoped token at once.
-Requires a <code>TenancyDepsModule</code> wiring a <code>tenant_resolver</code> <strong>and</strong> <code>tenant_management</code> route
-(see <a href="../authn-authz-tenancy-fastapi/#wire-the-planes">Wire the planes</a>).</p>
-<h2 id="tenant-administration">Tenant administration<a class="headerlink" href="#tenant-administration" title="Permanent link">&para;</a></h2>
-<p>The selector is <strong>self-service</strong> — every op acts on the caller's <em>own</em> membership. Managing
-<em>other</em> tenants and members (create an org, invite/remove a member, list members, deactivate a
-tenant) is the privileged inverse, in a separate aggregate:
-<code>build_tenancy_admin_registry(ns)</code> → <code>attach_tenancy_admin_routes</code> (<code>POST /tenants</code>,
-<code>GET /tenants/{id}/members</code>, <code>POST /tenants/{id}/deactivate</code>, <code>POST</code>/<code>DELETE /memberships</code>).</p>
-<p>Because <em>who</em> may administer a tenant is your authorization model — not something the framework
-can define — these ops ship <strong>unguarded</strong>, exactly like <code>deactivate_principal</code> in the
-<a href="../authn-authz-tenancy-fastapi/#enforce-on-operations">authn recipe</a>. Bind <code>AuthnRequired</code> plus
-an <code>AuthzBeforeAuthorize</code> on each operation before exposing the router (or keep ops off it with
-<code>include=</code>):</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.hooks.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnRequired</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.hooks.authz</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthzBeforeAuthorize</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_tenancy_admin_routes</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.aggregates.tenancy_admin</span><span class="w"> </span><span class="kn">import</span> <span class="n">TenancyAdminKernelOp</span><span class="p">,</span> <span class="n">build_tenancy_admin_registry</span>
-
-<span class="n">reg</span> <span class="o">=</span> <span class="n">build_tenancy_admin_registry</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">default_namespace</span><span class="p">)</span>
-<span class="k">for</span> <span class="n">op</span> <span class="ow">in</span> <span class="n">TenancyAdminKernelOp</span><span class="p">:</span>
-    <span class="n">reg</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="n">reg</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">default_namespace</span><span class="o">.</span><span class="n">key</span><span class="p">(</span><span class="n">op</span><span class="p">))</span>
-        <span class="o">.</span><span class="n">bind_outer</span><span class="p">()</span>
-        <span class="o">.</span><span class="n">before</span><span class="p">(</span>
-            <span class="n">AuthnRequired</span><span class="p">()</span><span class="o">.</span><span class="n">to_step</span><span class="p">(),</span>
-            <span class="n">AuthzBeforeAuthorize</span><span class="p">(</span><span class="n">spec</span><span class="o">=</span><span class="n">AUTHZ</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;tenants:</span><span class="si">{</span><span class="n">op</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to_step</span><span class="p">(),</span>
-        <span class="p">)</span>
-        <span class="o">.</span><span class="n">finish</span><span class="p">(</span><span class="n">deep</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="p">)</span>
-
-<span class="n">admin_router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;/admin&quot;</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;tenant-admin&quot;</span><span class="p">])</span>
-<span class="n">attach_tenancy_admin_routes</span><span class="p">(</span>
-    <span class="n">admin_router</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">reg</span><span class="o">.</span><span class="n">freeze</span><span class="p">(),</span> <span class="n">ns</span><span class="o">=</span><span class="n">spec</span><span class="o">.</span><span class="n">default_namespace</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx_dep</span>
-<span class="p">)</span>
+<p>API-key accounts (<code>api_key_account_spec</code>):</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authn_api_key_accounts</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
+<span class="w">    </span><span class="n">rev</span><span class="w"> </span><span class="nb">integer</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">last_update_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">principal_id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">actor_principal_id</span><span class="w"> </span><span class="n">uuid</span><span class="p">,</span>
+<span class="w">    </span><span class="k">prefix</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">hint</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">label</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">key_hash</span><span class="w"> </span><span class="nb">text</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">expires_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="p">,</span>
+<span class="w">    </span><span class="n">is_active</span><span class="w"> </span><span class="nb">boolean</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">true</span>
+<span class="p">);</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">authn_api_key_accounts</span><span class="w"> </span><span class="p">(</span><span class="n">principal_id</span><span class="p">);</span>
 </code></pre></div>
-<p><code>list_members</code> returns principal ids only (<code>TenantManagementPort.list_tenant_principals</code>); join
-them with identity-plane details out of band.</p>
-<h2 id="enumerating-every-tenant">Enumerating every tenant<a class="headerlink" href="#enumerating-every-tenant" title="Permanent link">&para;</a></h2>
-<p>The selector's <code>list_principal_tenants</code> answers <em>"which tenants may this principal see"</em>, so
-anything driven from it visits only the tenants somebody happens to be a member of. To drive
-work across the whole deployment — a migration, a per-tenant sweep, an export — use
-<code>TenantManagementPort.list_tenants</code>, which is not membership-scoped:</p>
-<div class="highlight"><pre><span></span><code><span class="n">tenants</span><span class="p">,</span> <span class="n">total</span> <span class="o">=</span> <span class="k">await</span> <span class="n">mgmt</span><span class="o">.</span><span class="n">list_tenants</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">offset</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>          <span class="c1"># every tenant, paged</span>
-<span class="n">live</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="k">await</span> <span class="n">mgmt</span><span class="o">.</span><span class="n">list_tenants</span><span class="p">(</span><span class="n">active_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>                    <span class="c1"># only the live ones</span>
+<p>Sessions (<code>session_spec</code>):</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authn_sessions</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
+<span class="w">    </span><span class="n">rev</span><span class="w"> </span><span class="nb">integer</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">last_update_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">principal_id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">tenant_id</span><span class="w"> </span><span class="n">uuid</span><span class="p">,</span>
+<span class="w">    </span><span class="n">family_id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">refresh_digest</span><span class="w"> </span><span class="nb">text</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">expires_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">revoked_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="p">,</span>
+<span class="w">    </span><span class="n">rotated_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="p">,</span>
+<span class="w">    </span><span class="n">replaced_by</span><span class="w"> </span><span class="n">uuid</span>
+<span class="p">);</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">authn_sessions</span><span class="w"> </span><span class="p">(</span><span class="n">principal_id</span><span class="p">);</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">authn_sessions</span><span class="w"> </span><span class="p">(</span><span class="n">family_id</span><span class="p">);</span>
 </code></pre></div>
-<p><code>active_only=False</code> is the default <strong>on purpose</strong>. Deactivating a tenant sets a flag; it does
-not delete the row, and it certainly does not delete the tenant's documents, blobs or counters.
-A sweep that quietly skipped them would drop real data and report success — so the complete
-answer is what you get unless you ask for less. Pass <code>active_only=True</code> for a "who is live"
-admin view, where that genuinely is the question.</p>
-<p>Like the rest of the admin plane, this lists <strong>every</strong> tenant in the deployment, including ones
-the caller belongs to none of — put it behind your authz hooks.</p>
-<h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Both build on the base wiring.</strong> The middleware, deps modules, and enforcement hooks come
-  from <a href="../authn-authz-tenancy-fastapi/">Authn, authz &amp; tenancy</a> — these route sets only add the
-  org-switch and admin surfaces.</li>
-<li><strong>The selector is safe to ship as-is; the admin plane is not.</strong> Selector ops are keyed on the
-  caller's own principal; admin ops ship unguarded and must carry your authz hooks first.</li>
-</ul>
+<p>Password resets (<code>password_reset_spec</code>):</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authn_password_resets</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
+<span class="w">    </span><span class="n">rev</span><span class="w"> </span><span class="nb">integer</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">last_update_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">principal_id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">token_digest</span><span class="w"> </span><span class="nb">text</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">expires_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">used_at</span><span class="w"> </span><span class="n">timestamptz</span>
+<span class="p">);</span>
+</code></pre></div>
+<h2 id="authz">Authz<a class="headerlink" href="#authz" title="Permanent link">&para;</a></h2>
+<p>Policy principals (<code>policy_principal_spec</code>) — also the one table a token-only
+deployment needs for the default eligibility gate
+(<code>AuthnDepsModule(eligibility="allow_all")</code> is the declared opt-out):</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authz_policy_principals</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
+<span class="w">    </span><span class="n">rev</span><span class="w"> </span><span class="nb">integer</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">last_update_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">kind</span><span class="w"> </span><span class="nb">text</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">is_active</span><span class="w"> </span><span class="nb">boolean</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span>
+<span class="p">);</span>
+</code></pre></div>
+<p>The remaining identity specs (identity mappings, invites, authz bindings and
+grants) follow the same mapping rule — apply the table above to their model
+fields, and startup validation will tell you, field by field, if a column
+disagrees.</p>
+<h2 id="trust-but-verify">Trust but verify<a class="headerlink" href="#trust-but-verify" title="Permanent link">&para;</a></h2>
+<p>These shapes are the ones forze's own Postgres integration tests provision and
+run schema validation against, so they cannot drift from the models silently. If
+you change a model (or upgrade across a release that does), boot against a copy
+of production first: the validation error names the exact field, the expected
+column family, and what it found.</p>
 
 
 
@@ -5887,7 +5917,7 @@ the caller belongs to none of — put it behind your authz hooks.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../password-reset/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Self-service password reset">
+          <a href="../authn-authz-tenancy-fastapi/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Authn, authz &amp; tenancy">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -5897,20 +5927,20 @@ the caller belongs to none of — put it behind your authz hooks.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Self-service password reset
+                Authn, authz & tenancy
               </div>
             </div>
           </a>
         
         
           
-          <a href="../local-identity/" class="md-footer__link md-footer__link--next" aria-label="Next: Local identity">
+          <a href="../password-reset/" class="md-footer__link md-footer__link--next" aria-label="Next: Self-service password reset">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Local identity
+                Self-service password reset
               </div>
             </div>
             <div class="md-footer__button md-icon">

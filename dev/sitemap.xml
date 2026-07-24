@@ -253,6 +253,9 @@
         <loc>https://morzecrew.github.io/forze/dev/recipes/authn-authz-tenancy-fastapi/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/provision-identity-postgres/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/recipes/password-reset/</loc>
       </url>
       <url>

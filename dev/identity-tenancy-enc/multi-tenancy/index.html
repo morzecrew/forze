@@ -4232,6 +4232,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../recipes/provision-identity-postgres/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Provision identity tables on Postgres
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../recipes/password-reset/" class="md-nav__link">
         
   
@@ -5938,7 +5967,17 @@ needs fixed names) skips these routes.</p>
 <p>A <strong>routed client</strong> resolves credentials per <code>TenantIdentity</code> and pools
 connections by fingerprint, so tenants that share an endpoint reuse pools. You
 swap it in at <a href="../../writing-operation/wiring/">wiring</a> time — <code>RoutedPostgresClient</code> for
-<code>PostgresClient</code> — and the specs and handlers don't change.</p>
+<code>PostgresClient</code> — and the specs and handlers don't change. For backend calls the
+routed facade doesn't wrap, <code>client_scope()</code> yields the current tenant's pooled
+inner client.</p>
+<p><strong>Credential rotation.</strong> The fingerprint is a <em>rebuild</em> trigger: when a tenant's
+stored credentials change, the pooled client is evicted and rebuilt — wire your
+secret store's rotation signal to <code>evict_tenant()</code>, or set <code>fingerprint_ttl</code> to
+poll. That model fits credentials that change rarely. A provider that mints
+<strong>short-lived tokens</strong> is different: fingerprint only the stable identity
+(endpoint, account, key id) and have the client fetch the current token through a
+callback per connection or request — feeding the token into the fingerprint would
+read every mint as a rotation and tear down a healthy pool.</p>
 <div class="admonition note">
 <p class="admonition-title">Postgres routed clients</p>
 <p>Set <code>introspector_cache_partition_key</code> on the deps module so the schema
