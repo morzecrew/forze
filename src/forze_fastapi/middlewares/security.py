@@ -16,7 +16,7 @@ from forze.application.execution.context import (
     ExecutionContext,
     ExecutionContextFactory,
 )
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 
 from ..exceptions import build_core_exception_response
 from ..security import AuthnRequirement, resolve_authn_ingress, resolve_tenant_identity
@@ -61,11 +61,14 @@ class SecurityContextMiddleware:
 
     A browser holding a stale access cookie would otherwise be refused on the very
     routes that exist without an identity — ``/auth/login`` (which replaces the
-    credential), ``/auth/refresh``, a public health page. On these paths a resolver
-    error (expired/invalid credential, ambiguous credentials, an unvalidated tenant
-    header) downgrades to an **anonymous** request: no authn, no tenant bound — the
-    route authenticates from its body or serves anonymously, exactly as it would for
-    a request carrying no credential at all. A VALID credential still binds normally.
+    credential), ``/auth/refresh``, a public health page. On these paths an
+    **authentication-kind** failure (expired/invalid credential, ambiguous
+    credentials, a tenant mismatch) downgrades to an **anonymous** request: no
+    authn, no tenant bound — the route authenticates from its body or serves
+    anonymously, exactly as it would for a request carrying no credential at all.
+    A VALID credential still binds normally, and any other failure kind
+    (infrastructure, configuration, internal) still returns the error response —
+    a secrets-store outage is a server fault, not a missing credential.
     Exact paths, never prefixes — a prefix is one refactor away from an ungoverned
     hole (the same stance as ``allowed_websocket_paths``)."""
 
@@ -140,11 +143,17 @@ class SecurityContextMiddleware:
             )
 
         except CoreException as error:
-            if request.url.path in self.anonymous_paths:
-                # A failing credential on an anonymous path downgrades to no
+            if (
+                error.kind is ExceptionKind.AUTHENTICATION
+                and request.url.path in self.anonymous_paths
+            ):
+                # A failing CREDENTIAL on an anonymous path downgrades to no
                 # identity at all (see ``anonymous_paths``): the route is reachable
                 # without one by design, and a stale cookie must not lock the
-                # caller out of the very route that replaces it.
+                # caller out of the very route that replaces it. Only
+                # authentication-kind failures qualify — an infrastructure or
+                # configuration error during resolution is a server fault, and
+                # serving the route anonymously would mask the outage.
                 authn = None
                 tenant = None
 

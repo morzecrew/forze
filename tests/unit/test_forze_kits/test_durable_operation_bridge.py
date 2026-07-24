@@ -80,6 +80,64 @@ async def test_malformed_stored_input_is_a_clean_precondition() -> None:
     assert caught.value.code == "durable_input_invalid"
 
 
+@pytest.mark.asyncio
+async def test_dict_output_is_json_encoded_at_the_bridge() -> None:
+    # A dict output gets the same encoding a BaseModel gets from
+    # model_dump(mode="json") — live UUID/datetime leaves must not ride into the
+    # JSON-only run store and fail there, after the operation already ran.
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    async def _raw(args: _Args) -> dict[str, object]:
+        return {
+            "id": UUID("11111111-1111-1111-1111-111111111111"),
+            "at": datetime(2026, 7, 24, tzinfo=UTC),
+        }
+
+    operations = OperationRegistry().set_handler("sync.run", lambda _ctx: _raw).freeze()
+    handler = operation_durable_handler(_spec(), operations)
+    ctx = context_from_modules(MockDepsModule())
+
+    output = await handler(ctx, {"order_id": "o-1"})
+
+    assert output == {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "at": "2026-07-24T00:00:00Z",
+    }
+
+
+@pytest.mark.asyncio
+async def test_non_json_output_is_refused_at_the_bridge() -> None:
+    # The old fall-through returned ANY non-BaseModel value unchanged, deferring
+    # the failure to durable result persistence. It must fail here, typed.
+    async def _raw(args: _Args) -> object:
+        return object()
+
+    operations = OperationRegistry().set_handler("sync.run", lambda _ctx: _raw).freeze()
+    handler = operation_durable_handler(_spec(), operations)
+    ctx = context_from_modules(MockDepsModule())
+
+    with pytest.raises(CoreException) as caught:
+        await handler(ctx, {"order_id": "o-1"})
+
+    assert caught.value.code == "durable_output_invalid"
+
+
+@pytest.mark.asyncio
+async def test_unencodable_dict_output_is_refused_at_the_bridge() -> None:
+    async def _raw(args: _Args) -> dict[str, object]:
+        return {"payload": object()}  # a dict, but not JSON-encodable
+
+    operations = OperationRegistry().set_handler("sync.run", lambda _ctx: _raw).freeze()
+    handler = operation_durable_handler(_spec(), operations)
+    ctx = context_from_modules(MockDepsModule())
+
+    with pytest.raises(CoreException) as caught:
+        await handler(ctx, {"order_id": "o-1"})
+
+    assert caught.value.code == "durable_output_invalid"
+
+
 def test_spec_without_operation_is_refused() -> None:
     with pytest.raises(CoreException, match="declares no operation"):
         operation_durable_handler(_spec(operation=None), _operations())

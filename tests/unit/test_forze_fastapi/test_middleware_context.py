@@ -726,6 +726,16 @@ class _ExpiredTokenAuthFactory:
         return _ExpiredTokenAuthPort()
 
 
+class _SecretsDownAuthPort:
+    async def authenticate_with_token(self, credentials: object) -> AuthnResult | None:
+        raise exc.infrastructure("Secrets backend unavailable", code="secrets_unavailable")
+
+
+class _SecretsDownAuthFactory:
+    def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> _SecretsDownAuthPort:
+        return _SecretsDownAuthPort()
+
+
 class TestAnonymousPaths:
     """A present-but-invalid credential must not lock callers out of the routes
     that exist without one — /auth/login is the route that REPLACES the stale
@@ -775,3 +785,29 @@ class TestAnonymousPaths:
             c.args[0] for c in send.await_args_list if c.args[0]["type"] == "http.response.start"
         )
         assert start["status"] == 401
+
+    @pytest.mark.asyncio
+    async def test_infrastructure_failure_is_not_downgraded_to_anonymous(self) -> None:
+        # Only an AUTHENTICATION-kind failure means "this credential is bad".
+        # A secrets-store outage during resolution is a server fault: serving the
+        # anonymous_paths route anonymously would mask the outage as success.
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: _SecretsDownAuthFactory()}))
+        downstream = AsyncMock()
+        send = AsyncMock()
+        mw = SecurityContextMiddleware(
+            downstream,
+            AuthnRequirement(
+                ingress=[HeaderTokenAuthn(authn_spec=_TOKEN_SPEC, header_name="Authorization")]
+            ),
+            "first_in_order",
+            ctx_dep=lambda: ctx,
+            anonymous_paths=frozenset({"/auth/login"}),
+        )
+
+        await mw(self._scope("/auth/login"), AsyncMock(), send)
+
+        downstream.assert_not_awaited()  # the error surfaces; no anonymous execution
+        start = next(
+            c.args[0] for c in send.await_args_list if c.args[0]["type"] == "http.response.start"
+        )
+        assert start["status"] >= 500
