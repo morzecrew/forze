@@ -69,3 +69,40 @@ async def test_require_authentication_allowed_missing_principal() -> None:
         await adapter.require_authentication_allowed(pid)
 
     assert exc_info.value.kind is ExceptionKind.AUTHENTICATION
+
+
+@pytest.mark.asyncio
+async def test_allow_all_admits_any_principal() -> None:
+    # The declared opt-out for token-only deployments without the authz plane:
+    # no policy_principal document, no upsert bookkeeping — every principal is
+    # eligible, and revocation lives entirely on credential lifecycle.
+    from forze_identity.authn.adapters.principal_eligibility import (
+        AllowAllPrincipalEligibilityAdapter,
+    )
+
+    adapter = AllowAllPrincipalEligibilityAdapter()
+
+    await adapter.require_authentication_allowed(uuid4())  # never raises
+
+
+@pytest.mark.asyncio
+async def test_module_eligibility_knob_selects_the_gate() -> None:
+    from forze_identity.authn.execution.deps.deps import (
+        ConfigurableAllowAllEligibility,
+        ConfigurablePolicyPrincipalEligibility,
+    )
+    from forze_identity.authn.execution.deps.module import AuthnDepsModule
+
+    assert AuthnDepsModule().eligibility == "policy_principal"
+    assert AuthnDepsModule(eligibility="allow_all").eligibility == "allow_all"
+
+    # the factories build the matching adapters
+    from forze_identity.authn.adapters.principal_eligibility import (
+        AllowAllPrincipalEligibilityAdapter,
+    )
+
+    built = ConfigurableAllowAllEligibility()(MagicMock(), MagicMock())
+    assert isinstance(built, AllowAllPrincipalEligibilityAdapter)
+    assert isinstance(
+        ConfigurablePolicyPrincipalEligibility, type
+    )  # the default stays constructible

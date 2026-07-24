@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Identity & authn ergonomics** (from downstream adoption feedback)
+
+- **Cookie-mode authn routes** — new `AuthnCookieCarrier` (HttpOnly, Secure/SameSite, per-cookie paths, `Max-Age` from the token lifetimes) wired via `attach_authn_routes(cookies=…)`: `/login` and `/refresh` set and rotate the cookies and strip token strings from bodies, `/refresh` reads the token from its cookie when the body is absent, and `/logout` expires both — idempotently, so a stale access cookie can never pin a dead session.
+- **`SecurityContextMiddleware(anonymous_paths=…)`** — exact paths where a present-but-invalid credential binds no identity instead of 401ing before routing (a stale access cookie no longer locks callers out of `/login` itself).
+- **`AuthnDepsModule(eligibility="allow_all")`** — the declared opt-out of the policy-principal gate for token-only deployments with no authz plane; the default routed registration was previously non-overridable.
+- **Canonical identity-plane DDL** — the authn/authz spec modules now ship the exact Postgres DDL the startup schema validation enforces (the durable-adapter precedent), so migrations are copied, not reverse-engineered.
+- **Self-hosted durable→registry bridge** — `operation_durable_handler` / `register_operation_functions` give `DurableFunctionSpec.operation` the same auto-bridging on the self-hosted tier that Inngest already had: stored JSON validated into the args type, dispatched through `run_operation`, malformed records a clean precondition.
+
 **Inference seam** — typed model invocation behind one port; whether the model is a local artifact, a served endpoint or a cloud runtime is a wiring fact.
 
 - Handlers call `ctx.inference.model(spec)` for single, batch (all-or-nothing) or streaming prediction. It is a read-plane port, so a CQRS query can hold it; a backend response that does not match the declared output type is refused at the boundary rather than handed on.

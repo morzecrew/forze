@@ -23,6 +23,7 @@ from .lifecycle import (
     durable_recovery_background_lifecycle_step,
     durable_scheduler_background_lifecycle_step,
 )
+from .operation_bridge import operation_durable_handler, register_operation_functions
 from .registry import DurableFunctionHandler, DurableFunctionRegistry
 from .runner import DurableFunctionRunner
 from .saga_executor import DurableSagaExecutor, durable_saga_handler
@@ -45,6 +46,8 @@ __all__ = [
     "DurableFunctionHandler",
     "DurableFunctionRegistry",
     "DurableFunctionRunner",
+    "operation_durable_handler",
+    "register_operation_functions",
     "DurableKitsDepsModule",
     "DurableRunnerDepKey",
     "DurableSagaExecutor",

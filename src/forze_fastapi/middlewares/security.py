@@ -54,6 +54,21 @@ class SecurityContextMiddleware:
     owns identity, tenancy, and error shaping on every websocket route itself.
     """
 
+    anonymous_paths: frozenset[str] = attrs.field(
+        default=frozenset(), kw_only=True, converter=frozenset
+    )
+    """Exact request paths where a failing credential binds no identity instead of 401ing.
+
+    A browser holding a stale access cookie would otherwise be refused on the very
+    routes that exist without an identity — ``/auth/login`` (which replaces the
+    credential), ``/auth/refresh``, a public health page. On these paths a resolver
+    error (expired/invalid credential, ambiguous credentials, an unvalidated tenant
+    header) downgrades to an **anonymous** request: no authn, no tenant bound — the
+    route authenticates from its body or serves anonymously, exactly as it would for
+    a request carrying no credential at all. A VALID credential still binds normally.
+    Exact paths, never prefixes — a prefix is one refactor away from an ungoverned
+    hole (the same stance as ``allowed_websocket_paths``)."""
+
     allowed_websocket_paths: frozenset[str] = attrs.field(
         default=frozenset(), kw_only=True, converter=frozenset
     )
@@ -125,12 +140,21 @@ class SecurityContextMiddleware:
             )
 
         except CoreException as error:
-            # This middleware runs above Starlette's ExceptionMiddleware, so the
-            # registered CoreException handler never sees errors raised here.
-            # Convert them to the standard JSON error response in place.
-            response = build_core_exception_response(error)
-            await response(scope, receive, send)
-            return
+            if request.url.path in self.anonymous_paths:
+                # A failing credential on an anonymous path downgrades to no
+                # identity at all (see ``anonymous_paths``): the route is reachable
+                # without one by design, and a stale cookie must not lock the
+                # caller out of the very route that replaces it.
+                authn = None
+                tenant = None
+
+            else:
+                # This middleware runs above Starlette's ExceptionMiddleware, so the
+                # registered CoreException handler never sees errors raised here.
+                # Convert them to the standard JSON error response in place.
+                response = build_core_exception_response(error)
+                await response(scope, receive, send)
+                return
 
         with ctx.inv_ctx.bind_identity(authn=authn, tenant=tenant):
             await self.app(scope, receive, send)

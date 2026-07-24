@@ -1,7 +1,7 @@
 """Authn dependency module for the application kernel."""
 
 from collections.abc import Collection
-from typing import final
+from typing import Literal, final
 
 import attrs
 
@@ -38,6 +38,7 @@ from .configs import (
     validate_shared_matches_route_sets,
 )
 from .deps import (
+    ConfigurableAllowAllEligibility,
     ConfigurableApiKeyLifecycle,
     ConfigurableArgon2PasswordVerifier,
     ConfigurableAuthn,
@@ -146,6 +147,17 @@ class AuthnDepsModule(DepsModule):
     to the current Argon2 parameters after a successful login (wires the password
     account command port into the verifier). Best-effort; never fails the login."""
 
+    eligibility: Literal["policy_principal", "allow_all"] = attrs.field(default="policy_principal")
+    """Which principal-eligibility gate every wired route resolves.
+
+    ``"policy_principal"`` (default): authentication and credential mutations require
+    an ACTIVE policy principal document — the posture for deployments running the
+    authz plane. ``"allow_all"``: every principal is eligible — the declared opt-out
+    for token-only services with no authz plane, which otherwise must maintain the
+    ``policy_principal`` table (and its upsert bookkeeping) purely to satisfy the
+    gate. Opting out moves revocation entirely onto credential lifecycle (session /
+    API-key revoke); a deactivated principal no longer blocks token issuance."""
+
     events: AuthnEventSinkDepPort | None = attrs.field(default=None)
     """Optional authn event sink factory (e.g.
     :class:`ConfigurableLoggingAuthnEventSink`). ``None`` (default) disables
@@ -223,13 +235,23 @@ class AuthnDepsModule(DepsModule):
 
         eligibility_routes = authn_map.keys() | tl | pl | akl | pap | pr | pd
         if eligibility_routes:
+            # ``allow_all`` is the declared opt-out for token-only deployments with no
+            # authz plane: the policy-principal gate otherwise forces the
+            # policy_principal document (plus its upsert bookkeeping) to exist purely
+            # so authentication can check ``is_active`` — and the routed registration
+            # here would conflict with any later override, making the default
+            # non-overridable rather than merely default.
+            eligibility_factory = (
+                ConfigurablePolicyPrincipalEligibility()
+                if self.eligibility == "policy_principal"
+                else ConfigurableAllowAllEligibility()
+            )
             merged = merged.merge(
                 Deps.routed(
                     {
-                        PrincipalEligibilityDepKey: {
-                            name: ConfigurablePolicyPrincipalEligibility()
-                            for name in eligibility_routes
-                        },
+                        PrincipalEligibilityDepKey: dict.fromkeys(
+                            eligibility_routes, eligibility_factory
+                        ),
                     },
                 ),
             )

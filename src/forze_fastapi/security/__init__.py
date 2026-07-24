@@ -1,3 +1,4 @@
+from .cookies import AuthnCookieCarrier
 from .openapi import apply_openapi_security
 from .resolvers import resolve_authn_ingress, resolve_tenant_identity
 from .value_objects import (
@@ -13,6 +14,7 @@ __all__ = [
     "AuthnRequirement",
     "HeaderApiKeyAuthn",
     "HeaderTokenAuthn",
+    "AuthnCookieCarrier",
     "CookieTokenAuthn",
     "apply_openapi_security",
     "resolve_authn_ingress",
