@@ -9,6 +9,7 @@ never add a delivery contract.
 """
 
 from .commands import RealtimeCommandRoute
+from .frames import FRAME_UNSERIALIZABLE_CODE, encode_frame, jsonable_frame
 from .mailbox import (
     InMemoryMailboxCursors,
     InMemoryRealtimeMailbox,
@@ -48,6 +49,9 @@ __all__ = [
     "RealtimeCommandRoute",
     "negotiate_realtime_protocol",
     "acknowledge_up_to",
+    "FRAME_UNSERIALIZABLE_CODE",
+    "encode_frame",
+    "jsonable_frame",
     "BacklogDrain",
     "iter_backlog",
     "iter_replay",

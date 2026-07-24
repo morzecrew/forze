@@ -639,6 +639,26 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 write_snapshot=snapshot_write,
             )
 
+        if sorts is not None:
+            # A global sort over cap-truncated relevance pools is silently wrong: the
+            # row that leads under the sort can sit past ``leg_cap`` in its leg and
+            # never enter the fused pool. Pushing the sort into every leg makes the
+            # union of per-leg top-``leg_cap`` provably contain the global top-
+            # ``leg_cap`` — so a window inside that bound is exact, and one beyond
+            # it is refused instead of quietly missing rows.
+            requested_end = None if limit is None else offset + int(limit)
+
+            if requested_end is None or requested_end > leg_cap:
+                raise exc.precondition(
+                    f"A sorted merge='rrf' window must fit inside rrf_per_leg_limit "
+                    f"({leg_cap}): each leg contributes its top-{leg_cap} rows under "
+                    f"the sort, so rows past that bound may be missing from the fused "
+                    f"pool. Request offset+limit <= {leg_cap} (got "
+                    f"{'unbounded' if requested_end is None else requested_end}), "
+                    f"raise rrf_per_leg_limit, or drop the sort.",
+                    code="core.search.sorted_window_exceeds_leg_cap",
+                )
+
         async def _run_leg(
             name: str,
             port: MeilisearchSimpleSearchAdapter[M],
@@ -648,7 +668,10 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 query,
                 filters,
                 leg_page,
-                None,
+                # The global sort rides into every leg (see the window guard above);
+                # without it a leg's cap keeps relevance-ranked rows and drops the
+                # sort's leaders.
+                sorts,
                 options=leg_opts,
             )
             return name, page, weight

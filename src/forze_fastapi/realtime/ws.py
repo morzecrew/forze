@@ -58,6 +58,7 @@ from forze.application.integrations.realtime import (
     RealtimeMailbox,
     RealtimePresence,
     acknowledge_up_to,
+    encode_frame,
     iter_backlog,
     negotiate_realtime_protocol,
     resolve_client_key,
@@ -215,11 +216,14 @@ def _render_error(envelope: ErrorEnvelope) -> dict[str, Any]:
 
 
 def _egress_frame(*, event: str, event_id: str | None, payload: Mapping[str, Any]) -> str:
-    """One delivery frame: the `{id, data}` envelope with the event name in-band."""
+    """One delivery frame: the `{id, data}` envelope with the event name in-band.
 
-    return json.dumps(
-        {"event": event, "id": event_id, "data": dict(payload)}, separators=(",", ":")
-    )
+    Through :func:`encode_frame`: a live hub payload is an application-supplied dict
+    whose ``JsonDict`` shape is a claim, not an enforcement — an unencodable one must
+    cost this frame, never the sender task (and with it the whole socket).
+    """
+
+    return encode_frame({"event": event, "id": event_id, "data": dict(payload)})
 
 
 async def _resolve(resolver: WsConnectionResolver, connect: WsConnect) -> WsConnection | None:
@@ -454,33 +458,11 @@ def attach_realtime_ws_route(
                 await websocket.send_text(payload)
 
         async def _send_json(payload: dict[str, Any]) -> None:
-            # Serialization backstop for every control frame (error frames included —
-            # ``error_envelope`` coerces its context to JSON-safe values, this guards
-            # whatever else rides a frame): an unguarded TypeError here matches
-            # neither ``except*`` clause and unwinds the whole task group, cancelling
-            # every in-flight command on the socket. It must cost this frame only.
-            try:
-                raw = json.dumps(payload, separators=(",", ":"))
-
-            except (TypeError, ValueError) as error:
-                _logger.critical_exception(
-                    "WebSocket control frame is not JSON-serializable", exc=error
-                )
-                fallback: dict[str, Any] = {
-                    key: payload[key] for key in ("type", "cid") if key in payload
-                }
-                # provably serializable: a masked internal envelope carries no context
-                fallback["error"] = _render_error(
-                    error_envelope(
-                        exc.internal(
-                            "Frame could not be serialized",
-                            code="realtime_frame_unserializable",
-                        )
-                    )
-                )
-                raw = json.dumps(fallback, separators=(",", ":"))
-
-            await _send(raw)
+            # The shared boundary (``encode_frame``) guards every control frame:
+            # an unguarded TypeError here would match neither ``except*`` clause
+            # and unwind the whole task group, cancelling every in-flight command
+            # on the socket. It must cost this frame only.
+            await _send(encode_frame(payload))
 
         async def _send_error(message: str) -> None:
             await _send_json(
@@ -674,36 +656,17 @@ def attach_realtime_ws_route(
                 )
                 return
 
-            # Serialize before sending: an ack value that json.dumps cannot encode (a
+            # Through the shared boundary: an ack value json.dumps cannot encode (a
             # datetime from an untyped parse_ack) raises past guard_frame's protection —
             # unguarded, that TypeError escapes every except* clause and cancels every
-            # in-flight command on the socket. It must cost this command an error ack.
-            try:
-                payload = json.dumps(
-                    {"type": "ack", "cid": cid, "data": outcome.value}, separators=(",", ":")
+            # in-flight command on the socket. It must cost this command an error ack,
+            # under the ack-specific code so the client can tell WHAT failed.
+            await _send(
+                encode_frame(
+                    {"type": "ack", "cid": cid, "data": outcome.value},
+                    fallback_code="realtime_ack_unserializable",
                 )
-
-            except (TypeError, ValueError) as error:
-                _logger.critical_exception(
-                    "WebSocket command ack is not JSON-serializable", exc=error
-                )
-                await _send_json(
-                    {
-                        "type": "ack",
-                        "cid": cid,
-                        "error": _render_error(
-                            error_envelope(
-                                exc.internal(
-                                    "Command ack could not be serialized",
-                                    code="realtime_ack_unserializable",
-                                )
-                            )
-                        ),
-                    }
-                )
-                return
-
-            await _send(payload)
+            )
 
         # ....................... #
 

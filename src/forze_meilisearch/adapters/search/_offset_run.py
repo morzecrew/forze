@@ -41,7 +41,10 @@ from forze_meilisearch.adapters.search._search_params import (
     build_sort,
     render_user_sorts,
 )
-from forze_meilisearch.adapters.search.base import MeilisearchSearchGateway
+from forze_meilisearch.adapters.search.base import (
+    _DECIMAL_EXACT_FIELD,  # pyright: ignore[reportPrivateUsage]
+    MeilisearchSearchGateway,
+)
 from forze_meilisearch.kernel.client.port import MeilisearchClientPort
 
 # ----------------------- #
@@ -79,6 +82,12 @@ class _MeilisearchOffsetHooks:
 
         if self.filter_str is not None:
             kwargs["filter"] = self.filter_str
+
+        if self.attrs is not None:
+            # The count must count what the rows query matches: without the same
+            # ``attributes_to_search_on`` narrowing, the exact total counts matches
+            # across EVERY searchable attribute while the page searches a subset.
+            kwargs["attributes_to_search_on"] = self.attrs
 
         index = self.client.index(
             await self.gw._resolved_index_uid()  # pyright: ignore[reportPrivateUsage]
@@ -154,8 +163,13 @@ class _MeilisearchOffsetHooks:
 
         if self.return_fields is not None:
             phys_fields = self.gw.physical_paths(self.return_fields)
+            # The exact-decimal shadow rides every projection: without it a projected
+            # read silently returns the f64-rounded index number for a Decimal field
+            # while an unprojected read of the same row returns the exact value.
+            # Harmless when the model has no Decimals (the attribute simply doesn't
+            # exist on the document).
             search_kwargs["attributes_to_retrieve"] = list(
-                dict.fromkeys([*phys_fields, self.gw.primary_key])
+                dict.fromkeys([*phys_fields, self.gw.primary_key, _DECIMAL_EXACT_FIELD])
             )
 
         index = self.client.index(

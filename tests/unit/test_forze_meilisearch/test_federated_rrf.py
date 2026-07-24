@@ -329,3 +329,76 @@ async def test_rrf_snapshot_read_miss_then_merges_and_writes() -> None:
     )
     assert stored is not None
     assert len(stored) == 2
+
+
+# ....................... #
+# A global sort over cap-truncated relevance pools is silently wrong.
+
+
+def _sorted_adapter(
+    leg_a: MagicMock, leg_b: MagicMock, *, per_leg_limit: int
+) -> MeilisearchFederatedSearchAdapter[_Hit]:
+    return MeilisearchFederatedSearchAdapter(
+        federated_spec=FederatedSearchSpec(name="fed_rrf", members=(_mem("a"), _mem("b"))),
+        legs=(("a", leg_a), ("b", leg_b)),
+        client=MagicMock(),
+        merge="rrf",
+        rrf_k=60,
+        rrf_per_leg_limit=per_leg_limit,
+    )
+
+
+def _leg(name: str, hits: list[_Hit]) -> MagicMock:
+    leg = MagicMock()
+    leg.index_uid = f"idx_{name}"
+    leg.spec = _mem(name)
+    leg.config.max_total_hits = 1000
+    leg.search = AsyncMock(
+        return_value=page_from_limit_offset(hits, {"offset": 0, "limit": 100}, total=None)
+    )
+    return leg
+
+
+@pytest.mark.asyncio
+async def test_rrf_global_sort_is_pushed_into_every_leg() -> None:
+    # Without the push-down, each leg returns its top-leg_cap by RELEVANCE and the
+    # sort's leaders can sit past the cap — silently missing from the fused pool.
+    leg_a = _leg("a", [_Hit(id="1", label="alpha")])
+    leg_b = _leg("b", [_Hit(id="2", label="beta")])
+    adapter = _sorted_adapter(leg_a, leg_b, per_leg_limit=100)
+
+    await adapter.search_page(
+        "alpha",
+        sorts={"label": "asc"},
+        pagination={"offset": 0, "limit": 5},
+    )
+
+    for leg in (leg_a, leg_b):
+        args = leg.search.await_args
+        assert args.args[3] == {"label": "asc"}  # the sorts positional rides into the leg
+
+
+@pytest.mark.asyncio
+async def test_rrf_sorted_window_beyond_leg_cap_is_refused() -> None:
+    # Each leg contributes its top-leg_cap rows under the sort, so a window past
+    # that bound may be missing rows — refused, never silently short.
+    from forze.base.exceptions import CoreException
+
+    leg_a = _leg("a", [_Hit(id="1")])
+    leg_b = _leg("b", [_Hit(id="2")])
+    adapter = _sorted_adapter(leg_a, leg_b, per_leg_limit=10)
+
+    with pytest.raises(CoreException) as caught:
+        await adapter.search_page(
+            "alpha", sorts={"label": "asc"}, pagination={"offset": 8, "limit": 5}
+        )
+
+    assert caught.value.code == "core.search.sorted_window_exceeds_leg_cap"
+
+    # an UNBOUNDED sorted window is the same refusal
+    with pytest.raises(CoreException):
+        await adapter.search_page("alpha", sorts={"label": "asc"}, pagination={"offset": 0})
+
+    # unsorted RRF keeps its existing semantics: relevance fusion, no guard
+    page = await adapter.search_page("alpha", pagination={"offset": 8, "limit": 5})
+    assert page.hits == []

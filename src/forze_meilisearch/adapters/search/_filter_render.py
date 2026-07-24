@@ -188,9 +188,7 @@ class MeilisearchFilterRenderer:
         factory=lambda: QueryFilterExpressionParser(limits=QueryFilterLimits()),
     )
 
-    # After ``parser``, so the pre-existing positional binding
-    # ``MeilisearchFilterRenderer(field_map, parser)`` keeps meaning what it says.
-    read_model: type[BaseModel] | None = None
+    read_model: type[BaseModel] | None = attrs.field(kw_only=True)
     """The searchable read model, for operator–type validation and operand coercion.
 
     Meilisearch is the one query surface that does not run through the shared
@@ -198,8 +196,12 @@ class MeilisearchFilterRenderer:
     other backend rejects or casts: ``{"price": {"$lt": "5"}}`` rendered as a quoted
     string compares **lexically** (``"9" > "10"``), ``$gt`` on a text field is
     accepted, and a ``"NaN"`` bound sails through as a harmless-looking literal.
-    ``None`` skips the model-aware half (capability validation still runs) — for
-    callers that genuinely have no model, never as an optimization."""
+
+    **Required, deliberately without a default**: every construction site must decide
+    — the seam is only "centralized" if it is also unavoidable, and a defaulted
+    ``None`` is how a correctly-built seam gets bypassed by the next call site
+    (the repo's sealed-sort lesson). Pass ``None`` only for a caller that genuinely
+    has no model, never as an omission."""
 
     # ....................... #
 

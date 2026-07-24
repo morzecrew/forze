@@ -30,7 +30,6 @@ require_fastapi()
 # ....................... #
 
 import asyncio
-import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from datetime import timedelta
@@ -53,6 +52,7 @@ from forze.application.integrations.realtime import (
     RealtimeMailbox,
     RealtimePresence,
     acknowledge_up_to,
+    encode_frame,
     iter_backlog,
     negotiate_realtime_protocol,
     resolve_client_key,
@@ -118,7 +118,9 @@ def _sse_frame(*, event: str, event_id: str | None, payload: dict[str, Any]) -> 
     lines = [f"id: {event_id}"] if event_id is not None else []
     envelope = {"id": event_id, "data": payload}
     lines.append(f"event: {event}")
-    lines.append(f"data: {json.dumps(envelope, separators=(',', ':'))}")
+    # encode_frame: a live hub payload's JsonDict shape is a claim, not an
+    # enforcement — an unencodable one costs this frame, never the stream.
+    lines.append(f"data: {encode_frame(envelope)}")
 
     return "\n".join(lines) + "\n\n"
 
