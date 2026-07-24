@@ -219,3 +219,66 @@ async def test_routed_requires_tenant() -> None:
     await routed.startup()
     with pytest.raises(CoreException, match="Tenant ID"):
         await routed.health()
+
+
+@pytest.mark.asyncio
+async def test_routed_scope_methods_delegate_to_the_tenant_client() -> None:
+    """Every scoped facade method resolves the tenant client and delegates."""
+    from contextlib import asynccontextmanager
+
+    secrets = _MemSecrets({_T1: "postgresql://localhost/db1"})
+    routed = RoutedPostgresClient(
+        secrets=secrets,
+        secret_ref_for_tenant=_ref,
+        tenant_provider=lambda: _T1,
+        max_cached_tenants=2,
+    )
+    await routed.startup()
+
+    inner = MagicMock()
+    inner.initialize = AsyncMock()
+    inner.close = AsyncMock()
+    inner.execute = AsyncMock(return_value=3)
+    inner.execute_many = AsyncMock()
+    inner.fetch_all = AsyncMock(return_value=[{"a": 1}])
+    inner.fetch_one = AsyncMock(return_value={"a": 1})
+    inner.fetch_value = AsyncMock(return_value=42)
+
+    @asynccontextmanager
+    async def _yield(value):  # type: ignore[no-untyped-def]
+        yield value
+
+    inner.bound_connection = lambda: _yield("conn")
+    inner.transaction = lambda *, options=None: _yield("tx-conn")
+    inner.detached = lambda: _yield(None)
+
+    async def _batched(*args, **kwargs):  # type: ignore[no-untyped-def]
+        yield [{"a": 1}]
+        yield [{"a": 2}]
+
+    inner.fetch_all_batched = _batched
+
+    with patch(
+        "forze_postgres.kernel.client.routed_client.PostgresClient",
+        return_value=inner,
+    ):
+        assert await routed.execute("UPDATE t SET x = 1", return_rowcount=True) == 3
+        assert await routed.execute("UPDATE t SET x = 1") is None
+        await routed.execute_many("UPDATE t SET x = 1", [{}])
+        assert await routed.fetch_all("SELECT 1") == [{"a": 1}]
+        assert await routed.fetch_one("SELECT 1") == {"a": 1}
+        assert await routed.fetch_value("SELECT 1") == 42
+
+        chunks = [c async for c in routed.fetch_all_batched("SELECT 1", batch_size=10)]
+        assert chunks == [[{"a": 1}], [{"a": 2}]]
+
+        async with routed.bound_connection() as conn:
+            assert conn == "conn"
+
+        async with routed.transaction() as tx_conn:
+            assert tx_conn == "tx-conn"
+
+        async with routed.detached():
+            pass
+
+    await routed.close()

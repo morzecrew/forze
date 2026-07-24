@@ -242,6 +242,33 @@ class TestRoutedClientGuardedPin:
 
         assert routed.guarded is True
 
+    @pytest.mark.asyncio
+    async def test_health_delegates_through_the_client_scope(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock, MagicMock
+        from uuid import UUID
+
+        from forze_neo4j.kernel.client import RoutedNeo4jClient
+
+        inner = MagicMock(spec=Neo4jClient)
+        inner.health = AsyncMock(return_value=("neo4j", True))
+
+        @asynccontextmanager
+        async def _fake_scope(self: object):  # type: ignore[no-untyped-def]
+            yield inner
+
+        monkeypatch.setattr(RoutedNeo4jClient, "client_scope", _fake_scope)
+
+        routed = RoutedNeo4jClient(
+            secrets=MagicMock(),
+            secret_ref_for_tenant={},
+            tenant_provider=lambda: UUID(int=1),
+        )
+
+        assert await routed.health() == ("neo4j", True)
+
 
 # ....................... #
 # A routed transaction scope must not silently span tenants.

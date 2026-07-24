@@ -669,6 +669,42 @@ class TestCookieMode:
 
         assert response.status_code == 401
 
+    def test_refresh_still_accepts_an_explicit_body(self) -> None:
+        # An API client may keep sending the token in the body even in cookie
+        # mode; the cookie is the fallback, not the only path.
+        state = MockState()
+        _seed(state)
+        client = self._cookie_client(state)
+        client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+
+        token = client.cookies.get("forze_refresh", path="/auth/refresh")
+        client.cookies.clear()  # no cookie jar: the body must carry it alone
+
+        response = client.post("/auth/refresh", json={"refresh_token": token})
+
+        assert response.status_code == 200
+        assert "refresh_token" not in response.json()  # still stripped to cookies
+
+    def test_logout_propagates_non_auth_failures(self) -> None:
+        # Idempotency covers ONLY the no-identity case; any other failure from
+        # the logout operation must surface, not silently clear cookies.
+        import asyncio
+        from unittest.mock import MagicMock
+
+        from fastapi import Response
+
+        from forze.base.exceptions import CoreException, exc
+        from forze_fastapi.routes.authn import _cookie_logout_endpoint
+        from forze_fastapi.security import AuthnCookieCarrier
+
+        async def runner(_payload: object) -> object:
+            raise exc.infrastructure("session store down")
+
+        endpoint = _cookie_logout_endpoint(AuthnCookieCarrier())(runner, None, "logout")
+
+        with pytest.raises(CoreException, match="session store down"):
+            asyncio.run(endpoint(response=MagicMock(spec=Response)))
+
     def test_logout_expires_both_cookies(self) -> None:
         state = MockState()
         _seed(state)
@@ -686,3 +722,55 @@ class TestCookieMode:
         assert any(
             "forze_refresh=" in c and ("Max-Age=0" in c or "max-age=0" in c) for c in cleared
         )
+
+
+class TestAuthnCookieCarrier:
+    """Direct carrier behavior not reachable through the route flow above."""
+
+    def _carrier(self, **kwargs: object):  # type: ignore[no-untyped-def]
+        from forze_fastapi.security import AuthnCookieCarrier
+
+        return AuthnCookieCarrier(**kwargs)  # type: ignore[arg-type]
+
+    def test_samesite_none_requires_secure(self) -> None:
+        from forze.base.exceptions import CoreException
+
+        with pytest.raises(CoreException, match="SameSite=None"):
+            self._carrier(samesite="none", secure=False)
+
+        self._carrier(samesite="none", secure=True)  # the valid pairing builds
+
+    def test_partial_token_response_sets_only_the_present_cookie(self) -> None:
+        # A refresh-only response (or access-only) must not emit an empty
+        # sibling cookie.
+        from fastapi import Response
+
+        from forze_kits.aggregates.authn import AuthnTokenResponseDTO
+
+        response = Response()
+        self._carrier(secure=False).apply(
+            response, AuthnTokenResponseDTO(refresh_token="r-1", refresh_expires_in=60)
+        )
+        set_cookies = response.headers.getlist("set-cookie")
+        assert any(c.startswith("forze_refresh=") for c in set_cookies)
+        assert not any(c.startswith("forze_access=") for c in set_cookies)
+
+        response = Response()
+        self._carrier(secure=False).apply(
+            response, AuthnTokenResponseDTO(access_token="a-1", access_expires_in=60)
+        )
+        set_cookies = response.headers.getlist("set-cookie")
+        assert any(c.startswith("forze_access=") for c in set_cookies)
+        assert not any(c.startswith("forze_refresh=") for c in set_cookies)
+
+    def test_strip_body_tokens_false_keeps_the_body_intact(self) -> None:
+        from fastapi import Response
+
+        from forze_kits.aggregates.authn import AuthnTokenResponseDTO
+
+        tokens = AuthnTokenResponseDTO(access_token="a-1", refresh_token="r-1")
+        returned = self._carrier(secure=False, strip_body_tokens=False).apply(
+            Response(), tokens
+        )
+
+        assert returned is tokens  # untouched: the declared opt-out of stripping

@@ -182,6 +182,15 @@ class TestAuthnDepsModule:
                 eligibility=cast("Any", "allow_al"),  # the typo, verbatim
             )()
 
+    def test_allow_all_eligibility_registers_the_gate(self) -> None:
+        deps = AuthnDepsModule(
+            kernel=_kernel_min_access(),
+            authn={"main": frozenset({"token"})},
+            eligibility="allow_all",
+        )()
+
+        assert deps.exists(PrincipalEligibilityDepKey, route="main")
+
     def test_registers_token_route(self) -> None:
         deps = AuthnDepsModule(
             kernel=_kernel_min_access(),

@@ -81,6 +81,18 @@ async def test_malformed_stored_input_is_a_clean_precondition() -> None:
 
 
 @pytest.mark.asyncio
+async def test_none_output_stays_none() -> None:
+    async def _raw(args: _Args) -> None:
+        return None
+
+    operations = OperationRegistry().set_handler("sync.run", lambda _ctx: _raw).freeze()
+    handler = operation_durable_handler(_spec(), operations)
+    ctx = context_from_modules(MockDepsModule())
+
+    assert await handler(ctx, {"order_id": "o-1"}) is None
+
+
+@pytest.mark.asyncio
 async def test_dict_output_is_json_encoded_at_the_bridge() -> None:
     # A dict output gets the same encoding a BaseModel gets from
     # model_dump(mode="json") — live UUID/datetime leaves must not ride into the
