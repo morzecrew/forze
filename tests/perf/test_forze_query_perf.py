@@ -120,7 +120,8 @@ def test_meili_renderer_rebuild_per_call_benchmark(benchmark: Any) -> None:
     field_map = {f"f{i}": f"col{i}" for i in range(8)}
 
     def _build_and_render() -> str | None:
-        renderer = MeilisearchFilterRenderer(field_map=dict(field_map))
+        # read_model=None: a synthetic field map with no model — the explicit no-model case
+        renderer = MeilisearchFilterRenderer(field_map=dict(field_map), read_model=None)
         return renderer.render_filters(_SMALL)
 
     benchmark(_build_and_render)
@@ -136,6 +137,7 @@ def test_meili_renderer_reused_benchmark(benchmark: Any) -> None:
 
     renderer = MeilisearchFilterRenderer(
         field_map={f"f{i}": f"col{i}" for i in range(8)},
+        read_model=None,  # synthetic field map with no model
     )
 
     benchmark(lambda: renderer.render_filters(_SMALL))

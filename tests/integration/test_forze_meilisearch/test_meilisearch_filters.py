@@ -583,3 +583,43 @@ async def test_string_bound_on_a_numeric_field_filters_numerically(meilisearch_c
     )
 
     assert [h.id for h in page.hits] == ["1"]  # lexical comparison would have matched both
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_projection_excluding_the_decimal_does_not_smuggle_it_back(
+    meilisearch_client,
+) -> None:
+    """The exact-value shadow rides every projection, so ``from_hit`` must restore
+    only fields the projected hit carries — not graft excluded Decimal fields back
+    into rows the caller asked to be narrow."""
+
+    index_uid = "products_decimal_excluded_it"
+    spec = SearchSpec(name="products", model_type=PricedProduct, fields=["title"])
+    cfg = MeilisearchSearchConfig(index_uid=index_uid, filterable_attributes=["price"])
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MeilisearchClientDepKey: meilisearch_client,
+                SearchQueryDepKey: ConfigurableMeilisearchSearch(config=cfg),
+                SearchCommandDepKey: ConfigurableMeilisearchSearchCommand(config=cfg),
+                SearchManagementDepKey: ConfigurableMeilisearchSearchManagement(config=cfg),
+            },
+        ),
+    )
+
+    mgmt = ctx.search.management(spec)
+    await mgmt.ensure_index()
+    await mgmt.delete_all()
+    await ctx.search.command(spec).upsert(
+        [PricedProduct(id="1", title="Apple", price=Decimal("123.456789012345678901"))]
+    )
+
+    page = await ctx.search.query(spec).project_search(
+        ["title"], "apple", pagination={"offset": 0, "limit": 10}
+    )
+
+    assert len(page.hits) == 1
+    row = page.hits[0]
+    assert row.get("title") == "Apple"
+    assert "price" not in row  # excluded by the projection — the shadow must not restore it

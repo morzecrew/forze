@@ -52,6 +52,7 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import FrozenOperationRegistry, run_operation
 from forze.application.integrations.realtime import (
+    FRAME_UNSERIALIZABLE_CODE,
     BacklogDrain,
     MailboxCursors,
     RealtimeCommandRoute,
@@ -457,12 +458,17 @@ def attach_realtime_ws_route(
             async with send_lock:
                 await websocket.send_text(payload)
 
-        async def _send_json(payload: dict[str, Any]) -> None:
+        async def _send_json(
+            payload: dict[str, Any],
+            *,
+            fallback_code: str = FRAME_UNSERIALIZABLE_CODE,
+        ) -> None:
             # The shared boundary (``encode_frame``) guards every control frame:
             # an unguarded TypeError here would match neither ``except*`` clause
             # and unwind the whole task group, cancelling every in-flight command
-            # on the socket. It must cost this frame only.
-            await _send(encode_frame(payload))
+            # on the socket. It must cost this frame only — under *fallback_code*
+            # when the caller has a more specific one (the command ack).
+            await _send(encode_frame(payload, fallback_code=fallback_code))
 
         async def _send_error(message: str) -> None:
             await _send_json(
@@ -656,16 +662,13 @@ def attach_realtime_ws_route(
                 )
                 return
 
-            # Through the shared boundary: an ack value json.dumps cannot encode (a
-            # datetime from an untyped parse_ack) raises past guard_frame's protection —
-            # unguarded, that TypeError escapes every except* clause and cancels every
-            # in-flight command on the socket. It must cost this command an error ack,
-            # under the ack-specific code so the client can tell WHAT failed.
-            await _send(
-                encode_frame(
-                    {"type": "ack", "cid": cid, "data": outcome.value},
-                    fallback_code="realtime_ack_unserializable",
-                )
+            # An ack value json.dumps cannot encode (a datetime from an untyped
+            # parse_ack) raises past guard_frame's protection — the shared boundary
+            # in _send_json makes it cost this command an error ack, under the
+            # ack-specific code so the client can tell WHAT failed.
+            await _send_json(
+                {"type": "ack", "cid": cid, "data": outcome.value},
+                fallback_code="realtime_ack_unserializable",
             )
 
         # ....................... #

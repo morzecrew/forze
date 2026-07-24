@@ -608,10 +608,15 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
 
         # Restore exact Decimal values the f64 index number rounded (keyed by logical
         # field). The read codec re-parses the exact strings into Decimals on decode.
+        # Only for fields the hit actually carries: the shadow rides EVERY projection
+        # (see the retrieve-attributes append), so on a projected read it holds exact
+        # values for excluded fields too — grafting those would smuggle unrequested
+        # fields back into the projected row.
         exact = hit.get(_DECIMAL_EXACT_FIELD)
 
         if isinstance(exact, dict):
             for logical, value in cast(dict[str, Any], exact).items():
-                out[logical] = value
+                if logical.split(".", 1)[0] in out:
+                    out[logical] = value
 
         return out
