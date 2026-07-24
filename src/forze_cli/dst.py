@@ -30,6 +30,9 @@ _DEFAULT_CORPUS = "dst-regressions.jsonl"
 
 dst_app = typer.Typer(
     no_args_is_help=True,
+    # No locals panel on unhandled errors (see the root app): a simulation drives
+    # application code whose frames hold live credentials.
+    pretty_exceptions_show_locals=False,
     help=(
         "Deterministic simulation testing — explore an app's operations for concurrency "
         "and consistency bugs (needs the 'dst' extra)."
