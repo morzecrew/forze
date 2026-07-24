@@ -1,3 +1,16 @@
+"""Document specs for the authn plane.
+
+The specs are backend-agnostic document contracts — the same models run on
+Postgres, Mongo, Firestore, or the mock. Backends with a schema enforce the
+column mapping at boot (type family and nullability per field, via the
+backend's schema validation), so provisioning is copy-not-guess: the canonical
+Postgres DDL lives in the docs recipe **"Provision identity tables on
+Postgres"**, which mirrors the shapes forze's own integration tests validate
+against. The mapping rule is mechanical either way: ``UUID`` → ``uuid``,
+``str`` → ``text``, ``bool`` → ``boolean``, ``datetime`` → ``timestamptz``,
+nested models → ``jsonb``; ``T | None`` nullable, required ``NOT NULL``.
+"""
+
 from forze.application.contracts.document import DocumentSpec
 
 from ..domain.models.account import (

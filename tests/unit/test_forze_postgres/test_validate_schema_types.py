@@ -161,3 +161,164 @@ class TestValidateFieldNullability:
             omit_fields=frozenset(),
             label="write",
         )
+
+
+class TestBoolAndOptionalRegression:
+    """Two coupled bugs a downstream app hit at startup.
+
+    ``issubclass(bool, int)`` is True, so with ``int`` probed first every bool field
+    demanded an int2/int4/int8 column and a CORRECT boolean column failed startup
+    validation. And ``T | None`` (PEP 604) unions have origin ``types.UnionType``,
+    not ``typing.Union`` — the unwrap missed them, so every such field silently
+    skipped type validation, which is also why the bool bug hid on optional fields.
+    """
+
+    def test_bool_field_accepts_a_boolean_column(self) -> None:
+        class Row(BaseModel):
+            is_active: bool
+
+        validate_field_type_compatibility(
+            model=Row,
+            column_types={"is_active": _pg("bool")},
+            omit_fields=frozenset(),
+            label="t",
+        )
+
+    def test_bool_field_rejects_an_int_column(self) -> None:
+        class Row(BaseModel):
+            is_active: bool
+
+        with pytest.raises(CoreException):
+            validate_field_type_compatibility(
+                model=Row,
+                column_types={"is_active": _pg("int4")},
+                omit_fields=frozenset(),
+                label="t",
+            )
+
+    def test_int_field_still_accepts_int_columns(self) -> None:
+        class Row(BaseModel):
+            count: int
+
+        validate_field_type_compatibility(
+            model=Row,
+            column_types={"count": _pg("int8")},
+            omit_fields=frozenset(),
+            label="t",
+        )
+
+    def test_pep604_optional_field_is_validated_not_skipped(self) -> None:
+        class Row(BaseModel):
+            is_active: bool | None = None
+            name: str | None = None
+
+        # the inner type is enforced...
+        with pytest.raises(CoreException):
+            validate_field_type_compatibility(
+                model=Row,
+                column_types={"is_active": _pg("int4", not_null=False)},
+                omit_fields=frozenset(),
+                label="t",
+            )
+
+        # ...and a correct column passes
+        validate_field_type_compatibility(
+            model=Row,
+            column_types={
+                "is_active": _pg("bool", not_null=False),
+                "name": _pg("text", not_null=False),
+            },
+            omit_fields=frozenset(),
+            label="t",
+        )
+
+    def test_typing_optional_spelling_matches_pep604(self) -> None:
+        from typing import Optional
+
+        class Row(BaseModel):
+            flag: Optional[bool] = None  # noqa: UP045 — the OTHER union spelling is the point
+
+        with pytest.raises(CoreException):
+            validate_field_type_compatibility(
+                model=Row,
+                column_types={"flag": _pg("int4", not_null=False)},
+                omit_fields=frozenset(),
+                label="t",
+            )
+
+    def test_datetime_field_still_beats_its_date_superclass(self) -> None:
+        # the same subclass overlap as bool < int: datetime < date
+        class Row(BaseModel):
+            at: datetime
+
+        validate_field_type_compatibility(
+            model=Row,
+            column_types={"at": _pg("timestamptz")},
+            omit_fields=frozenset(),
+            label="t",
+        )
+
+        with pytest.raises(CoreException):
+            validate_field_type_compatibility(
+                model=Row,
+                column_types={"at": _pg("date")},
+                omit_fields=frozenset(),
+                label="t",
+            )
+
+
+class TestAnnotationFallbacks:
+    def test_multi_member_union_skips_typing_but_keeps_optionality(self) -> None:
+        # ``str | int | None`` has no single scalar mapping — typing is skipped
+        # (never guessed) — but the ``None`` member still counts as optional for
+        # the nullability check.
+        class Row(BaseModel):
+            either: str | int | None = None
+
+        assert expected_pg_bases_for_field(Row.model_fields["either"]) is None
+
+        validate_field_nullability(
+            model=Row,
+            column_types={"either": _pg("text", not_null=False)},
+            omit_fields=frozenset(),
+            label="t",
+        )
+
+    def test_enum_subclasses_fall_back_to_their_scalar_base(self) -> None:
+        from enum import IntEnum, StrEnum
+
+        class Color(StrEnum):
+            RED = "red"
+
+        class Rank(IntEnum):
+            ONE = 1
+
+        class Row(BaseModel):
+            color: Color
+            rank: Rank
+
+        color_bases = expected_pg_bases_for_field(Row.model_fields["color"])
+        assert color_bases is not None and "text" in color_bases
+
+        # IntEnum walks the fallback too — and must land on int, not bool
+        rank_bases = expected_pg_bases_for_field(Row.model_fields["rank"])
+        assert rank_bases is not None and "int4" in rank_bases and "bool" not in rank_bases
+
+    def test_unmapped_type_is_skipped(self) -> None:
+        class Opaque:
+            pass
+
+        assert expected_pg_bases_for_annotation(Opaque) is None
+
+    def test_bare_list_and_unknown_element_are_skipped(self) -> None:
+        class Opaque:
+            pass
+
+        class Row(BaseModel):
+            model_config = {"arbitrary_types_allowed": True}
+
+            bare: list  # type: ignore[type-arg]
+            weird: list[Opaque]
+
+        assert expected_pg_bases_for_field(Row.model_fields["bare"]) is None
+        assert expected_pg_bases_for_field(Row.model_fields["weird"]) is None

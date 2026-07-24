@@ -124,9 +124,7 @@ def _build_secured_app(state: MockState, *, access_log: bool = False) -> FastAPI
         SecurityContextMiddleware,  # type: ignore[arg-type]
         ctx_dep=lambda: ctx,
         authn=AuthnRequirement(
-            ingress=(
-                HeaderTokenAuthn(authn_spec=AUTHN_SPEC, header_name="Authorization"),
-            ),
+            ingress=(HeaderTokenAuthn(authn_spec=AUTHN_SPEC, header_name="Authorization"),),
         ),
         when_multiple_credentials="first_in_order",
     )
@@ -206,24 +204,22 @@ class TestAuthnRouteSurface:
             assert set(methods) == expected, path
 
     def test_operation_ids_are_registry_keys_verbatim(self) -> None:
-        assert _operation_ids(_build_app()) == {
-            f"main.{op.value}" for op in AuthnKernelOp
-        }
+        assert _operation_ids(_build_app()) == {f"main.{op.value}" for op in AuthnKernelOp}
 
     def test_request_and_response_schemas_come_from_descriptors(self) -> None:
         spec = _build_app().openapi()
 
         def body_ref(path: str) -> str:
-            schema: dict[str, Any] = spec["paths"][path]["post"]["requestBody"][
-                "content"
-            ]["application/json"]["schema"]
+            schema: dict[str, Any] = spec["paths"][path]["post"]["requestBody"]["content"][
+                "application/json"
+            ]["schema"]
             ref: str = schema["$ref"]
             return ref
 
         def ok_ref(path: str) -> str:
-            schema: dict[str, Any] = spec["paths"][path]["post"]["responses"]["200"][
-                "content"
-            ]["application/json"]["schema"]
+            schema: dict[str, Any] = spec["paths"][path]["post"]["responses"]["200"]["content"][
+                "application/json"
+            ]["schema"]
             ref: str = schema["$ref"]
             return ref
 
@@ -233,25 +229,19 @@ class TestAuthnRouteSurface:
         assert body_ref("/auth/refresh").endswith("/AuthnRefreshRequestDTO")
         assert ok_ref("/auth/refresh").endswith("/AuthnTokenResponseDTO")
 
-        assert body_ref("/auth/change-password").endswith(
-            "/AuthnChangePasswordRequestDTO"
-        )
+        assert body_ref("/auth/change-password").endswith("/AuthnChangePasswordRequestDTO")
         assert body_ref("/auth/deactivate").endswith("/DeactivatePrincipalRequestDTO")
 
         # Password reset: request answers 202 with the uniform ack DTO; confirm
         # is a void 204.
-        assert body_ref("/auth/password-reset/request").endswith(
-            "/AuthnRequestPasswordResetDTO"
-        )
+        assert body_ref("/auth/password-reset/request").endswith("/AuthnRequestPasswordResetDTO")
         request_reset = spec["paths"]["/auth/password-reset/request"]["post"]
-        ack_ref: str = request_reset["responses"]["202"]["content"][
-            "application/json"
-        ]["schema"]["$ref"]
+        ack_ref: str = request_reset["responses"]["202"]["content"]["application/json"]["schema"][
+            "$ref"
+        ]
         assert ack_ref.endswith("/AuthnPasswordResetAckDTO")
 
-        assert body_ref("/auth/password-reset/confirm").endswith(
-            "/AuthnResetPasswordDTO"
-        )
+        assert body_ref("/auth/password-reset/confirm").endswith("/AuthnResetPasswordDTO")
 
         # Logout takes no payload at all; the void operations answer 204.
         logout = spec["paths"]["/auth/logout"]["post"]
@@ -604,3 +594,183 @@ class TestPasswordResetRoutes:
 
         fresh = _login(client, password="pw-2")
         assert fresh["access_token"].startswith("mock_access_")
+
+
+# ....................... #
+# Cookie mode: tokens ride HttpOnly cookies, never the body.
+
+
+class TestCookieMode:
+    def _cookie_client(self, state: MockState) -> TestClient:
+        from forze_fastapi.security import AuthnCookieCarrier
+
+        ctx = context_from_modules(MockDepsModule(state=state))
+        router = APIRouter(prefix="/auth")
+        attach_authn_routes(
+            router,
+            registry=build_authn_registry(AUTHN_SPEC).freeze(),
+            ns=_NS,
+            ctx_dep=lambda: ctx,
+            # secure=False: the TestClient speaks plain http and would drop
+            # Secure cookies from its jar — production keeps the default True
+            cookies=AuthnCookieCarrier(secure=False, refresh_path="/auth/refresh"),
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+        register_exception_handlers(app)
+
+        return TestClient(app)
+
+    def test_login_sets_cookies_and_strips_the_body(self) -> None:
+        state = MockState()
+        _seed(state)
+        client = self._cookie_client(state)
+
+        response = client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "access_token" not in body  # stripped: it rides the cookie
+        assert "refresh_token" not in body
+        assert body["access_token_type"] == "Bearer"  # scheme + lifetime stay
+        assert body["access_expires_in"] is not None
+
+        set_cookies = response.headers.get_list("set-cookie")
+        access = next(c for c in set_cookies if c.startswith("forze_access="))
+        refresh = next(c for c in set_cookies if c.startswith("forze_refresh="))
+        assert "HttpOnly" in access and "HttpOnly" in refresh
+        assert "Path=/auth/refresh" in refresh  # the long-lived credential is scoped
+        assert "Max-Age=" in access  # lifetime from the token response
+
+    def test_refresh_rotates_from_the_cookie_without_a_body(self) -> None:
+        state = MockState()
+        _seed(state)
+        client = self._cookie_client(state)
+        client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+
+        before = client.cookies.get("forze_refresh", path="/auth/refresh")
+
+        response = client.post("/auth/refresh")  # no body: the cookie carries it
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "access_token" not in body and "refresh_token" not in body
+
+        after = client.cookies.get("forze_refresh", path="/auth/refresh")
+        assert after is not None and after != before  # single-use rotation landed
+
+    def test_refresh_without_body_or_cookie_is_401(self) -> None:
+        state = MockState()
+        _seed(state)
+        client = self._cookie_client(state)
+
+        response = client.post("/auth/refresh")
+
+        assert response.status_code == 401
+
+    def test_refresh_still_accepts_an_explicit_body(self) -> None:
+        # An API client may keep sending the token in the body even in cookie
+        # mode; the cookie is the fallback, not the only path.
+        state = MockState()
+        _seed(state)
+        client = self._cookie_client(state)
+        client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+
+        token = client.cookies.get("forze_refresh", path="/auth/refresh")
+        client.cookies.clear()  # no cookie jar: the body must carry it alone
+
+        response = client.post("/auth/refresh", json={"refresh_token": token})
+
+        assert response.status_code == 200
+        assert "refresh_token" not in response.json()  # still stripped to cookies
+
+    def test_logout_propagates_non_auth_failures(self) -> None:
+        # Idempotency covers ONLY the no-identity case; any other failure from
+        # the logout operation must surface, not silently clear cookies.
+        import asyncio
+        from unittest.mock import MagicMock
+
+        from fastapi import Response
+
+        from forze.base.exceptions import CoreException, exc
+        from forze_fastapi.routes.authn import _cookie_logout_endpoint
+        from forze_fastapi.security import AuthnCookieCarrier
+
+        async def runner(_payload: object) -> object:
+            raise exc.infrastructure("session store down")
+
+        endpoint = _cookie_logout_endpoint(AuthnCookieCarrier())(runner, None, "logout")
+
+        with pytest.raises(CoreException, match="session store down"):
+            asyncio.run(endpoint(response=MagicMock(spec=Response)))
+
+    def test_logout_expires_both_cookies(self) -> None:
+        state = MockState()
+        _seed(state)
+        client = self._cookie_client(state)
+        client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+
+        response = client.post("/auth/logout")
+
+        # Idempotent in cookie mode: even with no bound identity (this plain app
+        # runs no security middleware) the dead cookies are cleared, never pinned
+        # to the browser by a 401.
+        assert response.status_code == 204
+        cleared = response.headers.get_list("set-cookie")
+        assert any("forze_access=" in c and ("Max-Age=0" in c or "max-age=0" in c) for c in cleared)
+        assert any(
+            "forze_refresh=" in c and ("Max-Age=0" in c or "max-age=0" in c) for c in cleared
+        )
+
+
+class TestAuthnCookieCarrier:
+    """Direct carrier behavior not reachable through the route flow above."""
+
+    def _carrier(self, **kwargs: object):  # type: ignore[no-untyped-def]
+        from forze_fastapi.security import AuthnCookieCarrier
+
+        return AuthnCookieCarrier(**kwargs)  # type: ignore[arg-type]
+
+    def test_samesite_none_requires_secure(self) -> None:
+        from forze.base.exceptions import CoreException
+
+        with pytest.raises(CoreException, match="SameSite=None"):
+            self._carrier(samesite="none", secure=False)
+
+        self._carrier(samesite="none", secure=True)  # the valid pairing builds
+
+    def test_partial_token_response_sets_only_the_present_cookie(self) -> None:
+        # A refresh-only response (or access-only) must not emit an empty
+        # sibling cookie.
+        from fastapi import Response
+
+        from forze_kits.aggregates.authn import AuthnTokenResponseDTO
+
+        response = Response()
+        self._carrier(secure=False).apply(
+            response, AuthnTokenResponseDTO(refresh_token="r-1", refresh_expires_in=60)
+        )
+        set_cookies = response.headers.getlist("set-cookie")
+        assert any(c.startswith("forze_refresh=") for c in set_cookies)
+        assert not any(c.startswith("forze_access=") for c in set_cookies)
+
+        response = Response()
+        self._carrier(secure=False).apply(
+            response, AuthnTokenResponseDTO(access_token="a-1", access_expires_in=60)
+        )
+        set_cookies = response.headers.getlist("set-cookie")
+        assert any(c.startswith("forze_access=") for c in set_cookies)
+        assert not any(c.startswith("forze_refresh=") for c in set_cookies)
+
+    def test_strip_body_tokens_false_keeps_the_body_intact(self) -> None:
+        from fastapi import Response
+
+        from forze_kits.aggregates.authn import AuthnTokenResponseDTO
+
+        tokens = AuthnTokenResponseDTO(access_token="a-1", refresh_token="r-1")
+        returned = self._carrier(secure=False, strip_body_tokens=False).apply(
+            Response(), tokens
+        )
+
+        assert returned is tokens  # untouched: the declared opt-out of stripping

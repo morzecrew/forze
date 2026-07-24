@@ -91,6 +91,67 @@ def test_fingerprint_cache_get_is_lru_touch() -> None:
     assert registry.get_fingerprint(c) == "fp-c"
 
 
+@pytest.mark.asyncio
+async def test_use_works_on_simple_registry() -> None:
+    # Regression: ``use()`` used to raise "Use is not supported for simple registry",
+    # so a routed client built with the default ``guarded=False`` blew up at runtime
+    # on its first scoped access. It now hands out the client unleased instead.
+    created: list[UUID] = []
+
+    async def _create(tid: UUID) -> str:
+        created.append(tid)
+        return f"client-{tid}"
+
+    registry: TenantClientRegistry[str, str] = TenantClientRegistry(
+        max_entries=2,
+        create=_create,
+        dispose=lambda _c: _async_return(None),
+        guarded=False,
+    )
+    await registry.startup()
+    registry.set_fingerprint(_TID, "fp")
+
+    async with registry.use(_TID) as client:
+        assert client == f"client-{_TID}"
+
+    async with registry.use(_TID) as client:
+        assert client == f"client-{_TID}"
+
+    assert created == [_TID]  # one build, reused across scopes
+
+
+@pytest.mark.asyncio
+async def test_use_works_on_guarded_registry() -> None:
+    registry: TenantClientRegistry[str, str] = TenantClientRegistry(
+        max_entries=2,
+        create=lambda tid: _async_return(f"client-{tid}"),
+        dispose=lambda _c: _async_return(None),
+        guarded=True,
+    )
+    await registry.startup()
+    registry.set_fingerprint(_TID, "fp")
+
+    async with registry.use(_TID) as client:
+        assert client == f"client-{_TID}"
+
+
+@pytest.mark.asyncio
+async def test_get_refused_on_guarded_registry_points_to_use() -> None:
+    # ``get()`` hands out an unleased reference, which would defeat the guarded
+    # registry's drain-after-release contract — the error must say what to call.
+    registry: TenantClientRegistry[str, str] = TenantClientRegistry(
+        max_entries=2,
+        create=lambda tid: _async_return(f"client-{tid}"),
+        dispose=lambda _c: _async_return(None),
+        guarded=True,
+    )
+    await registry.startup()
+    registry.set_fingerprint(_TID, "fp")
+
+    with pytest.raises(CoreException, match="use\\(\\)"):
+        await registry.get(_TID)
+
+
 def test_is_fingerprint_expired() -> None:
     registry: TenantClientRegistry[str, str] = TenantClientRegistry(
         max_entries=4,

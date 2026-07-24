@@ -40,3 +40,25 @@ class PolicyPrincipalEligibilityAdapter(PrincipalEligibilityPort):
 
         if principal is None or not principal.is_active:
             raise exc.authentication("Principal not found")
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True)
+class AllowAllPrincipalEligibilityAdapter(PrincipalEligibilityPort):
+    """Every principal is eligible — the explicit opt-out of the policy-principal gate.
+
+    For token-only deployments with no authz plane: the default
+    :class:`PolicyPrincipalEligibilityAdapter` requires the ``policy_principal``
+    document (and its upsert bookkeeping) to exist purely so authentication can
+    check ``is_active``. A service that has no policy principals opts out here —
+    a *declared* decision (``AuthnDepsModule(eligibility="allow_all")``), never a
+    silent default: with it, deactivating a principal no longer blocks token
+    issuance, so revocation must come from credential lifecycle (session revoke,
+    API-key revoke) alone.
+    """
+
+    async def require_authentication_allowed(self, principal_id: UUID) -> None:
+        del principal_id

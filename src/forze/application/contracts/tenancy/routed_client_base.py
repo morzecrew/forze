@@ -48,6 +48,16 @@ class RoutedTenantClientBase(Generic[C]):
     credentials. For deployments without such a signal, set :attr:`fingerprint_ttl`
     (seconds) to periodically re-resolve credentials and rebuild only when the
     fingerprint actually changed.
+
+    **Auto-rotating / short-lived credentials.** A fingerprint change is a *rebuild*
+    trigger, so the fingerprint must cover exactly the fields the client captures at
+    build time. A provider that mints short-lived tokens (an STS-style token
+    service) must **not** feed the token into the fingerprint — every mint would
+    read as a rotation and tear down a healthy pooled client. Fingerprint the stable
+    identity instead (endpoint, account/workspace, key id) and build the inner
+    client around a dynamic credential callback that fetches the current token per
+    connection or request; the pooled client then refreshes itself, and eviction
+    stays reserved for changes that genuinely require a rebuild.
     """
 
     secrets: SecretsPort
@@ -168,7 +178,17 @@ class RoutedTenantClientBase(Generic[C]):
     # ....................... #
 
     @asynccontextmanager
-    async def _client_scope(self) -> AsyncGenerator[C]:
+    async def client_scope(self) -> AsyncGenerator[C]:
+        """Scoped access to the current tenant's inner client — the public seam.
+
+        Resolves the ambient tenant, refreshes the access fingerprint (rotation
+        detection), and yields the pooled backend client. This is the supported way
+        to run backend calls the routed facade does not wrap; it works in both
+        registry modes, and ``guarded=True`` additionally holds an eviction lease
+        for the scope's lifetime (a concurrent rotation disposes the client only
+        after the scope exits).
+        """
+
         tenant_id = self._require_tenant_id()
         await self.ensure_access_fingerprint(tenant_id)
 
@@ -292,9 +312,15 @@ class StructuredSecretRoutedTenantClientBase(RoutedTenantClientBase[C]):
         """Return the LRU pool dedup key for *creds*.
 
         Build it with :func:`~forze.base.primitives.build_routing_fingerprint`,
-        declaring **every** credential field — including secrets — so that rotating any
-        field (a secret in particular) changes the key. Omitting a secret silently
-        defeats rotation detection: the pool would keep serving the stale client.
+        declaring every credential field **the client captures at build time** —
+        including secrets — so that rotating any captured field changes the key and
+        evicts the stale client. Omitting a captured secret silently defeats
+        rotation detection: the pool would keep serving the stale client.
+
+        The inverse holds for auto-rotating credentials: a field the client re-reads
+        dynamically (a token callback consulted per connection or request) must stay
+        **out** of the fingerprint, or every mint reads as a rotation and rebuilds a
+        healthy client (see the class rotation contract).
         """
 
         raise NotImplementedError

@@ -102,7 +102,18 @@ needs fixed names) skips these routes.
 A **routed client** resolves credentials per `TenantIdentity` and pools
 connections by fingerprint, so tenants that share an endpoint reuse pools. You
 swap it in at [wiring](../writing-operation/wiring.md) time — `RoutedPostgresClient` for
-`PostgresClient` — and the specs and handlers don't change.
+`PostgresClient` — and the specs and handlers don't change. For backend calls the
+routed facade doesn't wrap, `client_scope()` yields the current tenant's pooled
+inner client.
+
+**Credential rotation.** The fingerprint is a *rebuild* trigger: when a tenant's
+stored credentials change, the pooled client is evicted and rebuilt — wire your
+secret store's rotation signal to `evict_tenant()`, or set `fingerprint_ttl` to
+poll. That model fits credentials that change rarely. A provider that mints
+**short-lived tokens** is different: fingerprint only the stable identity
+(endpoint, account, key id) and have the client fetch the current token through a
+callback per connection or request — feeding the token into the fingerprint would
+read every mint as a rotation and tear down a healthy pool.
 
 !!! note "Postgres routed clients"
 

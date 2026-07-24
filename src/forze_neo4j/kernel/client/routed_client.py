@@ -53,6 +53,10 @@ class RoutedNeo4jClient(
         init=False,
     )
     backend: str = attrs.field(default="Neo4j", init=False)
+    guarded: bool = attrs.field(default=True, init=False)
+    """Pinned: the transaction-scope pin (see ``_tx_client``) relies on the guarded
+    registry's eviction lease — a rotation detected mid-scope must drain the opening
+    client only after the scope exits, never dispose it under an open transaction."""
     tenant_required_message: str = attrs.field(
         default="Tenant ID is required for routed Neo4j access",
         init=False,
@@ -131,7 +135,7 @@ class RoutedNeo4jClient(
     # ....................... #
 
     async def health(self) -> tuple[str, bool]:
-        async with self._client_scope() as inner:
+        async with self.client_scope() as inner:
             return await inner.health()
 
     # ....................... #
@@ -180,7 +184,7 @@ class RoutedNeo4jClient(
             # session has NO open transaction (see ``_tx_client``).
             return await pinned.run(query, params, database=database)
 
-        async with self._client_scope() as inner:
+        async with self.client_scope() as inner:
             return await inner.run(query, params, database=database)
 
     # ....................... #
@@ -234,12 +238,12 @@ class RoutedNeo4jClient(
 
         # Pin the scope's tenant AND its resolved client: every statement inside must
         # run on this exact client (see _require_tx_tenant_unchanged / _tx_client; a
-        # None tenant fails in _client_scope). The pool lease below spans the whole
+        # None tenant fails in client_scope). The pool lease below spans the whole
         # scope, so a rotation-driven eviction drains the client only after exit.
         token_tenant = self._tx_tenant.set(self.tenant_provider())
 
         try:
-            async with self._client_scope() as inner:
+            async with self.client_scope() as inner:
                 token_client = self._tx_client.set(inner)
 
                 try:

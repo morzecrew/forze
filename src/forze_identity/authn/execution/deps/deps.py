@@ -50,7 +50,10 @@ from ...adapters import (
 )
 from ...adapters.credential_deactivation import AuthnCredentialDeactivationHelper
 from ...adapters.principal_deactivation import PrincipalDeactivationAdapter
-from ...adapters.principal_eligibility import PolicyPrincipalEligibilityAdapter
+from ...adapters.principal_eligibility import (
+    AllowAllPrincipalEligibilityAdapter,
+    PolicyPrincipalEligibilityAdapter,
+)
 from ...application.specs import (
     api_key_account_spec,
     identity_mapping_spec,
@@ -347,6 +350,21 @@ class ConfigurablePolicyPrincipalEligibility:
         return PolicyPrincipalEligibilityAdapter(
             principal_qry=ctx.doc.query(policy_principal_spec),
         )
+
+
+# ....................... #
+
+
+class ConfigurableAllowAllEligibility:
+    """Build :class:`AllowAllPrincipalEligibilityAdapter` — no documents required."""
+
+    def __call__(
+        self,
+        ctx: ExecutionContext,
+        spec: AuthnSpec,
+    ) -> PrincipalEligibilityPort:
+        _ = ctx, spec
+        return AllowAllPrincipalEligibilityAdapter()
 
 
 # ....................... #

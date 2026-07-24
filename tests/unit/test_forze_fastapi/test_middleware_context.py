@@ -414,7 +414,8 @@ class TestSecurityContextMiddleware:
                 _ = principal_id, requested_tenant_id
                 return TenantIdentity(tenant_id=tid)
 
-        ctx = context_from_deps(Deps.plain(
+        ctx = context_from_deps(
+            Deps.plain(
                 {
                     AuthnDepKey: _TokenAuthFactory(),
                     TenantResolverDepKey: lambda c: _TenantResolver(),
@@ -709,3 +710,104 @@ class TestMiddlewareStackErrorHandling:
         assert response.status_code == 404
         assert response.json() == {"detail": "Document not found"}
         assert response.headers.get(ERROR_CODE_HEADER) == "core.not_found"
+
+
+# ....................... #
+# anonymous_paths: a failing credential downgrades instead of 401ing.
+
+
+class _ExpiredTokenAuthPort:
+    async def authenticate_with_token(self, credentials: object) -> AuthnResult | None:
+        raise exc.authentication("Access token expired", code="token_expired")
+
+
+class _ExpiredTokenAuthFactory:
+    def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> _ExpiredTokenAuthPort:
+        return _ExpiredTokenAuthPort()
+
+
+class _SecretsDownAuthPort:
+    async def authenticate_with_token(self, credentials: object) -> AuthnResult | None:
+        raise exc.infrastructure("Secrets backend unavailable", code="secrets_unavailable")
+
+
+class _SecretsDownAuthFactory:
+    def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> _SecretsDownAuthPort:
+        return _SecretsDownAuthPort()
+
+
+class TestAnonymousPaths:
+    """A present-but-invalid credential must not lock callers out of the routes
+    that exist without one — /auth/login is the route that REPLACES the stale
+    cookie, and it used to 401 before routing."""
+
+    def _middleware(self, downstream: AsyncMock) -> SecurityContextMiddleware:
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: _ExpiredTokenAuthFactory()}))
+
+        return SecurityContextMiddleware(
+            downstream,
+            AuthnRequirement(
+                ingress=[HeaderTokenAuthn(authn_spec=_TOKEN_SPEC, header_name="Authorization")]
+            ),
+            "first_in_order",
+            ctx_dep=lambda: ctx,
+            anonymous_paths=frozenset({"/auth/login"}),
+        )
+
+    def _scope(self, path: str) -> dict[str, object]:
+        return {
+            "type": "http",
+            "path": path,
+            "method": "POST",
+            "headers": [(b"authorization", b"Bearer stale")],
+            "query_string": b"",
+        }
+
+    @pytest.mark.asyncio
+    async def test_failing_credential_downgrades_on_an_anonymous_path(self) -> None:
+        downstream = AsyncMock()
+        mw = self._middleware(downstream)
+
+        await mw(self._scope("/auth/login"), AsyncMock(), AsyncMock())
+
+        downstream.assert_awaited_once()  # anonymous, but the request proceeds
+
+    @pytest.mark.asyncio
+    async def test_failing_credential_still_401s_everywhere_else(self) -> None:
+        downstream = AsyncMock()
+        send = AsyncMock()
+        mw = self._middleware(downstream)
+
+        await mw(self._scope("/api/orders"), AsyncMock(), send)
+
+        downstream.assert_not_awaited()
+        start = next(
+            c.args[0] for c in send.await_args_list if c.args[0]["type"] == "http.response.start"
+        )
+        assert start["status"] == 401
+
+    @pytest.mark.asyncio
+    async def test_infrastructure_failure_is_not_downgraded_to_anonymous(self) -> None:
+        # Only an AUTHENTICATION-kind failure means "this credential is bad".
+        # A secrets-store outage during resolution is a server fault: serving the
+        # anonymous_paths route anonymously would mask the outage as success.
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: _SecretsDownAuthFactory()}))
+        downstream = AsyncMock()
+        send = AsyncMock()
+        mw = SecurityContextMiddleware(
+            downstream,
+            AuthnRequirement(
+                ingress=[HeaderTokenAuthn(authn_spec=_TOKEN_SPEC, header_name="Authorization")]
+            ),
+            "first_in_order",
+            ctx_dep=lambda: ctx,
+            anonymous_paths=frozenset({"/auth/login"}),
+        )
+
+        await mw(self._scope("/auth/login"), AsyncMock(), send)
+
+        downstream.assert_not_awaited()  # the error surfaces; no anonymous execution
+        start = next(
+            c.args[0] for c in send.await_args_list if c.args[0]["type"] == "http.response.start"
+        )
+        assert start["status"] >= 500

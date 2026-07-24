@@ -50,24 +50,29 @@ require_fastapi()
 
 # ....................... #
 
+import inspect
 from collections.abc import Awaitable, Callable, Mapping
 from collections.abc import Set as AbstractSet
 from typing import Any
 
-from fastapi import APIRouter
+import attrs
+from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel
 
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import FrozenOperationRegistry
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKeyNamespace
 from forze_kits.aggregates.authn import AuthnKernelOp
 
+from ..security.cookies import AuthnCookieCarrier
 from ._attach import (
     OperationRunner,
     RouteBinding,
     attach_operation_routes,
     body_endpoint,
     id_endpoint,
+    require_input_type,
     resolve_namespace,
 )
 
@@ -87,6 +92,152 @@ def _no_body_endpoint(
         return await runner(None)
 
     return endpoint
+
+
+# ....................... #
+# Cookie-mode endpoint builders: same operations, token material rides cookies.
+
+
+def _cookie_token_endpoint(cookies: AuthnCookieCarrier) -> Any:
+    """Login-shaped builder: run the op, set/rotate cookies, strip the body."""
+
+    def build(
+        runner: OperationRunner,
+        input_type: type[BaseModel] | None,
+        op: str,
+    ) -> Callable[..., Awaitable[Any]]:
+        dto_type = require_input_type(input_type, op)
+
+        async def endpoint(*, payload: Any, response: Response) -> Any:
+            return cookies.apply(response, await runner(payload))
+
+        endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+            [
+                inspect.Parameter("payload", inspect.Parameter.KEYWORD_ONLY, annotation=dto_type),
+                inspect.Parameter("response", inspect.Parameter.KEYWORD_ONLY, annotation=Response),
+            ]
+        )
+        endpoint.__annotations__ = {"payload": dto_type, "response": Response}
+
+        return endpoint
+
+    return build
+
+
+def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
+    """Refresh builder: the token may ride the cookie instead of the body.
+
+    The body stays accepted (an API client may still send it); absent one, the
+    refresh token comes from the carrier's cookie — the reason a browser can
+    refresh without ever seeing token strings.
+    """
+
+    def build(
+        runner: OperationRunner,
+        input_type: type[BaseModel] | None,
+        op: str,
+    ) -> Callable[..., Awaitable[Any]]:
+        dto_type = require_input_type(input_type, op)
+
+        async def endpoint(*, request: Request, response: Response, payload: Any = None) -> Any:
+            body = payload
+
+            if body is None:
+                token = cookies.read_refresh(request)
+
+                if token is None:
+                    raise exc.authentication(
+                        "No refresh token: the request carried neither a body nor "
+                        f"the {cookies.refresh_cookie!r} cookie.",
+                        code="auth_required",
+                    )
+
+                body = dto_type.model_validate({"refresh_token": token})
+
+            return cookies.apply(response, await runner(body))
+
+        endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+            [
+                inspect.Parameter("request", inspect.Parameter.KEYWORD_ONLY, annotation=Request),
+                inspect.Parameter("response", inspect.Parameter.KEYWORD_ONLY, annotation=Response),
+                inspect.Parameter(
+                    "payload",
+                    inspect.Parameter.KEYWORD_ONLY,
+                    annotation=dto_type | None,
+                    default=None,
+                ),
+            ]
+        )
+        endpoint.__annotations__ = {
+            "request": Request,
+            "response": Response,
+            "payload": dto_type | None,
+        }
+
+        return endpoint
+
+    return build
+
+
+def _cookie_logout_endpoint(cookies: AuthnCookieCarrier) -> Any:
+    """Logout builder: run the op, then expire both cookies.
+
+    Idempotent in cookie mode: with a stale or missing access cookie there is no
+    bound identity and nothing server-side to revoke — but the caller's goal is
+    "end this browser session", and a 401 would leave the dead cookies pinned to
+    the browser. The unauthenticated case clears them and answers 204; every
+    other failure propagates.
+    """
+
+    def build(
+        runner: OperationRunner,
+        input_type: type[BaseModel] | None,
+        op: str,
+    ) -> Callable[..., Awaitable[Any]]:
+        _ = input_type, op
+
+        async def endpoint(*, response: Response) -> Any:
+            from forze.base.exceptions import CoreException
+
+            try:
+                result = await runner(None)
+
+            except CoreException as error:
+                if error.code != "auth_required":
+                    raise
+
+                result = None  # nothing to revoke server-side; still clear below
+
+            cookies.clear(response)
+            return result
+
+        endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+            [
+                inspect.Parameter("response", inspect.Parameter.KEYWORD_ONLY, annotation=Response),
+            ]
+        )
+        endpoint.__annotations__ = {"response": Response}
+
+        return endpoint
+
+    return build
+
+
+def _cookie_bindings(cookies: AuthnCookieCarrier) -> Mapping[str, RouteBinding]:
+    """The action bindings with login/refresh/logout swapped to cookie mode."""
+
+    bindings = dict(_AUTHN_BINDINGS)
+    bindings[AuthnKernelOp.PASSWORD_LOGIN] = attrs.evolve(
+        bindings[AuthnKernelOp.PASSWORD_LOGIN], build=_cookie_token_endpoint(cookies)
+    )
+    bindings[AuthnKernelOp.REFRESH_TOKENS] = attrs.evolve(
+        bindings[AuthnKernelOp.REFRESH_TOKENS], build=_cookie_refresh_endpoint(cookies)
+    )
+    bindings[AuthnKernelOp.LOGOUT] = attrs.evolve(
+        bindings[AuthnKernelOp.LOGOUT], build=_cookie_logout_endpoint(cookies)
+    )
+
+    return bindings
 
 
 # ....................... #
@@ -157,6 +308,7 @@ def attach_authn_routes(
     resource: str | None = None,
     path_overrides: Mapping[AuthnKernelOp | str, str] | None = None,
     exclude_none: bool = True,
+    cookies: AuthnCookieCarrier | None = None,
 ) -> APIRouter:
     """Attach the registered authn operations under *ns* to *router*.
 
@@ -219,6 +371,14 @@ def attach_authn_routes(
     Returns:
         APIRouter: The same *router*, for chaining.
 
+        cookies (AuthnCookieCarrier | None): Cookie mode. When set, ``/login`` and
+            ``/refresh`` set (and rotate) the carrier's HttpOnly cookies and strip
+            token strings from their bodies; ``/refresh`` also accepts a body-less
+            request, reading the refresh token from its cookie; ``/logout`` expires
+            both cookies. Point ``CookieTokenAuthn`` at the carrier's access cookie,
+            and list the login/refresh paths in the security middleware's
+            ``anonymous_paths`` so a stale access cookie cannot 401 them.
+
     Raises:
         CoreException: On a configuration error — an unknown *include*/override
             operation, both or neither of *ns*/*resource*, or a path override that
@@ -230,7 +390,7 @@ def attach_authn_routes(
         registry=registry,
         ns=resolve_namespace(ns, resource),
         ctx_dep=ctx_dep,
-        bindings=_AUTHN_BINDINGS,
+        bindings=_AUTHN_BINDINGS if cookies is None else _cookie_bindings(cookies),
         include=include,
         path_overrides=path_overrides,
         exclude_none=exclude_none,

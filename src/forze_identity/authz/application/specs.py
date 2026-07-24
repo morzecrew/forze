@@ -1,3 +1,12 @@
+"""Document specs for the authz plane.
+
+Backend-agnostic document contracts; backends with a schema enforce the column
+mapping at boot. The canonical Postgres DDL (including ``policy_principal`` —
+the one table the default authn eligibility gate reads;
+``AuthnDepsModule(eligibility="allow_all")`` is the declared opt-out) lives in
+the docs recipe **"Provision identity tables on Postgres"**.
+"""
+
 from forze.application.contracts.document import DocumentSpec
 
 from ..domain.models.bindings import (
