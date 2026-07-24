@@ -181,9 +181,7 @@ async def test_dead_letter_forwards_sealed_envelope_round_trip() -> None:
 
     # Seed one sealed message the way the governed path produces it: through the
     # encrypting command port, under a bound tenant.
-    command = ctx.deps.resolve_configurable(
-        ctx, StreamCommandDepKey, e2e_spec, route=e2e_spec.name
-    )
+    command = ctx.deps.resolve_configurable(ctx, StreamCommandDepKey, e2e_spec, route=e2e_spec.name)
     tenant_id = uuid4()
     with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant_id)):
         await command.append(_TOPIC, _Payload(value="0"), key="k")
@@ -400,9 +398,7 @@ async def test_undecodable_marker_pauses_and_seeks_to_committed() -> None:
     # BUG 1: an UndecodableStreamPayload surfaced by the read path pauses the run
     # (offset left uncommitted) and rewinds to committed, never committing past it.
     port = _PoisonThenEmptyPort()
-    ctx = context_from_deps(
-        Deps.plain({CommitStreamGroupQueryDepKey: (lambda _ctx, _spec: port)})
-    )
+    ctx = context_from_deps(Deps.plain({CommitStreamGroupQueryDepKey: (lambda _ctx, _spec: port)}))
 
     async def handler(_msg: StreamMessage[_Payload]) -> None:  # pragma: no cover
         raise AssertionError("handler must not run on a decode-poison marker")
@@ -464,3 +460,57 @@ async def test_draining_refusal_stops_without_dead_lettering() -> None:
     # the refused message and the tail stay uncommitted — a fresh run redelivers
     redelivered = await query.read("g", "c", [_TOPIC])
     assert [m.payload.value for m in redelivered] == ["1", "2"]
+
+
+@pytest.mark.asyncio
+async def test_non_draining_core_exception_retries_then_dead_letters() -> None:
+    # A CoreException with any other code is an ordinary handler failure: it burns
+    # attempts and follows the poison ladder — only the draining code short-circuits.
+    from forze.base.exceptions import exc
+
+    ctx, producer, admin, query, state = _harness()
+    await admin.ensure_group("g", [_TOPIC], start=OffsetReset.EARLIEST)
+    await _seed(producer, 1)
+
+    attempts = 0
+
+    async def handler(_msg: StreamMessage[_Payload]) -> None:
+        nonlocal attempts
+        attempts += 1
+        raise exc.conflict("busy", code="not_draining")
+
+    result = await _consumer(handler, dlq_stream="orders.dlq", max_attempts=2).run(
+        ctx, timeout=_IDLE
+    )
+
+    assert attempts == 2  # retried, unlike a draining refusal
+    assert result.dead_lettered == 1
+    assert len(state.streams[_TOPIC]["orders.dlq"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_core_exception_escaping_process_one_propagates_unless_draining() -> None:
+    # The batch loop's draining handler must NOT absorb other CoreExceptions that
+    # escape _process_one — anything else is crash-shaped and belongs to the
+    # supervised restart, not to the stop-and-rewind path.
+    from unittest.mock import AsyncMock, patch
+
+    from forze.base.exceptions import exc
+    from forze_kits.integrations.consumer.commit_stream_runner import (
+        CommitStreamGroupConsumer as _Consumer,
+    )
+
+    ctx, producer, admin, query, _state = _harness()
+    await admin.ensure_group("g", [_TOPIC], start=OffsetReset.EARLIEST)
+    await _seed(producer, 1)
+
+    async def handler(_msg: StreamMessage[_Payload]) -> None:  # pragma: no cover — patched out
+        return None
+
+    boom = exc.infrastructure("store down", code="not_draining")
+
+    with (
+        patch.object(_Consumer, "_process_one", AsyncMock(side_effect=boom)),
+        pytest.raises(CoreException, match="store down"),
+    ):
+        await _consumer(handler).run(ctx, timeout=_IDLE)

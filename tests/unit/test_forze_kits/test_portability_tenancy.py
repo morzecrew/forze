@@ -26,6 +26,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionRuntime
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, Document, ReadDocument
+from forze_kits.dto import ImportTimestamps
 from forze_kits.integrations.portability import (
     UNTENANTED,
     ArchiveSealer,
@@ -59,7 +60,10 @@ class _NoteRead(ReadDocument):
     body: str
 
 
-class _NoteCreate(BaseDTO):
+class _NoteCreate(ImportTimestamps):
+    # ImportTimestamps: the app-side requirement for faithful timestamps on import —
+    # without it the target re-mints created_at/last_update_at and the round-trip
+    # harness (correctly) reports the documents as diverged.
     body: str
 
 
@@ -582,7 +586,9 @@ async def test_deleted_tenant_section_imports_as_success_without_the_anchor(
 
     archive = tmp_path / "archive"
     async with source.scope():
-        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2]))
+        await export_archive(
+            source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2])
+        )
 
     _drop_tenant_section(archive, _T2)
 
@@ -600,7 +606,9 @@ async def test_expect_tenants_refuses_a_deleted_tenant_section(tmp_path: Path) -
 
     archive = tmp_path / "archive"
     async with source.scope():
-        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2]))
+        await export_archive(
+            source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2])
+        )
 
     _drop_tenant_section(archive, _T2)
 
@@ -617,7 +625,9 @@ async def test_expect_tenants_passes_an_untampered_archive(tmp_path: Path) -> No
 
     archive = tmp_path / "archive"
     async with source.scope():
-        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2]))
+        await export_archive(
+            source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2])
+        )
 
     target = _runtime(MockState())
     async with target.scope():
@@ -635,7 +645,9 @@ async def test_expect_tenants_refuses_an_unexpected_extra_section(tmp_path: Path
 
     archive = tmp_path / "archive"
     async with source.scope():
-        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2]))
+        await export_archive(
+            source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2])
+        )
 
     target = _runtime(MockState())
     async with target.scope():
@@ -650,9 +662,155 @@ async def test_expect_tenants_untenanted_refuses_tenant_sections(tmp_path: Path)
 
     archive = tmp_path / "archive"
     async with source.scope():
-        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2]))
+        await export_archive(
+            source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2])
+        )
 
     target = _runtime(MockState())
     async with target.scope():
         with pytest.raises(CoreException, match="untenanted"):
             await import_archive(target, archive, expect_tenants="untenanted")
+
+
+# ....................... #
+# The round-trip trust harness over the tenanted full-system shape
+
+
+@pytest.mark.asyncio
+async def test_tenanted_full_scope_roundtrip_compares_real_projections(tmp_path: Path) -> None:
+    # The harness used to reduce a tenanted archive to two EMPTY projections (its
+    # prefixes matched only the untenanted layout) and compare them vacuously
+    # equal, ignoring counters outright. This drives the mock↔mock round-trip over
+    # two tenant partitions with documents AND counters and requires the verdict to
+    # rest on populated, section-qualified maps.
+    from forze_kits.integrations.portability.conformance import (
+        _archive_projection,  # pyright: ignore[reportPrivateUsage]
+        run_export_import_roundtrip,
+    )
+
+    source = _runtime(MockState())
+    target = _runtime(MockState())
+
+    async def seed(ctx: Any) -> None:
+        for tenant, count, sequence in ((_T1, 2, 100), (_T2, 3, 999)):
+            with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+                for index in range(count):
+                    await ctx.document.command(NOTE_SPEC).ensure(
+                        uuid4(), _NoteCreate(body=f"{tenant}:{index}")
+                    )
+
+                await ctx.counter(INVOICES).reset(sequence)
+
+    async with source.scope(), target.scope():
+        outcome = await run_export_import_roundtrip(
+            source.get_context(),
+            target.get_context(),
+            source.spec_registry,
+            seed=seed,
+            workdir=tmp_path,
+            scope=FullScope(quiesce=_ATTESTED, tenants=[_T1, _T2]),
+        )
+
+    assert outcome.lossless
+    assert outcome.counters_match
+    assert outcome.exported == outcome.imported == outcome.reexported == 5
+
+    # non-vacuous by construction: the projection holds section-qualified planes
+    projection = await _archive_projection(tmp_path / "a")
+    assert set(projection.documents) == {f"tenants/{_T1}/notes", f"tenants/{_T2}/notes"}
+    assert set(projection.counters) == {f"tenants/{_T1}/invoices", f"tenants/{_T2}/invoices"}
+    assert all(projection.documents.values())  # populated, not empty maps
+
+
+@pytest.mark.asyncio
+async def test_archive_projection_reduces_graph_files_by_canonical_row(tmp_path: Path) -> None:
+    # Graph rows carry no single natural id, so the projection keys them by their
+    # canonical serialization — this pins the plane the harness previously ignored.
+    import gzip
+    import json as _json
+
+    from forze_kits.integrations.portability.conformance import (
+        _archive_projection,  # pyright: ignore[reportPrivateUsage]
+    )
+    from forze_kits.integrations.portability.manifest import ArchiveFile, Manifest, ScopeManifest
+
+    archive = tmp_path / "archive"
+    nodes_rel = "graph/social/nodes/user.jsonl.gz"
+    edges_rel = f"tenants/{_T1}/graph/social/edges/follows.jsonl.gz"
+
+    rows = {
+        nodes_rel: [{"id": "u1", "name": "ada"}],
+        edges_rel: [{"src": "u1", "dst": "u2"}],
+    }
+
+    for rel, content in rows.items():
+        path = archive / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        with gzip.open(path, "wt") as fh:
+            for row in content:
+                fh.write(_json.dumps(row) + "\n")
+
+    manifest = Manifest(
+        forze_version="0.0.0-test",
+        registry_fingerprint="sha256:test",
+        scope=ScopeManifest(kind="full", tenants=[_T1]),
+        consistency="fuzzy",
+        files=[ArchiveFile(path=rel, sha256="", rows=1) for rel in rows],
+    )
+    (archive / "manifest.json").write_text(manifest.model_dump_json())
+
+    projection = await _archive_projection(archive)
+
+    # the ``graph/`` marker is stripped: keys are section-qualified module paths
+    assert set(projection.graphs) == {
+        "social/nodes/user",
+        f"tenants/{_T1}/social/edges/follows",
+    }
+    assert list(projection.graphs["social/nodes/user"].values()) == rows[nodes_rel]
+
+
+# ....................... #
+# expect_tenants edge shapes
+
+
+@pytest.mark.asyncio
+async def test_expect_tenants_is_refused_for_a_per_tenant_archive(tmp_path: Path) -> None:
+    source = _runtime(MockState())
+    await _seed(source)
+
+    archive = tmp_path / "archive"
+    async with source.scope():
+        await export_archive(source, archive, scope=TenantScope(tenant_id=_T1))
+
+    target = _runtime(MockState())
+    async with target.scope():
+        with pytest.raises(CoreException, match="per-tenant"):
+            await import_archive(target, archive, tenant=_T1, expect_tenants=(_T1,))
+
+
+@pytest.mark.asyncio
+async def test_expect_tenants_untenanted_passes_an_untenanted_archive(tmp_path: Path) -> None:
+    # tenant-agnostic routes: an UNTENANTED walk must actually run unbound
+    def _untenanted_runtime() -> ExecutionRuntime:
+        return build_runtime(
+            MockDepsModule(state=MockState()),
+            specs=SpecRegistry().register(NOTE_SPEC).register(INVOICES),
+            allow_unregistered=True,
+        )
+
+    source = _untenanted_runtime()
+
+    archive = tmp_path / "archive"
+    async with source.scope():
+        ctx = source.get_context()
+        await ctx.document.command(NOTE_SPEC).ensure(uuid4(), _NoteCreate(body="solo"))
+        await export_archive(
+            source, archive, scope=FullScope(quiesce=_ATTESTED_UNTENANTED, tenants=UNTENANTED)
+        )
+
+    target = _untenanted_runtime()
+    async with target.scope():
+        result = await import_archive(target, archive, expect_tenants="untenanted")
+
+    assert result.total_imported == 1  # the anchor confirmed; the import ran
