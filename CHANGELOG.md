@@ -11,192 +11,168 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Identity & authn ergonomics** (from downstream adoption feedback)
 
-- **Cookie-mode authn routes** — new `AuthnCookieCarrier` (HttpOnly, Secure/SameSite, per-cookie paths, `Max-Age` from the token lifetimes) wired via `attach_authn_routes(cookies=…)`: `/login` and `/refresh` set and rotate the cookies and strip token strings from bodies, `/refresh` reads the token from its cookie when the body is absent, and `/logout` expires both — idempotently, so a stale access cookie can never pin a dead session.
-- **`SecurityContextMiddleware(anonymous_paths=…)`** — exact paths where a present-but-invalid credential binds no identity instead of 401ing before routing (a stale access cookie no longer locks callers out of `/login` itself); only authentication-kind failures downgrade — infrastructure/configuration errors still return the error response.
-- **`AuthnDepsModule(eligibility="allow_all")`** — the declared opt-out of the policy-principal gate for token-only deployments with no authz plane; the default routed registration was previously non-overridable.
-- **Canonical identity-plane DDL** — a new docs recipe ("Provision identity tables on Postgres") ships the exact DDL the startup schema validation enforces, so migrations are copied, not reverse-engineered; the backend-agnostic spec modules point at it instead of embedding one backend's DDL.
-- **Self-hosted durable→registry bridge** — `operation_durable_handler` / `register_operation_functions` give `DurableFunctionSpec.operation` the same auto-bridging on the self-hosted tier that Inngest already had: stored JSON validated into the args type, dispatched through `run_operation`; malformed input is a clean precondition and a non-JSON output is refused at the bridge (`durable_output_invalid`).
-- **Routed-client ergonomics** — the tenant-scoped accessor is now public (`client_scope()`, replacing the protected `_client_scope`) and works in both registry modes (no more runtime "Use is not supported for simple registry"); `RoutedNeo4jClient` pins `guarded=True`; docs cover the rotating-credential pattern (fingerprint stable identity only, fetch short-lived tokens via a client callback).
+- **Cookie-mode authn routes** — `AuthnCookieCarrier` via `attach_authn_routes(cookies=…)`: login/refresh set and rotate HttpOnly cookies and strip token strings from bodies, refresh falls back to its cookie, logout expires both idempotently.
+- **`SecurityContextMiddleware(anonymous_paths=…)`** — exact paths where an authentication-kind failure binds no identity instead of 401ing before routing; other failure kinds still return the error response.
+- **`AuthnDepsModule(eligibility="allow_all")`** — declared opt-out of the policy-principal gate for token-only deployments with no authz plane; unknown values are refused at wiring.
+- **Identity DDL recipe** — "Provision identity tables on Postgres" documents the exact DDL startup schema validation enforces; the backend-agnostic spec modules point at it.
+- **Self-hosted durable→registry bridge** — `operation_durable_handler` / `register_operation_functions` auto-bridge `DurableFunctionSpec.operation` like the Inngest tier: malformed stored input is a clean precondition (`durable_input_invalid`), a non-JSON output is refused at the bridge (`durable_output_invalid`).
+- **Routed-client ergonomics** — the tenant-scoped accessor is now public (`client_scope()`, replacing the protected `_client_scope`) and works in both registry modes; `RoutedNeo4jClient` pins `guarded=True`; the rotating-credential pattern is documented (fingerprint stable identity only; fetch short-lived tokens via a client callback).
 
 **Inference seam** — typed model invocation behind one port; whether the model is a local artifact, a served endpoint or a cloud runtime is a wiring fact.
 
-- Handlers call `ctx.inference.model(spec)` for single, batch (all-or-nothing) or streaming prediction. It is a read-plane port, so a CQRS query can hold it; a backend response that does not match the declared output type is refused at the boundary rather than handed on.
-- Backends: a local adapter whose loader runs off the event loop and is warmed fail-closed at boot, a programmable mock, and remote adapters for KServe-V2/MLflow over HTTP and for SageMaker (extras `inference-http`, `inference-sagemaker`). Capabilities are declared per backend and unsupported features fail closed.
-- Upstream error bodies are withheld from raised errors and from logs (only status, size, and the container's log pointer are recorded); an upstream 401/403 and a failing model container classify as infrastructure, not caller errors. SageMaker pins botocore retries to a single attempt unless configured explicitly (`invoke_endpoint` is metered and non-idempotent); the `config` knob is on the client, the lifecycle hook, `sagemaker_inference_lifecycle_step`, and `RoutedSageMakerRuntimeClient` (applied to every tenant's client).
-- The local adapter's `serialize_calls` lock is awaited on the loop before dispatch, so a waiting prediction holds no slot in the shared CPU pool and cancels cleanly. The mock accepts per-route `capabilities=` mirroring a real backend's declared surface and enforces them (batch cap, stream refusal), so capability gates fail against the oracle where production would; the full-surface default is unchanged.
-- Remote wiring refuses to build until data egress is explicitly acknowledged, and honours all four tenant-isolation tiers — `dedicated` requires a routed client with per-tenant credentials.
-- Simulation value capture masks inference inputs by default; any spec type can now declare its own sensitive capture fields.
+- Handlers call `ctx.inference.model(spec)` for single, batch (all-or-nothing) or streaming prediction; a read-plane port, output validated against the declared type at the boundary.
+- Backends: local (off-loop loader, fail-closed warmup), programmable mock (per-route `capabilities=`), KServe-V2/MLflow over HTTP and SageMaker (extras `inference-http`, `inference-sagemaker`); per-backend capabilities fail closed.
+- Remote wiring requires an explicit data-egress acknowledgement and honours all four tenant-isolation tiers (`dedicated` needs a routed client). Upstream error bodies are withheld from errors and logs; upstream 401/403 and failing containers classify as infrastructure. SageMaker pins botocore retries to one attempt unless configured (`config` on client, lifecycle hooks, and `RoutedSageMakerRuntimeClient`).
+- Simulation value capture masks inference inputs by default; spec types can declare their own sensitive capture fields.
 
 **Portability** (`forze_kits.integrations.portability`) — carry an application's system-of-record state to any other wired backend.
 
-- `export_archive` / `import_archive` move the document, blob, graph and counter planes through a backend-agnostic archive. Ids are preserved and revisions reset; import fails closed on version, fingerprint or checksum mismatch.
-- `migrate` fuses the same pipelines port-to-port: no artifact, and the target re-seals fields under its own keys.
-- Scope is declared, never inferred — one tenant or the whole system. Claiming a quiesced export requires an attested quiesce report, and per-tenant exports leave identity and credential specs out unless asked for.
-- Archives are plaintext by construction; passing a sealer encrypts one under a KMS-wrapped per-archive key. Gzip by default, zstd available via the `zstd` extra.
+- `export_archive` / `import_archive` move the document, blob, graph and counter planes through a backend-agnostic archive; ids preserved, revisions reset, import fails closed on version/fingerprint/checksum mismatch.
+- `migrate` fuses the same pipelines port-to-port with no artifact; the target re-seals fields under its own keys.
+- Scope is declared, never inferred (one tenant or the whole system); a quiesced claim requires an attested report, and per-tenant exports omit identity/credential specs unless asked.
+- Archives are plaintext unless a sealer is passed (KMS-wrapped per-archive key); gzip by default, zstd via the `zstd` extra.
 
 **Export foundations** — every plane an application binds is enumerable, quiescible and streamable; a portable export refuses anything undeclared.
 
-- **Spec inventory** — applications register their specs, and `build_runtime` reconciles that inventory against the wired deps so an unbound or unregistered plane surfaces at startup. Identity and aggregate kits contribute their own specs. A registry fingerprint hashes the app's portable shape as a drift signal, not a gate.
-- **Quiesce** — `quiesce()` stops admission, waits for in-flight work, then polls the outbox, durable and stream-group planes to rest, returning settled and attested verdicts. Run without closing the gate it is a health check that cannot attest.
-- **Outbox and counter observability** — read-only admin ports report outbox depth, undrained state and oldest pending age, and enumerate counter partitions; both are safe for a CQRS query to hold.
-- **Counter backends** — Postgres, Mongo and Firestore join Redis. Counter operations never join the caller's transaction, which is **breaking** for custom implementations of the three client ports; Postgres additionally needs an app-migrated counter table.
-- **Graph streaming reads** — capability-gated keyset streaming of vertices and edges (Neo4j, mock), failing closed where unsupported. **Breaking** for custom graph query ports: two new protocol methods.
-- **Search-index rebuild** — an idempotent keyset-paged backfill that upserts live rows and removes soft-deleted ones, available standalone or on an aggregate kit.
-- **Relay drain and provenance** — the outbox relay can opt into draining on shutdown, and analytics specs declare whether they are projected or system-of-record so an export can refuse to carry a plane that cannot be reproduced.
-- **Tenant enumeration** — tenant management pages every tenant with a total, independent of membership.
+- **Spec inventory** — apps register their specs and `build_runtime` reconciles them against the wired deps at startup; identity and aggregate kits contribute theirs; a registry fingerprint is a drift signal, not a gate.
+- **Quiesce** — `quiesce()` stops admission, waits out in-flight work, polls outbox/durable/stream-group planes to rest, and returns settled/attested verdicts; without closing the gate it is a health check that cannot attest.
+- **Observability & enumeration** — read-only admin ports for outbox depth/undrained/oldest-pending and counter partitions (safe for a CQRS query); tenant management pages every tenant with a total, independent of membership.
+- **Counter backends** — Postgres, Mongo and Firestore join Redis. Counter operations never join the caller's transaction — **breaking** for custom implementations of the three client ports; Postgres needs an app-migrated counter table.
+- **Graph streaming reads** — capability-gated keyset streaming of vertices and edges (Neo4j, mock). **Breaking** for custom graph query ports: two new protocol methods.
+- **Search-index rebuild** — idempotent keyset-paged backfill (upserts live rows, removes soft-deleted), standalone or on an aggregate kit.
+- **Relay drain and provenance** — the outbox relay can drain on shutdown; analytics specs declare projected vs system-of-record so an export can refuse an unreproducible plane.
 
 **Realtime operational hardening** — the egress plane (stream → gateway → Socket.IO) reaches the durable plane's operational bar.
 
-- **Supervised loops** — a shared background-loop runner with jittered restart backoff and a consecutive-crash ceiling now underpins the realtime loops. **Breaking** for imports of `BackgroundLoopControl`, which moved out of `forze_kits.lifecycle` (unreleased).
-- **Retention and trim** — realtime streams can be capped, and a supervised trim removes only entries every group both delivered and acked.
-- **Delivery guards and depth** — a poison ceiling bounds redelivery of a stuck signal (default 5), and group depth is readable and quiescible.
-- **Mailbox durability** — an age sweep bounds mailbox growth and prunes idle device cursors, stored signal bodies can be sealed at rest (sealing the replay index is refused), and the in-memory mailbox caps entries per principal.
-- **Perimeter and tenancy** — the WebSocket route takes an Origin allowlist and enforces credential expiry continuously, a built-in reauth command refreshes it for the same principal and tenant, and an untenanted signal is dropped rather than broadcast to the global room.
-- **Observability and crash conformance** — gateway and backplane stats with OTel instrumentation, bridging under the producer's trace context, plus a DST conformance run for gateway crash delivery against the mock or a real Redis stream.
+- **Supervised loops** — shared background-loop runner (jittered restart backoff, consecutive-crash ceiling) under all realtime loops. **Breaking**: `BackgroundLoopControl` moved out of `forze_kits.lifecycle` (unreleased).
+- **Retention, trim, delivery guards** — streams can be capped with a supervised trim of delivered+acked entries; a poison ceiling bounds redelivery (default 5); group depth is readable and quiescible.
+- **Mailbox durability** — age sweep bounds growth and prunes idle device cursors; stored bodies can be sealed at rest (sealing the replay index is refused); the in-memory mailbox caps entries per principal.
+- **Perimeter and tenancy** — WebSocket Origin allowlist, continuous credential-expiry enforcement with a built-in same-principal reauth command; an untenanted signal is dropped, not broadcast globally.
+- **Observability and crash conformance** — gateway/backplane stats with OTel instrumentation under the producer's trace context; DST conformance run for gateway crash delivery (mock or real Redis stream).
 
 **Realtime transports & client contract** — three transports (Socket.IO, SSE, raw WebSocket), one versioned wire contract.
 
-- **Versioned wire protocol** — the envelope, cumulative ack and handshake are now normatively documented, and every transport negotiates a protocol version at connect, refusing one it does not support.
-- **Transport-neutral kernel** — mailbox and cursor seams, replay/ack helpers, the client-key ladder and presence move into the core realtime integration; `forze_socketio` re-exports every established name unchanged.
-- **SSE and raw WebSocket egress** — both offer replay plus live tail; SSE resumes from `Last-Event-ID` and acks over POST, while the WebSocket route adds governed command dispatch with per-frame idempotency, deadline budgets, and in-flight and frame-size bounds. Topic subscriptions are authorized fail-closed.
-- **Fail-closed WebSocket scopes** — the middlewares refuse raw WebSocket scopes unless the exact mounted path is allowlisted, reconciled at startup. **Breaking** for apps mounting raw WebSocket routes behind them.
-- **AsyncAPI export** — the realtime catalog renders as an AsyncAPI 3 document, servable like the OpenAPI one for client codegen.
+- **Versioned wire protocol** — envelope, cumulative ack and handshake normatively documented; every transport negotiates the protocol version at connect and refuses unsupported ones.
+- **Transport-neutral kernel** — mailbox/cursor seams, replay/ack helpers, client-key ladder and presence move into the core realtime integration; `forze_socketio` re-exports every established name unchanged.
+- **SSE and raw WebSocket egress** — replay plus live tail on both; SSE resumes from `Last-Event-ID` and acks over POST; the WebSocket route adds governed command dispatch (per-frame idempotency, deadline budgets, in-flight/frame-size bounds); topic subscriptions authorize fail-closed.
+- **Fail-closed WebSocket scopes** — middlewares refuse raw WebSocket scopes unless the exact mounted path is allowlisted. **Breaking** for apps mounting raw WebSocket routes behind them.
+- **AsyncAPI export** — the realtime catalog renders as an AsyncAPI 3 document, servable like the OpenAPI one.
 
 **Mock field-encryption conformance** — `forze_mock` runs the real field-encryption path on every field plane.
 
-- **Synchronous key seam** — opt-in synchronous twins of the key-management and directory ports, for computation-only key backends. Implemented by the mock and the shipped directories only, never a real KMS, and they keep the same key-ownership guard as the async path.
-- **Every mock field plane seals** — document, graph, search (including hub/federated and snapshots), analytics and procedures resolve the same fail-closed encrypting codecs as real backends, with decrypt-on-read, searchable-equality rewriting and cross-tenant key refusal. **Behavior change** for mock suites asserting raw stored ciphertext; text queries no longer match sealed content.
+- **Synchronous key seam** — opt-in synchronous twins of the key-management and directory ports for computation-only key backends (mock and shipped directories only, never a real KMS); same key-ownership guard as the async path.
+- **Every mock field plane seals** — document, graph, search (hub/federated, snapshots), analytics and procedures resolve the same fail-closed encrypting codecs as real backends. **Behavior change** for mock suites asserting raw stored ciphertext; text queries no longer match sealed content.
 
 ### Changed
 
 **Breaking — graph**
 
-- **An edge kind identified by its endpoints now enforces that identity** — at most one edge per endpoint pair, so creating a second one conflicts instead of quietly laying a parallel edge. **Migration:** kinds that legitimately allow parallel edges declare a key field and identify by it. Ensure, update and keyed kinds are unaffected.
+- **An edge kind identified by its endpoints now enforces that identity** — at most one edge per endpoint pair; a second create conflicts. **Migration:** kinds that allow parallel edges declare a key field and identify by it; ensure/update/keyed kinds unaffected.
 
-- **Graph module specs are validated at construction** — a duplicate kind name, an endpoint naming an unknown node kind, or a key field missing from its read model now fails at build rather than at first use.
+- **Graph module specs are validated at construction** — duplicate kind names, endpoints naming unknown node kinds, or a key field missing from its read model fail at build, not first use.
 
 **Behavior**
 
-- **Background loops stop gracefully instead of being cancelled** — kits loops register per scope and shutdown stops each between units of work; consumers accept a stop signal, and a commit-stream consumer commits processed offsets even when cancelled mid-batch.
+- **Background loops stop gracefully instead of being cancelled** — kits loops register per scope and stop between units of work; consumers accept a stop signal; a commit-stream consumer commits processed offsets even when cancelled mid-batch.
 
-- **The realtime loops join them, supervised** — the gateway, presence heartbeat and identity-expiry sweep restart on crash with jittered backoff and register as drainable, and each tenant's loop is supervised independently. **Breaking** for custom signal sources, which must accept a stop signal.
+- **The realtime loops join them, supervised** — gateway, presence heartbeat and identity-expiry sweep restart on crash with jittered backoff and register as drainable, per-tenant loops independently. **Breaking** for custom signal sources: they must accept a stop signal.
 
-- **Realtime gateway defaults harden** — emits time out after 5 seconds instead of hanging unbounded, and a realtime stream route declaring an encryption tier is refused at start rather than silently unsupported.
+- **Realtime gateway defaults harden** — emits time out after 5 seconds; a realtime stream route declaring an encryption tier is refused at start.
 
-- **Redis pub/sub subscribers reconnect by default** — after a transport error a subscriber resubscribes instead of silently stopping; opt out per client config.
+- **Redis pub/sub subscribers reconnect by default** — a transport error resubscribes instead of silently stopping; opt out per client config.
 
 - **`python-socketio` capped below 6** — the gateway and server builder depend on 5.x constructor surfaces.
 
-- **An outbox relay with no destination is rejected** — naming a transport spec that was never provided now raises at construction instead of quietly dropping that route from the inventory.
+- **An outbox relay with no destination is rejected** — naming a never-provided transport spec raises at construction instead of dropping the route.
 
 ### Fixed
 
 **Persistence tenancy & fidelity**
 
-- **Counter tenancy (Postgres, Mongo, Firestore)** — counters resolve through the bound tenant, so namespace-tier isolation holds, and the spec route is folded into the stored key so two specs sharing a relation no longer merge sequences. An existing pre-route sequence is carried forward rather than restarting at zero.
-- **A contended Firestore counter no longer surfaces a concurrency error** — allocation retries under a budget sized for counter contention instead of the shared optimistic-concurrency default, which gave up while concurrent callers were still queued. Postgres and Mongo allocate atomically and were unaffected.
-- **Mongo history reads scope by tenant** — snapshots are stamped and reads filter strictly on it, matching Firestore and closing a tagged-tier cross-tenant read. A pre-upgrade snapshot carries no tenant, so it is unowned and invisible to every tenant; backfill it on legacy history rows for strict pre-upgrade concurrency continuity.
-- **Listing a missing bucket can read as empty** — opt-in, so the object-list route and a blob-less export no longer fail outright; the default still raises. Object listing also bounds its per-object HEAD fan-out.
-- **Decimal filter values** — the query caster no longer locale-guesses a comma, and a JSON string is accepted as an exact Decimal or datetime range bound, cast per field against the read model; non-finite bounds (`"NaN"`/`"Infinity"`, string or native) are refused on every backend.
-- **Meilisearch Decimal reads are exact** — a shadow field restores the precision the f64 index number rounds away.
-- **Mock graph matches Neo4j on four write-path guards** — deleting a vertex detaches its edges, edges require existing endpoints, creating a duplicate key conflicts, and unknown kinds raise.
+- **Counter tenancy (Postgres, Mongo, Firestore)** — counters resolve through the bound tenant and fold the spec route into the stored key (shared relations no longer merge sequences); a pre-route sequence is carried forward.
+- **Contended Firestore counters no longer surface a concurrency error** — allocation retries under a contention-sized budget; Postgres and Mongo were unaffected.
+- **Mongo history reads scope by tenant** — snapshots are stamped and reads filter strictly, closing a tagged-tier cross-tenant read. **Migration:** a pre-upgrade snapshot carries no tenant and is invisible to every tenant; backfill legacy history rows for pre-upgrade concurrency continuity.
+- **Listing a missing bucket can read as empty (opt-in)** — the default still raises; object listing bounds its per-object HEAD fan-out.
+- **Decimal filter values** — no locale-guessed commas; JSON strings accepted as exact Decimal/datetime range bounds cast per field; non-finite bounds (`"NaN"`/`"Infinity"`) refused on every backend.
+- **Meilisearch reads and filters match the shared seam** — filters validate operator-field fit and cast string ordering bounds to the field's scalar family (no lexical `price < "5"`; `"NaN"` refused); exact counts honor `attributes_to_search_on`; Decimal reads keep an exact-value shadow through plain and projected paths; `merge="rrf"` sorts only tie-break the fused score (sort-primary = `merge="federation"`); the filter renderer's `read_model` is now required.
+- **Mock graph matches Neo4j on four write-path guards** — delete detaches edges, edges require existing endpoints, duplicate keys conflict, unknown kinds raise.
 
 **Portability, quiesce & inventory**
 
-- **A full-system scope must declare its tenant dimension** (**breaking**) — there is no default; a full export or migrate walks each declared tenant bound and writes one archive section per tenant (archive format 2), counters included, so no tenant's sequences restart at zero.
-- **Import confirms the target tenant** (**breaking**) — a per-tenant archive must be imported against an explicit tenant. The manifest is cross-checked rather than trusted, and sealed frames bind the tenant into their authenticated data, so an edited manifest fails authentication instead of re-homing the payload.
-- **The artifact is cross-checked against the manifest and the target's plan** — an unlisted data file, or a plane the target expects that the manifest never lists, refuses the import; a missing plane no longer imports as an empty one.
-- **Unsealed credential-adjacent exports are refused** — carrying identity or field-encrypted specs requires either a sealer or an explicit plaintext acknowledgement.
-- **Quiesce attests only what it observed** — planes it could not read are now recorded as unobserved and block attestation: unreachable admin ports, catalogued queues and locks with no probe, streams with no named group, and a runtime with no spec inventory.
-- **Attestation is a cross-checkable record, not a boolean** — `QuiesceReport` carries `taken_at` and the tenant partitions it probed, a report with no observed planes never attests, and the export/migrate gate refuses an attestation that does not cover the scope's tenant set (an unbound sweep probes only the default partition). **Breaking** for hand-built reports: `taken_at` is required.
-- **Quiesce flushes the relay it stops** — stopping the in-process outbox relay ended its ticks, so the sweep polled a backlog nothing drained and reported residual regardless of `drain_on_shutdown`. Loops that confirm a clean stop are then asked to publish what is claimable (pubsub destinations excepted; `Drainables.stop_all` now reports which loops stopped, not just how many), sharing the once-per-startup drain guard — which only a completed pass claims, so a drain cut by its budget or cancelled mid-batch re-arms the teardown retry.
-- **Meilisearch filters run the shared typing seam** — the filter renderer now validates operator-field fit and casts string ordering bounds to the field's scalar family (with the finiteness guard), so `price < "5"` no longer compares lexically, `$gt` on a text field is rejected, and a `"NaN"` bound refuses like every other backend.
-- **A full-system import can anchor its tenant set** — `expect_tenants=` on import (mirroring `tenant=` for per-tenant archives) refuses an archive whose declared sections disagree with the target's expected set: a tenant deleted from the manifest and its files otherwise vanished with every checksum passing. The round-trip trust harness is now section-aware and compares counters and graph planes too, so a tenanted full-system comparison can no longer pass vacuously.
-- **The offset-log consumer no longer dead-letters on graceful shutdown** — a drain-gate refusal mid-deploy stops the run with the offset uncommitted for redelivery, instead of burning `max_attempts` on the one-way gate and parking a healthy message as poison (the queue consumer's existing behavior, now on both).
-- **`serialize_calls` survives the invocation deadline** — a deadline-abandoned worker thread is tracked and waited out before the next serialized prediction enters the model, closing the concurrent-access window the deadline path reopened.
-- **Analytics cursor limits use the hardened clamp** — DuckDB and BigQuery cursor pagination now coerce and clamp `limit` like every keyset path (clean 400 on a non-integer, capped instead of `LIMIT 10**20`).
-- **The CLI no longer prints local variables on a crash** — Typer's default pretty exceptions rendered every frame's locals (live credentials included) for an unhandled error; the `forze` CLI keeps the pretty traceback and drops the locals panel.
-- **Postgres schema validation no longer rejects boolean columns and no longer skips optional fields** — `issubclass(bool, int)` made every `bool` field demand an int column (a correct `boolean` column failed startup), and `T | None` (PEP 604) fields were silently never validated; both union spellings now unwrap and exact type matches beat subclass overlap (`bool`/`int`, `datetime`/`date`).
-- **Routed Neo4j transactions pin their client** — a credential rotation mid-scope no longer swaps the resolved client under an open transaction (statements ran auto-committed on the fresh one); the scope completes on the client that opened it and the rotation applies from the next scope. Nested scopes reuse the pinned client.
-- **One serialization boundary for every realtime frame** — new `encode_frame`/`jsonable_frame` kernel helpers back every WS control/egress frame, SSE data line, and Socket.IO error ack: an unencodable payload costs that one frame (a masked error preserving `type`/`cid`/`id`/`event`), never the connection.
-- **Drain-gate classification is one shared predicate** — both consumer runners import `is_draining_refusal` instead of each keeping an inline check, so the queue and offset-log ladders cannot drift on what counts as draining.
-- **Meilisearch closes three read-path gaps** — exact counts honor the same `attributes_to_search_on` narrowing as the rows; projected reads keep the exact-decimal shadow (a money field is no longer f64-rounded through one path only); and `merge="rrf"` sort semantics are pinned and documented: legs stay relevance-ordered on both merge paths and `sorts` only tie-break the fused score (a sort-primary federated search is `merge="federation"`). The filter renderer's `read_model` is now a required argument, and a parity test pins that Meili rejects exactly what the shared seam rejects.
-- **A non-JSON error detail no longer tears down transports** — `ErrorEnvelope.context` is coerced to JSON-renderable values (UUIDs, datetimes, Decimals render as strings), and the WebSocket transport guards control-frame serialization, so one bad ack costs one error frame instead of cancelling every in-flight command on the socket.
-- **Inventory registration refuses conflicting metadata** — a re-registration that disagrees with the first now raises instead of silently winning, an empty registry over bound planes fails reconciliation, and planning an export against an empty inventory is refused.
+- **A full-system scope must declare its tenant dimension** (**breaking**) — no default; a full export/migrate writes one archive section per declared tenant (archive format 2), counters included.
+- **Imports confirm their tenant scope** (**breaking**) — a per-tenant archive imports against an explicit tenant and `expect_tenants=` anchors a full-system archive's section set (a tenant deleted from the manifest no longer vanishes with checksums passing); the manifest is cross-checked and sealed frames bind the tenant into their authenticated data.
+- **The artifact is cross-checked against the manifest and the target's plan** — unlisted data files or expected-but-unlisted planes refuse the import (a missing plane never imports as empty); identity or field-encrypted specs require a sealer or an explicit plaintext acknowledgement.
+- **Quiesce attests only what it observed, as a cross-checkable record** — unreadable planes block attestation; `QuiesceReport` carries `taken_at` (**breaking** for hand-built reports: now required) and the tenant partitions probed, and the export/migrate gate refuses an attestation that does not cover the scope's tenant set.
+- **Quiesce flushes the relay it stops** — cleanly stopped loops publish what is claimable before the sweep (pubsub excepted); an interrupted drain re-arms the teardown retry.
+- **The offset-log consumer no longer dead-letters on graceful shutdown** — a drain-gate refusal stops the run with the offset uncommitted for redelivery instead of parking a healthy message as poison.
+- **`serialize_calls` survives the invocation deadline** — a deadline-abandoned worker is waited out before the next serialized prediction enters the model.
+- **Analytics cursor limits use the hardened clamp** — DuckDB and BigQuery cursor pagination coerce and clamp `limit` like every keyset path.
+- **The CLI no longer prints local variables on a crash** — the pretty traceback stays, the locals panel (live credentials included) is dropped.
+- **Postgres schema validation no longer rejects boolean columns or skips optional fields** — both union spellings (`Optional[T]`, `T | None`) unwrap, and exact type matches beat subclass overlap (`bool`/`int`, `datetime`/`date`).
+- **Routed Neo4j transactions pin their client** — a mid-scope credential rotation no longer swaps the client under an open transaction; the scope completes on the opening client and rotation applies from the next scope.
+- **A non-JSON payload never tears down a transport** — `ErrorEnvelope.context` coerces to JSON-renderable values, and the `encode_frame`/`jsonable_frame` kernel helpers back every WS control/egress frame, SSE data line and Socket.IO error ack: an unencodable payload costs one masked error frame (correlation keys preserved), never the connection.
+- **Inventory registration refuses conflicting metadata** — a disagreeing re-registration raises; an empty registry over bound planes fails reconciliation; exporting against an empty inventory is refused.
 
 **Realtime**
 
-- **An untenanted signal no longer stops the gateway for every tenant** — it is now a per-signal error, parked and bounded by the poison ceiling, rather than a process-terminal configuration verdict.
-- **Cumulative ack could skip — then trim — undelivered mailbox entries** — the replay cap is now a newest-first retention window, always a complete suffix rather than a truncated prefix, and acks clamp to the replay's delivered floor mid-drain.
-- **Node-local presence on a multi-node backplane suppressed every live emit** — the gateway now refuses node-local presence under a pub/sub Socket.IO manager instead of silently dropping emits.
-- **One hostile frame could tear down a WebSocket connection** — a binary frame closes cleanly, and a command result that cannot be serialized becomes an error ack instead of cancelling every in-flight command.
-- **Redis counter reset returned the previous value, not the new one** (**behavior change** for callers relying on the old return); batch allocation now uniformly accepts a size of one and rejects anything smaller on every backend.
-- **A principal in two orgs could wedge the ack path forever** — the per-device cursor id now includes the tenant (it collided across tenants on the shared-table shape, looping find-miss/create-conflict unboundedly), and the compare-and-advance loop is bounded, raising `realtime_cursor_advance_stalled` instead of spinning.
-- **A cap-filled replay no longer lifts the ack clamp** — a replay that stopped at the mailbox cap could let a live-frame ack advance the cursor over the undelivered middle (including siblings sharing the boundary HLC), which the trim then hard-deleted. New `iter_backlog` kernel helper (replaces `has_entries_after`) drains past the cap in bounded rounds and never lets acks claim a partially delivered equal-HLC run — mid-drain too; an unconfirmed SSE/WebSocket drain ends the stream (WS close code 1012) instead, WS acks clamp to the run-proven floor mid-replay, and the `Last-Event-ID` resume is id-anchored on both transports so it no longer skips undelivered entries sharing the resumed id's HLC.
-- **SSE acks require `?device_id=...`** (**behavior change**) — the device-less fallback cursor is shared by every tab of a principal, so one tab's cumulative ack could trim another tab's undelivered backlog. Device-less streams still work via `Last-Event-ID` resume.
+- **An untenanted signal no longer stops the gateway for every tenant** — a per-signal error bounded by the poison ceiling, not a process-terminal verdict.
+- **Cumulative ack could skip — then trim — undelivered mailbox entries** — the replay cap is a newest-first retention window (always a complete suffix), and acks clamp to the delivered floor mid-drain.
+- **Node-local presence on a multi-node backplane suppressed every live emit** — refused under a pub/sub Socket.IO manager instead of silently dropping.
+- **One hostile frame could tear down a WebSocket connection** — a binary frame closes cleanly; an unserializable command result becomes an error ack.
+- **Redis counter reset returned the previous value, not the new one** (**behavior change**); batch allocation uniformly accepts size one and rejects smaller on every backend.
+- **A principal in two orgs could wedge the ack path forever** — the per-device cursor id now includes the tenant, and the compare-and-advance loop is bounded (`realtime_cursor_advance_stalled`).
+- **A cap-filled replay no longer lifts the ack clamp** — the `iter_backlog` kernel helper (replaces `has_entries_after`) drains past the cap in bounded rounds and never lets acks claim a partially delivered equal-HLC run; an unconfirmed drain ends the stream (WS close 1012), and `Last-Event-ID` resume is id-anchored on both transports.
+- **SSE acks require `?device_id=...`** (**behavior change**) — the device-less fallback cursor was shared across a principal's tabs; device-less streams still work via `Last-Event-ID` resume.
 
-**A saga step interrupted at its own commit no longer reports a consistent rollback** — a drain-timeout cancel at a step's transaction commit (`commit_ambiguous`) was read as a step failure: earlier steps were compensated around a possibly-committed step and DOMAIN `saga.step_failed` falsely certified consistency. All three drivers (in-process, durable, Temporal) now compensate nothing and raise infrastructure-kind `saga.step_ambiguous` for operator reconciliation (pinned non-retryable in the Temporal mapping); the durable journal keeps the classification across crash recovery and replay.
+**A saga step interrupted at its own commit no longer reports a consistent rollback** — all three drivers (in-process, durable, Temporal) compensate nothing on `commit_ambiguous` and raise infrastructure-kind `saga.step_ambiguous` for operator reconciliation (non-retryable in the Temporal mapping); the durable journal keeps the classification across recovery and replay.
 
-**`Decimal` is a first-class filter and sort value across the query DSL** — the scalar union omitted it, so the parser rejected an explicit `Decimal` operand and a bare shortcut misrouted to a membership test.
+**`Decimal` is a first-class filter and sort value across the query DSL** — the scalar union omitted it; per-backend symptoms fixed:
 
-- **Postgres** — nested JSON Decimal leaves compared as text, numeric columns round-tripped filter values through `float`, and writing a Decimal into `jsonb` raised; all fixed, and Decimal-annotated array quantifiers now compare numerically for integer and float operands too.
-- **Mongo** — a Decimal filter value was stringified before coercion and so matched nothing (the read-side sibling of the 0.5.0 write fix).
-- **Firestore** — a Decimal field could not be written at all, and UUID and Decimal filter values reached the driver raw; writes and filters now share one coercion.
-- **Mock** — aggregates refused Decimal fields; they now fold in float space.
-- **Meilisearch** — Decimal fields index as JSON numbers, so filters and sorts are numeric rather than lexical (the document plane keeps the exact value). Sealed roots are never converted. Rebuild the index if Decimal fields were indexed from an unreleased build.
-- **Meilisearch filter literals now match the indexed representation** — aware datetimes normalize to UTC on both sides, where a UTC equality filter previously never matched, and an enum operand renders its indexed value.
+- **Postgres** — nested JSON Decimal leaves compared as text, numeric columns round-tripped through `float`, writing Decimal into `jsonb` raised; Decimal-annotated array quantifiers compare numerically.
+- **Mongo** — a Decimal filter value matched nothing (read-side sibling of the 0.5.0 write fix). **Firestore** — Decimal fields could not be written; UUID/Decimal filters reached the driver raw. **Mock** — aggregates refused Decimal fields.
+- **Meilisearch** — Decimal fields index as JSON numbers (numeric, not lexical, filters and sorts); sealed roots never convert. **Migration:** rebuild the index if Decimal fields were indexed from an unreleased build. Filter literals now match the indexed representation (aware datetimes normalize to UTC; enums render their indexed value).
 
-**Streamed object uploads dropped their tags** — multipart completion carries no tagging, so a streamed upload never wrote its tag map while the returned object reported it; tags are now applied after completion.
+**Streamed object uploads dropped their tags** — multipart completion carries no tagging; tags are now applied after completion.
 
-**Sealed fields are refused as filter and sort keys on every backend, including the mock** (**breaking**) — decided from the spec's declaration: filtering a randomized field is refused (searchable fields keep equality), and sorting any sealed field is refused, including a default sort. Such filters and sorts now raise where they previously returned wrong answers.
+**Sealed fields are refused as filter and sort keys on every backend, including the mock** (**breaking**) — filtering a randomized field is refused (searchable fields keep equality), sorting any sealed field is refused including a default sort; previously these returned wrong answers.
 
-**Mock storage refused to create a missing object on unconditional overwrite** — it raised not-found for any absent key, contradicting the port contract and the real S3/GCS adapters. It now creates-or-replaces, and still answers not-found for a *conditional* overwrite of a vanished object.
+**Mock storage refused to create a missing object on unconditional overwrite** — now creates-or-replaces per the port contract (matching S3/GCS); a *conditional* overwrite of a vanished object still answers not-found.
 
-**Mongo could not store a document with a UUID or Decimal field** — such a document could be updated but never created; the write coercion now applies on insert too, and reads convert back exactly.
+**Mongo could not store a document with a UUID or Decimal field** — write coercion now applies on insert too; reads convert back exactly.
 
-**JSON-boundary encoding** — four adapters handed Python-mode maps, holding live UUID, datetime and Decimal objects, to JSON serializers and raised on ordinary payloads. The rule is now documented at the seam; Postgres and ClickHouse keep the Python encode on purpose.
+**JSON-boundary encoding** — four adapters handed Python-mode maps (live UUID/datetime/Decimal) to JSON serializers and raised on ordinary payloads: transactional outbox staging, Meilisearch search-synced writes, BigQuery analytics ingest and Inngest events now encode to JSON at the seam. Postgres and ClickHouse keep the Python encode on purpose.
 
-- **Transactional outbox** — staging such a payload raised; it now encodes to JSON before any backend sees it.
-- **Meilisearch** — every committed write on a search-synced aggregate raised against a real index, since a standard read model carries a UUID and a datetime.
-- **BigQuery analytics ingest** and **Inngest events** — raised or rejected on any of the three.
+**Cross-process fingerprints: sets hashed in iteration order** — **idempotency was live-broken**: a byte-identical retry of a command with a set field was rejected as a payload-hash mismatch. Sets hash order-independently now; search-snapshot and federated-cursor fingerprints fixed with it.
 
-**Cross-process fingerprints: sets hashed in iteration order** — **idempotency was live-broken**, as a command model with a set field hashed differently per replica, so a byte-identical retry was rejected as a payload-hash mismatch. Sets now hash order-independently; search-snapshot and federated-cursor fingerprints are fixed with it.
+**Kafka** — a failed rewind is no longer read as a benign rebalance (an unrestorable consumer is discarded instead of committing past unprocessed records), and a poison marker carries the decoded headers and message type so a forwarded sealed envelope stays decryptable for dead-letter triage.
 
-**Kafka**
+**The log scrubber masks camelCase and PascalCase names** — `dbPwd` and `secretKey=` now mask like their snake_case twins; mid-token runs like `backupwd` stay unmasked.
 
-- **A failed rewind could silently skip records** — every rewind failure was treated as a benign rebalance, so a coordinator error with partitions still held left the position past unprocessed records and then committed past them. The two cases are now told apart and an unrestorable consumer is discarded.
-- **A poison marker no longer drops the record's headers** — it now carries the decoded headers and message type, so a forwarded sealed envelope keeps the ids its authenticated data binds to and stays decryptable for dead-letter triage.
+**A backward keyset page no longer dead-ends navigation** (**behavior change**) — a `before` page landing on the start of the set always carries a forward cursor, and `has_more` reports that same forward answer; every keyset-paging backend.
 
-**The log scrubber masks camelCase and PascalCase names** — a credential masked as `db_pwd` leaked as `dbPwd`, and `secret_key=` masked while `secretKey=` leaked. The key heuristic and the value rule both recognize a case hump now; mid-token runs like `backupwd` stay unmasked as before, and compound-suffix matching is linear-time on hostile text.
+**A rejected MCP tool argument no longer echoes the value back** — masked validation error (`mcp_invalid_arguments`) with field-level errors, independent of the host server's `mask_error_details`.
 
-**A backward keyset page no longer dead-ends navigation** (**behavior change**) — a `before` page landing flush on the start of the set returned no cursor in either direction, stranding the client on a full page with rows still ahead. It now always carries a forward cursor, and `has_more` reports that same forward answer instead of the backward fetch, so the flag and the cursor cannot disagree. Applies to every keyset-paging backend.
+**The search-sync outbox route declares `require_transaction`** — a marker flushed outside a transaction is refused (`core.outbox.flush_outside_transaction`); hand-rolled wiring without `bind_tx()` now fails loudly.
 
-**A rejected MCP tool argument no longer echoes the value back** — invalid arguments raise a masked validation error (`mcp_invalid_arguments`) with field-level errors and the raw input stripped, no longer depending on the host server's `mask_error_details` (which a caller-owned FastMCP does not set).
-
-**The search-sync outbox route declares `require_transaction`** — a marker flushed outside a transaction is refused (`core.outbox.flush_outside_transaction`) instead of silently degrading to a dual-write. The kit already stages in-transaction; hand-rolled wiring that attaches the staging hook without `bind_tx()` now fails loudly.
-
-**Durable search sync works multi-tenant out of the box** (**behavior change**) — `OutboxSearchSync.bind_tenant_from_headers` defaults to `True`, so the consumer binds the tenant its own relay stamped rather than nacking forever; set `False` for the strict posture.
+**Durable search sync works multi-tenant out of the box** (**behavior change**) — `OutboxSearchSync.bind_tenant_from_headers` defaults to `True`; set `False` for the strict posture.
 
 **Permanent dependency faults are no longer retried forever**
 
-- **A deleted or disabled KMS key is classified permanent** (**behavior change**) — AWS, GCP and Yandex map a key state they name outright (not-found, disabled, destroyed) to `CONFIGURATION`, so a commit-stream consumer pauses-and-alerts with `failed > 0` instead of crash-restarting forever, and a queue consumer requeues the affected messages uncounted and keeps consuming (throttled while nothing decrypts), instead of parking the encrypted backlog as poison. Anything ambiguous stays retryable: access-denied, throttling, and any state naming no terminal condition.
-- **The commit-stream supervisor escalates instead of giving up** — a `CONFIGURATION`-kind crash is terminal, while a retryable one is retried indefinitely; new `crash_alert_after` (default 5 min, `None` to never escalate) raises one critical log per incident once it has crashed on every restart for that long. Healthy uptime opens a fresh incident.
+- **A deleted or disabled KMS key is classified permanent** (**behavior change**) — AWS/GCP/Yandex map named terminal key states to `CONFIGURATION`: the commit-stream consumer pauses-and-alerts, the queue consumer requeues uncounted and keeps consuming. Ambiguous states (access-denied, throttling) stay retryable.
+- **The commit-stream supervisor escalates instead of giving up** — retryable crashes retry indefinitely; new `crash_alert_after` (default 5 min, `None` disables) raises one critical log per incident.
 
-**Broker delivery integrity (RabbitMQ, draining)**
+**Broker delivery integrity (RabbitMQ, SQS, draining)**
 
-- **The RabbitMQ pending map leaked on partial ack and after channel recovery** — a channel reopen purges the stale delivery tags, deliveries read on a channel replaced mid-drain are discarded rather than registered against it, and only confirmed acks and nacks are counted and settled.
-- **Draining no longer parks in-flight messages as poison** — a message refused by the drain gate mid-quiesce is requeued without counting as a delivery attempt and the loop stops, so a rolling deploy cannot drive it to the poison ceiling with no handler defect. Terminal nacks can now opt out of delivery counting where the backend tracks it.
-- **A terminal nack no longer wedges an SQS FIFO message group** (**behavior change**) — on a FIFO queue it now retains a copy on the configured poison queue and deletes, rather than blocking the group forever where no redrive policy would ever trim it. Standard queues are unchanged.
-- **SQS honors an uncounted requeue** — `nack(requeue=True, count=False)` replaces the message with a byte-identical copy whose receive count restarts, keeping drain refusals and key-outage redeliveries away from the redrive DLQ. A FIFO queue keeps the order-preserving reset until the count nears its redrive threshold, then copies back under the same message group; without a redrive policy it always resets.
-- **A FIFO poison message is never deleted without being retained** (**behavior change**) — where a retention queue is configured but the copy cannot be sent, the original is kept rather than destroyed and its message group stays blocked until the retention queue recovers. Unconfigured retention still deletes, as before.
+- **The RabbitMQ pending map leaked on partial ack and after channel recovery** — channel reopen purges stale delivery tags; only confirmed acks/nacks are counted and settled.
+- **Draining no longer parks in-flight messages as poison** — a drain-gate refusal requeues without counting a delivery attempt and stops the loop; terminal nacks can opt out of delivery counting.
+- **SQS FIFO poison and requeue handling** (**behavior change**) — a terminal nack retains a copy on the configured poison queue and deletes instead of wedging the group forever (if the copy cannot be sent, the original is kept and the group stays blocked; standard queues unchanged), and `nack(requeue=True, count=False)` restarts the receive count to keep drain refusals and key-outage redeliveries away from the redrive DLQ.
 
 **Graph**
 
-- **A kind could seal its own key field, making its vertices unreachable** — a key field named in its own kind's encryption policy is now refused at spec construction; encrypting an ordinary property is unaffected.
-- **Neo4j: concurrent statements in one transaction no longer race the lazy open** — two statements under one `asyncio.gather` could each begin a transaction, the second orphaning the first (never committed; its session leaked); a scope now opens exactly one transaction.
-- **Neo4j: a routed transaction refuses a tenant change mid-scope** — later statements would run auto-committed on the other tenant's client while the scope committed only the first tenant's work; now fails closed (`neo4j_tx_tenant_conflict`), matching the direct client's database guard.
+- **A kind could seal its own key field, making its vertices unreachable** — refused at spec construction; encrypting ordinary properties is unaffected.
+- **Neo4j transaction-scope integrity** — concurrent statements in one transaction no longer race the lazy open (a scope opens exactly one transaction), and a routed transaction refuses a tenant change mid-scope (`neo4j_tx_tenant_conflict`) instead of running later statements auto-committed on the other tenant's client.
 
-**Meilisearch federation returned ciphertext for sealed fields** — `merge="federation"` now decrypts sealed fields through the same seam as every other read path (the same query returned plaintext under `merge="rrf"`), refuses sealed sort keys, and fails closed when the fused window exceeds the smallest member's `maxTotalHits`.
+**Meilisearch federation returned ciphertext for sealed fields** — `merge="federation"` decrypts through the same seam as every other read path, refuses sealed sort keys, and fails closed when the fused window exceeds the smallest member's `maxTotalHits`.
 
 ## [0.5.0] - 2026-07-13
 
