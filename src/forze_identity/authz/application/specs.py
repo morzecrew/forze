@@ -1,21 +1,10 @@
-"""Document specs for the authz plane — and their canonical Postgres DDL.
+"""Document specs for the authz plane.
 
-Startup schema validation enforces the columns exactly (see the authn specs
-module for the full mapping rule). The policy principal is the one table a
-token-only deployment also needs (the default eligibility gate reads it;
-``AuthnDepsModule(eligibility="allow_all")`` is the declared opt-out)::
-
-    CREATE TABLE authz_policy_principals (
-        id uuid PRIMARY KEY,
-        rev integer NOT NULL,
-        created_at timestamptz NOT NULL,
-        last_update_at timestamptz NOT NULL,
-        kind text NOT NULL,
-        is_active boolean NOT NULL
-    );
-
-The binding/grant specs below map mechanically: every field a column of the
-matching family, ``T | None`` nullable, required ``NOT NULL``.
+Backend-agnostic document contracts; backends with a schema enforce the column
+mapping at boot. The canonical Postgres DDL (including ``policy_principal`` —
+the one table the default authn eligibility gate reads;
+``AuthnDepsModule(eligibility="allow_all")`` is the declared opt-out) lives in
+the docs recipe **"Provision identity tables on Postgres"**.
 """
 
 from forze.application.contracts.document import DocumentSpec

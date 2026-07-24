@@ -1,78 +1,14 @@
-"""Document specs for the authn plane — and their canonical Postgres DDL.
+"""Document specs for the authn plane.
 
-The specs prescribe exact columns, enforced at boot by the Postgres schema
-validation (type and nullability per field). The DDL below is the canonical
-starting point — the same shape forze's own integration fixtures validate
-against; adapt names/indexes to taste, not columns. The durable adapters set
-the precedent of shipping DDL next to the spec; the identity plane deserves
-the same, so nobody reverse-engineers migrations from the models again.
-
-Password accounts (``password_account_spec``)::
-
-    CREATE TABLE authn_password_accounts (
-        id uuid PRIMARY KEY,
-        rev integer NOT NULL,
-        created_at timestamptz NOT NULL,
-        last_update_at timestamptz NOT NULL,
-        principal_id uuid NOT NULL,
-        username text NOT NULL,
-        email text,
-        password_hash text NOT NULL,
-        is_active boolean NOT NULL DEFAULT true
-    );
-
-API-key accounts (``api_key_account_spec``)::
-
-    CREATE TABLE authn_api_key_accounts (
-        id uuid PRIMARY KEY,
-        rev integer NOT NULL,
-        created_at timestamptz NOT NULL,
-        last_update_at timestamptz NOT NULL,
-        principal_id uuid NOT NULL,
-        actor_principal_id uuid,
-        prefix text,
-        hint text,
-        label text,
-        key_hash text NOT NULL,
-        expires_at timestamptz,
-        is_active boolean NOT NULL DEFAULT true
-    );
-
-Sessions (``session_spec``)::
-
-    CREATE TABLE authn_sessions (
-        id uuid PRIMARY KEY,
-        rev integer NOT NULL,
-        created_at timestamptz NOT NULL,
-        last_update_at timestamptz NOT NULL,
-        principal_id uuid NOT NULL,
-        tenant_id uuid,
-        family_id uuid NOT NULL,
-        refresh_digest text NOT NULL,
-        expires_at timestamptz NOT NULL,
-        revoked_at timestamptz,
-        rotated_at timestamptz,
-        replaced_by uuid
-    );
-
-Password resets (``password_reset_spec``)::
-
-    CREATE TABLE authn_password_resets (
-        id uuid PRIMARY KEY,
-        rev integer NOT NULL,
-        created_at timestamptz NOT NULL,
-        last_update_at timestamptz NOT NULL,
-        principal_id uuid NOT NULL,
-        token_digest text NOT NULL,
-        expires_at timestamptz NOT NULL,
-        used_at timestamptz
-    );
-
-The remaining specs in this module follow the same mechanical mapping the
-validator enforces: every model field is a column of the matching family
-(``UUID`` → ``uuid``, ``str`` → ``text``/``varchar``, ``bool`` → ``boolean``,
-``datetime`` → ``timestamptz``, ``int`` → ``int2/4/8``, nested models →
-``jsonb``), ``T | None`` fields nullable, required fields ``NOT NULL``.
+The specs are backend-agnostic document contracts — the same models run on
+Postgres, Mongo, Firestore, or the mock. Backends with a schema enforce the
+column mapping at boot (type family and nullability per field, via the
+backend's schema validation), so provisioning is copy-not-guess: the canonical
+Postgres DDL lives in the docs recipe **"Provision identity tables on
+Postgres"**, which mirrors the shapes forze's own integration tests validate
+against. The mapping rule is mechanical either way: ``UUID`` → ``uuid``,
+``str`` → ``text``, ``bool`` → ``boolean``, ``datetime`` → ``timestamptz``,
+nested models → ``jsonb``; ``T | None`` nullable, required ``NOT NULL``.
 """
 
 from forze.application.contracts.document import DocumentSpec
