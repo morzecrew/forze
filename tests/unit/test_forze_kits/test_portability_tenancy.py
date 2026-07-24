@@ -37,15 +37,18 @@ from forze_kits.integrations.portability import (
     migrate,
 )
 from forze_kits.integrations.portability.planes import plan_export
-from forze_kits.integrations.quiesce import QuiesceReport
 from forze_mock import MockDepsModule, MockKeyManagement, MockRouteConfig
 from forze_mock.state import MockState
+from tests.support.quiesce import attested_report
 
 # ----------------------- #
 
 _T1 = UUID(int=1)
 _T2 = UUID(int=2)
-_ATTESTED = QuiesceReport(planes=(), admission_held=True)
+# covers both declared tenants: the export gate now cross-checks the scope's
+# tenant set against the partitions the sweep actually probed
+_ATTESTED = attested_report(tenants=(_T1, _T2))
+_ATTESTED_UNTENANTED = attested_report()
 
 
 class _NoteDoc(Document):
@@ -217,7 +220,9 @@ async def test_untenanted_declaration_on_a_tenant_aware_deployment_fails_loudly(
     with pytest.raises(CoreException, match="[Tt]enant"):
         async with source.scope():
             await export_archive(
-                source, tmp_path / "archive", scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
+                source,
+                tmp_path / "archive",
+                scope=FullScope(quiesce=_ATTESTED_UNTENANTED, tenants=UNTENANTED),
             )
 
 
@@ -429,9 +434,7 @@ async def test_a_file_belonging_to_no_declared_section_is_refused(tmp_path: Path
 
     archive = tmp_path / "archive"
     async with source.scope():
-        await export_archive(
-            source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1])
-        )
+        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1]))
 
     # A checksummed, manifest-listed file OUTSIDE every declared tenant section: the
     # archive and its manifest disagree on what the scope covers.
@@ -500,9 +503,7 @@ async def test_defensive_guards_refuse_planes_the_registry_does_not_bind(
             )
 
         # a read-only document (no write model) is equally un-importable
-        read_only = SpecRegistry().register(
-            DocumentSpec(name="ghost", read=_NoteRead)
-        ).freeze()
+        read_only = SpecRegistry().register(DocumentSpec(name="ghost", read=_NoteRead)).freeze()
 
         with pytest.raises(CoreException, match="read-only"):
             await importer._import_document(
@@ -532,9 +533,7 @@ async def test_a_manifest_with_duplicate_tenant_sections_is_refused(tmp_path: Pa
 
     archive = tmp_path / "archive"
     async with source.scope():
-        await export_archive(
-            source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1])
-        )
+        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=[_T1]))
 
     manifest_path = archive / "manifest.json"
     tampered = json.loads(manifest_path.read_text())

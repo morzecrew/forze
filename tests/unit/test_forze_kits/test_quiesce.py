@@ -128,9 +128,7 @@ async def test_pending_counts_rows_parked_for_a_future_retry() -> None:
 
     async with runtime.scope():
         ctx = runtime.get_context()
-        ctx.deps.provide(MockStateDepKey).outbox_rows["events"] = [
-            _row(available_at=future)
-        ]
+        ctx.deps.provide(MockStateDepKey).outbox_rows["events"] = [_row(available_at=future)]
 
         admin = ctx.outbox.admin(OUTBOX)
 
@@ -327,9 +325,7 @@ async def test_a_named_outbox_with_no_admin_read_is_unobserved_and_blocks() -> N
     )
 
     async with runtime.scope():
-        report = await quiesce(
-            runtime, outboxes=[OUTBOX], timeout=timedelta(milliseconds=50)
-        )
+        report = await quiesce(runtime, outboxes=[OUTBOX], timeout=timedelta(milliseconds=50))
 
     plane = next(p for p in report.planes if p.name == "outbox:events")
 
@@ -344,9 +340,7 @@ async def test_a_named_outbox_with_no_admin_read_is_unobserved_and_blocks() -> N
 async def test_a_runtime_without_an_inventory_never_attests() -> None:
     # Zero probed routes must never add up to an attested report: without an inventory the
     # sweep cannot enumerate the outbox/queue/stream/lock surface at all.
-    runtime = ExecutionRuntime(
-        deps=DepsRegistry.from_modules(MockDepsModule()).freeze()
-    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
 
     async with runtime.scope():
         report = await quiesce(runtime, timeout=timedelta(milliseconds=50))
@@ -520,12 +514,8 @@ async def test_ack_stream_plane_probes_each_tenant() -> None:
 
         # only the busy tenant's per-tenant stream key holds an undelivered signal
         with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=busy)):
-            command = ctx.deps.resolve_configurable(
-                ctx, StreamCommandDepKey, spec, route=spec.name
-            )
-            await command.append(
-                str(spec.name), RealtimeSignal.of(Audience.topic("t"), "e", {})
-            )
+            command = ctx.deps.resolve_configurable(ctx, StreamCommandDepKey, spec, route=spec.name)
+            await command.append(str(spec.name), RealtimeSignal.of(Audience.topic("t"), "e", {}))
 
         report = await quiesce(
             runtime,
@@ -573,9 +563,7 @@ async def test_ack_stream_plane_not_wired_and_trimmed_unknown_details() -> None:
     # a capped route that evicted undelivered entries → residual with the unknown marker
     capped = ExecutionRuntime(
         deps=DepsRegistry.from_modules(
-            MockDepsModule(
-                routes={str(spec.name): MockRouteConfig(stream_retention_max_entries=1)}
-            )
+            MockDepsModule(routes={str(spec.name): MockRouteConfig(stream_retention_max_entries=1)})
         ).freeze()
     )
     async with capped.scope():
@@ -612,9 +600,7 @@ async def test_a_catalogued_outbox_excluded_from_the_sweep_is_unobserved() -> No
     )
 
     async with runtime.scope():
-        report = await quiesce(
-            runtime, outboxes=[OUTBOX], timeout=timedelta(milliseconds=50)
-        )
+        report = await quiesce(runtime, outboxes=[OUTBOX], timeout=timedelta(milliseconds=50))
 
     states = {plane.name: plane.state for plane in report.planes}
 
@@ -754,3 +740,163 @@ async def test_a_named_commit_stream_group_with_no_admin_is_unobserved() -> None
 
     assert plane.state == "unobserved"
     assert not report.attested
+
+
+@pytest.mark.asyncio
+async def test_quiesce_flushes_the_in_process_relay_it_stopped() -> None:
+    # The realistic default wiring, un-faked: a background relay step with
+    # ``drain_on_shutdown`` at its default (off) and a tick interval far past the
+    # sweep budget. Quiesce stops the loop before watching — which ends its ticks —
+    # so without the explicit flush the sweep would poll a depth nothing drains,
+    # burn its whole budget, and report residual on a backlog the relay it halted
+    # would have delivered.
+    from forze.application.contracts.queue import QueueSpec
+    from forze_kits.integrations.outbox import outbox_relay_background_lifecycle_step
+
+    codec = PydanticModelCodec(_Payload)
+    step = outbox_relay_background_lifecycle_step(
+        outbox_spec=OUTBOX,
+        queue_spec=QueueSpec(name="jobs", codec=codec),
+        interval=timedelta(hours=1),  # never ticks on its own within the sweep
+    )
+    rows = [_row(index=0), _row(index=1)]
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await step.startup(ctx)
+        await asyncio.sleep(0.02)
+
+        ctx.deps.provide(MockStateDepKey).outbox_rows["events"] = rows
+
+        report = await quiesce(
+            runtime,
+            outboxes=[OUTBOX],
+            timeout=timedelta(seconds=2),
+            poll=timedelta(milliseconds=10),
+        )
+
+    assert [row.status for row in rows] == [OutboxStatus.PUBLISHED] * 2
+    assert report.attested
+
+
+@pytest.mark.asyncio
+async def test_a_loop_that_did_not_stop_cleanly_is_not_flushed() -> None:
+    # The flush drains rows on the assumption that nothing else in this process is
+    # claiming the route; a loop that timed out or refused to stop may still be
+    # mid-unit, and flushing it would race its own tick for the same rows. Only a
+    # CONFIRMED clean stop earns a flush — the wedged loop's plane goes residual.
+    flushed: list[str] = []
+
+    class _Loop:
+        def __init__(self, name: str, *, stops_cleanly: bool) -> None:
+            self._name = name
+            self._clean = stops_cleanly
+
+        @property
+        def loop_name(self) -> str:
+            return self._name
+
+        async def stop(self, *, deadline: float) -> bool:
+            del deadline
+            return self._clean
+
+        async def flush(self, *, deadline: float) -> None:
+            del deadline
+            flushed.append(self._name)
+
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        ctx.drainables.register(_Loop("clean", stops_cleanly=True))
+        ctx.drainables.register(_Loop("wedged", stops_cleanly=False))
+
+        await quiesce(
+            runtime,
+            outboxes=[OUTBOX],
+            timeout=timedelta(milliseconds=150),
+            poll=timedelta(milliseconds=10),
+        )
+
+    assert flushed == ["clean"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_flush_is_isolated_and_flushless_loops_are_skipped() -> None:
+    # One loop has no flush (a consumer), one's flush raises, one flushes fine:
+    # the failure is logged, not raised — the sweep must go on to report the plane
+    # residual — and the healthy loop still gets its flush.
+    flushed: list[str] = []
+
+    class _Loop:
+        def __init__(self, name: str) -> None:
+            self._name = name
+
+        @property
+        def loop_name(self) -> str:
+            return self._name
+
+        async def stop(self, *, deadline: float) -> bool:
+            del deadline
+            return True
+
+    class _Broken(_Loop):
+        async def flush(self, *, deadline: float) -> None:
+            del deadline
+            raise RuntimeError("store down")
+
+    class _Good(_Loop):
+        async def flush(self, *, deadline: float) -> None:
+            del deadline
+            flushed.append(self.loop_name)
+
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        ctx.drainables.register(_Loop("flushless"))
+        ctx.drainables.register(_Broken("broken"))
+        ctx.drainables.register(_Good("good"))
+
+        report = await quiesce(
+            runtime,
+            outboxes=[OUTBOX],
+            timeout=timedelta(milliseconds=150),
+            poll=timedelta(milliseconds=10),
+        )
+
+    assert flushed == ["good"]
+    assert report.attested  # nothing was pending, so the failed flush cost nothing
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_flush_propagates_instead_of_being_swallowed() -> None:
+    # Cancellation is the caller tearing quiesce down — it must not be absorbed
+    # into the "failed flush" log-and-continue path.
+    class _Cancelled:
+        @property
+        def loop_name(self) -> str:
+            return "cancelled"
+
+        async def stop(self, *, deadline: float) -> bool:
+            del deadline
+            return True
+
+        async def flush(self, *, deadline: float) -> None:
+            del deadline
+            raise asyncio.CancelledError
+
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        ctx.drainables.register(_Cancelled())
+
+        with pytest.raises(asyncio.CancelledError):
+            await quiesce(
+                runtime,
+                outboxes=[OUTBOX],
+                timeout=timedelta(milliseconds=150),
+                poll=timedelta(milliseconds=10),
+            )

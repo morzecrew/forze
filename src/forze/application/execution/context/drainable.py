@@ -53,6 +53,35 @@ class DrainableLoop(Protocol):
 
 
 @final
+@attrs.define(slots=True, frozen=True)
+class StoppedLoops:
+    """Per-loop outcome of :meth:`Drainables.stop_all`.
+
+    The aggregate count alone cannot say **which** loops came to rest — and a caller
+    about to act on a stopped loop's resources (quiesce flushing a relay's backlog)
+    must not race one that is still unwinding or wedged mid-unit.
+    """
+
+    clean: tuple[DrainableLoop, ...]
+    """The loops that stopped cleanly within the grace — the only ones whose owned
+    work is provably no longer moving."""
+
+    total: int
+    """How many loops were asked to stop."""
+
+    # ....................... #
+
+    @property
+    def count(self) -> int:
+        """How many loops stopped cleanly."""
+
+        return len(self.clean)
+
+
+# ....................... #
+
+
+@final
 @attrs.define(slots=True)
 class Drainables:
     """Registry of this scope's background loops, stopped once at shutdown."""
@@ -80,7 +109,7 @@ class Drainables:
 
     # ....................... #
 
-    async def stop_all(self, *, grace: float) -> int:
+    async def stop_all(self, *, grace: float) -> StoppedLoops:
         """Stop every registered loop concurrently, bounded overall by *grace* seconds.
 
         Concurrent because these are independent workers on independent backends; a relay
@@ -88,13 +117,14 @@ class Drainables:
         loop bounds itself against the shared deadline, and failures are isolated — one wedged
         loop must not keep the others from stopping cleanly.
 
-        :returns: the number of loops that stopped cleanly.
+        :returns: which loops stopped cleanly (see :class:`StoppedLoops` — a caller acting
+            on a stopped loop's resources must know *which*, not merely *how many*).
         """
 
         loops = list(self._loops)
 
         if not loops:
-            return 0
+            return StoppedLoops(clean=(), total=0)
 
         clock = asyncio.get_running_loop()
         deadline = clock.time() + grace
@@ -118,7 +148,7 @@ class Drainables:
                 grace,
             )
 
-        stopped = 0
+        clean: list[DrainableLoop] = []
 
         for one, task in zip(loops, tasks, strict=True):
             if not task.done() or task.cancelled():
@@ -136,8 +166,8 @@ class Drainables:
                 continue
 
             if task.result():
-                stopped += 1
+                clean.append(one)
 
-        logger.info("Stopped %d of %d background loop(s)", stopped, len(loops))
+        logger.info("Stopped %d of %d background loop(s)", len(clean), len(loops))
 
-        return stopped
+        return StoppedLoops(clean=tuple(clean), total=len(loops))

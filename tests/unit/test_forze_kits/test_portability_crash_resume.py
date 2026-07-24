@@ -39,9 +39,9 @@ from forze_kits.integrations.portability import (
     export_archive,
     import_archive,
 )
-from forze_kits.integrations.quiesce import QuiesceReport
 from forze_mock import MockDepsModule
 from forze_mock.state import MockState
+from tests.support.quiesce import attested_report
 
 # ----------------------- #
 
@@ -91,7 +91,7 @@ B_SPEC: DocumentSpec[_BRead, _BDoc, _BCreate, _BUpdate] = DocumentSpec(
     write=DocumentWriteTypes(domain=_BDoc, create_cmd=_BCreate, update_cmd=_BUpdate),
 )
 
-_ATTESTED = QuiesceReport(planes=(), admission_held=True)
+_ATTESTED = attested_report()
 
 
 def _runtime(state: MockState) -> ExecutionRuntime:

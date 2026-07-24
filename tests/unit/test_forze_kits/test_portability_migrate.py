@@ -33,7 +33,6 @@ from forze_kits.integrations.portability import (
     migrate,
 )
 from forze_kits.integrations.portability.format import read_rows
-from forze_kits.integrations.quiesce import QuiesceReport
 from forze_kits.integrations.quiesce.report import QuiescePlane
 from forze_mock.state import MockState
 from tests.support.portability_corpus import (
@@ -46,13 +45,13 @@ from tests.support.portability_corpus import (
     seed_attachments,
     seed_orders,
 )
+from tests.support.quiesce import attested_report, unattested_report
 
 # ----------------------- #
 
-_ATTESTED = QuiesceReport(planes=(), admission_held=True)
-_UNATTESTED = QuiesceReport(
-    planes=(QuiescePlane(name="outbox:events", state="residual", detail="3 pending"),),
-    admission_held=True,
+_ATTESTED = attested_report()
+_UNATTESTED = unattested_report(
+    QuiescePlane(name="outbox:events", state="residual", detail="3 pending")
 )
 
 
@@ -209,7 +208,9 @@ async def test_full_scope_unattested_migrate_is_refused_unless_allowed(tmp_path:
     with pytest.raises(CoreException, match="not quiesced"):
         await _migrate(source, target, FullScope(quiesce=_UNATTESTED, tenants=UNTENANTED))
 
-    report = await _migrate(source, target, FullScope(quiesce=_UNATTESTED, tenants=UNTENANTED), allow_fuzzy=True)
+    report = await _migrate(
+        source, target, FullScope(quiesce=_UNATTESTED, tenants=UNTENANTED), allow_fuzzy=True
+    )
     assert report.total_imported == 2
 
 

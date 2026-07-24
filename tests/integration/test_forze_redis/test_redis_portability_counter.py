@@ -28,16 +28,17 @@ from forze_kits.integrations.portability import (
     ArchiveImporter,
     FullScope,
 )
-from forze_kits.integrations.quiesce import QuiesceReport
 from forze_redis import RedisCounterConfig, RedisDepsModule
 from forze_redis.kernel.client import RedisClient
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
+from tests.support.quiesce import attested_report
+
 # ----------------------- #
 
 SPEC = CounterSpec(name="invoices")
-_ATTESTED = QuiesceReport(planes=(), admission_held=True)
+_ATTESTED = attested_report()
 
 
 def _registry() -> FrozenSpecRegistry:

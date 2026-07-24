@@ -209,16 +209,51 @@ async def list_keys(query: Any) -> list[str]:
 
 
 def assert_scope_permitted(scope: ExportScope, *, allow_fuzzy: bool) -> None:
-    """Refuse a full-system walk whose quiesce did not attest, unless *allow_fuzzy* opts in.
+    """Refuse a full-system walk whose quiesce did not attest **and cover this scope**.
 
     A no-op for a :class:`TenantScope` — its consistency is the operator's claim that the tenant is
     quiet. Shared by export and the direct ``migrate`` so both refuse an unattested whole-system
     capture identically: an artifact that only *looks* point-consistent, or a migration that copied
     a still-moving source, is the same "looks complete and is not" failure either way.
+
+    Attested is not enough on its own — the report also carries **which tenant partitions the
+    sweep probed**, and the scope's tenant set must be inside it. On a tenant-partitioned
+    runtime an unbound sweep (``tenants=None``) reads only the default partition, so a
+    three-tenant export gated on it would stamp ``consistency: quiesced`` on backlogs nobody
+    looked at. *allow_fuzzy* opts out of both checks, and says so in the manifest.
     """
 
-    if isinstance(scope, FullScope) and not scope.quiesce.attested and not allow_fuzzy:
-        scope.quiesce.raise_if_unattested()
+    if not isinstance(scope, FullScope) or allow_fuzzy:
+        return
+
+    scope.quiesce.raise_if_unattested()
+
+    probed = scope.quiesce.tenants
+
+    if scope.tenants == "untenanted":
+        if probed is not None:
+            raise exc.precondition(
+                "The quiesce attestation does not cover this scope: the sweep probed "
+                "per-tenant partitions, but the scope declares an untenanted walk — the "
+                "unbound partition it will export was never watched. Run quiesce without "
+                "tenants= for an untenanted deployment."
+            )
+
+        return
+
+    missing = [t for t in scope.tenants if probed is None or t not in set(probed)]
+
+    if missing:
+        raise exc.precondition(
+            "The quiesce attestation does not cover this scope's tenant set: "
+            + (
+                "the sweep ran unbound (tenants=None probes only the default partition), "
+                "attesting nothing about any named tenant's backlog"
+                if probed is None
+                else f"tenant partition(s) never probed: {[str(t) for t in missing]}"
+            )
+            + ". Re-run quiesce(runtime, tenants=[...]) with the scope's full tenant set."
+        )
 
 
 # ....................... #

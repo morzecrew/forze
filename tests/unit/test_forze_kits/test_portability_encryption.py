@@ -42,7 +42,6 @@ from forze_kits.integrations.portability import (
     migrate,
 )
 from forze_kits.integrations.portability.format import Compression, data_suffix
-from forze_kits.integrations.quiesce import QuiesceReport
 from forze_mock import MockKeyManagement
 from forze_mock.state import MockState
 from tests.support.portability_corpus import (
@@ -56,11 +55,12 @@ from tests.support.portability_corpus import (
     seed_attachments,
     seed_orders,
 )
+from tests.support.quiesce import attested_report
 
 # ----------------------- #
 
 _KEY_ID = "archive-kek"
-_ATTESTED = QuiesceReport(planes=(), admission_held=True)
+_ATTESTED = attested_report()
 
 
 def _sealer(*, chunk_size: int | None = None) -> ArchiveSealer:
@@ -307,7 +307,9 @@ async def _export_full(
     runtime: ExecutionRuntime, dest: Path, *, sealer: ArchiveSealer | None
 ) -> ExportReport:
     async with runtime.scope():
-        return await export_archive(runtime, dest, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED), sealer=sealer)
+        return await export_archive(
+            runtime, dest, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED), sealer=sealer
+        )
 
 
 @pytest.mark.asyncio
@@ -345,7 +347,9 @@ async def test_encrypted_blob_round_trip(tmp_path: Path) -> None:
     for key, (content, tags) in seeded.items():
         async with target.scope():
             assert await download_attachment(target.get_context(), key) == content
-            head = await target.get_context().storage.query(ATTACHMENTS).head(key, include_tags=True)
+            head = (
+                await target.get_context().storage.query(ATTACHMENTS).head(key, include_tags=True)
+            )
         assert dict(head.tags) == tags
 
 

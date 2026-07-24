@@ -41,10 +41,10 @@ from forze_kits.integrations.portability import (
     export_archive,
     import_archive,
 )
-from forze_kits.integrations.quiesce import QuiesceReport
 from forze_kits.integrations.quiesce.report import QuiescePlane
 from forze_mock import MockDepsModule
 from forze_mock.state import MockState
+from tests.support.quiesce import attested_report, unattested_report
 
 # ----------------------- #
 
@@ -285,10 +285,9 @@ async def _seed_untenanted(runtime: ExecutionRuntime, count: int) -> list[UUID]:
     return ids
 
 
-_ATTESTED = QuiesceReport(planes=(), admission_held=True)
-_UNATTESTED = QuiesceReport(
-    planes=(QuiescePlane(name="outbox:events", state="residual", detail="3 pending"),),
-    admission_held=True,
+_ATTESTED = attested_report()
+_UNATTESTED = unattested_report(
+    QuiescePlane(name="outbox:events", state="residual", detail="3 pending")
 )
 
 
@@ -301,7 +300,9 @@ async def test_full_scope_attested_stamps_quiesced_and_embeds_the_attestation(
 
     archive = tmp_path / "archive"
     async with runtime.scope():
-        report = await export_archive(runtime, archive, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
+        report = await export_archive(
+            runtime, archive, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
+        )
 
     assert report.total_rows == 3
 
@@ -323,7 +324,9 @@ async def test_full_scope_unattested_is_refused_by_default(tmp_path: Path) -> No
 
     with pytest.raises(CoreException, match="not quiesced"):
         async with runtime.scope():
-            await export_archive(runtime, tmp_path / "a", scope=FullScope(quiesce=_UNATTESTED, tenants=UNTENANTED))
+            await export_archive(
+                runtime, tmp_path / "a", scope=FullScope(quiesce=_UNATTESTED, tenants=UNTENANTED)
+            )
 
 
 @pytest.mark.asyncio
@@ -334,7 +337,10 @@ async def test_full_scope_unattested_is_fuzzy_when_explicitly_allowed(tmp_path: 
     archive = tmp_path / "archive"
     async with runtime.scope():
         await export_archive(
-            runtime, archive, scope=FullScope(quiesce=_UNATTESTED, tenants=UNTENANTED), allow_fuzzy=True
+            runtime,
+            archive,
+            scope=FullScope(quiesce=_UNATTESTED, tenants=UNTENANTED),
+            allow_fuzzy=True,
         )
 
     manifest = _manifest(archive)
@@ -352,7 +358,9 @@ async def test_full_scope_round_trips_every_row(tmp_path: Path) -> None:
 
     archive = tmp_path / "archive"
     async with source.scope():
-        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
+        await export_archive(
+            source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
+        )
 
     target = _runtime(MockState())
     result = await _import(target, archive)
@@ -421,7 +429,9 @@ async def test_blob_round_trip_preserves_bytes_keys_and_tags(tmp_path: Path) -> 
 
     archive = tmp_path / "archive"
     async with source.scope():
-        report = await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
+        report = await export_archive(
+            source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
+        )
 
     assert report.total_blobs == 3
     assert (archive / "blobs" / "attachments" / "index.jsonl.gz").exists()
@@ -450,7 +460,9 @@ async def test_blob_import_verifies_object_checksums(tmp_path: Path) -> None:
 
     archive = tmp_path / "archive"
     async with source.scope():
-        await export_archive(source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED))
+        await export_archive(
+            source, archive, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
+        )
 
     objects = archive / "blobs" / "attachments" / "objects"
     (blob,) = list(objects.iterdir())

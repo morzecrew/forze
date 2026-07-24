@@ -41,13 +41,13 @@ from forze_kits.integrations.portability import (
     FullScope,
 )
 from forze_kits.integrations.portability.format import read_rows
-from forze_kits.integrations.quiesce import QuiesceReport
 from forze_mock import MockDepsModule, MockState
 from forze_neo4j.execution.deps import ConfigurableNeo4jGraph  # noqa: F401 - ensures deps import
 from forze_neo4j.execution.deps.configs import Neo4jGraphConfig
 from forze_neo4j.execution.deps.module import Neo4jDepsModule
 from forze_neo4j.kernel.client import Neo4jClient
 from tests.support.execution_context import context_from_deps
+from tests.support.quiesce import attested_report
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -108,7 +108,7 @@ SOCIAL = GraphModuleSpec(
     ),
 )
 
-_ATTESTED = QuiesceReport(planes=(), admission_held=True)
+_ATTESTED = attested_report()
 
 
 def _registry() -> FrozenSpecRegistry:

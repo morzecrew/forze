@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, final
+from uuid import UUID
 
 import attrs
 
@@ -76,6 +78,23 @@ class QuiesceReport:
     at rest, but nothing stopped a handler from committing the moment the sweep looked away,
     so the reading cannot be built on. See :attr:`attested`."""
 
+    taken_at: datetime
+    """When the sweep finished — a timezone-aware (UTC) instant.
+
+    A cross-checkable fact for whatever the report gates: an export manifest records it, an
+    operator can line it up against deploy logs. The gate stays valid over time *within the
+    process* (closing the gate is one-way — an attested runtime cannot start accepting work
+    again), so this is provenance, not an expiry."""
+
+    tenants: tuple[UUID, ...] | None = None
+    """The tenant partitions the sweep probed under a bound tenant; ``None`` when it ran a
+    single unbound pass.
+
+    The coverage fact a scoped consumer must cross-check: on a tenant-partitioned runtime an
+    unbound sweep reads only the default partition, so a report with ``tenants=None`` attests
+    **nothing** about any named tenant's backlog — an export of three tenants must refuse an
+    attestation that probed one."""
+
     # ....................... #
 
     @property
@@ -84,8 +103,13 @@ class QuiesceReport:
 
         Planes this runtime does not wire (``not_wired``) do not count against it — there is
         nothing there to settle. A ``residual`` or an ``error`` does: an unreadable plane is
-        not an empty one.
+        not an empty one. And a report with **no planes at all** never settles — ``all(())``
+        is vacuously true, but a sweep that observed nothing has nothing to attest; empty is
+        unseen, not at rest.
         """
+
+        if not self.planes:
+            return False
 
         return all(plane.settled for plane in self.planes)
 
@@ -130,6 +154,12 @@ class QuiesceReport:
             return
 
         reasons = [f"  - {plane.name}: [{plane.state}] {plane.detail}" for plane in self.unsettled]
+
+        if not self.planes:
+            reasons.append(
+                "  - the report observed no planes at all — a sweep that saw nothing has "
+                "nothing to attest (empty is unseen, not at rest)"
+            )
 
         if not self.admission_held:
             reasons.append(

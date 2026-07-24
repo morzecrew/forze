@@ -93,7 +93,7 @@ async def test_gateway_registers_in_drainables_and_stops_cleanly() -> None:
         assert step.startup in ctx.drainables.loops
 
         stopped = await ctx.drainables.stop_all(grace=5.0)
-        assert stopped == 1
+        assert stopped.count == 1
 
         task = step.startup.task
         assert task is not None and task.done() and not task.cancelled()
