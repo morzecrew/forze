@@ -206,8 +206,7 @@ def _cookie_logout_endpoint(cookies: AuthnCookieCarrier) -> Any:
                 if error.code != "auth_required":
                     raise
 
-                cookies.clear(response)
-                return None
+                result = None  # nothing to revoke server-side; still clear below
 
             cookies.clear(response)
             return result

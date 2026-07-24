@@ -241,11 +241,24 @@ class AuthnDepsModule(DepsModule):
             # so authentication can check ``is_active`` — and the routed registration
             # here would conflict with any later override, making the default
             # non-overridable rather than merely default.
-            eligibility_factory = (
-                ConfigurablePolicyPrincipalEligibility()
-                if self.eligibility == "policy_principal"
-                else ConfigurableAllowAllEligibility()
+            eligibility_factory: (
+                ConfigurablePolicyPrincipalEligibility | ConfigurableAllowAllEligibility
             )
+
+            if self.eligibility == "policy_principal":
+                eligibility_factory = ConfigurablePolicyPrincipalEligibility()
+
+            elif self.eligibility == "allow_all":
+                eligibility_factory = ConfigurableAllowAllEligibility()
+
+            else:
+                # The Literal annotation is not enforced at runtime; an unknown
+                # value must fail closed here, never fall through to the
+                # allow-all gate.
+                raise exc.configuration(
+                    f"Unknown eligibility {self.eligibility!r}: expected "
+                    "'policy_principal' or 'allow_all'.",
+                )
             merged = merged.merge(
                 Deps.routed(
                     {

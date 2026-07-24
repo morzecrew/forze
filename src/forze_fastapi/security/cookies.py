@@ -42,6 +42,14 @@ class AuthnCookieCarrier:
     point of cookie mode) and ``Secure`` by default. ``Max-Age`` comes from the
     token response's own lifetimes (``access_expires_in`` / ``refresh_expires_in``);
     a token without a known lifetime becomes a session cookie.
+
+    **CSRF posture.** The cookie-mode endpoints are all ``POST``, so the default
+    ``samesite="lax"`` (or ``"strict"``) keeps browsers from attaching these
+    cookies to cross-site requests — that is the shipped CSRF defense.
+    ``samesite="none"`` deployments must add their own CSRF layer (double-submit
+    or synchronizer token) in front of state-changing routes; the carrier
+    deliberately ships none, because a token needs an issuance surface (a page or
+    bootstrap route) that the authn routes do not own.
     """
 
     access_cookie: str = "forze_access"

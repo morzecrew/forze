@@ -170,6 +170,18 @@ class TestAuthnDepsModule:
                 authn={"main": frozenset({"token", "api_key"})},
             )()
 
+    def test_unknown_eligibility_fails_closed(self) -> None:
+        # The Literal annotation is not enforced at runtime; a typo used to fall
+        # through the old ternary into the ALLOW-ALL gate. It must refuse instead.
+        from typing import Any, cast
+
+        with pytest.raises(CoreException, match="eligibility"):
+            AuthnDepsModule(
+                kernel=_kernel_min_access(),
+                authn={"main": frozenset({"token"})},
+                eligibility=cast("Any", "allow_al"),  # the typo, verbatim
+            )()
+
     def test_registers_token_route(self) -> None:
         deps = AuthnDepsModule(
             kernel=_kernel_min_access(),
