@@ -65,7 +65,7 @@ async def create_authn_tables(
             principal_id uuid NOT NULL,
             tenant_id uuid,
             family_id uuid NOT NULL,
-            refresh_digest bytea NOT NULL,
+            refresh_digest text NOT NULL,
             expires_at timestamptz NOT NULL,
             revoked_at timestamptz,
             rotated_at timestamptz,

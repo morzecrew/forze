@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import types
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any, Union, get_args, get_origin
@@ -22,10 +23,14 @@ from forze_postgres.kernel.catalog.introspect.utils import (
 _SCALAR_PG_BASES: dict[type[Any], frozenset[str]] = {
     UUID: frozenset({"uuid"}),
     str: frozenset({"text", "varchar", "char", "citext", "name"}),
+    # ``bool`` MUST precede ``int``: the fallback below probes with ``issubclass``
+    # and ``issubclass(bool, int)`` is True — probed the other way around, every
+    # bool field demanded an int2/int4/int8 column and a correct boolean column
+    # failed startup validation. (``datetime`` before ``date`` for the same reason.)
+    bool: frozenset({"bool"}),
     int: frozenset({"int2", "int4", "int8"}),
     float: frozenset({"float4", "float8", "numeric"}),
     Decimal: frozenset({"numeric", "float4", "float8"}),
-    bool: frozenset({"bool"}),
     datetime: frozenset({"timestamp", "timestamptz"}),
     date: frozenset({"date"}),
     time: frozenset({"time", "timetz"}),
@@ -36,17 +41,25 @@ _JSON_PG_BASES = frozenset({"json", "jsonb"})
 
 
 def _unwrap_optional(annotation: Any) -> tuple[Any, bool]:
-    """Return (inner annotation, is_optional)."""
+    """Return (inner annotation, is_optional).
+
+    Both union spellings: ``Optional[T]`` (origin ``typing.Union``) and the PEP 604
+    ``T | None`` (origin ``types.UnionType``). Matching only the first silently
+    skipped every ``T | None`` field — the union fell through as "not a type" and
+    the column was never validated at all.
+    """
 
     origin = get_origin(annotation)
 
-    if origin is Union:
+    if origin is Union or origin is types.UnionType:
         args = [a for a in get_args(annotation) if a is not type(None)]
+        optional = len(args) < len(get_args(annotation))
 
         if len(args) == 1:
-            return _unwrap_optional(args[0])
+            inner, inner_optional = _unwrap_optional(args[0])
+            return inner, optional or inner_optional
 
-        return annotation, True
+        return annotation, optional
 
     return annotation, False
 
@@ -89,6 +102,15 @@ def expected_pg_bases_for_annotation(annotation: Any) -> frozenset[str] | None:
         return _JSON_PG_BASES
 
     if isinstance(annotation, type):
+        # Exact type first: the subclass fallback exists for enums and other
+        # subclasses (StrEnum → str, IntEnum → int), but Python's own builtins
+        # overlap it (bool < int, datetime < date) — an exact hit must never be
+        # decided by dict iteration order.
+        exact = _SCALAR_PG_BASES.get(annotation)
+
+        if exact is not None:
+            return exact
+
         for py_t, bases in _SCALAR_PG_BASES.items():
             if issubclass(annotation, py_t):
                 return bases
