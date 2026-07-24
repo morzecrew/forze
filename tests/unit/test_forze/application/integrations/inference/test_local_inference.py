@@ -341,6 +341,116 @@ class TestLocalInferenceAdapter:
         finally:
             executor.close()
 
+    @pytest.mark.asyncio
+    async def test_deadline_abandoned_worker_blocks_the_next_serialized_call(self) -> None:
+        # The deadline path escapes run_to_completion: run_cpu enforces the budget
+        # INTERNALLY, abandons the still-running worker thread and raises — the guard
+        # releases while the model is still inside predict_batch. The next serialized
+        # dispatch must wait the abandoned worker out, or two threads enter the
+        # non-thread-safe model — the exact corruption serialize_calls prevents.
+        import asyncio
+
+        from forze.base.primitives.cpu import ThreadPoolCpuExecutor, bind_cpu_executor
+        from forze.base.primitives.deadline import bind_deadline
+
+        entered = threading.Event()
+        release = threading.Event()
+        busy = threading.Event()
+        overlaps: list[bool] = []
+
+        class _NonThreadSafeBlockingModel:
+            def predict_batch(self, instances: Sequence[_Features]) -> Sequence[_Score]:
+                overlaps.append(busy.is_set())
+                busy.set()
+                entered.set()
+                release.wait(timeout=5.0)
+                busy.clear()
+                return [_Score(y=i.x) for i in instances]
+
+        module = LocalInferenceDepsModule(
+            models={
+                "doubler": LocalInferenceConfig(
+                    loader=_CountingLoader(_NonThreadSafeBlockingModel()),
+                    serialize_calls=True,
+                ),
+            },
+        )
+        port = _ctx(module).inference.model(_spec())
+        executor = ThreadPoolCpuExecutor(max_workers=2)
+
+        try:
+            with bind_cpu_executor(executor):
+                with bind_deadline(0.1), pytest.raises(CoreException):
+                    await port.predict(_Features(x=1.0))  # deadline cuts the dispatch
+
+                assert entered.is_set()  # ...but the abandoned worker is still in the model
+
+                second = asyncio.ensure_future(port.predict(_Features(x=2.0)))
+                await asyncio.sleep(0.05)  # give second every chance to (wrongly) enter
+
+                assert len(overlaps) == 1  # it waited: the model was never re-entered
+
+                release.set()  # the abandoned worker exits; second may now proceed
+
+                assert (await second).y == 2.0
+
+            assert overlaps == [False, False]  # never concurrent inside the model
+
+        finally:
+            release.set()
+            executor.close()
+
+    @pytest.mark.asyncio
+    async def test_waiting_out_an_abandoned_worker_is_bounded_by_the_deadline(self) -> None:
+        # A hung abandoned worker must cost the NEXT deadline-bound caller a clean
+        # ``inference_model_busy`` timeout — never an unbounded park — and the
+        # completion signal stays armed for whoever tries after the worker exits.
+
+        from forze.base.primitives.cpu import ThreadPoolCpuExecutor, bind_cpu_executor
+        from forze.base.primitives.deadline import bind_deadline
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        class _BlockingModel:
+            def predict_batch(self, instances: Sequence[_Features]) -> Sequence[_Score]:
+                entered.set()
+                release.wait(timeout=5.0)
+                return [_Score(y=i.x) for i in instances]
+
+        module = LocalInferenceDepsModule(
+            models={
+                "doubler": LocalInferenceConfig(
+                    loader=_CountingLoader(_BlockingModel()),
+                    serialize_calls=True,
+                ),
+            },
+        )
+        port = _ctx(module).inference.model(_spec())
+        executor = ThreadPoolCpuExecutor(max_workers=2)
+
+        try:
+            with bind_cpu_executor(executor):
+                with bind_deadline(0.05), pytest.raises(CoreException):
+                    await port.predict(_Features(x=1.0))  # abandoned mid-predict
+
+                assert entered.is_set()
+
+                # a second bounded caller times out CLEANLY on the busy model
+                with bind_deadline(0.05), pytest.raises(CoreException) as caught:
+                    await port.predict(_Features(x=2.0))
+
+                assert caught.value.code == "inference_model_busy"
+
+                release.set()  # the worker exits; a bounded caller now proceeds
+
+                with bind_deadline(5.0):
+                    assert (await port.predict(_Features(x=3.0))).y == 3.0
+
+        finally:
+            release.set()
+            executor.close()
+
 
 # ....................... #
 

@@ -23,6 +23,7 @@ citation, and — where one exists — the name of a probe that pins it on both 
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -73,14 +74,27 @@ class RoundTripOutcome:
     blobs_match: bool
     """Whether the target's re-exported blob index equals the source's, keyed by object key."""
 
+    counters_match: bool
+    """Whether the target's re-exported counter rows equal the source's."""
+
+    graphs_match: bool
+    """Whether the target's re-exported graph node/edge rows equal the source's."""
+
     # ....................... #
 
     @property
     def lossless(self) -> bool:
         """The headline verdict: the re-export projects to exactly the export, so by the format's
-        own definition nothing it can represent was lost across the backend change."""
+        own definition nothing it can represent was lost across the backend change.
 
-        return self.documents_match and self.blobs_match
+        Every carryable plane counts — documents, blobs, counters, graph — and the
+        projection is section-aware (``tenants/<uuid>/`` layouts included), so a
+        full-system round-trip can never pass vacuously on two empty projections.
+        """
+
+        return (
+            self.documents_match and self.blobs_match and self.counters_match and self.graphs_match
+        )
 
 
 # ....................... #
@@ -133,6 +147,8 @@ async def run_export_import_roundtrip(
         reexported=export_b.total_rows,
         documents_match=proj_a.documents == proj_b.documents,
         blobs_match=proj_a.blobs == proj_b.blobs,
+        counters_match=proj_a.counters == proj_b.counters,
+        graphs_match=proj_a.graphs == proj_b.graphs,
     )
 
 
@@ -144,18 +160,41 @@ class _ArchiveProjection:
     """An archive reduced to the row maps the round-trip compares, keyed for order-independence."""
 
     documents: dict[str, dict[str, JsonDict]]
-    """spec name → {document id → canonical row}."""
+    """section-qualified spec name → {document id → canonical row}."""
 
     blobs: dict[str, dict[str, JsonDict]]
-    """storage route → {object key → index row (sha256, size, content_type, tags)}."""
+    """section-qualified storage route → {object key → index row}."""
+
+    counters: dict[str, dict[str, JsonDict]]
+    """section-qualified counter name → {canonical row → row}."""
+
+    graphs: dict[str, dict[str, JsonDict]]
+    """section-qualified graph file (module/nodes|edges/kind) → {canonical row → row}."""
+
+
+def _split_section(path: str) -> tuple[str, str]:
+    """Split ``tenants/<uuid>/rest`` into its section prefix and the plane-relative path.
+
+    A tenanted full-system archive lays every plane under ``tenants/<uuid>/`` — a
+    projection matching only root prefixes would reduce BOTH archives to empty maps
+    and compare them vacuously equal, reading total loss as lossless.
+    """
+
+    parts = path.split("/", 2)
+
+    if len(parts) == 3 and parts[0] == "tenants":
+        return f"tenants/{parts[1]}/", parts[2]
+
+    return "", path
 
 
 async def _archive_projection(archive: Path) -> _ArchiveProjection:
-    """Reduce an archive to its comparable projection.
+    """Reduce an archive to its comparable projection — every carryable plane, per section.
 
-    Keyed by id / key rather than compared by file position, so ``find_stream`` /​ ``list`` ordering
+    Keyed by id / key rather than compared by file position, so ``find_stream`` / ``list`` ordering
     differences across backends (the ``stream-order-normalized`` divergence) cannot surface as a
-    false loss. The manifest drives which files are documents and which are blob indexes.
+    false loss. Counter and graph rows carry no single natural id, so they key by their own
+    canonical serialization — equality as multisets of rows (identical duplicates collapse).
     """
 
     manifest = Manifest.model_validate_json((archive / "manifest.json").read_text())
@@ -163,23 +202,40 @@ async def _archive_projection(archive: Path) -> _ArchiveProjection:
 
     documents: dict[str, dict[str, JsonDict]] = {}
     blobs: dict[str, dict[str, JsonDict]] = {}
+    counters: dict[str, dict[str, JsonDict]] = {}
+    graphs: dict[str, dict[str, JsonDict]] = {}
 
     for archive_file in manifest.files:
         path = archive / archive_file.path
+        section, rel = _split_section(archive_file.path)
 
-        if archive_file.path.startswith("documents/"):
-            name = Path(archive_file.path).name.removesuffix(data_suffix(codec))
-            documents[name] = {
+        if rel.startswith("documents/"):
+            name = Path(rel).name.removesuffix(data_suffix(codec))
+            documents[f"{section}{name}"] = {
                 str(row["id"]): row async for row in read_rows(path, compression=codec)
             }
 
-        elif archive_file.path.startswith("blobs/"):
-            route = Path(archive_file.path).parent.name
-            blobs[route] = {
+        elif rel.startswith("blobs/"):
+            route = Path(rel).parent.name
+            blobs[f"{section}{route}"] = {
                 str(row["key"]): row async for row in read_rows(path, compression=codec)
             }
 
-    return _ArchiveProjection(documents=documents, blobs=blobs)
+        elif rel.startswith("counters/"):
+            name = Path(rel).name.removesuffix(data_suffix(codec))
+            counters[f"{section}{name}"] = {
+                json.dumps(row, sort_keys=True): row
+                async for row in read_rows(path, compression=codec)
+            }
+
+        elif rel.startswith("graph/"):
+            kind = rel.removeprefix("graph/").removesuffix(data_suffix(codec))
+            graphs[f"{section}{kind}"] = {
+                json.dumps(row, sort_keys=True): row
+                async for row in read_rows(path, compression=codec)
+            }
+
+    return _ArchiveProjection(documents=documents, blobs=blobs, counters=counters, graphs=graphs)
 
 
 # ....................... #

@@ -17,6 +17,7 @@ coroutines, never as blocked worker threads inside the shared CPU pool.
 """
 
 import asyncio
+import contextlib
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from typing import Any, Protocol, final
 
@@ -33,6 +34,7 @@ from forze.application.contracts.inference import (
 from forze.base.asyncio import run_to_completion
 from forze.base.exceptions import exc
 from forze.base.primitives import OnceCell, run_cpu
+from forze.base.primitives.deadline import remaining_time
 
 from .adapter_common import bind_run_options, shape_outputs, validated_instances
 
@@ -123,6 +125,17 @@ class LocalModelHost:
     invocation deadline could not free the slots either. An awaiting coroutine costs no
     slot and cancels cleanly."""
 
+    _abandoned: asyncio.Event | None = attrs.field(default=None, init=False)
+    """Completion signal of a serialized worker whose dispatch exited before the worker
+    did. Holding the guard until the worker exits covers **cancellation** (the dispatch
+    runs under ``run_to_completion``) — but not the invocation **deadline**: ``run_cpu``
+    enforces it internally, abandons the still-running thread and raises immediately,
+    so the guard releases while the model is still inside ``predict_batch``. The next
+    serialized dispatch must therefore wait this signal out before entering the model —
+    exactly the concurrent access ``serialize_calls`` exists to prevent. Set from the
+    worker's ``finally`` via ``call_soon_threadsafe``; ``None`` when the last dispatch
+    returned with its worker provably done."""
+
     # ....................... #
 
     async def model(self) -> LocalModel[Any, Any]:
@@ -167,14 +180,73 @@ class LocalModelHost:
         on cancellation would let the next serialized call enter the non-thread-safe
         model while the abandoned thread is still inside ``predict_batch``. The guard
         is therefore held until the worker actually exits; the pending cancellation
-        (or deadline) re-raises right after, with the model provably idle again.
+        re-raises right after, with the model provably idle again.
+
+        The invocation **deadline** escapes that discipline — ``run_cpu`` enforces it
+        internally, abandoning the worker and raising with the model still running —
+        so each serialized worker also signals its actual exit (``_abandoned``), and
+        the next dispatch waits that signal out (bounded by its own deadline) before
+        entering the model.
         """
 
         if not self.config.serialize_calls:
             return await run_cpu(self._invoke, model, instances)
 
         async with self._serialize_guard:
-            return await run_to_completion(run_cpu(self._invoke, model, instances))
+            if self._abandoned is not None:
+                await self._await_abandoned(self._abandoned)
+                self._abandoned = None
+
+            done = asyncio.Event()
+            loop = asyncio.get_running_loop()
+
+            def _tracked() -> Sequence[Any]:
+                try:
+                    return self._invoke(model, instances)
+
+                finally:
+                    # suppress: the loop closed under a torn-down scope — nothing
+                    # left on it to guard against; the worker must not die noisily
+                    with contextlib.suppress(RuntimeError):
+                        loop.call_soon_threadsafe(done.set)
+
+            # Tracked BEFORE the dispatch: any exit that leaves the worker running
+            # (a deadline abandonment mid-predict) keeps the signal armed for the
+            # next dispatch. Cleared only when the dispatch returned normally —
+            # the worker is then provably done.
+            self._abandoned = done
+            result = await run_to_completion(run_cpu(_tracked))
+            self._abandoned = None
+
+            return result
+
+    # ....................... #
+
+    @staticmethod
+    async def _await_abandoned(done: asyncio.Event) -> None:
+        """Wait out an abandoned worker before entering the model again.
+
+        Bounded by the caller's own invocation deadline: a hung abandoned worker must
+        cost this call a clean timeout, not an unbounded park — and the signal stays
+        armed for whoever tries next.
+        """
+
+        remaining = remaining_time()
+
+        try:
+            if remaining is None:
+                await done.wait()
+                return
+
+            async with asyncio.timeout(remaining):
+                await done.wait()
+
+        except TimeoutError as e:
+            raise exc.timeout(
+                "Serialized local model is still executing a deadline-abandoned "
+                "prediction; refusing to enter it concurrently.",
+                code="inference_model_busy",
+            ) from e
 
     # ....................... #
 

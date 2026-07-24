@@ -18,6 +18,13 @@ from forze_cli.dst import dst_app
 
 app = typer.Typer(
     no_args_is_help=True,
+    # Typer's default pretty exceptions render a rich locals panel for every frame
+    # of an unhandled error — the raw values, straight past the framework's log
+    # scrubbing. A CLI command driving application code (a simulation, an operation)
+    # has OAuth secrets, DSNs and tokens sitting in those locals; one crash prints
+    # them to the terminal and to whatever captures it. Keep the pretty traceback,
+    # never the locals.
+    pretty_exceptions_show_locals=False,
     help=(
         "Forze — exercise your domain operations under deterministic simulation.\n\n"
         "Point a command at a Simulation you expose (e.g. 'myapp.sim:simulation') to "

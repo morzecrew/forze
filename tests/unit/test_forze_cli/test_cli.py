@@ -451,3 +451,16 @@ class TestExtras:
         monkeypatch.setattr(forze_cli, "find_spec", lambda name: None)
         with pytest.raises(SystemExit):
             forze_cli.main()
+
+
+def test_pretty_exceptions_never_render_locals() -> None:
+    # Typer's default pretty exceptions print a rich locals panel for every frame
+    # of an unhandled error — raw values, straight past the framework's log
+    # scrubbing. CLI commands drive application code whose frames hold live
+    # credentials (OAuth secrets, DSNs, tokens); one crash would print them to the
+    # terminal and to whatever captures it. Pretty tracebacks stay; locals never.
+    from forze_cli.app import app
+    from forze_cli.dst import dst_app
+
+    assert app.pretty_exceptions_show_locals is False
+    assert dst_app.pretty_exceptions_show_locals is False
