@@ -590,14 +590,17 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     async def _bounded_drain(self, ctx: ExecutionContext, *, deadline: float, label: str) -> bool:
         """Claim the once-guard and run the strict drain inside the budget.
 
-        Returns whether the pass completed. A pass cut by its budget logs (its cut
-        batch's claimed rows sit ``processing`` — invisible to every replica — until
-        ``reclaim_stale_after`` elapses) and **re-arms the guard**: holding it would
-        make the next ask — the step's own shutdown hook, with a fresh budget — a
-        silent no-op that strands the untouched remainder for another process. The
-        retry is safe: it cannot re-claim what the cut pass rescheduled (those rows
-        sit out their backoff), and a strict pass ends on the first reschedule it
-        does hit.
+        Returns whether the pass completed. **Only a completed pass keeps the guard**
+        — any other exit re-arms it: a pass cut by its budget (its cut batch's
+        claimed rows sit ``processing`` — invisible to every replica — until
+        ``reclaim_stale_after`` elapses), a cancellation (``stop_all`` cancels
+        straggler stops when the grace elapses; a torn quiesce cancels its flush),
+        or an unexpected raise. Holding the guard on any of those would make the
+        next ask — the step's own shutdown hook, with a fresh budget — a silent
+        no-op that strands the untouched remainder for another process. The retry
+        is safe: it cannot re-claim what the cut pass rescheduled (those rows sit
+        out their backoff), and a strict pass ends on the first reschedule it does
+        hit.
         """
 
         self.drained = True
@@ -617,6 +620,12 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
             )
             self.drained = False
             return False
+
+        except BaseException:
+            # cancellation or an unexpected raise: not a completed pass — re-arm
+            # exactly like the timeout path, then let the interruption propagate
+            self.drained = False
+            raise
 
         return True
 

@@ -702,3 +702,44 @@ async def test_a_timed_out_stop_drain_leaves_the_second_ask_armed() -> None:
         await startup.stop(deadline=clock.time() + 5.0)
 
     assert [row.status for row in rows] == [OutboxStatus.PUBLISHED]
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_drain_leaves_the_next_ask_armed() -> None:
+    # ``stop_all`` cancels straggler stops when its grace elapses (and a torn
+    # quiesce cancels its flush): the cancellation lands inside the drain, which
+    # must re-arm the once-guard like the timeout path — holding it would make the
+    # teardown's fresh-budget ask a silent no-op and strand the claimable backlog.
+    startup = _startup(drain_on_shutdown=True)
+    rows = [_outbox_row(index=0)]
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    entered = asyncio.Event()
+
+    async def _stall(*_args: Any, **_kwargs: Any) -> Any:
+        entered.set()
+        await asyncio.sleep(30)  # parked until the cancel arrives
+        return _result(0)
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await startup(ctx)
+        await asyncio.sleep(0.02)
+
+        ctx.deps.provide(MockStateDepKey).outbox_rows["events"] = rows
+        clock = asyncio.get_running_loop()
+
+        with patch.object(OutboxRelay, "to_queue", _stall):
+            stopping = asyncio.create_task(startup.stop(deadline=clock.time() + 30.0))
+            await entered.wait()  # the drain is mid-batch
+            stopping.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await stopping
+
+        assert startup.drained is False  # the guard re-armed
+
+        # the teardown ask, with its own fresh budget, retries and drains
+        await startup.stop(deadline=clock.time() + 5.0)
+
+    assert [row.status for row in rows] == [OutboxStatus.PUBLISHED]
