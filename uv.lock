@@ -1318,6 +1318,9 @@ vault = [
     { name = "types-hvac" },
     { name = "urllib3" },
 ]
+watchfiles = [
+    { name = "watchfiles" },
+]
 zstd = [
     { name = "zstandard" },
 ]
@@ -1436,10 +1439,11 @@ requires-dist = [
     { name = "types-hvac", marker = "extra == 'vault'", specifier = ">=2.4.0.20260518" },
     { name = "urllib3", marker = "extra == 'vault'", specifier = ">=2.7.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'fastapi'", specifier = ">=0.42.0" },
+    { name = "watchfiles", marker = "extra == 'watchfiles'", specifier = ">=1.0.0" },
     { name = "yandexcloud", marker = "extra == 'kms-yc'", specifier = ">=0.300.0" },
     { name = "zstandard", marker = "extra == 'zstd'", specifier = ">=0.23.0" },
 ]
-provides-extras = ["authn", "bigquery", "cli", "clickhouse", "dst", "duckdb", "fastapi", "firestore", "gcs", "http", "inference-http", "inference-sagemaker", "inngest", "kafka", "kms-aws", "kms-gcp", "kms-yc", "mcp", "meilisearch", "mongo", "neo4j", "oidc", "postgres", "rabbitmq", "redis", "s3", "socketio", "sqs", "temporal", "vault", "zstd"]
+provides-extras = ["authn", "bigquery", "cli", "clickhouse", "dst", "duckdb", "fastapi", "firestore", "gcs", "http", "inference-http", "inference-sagemaker", "inngest", "kafka", "kms-aws", "kms-gcp", "kms-yc", "mcp", "meilisearch", "mongo", "neo4j", "oidc", "postgres", "rabbitmq", "redis", "s3", "socketio", "sqs", "temporal", "vault", "watchfiles", "zstd"]
 
 [package.metadata.requires-dev]
 dev = [

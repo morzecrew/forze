@@ -59,6 +59,20 @@ step = watcher.lifecycle_step()   # a supervised 30s tick; first tick primes sil
   forever), and a stat gate keeps unchanged files at one `stat` per tick.
   **`subPath` mounts never update** — that is a Kubernetes fact no watcher can fix.
 
+With the `forze[watchfiles]` extra installed, the directory source can also react
+to OS-native events instead of waiting out the poll interval:
+
+```python
+steps = [
+    file_source.lifecycle_step(interval=timedelta(minutes=5)),  # the floor, raised
+    file_source.native_events_lifecycle_step(),                 # the accelerator
+]
+```
+
+Event paths are deliberately never trusted — every native event just triggers the
+same stat-gated diff, so a spurious burst costs one `stat` per ref. Keep the poll
+step wired: native events let you *raise* its interval, never remove it.
+
 Delivery is at-least-once, unordered, and advisory. That costs nothing: eviction on
 an unchanged secret re-resolves, recomputes an equal fingerprint, and rebuilds
 nothing — over-notification is free by design.

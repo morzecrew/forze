@@ -118,3 +118,71 @@ class TestDirectorySource:
     def test_needs_at_least_one_ref(self, tmp_path: Path) -> None:
         with pytest.raises(CoreException, match="at least one ref"):
             DirectorySecretsChangeSource(root=tmp_path, refs=())
+
+
+class TestNativeEvents:
+    async def test_native_events_accelerate_the_tick(self, tmp_path: Path) -> None:
+        """A rewrite is observed via OS events alone — no periodic tick wired."""
+
+        import asyncio
+        from datetime import timedelta
+
+        from forze_mock import MockDepsModule
+        from tests.support.execution_context import context_from_modules
+
+        pytest.importorskip("watchfiles")
+
+        target = tmp_path / "dsn"
+        target.write_text("dsn-a", encoding="utf-8")
+        source = DirectorySecretsChangeSource(root=tmp_path, refs=(_REF,))
+        seen: list[SecretChanged] = []
+        task = collect_changes(source, seen)
+        await settle()
+
+        await source.tick()  # prime
+
+        ctx = context_from_modules(MockDepsModule())
+        step = source.native_events_lifecycle_step(debounce=timedelta(milliseconds=50))
+        await step.startup(ctx)
+
+        try:
+            # Give the watcher a moment to arm before the mutation.
+            await asyncio.sleep(0.2)
+            target.write_text("dsn-b", encoding="utf-8")
+            os.utime(target, ns=(1_000_000_000, 2_000_000_000))
+
+            for _ in range(100):
+                await asyncio.sleep(0.05)
+
+                if seen:
+                    break
+
+            assert [change.version for change in seen] == [content_secret_version("dsn-b")]
+
+        finally:
+            await step.shutdown(ctx)
+            task.cancel()
+
+        assert step.requires_long_running
+
+    def test_fails_closed_without_watchfiles(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from forze_kits.integrations.secrets import file_source
+
+        monkeypatch.setattr(file_source, "_awatch", None)
+        source = DirectorySecretsChangeSource(root=tmp_path, refs=(_REF,))
+
+        with pytest.raises(CoreException, match="watchfiles") as excinfo:
+            source.native_events_lifecycle_step()
+
+        assert "forze[watchfiles]" in excinfo.value.summary
+
+    def test_rejects_non_positive_debounce(self, tmp_path: Path) -> None:
+        from datetime import timedelta
+
+        pytest.importorskip("watchfiles")
+        source = DirectorySecretsChangeSource(root=tmp_path, refs=(_REF,))
+
+        with pytest.raises(CoreException, match="Debounce"):
+            source.native_events_lifecycle_step(debounce=timedelta(0))

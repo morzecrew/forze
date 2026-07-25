@@ -17,10 +17,19 @@ costs one ``stat`` per tick; only a swapped or rewritten file is re-read and
 re-hashed. Corollary: an in-place same-size rewrite inside the filesystem's
 timestamp granularity is invisible to the gate — irrelevant for kubelet (swaps
 change the inode) and covered by the ``fingerprint_ttl`` floor everywhere else.
+
+**Native-event upgrade** (``forze[watchfiles]`` extra): an optional second
+lifecycle step that watches the root directory with OS-native events and triggers
+the *same* stat+hash tick immediately on activity. Events are only ever an
+accelerator — their paths are never trusted (that would re-import every inotify
+trap this module exists to avoid), a spurious or duplicate event costs one cheap
+tick, and the poll step stays wired as the floor; native events let you *raise*
+its interval, not remove it.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator, Collection
 from datetime import timedelta
@@ -29,20 +38,32 @@ from typing import final
 
 import attrs
 
-from forze.application.contracts.execution import LifecycleStep
+from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.secrets import (
     SecretChanged,
     SecretRef,
     SecretVersion,
     content_secret_version,
 )
-from forze.application.execution.background import periodic_lifecycle_step
+from forze.application.execution.background import (
+    DEFAULT_STOP_GRACE_SECONDS,
+    BackgroundLoopControl,
+    periodic_lifecycle_step,
+    run_supervised,
+)
+from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 from forze_kits.integrations._logger import logger
 
 from ._fanout import ChangeFanout
 from .watcher import DEFAULT_SECRETS_WATCH_INTERVAL
+
+try:  # the native-event upgrade is optional by design (decision: poll-first)
+    from watchfiles import awatch as _awatch  # pyright: ignore[reportUnknownVariableType]
+
+except ImportError:  # pragma: no cover - exercised via the fail-closed test
+    _awatch = None  # type: ignore[assignment]
 
 # ----------------------- #
 
@@ -161,3 +182,120 @@ class DirectorySecretsChangeSource:
             name="secrets_file_source",
             step_id=step_id,
         )
+
+    # ....................... #
+
+    def native_events_lifecycle_step(
+        self,
+        *,
+        debounce: timedelta = timedelta(milliseconds=1600),
+        step_id: StrKey = "secrets_file_source_native",
+    ) -> LifecycleStep:
+        """OS-native event accelerator — an *additional* step beside the poll step.
+
+        Watches :attr:`root` recursively and runs :meth:`tick` immediately on
+        activity. Event paths are never trusted: kubelet's ``..data`` swap makes
+        per-file event interpretation a trap, so every event just triggers the same
+        stat-gated diff (a duplicate or irrelevant event costs one ``stat`` per
+        ref). Keep :meth:`lifecycle_step` wired too — native events accelerate, the
+        poll floor guarantees; wiring this step lets you raise the poll interval,
+        not remove it.
+
+        Fails closed at wiring when ``watchfiles`` is not installed
+        (``forze[watchfiles]`` extra).
+
+        :param debounce: Event coalescing window before a tick fires (native
+            bursts — a kubelet swap touches several entries — become one tick).
+        """
+
+        if _awatch is None:
+            raise exc.configuration(
+                "Native file events need the 'watchfiles' package; install the "
+                "forze[watchfiles] extra, or rely on the poll step alone.",
+            )
+
+        if debounce.total_seconds() <= 0:
+            raise exc.configuration("Debounce must be positive")
+
+        startup = _NativeEventsStartup(source=self, debounce=debounce)
+
+        return LifecycleStep(
+            id=step_id,
+            startup=startup,
+            shutdown=_NativeEventsShutdown(startup=startup),
+            requires_long_running=True,
+        )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class _NativeEventsStartup(LifecycleHook):
+    """Run a supervised native-event loop that ticks the source on activity."""
+
+    source: DirectorySecretsChangeSource
+    debounce: timedelta
+
+    control: BackgroundLoopControl = attrs.field(
+        default=attrs.Factory(
+            lambda: BackgroundLoopControl(name="secrets_file_source_native"),
+        ),
+        init=False,
+    )
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        if self.control.running:
+            return
+
+        stop = self.control.arm()
+        root = self.source.root
+        debounce_ms = int(self.debounce.total_seconds() * 1000)
+
+        async def _watch_once() -> None:
+            if _awatch is None:  # pragma: no cover - wiring already failed closed
+                raise exc.configuration("watchfiles is not installed")
+
+            # stop_event ends the generator at its next step, so a stop request
+            # never waits out a quiet directory; rust_timeout bounds how long a
+            # quiet directory can defer that check (the default 5s equals the stop
+            # grace and would push every shutdown into the cancel backstop). The
+            # events themselves are discarded — the tick re-derives truth from
+            # stat+hash.
+            async for _events in _awatch(
+                root, debounce=debounce_ms, stop_event=stop, rust_timeout=1_000
+            ):
+                await self.source.tick()
+
+                if stop.is_set():
+                    return
+
+        self.control.task = asyncio.create_task(
+            run_supervised(
+                _watch_once,
+                stop=stop,
+                name=self.control.loop_name,
+            ),
+            name=self.control.loop_name,
+        )
+        ctx.drainables.register(self.control)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class _NativeEventsShutdown(LifecycleHook):
+    """Stop the native-event loop; normally a no-op after the runtime drains it."""
+
+    startup: _NativeEventsStartup
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        clock = asyncio.get_running_loop()
+        await self.startup.control.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)

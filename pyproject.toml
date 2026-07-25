@@ -162,6 +162,7 @@ mcp = ["fastmcp>=3.0.0", "mcp>=1.27.0"]
 dst = ["polyfactory>=3.3.0", "hypothesis>=6.153.0"]
 cli = ["typer>=0.12.0"]
 zstd = ["zstandard>=0.23.0"]
+watchfiles = ["watchfiles>=1.0.0"]
 
 # ....................... #
 
