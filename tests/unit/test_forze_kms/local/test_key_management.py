@@ -178,6 +178,43 @@ def test_source_mapping_is_copied_at_construction() -> None:
 
 
 # ....................... #
+# Fingerprint (fleet drift comparison)
+
+
+def test_fingerprint_is_stable_and_order_independent() -> None:
+    a = LocalKeyManagement({"local-v1": MASTER, "local-v2": MASTER_V2})
+    b = LocalKeyManagement({"local-v2": MASTER_V2, "local-v1": MASTER})
+
+    assert a.fingerprint == b.fingerprint
+    assert a.fingerprint != LocalKeyManagement({"local-v1": MASTER}).fingerprint
+
+
+def test_fingerprint_distinguishes_same_id_different_bytes() -> None:
+    """The skew whose only runtime symptom is a generic AEAD auth failure —
+    the fingerprint must make it visible."""
+
+    assert (
+        LocalKeyManagement({"local-v1": MASTER}).fingerprint
+        != LocalKeyManagement({"local-v1": MASTER_V2}).fingerprint
+    )
+
+
+def test_fingerprint_encoding_is_pinned() -> None:
+    """Operators compare fingerprints across nodes that may run different forze
+    versions — changing the encoding must be a visible decision, never an accident."""
+
+    assert LocalKeyManagement({"local-v1": MASTER}).fingerprint == "edfe3539b9dd909f"
+
+
+def test_fingerprint_and_repr_carry_no_key_material() -> None:
+    kms = LocalKeyManagement({"local-v1": MASTER})
+
+    assert len(kms.fingerprint) == 16
+    assert int(kms.fingerprint, 16) >= 0  # hex digest, not material
+    assert repr(kms) == "LocalKeyManagement()"  # the keys field is repr-suppressed
+
+
+# ....................... #
 # Keyring integration (the overlap-rotation story, end to end)
 
 

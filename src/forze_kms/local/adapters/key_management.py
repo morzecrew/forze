@@ -46,8 +46,14 @@ The wrap is pure in-process computation, so the adapter also implements
 :class:`~forze.application.contracts.crypto.SyncKeyManagementPort` — the
 documented legitimate case for that opt-in: a keyring over this backend fills
 its data-key cache inline and the synchronous field path never dies cold.
+
+In a fleet every replica must hold the same key map. Each instance logs its key
+ids and a one-way :attr:`~LocalKeyManagement.fingerprint` at construction —
+compare that value across replicas to spot key-map drift before it surfaces as
+unwrap errors.
 """
 
+import hashlib
 from collections.abc import Mapping
 from typing import final
 
@@ -55,14 +61,22 @@ import attrs
 
 from forze.application.contracts.crypto import AesGcmAead, DataKey, KeyRef
 from forze.base.exceptions import exc
+from forze.base.logging import get_logger
 from forze.base.primitives import secure_random_bytes
 
 # ----------------------- #
+
+logger = get_logger("forze_kms.local")
+
+# ....................... #
 
 _NONCE_SIZE = 12
 _DEK_SIZE = 32
 _MASTER_KEY_SIZE = 32
 _AAD_PREFIX = "forze-local-kms"
+
+_FINGERPRINT_DOMAIN = b"forze-local-kms-fingerprint-v1"
+_KEY_DIGEST_DOMAIN = b"forze-local-kms-key-digest-v1|"
 
 
 # ....................... #
@@ -108,6 +122,43 @@ class LocalKeyManagement:
                     code="core.crypto.master_key_invalid",
                     details={"key_id": key_id, "length": len(key)},
                 )
+
+        logger.info(
+            "Local KMS configured with %d master key(s) %s, fingerprint %s",
+            len(self.keys),
+            sorted(self.keys),
+            self.fingerprint,
+        )
+
+    # ....................... #
+
+    @property
+    def fingerprint(self) -> str:
+        """One-way digest of the key map, for comparing replicas — never a secret itself.
+
+        Stable across processes and insertion order: SHA-256 over the sorted key ids,
+        each paired with a domain-separated digest of its key bytes. Two replicas agree
+        exactly when they hold the same ids *and* the same material, so grouping a fleet
+        by this value (a startup log line, a metric attribute) turns key-map drift into
+        a visible diff — including the confusing skew where one node holds *different
+        bytes under the same id* (whose only runtime symptom is a generic AEAD
+        authentication failure).
+
+        A plain hash is sound here because master keys are required to be CSPRNG-random
+        32-byte material: at 256 bits of entropy no preimage search is feasible, so the
+        digest reveals nothing. (A guessable key would be compromised with or without a
+        fingerprint — the key itself is the search target then.)
+        """
+
+        digest = hashlib.sha256(_FINGERPRINT_DOMAIN)
+
+        for key_id in sorted(self.keys):
+            encoded = key_id.encode()
+            digest.update(len(encoded).to_bytes(4, "big"))
+            digest.update(encoded)
+            digest.update(hashlib.sha256(_KEY_DIGEST_DOMAIN + self.keys[key_id]).digest())
+
+        return digest.hexdigest()[:16]
 
     # ....................... #
 

@@ -220,7 +220,16 @@ the new key to every replica's **map** (directory unchanged), then flip
 `key_ref` in a second rollout — otherwise a mid-rollout replica that already
 seals under the new key writes envelopes its not-yet-updated peers cannot open.
 And *every config holder is a key holder* — there is no central place that
-audits or revokes access. If you need keys that never leave one service, that
+audits or revokes access.
+
+Drift between replicas is fail-closed but worth catching early: each instance
+logs its key ids and a one-way `fingerprint` of the key map at construction —
+compare that value across the fleet (grep startup logs, or attach it to your
+own metrics) and any divergence is a ten-second diagnosis. In particular,
+fleet-wide `core.crypto.aead_auth_failed` right after a deploy usually means
+two replicas hold *different bytes under the same key id* — differing
+fingerprints confirm it; envelopes sealed by the odd node out are fine once its
+config is corrected. If you need keys that never leave one service, that
 property is exactly what requires a networked unwrap: use
 [Vault Transit](vault.md) (or an API-compatible self-hosted service) or a cloud
 backend above.
