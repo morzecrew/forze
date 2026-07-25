@@ -112,6 +112,23 @@ class TestVaultDynamicSecrets:
         with pytest.raises(CoreException, match="unexpected payload"):
             await adapter.issue(SecretRef("app-role"))
 
+    def test_lease_manager_accepts_the_adapter(self) -> None:
+        """The fail-closed capability gate must pass for the real adapter, not just
+        test doubles — this is exactly what a mock-only suite would never catch."""
+
+        from forze_kits.integrations.secrets import SecretsLeaseManager
+
+        async def _on_credential(ref: SecretRef, leased: object) -> None:  # pragma: no cover
+            pass
+
+        manager = SecretsLeaseManager(
+            dynamic=VaultDynamicSecrets(client=_client()),
+            roles=(SecretRef("app-role"),),
+            on_credential=_on_credential,  # type: ignore[arg-type]
+        )
+
+        assert manager.dynamic.secrets_capabilities.dynamic_credentials  # type: ignore[attr-defined]
+
     async def test_renew_and_revoke_pass_through(self) -> None:
         client = _client()
         adapter = VaultDynamicSecrets(client=client)

@@ -102,6 +102,18 @@ class TestMockLeases:
         with pytest.raises(CoreException, match="No live lease"):
             await port.renew(leased.lease_id, timedelta(seconds=30))
 
+    def test_lease_manager_accepts_the_mock_port(self) -> None:
+        from forze_kits.integrations.secrets import SecretsLeaseManager
+
+        async def _on_credential(ref: SecretRef, leased: object) -> None:  # pragma: no cover
+            pass
+
+        SecretsLeaseManager(
+            dynamic=MockDynamicSecretsPort(state=MockState()),
+            roles=(SecretRef("db/role"),),
+            on_credential=_on_credential,  # type: ignore[arg-type]
+        )
+
     async def test_issuances_are_sequenced_and_distinct(self) -> None:
         port = MockDynamicSecretsPort(state=MockState())
 

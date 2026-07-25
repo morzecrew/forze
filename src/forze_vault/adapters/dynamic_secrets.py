@@ -7,12 +7,20 @@ from typing import final
 import attrs
 import orjson
 
-from forze.application.contracts.secrets import LeasedSecret, SecretRef
+from forze.application.contracts.secrets import (
+    LeasedSecret,
+    SecretRef,
+    SecretsCapabilities,
+)
 from forze.base.exceptions import exc
 
 from ..kernel.client import VaultClientPort
 
 # ----------------------- #
+
+_VAULT_DYNAMIC_CAPABILITIES = SecretsCapabilities(dynamic_credentials=True)
+"""This adapter serves only the lease plane; static reads/writes live on
+:class:`~forze_vault.adapters.VaultKvSecrets`."""
 
 
 @final
@@ -28,6 +36,12 @@ class VaultDynamicSecrets:
 
     client: VaultClientPort
     """Vault client."""
+
+    # ....................... #
+
+    @property
+    def secrets_capabilities(self) -> SecretsCapabilities:
+        return _VAULT_DYNAMIC_CAPABILITIES
 
     # ....................... #
 

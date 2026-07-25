@@ -145,6 +145,10 @@ class MockDynamicSecretsPort:
     ttl: timedelta = timedelta(seconds=60)
     """Granted TTL at issuance."""
 
+    @property
+    def secrets_capabilities(self) -> SecretsCapabilities:
+        return SecretsCapabilities(dynamic_credentials=True)
+
     def _leases(self) -> dict[str, dict[str, object]]:
         identity = self.state.identity
         leases = identity.setdefault("secrets_leases", {})
