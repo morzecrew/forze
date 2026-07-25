@@ -147,8 +147,10 @@ because it is the known-safe one:
    rather than publishing. Finally, a **delayed reconfirmation run**
    (`reconfirm_after`, default 60s) re-asserts the canonical credential past the
    only physical bound a stale in-flight statement has — the stale worker's own
-   statement timeout. Set a statement timeout on rotation-admin connections and
-   keep `reconfirm_after` above it.
+   statement timeout. The shipped Postgres target enforces that bound itself
+   (`apply_statement_timeout`, default 30s — the `ALTER ROLE` runs under a
+   server-side `SET LOCAL statement_timeout`); keep `reconfirm_after` above it,
+   and apply the same pairing to any custom target.
 
 The pending ref is what makes this crash-safe: after **set**, the only copy of a
 password already live at the backend exists durably in the secret store. A rotator

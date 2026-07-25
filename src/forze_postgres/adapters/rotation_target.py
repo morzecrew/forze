@@ -78,6 +78,15 @@ class PostgresRotationTarget(RotationTargetPort):
     verify_timeout: timedelta = timedelta(seconds=10)
     """Connect timeout for the verification connection."""
 
+    apply_statement_timeout: timedelta | None = timedelta(seconds=30)
+    """Server-side ``statement_timeout`` for the ``ALTER ROLE`` (``None`` disables).
+
+    This is what makes a stale in-flight apply *boundedly* stale: a lock-losing
+    worker's ALTER that the server hasn't executed within this bound is killed
+    server-side and can never commit late. Keep it below the rotator's
+    ``reconfirm_after`` so the delayed reconfirmation runs strictly after any
+    latecomer could still land."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -99,6 +108,12 @@ class PostgresRotationTarget(RotationTargetPort):
 
         if self.verify_timeout.total_seconds() <= 0:
             raise exc.configuration("Verify timeout must be positive")
+
+        if (
+            self.apply_statement_timeout is not None
+            and self.apply_statement_timeout.total_seconds() <= 0
+        ):
+            raise exc.configuration("Apply statement timeout must be positive")
 
     # ....................... #
 
@@ -150,18 +165,35 @@ class PostgresRotationTarget(RotationTargetPort):
         if not user or not password:
             raise exc.configuration("Pending DSN names no user or password.")
 
+        alter = cast(
+            QueryNoTemplate,
+            sql.SQL("ALTER ROLE {} WITH PASSWORD {}").format(
+                sql.Identifier(user),
+                sql.Literal(password),
+            ),
+        )
+
         # Detached: a role password must never ride (or die with) an ambient
-        # transaction the durable runner happens to hold open.
+        # transaction the durable runner happens to hold open. Inside the scope,
+        # transaction() opens a fresh root on its own connection.
         async with self.client.detached():
-            await self.client.execute(
-                cast(
-                    QueryNoTemplate,
-                    sql.SQL("ALTER ROLE {} WITH PASSWORD {}").format(
-                        sql.Identifier(user),
-                        sql.Literal(password),
-                    ),
+            if self.apply_statement_timeout is None:
+                await self.client.execute(alter)
+                return
+
+            # SET LOCAL bounds the ALTER server-side: a stale worker's apply that
+            # the server hasn't run within the bound is killed and can never
+            # commit late (the fence the delayed reconfirmation relies on).
+            async with self.client.transaction():
+                await self.client.execute(
+                    cast(
+                        QueryNoTemplate,
+                        sql.SQL("SET LOCAL statement_timeout = {}").format(
+                            sql.Literal(int(self.apply_statement_timeout.total_seconds() * 1000))
+                        ),
+                    )
                 )
-            )
+                await self.client.execute(alter)
 
     # ....................... #
 
