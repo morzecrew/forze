@@ -18,13 +18,14 @@ re-hashed. Corollary: an in-place same-size rewrite inside the filesystem's
 timestamp granularity is invisible to the gate — irrelevant for kubelet (swaps
 change the inode) and covered by the ``fingerprint_ttl`` floor everywhere else.
 
-**Native-event upgrade** (``forze[watchfiles]`` extra): an optional second
-lifecycle step that watches the root directory with OS-native events and triggers
-the *same* stat+hash tick immediately on activity. Events are only ever an
-accelerator — their paths are never trusted (that would re-import every inotify
-trap this module exists to avoid), a spurious or duplicate event costs one cheap
-tick, and the poll step stays wired as the floor; native events let you *raise*
-its interval, not remove it.
+**Native-event upgrade** (needs the ``watchfiles`` package, installed by the app —
+deliberately not a package extra): an optional second lifecycle step that watches
+the root directory with OS-native events and triggers the *same* stat+hash tick
+immediately on activity. Events are only ever an accelerator — their paths are
+never trusted (that would re-import every inotify trap this module exists to
+avoid), a spurious or duplicate event costs one cheap tick, and the poll step
+stays wired as the floor; native events let you *raise* its interval, not remove
+it.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.secrets import (
     SecretChanged,
     SecretRef,
+    SecretsChangeSource,
     SecretVersion,
     content_secret_version,
 )
@@ -70,7 +72,7 @@ except ImportError:  # pragma: no cover - exercised via the fail-closed test
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class DirectorySecretsChangeSource:
+class DirectorySecretsChangeSource(SecretsChangeSource):
     """Poll-based change source over secret files beneath a root directory.
 
     Versions are content hashes — identical to what
@@ -201,8 +203,7 @@ class DirectorySecretsChangeSource:
         poll floor guarantees; wiring this step lets you raise the poll interval,
         not remove it.
 
-        Fails closed at wiring when ``watchfiles`` is not installed
-        (``forze[watchfiles]`` extra).
+        Fails closed at wiring when ``watchfiles`` is not installed.
 
         :param debounce: Event coalescing window before a tick fires (native
             bursts — a kubelet swap touches several entries — become one tick).
@@ -210,8 +211,9 @@ class DirectorySecretsChangeSource:
 
         if _awatch is None:
             raise exc.configuration(
-                "Native file events need the 'watchfiles' package; install the "
-                "forze[watchfiles] extra, or rely on the poll step alone.",
+                "Native file events need the 'watchfiles' package; add it to your "
+                "application's dependencies (e.g. `uv add watchfiles`), or rely on "
+                "the poll step alone.",
             )
 
         if debounce.total_seconds() <= 0:

@@ -73,6 +73,9 @@ dev = [
     # read via DuckDB extensions at runtime; these only create the tables to read).
     "deltalake>=0.22.0",
     "pyiceberg[sql-sqlite]>=0.8.0",
+    # Exercises the secrets file-source native-event upgrade in tests; apps that want
+    # it install watchfiles themselves (deliberately not a package extra).
+    "watchfiles>=1.0.0",
 ]
 docs = [
     "zensical>=0.0.43",
@@ -162,7 +165,6 @@ mcp = ["fastmcp>=3.0.0", "mcp>=1.27.0"]
 dst = ["polyfactory>=3.3.0", "hypothesis>=6.153.0"]
 cli = ["typer>=0.12.0"]
 zstd = ["zstandard>=0.23.0"]
-watchfiles = ["watchfiles>=1.0.0"]
 
 # ....................... #
 
@@ -608,6 +610,12 @@ DEP002 = [
     #! Added temporarily
     "uvicorn",
     "types-hvac",
+]
+DEP004 = [
+    # Optional native-event upgrade for the secrets file source: guarded import,
+    # fail-closed at wiring, apps install it themselves (deliberately not an extra);
+    # the dev-group pin only exists so tests exercise the upgrade.
+    "watchfiles",
 ]
 DEP003 = [
     "types_aiobotocore_s3",

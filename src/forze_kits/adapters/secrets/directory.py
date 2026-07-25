@@ -11,6 +11,7 @@ from forze.application.contracts.secrets import (
     SecretsPort,
     SecretValue,
     SecretVersion,
+    VersionedSecretsPort,
     content_secret_version,
 )
 from forze.base.exceptions import exc
@@ -26,7 +27,7 @@ platform (e.g. the Kubernetes API), never by the app."""
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class DirectorySecrets(SecretsPort):
+class DirectorySecrets(SecretsPort, VersionedSecretsPort):
     """Resolve secrets as UTF-8 text files under a configured root directory.
 
     :attr:`~forze.application.contracts.secrets.SecretRef.path` is a relative path

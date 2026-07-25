@@ -33,6 +33,7 @@ from forze.application.contracts.secrets import (
     SecretChanged,
     SecretRef,
     SecretRotated,
+    SecretsChangeSource,
     SecretVersion,
 )
 from forze.application.execution.context import ExecutionContext
@@ -97,7 +98,7 @@ async def publish_secret_rotated(
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class PubSubSecretsChangeSource:
+class PubSubSecretsChangeSource(SecretsChangeSource):
     """Presents a broadcast rotation channel as a standard change source.
 
     Wire it into the hot-reload binder exactly like the poll watcher; reconnects are

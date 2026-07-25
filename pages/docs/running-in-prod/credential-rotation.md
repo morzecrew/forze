@@ -59,8 +59,9 @@ step = watcher.lifecycle_step()   # a supervised 30s tick; first tick primes sil
   forever), and a stat gate keeps unchanged files at one `stat` per tick.
   **`subPath` mounts never update** — that is a Kubernetes fact no watcher can fix.
 
-With the `forze[watchfiles]` extra installed, the directory source can also react
-to OS-native events instead of waiting out the poll interval:
+With the `watchfiles` package installed (an app-level dependency, deliberately not
+a Forze extra), the directory source can also react to OS-native events instead of
+waiting out the poll interval:
 
 ```python
 steps = [

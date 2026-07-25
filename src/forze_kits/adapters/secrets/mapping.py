@@ -7,10 +7,12 @@ import attrs
 
 from forze.application.contracts.secrets import (
     SecretRef,
+    SecretsAdminPort,
     SecretsCapabilities,
     SecretsPort,
     SecretValue,
     SecretVersion,
+    VersionedSecretsPort,
     content_secret_version,
     validate_secret_writes_supported,
 )
@@ -21,7 +23,7 @@ from forze.base.exceptions import exc
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MappingSecrets(SecretsPort):
+class MappingSecrets(SecretsPort, VersionedSecretsPort, SecretsAdminPort):
     """Resolve secrets from a ``path -> value`` mapping.
 
     :attr:`~forze.application.contracts.secrets.SecretRef.path` is the dict key.

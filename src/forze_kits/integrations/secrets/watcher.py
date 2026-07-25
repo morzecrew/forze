@@ -19,6 +19,7 @@ from forze.application.contracts.execution import LifecycleStep
 from forze.application.contracts.secrets import (
     SecretChanged,
     SecretRef,
+    SecretsChangeSource,
     SecretVersion,
     VersionedSecretsPort,
     secrets_capabilities_of,
@@ -40,7 +41,7 @@ metadata read per ref per tick."""
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class SecretsPollWatcher:
+class SecretsPollWatcher(SecretsChangeSource):
     """A change source that diffs ``current_version`` snapshots on a periodic tick.
 
     Snapshots hold **versions only** — never values. The first tick primes the

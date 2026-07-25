@@ -39,7 +39,11 @@ import psycopg
 from psycopg import conninfo, sql
 from psycopg.abc import QueryNoTemplate
 
-from forze.application.contracts.secrets import PendingCredential, SecretsPort
+from forze.application.contracts.secrets import (
+    PendingCredential,
+    RotationTargetPort,
+    SecretsPort,
+)
 from forze.base.exceptions import exc
 
 from ..kernel.client import PostgresClientPort
@@ -48,7 +52,7 @@ from ..kernel.client import PostgresClientPort
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
-class PostgresRotationTarget:
+class PostgresRotationTarget(RotationTargetPort):
     """:class:`~forze.application.contracts.secrets.RotationTargetPort` for Postgres DSNs.
 
     The staged value is resolved through :attr:`secrets` at call time — steps carry

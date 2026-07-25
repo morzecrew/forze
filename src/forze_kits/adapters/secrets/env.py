@@ -11,6 +11,7 @@ from forze.application.contracts.secrets import (
     SecretsPort,
     SecretValue,
     SecretVersion,
+    VersionedSecretsPort,
     content_secret_version,
 )
 from forze.base.exceptions import exc
@@ -23,7 +24,7 @@ _ENV_SECRETS_CAPABILITIES = SecretsCapabilities(versioned_reads=True)
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class EnvSecrets(SecretsPort):
+class EnvSecrets(SecretsPort, VersionedSecretsPort):
     """Resolve secrets from process environment variables.
 
     :attr:`~forze.application.contracts.secrets.SecretRef.path` is the env var name.

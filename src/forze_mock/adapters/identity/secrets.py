@@ -11,13 +11,17 @@ import attrs
 
 from forze.application.contracts.secrets import (
     FULL_SECRETS_CAPABILITIES,
+    DynamicSecretsPort,
     LeasedSecret,
     SecretChanged,
     SecretRef,
+    SecretsAdminPort,
     SecretsCapabilities,
+    SecretsChangeSource,
     SecretsPort,
     SecretValue,
     SecretVersion,
+    VersionedSecretsPort,
 )
 from forze.base.exceptions import exc
 from forze_mock.state import MockState
@@ -27,7 +31,7 @@ from forze_mock.state import MockState
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class MockSecretsPort(SecretsPort):
+class MockSecretsPort(SecretsPort, VersionedSecretsPort, SecretsAdminPort):
     state: MockState
 
     @property
@@ -94,7 +98,7 @@ class MockSecretsPort(SecretsPort):
 
 @final
 @attrs.define(slots=True)
-class MockSecretsChangeSource:
+class MockSecretsChangeSource(SecretsChangeSource):
     """Programmable change source: tests and DST call :meth:`emit` at exact schedule
     points; every live subscription matching the ref observes the change."""
 
@@ -133,7 +137,7 @@ class MockSecretsChangeSource:
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class MockDynamicSecretsPort:
+class MockDynamicSecretsPort(DynamicSecretsPort):
     """Deterministic leased credentials backed by :attr:`MockState.identity`.
 
     Issues sequenced leases with a fixed TTL; renewal grants exactly what was asked

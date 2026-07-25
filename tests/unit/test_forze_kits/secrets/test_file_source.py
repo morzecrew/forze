@@ -176,7 +176,7 @@ class TestNativeEvents:
         with pytest.raises(CoreException, match="watchfiles") as excinfo:
             source.native_events_lifecycle_step()
 
-        assert "forze[watchfiles]" in excinfo.value.summary
+        assert "uv add watchfiles" in excinfo.value.summary
 
     def test_rejects_non_positive_debounce(self, tmp_path: Path) -> None:
         from datetime import timedelta
