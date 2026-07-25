@@ -19,9 +19,13 @@ under `tx={...}`. Everything inside commits together:
 ```python
 async with ctx.tx_ctx.scope("orders"):
     order = await ctx.document.command(order_spec).create(cmd)
-    await ctx.counter(order_counter).incr()
+    await ctx.document.command(line_spec).create(line_cmd)
 # committed here; an exception inside would have rolled it all back
 ```
+
+Both writes land on a transactional backend, so both roll back together. Not
+everything you can call inside a scope does — see [What commits
+together](#what-commits-together).
 
 The route must be registered for transactions when you wire the module —
 `PostgresDepsModule(client=pg, ..., tx={"orders"})` — otherwise the scope can't
@@ -49,6 +53,16 @@ matches; a port of a different kind runs outside it.
     *across* systems, you don't reach for a bigger transaction — you stage the
     cross-system effect and apply it after commit (see [below](#after-the-commit)
     and [Events & sagas](../data-events/events-sagas.md)).
+
+Queues, streams, object storage, caches, locks, and search/analytics writes are
+not transactional in production, so they never roll back with the scope.
+
+**Counters are the case worth calling out**, because they look like an ordinary
+Postgres write and are not one: a counter allocation runs on its own connection,
+outside the caller's transaction, on *every* backend — Redis, Postgres, Mongo and
+Firestore alike. A rolled-back transaction does not give the number back. That is
+deliberate: a sequence you could roll back would reissue an invoice number already
+handed out. Treat an allocated number as spent and let gaps happen.
 
 ## Two-phase handlers: work before the write
 

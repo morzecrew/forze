@@ -128,6 +128,14 @@ Use `StreamQueryDepKey` for `read` / `tail`. Consumer groups come in two discipl
 - Prefer idempotent consumers; message brokers can redeliver.
 - Wrap document mutations and enqueue/outbox-style side effects with transactions and `defer_after_commit` when duplicate or premature events would hurt.
 
+## Shutdown
+
+Consumers stop **gracefully**, not by cancellation: a running consumer accepts a stop signal and finishes the unit of work in hand before returning, and a commit-stream consumer commits the offsets it processed even when the stop lands mid-batch. A custom consumer or signal source you write must accept the stop signal too — one that ignores it gets torn down with work in flight.
+
+A graceful shutdown is also not a poison verdict. An offset-log consumer refused by the drain gate stops with its offset **uncommitted** for redelivery rather than dead-lettering a healthy message.
+
+An outbox relay can `drain_on_shutdown` — publish what is claimable before teardown — and a relay that names a transport spec nothing ever provides is now **rejected at construction** instead of silently dropping the route.
+
 ## Anti-patterns
 
 1. **Resolving queue ports without `route=spec.name`** when using SQS/RabbitMQ routed modules.

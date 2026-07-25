@@ -65,9 +65,17 @@ that emit to whichever node actually holds the recipient's socket, so the gatewa
 need not be co-located with connections.
 
 Tenancy lives at **room membership**: a connection only ever joins its own
-tenant's rooms, so the stream itself can be tenant-global. A second transport —
-SSE, a push vendor — is just another gateway consuming the same stream, never a
-new application contract.
+tenant's rooms, so the stream itself can be tenant-global.
+
+**A transport is never a new application contract.** Three ship — the Socket.IO
+gateway, an SSE route and a raw-WebSocket route — and each is just another
+consumer of the same stream, delivering the same envelope under the same
+[wire protocol](../reference/realtime-protocol.md). Which one a client speaks is
+a deployment fact: SSE where a browser only needs server push over plain HTTP,
+raw WebSocket where it also sends governed commands back, Socket.IO where you
+want rooms, presence and its client ecosystem. The signal your handler published
+does not know the difference, and a fourth transport (a push vendor, a mobile
+gateway) is written the same way.
 
 ## Reaching someone who's offline
 
@@ -100,6 +108,11 @@ and an event can opt out of offline delivery when it isn't worth persisting.
 - [Socket.IO integration](../integrations/socketio.md) — the full wiring: the
   publisher, the gateway and its lifecycle, presence, the device-identity
   handshake, the delivery envelope, and the production hardening knobs.
+- [Realtime wire protocol](../reference/realtime-protocol.md) — the client
+  contract every transport implements: handshake, envelope, cumulative ack,
+  replay, and the AsyncAPI export you generate clients from.
+- [SSE and raw WebSocket routes](../integrations/fastapi.md#realtime-egress-over-sse) —
+  the two HTTP-native transports.
 - [Events & sagas](events-sagas.md) — the outbox and relay the durable path rides on.
 - Recipes: [offline delivery](../recipes/realtime-offline-delivery.md) (store-and-forward
   per device) and [tenant-sharded realtime](../recipes/tenant-sharded-realtime.md)

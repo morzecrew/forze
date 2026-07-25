@@ -3,7 +3,7 @@
 Export walks the runtime's spec inventory and streams each plane's state into a backend-agnostic
 archive — decrypted on read, so it never depends on the source's keys; import replays it into any
 other wired backend, re-sealing under the target's. The trust story is the plane-completeness
-doctrine (RFC 0016): every plane an application binds declares itself *exportable*, *rebuildable*,
+doctrine: every plane an application binds declares itself *exportable*, *rebuildable*,
 or *drained*, and an export **refuses anything it cannot account for** rather than ship an artifact
 that looks complete and is not.
 

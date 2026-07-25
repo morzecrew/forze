@@ -47,7 +47,7 @@ class FullScope:
     """Export the whole system, carrying the attestation that it was still while captured.
 
     The *procedure* that makes the attestation mean anything — stop the fleet, run a dedicated
-    exporter, drain its own relay, quiesce (RFC 0017 §4.1) — is operational. This type carries the
+    exporter, drain its own relay, quiesce — is operational. This type carries the
     resulting :class:`QuiesceReport`, and export refuses to stamp ``consistency: quiesced`` from a
     report that did not attest.
 

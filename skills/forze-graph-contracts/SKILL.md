@@ -24,7 +24,6 @@ from forze.application.contracts.graph import (
     GraphEdgeSpec,
     GraphModuleSpec,
     GraphNodeSpec,
-    validate_graph_module_spec,
 )
 
 
@@ -51,12 +50,18 @@ project_graph = GraphModuleSpec(
         ),
     ),
 )
-validate_graph_module_spec(project_graph)
 ```
+
+**The module validates itself at construction.** A duplicate kind name, an endpoint naming a node kind the module does not declare, or a `key_field` missing from its own read model fails at build — not at the first `get_edge`. You no longer call `validate_graph_module_spec` yourself.
 
 `GraphEdgeEndpoint.from_kind` / `to_kind` are strings and must match node kind values in the same module.
 
-Edge identity: the default `identity="key"` addresses each edge by a stable business key and **requires** `key_field` (a field of the edge read model); `ensure_edge` then upserts on that key so concurrent calls cannot create duplicates. `identity="endpoints"` means at most one edge of the kind per `(from, to)` pair, addressed by its endpoints.
+Edge identity, and this is the decision to get right up front:
+
+- `identity="key"` (the default) addresses each edge by a stable business key and **requires** `key_field` (a field of the edge read model); `ensure_edge` upserts on that key so concurrent calls cannot create duplicates. The shortest edge declaration you would write is a keyed edge with no key — that now fails at construction instead of at first use.
+- `identity="endpoints"` means **at most one edge of the kind per `(from, to)` pair, and that uniqueness is enforced** — a second create conflicts. A kind that legitimately needs parallel edges between the same two vertices must declare a `key_field` and identify by it.
+
+A node or edge `key_field` may not be sealed — an encrypted key cannot be addressed.
 
 ## Resolving ports
 
@@ -83,13 +88,15 @@ created = await command.create_vertex("project", CreateProjectNode(name="Demo"))
 
 `GraphCommandPort` covers create/update/delete for vertices and edges, batch creation, and ensure operations. Adapter implementations define stable key semantics through `VertexRef` and `EdgeRef`.
 
+For bounded-memory reads over a whole kind — an export, a reindex, a migration — the query port streams keyset pages: `find_vertices_stream` and `find_edges_stream`. Both are capability-gated; a backend without keyset support refuses rather than silently paging in memory. Deleting a vertex detaches its edges, an edge requires both endpoints to exist, a duplicate key conflicts, and an unknown kind raises — the mock enforces all four exactly as Neo4j does.
+
 ## Adapter guidance
 
 Prefer `forze_neo4j` when Neo4j fits: `Neo4jDepsModule(client=..., graphs={...}, tx={...})` registers query/command (plus raw-query and management) ports per graph module, supports keyed-edge `ensure_edge` identity (`identity="key"` with `key_field`) and native/weighted `k_shortest_paths`, and offers tenant isolation tiers (tagged property, per-tenant database, routed client). For custom adapters, keep Cypher, AQL, and engine-specific query strings inside the adapter and register providers as routed deps under `GraphQueryDepKey` and `GraphCommandDepKey`, keyed by `GraphModuleSpec.name`.
 
 ## Anti-patterns
 
-1. **Using graph contracts before validating the module spec** — duplicate or unknown kinds fail later.
+1. **Declaring `identity="endpoints"` for a kind that needs parallel edges** — the pair is unique and a second create conflicts; give the kind a `key_field` instead.
 2. **Putting engine labels/collection names in specs** — specs hold logical kinds; adapters map physical layout.
 3. **Hand-rolling a Neo4j adapter** — `forze_neo4j` already ships one; write a custom `DepsModule` only for engines without an official integration.
 4. **Mixing node kind names with module route names** — module name routes deps; node/edge names identify graph kinds.

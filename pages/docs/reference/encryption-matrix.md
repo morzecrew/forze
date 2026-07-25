@@ -16,8 +16,8 @@ plaintext.
 A single `FieldEncryption` policy — `encrypted` (randomized AEAD) and `searchable`
 (deterministic, equality-only) field sets, plus `binds_record_id` and
 `reject_plaintext` — is declared once on the document spec and **carried to search,
-analytics, and graph** by pointing their spec at the same policy, so the planes
-can't drift.
+analytics, graph, and procedure params** by pointing their spec at the same policy, so
+the planes can't drift.
 
 | Surface | Backends | `searchable` | `binds_record_id` | Fail-closed code |
 |---------|----------|--------------|-------------------|------------------|
@@ -25,6 +25,7 @@ can't drift.
 | Search | Postgres, Mongo, Meilisearch, mock | yes (rewrites equality filters) | inherited | `core.search.encryption_wiring` |
 | Analytics / warehouse | Postgres, ClickHouse, BigQuery, DuckDB, mock | yes (equality only) | **rejected** — warehouse rows have no id | `core.analytics.encryption_wiring` |
 | Graph | Neo4j, mock | yes | nodes + key-addressed edges; **rejected** for endpoint-identity edges | `core.graph.encryption_wiring` |
+| Procedure params | Postgres, mock | yes | **rejected** — params have no stable id | `core.procedures.encryption_wiring` |
 
 - **Reach:** at rest. Fields are sealed on write and decrypted out of *every* read path
   — search results, warehouse offset/cursor/chunked/projection reads, graph
@@ -88,9 +89,13 @@ can't drift.
   for field-encrypted rows, `reencrypt_objects` for stored blobs), then drop the previous
   key. Without
   the overlap the confused-deputy guard refuses the old envelopes and the data is stranded.
-- **KMS backends:** every one holds the KEK outside the app, and its wrapped data key is
+- **KMS backends:** every cloud one holds the KEK outside the app, and its wrapped data key is
   decryptable without being told which key version sealed it — so rotation never orphans
   data. (`DataKey.key_version` records the version only where the provider reports one.)
+  The self-hosted `LocalKeyManagement` is the exception by design: it wraps under
+  operator-supplied 32-byte master keys held **in the process**, so your secret delivery is
+  its whole trust model, and the rotation overlap needs the outgoing key kept in the key map
+  (not just the directory) until the sweep finishes.
 
     | Backend | Package | `KeyManagementPort` |
     |---------|---------|---------------------|
@@ -98,6 +103,7 @@ can't drift.
     | AWS KMS | `forze[kms-aws]` | `AwsKmsKeyManagement` |
     | Google Cloud KMS | `forze[kms-gcp]` | `GcpKmsKeyManagement` |
     | Yandex Cloud KMS | `forze[kms-yc]` | `YcKmsKeyManagement` |
+    | Self-hosted local | — (no extra) | `LocalKeyManagement` |
     | Self-hosted (in-process master keys) | core, no extra | `LocalKeyManagement` |
 
     The self-hosted backend is the one exception to "the KEK is held outside the app":

@@ -57,10 +57,10 @@ class PlaneDisposition(StrEnum):
     REFUSED = "refused"
     """Cannot be carried faithfully *and* cannot be safely skipped. Export refuses, loudly.
 
-    Today: ``counter`` (durable state with no read path until a ``CounterAdminPort`` exists —
-    silently skipping it makes a migrated app reissue sequence numbers it has already handed
-    out) and ``analytics`` (which may be a warehouse system of record, and the framework
-    cannot tell)."""
+    Today: an ``analytics`` spec whose provenance is a warehouse system of record — or is
+    left undeclared, which reads the same, since the framework cannot tell a projection from
+    the only copy. (``counter`` was here too until ``CounterAdminPort.list_counters()`` made
+    counters enumerable for operators and exports; handlers still cannot read one.)"""
 
 
 # ....................... #
@@ -173,7 +173,7 @@ class SpecRegistryEntry:
     changes *which tenant-scoped export carries the spec*, not the shape a target must be able to
     import. A **per-tenant** export excludes identity specs by default (a data-portability request
     wants the tenant's business data, not their session tokens); a **full-system** export always
-    carries them (a live system needs its sessions). See RFC 0017 §9 / decision #10.
+    carries them (a live system needs its sessions).
     """
 
     # ....................... #

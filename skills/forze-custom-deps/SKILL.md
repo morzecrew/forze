@@ -86,6 +86,17 @@ Handlers resolve with `route=spec.name` via `ctx.deps.resolve_configurable(ctx, 
 
 Register a shared client as a plain dep; routed factories pick tenant-specific connections from `ExecutionContext` at call time.
 
+When you build on a shipped **routed** client (`RoutedPostgresClient`, `RoutedNeo4jClient`, …) and need a backend call the routed facade does not wrap, use its public `client_scope()` seam rather than reaching for internals:
+
+```python
+async with routed_client.client_scope() as client:
+    await client.do_something_unwrapped()
+```
+
+It resolves the ambient tenant, refreshes the access fingerprint so credential rotation is detected, and yields the pooled client — in both registry modes. A `guarded=True` client also holds an eviction lease for the scope, so a concurrent rotation disposes the client only after you exit; that is what keeps a multi-statement transaction on one client instead of swapping it mid-scope.
+
+For a **rotating credential**, keep the fingerprint a stable identity (a role or account name, never the short-lived secret) and fetch the live token through a client callback — a fingerprint that changes on every rotation churns the pool.
+
 ## Anti-patterns
 
 1. **Instantiating adapters directly in handlers** — register factories and resolve ports.

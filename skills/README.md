@@ -33,6 +33,8 @@ Skills load automatically when the agent detects a relevant task (handlers, wiri
 | **forze-object-storage** | `StorageSpec` + `StorageFacade`, S3 (`S3DepsModule`) and GCS (`GCSDepsModule`) backends, tenant-aware buckets, presigned/multipart uploads, mock tests. |
 | **forze-http-outbound** | Outbound HTTP: declarative `BaseHttpIntegration` / `async_http_op`, `HttpServiceSpec`, `HttpDepsModule`, auth, tenant routing. |
 | **forze-messaging-streaming** | Queue, pub/sub, stream contracts; SQS/RabbitMQ queues, Redis streams/pub-sub, Kafka commit-stream groups. |
+| **forze-realtime** | Realtime egress: event catalogs, `RealtimePublisher` (ephemeral vs durable), offline mailbox and device cursors, and the Socket.IO / SSE / WebSocket transports behind one wire protocol. |
+| **forze-inference** | Typed model invocation: `InferenceSpec`, `ctx.inference.model()`, local / HTTP (KServe-v2, MLflow) / SageMaker backends, capabilities, and the mock registry. |
 | **forze-temporal-workflows** | `DurableWorkflowSpec`, Temporal deps, workflow ports, schedules, worker context. |
 | **forze-inngest-durable-functions** | Durable functions: Inngest events/registration/steps/FastAPI serve, plus the self-hosted Postgres runner. |
 | **forze-auth-tenancy-secrets** | Authn/authz, tenancy, secrets, OIDC, FastAPI identity binding. |

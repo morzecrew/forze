@@ -4,7 +4,7 @@ Export decrypts on read and import re-seals on write; a file archive sits in bet
 at rest*. ``migrate`` removes the file: it fuses the export and import pipelines **per chunk**, so a
 document's rows flow ``find_stream`` → encode → decode → ``ensure_many`` and a blob's bytes flow
 ``download_stream`` → ``overwrite_stream`` without ever landing on disk. That makes it the
-**recommended path for a backend migration** (RFC 0017 §6/§9) — including the honest escape from a
+**recommended path for a backend migration** — including the honest escape from a
 bricked KEK, since the target re-seals every field under its own keys as it writes them — and the
 safe way to move a full system whose archive would otherwise be a credential store (§9, identity).
 
@@ -94,7 +94,7 @@ class ArchiveMigrator:
 
     allow_fuzzy: bool = False
     """Permit a full-system migration whose quiesce did not attest — off by default, so a
-    still-moving source is refused rather than silently copied inconsistently (RFC 0017 §4)."""
+    still-moving source is refused rather than silently copied inconsistently."""
 
     include_identity: bool = False
     """Carry identity/credential specs in a **per-tenant** migration. Off by default (RFC §9 /
@@ -393,8 +393,8 @@ def _assert_fingerprints_match(source: FrozenSpecRegistry, target: FrozenSpecReg
 
     The direct migrate resolves one shared inventory against both contexts, so the source and target
     must bind fingerprint-compatible specs — otherwise the source's spec would resolve against a
-    target that shapes it differently, silent corruption. Cross-version transforms are out of scope
-    (RFC 0017 §3): wire both runtimes with the same specs.
+    target that shapes it differently, silent corruption. Cross-version transforms are out of
+    scope; wire both runtimes with the same specs.
     """
 
     source_fp = source.fingerprint()

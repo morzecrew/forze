@@ -39,6 +39,7 @@ from the `ExecutionContext`. Capabilities with a dedicated reference page are li
 | [Inbox](contracts/messaging.md#inbox) | `InboxSpec` | `ctx.inbox` |
 | Domain events | — | `ctx.domain` (dispatch) |
 | Saga | `SagaDefinition` | `SagaExecutorDepKey` |
+| [Realtime egress](../data-events/realtime.md) | `RealtimeEvent` catalog | `build_realtime_publisher(ctx, …)` ([wire protocol](realtime-protocol.md)) |
 
 ## Reliability & coordination
 
@@ -72,6 +73,7 @@ from the `ExecutionContext`. Capabilities with a dedicated reference page are li
 | Capability | Spec | Resolve via |
 |------------|------|-------------|
 | Outbound HTTP | `HttpServiceSpec` | `ctx.http.service(spec)` |
+| [Model inference](../data-events/inference.md) | `InferenceSpec` | `ctx.inference.model(spec)` |
 
 Capabilities resolved by a `*DepKey` (queue, pub/sub, durable) have no short
 `ctx.<x>` accessor — resolve them through the context's dependency resolution by

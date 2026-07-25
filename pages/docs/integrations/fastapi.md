@@ -58,6 +58,28 @@ app.add_middleware(SecurityContextMiddleware, ctx_dep=runtime.get_context)
 `Idempotency-Key` header; `SecurityContextMiddleware` binds the authenticated
 identity and tenant.
 
+A request whose credential fails to verify is refused before routing — which is
+wrong for the handful of paths that exist *because* the caller has no working
+credential. Name them exactly:
+
+```python
+app.add_middleware(
+    SecurityContextMiddleware,
+    ctx_dep=runtime.get_context,
+    anonymous_paths={"/auth/login", "/auth/refresh"},
+)
+```
+
+On those paths an **authentication-kind** failure — an expired or invalid
+credential, ambiguous credentials, a tenant mismatch — binds no identity instead
+of 401ing, so the route authenticates from its body exactly as it would for a
+request carrying nothing. A valid credential still binds normally, and every
+other failure kind still returns the error response: a secrets-store outage is a
+server fault, not a missing credential. This matters most in
+[cookie mode](../reference/fastapi-routes.md#cookie-mode), where a stale access
+cookie rides every request including the one that would replace it. Paths are
+exact, never prefixes.
+
 When an upstream Forze service forwards its remaining [time
 budget](../running-in-prod/deadlines.md) as `X-Forze-Deadline-Budget`, opt in to
 honoring it with `InvocationMetadataMiddleware(...,

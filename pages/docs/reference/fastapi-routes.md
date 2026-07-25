@@ -244,6 +244,35 @@ they 401 without a bound identity and show up protected under
 wiring (including how the reset token reaches the user via the outbox) is in the
 [Authn, authz & tenancy recipe](../recipes/authn-authz-tenancy-fastapi.md#http-login-endpoints).
 
+### Cookie mode
+
+Browser clients that must not hold a token in JavaScript pass an
+`AuthnCookieCarrier` to `attach_authn_routes(cookies=…)`. Login and refresh then
+set and rotate two `HttpOnly` cookies instead of returning token strings; the
+body keeps the scheme and the `*_expires_in` lifetimes, so a cookie client still
+learns how long its credential is valid. Refresh falls back to reading the
+refresh cookie when the body carries no token, and logout expires both cookies
+idempotently.
+
+```python
+from forze_fastapi.security import AuthnCookieCarrier
+
+cookies = AuthnCookieCarrier(
+    access_path="/api",              # the access cookie rides ordinary API calls
+    refresh_path="/auth/refresh",    # the long-lived one rides exactly one route
+)
+
+attach_authn_routes(router, registry=registry, ctx_dep=ctx_dep, cookies=cookies)
+```
+
+Point the inbound `CookieTokenAuthn`'s `cookie_name` at the same
+`access_cookie`, and list the login and refresh paths in the security
+middleware's [`anonymous_paths`](../integrations/fastapi.md#bind-request-context) —
+otherwise a stale access cookie 401s the very route that would replace it.
+Cookies are always `HttpOnly` and `Secure` by default; `samesite="lax"` (the
+default) is the shipped CSRF defense, and `samesite="none"` deployments must add
+their own CSRF layer.
+
 ### API-key management
 
 `attach_authn_routes` also generates **self-service API-key management** as a

@@ -53,11 +53,15 @@ from forze_postgres.adapters.document import PostgresDocumentAdapter  # Never in
 | `ctx.search.query(spec)` | `SearchQueryPort` | Full-text search |
 | `ctx.search.hub(spec)` | `SearchQueryPort` | Hub search |
 | `ctx.search.federated(spec)` | `SearchQueryPort` | Federated search |
+| `ctx.graph.query(spec)` / `ctx.graph.command(spec)` | `GraphQueryPort` / `GraphCommandPort` | `GraphModuleSpec` |
+| `ctx.inference.model(spec)` | `InferencePort` | `InferenceSpec` — read-plane, callable from a `QUERY` |
 | `ctx.transaction(route)` | `TransactionManagerPort` | Transaction route (e.g. `"default"`) |
 | `ctx.tx_ctx.scope(route)` | async context manager | Transaction scope |
 | `ctx.resilience()` | `ResilienceExecutorPort` | Run a call under a named policy — see [`forze-resilience-deadlines`](../forze-resilience-deadlines/SKILL.md) |
 
 For configurable keys without a convenience wrapper, use `ctx.deps.resolve_configurable(ctx, DepKey, spec, route=spec.name)`.
+
+**Counters never join your transaction.** `ctx.counter(spec)` allocations commit independently on every backend (Redis, Postgres, Mongo, Firestore) — a rolled-back transaction does not give the number back. That is the point: a sequence that could be rolled back would reissue an id it already handed out. Treat an allocated number as spent, and let gaps happen. Counters resolve through the bound tenant and fold the spec route into the stored key, so two specs sharing one relation keep separate sequences. Postgres additionally needs an app-migrated counter table.
 
 See [Execution reference](https://morzecrew.github.io/forze/latest/writing-operation/wiring/).
 

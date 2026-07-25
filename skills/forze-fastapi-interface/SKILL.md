@@ -176,6 +176,13 @@ register_scalar_docs(app, path="/docs")
 
 `SecurityContextMiddleware` binds `InvocationMetadata`, `AuthnIdentity`, and `TenantIdentity` at the boundary from an `AuthnRequirement`; handlers only read identity from `ExecutionContext`. `CustomHeadersMiddleware` adds response headers from `static_headers` and/or `dynamic_headers` (callables may be sync or async) and raises `CoreException` if a header is already set. `register_exception_handlers(app)` maps `CoreException` to JSON responses (and unhandled exceptions to 500) — see [`forze-observability-errors`](../forze-observability-errors/SKILL.md).
 
+Two middleware settings you will need:
+
+- **`anonymous_paths={"/auth/login", "/auth/refresh"}`** — exact paths where an *authentication-kind* failure binds no identity instead of 401ing. Without it a stale credential (a cookie especially) is refused on the very route that would replace it. A valid credential still binds; every other failure kind still errors. Exact paths, never prefixes.
+- **`allowed_websocket_paths={"/realtime/ws"}`** — both middlewares **refuse raw WebSocket scopes** unless the exact mounted path (router prefixes included) is allowlisted, because identity and tenancy resolve for HTTP scopes only. The boot check fails if an allowlisted path does not serve exactly one governed route. `allow_raw_websockets=True` opts out app-wide and hands you identity, tenancy and error shaping on every socket.
+
+For browser clients, `attach_authn_routes(cookies=AuthnCookieCarrier(...))` puts the tokens in `HttpOnly` cookies instead of the response body; pair it with `anonymous_paths` as above. The realtime SSE and WebSocket routes (`attach_realtime_sse_route`, `attach_realtime_ws_route`) and the AsyncAPI document (`attach_asyncapi_route`) are in [`forze-realtime`](../forze-realtime/SKILL.md).
+
 ## Exposing operations over MCP
 
 The same frozen registry can be projected to AI agents as MCP tools via `forze_mcp` (extra `mcp`, FastMCP-based): `register_tools(...)` + `exposed_operations(...)` project operation keys as tool names, `runtime_lifespan` scopes the runtime, and auth is **API-key-as-bearer** — `ForzeApiKeyVerifier` validates the inbound bearer through the same `AuthnSpec`/authn brain as your HTTP routes (pass both `auth=` and the identity binder). See [MCP integration](https://morzecrew.github.io/forze/latest/integrations/mcp/) and [Expose an aggregate over MCP](https://morzecrew.github.io/forze/latest/recipes/expose-an-aggregate-over-mcp/).

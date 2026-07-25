@@ -132,13 +132,13 @@ See [Deterministic Simulation Testing](../dst/overview.md) for the full model.
   the `DocumentSpec` — Python has no `Partial<T>`/`Pick<T>`, and the four contracts
   genuinely diverge. The kit collapses *wiring*, never the models.
 - **It does not invent a lifecycle.** `soft_delete=True` gives the governed-CRUD floor;
-  a status machine (like `StoredFileKit`'s pending → ready → failed) comes through the
+  a status machine (like `StoredFileKitSpec`'s pending → ready → failed) comes through the
   escape hatch.
 - **A wholly lifecycle-driven aggregate is its own shape, not a kit with many overrides.**
   The escape hatch is for overriding a *few* generated ops. When the *entire* operation
-  surface is bespoke — `StoredFileKit`'s `upload`/`download`/`delete` are a create-then-upload
+  surface is bespoke — `StoredFileKitSpec`'s `upload`/`download`/`delete` are a create-then-upload
   lifecycle, a cross-port join, and a status-based delete, with no plain `create`/`update` at
-  all — hand-wire it (as `StoredFileKit` does); the kit's generated CRUD would only get in the way.
+  all — hand-wire it (as `StoredFileKitSpec` does); the kit's generated CRUD would only get in the way.
 - **It does not couple to a backend.** `registry()` / `facade()` are backend-agnostic;
   you wire the store yourself. No `AggregateKit(...).build_everything(client)`.
 - **`storage=` gives the blob ops, not the join.** Declaring an object-storage bucket
