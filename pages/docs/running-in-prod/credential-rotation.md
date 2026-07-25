@@ -136,7 +136,7 @@ because it is the known-safe one:
    check. Failure halts the run before promote — promoting an unverified
    credential and evicting the fleet onto it is a self-inflicted outage;
 4. **finish** — promote, confirm, then publish `SecretRotated` via the outbox.
-   Promotion is triple-fenced, because the distributed lock is advisory: the
+   Promotion is fenced in depth, because the distributed lock is advisory: the
    staged version must still be the one this run verified (no unverified text can
    be promoted); the write to the primary ref is **compare-and-set** against the
    version observed at create (a competing rotation that already promoted wins;
@@ -144,7 +144,11 @@ because it is the known-safe one:
    write like `ALTER ROLE` is not fenceable at all, the winner **re-verifies the
    promoted credential after the promote and converges the backend** if a stale
    apply landed late — a credential that still fails then fails the run loudly
-   rather than publishing.
+   rather than publishing. Finally, a **delayed reconfirmation run**
+   (`reconfirm_after`, default 60s) re-asserts the canonical credential past the
+   only physical bound a stale in-flight statement has — the stale worker's own
+   statement timeout. Set a statement timeout on rotation-admin connections and
+   keep `reconfirm_after` above it.
 
 The pending ref is what makes this crash-safe: after **set**, the only copy of a
 password already live at the backend exists durably in the secret store. A rotator

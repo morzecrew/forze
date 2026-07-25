@@ -37,6 +37,7 @@ lock single-flights concurrent rotations of the same ref across replicas.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from datetime import timedelta
 from typing import Final, cast
 from uuid import UUID
 
@@ -140,6 +141,15 @@ class SecretRotator:
     """Single-flight lock per ref across replicas (``None`` relies on durable-run
     idempotency keys alone)."""
 
+    reconfirm_after: timedelta | None = timedelta(seconds=60)
+    """Delay before the follow-up reconfirmation run (``None`` disables it).
+
+    The in-run confirmation cannot catch a stale backend write that commits
+    *after* it — an unfenceable statement's only real bound is the stale worker's
+    own statement timeout. Set this above that bound (and DO set a statement
+    timeout on rotation-admin connections) so the delayed run re-converges every
+    physically possible latecomer."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -149,12 +159,24 @@ class SecretRotator:
         if not self.pending_suffix:
             raise exc.configuration("Pending suffix must be non-empty")
 
+        if self.reconfirm_after is not None and self.reconfirm_after.total_seconds() < 0:
+            raise exc.configuration("Reconfirm delay must not be negative")
+
+    # ....................... #
+
+    @property
+    def confirm_function_name(self) -> str:
+        """Durable-function name of the delayed reconfirmation handler."""
+
+        return f"{self.function_name}_confirm"
+
     # ....................... #
 
     def register(self, registry: DurableFunctionRegistry) -> None:
-        """Register the rotation handler under :attr:`function_name`."""
+        """Register the rotation and reconfirmation handlers."""
 
         registry.register(self.function_name, self.handler)
+        registry.register(self.confirm_function_name, self.confirm_handler)
 
     # ....................... #
 
@@ -302,9 +324,54 @@ class SecretRotator:
             if self.publish_spec is not None:
                 await publish_secret_rotated(ctx, self.publish_spec, event)
 
+            if self.reconfirm_after is not None:
+                # Fence four — the delayed reconfirmation: a stale backend write can
+                # commit after the in-run confirm (its only physical bound is the
+                # stale worker's statement timeout), so a follow-up durable run
+                # re-converges past that bound. Keyed per promoted version, so
+                # finish retries converge on one run.
+                await resolve_durable_runner(ctx).enqueue(
+                    ctx,
+                    self.confirm_function_name,
+                    RotationInput(ref_path=ref.path, tenant_id=tenant_id).model_dump(mode="json"),
+                    idempotency_key=f"{self.confirm_function_name}:{ref.path}:{promoted.token}",
+                    tenant_id=tenant_id,
+                    run_at=utcnow() + self.reconfirm_after,
+                )
+
             return {"ref_path": ref.path, "version_token": promoted.token}
 
         return await step.run("finish", _finish)
+
+    # ....................... #
+
+    async def confirm_handler(self, ctx: ExecutionContext, input_json: JsonDict | None) -> JsonDict:
+        """The delayed reconfirmation body: prove the backend honors the *current*
+        primary credential, converging it if a stale write landed late.
+
+        Idempotent as a whole (no steps): it re-reads the primary at execution
+        time, so even if newer rotations happened since it was scheduled, it
+        asserts whatever is canonical *now* — always correct, at worst a no-op.
+        """
+
+        payload = RotationInput.model_validate(input_json or {})
+        ref = SecretRef(payload.ref_path)
+        secrets = ctx.deps.provide(SecretsDepKey)
+
+        validate_versioned_reads_supported(
+            secrets_capabilities_of(secrets), backend=type(secrets).__name__
+        )
+        current = await cast(VersionedSecretsPort, secrets).resolve_versioned(ref)
+        canonical = PendingCredential(ref=ref, version=current.version)
+
+        try:
+            await self.target.verify(payload.tenant_id, canonical)
+
+        except Exception:
+            await self.target.apply(payload.tenant_id, canonical)
+            await self.target.verify(payload.tenant_id, canonical)
+
+        return {"ref_path": ref.path, "version_token": current.version.token}
 
     # ....................... #
 

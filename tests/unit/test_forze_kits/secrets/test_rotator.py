@@ -367,6 +367,68 @@ class TestBackendConvergence:
         secrets = ctx.deps.provide(SecretsDepKey)
         assert await secrets.resolve_str(_REF) == f"dsn-for-{target.minted[0]}"
 
+    async def test_finish_schedules_the_delayed_reconfirmation(self) -> None:
+        target = _RecordingTarget()
+        ctx, rotator, _ = _composition(target, publish=False)
+        await _seed(ctx, "dsn-old")
+
+        await rotator.rotate_now(ctx, _REF)
+
+        admin = resolve_durable_run_admin(ctx)
+        page = await admin.list_runs(name=rotator.confirm_function_name)
+        assert len(page.records) == 1
+        assert page.records[0].status is DurableRunStatus.PENDING
+
+    async def test_reconfirmation_can_be_disabled(self) -> None:
+        target = _RecordingTarget()
+        state = MockState()
+        registry = DurableFunctionRegistry()
+        rotator = SecretRotator(target=target, publish_spec=None, reconfirm_after=None)
+        rotator.register(registry)
+        durable_deps, _, _ = durable_kits_deps(registry=registry)
+        ctx = context_from_deps(MockDepsModule(state=state)(), durable_deps)
+        await _seed(ctx, "dsn-old")
+
+        await rotator.rotate_now(ctx, _REF)
+
+        admin = resolve_durable_run_admin(ctx)
+        page = await admin.list_runs(name=rotator.confirm_function_name)
+        assert page.records == []
+
+    async def test_delayed_reconfirmation_converges_a_late_stale_write(self) -> None:
+        """The latecomer beyond the in-run confirm: a stale ALTER commits after the
+        rotation completed. The delayed run re-verifies the canonical credential
+        and converges the backend."""
+
+        target = _ConfirmScriptedTarget()
+        state = MockState()
+        registry = DurableFunctionRegistry()
+        rotator = SecretRotator(
+            target=target,
+            publish_spec=None,
+            reconfirm_after=timedelta(0),  # due immediately, picked up by recover
+        )
+        rotator.register(registry)
+        durable_deps, runner, _ = durable_kits_deps(registry=registry)
+        ctx = context_from_deps(MockDepsModule(state=state)(), durable_deps)
+        await _seed(ctx, "dsn-old")
+
+        await rotator.rotate_now(ctx, _REF)
+        assert target.calls[-1] == "confirm"  # in-run confirmation passed
+
+        # The stale statement commits AFTER the rotation finished: the backend no
+        # longer agrees with the promoted credential.
+        target.fail_confirms = 1
+
+        assert await runner.recover(ctx) == 1  # the delayed reconfirmation run
+
+        assert target.calls[-3:] == ["confirm", "converge", "confirm"]
+
+        admin = resolve_durable_run_admin(ctx)
+        page = await admin.list_runs(name=rotator.confirm_function_name)
+        assert len(page.records) == 1
+        assert page.records[0].status is DurableRunStatus.COMPLETED
+
     async def test_finish_retry_after_own_promote_is_idempotent(self) -> None:
         """A crash between promote and publish makes the retry's CAS trip on OUR
         OWN earlier write — it must converge, not fail as a competitor."""
