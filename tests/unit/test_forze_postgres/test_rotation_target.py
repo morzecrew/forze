@@ -93,6 +93,12 @@ class TestCompose:
         with pytest.raises(CoreException, match="not a libpq DSN"):
             await target.compose(None, current='{"user": "json-creds"}', minted="fresh")
 
+    async def test_dsn_without_user_fails_closed(self) -> None:
+        target, _ = _target()
+
+        with pytest.raises(CoreException, match="names no user"):
+            await target.compose(None, current="host=db dbname=app", minted="fresh")
+
 
 class TestApply:
     async def test_renders_quoted_alter_role(self) -> None:
@@ -107,6 +113,15 @@ class TestApply:
         statement = client.executed[0]
         assert statement.startswith('ALTER ROLE "app_b" WITH PASSWORD ')
         assert "fresh-pw" in statement
+
+    async def test_pending_dsn_missing_credentials_fails_closed(self) -> None:
+        secrets = MappingSecrets(data={"db/dsn.pending": "host=db dbname=app user=app_b"})
+        target, client = _target(secrets)
+
+        with pytest.raises(CoreException, match="no user or password"):
+            await target.apply(None, _PENDING)
+
+        assert client.executed == []
 
     async def test_identifier_injection_is_quoted(self) -> None:
         secrets = MappingSecrets(
@@ -243,4 +258,15 @@ class TestConfig:
                 secrets=MappingSecrets(data={}),
                 client=_FakeClient(),  # type: ignore[arg-type]
                 role_pair=("app", "app"),
+            )
+
+    def test_rejects_non_positive_verify_timeout(self) -> None:
+        from datetime import timedelta
+
+        with pytest.raises(CoreException, match="Verify timeout"):
+            PostgresRotationTarget(
+                secrets=MappingSecrets(data={}),
+                client=_FakeClient(),  # type: ignore[arg-type]
+                role_pair=("app_a", "app_b"),
+                verify_timeout=timedelta(0),
             )

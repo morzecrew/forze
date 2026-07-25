@@ -69,6 +69,20 @@ class TestMockVersions:
             FULL_SECRETS_CAPABILITIES
         )
 
+    async def test_versioned_read_of_missing_secret_fails_closed(self) -> None:
+        port = MockSecretsPort(state=MockState())
+
+        with pytest.raises(CoreException, match="not found"):
+            await port.resolve_versioned(SecretRef("ghost"))
+
+    async def test_corrupted_substore_is_an_internal_error(self) -> None:
+        state = MockState()
+        state.identity["secrets"] = "not-a-dict"
+        port = MockSecretsPort(state=state)
+
+        with pytest.raises(CoreException, match="must be a dict"):
+            await port.resolve_str(_REF)
+
 
 class TestMockChangeSource:
     async def test_emit_reaches_matching_subscribers_only(self) -> None:
@@ -138,6 +152,11 @@ class TestMockLeases:
 
         assert first.lease_id != second.lease_id
         assert first.text != second.text
+
+    async def test_revoking_an_unknown_lease_is_a_no_op(self) -> None:
+        port = MockDynamicSecretsPort(state=MockState())
+
+        await port.revoke("never-issued")  # idempotent, mirrors store semantics
 
 
 class TestModuleRegistration:

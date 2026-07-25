@@ -310,6 +310,48 @@ class TestPublication:
         assert received == [_REF.path]
 
 
+class TestTriggers:
+    async def test_enqueue_fleet_enqueue_and_cron(self) -> None:
+        from uuid import uuid4
+
+        target = _RecordingTarget()
+        ctx, rotator, _ = _composition(target, publish=False)
+        await _seed(ctx, "dsn-old")
+
+        record = await rotator.enqueue(ctx, _REF)
+        assert record.status is DurableRunStatus.PENDING
+
+        tenant_a, tenant_b = uuid4(), uuid4()
+        refs = {
+            tenant_a: SecretRef(f"tenants/{tenant_a}/dsn"),
+            tenant_b: SecretRef(f"tenants/{tenant_b}/dsn"),
+        }
+
+        count = await rotator.enqueue_tenants(
+            ctx,
+            tenants=(tenant_a, tenant_b),
+            ref_for_tenant=refs,
+            idempotency_prefix="cycle-2026-07",
+        )
+        assert count == 2
+
+        # Re-submitting the same fleet pass converges on the same runs (per-key
+        # idempotency), instead of duplicating work.
+        assert (
+            await rotator.enqueue_tenants(
+                ctx,
+                tenants=(tenant_a, tenant_b),
+                ref_for_tenant=refs,
+                idempotency_prefix="cycle-2026-07",
+            )
+            == 2
+        )
+
+        schedule = await rotator.ensure_cron(ctx, _REF, cron="0 4 * * 0")
+        assert schedule.cron == "0 4 * * 0"
+        assert schedule.name == rotator.function_name
+
+
 class TestConfig:
     def test_rejects_weak_entropy(self) -> None:
         with pytest.raises(CoreException, match="at least 16 bytes"):

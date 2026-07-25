@@ -111,6 +111,27 @@ class TestDirectorySource:
         finally:
             task.cancel()
 
+    async def test_unreadable_path_is_skipped_without_state_poisoning(
+        self, tmp_path: Path
+    ) -> None:
+        # A directory where a file is expected: stat succeeds, the read fails —
+        # the tick logs, skips, and records no signature (so a later real file
+        # is observed as a fresh appearance).
+        (tmp_path / "dsn").mkdir()
+        source = DirectorySecretsChangeSource(root=tmp_path, refs=(_REF,))
+        seen: list[SecretChanged] = []
+        task = collect_changes(source, seen)
+        await settle()
+
+        try:
+            await source.tick()
+            await settle()
+
+            assert seen == []
+
+        finally:
+            task.cancel()
+
     def test_traversal_is_rejected_at_construction(self, tmp_path: Path) -> None:
         with pytest.raises(CoreException, match="escapes"):
             DirectorySecretsChangeSource(root=tmp_path, refs=(SecretRef("../outside"),))

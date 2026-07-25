@@ -101,3 +101,36 @@ async def test_dsn_routed_sets_fingerprint_before_create() -> None:
   await routed.startup()
   await routed._get_client()
   assert routed._pool.get_fingerprint(tid) is not None
+
+
+@pytest.mark.asyncio
+async def test_cached_tenant_ids_exposes_the_pool_snapshot() -> None:
+  # The hot-reload binder's seam: ids appear with the cached credential and
+  # disappear on eviction.
+  tid = uuid4()
+
+  @attrs.define(slots=True, kw_only=True)
+  class _Routed(RoutedTenantClientBase[_Client]):
+      async def resolve_credentials(self, tenant_id):
+          return "creds"
+
+      async def initialize_client(self, tenant_id, creds):
+          return _Client()
+
+      async def ensure_access_fingerprint(self, tenant_id) -> None:
+          self._pool.set_fingerprint(tenant_id, "fp")
+
+  routed = _Routed(
+      secrets=MagicMock(),
+      secret_ref_for_tenant={},
+      tenant_provider=lambda: tid,
+  )
+  await routed.startup()
+
+  assert routed.cached_tenant_ids() == ()
+
+  await routed._get_client()
+  assert routed.cached_tenant_ids() == (tid,)
+
+  await routed.evict_tenant(tid)
+  assert routed.cached_tenant_ids() == ()

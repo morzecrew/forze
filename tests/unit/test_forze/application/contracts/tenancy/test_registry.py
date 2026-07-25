@@ -170,5 +170,26 @@ def test_is_fingerprint_expired() -> None:
     assert registry.is_fingerprint_expired(tid, timedelta(seconds=-1)) is True
 
 
+@pytest.mark.asyncio
+async def test_cached_tenant_ids_tracks_fingerprint_lifecycle() -> None:
+    registry: TenantClientRegistry[str, str] = TenantClientRegistry(
+        max_entries=4,
+        create=lambda tid: _async_return(f"client-{tid}"),
+        dispose=lambda _c: _async_return(None),
+        guarded=False,
+    )
+    await registry.startup()
+    other = UUID("22222222-2222-2222-2222-222222222222")
+
+    assert registry.cached_tenant_ids() == ()
+
+    registry.set_fingerprint(_TID, "fp-a")
+    registry.set_fingerprint(other, "fp-b")
+    assert set(registry.cached_tenant_ids()) == {_TID, other}
+
+    await registry.evict(_TID)
+    assert registry.cached_tenant_ids() == (other,)
+
+
 async def _async_return[T](value: T) -> T:
     return value
