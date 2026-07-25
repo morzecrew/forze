@@ -231,8 +231,8 @@ two replicas hold *different bytes under the same key id* — differing
 fingerprints confirm it; envelopes sealed by the odd node out are fine once its
 config is corrected. If you need keys that never leave one service, that
 property is exactly what requires a networked unwrap: use
-[Vault Transit](vault.md) (or an API-compatible self-hosted service) or a cloud
-backend above.
+[Vault Transit](vault.md) (or OpenBao, which the suite is verified against) or
+a cloud backend above.
 
 Moving to a cloud backend later changes wiring only — envelopes and call sites
 are identical across backends — but envelopes wrapped under a local master key
