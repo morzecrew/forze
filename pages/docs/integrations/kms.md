@@ -211,6 +211,20 @@ Run the [re-encryption sweeps](../identity-tenancy-enc/encryption.md#re-encrypti
 the same deploy. Dropping it from the map too early fails closed with an error
 telling you to put it back.
 
+**Fleets work — same keys, every replica.** "Local" means the wrap is computed
+in process, not that the deployment is single-node: any replica holding the same
+key map can open any envelope, so a fleet just injects the same secret into
+every process (a mounted Secret, env injection — however you already ship
+`deterministic_root`). Two rules follow. *Rotate in two phases*: first roll out
+the new key to every replica's **map** (directory unchanged), then flip
+`key_ref` in a second rollout — otherwise a mid-rollout replica that already
+seals under the new key writes envelopes its not-yet-updated peers cannot open.
+And *every config holder is a key holder* — there is no central place that
+audits or revokes access. If you need keys that never leave one service, that
+property is exactly what requires a networked unwrap: use
+[Vault Transit](vault.md) (or an API-compatible self-hosted service) or a cloud
+backend above.
+
 Moving to a cloud backend later changes wiring only — envelopes and call sites
 are identical across backends — but envelopes wrapped under a local master key
 still have to be re-encrypted under the new backend's key: an overlap window
