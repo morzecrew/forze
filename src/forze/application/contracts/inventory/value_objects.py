@@ -59,8 +59,8 @@ class PlaneDisposition(StrEnum):
 
     Today: an ``analytics`` spec whose provenance is a warehouse system of record — or is
     left undeclared, which reads the same, since the framework cannot tell a projection from
-    the only copy. (``counter`` was here too until ``CounterAdminPort.list_counters()`` gave
-    operators the read handlers still — correctly — do not get.)"""
+    the only copy. (``counter`` was here too until ``CounterAdminPort.list_counters()`` made
+    counters enumerable for operators and exports; handlers still cannot read one.)"""
 
 
 # ....................... #

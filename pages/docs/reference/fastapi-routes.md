@@ -262,7 +262,7 @@ cookies = AuthnCookieCarrier(
     refresh_path="/auth/refresh",    # the long-lived one rides exactly one route
 )
 
-attach_authn_routes(router, registry, ctx_dep=ctx_dep, cookies=cookies)
+attach_authn_routes(router, registry=registry, ctx_dep=ctx_dep, cookies=cookies)
 ```
 
 Point the inbound `CookieTokenAuthn`'s `cookie_name` at the same

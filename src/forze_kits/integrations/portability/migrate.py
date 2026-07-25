@@ -393,8 +393,8 @@ def _assert_fingerprints_match(source: FrozenSpecRegistry, target: FrozenSpecReg
 
     The direct migrate resolves one shared inventory against both contexts, so the source and target
     must bind fingerprint-compatible specs — otherwise the source's spec would resolve against a
-    target that shapes it differently, silent corruption. Cross-version transforms are out of scope
-    wire both runtimes with the same specs.
+    target that shapes it differently, silent corruption. Cross-version transforms are out of
+    scope; wire both runtimes with the same specs.
     """
 
     source_fp = source.fingerprint()

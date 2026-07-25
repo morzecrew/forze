@@ -84,7 +84,7 @@ For browsers that must not hold a token in JavaScript, pair the inbound `CookieT
 from forze_fastapi.security import AuthnCookieCarrier
 
 cookies = AuthnCookieCarrier(access_path="/api", refresh_path="/auth/refresh")
-attach_authn_routes(router, registry, ctx_dep=ctx_dep, cookies=cookies)
+attach_authn_routes(router, registry=registry, ctx_dep=ctx_dep, cookies=cookies)
 ```
 
 Login and refresh then set and rotate two `HttpOnly` cookies and strip the token strings from the body (scheme and lifetimes stay); refresh falls back to its cookie; logout expires both idempotently. Point `CookieTokenAuthn(cookie_name=...)` at the same `access_cookie`.
