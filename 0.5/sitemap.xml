@@ -76,6 +76,9 @@
         <loc>https://morzecrew.github.io/forze/0.5/data-events/analytics/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/0.5/data-events/inference/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/0.5/data-events/caching/</loc>
       </url>
       <url>
@@ -113,6 +116,9 @@
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/0.5/running-in-prod/shutdown-and-fleets/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/0.5/running-in-prod/portability/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/0.5/running-in-prod/observability/</loc>
@@ -217,6 +223,9 @@
         <loc>https://morzecrew.github.io/forze/0.5/integrations/http/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/0.5/integrations/inference/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/0.5/recipes/crud-fastapi-postgres/</loc>
       </url>
       <url>
@@ -245,6 +254,9 @@
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/0.5/recipes/authn-authz-tenancy-fastapi/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/0.5/recipes/provision-identity-postgres/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/0.5/recipes/password-reset/</loc>
@@ -341,6 +353,9 @@
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/0.5/reference/fastapi-routes/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/0.5/reference/realtime-protocol/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/0.5/reference/errors/</loc>
