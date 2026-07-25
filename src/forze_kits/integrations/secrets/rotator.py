@@ -167,6 +167,11 @@ class SecretRotator:
         scope = DistributedLockScope(
             cmd=ctx.dlock.command(self.lock),
             owner_provider=lambda: f"secrets_rotator:{current_time_source().uuid()}",
+            # A rotation step (a real verify connection against a struggling
+            # backend) can outlive the lock TTL; the heartbeat keeps single-flight
+            # true for the whole run, and a lost lock raises on exit instead of
+            # letting two rotators interleave on one pending ref.
+            extend_interval=self.lock.ttl / 3,
         )
 
         async with scope.scope(f"secrets_rotate:{ref.path}"):
