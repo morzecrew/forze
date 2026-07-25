@@ -225,6 +225,120 @@ class VaultClient(VaultClientPort):
 
     # ....................... #
 
+    def _read_kv_data_versioned_sync(self, path: str) -> tuple[JsonDict, int]:
+        client = self._require_client()
+
+        try:
+            response = client.secrets.kv.v2.read_secret_version(
+                path=path,
+                mount_point=self.config.mount_point,
+            )
+
+        except InvalidPath as e:
+            raise exc.not_found(
+                f"No secret for {path!r}",
+                details={"ref": path},
+            ) from e
+
+        except VaultError as e:
+            raise exc.infrastructure(f"Vault read failed for {path!r}: {e}") from e
+
+        except Exception as e:
+            raise exc.infrastructure(f"Vault read failed for {path!r}: {e}") from e
+
+        envelope = response.get("data", {})
+        data = envelope.get("data")
+        version = envelope.get("metadata", {}).get("version")
+
+        if not isinstance(data, dict) or not isinstance(version, int):
+            raise exc.infrastructure(
+                f"Vault secret at {path!r} has unexpected payload shape",
+            )
+
+        return data, version  # type: ignore[return-value]
+
+    # ....................... #
+
+    async def read_kv_data_versioned(self, path: str) -> tuple[JsonDict, int]:
+        """Read secret data and its KV v2 version from one response (no TOCTOU)."""
+
+        return await asyncio.to_thread(self._read_kv_data_versioned_sync, path)
+
+    # ....................... #
+
+    def _read_kv_metadata_sync(self, path: str) -> JsonDict:
+        client = self._require_client()
+
+        try:
+            response = client.secrets.kv.v2.read_secret_metadata(
+                path=path,
+                mount_point=self.config.mount_point,
+            )
+
+        except InvalidPath as e:
+            raise exc.not_found(
+                f"No secret for {path!r}",
+                details={"ref": path},
+            ) from e
+
+        except VaultError as e:
+            raise exc.infrastructure(f"Vault metadata read failed for {path!r}: {e}") from e
+
+        except Exception as e:
+            raise exc.infrastructure(f"Vault metadata read failed for {path!r}: {e}") from e
+
+        metadata = response.get("data")
+
+        if not isinstance(metadata, dict):
+            raise exc.infrastructure(
+                f"Vault metadata at {path!r} has unexpected payload shape",
+            )
+
+        return metadata  # type: ignore[return-value]
+
+    # ....................... #
+
+    async def read_kv_metadata(self, path: str) -> JsonDict:
+        """Read KV v2 metadata (``current_version``, timestamps) without the payload."""
+
+        return await asyncio.to_thread(self._read_kv_metadata_sync, path)
+
+    # ....................... #
+
+    def _write_kv_data_sync(self, path: str, data: JsonDict) -> int:
+        client = self._require_client()
+
+        try:
+            response = client.secrets.kv.v2.create_or_update_secret(
+                path=path,
+                secret=data,
+                mount_point=self.config.mount_point,
+            )
+
+        except VaultError as e:
+            raise exc.infrastructure(f"Vault write failed for {path!r}: {e}") from e
+
+        except Exception as e:
+            raise exc.infrastructure(f"Vault write failed for {path!r}: {e}") from e
+
+        version = response.get("data", {}).get("version")
+
+        if not isinstance(version, int):
+            raise exc.infrastructure(
+                f"Vault write for {path!r} has unexpected payload shape",
+            )
+
+        return version
+
+    # ....................... #
+
+    async def write_kv_data(self, path: str, data: JsonDict) -> int:
+        """Write *data* as the new current version at *path*, returning the version."""
+
+        return await asyncio.to_thread(self._write_kv_data_sync, path, data)
+
+    # ....................... #
+
     def _kv_exists_sync(self, path: str) -> bool:
         client = self._require_client()
 
@@ -601,6 +715,104 @@ class VaultClient(VaultClientPort):
         """
 
         return await asyncio.to_thread(self._transit_delete_key_sync, key_name)
+
+    # ....................... #
+
+    def _db_generate_credentials_sync(self, role: str) -> JsonDict:
+        client = self._require_client()
+
+        try:
+            response = client.secrets.database.generate_credentials(
+                name=role,
+                mount_point=self.config.database_mount,
+            )
+
+        except InvalidPath as e:
+            raise exc.not_found(
+                f"No database role {role!r}",
+                details={"role": role},
+            ) from e
+
+        except VaultError as e:
+            raise exc.infrastructure(
+                f"Vault database credential mint failed for {role!r}: {e}"
+            ) from e
+
+        except Exception as e:
+            raise exc.infrastructure(
+                f"Vault database credential mint failed for {role!r}: {e}"
+            ) from e
+
+        data = response.get("data", {})
+
+        if not isinstance(data, dict):
+            raise exc.infrastructure(
+                f"Vault database credentials for {role!r} have unexpected payload shape",
+            )
+
+        return cast(JsonDict, response)
+
+    # ....................... #
+
+    async def db_generate_credentials(self, role: str) -> JsonDict:
+        """Mint dynamic database credentials for *role* (``lease_id``, ``lease_duration``,
+        ``renewable``, ``data`` with ``username``/``password``)."""
+
+        return await asyncio.to_thread(self._db_generate_credentials_sync, role)
+
+    # ....................... #
+
+    def _renew_lease_sync(self, lease_id: str, increment_seconds: int) -> int:
+        client = self._require_client()
+
+        try:
+            response = client.sys.renew_lease(
+                lease_id=lease_id,
+                increment=increment_seconds,
+            )
+
+        except VaultError as e:
+            raise exc.infrastructure(f"Vault lease renewal failed for {lease_id!r}: {e}") from e
+
+        except Exception as e:
+            raise exc.infrastructure(f"Vault lease renewal failed for {lease_id!r}: {e}") from e
+
+        duration = response.get("lease_duration")
+
+        if not isinstance(duration, int):
+            raise exc.infrastructure(
+                f"Vault lease renewal for {lease_id!r} has unexpected payload shape",
+            )
+
+        return duration
+
+    # ....................... #
+
+    async def renew_lease(self, lease_id: str, increment_seconds: int) -> int:
+        """Renew a lease, returning the granted TTL in seconds (may be less than asked)."""
+
+        return await asyncio.to_thread(self._renew_lease_sync, lease_id, increment_seconds)
+
+    # ....................... #
+
+    def _revoke_lease_sync(self, lease_id: str) -> None:
+        client = self._require_client()
+
+        try:
+            client.sys.revoke_lease(lease_id=lease_id)
+
+        except VaultError as e:
+            raise exc.infrastructure(f"Vault lease revoke failed for {lease_id!r}: {e}") from e
+
+        except Exception as e:
+            raise exc.infrastructure(f"Vault lease revoke failed for {lease_id!r}: {e}") from e
+
+    # ....................... #
+
+    async def revoke_lease(self, lease_id: str) -> None:
+        """Revoke a lease, dropping the principal it minted (hard-edged)."""
+
+        return await asyncio.to_thread(self._revoke_lease_sync, lease_id)
 
     # ....................... #
 

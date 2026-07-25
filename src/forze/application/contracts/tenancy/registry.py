@@ -167,6 +167,18 @@ class TenantClientRegistry[C, R]:
 
     # ....................... #
 
+    def cached_tenant_ids(self) -> tuple[UUID, ...]:
+        """Best-effort snapshot of tenants with cached credentials (no lock).
+
+        Fingerprints are set before pool creation and dropped on eviction, so this
+        tracks exactly the tenants a rotation signal could affect — the hot-reload
+        binder recomputes each one's ref against a changed secret and evicts matches.
+        """
+
+        return tuple(self.__fingerprints)
+
+    # ....................... #
+
     def set_fingerprint(self, tenant_id: UUID, fingerprint: R) -> None:
         """Call before first get/create so dedup_key is defined."""
 

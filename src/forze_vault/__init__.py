@@ -7,6 +7,7 @@ require_vault()
 # ....................... #
 
 from .adapters import (
+    VaultDynamicSecrets,
     VaultKvSecrets,
     VaultTransitKeyManagement,
     VaultTransitSigner,
@@ -23,6 +24,7 @@ __all__ = [
     "VaultConfig",
     "VaultClientDepKey",
     "VaultDepsModule",
+    "VaultDynamicSecrets",
     "VaultKvSecrets",
     "VaultTransitKeyManagement",
     "VaultTransitSigner",

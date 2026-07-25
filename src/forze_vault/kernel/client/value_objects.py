@@ -29,6 +29,9 @@ class VaultConfig:
     transit_mount: str = "transit"
     """Transit secrets-engine mount point (used for envelope key management)."""
 
+    database_mount: str = "database"
+    """Database secrets-engine mount point (used for dynamic credential leases)."""
+
     namespace: str | None = None
     """Optional Vault enterprise namespace."""
 

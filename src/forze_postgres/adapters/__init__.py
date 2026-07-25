@@ -1,4 +1,5 @@
 from .document import PostgresDocumentAdapter
+from .rotation_target import PostgresRotationTarget
 from .search import (
     FtsGroupLetter,
     FtsHubLegEngine,
@@ -20,6 +21,7 @@ from .txmanager import PostgresTxManagerAdapter, PostgresTxScopeKey
 
 __all__ = [
     "PostgresDocumentAdapter",
+    "PostgresRotationTarget",
     "PostgresSchemaTenantProvisioner",
     "FtsHubLegEngine",
     "HubLegRuntime",

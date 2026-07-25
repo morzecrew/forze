@@ -107,7 +107,11 @@ from forze.application.contracts.search import (
     SearchQueryDepKey,
     SearchResultSnapshotDepKey,
 )
-from forze.application.contracts.secrets import SecretsDepKey
+from forze.application.contracts.secrets import (
+    SecretsAdminDepKey,
+    SecretsDepKey,
+    SecretsLeaseDepKey,
+)
 from forze.application.contracts.storage import (
     StorageCommandDepKey,
     StorageQueryDepKey,
@@ -159,6 +163,7 @@ from forze_mock.adapters.identity import (
     MockAuthzScopePort,
     MockDelegationGrantPort,
     MockDelegationPort,
+    MockDynamicSecretsPort,
     MockGrantQueryPort,
     MockPasswordAccountProvisioningPort,
     MockPasswordVerifierPort,
@@ -428,6 +433,10 @@ class MockDepsModule(DepsModule):
             DurableRunAdminDepKey: ConfigurableMockDurableRunStore(module=self),
             DurableScheduleStoreDepKey: ConfigurableMockDurableSchedule(module=self),
             SecretsDepKey: secrets,
+            # The same store serves both protocols; the admin key is separate so
+            # the data path never acquires write access by accident.
+            SecretsAdminDepKey: secrets,
+            SecretsLeaseDepKey: MockDynamicSecretsPort(state=self.state),
             KeyManagementDepKey: crypto_kms,
             AeadDepKey: crypto_aead,
             KeyDirectoryDepKey: crypto_directory,
