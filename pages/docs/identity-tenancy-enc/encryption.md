@@ -53,9 +53,12 @@ CryptoDepsModule(
 That registers the key manager, the AEAD, the directory, and the composed
 `Keyring` under their dep keys. Integrations that opt into encryption resolve the
 keyring from here — they never construct one. Swap `kms` for any backend that
-holds your KEK: [Vault Transit](../integrations/vault.md), or AWS, Google Cloud,
-and Yandex Cloud [KMS](../integrations/kms.md). For per-tenant keys, swap the
-directory (see [Per-tenant keys](#per-tenant-keys-byok) below).
+holds your KEK: [Vault Transit](../integrations/vault.md), AWS, Google Cloud,
+and Yandex Cloud [KMS](../integrations/kms.md), or — for self-hosted
+deployments with no cloud and no Vault —
+[`LocalKeyManagement`](../integrations/kms.md#self-hosted-keys-no-cloud), which
+wraps data keys under operator-provided master keys in process. For per-tenant
+keys, swap the directory (see [Per-tenant keys](#per-tenant-keys-byok) below).
 
 !!! warning "`MockKeyManagement` is dev/test only"
 
@@ -335,6 +338,13 @@ dropping it restores the guard.
 `StaticKeyDirectory(previous_key_ref=…)` does the same for a single-key deployment. A
 store-backed directory — one BYOK customer replacing their own key — implements
 `KeyDirectoryWithPrevious` directly.
+
+With the self-hosted `LocalKeyManagement` there is a second half to the overlap: the
+outgoing master key must also **stay in the adapter's key map** until the sweep is done —
+the directory widens what reads *accept*, but the map is what can actually *unwrap*.
+Dropping it early fails closed with an error saying exactly that. See
+[Self-hosted keys](../integrations/kms.md#self-hosted-keys-no-cloud) for the full
+procedure.
 
 ## Observability
 

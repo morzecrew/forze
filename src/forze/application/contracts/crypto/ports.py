@@ -85,11 +85,14 @@ class SyncKeyManagementPort(Protocol):
     field-encryption path. Structural and deliberate: a backend opts in by
     implementing these two methods, never by a flag.
 
-    **No production key backend should implement this.** A real KMS / HSM / Vault
+    **No networked key backend should implement this.** A cloud KMS / HSM / Vault
     unwrap is a network call; exposing it synchronously would let a missing
     pre-pass silently issue a blocking call per field on the event loop. The sync
-    methods must be pure, in-process computation (the shipped implementation is
-    ``MockKeyManagement``, whose KEK is derived, not fetched).
+    methods must be pure, in-process computation. Shipped implementations:
+    ``MockKeyManagement`` (test/dev — its KEK is derived from the public key
+    reference) and ``LocalKeyManagement`` (production-grade self-hosted — its
+    KEKs are operator-provided material held in memory, and the wrap is one
+    AES-GCM operation).
     """
 
     def generate_data_key_sync(self, key_ref: KeyRef) -> DataKey:

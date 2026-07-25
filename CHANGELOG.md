@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Self-hosted KMS backend** — `forze_kms.local.LocalKeyManagement` wraps data keys under operator-provided 32-byte master keys, no cloud or extra needed; holds multiple keys so the previous-key rotation overlap works, and a rotated-away key id fails closed.
+
 **Identity & authn ergonomics** (from downstream adoption feedback)
 
 - **Cookie-mode authn routes** — `AuthnCookieCarrier` via `attach_authn_routes(cookies=…)`: login/refresh set and rotate HttpOnly cookies and strip token strings from bodies, refresh falls back to its cookie, logout expires both idempotently.

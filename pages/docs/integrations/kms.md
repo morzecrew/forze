@@ -1,13 +1,16 @@
 ---
-title: Cloud KMS
+title: KMS backends
 icon: lucide/key-round
-summary: Hold the key-encryption key in AWS, Google Cloud, or Yandex Cloud KMS
+summary: Hold the key-encryption key in AWS, Google Cloud, or Yandex Cloud KMS — or self-hosted, in process
 ---
 
 `forze[kms-aws]`, `forze[kms-gcp]`, and `forze[kms-yc]` each supply a
 `KeyManagementPort` backed by a managed key service, so the key-encryption key
 never leaves the KMS — reach for one when you want
 [envelope encryption](../identity-tenancy-enc/encryption.md) without running Vault.
+For deployments with no cloud at all, `forze_kms.local` supplies the same port
+over operator-provided master keys, with no extra to install — see
+[Self-hosted keys](#self-hosted-keys-no-cloud).
 
 ## Install
 
@@ -162,11 +165,62 @@ schema or bucket provisioner via `CompositeTenantProvisioner` — so onboarding 
 tenant readies every backend at once. Provisioning is idempotent, so a retried
 onboarding is safe.
 
+## Self-hosted keys (no cloud)
+
+`LocalKeyManagement` implements the same port entirely in process: it wraps data
+keys under raw 32-byte master keys you supply, with AES-256-GCM. It needs no
+extra — the `cryptography` library is already a core dependency — and no client,
+deps module, or lifecycle step:
+
+```python
+from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
+from forze.application.execution import CryptoDepsModule
+from forze_kms.local import LocalKeyManagement
+
+CryptoDepsModule(
+    kms=LocalKeyManagement({"k1": load_master_key()}),  # key id → raw 32 bytes
+    directory=StaticKeyDirectory(KeyRef(key_id="k1")),
+)
+```
+
+**Know the trust model.** The master keys live in process memory and in your
+configuration — there is no HSM, no non-exportability, no backend audit log.
+Compromise of the host or the config is compromise of the keys. That is the
+honest boundary of a self-hosted deployment; if you need keys that never leave a
+service, use one of the cloud backends or Vault above. How the raw bytes get to
+the process (env var, file mount, secret manager) is your application's choice,
+same as `deterministic_root`.
+
+**Replacing a key** uses the standard
+[previous-key overlap](../identity-tenancy-enc/encryption.md#replacing-a-key),
+with one extra rule: the outgoing key stays **in the map** until the sweep is
+done — the directory widens what reads accept; the map is what can unwrap:
+
+```python
+CryptoDepsModule(
+    kms=LocalKeyManagement({"k2": new_key, "k1": old_key}),  # old key still unwraps
+    directory=StaticKeyDirectory(
+        KeyRef(key_id="k2"),                                 # new writes seal here
+        previous_key_ref=KeyRef(key_id="k1"),                # old reads still accepted
+    ),
+)
+```
+
+Run the [re-encryption sweeps](../identity-tenancy-enc/encryption.md#re-encrypting-stored-data)
+(or let natural rewrites drain the old key), then drop `k1` from both places in
+the same deploy. Dropping it from the map too early fails closed with an error
+telling you to put it back.
+
+Moving to a cloud backend later changes wiring only — envelopes and call sites
+are identical across backends — but envelopes wrapped under a local master key
+still have to be re-encrypted under the new backend's key: an overlap window
+plus a sweep, the same procedure as replacing any key.
+
 ## What it provides
 
 | Contract | Implementation | Dep key |
 |----------|---------------|---------|
-| Key management (envelope encryption) | `AwsKmsKeyManagement` · `GcpKmsKeyManagement` · `YcKmsKeyManagement` | `KeyManagementDepKey` (registered by `CryptoDepsModule`) |
+| Key management (envelope encryption) | `AwsKmsKeyManagement` · `GcpKmsKeyManagement` · `YcKmsKeyManagement` · `LocalKeyManagement` | `KeyManagementDepKey` (registered by `CryptoDepsModule`) |
 | Per-tenant KEK provisioning | `AwsKmsTenantProvisioner` · `GcpKmsTenantProvisioner` · `YcKmsTenantProvisioner` | via `TenantProvisionerPort` |
 | Key directory (Yandex Cloud only) | `YcKmsKeyDirectory` | passed to `CryptoDepsModule(directory=…)` |
 | Raw client | `AwsKmsClient` · `GcpKmsClient` · `YcKmsClient` | `AwsKmsClientDepKey` · `GcpKmsClientDepKey` · `YcKmsClientDepKey` |
@@ -178,6 +232,7 @@ What a `KeyRef.key_id` names, per provider:
 | AWS | `forze[kms-aws]` | a CMK id, ARN, or `alias/<name>` | the botocore chain (env, profile, instance role) |
 | Google Cloud | `forze[kms-gcp]` | a CryptoKey resource name (`projects/…/cryptoKeys/…`) | application-default credentials |
 | Yandex Cloud | `forze[kms-yc]` | a symmetric key id | the instance metadata service |
+| Self-hosted | none needed | an operator-chosen name keying the master-key map | — (keys are supplied directly) |
 
 ## Notes
 
@@ -194,6 +249,8 @@ What a `KeyRef.key_id` names, per provider:
   *different* `key_id` is a migration, not a rotation — it needs a previous-key
   read overlap and a re-encrypt sweep; see
   [Replacing a key](../identity-tenancy-enc/encryption.md#replacing-a-key).
+  The self-hosted backend has no key versions at all: rotating it *is* replacing
+  the key ([above](#self-hosted-keys-no-cloud)).
 - **Data-key length** is `dek_bytes` on the adapter — 32 bytes (AES-256) by
   default, matching the keyring's AEAD; 16 selects AES-128.
 - **Teardown is opt-in and never immediate.** `deprovision` does nothing unless you
