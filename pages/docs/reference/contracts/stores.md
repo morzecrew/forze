@@ -65,6 +65,15 @@ There is **no read verb**, deliberately: a counter's value is only meaningful at
 instant it is allocated, so a handler that read one would be holding a number another
 allocation has already moved past. Allocate and use the value you were given.
 
+Allocations also **never join the caller's transaction** — on every backend (Redis,
+Postgres, Mongo, Firestore) the statement runs on its own connection, so a rolled-back
+transaction does not hand the number back. A sequence that could roll back would
+reissue a number already given out; gaps are the correct trade. Implementers of the
+Postgres, Mongo and Firestore client ports must preserve this.
+
+Backends: Redis, Postgres, Mongo, Firestore, mock. Postgres needs an app-migrated
+counter table.
+
 ### Enumerating counters (admin)
 
 `ctx.counter.admin(spec)` returns a `CounterAdminPort`. It exists because the missing read
@@ -129,7 +138,7 @@ sliced and refuses with `core.storage.range_whole_payload_unsupported`.
 | Contract | Backend | Integration |
 |----------|---------|-------------|
 | Cache | Redis | [Redis](../../integrations/redis.md) |
-| Counter | Redis | [Redis](../../integrations/redis.md) |
+| Counter | Redis, Postgres, Mongo, Firestore | [Redis](../../integrations/redis.md) · [Postgres](../../integrations/postgres.md) · [Mongo](../../integrations/mongo.md) · [Firestore](../../integrations/firestore.md) |
 | Object storage | S3, GCS | [S3](../../integrations/s3.md) · [GCS](../../integrations/gcs.md) |
 
 The in-memory mock implements all three for tests.
