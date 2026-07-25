@@ -36,7 +36,7 @@ lock single-flights concurrent rotations of the same ref across replicas.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Final
+from typing import Final, cast
 from uuid import UUID
 
 import attrs
@@ -53,9 +53,11 @@ from forze.application.contracts.secrets import (
     SecretsAdminDepKey,
     SecretsDepKey,
     SecretVersion,
+    VersionedSecretsPort,
     secret_ref_for_tenant,
     secrets_capabilities_of,
     validate_secret_writes_supported,
+    validate_versioned_reads_supported,
 )
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
@@ -185,10 +187,15 @@ class SecretRotator:
         secrets = ctx.deps.provide(SecretsDepKey)
         admin = ctx.deps.provide(SecretsAdminDepKey)
 
-        # Fail closed before minting anything — a read-only store cannot rotate.
+        # Fail closed before minting anything — a read-only store cannot rotate,
+        # and an unversioned store cannot serve the promote gate below.
         validate_secret_writes_supported(
             secrets_capabilities_of(admin), backend=type(admin).__name__
         )
+        validate_versioned_reads_supported(
+            secrets_capabilities_of(secrets), backend=type(secrets).__name__
+        )
+        versioned = cast(VersionedSecretsPort, secrets)
 
         staged_ref = pending_ref_for(ref, suffix=self.pending_suffix)
         step = resolve_durable_step(ctx)
@@ -224,8 +231,22 @@ class SecretRotator:
         await step.run("test", _test)
 
         async def _finish() -> JsonDict:
-            value = await secrets.resolve_str(pending.ref)
-            promoted = await admin.put(ref, value)
+            staged_now = await versioned.resolve_versioned(pending.ref)
+
+            if staged_now.version != pending.version:
+                # The promote fence: the lock is advisory (a lost or stolen lock is
+                # only raised at scope exit), so a competing rotator may have
+                # restaged this ref after our verify passed. Promoting it would
+                # activate a credential THIS run never verified — refuse instead;
+                # the competing run promotes its own verified value.
+                raise exc.concurrency(
+                    f"Staged credential at {pending.ref.path!r} changed after "
+                    "verification; refusing to promote an unverified value.",
+                    code="rotation_staging_conflict",
+                    details={"ref": ref.path},
+                )
+
+            promoted = await admin.put(ref, staged_now.text)
             event = SecretRotated(
                 ref_path=ref.path,
                 version_token=promoted.token,

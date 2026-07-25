@@ -216,6 +216,64 @@ class TestCrashResume:
         assert await secrets.resolve_str(_REF) == f"dsn-for-{target.minted[0]}"
 
 
+class TestPromoteFence:
+    async def test_restaged_ref_after_verify_refuses_promotion(self) -> None:
+        """The lost-lock race: a competing rotator overwrites the staging ref after
+        this run's verify passed. The version fence must refuse the promote — an
+        unverified credential never becomes active."""
+
+        class _InterferingTarget(_RecordingTarget):
+            """After verify succeeds, simulate the competing worker restaging."""
+
+            admin: Any = None
+
+            async def verify(self, tenant_id: UUID | None, pending: PendingCredential) -> None:
+                await super().verify(tenant_id, pending)
+                await self.admin.put(pending.ref, "intruder-unverified-value")
+
+        target = _InterferingTarget()
+        ctx, rotator, _ = _composition(target, publish=False)
+        target.admin = ctx.deps.provide(SecretsAdminDepKey)
+        await _seed(ctx, "dsn-old")
+
+        with pytest.raises(Exception, match="refusing to promote"):
+            await rotator.rotate_now(ctx, _REF)
+
+        secrets = ctx.deps.provide(SecretsDepKey)
+        # Neither our verified value nor the intruder's unverified one was promoted.
+        assert await secrets.resolve_str(_REF) == "dsn-old"
+
+    async def test_fails_closed_on_unversioned_data_store(self) -> None:
+        """The promote fence needs versioned reads — an unversioned store is
+        refused at the start of the run, before anything is minted."""
+
+        from forze.application.contracts.deps import Deps
+        from forze_kits.adapters.secrets import MappingSecrets
+
+        class _UnversionedSecrets:
+            async def resolve_str(self, ref: SecretRef) -> str:  # pragma: no cover
+                return "x"
+
+            async def exists(self, ref: SecretRef) -> bool:  # pragma: no cover
+                return True
+
+        target = _RecordingTarget()
+        rotator = SecretRotator(target=target, publish_spec=None, lock=None)
+        ctx = context_from_deps(
+            Deps.plain(
+                {
+                    SecretsDepKey: _UnversionedSecrets(),
+                    SecretsAdminDepKey: MappingSecrets(data={"db/dsn": "dsn-old"}),
+                }
+            )
+        )
+
+        with pytest.raises(Exception, match="not supported"):
+            await rotator.handler(ctx, {"ref_path": _REF.path, "tenant_id": None})
+
+        assert target.calls == []
+
+
 class TestPublication:
     async def test_finish_publishes_a_rotation_event_end_to_end(self) -> None:
         target = _RecordingTarget()
