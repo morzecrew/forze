@@ -3406,7 +3406,7 @@
   <span class="md-ellipsis">
     
   
-  Cloud KMS
+  KMS backends
 
     
   </span>
@@ -5936,10 +5936,18 @@ can't drift.</p>
 <td><code>forze[kms-yc]</code></td>
 <td><code>YcKmsKeyManagement</code></td>
 </tr>
+<tr>
+<td>Self-hosted (in-process master keys)</td>
+<td>core, no extra</td>
+<td><code>LocalKeyManagement</code></td>
+</tr>
 </tbody>
 </table>
-<p><code>MockKeyManagement</code> is <strong>dev/test only</strong> (it protects nothing). Any other <abbr title="Key Management Service">KMS</abbr> — Azure,
-an HSM — is a custom <code>KeyManagementPort</code>. See <a href="../../integrations/kms/">Cloud <abbr title="Key Management Service">KMS</abbr></a>.
+<p>The self-hosted backend is the one exception to "the KEK is held outside the app":
+its master keys live in process memory — the operator's host is the trust boundary,
+and rotation is by key replacement (it has no versions). <code>MockKeyManagement</code> is
+<strong>dev/test only</strong> (it protects nothing). Any other <abbr title="Key Management Service">KMS</abbr> — Azure, an HSM — is a custom
+<code>KeyManagementPort</code>. See <a href="../../integrations/kms/"><abbr title="Key Management Service">KMS</abbr> backends</a>.
 - <strong><code>required_encryption</code> floor:</strong> set it on a deps module and wiring refuses to assemble
   any surface whose derived coverage is weaker — a fail-closed floor checked once at
   startup. See <a href="../../identity-tenancy-enc/encryption/#declaring-a-minimum">Encryption → Declaring a minimum</a>.

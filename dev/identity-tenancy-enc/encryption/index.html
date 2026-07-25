@@ -3636,7 +3636,7 @@
   <span class="md-ellipsis">
     
   
-  Cloud KMS
+  KMS backends
 
     
   </span>
@@ -6026,9 +6026,12 @@ that maps a tenant to its KEK reference:</p>
 <p>That registers the key manager, the AEAD, the directory, and the composed
 <code>Keyring</code> under their dep keys. Integrations that opt into encryption resolve the
 keyring from here — they never construct one. Swap <code>kms</code> for any backend that
-holds your KEK: <a href="../../integrations/vault/">Vault Transit</a>, or AWS, Google Cloud,
-and Yandex Cloud <a href="../../integrations/kms/"><abbr title="Key Management Service">KMS</abbr></a>. For per-tenant keys, swap the
-directory (see <a href="#per-tenant-keys-byok">Per-tenant keys</a> below).</p>
+holds your KEK: <a href="../../integrations/vault/">Vault Transit</a>, AWS, Google Cloud,
+and Yandex Cloud <a href="../../integrations/kms/"><abbr title="Key Management Service">KMS</abbr></a>, or — for self-hosted
+deployments with no cloud and no Vault —
+<a href="../../integrations/kms/#self-hosted-keys-no-cloud"><code>LocalKeyManagement</code></a>, which
+wraps data keys under operator-provided master keys in process. For per-tenant
+keys, swap the directory (see <a href="#per-tenant-keys-byok">Per-tenant keys</a> below).</p>
 <div class="admonition warning">
 <p class="admonition-title"><code>MockKeyManagement</code> is dev/test only</p>
 <p>The in-memory <code>MockKeyManagement</code> from <code>forze_mock</code> derives keys locally —
@@ -6300,6 +6303,12 @@ dropping it restores the guard.</p>
 <p><code>StaticKeyDirectory(previous_key_ref=…)</code> does the same for a single-key deployment. A
 store-backed directory — one <abbr title="Bring Your Own Key">BYOK</abbr> customer replacing their own key — implements
 <code>KeyDirectoryWithPrevious</code> directly.</p>
+<p>With the self-hosted <code>LocalKeyManagement</code> there is a second half to the overlap: the
+outgoing master key must also <strong>stay in the adapter's key map</strong> until the sweep is done —
+the directory widens what reads <em>accept</em>, but the map is what can actually <em>unwrap</em>.
+Dropping it early fails closed with an error saying exactly that. See
+<a href="../../integrations/kms/#self-hosted-keys-no-cloud">Self-hosted keys</a> for the full
+procedure.</p>
 <h2 id="observability">Observability<a class="headerlink" href="#observability" title="Permanent link">&para;</a></h2>
 <p>The keyring exports the same pull-based metrics as the rest of the engine. Pass
 your keyrings to <code>instrument_crypto</code> by label —

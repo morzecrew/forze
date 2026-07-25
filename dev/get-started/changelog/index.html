@@ -4460,7 +4460,7 @@
   <span class="md-ellipsis">
     
   
-  Cloud KMS
+  KMS backends
 
     
   </span>
@@ -7632,6 +7632,10 @@
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.5.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Self-hosted <abbr title="Key Management Service">KMS</abbr> backend</strong> — <code>forze_kms.local.LocalKeyManagement</code> wraps data keys under operator-provided 32-byte master keys, no cloud or extra needed; multi-key map enables the previous-key rotation overlap, a rotated-away key id fails closed, and a one-way <code>fingerprint</code> spots fleet key-map drift.</li>
+<li><strong>OpenBao compatibility</strong> — <code>forze_vault</code> works with OpenBao (verified 2.6.1); the integration suite runs against any compatible engine via <code>FORZE_VAULT_IMAGE</code>.</li>
+</ul>
 <p><strong>Identity &amp; authn ergonomics</strong> (from downstream adoption feedback)</p>
 <ul>
 <li><strong>Cookie-mode authn routes</strong> — <code>AuthnCookieCarrier</code> via <code>attach_authn_routes(cookies=…)</code>: login/refresh set and rotate HttpOnly cookies and strip token strings from bodies, refresh falls back to its cookie, logout expires both idempotently.</li>
