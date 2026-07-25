@@ -19,11 +19,28 @@ class SecretsAdminPort(Protocol):
     fighting their platform.
     """
 
-    def put(self, ref: SecretRef, value: str) -> Awaitable[SecretVersion]:
+    def put(
+        self,
+        ref: SecretRef,
+        value: str,
+        *,
+        expected_version: SecretVersion | None = None,
+    ) -> Awaitable[SecretVersion]:
         """Write *value* as the new current version at *ref*.
+
+        With *expected_version* set, the write is **compare-and-set**: it succeeds
+        only while *ref*'s current version equals it, and raises a
+        ``CONCURRENCY``-kind error (code ``secret_version_conflict``) otherwise —
+        never overwriting a newer value. This is the rotator's promote fence: a
+        distributed lock is advisory (its loss surfaces late), so the conditional
+        write is what actually prevents a stale owner from clobbering a newer
+        rotation. Write-capable backends must honor it (Vault KV v2 maps it to
+        native ``cas``; in-memory stores compare under their own lock).
 
         :param ref: Secret reference.
         :param value: The new secret text.
+        :param expected_version: Fence — the version the caller last observed;
+            ``None`` writes unconditionally.
         :returns: The version the write produced.
         """
 

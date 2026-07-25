@@ -305,17 +305,33 @@ class VaultClient(VaultClientPort):
 
     # ....................... #
 
-    def _write_kv_data_sync(self, path: str, data: JsonDict) -> int:
+    def _write_kv_data_sync(self, path: str, data: JsonDict, cas: int | None) -> int:
         client = self._require_client()
 
         try:
-            response = client.secrets.kv.v2.create_or_update_secret(
-                path=path,
-                secret=data,
-                mount_point=self.config.mount_point,
-            )
+            if cas is not None:
+                response = client.secrets.kv.v2.create_or_update_secret(
+                    path=path,
+                    secret=data,
+                    cas=cas,
+                    mount_point=self.config.mount_point,
+                )
+
+            else:
+                response = client.secrets.kv.v2.create_or_update_secret(
+                    path=path,
+                    secret=data,
+                    mount_point=self.config.mount_point,
+                )
 
         except VaultError as e:
+            if cas is not None and "check-and-set" in str(e):
+                raise exc.concurrency(
+                    f"Secret at {path!r} changed since it was last observed.",
+                    code="secret_version_conflict",
+                    details={"ref": path},
+                ) from e
+
             raise exc.infrastructure(f"Vault write failed for {path!r}: {e}") from e
 
         except Exception as e:
@@ -332,10 +348,12 @@ class VaultClient(VaultClientPort):
 
     # ....................... #
 
-    async def write_kv_data(self, path: str, data: JsonDict) -> int:
-        """Write *data* as the new current version at *path*, returning the version."""
+    async def write_kv_data(self, path: str, data: JsonDict, *, cas: int | None = None) -> int:
+        """Write *data* as the new current version at *path*, returning the version.
 
-        return await asyncio.to_thread(self._write_kv_data_sync, path, data)
+        With *cas* set, the write is KV v2 check-and-set (see the port docstring)."""
+
+        return await asyncio.to_thread(self._write_kv_data_sync, path, data, cas)
 
     # ....................... #
 

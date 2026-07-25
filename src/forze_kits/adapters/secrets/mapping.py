@@ -74,13 +74,30 @@ class MappingSecrets(SecretsPort, VersionedSecretsPort, SecretsAdminPort):
 
     # ....................... #
 
-    async def put(self, ref: SecretRef, value: str) -> SecretVersion:
+    async def put(
+        self,
+        ref: SecretRef,
+        value: str,
+        *,
+        expected_version: SecretVersion | None = None,
+    ) -> SecretVersion:
         validate_secret_writes_supported(self.secrets_capabilities, backend=type(self).__name__)
 
         data = self._data
 
         if not isinstance(data, MutableMapping):  # pragma: no cover - guarded above
             raise exc.internal("Mapping secrets store is not mutable")
+
+        if expected_version is not None:
+            existing = data.get(ref.path)
+            current = None if existing is None else content_secret_version(existing)
+
+            if current != expected_version:
+                raise exc.concurrency(
+                    f"Secret at {ref.path!r} changed since it was last observed.",
+                    code="secret_version_conflict",
+                    details={"ref": ref.path},
+                )
 
         data[ref.path] = value
 

@@ -102,6 +102,26 @@ async def test_put_round_trips_through_resolve(vault_secrets: VaultKvSecrets) ->
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_conditional_put_fences_against_real_kv_cas(
+    vault_secrets: VaultKvSecrets,
+) -> None:
+    from forze.base.exceptions import CoreException
+
+    observed = await vault_secrets.put(_REF, "dsn-1")
+
+    # Matching fence lands; the stale fence is refused by the server's own CAS.
+    fresh = await vault_secrets.put(_REF, "dsn-2", expected_version=observed)
+    assert fresh != observed
+
+    with pytest.raises(CoreException, match="changed since") as excinfo:
+        await vault_secrets.put(_REF, "dsn-3", expected_version=observed)
+
+    assert excinfo.value.code == "secret_version_conflict"
+    assert await vault_secrets.resolve_str(_REF) == "dsn-2"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_watcher_stream_conforms_to_mock(vault_secrets: VaultKvSecrets) -> None:
     """Same mutation sequence → same shape of SecretChanged stream on mock and Vault."""
 

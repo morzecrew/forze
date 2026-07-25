@@ -40,8 +40,14 @@ class VaultClientPort(Protocol):
 
         ...  # pragma: no cover
 
-    def write_kv_data(self, path: str, data: dict[str, Any]) -> Awaitable[int]:
-        """Write *data* as the new current version at *path*, returning the version."""
+    def write_kv_data(
+        self, path: str, data: dict[str, Any], *, cas: int | None = None
+    ) -> Awaitable[int]:
+        """Write *data* as the new current version at *path*, returning the version.
+
+        With *cas* set, the write is KV v2 check-and-set: it succeeds only while the
+        current version equals *cas*, and raises a ``CONCURRENCY``-kind error
+        otherwise."""
 
         ...  # pragma: no cover
 

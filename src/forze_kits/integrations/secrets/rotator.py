@@ -201,21 +201,27 @@ class SecretRotator:
         step = resolve_durable_step(ctx)
 
         async def _create() -> JsonDict:
-            current = await secrets.resolve_str(ref)
+            current = await versioned.resolve_versioned(ref)
             # SecretEntropy by construction: a seeded source cannot be passed here,
             # so a simulated rotator can never mint a predictable production credential.
             minted = secure_token_urlsafe(self.minted_bytes)
-            value = await self.target.compose(tenant_id, current=current, minted=minted)
+            value = await self.target.compose(tenant_id, current=current.text, minted=minted)
             version = await admin.put(staged_ref, value)
 
-            # Journal carries {ref, version} only — never the minted text.
-            return {"ref_path": staged_ref.path, "version_token": version.token}
+            # Journal carries {ref, version} only — never the minted text. The
+            # primary's version rides along as the promote fence (see _finish).
+            return {
+                "ref_path": staged_ref.path,
+                "version_token": version.token,
+                "current_version_token": current.version.token,
+            }
 
         staged = await step.run("create", _create)
         pending = PendingCredential(
             ref=SecretRef(str(staged["ref_path"])),
             version=SecretVersion(str(staged["version_token"])),
         )
+        primary_at_create = SecretVersion(str(staged["current_version_token"]))
 
         async def _set() -> JsonDict:
             await self.target.apply(tenant_id, pending)
@@ -234,10 +240,10 @@ class SecretRotator:
             staged_now = await versioned.resolve_versioned(pending.ref)
 
             if staged_now.version != pending.version:
-                # The promote fence: the lock is advisory (a lost or stolen lock is
-                # only raised at scope exit), so a competing rotator may have
-                # restaged this ref after our verify passed. Promoting it would
-                # activate a credential THIS run never verified — refuse instead;
+                # Fence one — the staging read: the lock is advisory (a lost or
+                # stolen lock is only raised at scope exit), so a competing rotator
+                # may have restaged this ref after our verify passed. Promoting it
+                # would activate a credential THIS run never verified — refuse;
                 # the competing run promotes its own verified value.
                 raise exc.concurrency(
                     f"Staged credential at {pending.ref.path!r} changed after "
@@ -246,7 +252,13 @@ class SecretRotator:
                     details={"ref": ref.path},
                 )
 
-            promoted = await admin.put(ref, staged_now.text)
+            # Fence two — the promote itself: compare-and-set against the primary
+            # version journaled at create. A competitor that completed a WHOLE
+            # rotation (its promote advanced the primary) inside our read→write
+            # window makes this CAS fail instead of being clobbered by our stale
+            # staged value. Two fences, two hazards: staging = unverified text,
+            # primary = lost newer promotion.
+            promoted = await admin.put(ref, staged_now.text, expected_version=primary_at_create)
             event = SecretRotated(
                 ref_path=ref.path,
                 version_token=promoted.token,

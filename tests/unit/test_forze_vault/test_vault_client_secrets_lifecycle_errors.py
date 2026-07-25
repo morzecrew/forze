@@ -114,6 +114,39 @@ class TestWriteKvData:
         with pytest.raises(CoreException, match="unexpected payload"):
             await _client(mock_hvac).write_kv_data("p", {"value": "x"})
 
+    async def test_cas_is_passed_through(self) -> None:
+        mock_hvac = MagicMock()
+        mock_hvac.secrets.kv.v2.create_or_update_secret.return_value = {
+            "data": {"version": 8},
+        }
+
+        assert await _client(mock_hvac).write_kv_data("p", {"value": "x"}, cas=7) == 8
+        mock_hvac.secrets.kv.v2.create_or_update_secret.assert_called_once_with(
+            path="p", secret={"value": "x"}, cas=7, mount_point="secret"
+        )
+
+    async def test_cas_mismatch_is_a_concurrency_error(self) -> None:
+        mock_hvac = MagicMock()
+        mock_hvac.secrets.kv.v2.create_or_update_secret.side_effect = VaultError(
+            "check-and-set parameter did not match the current version"
+        )
+
+        with pytest.raises(CoreException, match="changed since") as excinfo:
+            await _client(mock_hvac).write_kv_data("p", {"value": "x"}, cas=7)
+
+        assert excinfo.value.code == "secret_version_conflict"
+
+    async def test_unconditional_write_never_maps_to_concurrency(self) -> None:
+        mock_hvac = MagicMock()
+        mock_hvac.secrets.kv.v2.create_or_update_secret.side_effect = VaultError(
+            "check-and-set parameter did not match the current version"
+        )
+
+        # Without a fence the same message is an infrastructure failure (e.g. a
+        # cas_required mount rejecting a bare write) — never a silent retry signal.
+        with pytest.raises(CoreException, match="write failed"):
+            await _client(mock_hvac).write_kv_data("p", {"value": "x"})
+
 
 class TestDatabaseLeases:
     async def test_generate_credentials_passes_the_response_through(self) -> None:

@@ -83,7 +83,13 @@ class MockSecretsPort(SecretsPort, VersionedSecretsPort, SecretsAdminPort):
     async def current_version(self, ref: SecretRef) -> SecretVersion:
         return (await self.resolve_versioned(ref)).version
 
-    async def put(self, ref: SecretRef, value: str) -> SecretVersion:
+    async def put(
+        self,
+        ref: SecretRef,
+        value: str,
+        *,
+        expected_version: SecretVersion | None = None,
+    ) -> SecretVersion:
         with self.state.lock:
             store = self._store()
             versions = self._versions()
@@ -94,6 +100,16 @@ class MockSecretsPort(SecretsPort, VersionedSecretsPort, SecretsAdminPort):
                 # first overwrite must advance past it — same token for a changed
                 # value would make the change invisible to every watcher.
                 current = 1 if ref.path in store else 0
+
+            if expected_version is not None:
+                observable = SecretVersion(str(current)) if current else None
+
+                if observable != expected_version:
+                    raise exc.concurrency(
+                        f"Secret at {ref.path!r} changed since it was last observed.",
+                        code="secret_version_conflict",
+                        details={"ref": ref.path},
+                    )
 
             version = current + 1
             store[ref.path] = value

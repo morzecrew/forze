@@ -91,9 +91,28 @@ class VaultKvSecrets:
 
     # ....................... #
 
-    async def put(self, ref: SecretRef, value: str) -> SecretVersion:
+    async def put(
+        self,
+        ref: SecretRef,
+        value: str,
+        *,
+        expected_version: SecretVersion | None = None,
+    ) -> SecretVersion:
         # The single-value shape round-trips through _encode_kv_payload, so a
         # rotator's put is read back verbatim by resolve_str.
-        version = await self.client.write_kv_data(ref.path, {"value": value})
+        cas: int | None = None
+
+        if expected_version is not None:
+            try:
+                cas = int(expected_version.token)
+
+            except ValueError as e:
+                # A fence token from another store cannot condition a Vault write.
+                raise exc.configuration(
+                    f"Expected version {expected_version.token!r} is not a Vault "
+                    "KV v2 version token.",
+                ) from e
+
+        version = await self.client.write_kv_data(ref.path, {"value": value}, cas=cas)
 
         return SecretVersion(str(version))

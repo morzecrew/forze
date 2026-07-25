@@ -243,6 +243,34 @@ class TestPromoteFence:
         # Neither our verified value nor the intruder's unverified one was promoted.
         assert await secrets.resolve_str(_REF) == "dsn-old"
 
+    async def test_completed_competing_rotation_is_not_clobbered(self) -> None:
+        """The lost-lock stale-promote race: a competitor finishes a WHOLE rotation
+        (its promote advanced the primary) while this run is between its staging
+        fence read and its promote write. The CAS promote must fail instead of
+        overwriting the newer credential — staging alone can't catch this."""
+
+        class _CompetingTarget(_RecordingTarget):
+            """After verify passes, simulate the competitor's completed promote —
+            the primary advances, the staging ref is left untouched."""
+
+            admin: Any = None
+
+            async def verify(self, tenant_id: UUID | None, pending: PendingCredential) -> None:
+                await super().verify(tenant_id, pending)
+                await self.admin.put(_REF, "competitor-promoted-dsn")
+
+        target = _CompetingTarget()
+        ctx, rotator, _ = _composition(target, publish=False)
+        target.admin = ctx.deps.provide(SecretsAdminDepKey)
+        await _seed(ctx, "dsn-old")
+
+        with pytest.raises(Exception, match="changed since it was last observed"):
+            await rotator.rotate_now(ctx, _REF)
+
+        secrets = ctx.deps.provide(SecretsDepKey)
+        # The competitor's promotion survives; the stale staged value never landed.
+        assert await secrets.resolve_str(_REF) == "competitor-promoted-dsn"
+
     async def test_fails_closed_on_unversioned_data_store(self) -> None:
         """The promote fence needs versioned reads — an unversioned store is
         refused at the start of the run, before anything is minted."""

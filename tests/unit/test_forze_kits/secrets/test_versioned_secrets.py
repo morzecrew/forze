@@ -52,6 +52,27 @@ class TestMappingVersionedSecrets:
         assert mutable.secrets_capabilities.writes
         assert not frozen.secrets_capabilities.writes
 
+    async def test_conditional_put_honors_the_fence(self) -> None:
+        backend = MappingSecrets(data={"db/dsn": "dsn-1"})
+        observed = await backend.current_version(_REF)
+
+        # Matching fence: the write lands.
+        await backend.put(_REF, "dsn-2", expected_version=observed)
+        assert await backend.resolve_str(_REF) == "dsn-2"
+
+        # Stale fence: the newer value is never overwritten.
+        with pytest.raises(CoreException, match="changed since") as excinfo:
+            await backend.put(_REF, "dsn-3", expected_version=observed)
+
+        assert excinfo.value.code == "secret_version_conflict"
+        assert await backend.resolve_str(_REF) == "dsn-2"
+
+    async def test_conditional_put_on_a_missing_key_conflicts(self) -> None:
+        backend = MappingSecrets(data={})
+
+        with pytest.raises(CoreException, match="changed since"):
+            await backend.put(_REF, "dsn-1", expected_version=content_secret_version("ghost"))
+
     async def test_put_on_read_only_mapping_fails_closed(self) -> None:
         backend = MappingSecrets(data=MappingProxyType({"db/dsn": "x"}))
 

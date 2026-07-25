@@ -82,7 +82,29 @@ class TestVaultVersionedSecrets:
         version = await adapter.put(_REF, "new-dsn")
 
         assert version.token == "8"
-        client.write_kv_data.assert_awaited_once_with("tenants/t1/dsn", {"value": "new-dsn"})
+        client.write_kv_data.assert_awaited_once_with(
+            "tenants/t1/dsn", {"value": "new-dsn"}, cas=None
+        )
+
+    async def test_conditional_put_maps_to_native_cas(self) -> None:
+        from forze.application.contracts.secrets import SecretVersion
+
+        client = _client()
+        adapter = VaultKvSecrets(client=client)
+
+        await adapter.put(_REF, "new-dsn", expected_version=SecretVersion("7"))
+
+        client.write_kv_data.assert_awaited_once_with(
+            "tenants/t1/dsn", {"value": "new-dsn"}, cas=7
+        )
+
+    async def test_conditional_put_rejects_a_foreign_fence_token(self) -> None:
+        from forze.application.contracts.secrets import SecretVersion
+
+        adapter = VaultKvSecrets(client=_client())
+
+        with pytest.raises(CoreException, match="not a Vault"):
+            await adapter.put(_REF, "new-dsn", expected_version=SecretVersion("sha256-hash"))
 
     async def test_capabilities_declare_native_versions_and_writes(self) -> None:
         caps = VaultKvSecrets(client=_client()).secrets_capabilities

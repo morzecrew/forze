@@ -48,6 +48,19 @@ class TestMockVersions:
 
         assert (await port.current_version(_REF)).token == "1"
 
+    async def test_conditional_put_honors_the_fence(self) -> None:
+        port = MockSecretsPort(state=MockState())
+        first = await port.put(_REF, "a")
+
+        second = await port.put(_REF, "b", expected_version=first)
+        assert second.token == "2"
+
+        with pytest.raises(CoreException, match="changed since") as excinfo:
+            await port.put(_REF, "c", expected_version=first)
+
+        assert excinfo.value.code == "secret_version_conflict"
+        assert (await port.resolve_versioned(_REF)).text == "b"
+
     async def test_first_put_over_a_seeded_value_advances_the_version(self) -> None:
         """A seeded entry reads as version 1, so replacing it must not also read
         as 1 — an unchanged token for a changed value is invisible to watchers."""

@@ -135,8 +135,12 @@ because it is the known-safe one:
 3. **test** — `RotationTargetPort.verify`: a **real connection**, not a syntactic
    check. Failure halts the run before promote — promoting an unverified
    credential and evicting the fleet onto it is a self-inflicted outage;
-4. **finish** — promote (a second put of the staged value at the primary ref) and
-   publish `SecretRotated` via the outbox.
+4. **finish** — promote and publish `SecretRotated` via the outbox. Promotion is
+   double-fenced, because the distributed lock is advisory: the staged version
+   must still be the one this run verified (no unverified text can be promoted),
+   and the write to the primary ref is **compare-and-set** against the version
+   observed at create (a competing rotation that already promoted wins; the stale
+   run fails loudly instead of clobbering it).
 
 The pending ref is what makes this crash-safe: after **set**, the only copy of a
 password already live at the backend exists durably in the secret store. A rotator
