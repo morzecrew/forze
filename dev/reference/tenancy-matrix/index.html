@@ -1948,6 +1948,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/portability/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73zM12 22V12"/><path d="M3.29 7 12 12l8.71-5M7.5 4.27l9 5.15"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Portability
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/observability/" class="md-nav__link">
         
   
@@ -5837,6 +5866,22 @@ routed client reaches <code>dedicated</code>.</p>
 <td>—</td>
 <td>—</td>
 <td>per-tenant credentials (routed)</td>
+<td><code>dedicated</code></td>
+</tr>
+<tr>
+<td>Served models (HTTP)</td>
+<td>inference</td>
+<td><code>tagged</code> (bound tenant required)</td>
+<td>per-tenant <code>model_name</code></td>
+<td><code>RoutedInferenceHttpClient</code></td>
+<td><code>dedicated</code></td>
+</tr>
+<tr>
+<td>SageMaker</td>
+<td>inference</td>
+<td><code>tagged</code> (bound tenant required)</td>
+<td>per-tenant <code>endpoint_name</code></td>
+<td><code>RoutedSageMakerRuntimeClient</code></td>
 <td><code>dedicated</code></td>
 </tr>
 </tbody>

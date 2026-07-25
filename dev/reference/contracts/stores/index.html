@@ -1948,6 +1948,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../running-in-prod/portability/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73zM12 22V12"/><path d="M3.29 7 12 12l8.71-5M7.5 4.27l9 5.15"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Portability
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../running-in-prod/observability/" class="md-nav__link">
         
   
@@ -5947,6 +5976,13 @@ under one spec.</p>
 <p>There is <strong>no read verb</strong>, deliberately: a counter's value is only meaningful at the
 instant it is allocated, so a handler that read one would be holding a number another
 allocation has already moved past. Allocate and use the value you were given.</p>
+<p>Allocations also <strong>never join the caller's transaction</strong> — on every backend (Redis,
+Postgres, Mongo, Firestore) the statement runs on its own connection, so a rolled-back
+transaction does not hand the number back. A sequence that could roll back would
+reissue a number already given out; gaps are the correct trade. Implementers of the
+Postgres, Mongo and Firestore client ports must preserve this.</p>
+<p>Backends: Redis, Postgres, Mongo, Firestore, mock. Postgres needs an app-migrated
+counter table.</p>
 <h3 id="enumerating-counters-admin">Enumerating counters (admin)<a class="headerlink" href="#enumerating-counters-admin" title="Permanent link">&para;</a></h3>
 <p><code>ctx.counter.admin(spec)</code> returns a <code>CounterAdminPort</code>. It exists because the missing read
 verb, correct as it is for handlers, left counters as the one plane that is <strong>durable state
@@ -6104,8 +6140,8 @@ sliced and refuses with <code>core.storage.range_whole_payload_unsupported</code
 </tr>
 <tr>
 <td>Counter</td>
-<td>Redis</td>
-<td><a href="../../../integrations/redis/">Redis</a></td>
+<td>Redis, Postgres, Mongo, Firestore</td>
+<td><a href="../../../integrations/redis/">Redis</a> · <a href="../../../integrations/postgres/">Postgres</a> · <a href="../../../integrations/mongo/">Mongo</a> · <a href="../../../integrations/firestore/">Firestore</a></td>
 </tr>
 <tr>
 <td>Object storage</td>

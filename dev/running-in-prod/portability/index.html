@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/integrations/duckdb/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/running-in-prod/portability/">
       
       
-        <link rel="prev" href="../clickhouse/">
+        <link rel="prev" href="../shutdown-and-fleets/">
       
       
-        <link rel="next" href="../kafka/">
+        <link rel="next" href="../observability/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>DuckDB - Forze</title>
+        <title>Portability - Forze</title>
       
     
     
@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#install" class="md-skip">
+        <a href="#what-an-application-consists-of" class="md-skip">
           Skip to content
         </a>
       
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              DuckDB
+              Portability
             
           </span>
         </div>
@@ -268,15 +268,7 @@
   
   
   
-  
     
-      
-    
-    
-    
-      
-  
-  
   
   
     
@@ -284,7 +276,19 @@
     
     
     
-      <li class="md-tabs__item">
+      
+  
+  
+  
+    
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
         <a href="../../core-concepts/overview/" class="md-tabs__link">
           
   
@@ -303,16 +307,14 @@
   
   
   
-    
-  
   
     
       
     
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../integrations/" class="md-tabs__link">
           
   
   Integrations
@@ -656,26 +658,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -692,7 +699,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -715,17 +722,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
         
           
-          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="">
             
   
   
@@ -976,17 +986,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
         
           
-          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="">
             
   
   
@@ -1266,17 +1279,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
         
           
-          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="">
             
   
   
@@ -1614,17 +1630,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
         
           
-          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="">
             
   
   
@@ -1779,26 +1798,31 @@
                 
   
   
+    
   
   
+  
     
     
     
     
       
       
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
         
           
-          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="">
             
   
   
@@ -1815,7 +1839,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1832,7 +1856,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running-in-prod/deadlines/" class="md-nav__link">
+      <a href="../deadlines/" class="md-nav__link">
         
   
   
@@ -1861,7 +1885,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running-in-prod/resilience/" class="md-nav__link">
+      <a href="../resilience/" class="md-nav__link">
         
   
   
@@ -1890,7 +1914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running-in-prod/load-shedding/" class="md-nav__link">
+      <a href="../load-shedding/" class="md-nav__link">
         
   
   
@@ -1919,7 +1943,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running-in-prod/shutdown-and-fleets/" class="md-nav__link">
+      <a href="../shutdown-and-fleets/" class="md-nav__link">
         
   
   
@@ -1945,10 +1969,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../running-in-prod/portability/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73zM12 22V12"/><path d="M3.29 7 12 12l8.71-5M7.5 4.27l9 5.15"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Portability
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1965,6 +2015,102 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-an-application-consists-of" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What an application consists of
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plane-completeness" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Plane completeness
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bring-the-planes-to-rest-first" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Bring the planes to rest first
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#export-and-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Export and import
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#migrating-without-an-artifact" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Migrating without an artifact
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sealing-the-artifact" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sealing the artifact
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Notes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1977,7 +2123,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running-in-prod/observability/" class="md-nav__link">
+      <a href="../observability/" class="md-nav__link">
         
   
   
@@ -2020,17 +2166,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
         
           
-          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="">
             
   
   
@@ -2136,17 +2285,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
         
           
-          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="">
             
   
   
@@ -2366,31 +2518,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
             
   
   
@@ -2407,7 +2554,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2424,7 +2571,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../integrations/" class="md-nav__link">
         
   
   
@@ -2450,31 +2597,26 @@
                 
   
   
-    
   
   
-  
     
     
     
     
       
       
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
         
           
-          
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
             
   
   
@@ -2491,7 +2633,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2508,7 +2650,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../postgres/" class="md-nav__link">
+      <a href="../../integrations/postgres/" class="md-nav__link">
         
   
   
@@ -2537,7 +2679,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../mongo/" class="md-nav__link">
+      <a href="../../integrations/mongo/" class="md-nav__link">
         
   
   
@@ -2566,7 +2708,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../firestore/" class="md-nav__link">
+      <a href="../../integrations/firestore/" class="md-nav__link">
         
   
   
@@ -2595,7 +2737,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../neo4j/" class="md-nav__link">
+      <a href="../../integrations/neo4j/" class="md-nav__link">
         
   
   
@@ -2624,7 +2766,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../redis/" class="md-nav__link">
+      <a href="../../integrations/redis/" class="md-nav__link">
         
   
   
@@ -2653,7 +2795,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../s3/" class="md-nav__link">
+      <a href="../../integrations/s3/" class="md-nav__link">
         
   
   
@@ -2682,7 +2824,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../gcs/" class="md-nav__link">
+      <a href="../../integrations/gcs/" class="md-nav__link">
         
   
   
@@ -2711,7 +2853,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../meilisearch/" class="md-nav__link">
+      <a href="../../integrations/meilisearch/" class="md-nav__link">
         
   
   
@@ -2740,7 +2882,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../bigquery/" class="md-nav__link">
+      <a href="../../integrations/bigquery/" class="md-nav__link">
         
   
   
@@ -2769,7 +2911,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../clickhouse/" class="md-nav__link">
+      <a href="../../integrations/clickhouse/" class="md-nav__link">
         
   
   
@@ -2795,36 +2937,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-database-zap" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 12 2.84M21 5v3M21 12l-3 5h4l-3 5"/><path d="M3 12a9 3 0 0 0 11.59 2.87"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  DuckDB
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../integrations/duckdb/" class="md-nav__link">
         
   
   
@@ -2841,91 +2957,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#install" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Install
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-client" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The client
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-lake-source" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The lake source
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#wire-it" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Wire it
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-it-provides" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        What it provides
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Notes
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -2952,20 +2983,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
         
           
-          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
             
   
   
@@ -2999,7 +3027,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../kafka/" class="md-nav__link">
+      <a href="../../integrations/kafka/" class="md-nav__link">
         
   
   
@@ -3028,7 +3056,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../rabbitmq/" class="md-nav__link">
+      <a href="../../integrations/rabbitmq/" class="md-nav__link">
         
   
   
@@ -3057,7 +3085,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../sqs/" class="md-nav__link">
+      <a href="../../integrations/sqs/" class="md-nav__link">
         
   
   
@@ -3100,20 +3128,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
         
           
-          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
             
   
   
@@ -3147,7 +3172,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../temporal/" class="md-nav__link">
+      <a href="../../integrations/temporal/" class="md-nav__link">
         
   
   
@@ -3176,7 +3201,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../inngest/" class="md-nav__link">
+      <a href="../../integrations/inngest/" class="md-nav__link">
         
   
   
@@ -3219,20 +3244,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
         
           
-          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
             
   
   
@@ -3266,7 +3288,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../fastapi/" class="md-nav__link">
+      <a href="../../integrations/fastapi/" class="md-nav__link">
         
   
   
@@ -3295,7 +3317,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../socketio/" class="md-nav__link">
+      <a href="../../integrations/socketio/" class="md-nav__link">
         
   
   
@@ -3324,7 +3346,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../mcp/" class="md-nav__link">
+      <a href="../../integrations/mcp/" class="md-nav__link">
         
   
   
@@ -3367,20 +3389,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
         
           
-          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="0">
             
   
   
@@ -3414,7 +3433,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../authn/" class="md-nav__link">
+      <a href="../../integrations/authn/" class="md-nav__link">
         
   
   
@@ -3443,7 +3462,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../oidc/" class="md-nav__link">
+      <a href="../../integrations/oidc/" class="md-nav__link">
         
   
   
@@ -3486,20 +3505,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_7" >
         
           
-          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="0">
             
   
   
@@ -3533,7 +3549,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../vault/" class="md-nav__link">
+      <a href="../../integrations/vault/" class="md-nav__link">
         
   
   
@@ -3562,7 +3578,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../kms/" class="md-nav__link">
+      <a href="../../integrations/kms/" class="md-nav__link">
         
   
   
@@ -3605,20 +3621,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
         
           
-          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
             
   
   
@@ -3652,7 +3665,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../http/" class="md-nav__link">
+      <a href="../../integrations/http/" class="md-nav__link">
         
   
   
@@ -3681,7 +3694,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../inference/" class="md-nav__link">
+      <a href="../../integrations/inference/" class="md-nav__link">
         
   
   
@@ -5665,10 +5678,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#install" class="md-nav__link">
+  <a href="#what-an-application-consists-of" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Install
+        What an application consists of
       </span>
     </span>
   </a>
@@ -5676,10 +5689,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-client" class="md-nav__link">
+  <a href="#plane-completeness" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The client
+        Plane completeness
       </span>
     </span>
   </a>
@@ -5687,10 +5700,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-lake-source" class="md-nav__link">
+  <a href="#bring-the-planes-to-rest-first" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The lake source
+        Bring the planes to rest first
       </span>
     </span>
   </a>
@@ -5698,10 +5711,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#wire-it" class="md-nav__link">
+  <a href="#export-and-import" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Wire it
+        Export and import
       </span>
     </span>
   </a>
@@ -5709,10 +5722,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#what-it-provides" class="md-nav__link">
+  <a href="#migrating-without-an-artifact" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        What it provides
+        Migrating without an artifact
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sealing-the-artifact" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sealing the artifact
       </span>
     </span>
   </a>
@@ -5776,16 +5800,27 @@
     
     
     
+      
+  
+  
+    
+    
+    
+    
+    
       <li class="md-path__item">
-        <a href="../" class="md-path__link">
+        <a href="../../core-concepts/overview/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Integrations
+    Learn
   </span>
 
         </a>
       </li>
+    
+  
+
     
   
 
@@ -5799,11 +5834,11 @@
     
     
       <li class="md-path__item">
-        <a href="../postgres/" class="md-path__link">
+        <a href="../deadlines/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Data
+    Running in production
   </span>
 
         </a>
@@ -5823,108 +5858,208 @@
   
 
 
-  <h1 id="__skip">DuckDB</h1>
+  <h1 id="__skip">Portability</h1>
 
-<p><code>forze[duckdb]</code> implements the analytics query contract with an <strong>embedded</strong>
-DuckDB engine. Where <a href="../clickhouse/">ClickHouse</a> and <a href="../bigquery/">BigQuery</a> are
-standing warehouses, DuckDB is <em>compute without a server</em>: point it at Parquet,
-CSV, Iceberg or Delta files on S3/GCS (or local disk) and it runs the scan
-in-process. It suits heavy analytics that don't need ultra-low-latency
-serving — and, being Docker-free, it doubles as an analytics backend in tests.</p>
-<p>It is <strong>query-only</strong> (no ingest, no table management): named, parameterized
-queries returning typed rows, exactly like the other analytics adapters.</p>
-<h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">&#39;forze[duckdb]&#39;</span>
+<p>Sooner or later something has to move: a tenant leaves and wants their data, a
+Postgres deployment becomes a Mongo one, a self-hosted install becomes a managed
+one. A database dump does not solve this — it is tied to one engine, it carries
+operational noise (in-flight outbox rows, half-drained queues) as if it were
+state, and it says nothing about the planes that live <em>outside</em> that database.
+Forze moves state the same way it writes it: <strong>through the ports</strong>, plane by
+plane, refusing to produce an artifact it cannot vouch for.</p>
+<p>This is a <strong>portability</strong> plane, not a backup one. Durability stays your
+backend's job — write-ahead logs, point-in-time recovery, snapshots.</p>
+<h2 id="what-an-application-consists-of">What an application consists of<a class="headerlink" href="#what-an-application-consists-of" title="Permanent link">&para;</a></h2>
+<p>The mechanism needs an answer to a question nothing could answer before: <em>what
+does this application actually bind?</em> Specs are handed to ports at resolve time
+and stored nowhere, so the dependency registry knows every <code>(key, route)</code> pair
+and not a single spec. The <strong>spec inventory</strong> closes that gap — you register what
+you own, and <code>build_runtime</code> reconciles it against the wiring at startup:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.inventory</span><span class="w"> </span><span class="kn">import</span> <span class="n">SpecRegistry</span>
+
+<span class="n">specs</span> <span class="o">=</span> <span class="n">SpecRegistry</span><span class="p">()</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">OrderSpec</span><span class="p">,</span> <span class="n">OrderSearchSpec</span><span class="p">,</span> <span class="n">InvoiceBlobSpec</span><span class="p">)</span>
+
+<span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="n">deps</span><span class="o">=</span><span class="n">deps</span><span class="p">,</span> <span class="n">specs</span><span class="o">=</span><span class="n">specs</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
 </code></pre></div>
-<p>No server to run — DuckDB is a library. Reading object storage pulls the
-<code>httpfs</code> extension (and <code>iceberg</code> / <code>delta</code> for those formats) on first use.</p>
-<h2 id="the-client">The client<a class="headerlink" href="#the-client" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_duckdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">DuckDbClient</span>
-
-<span class="n">duck</span> <span class="o">=</span> <span class="n">DuckDbClient</span><span class="p">()</span>
-</code></pre></div>
-<p>The engine is synchronous and in-process; the client runs each query on a
-dedicated bounded executor (DuckDB releases the GIL, so the event loop stays
-responsive) with its own cursor, and honors per-query timeouts via interrupt.</p>
-<h2 id="the-lake-source">The lake source<a class="headerlink" href="#the-lake-source" title="Permanent link">&para;</a></h2>
-<p>Sources are declared as typed descriptors that compile to scan expressions and
-auto-load the extensions they need — no hand-written SQL strings:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_duckdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">ParquetSource</span><span class="p">,</span> <span class="n">IcebergSource</span><span class="p">,</span> <span class="n">DeltaSource</span>
-
-<span class="n">events</span> <span class="o">=</span> <span class="n">ParquetSource</span><span class="p">(</span><span class="s2">&quot;s3://bucket/events/*.parquet&quot;</span><span class="p">)</span>   <span class="c1"># also CsvSource, JsonSource</span>
-</code></pre></div>
-<p>Object-storage credentials render to DuckDB secrets, resolved at startup from the
-wired <a href="../vault/">secrets backend</a> via a <code>secret_ref</code> (or supplied inline for
-local runs):</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.secrets</span><span class="w"> </span><span class="kn">import</span> <span class="n">SecretRef</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_duckdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">S3Credentials</span>
-
-<span class="n">creds</span> <span class="o">=</span> <span class="n">S3Credentials</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;lake&quot;</span><span class="p">,</span> <span class="n">secret_ref</span><span class="o">=</span><span class="n">SecretRef</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">&quot;lake/s3&quot;</span><span class="p">))</span>
-</code></pre></div>
-<h2 id="wire-it">Wire it<a class="headerlink" href="#wire-it" title="Permanent link">&para;</a></h2>
-<p>Each analytics route maps <code>query_key</code>s to DuckDB SQL (referencing a registered
-source view or an inline <code>read_parquet(...)</code>), keyed by <code>AnalyticsSpec.name</code>. The
-lifecycle step opens the connection, loads extensions, registers credentials and
-source views:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">DepsRegistry</span><span class="p">,</span> <span class="n">LifecyclePlan</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_duckdb</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">DuckDbAnalyticsConfig</span><span class="p">,</span>
-    <span class="n">DuckDbClient</span><span class="p">,</span>
-    <span class="n">DuckDbDepsModule</span><span class="p">,</span>
-    <span class="n">DuckDbQueryConfig</span><span class="p">,</span>
-    <span class="n">ParquetSource</span><span class="p">,</span>
-    <span class="n">S3Credentials</span><span class="p">,</span>
-    <span class="n">duckdb_lifecycle_step</span><span class="p">,</span>
-<span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.secrets</span><span class="w"> </span><span class="kn">import</span> <span class="n">SecretRef</span>
-
-<span class="n">duck</span> <span class="o">=</span> <span class="n">DuckDbClient</span><span class="p">()</span>
-
-<span class="n">events</span> <span class="o">=</span> <span class="n">DuckDbAnalyticsConfig</span><span class="p">(</span>
-    <span class="n">queries</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;by_day&quot;</span><span class="p">:</span> <span class="n">DuckDbQueryConfig</span><span class="p">(</span>
-        <span class="n">sql</span><span class="o">=</span><span class="s2">&quot;SELECT day, sum(total) AS total FROM events WHERE day &gt;= $since GROUP BY day&quot;</span><span class="p">,</span>
-    <span class="p">)},</span>
-<span class="p">)</span>
-
-<span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span><span class="n">DuckDbDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">duck</span><span class="p">,</span> <span class="n">analytics</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;events&quot;</span><span class="p">:</span> <span class="n">events</span><span class="p">}))</span>
-<span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_steps</span><span class="p">(</span>
-    <span class="n">duckdb_lifecycle_step</span><span class="p">(</span>
-        <span class="n">object_stores</span><span class="o">=</span><span class="p">(</span><span class="n">S3Credentials</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;lake&quot;</span><span class="p">,</span> <span class="n">secret_ref</span><span class="o">=</span><span class="n">SecretRef</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">&quot;lake/s3&quot;</span><span class="p">)),),</span>
-        <span class="n">sources</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;events&quot;</span><span class="p">:</span> <span class="n">ParquetSource</span><span class="p">(</span><span class="s2">&quot;s3://bucket/events/*.parquet&quot;</span><span class="p">)},</span>
-    <span class="p">),</span>
-<span class="p">)</span>
-</code></pre></div>
-<p>For a runnable, Docker-free walkthrough, see the
-<a href="../../recipes/analytics-over-a-data-lake/">analytics recipe</a>.</p>
-<h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
+<p>Kits contribute their own — an aggregate kit registers the outbox, queue and
+inbox its search-sync mints, and the identity plane registers its account,
+session and credential specs — so the routes hardest to remember are the ones
+you never have to. Reconciliation is a <strong>drift signal, not a gate</strong>: a mismatch
+between what you declared and what is wired is logged as a warning, and the
+registry's fingerprint is what an import later checks the target against.</p>
+<h2 id="plane-completeness">Plane completeness<a class="headerlink" href="#plane-completeness" title="Permanent link">&para;</a></h2>
+<p>Every plane an inventoried spec belongs to declares what an export may do with
+it. Four answers, and silence is not a fifth — a plane nobody classified is
+<code>REFUSED</code>, because "there is nothing to carry" and "we did not think about it"
+look identical from the outside and only one of them is safe:</p>
 <table>
 <thead>
 <tr>
-<th>Contract</th>
-<th>Keyed by</th>
+<th>Disposition</th>
+<th>Meaning</th>
+<th>Planes</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Analytics query (<code>run</code> / <code>run_page</code> / <code>run_cursor</code> / <code>run_chunked</code>)</td>
-<td><code>AnalyticsSpec.name</code></td>
+<td><code>EXPORTABLE</code></td>
+<td>System of record; its rows travel</td>
+<td>document, storage (blobs), graph, counter</td>
+</tr>
+<tr>
+<td><code>REBUILDABLE</code></td>
+<td>Derived; recomputed on the target</td>
+<td>search, cache, projected analytics</td>
+</tr>
+<tr>
+<td><code>DRAINED</code></td>
+<td>In-flight work; quiesce brings it to empty</td>
+<td>outbox, inbox, queue, pub/sub, stream, idempotency, distributed locks</td>
+</tr>
+<tr>
+<td><code>REFUSED</code></td>
+<td>Cannot be carried faithfully <em>or</em> safely skipped</td>
+<td>analytics that is a system of record, an undeclared plane</td>
 </tr>
 </tbody>
 </table>
+<p>Two planes are decided per spec rather than per plane. An analytics spec
+declares its provenance — a projection of data you already own is rebuildable, a
+warehouse table that is the only copy is refused, and nothing but its author can
+tell the difference. A graph is exportable only when every one of its kinds can
+be walked back to an identity.</p>
+<p>A <code>REFUSED</code> plane stops the export cold, by design: you either declare it
+carryable or accept that this artifact is not complete.</p>
+<h2 id="bring-the-planes-to-rest-first">Bring the planes to rest first<a class="headerlink" href="#bring-the-planes-to-rest-first" title="Permanent link">&para;</a></h2>
+<p>An export of a running system is a smear — rows written after the walk passed
+them are simply absent. <code>quiesce</code> is the step that makes a point-consistent
+artifact possible:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.quiesce</span><span class="w"> </span><span class="kn">import</span> <span class="n">quiesce</span>
+
+<span class="k">async</span> <span class="k">with</span> <span class="n">runtime</span><span class="o">.</span><span class="n">scope</span><span class="p">():</span>
+    <span class="n">report</span> <span class="o">=</span> <span class="k">await</span> <span class="n">quiesce</span><span class="p">(</span><span class="n">runtime</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">60</span><span class="p">))</span>
+</code></pre></div>
+<p>It stops admission (new top-level invocations get a retryable <code>throttled</code> with
+<code>code="draining"</code>), waits out in-flight work, stops the background loops the
+runtime owns and asks the outbox relay to flush what is claimable, then polls
+each outbox route, the durable-run plane and each named stream group until it is
+empty or the budget expires. Outbox routes default to <strong>every route in the
+inventory</strong>; consumer groups stay explicit, because a group name is the identity
+of whoever is reading and no inventory can supply it.</p>
+<p>The report answers two different questions, and the difference is the whole
+point:</p>
+<ul>
+<li><code>settled</code> — an <em>observation</em>: nothing was moving when the sweep finished.</li>
+<li><code>attested</code> — a <em>promise</em>: nothing was moving <strong>and nothing could arrive</strong>,
+  because the runtime was holding the door shut.</li>
+</ul>
+<p>Only the second is safe to build an export on. Pass <code>close_gate=False</code> and you
+get a health check instead: the sweep reads every plane and the scope keeps
+serving, so the report can settle but can never attest.</p>
+<div class="admonition warning">
+<p class="admonition-title">Closing the gate is one-way</p>
+<p>An attested runtime does not start accepting work again — this is the
+shutdown gate, and quiesce is the step <em>before</em> a shutdown, an export, or a
+migration. It also holds only <strong>this process</strong> still: a sibling replica that
+is still serving writes will happily invalidate whatever this one attested.
+Stop the fleet first.</p>
+</div>
+<p>Planes that exist but cannot be read are reported <code>unobserved</code> and <strong>block
+attestation</strong> — an unreadable plane is not an empty one. Planes the runtime does
+not wire at all are <code>not_wired</code> and cost nothing.</p>
+<h2 id="export-and-import">Export and import<a class="headerlink" href="#export-and-import" title="Permanent link">&para;</a></h2>
+<p>An export walks the inventory and streams each exportable plane into a
+backend-agnostic archive — JSONL data files plus raw blobs under a manifest.
+Both calls run inside a scope you already own:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.portability</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">TenantScope</span><span class="p">,</span>
+    <span class="n">export_archive</span><span class="p">,</span>
+    <span class="n">import_archive</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="k">async</span> <span class="k">with</span> <span class="n">source</span><span class="o">.</span><span class="n">scope</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">export_archive</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">Path</span><span class="p">(</span><span class="s2">&quot;/tmp/acme&quot;</span><span class="p">),</span> <span class="n">scope</span><span class="o">=</span><span class="n">TenantScope</span><span class="p">(</span><span class="n">tenant_id</span><span class="o">=</span><span class="n">acme</span><span class="p">))</span>
+
+<span class="k">async</span> <span class="k">with</span> <span class="n">target</span><span class="o">.</span><span class="n">scope</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">import_archive</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">Path</span><span class="p">(</span><span class="s2">&quot;/tmp/acme&quot;</span><span class="p">),</span> <span class="n">tenant</span><span class="o">=</span><span class="n">acme</span><span class="p">)</span>
+</code></pre></div>
+<p>Rows are the <strong>decrypted read models</strong>, so the artifact never depends on the
+source's keys and the target re-seals every sealed field under its own. Ids and
+business timestamps are preserved; <code>rev</code> resets to 1, because revisions are the
+concurrency history of the store the rows just left.</p>
+<p><strong>Scope is declared, never inferred.</strong> <code>TenantScope</code> carries one tenant's
+partition. <code>FullScope</code> carries the whole system and takes two things: the
+<code>QuiesceReport</code> that attests it, and the tenant dimension it spans — the archive
+gets one section per declared tenant, or <code>UNTENANTED</code> for a single-partition
+app. There is no default, because guessing wrong writes an artifact that is
+silently missing a tenant.</p>
+<p>Import fails closed on everything it can check:</p>
+<ul>
+<li>The manifest is cross-checked against the artifact — an unlisted data file, or
+  an expected plane the manifest never listed, refuses the import. A missing
+  plane never imports as empty.</li>
+<li>The archive's format version and the source registry's fingerprint must match
+  the target's plan.</li>
+<li>A per-tenant archive requires an explicit <code>tenant=</code>, and a full-system archive
+  anchors its section list with <code>expect_tenants=</code>. The manifest names a tenant,
+  but it is plaintext and unauthenticated — it is cross-checked, never trusted,
+  so a tenant deleted from the manifest cannot vanish with every checksum
+  passing.</li>
+<li><code>on_conflict</code> is <code>"skip"</code> by default; <code>"fail"</code> makes an id collision an error.</li>
+</ul>
+<p>Rebuildable planes are not in the artifact — recompute them on the target once
+the documents land, with
+<a href="../../reference/contracts/search/#rebuilding-an-index"><code>rebuild_search_index</code></a> for
+a search index.</p>
+<h2 id="migrating-without-an-artifact">Migrating without an artifact<a class="headerlink" href="#migrating-without-an-artifact" title="Permanent link">&para;</a></h2>
+<p>When the destination is another live deployment rather than a file, <code>migrate</code>
+fuses the two pipelines port-to-port. Nothing plaintext is ever written to disk,
+which makes it the recommended path for a backend change:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.portability</span><span class="w"> </span><span class="kn">import</span> <span class="n">migrate</span>
+
+<span class="k">async</span> <span class="k">with</span> <span class="n">source</span><span class="o">.</span><span class="n">scope</span><span class="p">(),</span> <span class="n">target</span><span class="o">.</span><span class="n">scope</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">migrate</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="n">FullScope</span><span class="p">(</span><span class="n">quiesce</span><span class="o">=</span><span class="n">report</span><span class="p">,</span> <span class="n">tenants</span><span class="o">=</span><span class="p">(</span><span class="n">acme</span><span class="p">,</span> <span class="n">globex</span><span class="p">)))</span>
+</code></pre></div>
+<p>The fingerprint gate the file import applies to an archive is applied here to
+the live target before a single row moves: two runtimes whose spec shapes
+disagree are refused.</p>
+<h2 id="sealing-the-artifact">Sealing the artifact<a class="headerlink" href="#sealing-the-artifact" title="Permanent link">&para;</a></h2>
+<p>A file archive is <strong>plaintext by construction</strong> — that is what makes it portable
+across key domains, and it is also what makes it credential-adjacent. Treat the
+directory accordingly, and for anything beyond a short-lived local copy, seal
+it:</p>
+<div class="highlight"><pre><span></span><code><span class="k">await</span> <span class="n">export_archive</span><span class="p">(</span><span class="n">runtime</span><span class="p">,</span> <span class="n">dest</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="n">scope</span><span class="p">,</span> <span class="n">sealer</span><span class="o">=</span><span class="n">sealer</span><span class="p">)</span>
+</code></pre></div>
+<p>A per-archive data key encrypts every data file and blob, wrapped under a KEK
+whose plaintext never leaves the <a href="../../integrations/kms/"><abbr title="Key Management Service">KMS</abbr></a>; import needs the
+same sealer and fails closed without one when the manifest says the archive is
+sealed. An <strong>unsealed</strong> export whose payload is credential-adjacent — identity
+specs included, or specs declaring field encryption — is refused outright unless
+<code>acknowledge_plaintext=True</code> states that a plaintext artifact is the intent.</p>
+<p>Per-tenant exports omit identity and credential specs by default (<code>sessions</code>,
+API keys, invite and reset tokens): a data-portability request wants the
+tenant's business data, not their live session tokens. Pass
+<code>include_identity=True</code> when moving a deployment rather than answering a
+request. A full-system export always carries them — moving a live system means
+moving its sessions.</p>
+<p>Archives are gzip-compressed by default; <code>compression="zstd"</code> needs the
+<code>forze[zstd]</code> extra and fails closed without it.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Query-only.</strong> Writing/maintaining tables (Iceberg/Delta compaction, ingest)
-  is an ETL/ops concern, not a domain port — keep it out of the adapter.</li>
-<li><strong>Source styles compose.</strong> Register named views (<code>sources=</code>) and reference them
-  in SQL, <em>or</em> inline <code>read_parquet('s3://…')</code> in a query — both work.</li>
-<li><strong>Iceberg/Delta:</strong> point <code>IcebergSource</code> at the table's current
-  <code>*.metadata.json</code> (the table-directory form needs a <code>version-hint.text</code> many
-  writers omit); for in-place tables read with <code>allow_moved_paths=False</code>.</li>
-<li><strong>Concurrency:</strong> each query gets its own cursor, so parallel reads don't
-  serialize. Cap parallelism with <code>DuckDbConfig(max_concurrent_queries=...)</code>.</li>
-<li>Cursor pagination is offset-based; a full terminal page reports <code>has_more</code>
-  until the next (short) page confirms the end.</li>
+<li>Both halves refuse to run without a spec inventory. An export that cannot
+  enumerate the application cannot claim to be complete.</li>
+<li>A full-system export without an attesting quiesce is refused unless
+  <code>allow_fuzzy=True</code>, which stamps the manifest <code>consistency: fuzzy</code> — importable,
+  but not point-consistent.</li>
+<li>Temporal-backed workflows are outside what quiesce can speak for; their state
+  lives in the Temporal cluster.</li>
+<li><code>ArchiveExporter</code>, <code>ArchiveImporter</code> and <code>ArchiveMigrator</code> are the configurable
+  cores behind the three functions — reach for them when you want to reuse a
+  configuration or already hold a context.</li>
 </ul>
+<p>Portability leans on the same drain machinery a rollout does — the gate, the
+in-flight window, the loops that stop between units of work — which is
+<a href="../shutdown-and-fleets/">Shutdown &amp; fleets</a> seen from the other side.</p>
 
 
 
@@ -5965,7 +6100,7 @@ source views:</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../clickhouse/" class="md-footer__link md-footer__link--prev" aria-label="Previous: ClickHouse">
+          <a href="../shutdown-and-fleets/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Shutdown &amp; fleets">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -5975,20 +6110,20 @@ source views:</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                ClickHouse
+                Shutdown & fleets
               </div>
             </div>
           </a>
         
         
           
-          <a href="../kafka/" class="md-footer__link md-footer__link--next" aria-label="Next: Kafka">
+          <a href="../observability/" class="md-footer__link md-footer__link--next" aria-label="Next: Observability">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Kafka
+                Observability
               </div>
             </div>
             <div class="md-footer__button md-icon">

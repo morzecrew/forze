@@ -1948,6 +1948,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/portability/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73zM12 22V12"/><path d="M3.29 7 12 12l8.71-5M7.5 4.27l9 5.15"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Portability
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/observability/" class="md-nav__link">
         
   
@@ -5945,6 +5974,24 @@ returns the current <code>ExecutionContext</code> — <code>runtime.get_context<
 <p><code>InvocationMetadataMiddleware</code> binds correlation/execution metadata and the
 <code>Idempotency-Key</code> header; <code>SecurityContextMiddleware</code> binds the authenticated
 identity and tenant.</p>
+<p>A request whose credential fails to verify is refused before routing — which is
+wrong for the handful of paths that exist <em>because</em> the caller has no working
+credential. Name them exactly:</p>
+<div class="highlight"><pre><span></span><code><span class="n">app</span><span class="o">.</span><span class="n">add_middleware</span><span class="p">(</span>
+    <span class="n">SecurityContextMiddleware</span><span class="p">,</span>
+    <span class="n">ctx_dep</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">,</span>
+    <span class="n">anonymous_paths</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;/auth/login&quot;</span><span class="p">,</span> <span class="s2">&quot;/auth/refresh&quot;</span><span class="p">},</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>On those paths an <strong>authentication-kind</strong> failure — an expired or invalid
+credential, ambiguous credentials, a tenant mismatch — binds no identity instead
+of 401ing, so the route authenticates from its body exactly as it would for a
+request carrying nothing. A valid credential still binds normally, and every
+other failure kind still returns the error response: a secrets-store outage is a
+server fault, not a missing credential. This matters most in
+<a href="../../reference/fastapi-routes/#cookie-mode">cookie mode</a>, where a stale access
+cookie rides every request including the one that would replace it. Paths are
+exact, never prefixes.</p>
 <p>When an upstream Forze service forwards its remaining <a href="../../running-in-prod/deadlines/">time
 budget</a> as <code>X-Forze-Deadline-Budget</code>, opt in to
 honoring it with <code>InvocationMetadataMiddleware(...,

@@ -1948,6 +1948,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../running-in-prod/portability/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73zM12 22V12"/><path d="M3.29 7 12 12l8.71-5M7.5 4.27l9 5.15"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Portability
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../running-in-prod/observability/" class="md-nav__link">
         
   
@@ -5706,14 +5735,17 @@ extras in <code>pyproject.toml</code>; each <code>forze[&lt;name&gt;]</code> map
 </tr>
 <tr>
 <td><strong>Outbound</strong></td>
-<td><code>http</code></td>
+<td><code>http</code> · <code>inference-http</code> · <code>inference-sagemaker</code></td>
 </tr>
 </tbody>
 </table>
 <p>Each row maps to a <code>forze[&lt;extra&gt;]</code> package; their precise contract coverage is
-on each integration's page. The remaining extras — <code>dst</code> and <code>cli</code> — are
-tooling, not backend integrations: <a href="../dst/overview/">deterministic simulation
-testing</a> and the <code>forze</code> command-line tool.</p>
+on each integration's page. Two key backends need no extra at all: the
+<a href="kms/">self-hosted local <abbr title="Key Management Service">KMS</abbr></a> and the in-memory mock.</p>
+<p>The remaining extras are not backend integrations: <code>dst</code> and <code>cli</code> are tooling
+(<a href="../dst/overview/">deterministic simulation testing</a> and the <code>forze</code>
+command-line tool), and <code>zstd</code> adds the zstd codec for
+<a href="../running-in-prod/portability/">portable archives</a>.</p>
 <p>Install one or several at once — <code>uv add 'forze[fastapi,postgres,redis]'</code>.</p>
 
 

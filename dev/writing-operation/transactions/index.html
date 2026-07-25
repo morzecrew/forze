@@ -2105,6 +2105,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/portability/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73zM12 22V12"/><path d="M3.29 7 12 12l8.71-5M7.5 4.27l9 5.15"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Portability
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/observability/" class="md-nav__link">
         
   
@@ -5863,9 +5892,12 @@ back on an exception — while the adapter does the real database work.</p>
 under <code>tx={...}</code>. Everything inside commits together:</p>
 <div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">tx_ctx</span><span class="o">.</span><span class="n">scope</span><span class="p">(</span><span class="s2">&quot;orders&quot;</span><span class="p">):</span>
     <span class="n">order</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">order_spec</span><span class="p">)</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span>
-    <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">counter</span><span class="p">(</span><span class="n">order_counter</span><span class="p">)</span><span class="o">.</span><span class="n">incr</span><span class="p">()</span>
+    <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">line_spec</span><span class="p">)</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">line_cmd</span><span class="p">)</span>
 <span class="c1"># committed here; an exception inside would have rolled it all back</span>
 </code></pre></div>
+<p>Both writes land on a transactional backend, so both roll back together. Not
+everything you can call inside a scope does — see <a href="#what-commits-together">What commits
+together</a>.</p>
 <p>The route must be registered for transactions when you wire the module —
 <code>PostgresDepsModule(client=pg, ..., tx={"orders"})</code> — otherwise the scope can't
 resolve a transaction manager.</p>
@@ -5890,6 +5922,14 @@ Postgres write and a Redis write do <strong>not</strong>. When you need consiste
 cross-system effect and apply it after commit (see <a href="#after-the-commit">below</a>
 and <a href="../../data-events/events-sagas/">Events &amp; sagas</a>).</p>
 </div>
+<p>Queues, streams, object storage, caches, locks, and search/analytics writes are
+not transactional in production, so they never roll back with the scope.</p>
+<p><strong>Counters are the case worth calling out</strong>, because they look like an ordinary
+Postgres write and are not one: a counter allocation runs on its own connection,
+outside the caller's transaction, on <em>every</em> backend — Redis, Postgres, Mongo and
+Firestore alike. A rolled-back transaction does not give the number back. That is
+deliberate: a sequence you could roll back would reissue an invoice number already
+handed out. Treat an allocated number as spent and let gaps happen.</p>
 <h2 id="two-phase-handlers-work-before-the-write">Two-phase handlers: work before the write<a class="headerlink" href="#two-phase-handlers-work-before-the-write" title="Permanent link">&para;</a></h2>
 <p>Lazy acquisition keeps the transaction off the connection until your first query —
 but only for work that runs <em>before</em> that query. When an external call has to sit

@@ -1948,6 +1948,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/portability/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73zM12 22V12"/><path d="M3.29 7 12 12l8.71-5M7.5 4.27l9 5.15"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Portability
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/observability/" class="md-nav__link">
         
   
@@ -5777,6 +5806,15 @@ credential families a route accepts; <code>kernel</code> carries the signing/sec
 </code></pre></div>
 <p>A route's <a href="../../identity-tenancy-enc/identity/"><code>AuthnSpec</code></a> selects verifiers and a resolver
 by profile name; override the defaults via <code>token_verifiers</code>, <code>resolvers</code>, etc.</p>
+<p>By default every wired route checks the authenticating principal against an
+active <code>policy_principal</code> document — the posture for deployments running the
+authz plane. A token-only service with no authz plane opts out explicitly:</p>
+<div class="highlight"><pre><span></span><code><span class="n">AuthnDepsModule</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">eligibility</span><span class="o">=</span><span class="s2">&quot;allow_all&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>That is a declared decision, never a silent fallback (an unknown value is
+refused at wiring): with it, deactivating a principal no longer blocks token
+issuance, so revocation rests entirely on credential lifecycle — session revoke
+and API-key revoke.</p>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5819,6 +5857,9 @@ by profile name; override the defaults via <code>token_verifiers</code>, <code>r
 <li><strong>Document-backed:</strong> wire the account / session / identity-mapping specs to a
   document store (Postgres, Mongo, …). <code>kernel</code> is required only when a route
   mints first-party tokens.</li>
+<li><strong>Browser clients:</strong> the generated login/refresh/logout routes can carry their
+  tokens in <code>HttpOnly</code> cookies instead of response bodies — see
+  <a href="../../reference/fastapi-routes/#cookie-mode">cookie mode</a>.</li>
 <li>Authorization is a sibling plane — <code>forze_identity.authz</code> (<code>AuthzDepsModule</code>).</li>
 <li>The conceptual model (verify → resolve, resolver flavors) is in
   <a href="../../identity-tenancy-enc/identity/">Identity &amp; access</a>; this page is the wiring.</li>

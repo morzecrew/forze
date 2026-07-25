@@ -1948,6 +1948,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/portability/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73zM12 22V12"/><path d="M3.29 7 12 12l8.71-5M7.5 4.27l9 5.15"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Portability
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/observability/" class="md-nav__link">
         
   
@@ -5753,8 +5782,8 @@ plaintext.</p>
 <p>A single <code>FieldEncryption</code> policy — <code>encrypted</code> (randomized AEAD) and <code>searchable</code>
 (deterministic, equality-only) field sets, plus <code>binds_record_id</code> and
 <code>reject_plaintext</code> — is declared once on the document spec and <strong>carried to search,
-analytics, and graph</strong> by pointing their spec at the same policy, so the planes
-can't drift.</p>
+analytics, graph, and procedure params</strong> by pointing their spec at the same policy, so
+the planes can't drift.</p>
 <table>
 <thead>
 <tr>
@@ -5793,6 +5822,13 @@ can't drift.</p>
 <td>yes</td>
 <td>nodes + key-addressed edges; <strong>rejected</strong> for endpoint-identity edges</td>
 <td><code>core.graph.encryption_wiring</code></td>
+</tr>
+<tr>
+<td>Procedure params</td>
+<td>Postgres, mock</td>
+<td>yes</td>
+<td><strong>rejected</strong> — params have no stable id</td>
+<td><code>core.procedures.encryption_wiring</code></td>
 </tr>
 </tbody>
 </table>
@@ -5904,9 +5940,13 @@ can't drift.</p>
   key. Without
   the overlap the confused-deputy guard refuses the old envelopes and the data is stranded.</li>
 <li>
-<p><strong><abbr title="Key Management Service">KMS</abbr> backends:</strong> every one holds the KEK outside the app, and its wrapped data key is
+<p><strong><abbr title="Key Management Service">KMS</abbr> backends:</strong> every cloud one holds the KEK outside the app, and its wrapped data key is
   decryptable without being told which key version sealed it — so rotation never orphans
-  data. (<code>DataKey.key_version</code> records the version only where the provider reports one.)</p>
+  data. (<code>DataKey.key_version</code> records the version only where the provider reports one.)
+  The self-hosted <code>LocalKeyManagement</code> is the exception by design: it wraps under
+  operator-supplied 32-byte master keys held <strong>in the process</strong>, so your secret delivery is
+  its whole trust model, and the rotation overlap needs the outgoing key kept in the key map
+  (not just the directory) until the sweep finishes.</p>
 <table>
 <thead>
 <tr>
@@ -5935,6 +5975,11 @@ can't drift.</p>
 <td>Yandex Cloud <abbr title="Key Management Service">KMS</abbr></td>
 <td><code>forze[kms-yc]</code></td>
 <td><code>YcKmsKeyManagement</code></td>
+</tr>
+<tr>
+<td>Self-hosted local</td>
+<td>— (no extra)</td>
+<td><code>LocalKeyManagement</code></td>
 </tr>
 <tr>
 <td>Self-hosted (in-process master keys)</td>

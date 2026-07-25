@@ -1950,6 +1950,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/portability/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73zM12 22V12"/><path d="M3.29 7 12 12l8.71-5M7.5 4.27l9 5.15"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Portability
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/observability/" class="md-nav__link">
         
   
@@ -6019,13 +6048,13 @@ See <a href="../../dst/overview/">Deterministic Simulation Testing</a> for the f
   the <code>DocumentSpec</code> — Python has no <code>Partial&lt;T&gt;</code>/<code>Pick&lt;T&gt;</code>, and the four contracts
   genuinely diverge. The kit collapses <em>wiring</em>, never the models.</li>
 <li><strong>It does not invent a lifecycle.</strong> <code>soft_delete=True</code> gives the governed-CRUD floor;
-  a status machine (like <code>StoredFileKit</code>'s pending → ready → failed) comes through the
+  a status machine (like <code>StoredFileKitSpec</code>'s pending → ready → failed) comes through the
   escape hatch.</li>
 <li><strong>A wholly lifecycle-driven aggregate is its own shape, not a kit with many overrides.</strong>
   The escape hatch is for overriding a <em>few</em> generated ops. When the <em>entire</em> operation
-  surface is bespoke — <code>StoredFileKit</code>'s <code>upload</code>/<code>download</code>/<code>delete</code> are a create-then-upload
+  surface is bespoke — <code>StoredFileKitSpec</code>'s <code>upload</code>/<code>download</code>/<code>delete</code> are a create-then-upload
   lifecycle, a cross-port join, and a status-based delete, with no plain <code>create</code>/<code>update</code> at
-  all — hand-wire it (as <code>StoredFileKit</code> does); the kit's generated CRUD would only get in the way.</li>
+  all — hand-wire it (as <code>StoredFileKitSpec</code> does); the kit's generated CRUD would only get in the way.</li>
 <li><strong>It does not couple to a backend.</strong> <code>registry()</code> / <code>facade()</code> are backend-agnostic;
   you wire the store yourself. No <code>AggregateKit(...).build_everything(client)</code>.</li>
 <li><strong><code>storage=</code> gives the blob ops, not the join.</strong> Declaring an object-storage bucket

@@ -1948,6 +1948,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/portability/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73zM12 22V12"/><path d="M3.29 7 12 12l8.71-5M7.5 4.27l9 5.15"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Portability
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/observability/" class="md-nav__link">
         
   
@@ -5445,6 +5474,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#cookie-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cookie mode
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#api-key-management" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5799,6 +5839,17 @@
   
     <nav class="md-nav" aria-label="Authn routes">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cookie-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cookie mode
+      </span>
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#api-key-management" class="md-nav__link">
@@ -6195,6 +6246,30 @@ they 401 without a bound identity and show up protected under
 <code>AuthnRequired</code> + authz hooks on it or exclude it via <code>include=</code>. The full
 wiring (including how the reset token reaches the user via the outbox) is in the
 <a href="../../recipes/authn-authz-tenancy-fastapi/#http-login-endpoints">Authn, authz &amp; tenancy recipe</a>.</p>
+<h3 id="cookie-mode">Cookie mode<a class="headerlink" href="#cookie-mode" title="Permanent link">&para;</a></h3>
+<p>Browser clients that must not hold a token in JavaScript pass an
+<code>AuthnCookieCarrier</code> to <code>attach_authn_routes(cookies=…)</code>. Login and refresh then
+set and rotate two <code>HttpOnly</code> cookies instead of returning token strings; the
+body keeps the scheme and the <code>*_expires_in</code> lifetimes, so a cookie client still
+learns how long its credential is valid. Refresh falls back to reading the
+refresh cookie when the body carries no token, and logout expires both cookies
+idempotently.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.security</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnCookieCarrier</span>
+
+<span class="n">cookies</span> <span class="o">=</span> <span class="n">AuthnCookieCarrier</span><span class="p">(</span>
+    <span class="n">access_path</span><span class="o">=</span><span class="s2">&quot;/api&quot;</span><span class="p">,</span>              <span class="c1"># the access cookie rides ordinary API calls</span>
+    <span class="n">refresh_path</span><span class="o">=</span><span class="s2">&quot;/auth/refresh&quot;</span><span class="p">,</span>    <span class="c1"># the long-lived one rides exactly one route</span>
+<span class="p">)</span>
+
+<span class="n">attach_authn_routes</span><span class="p">(</span><span class="n">router</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx_dep</span><span class="p">,</span> <span class="n">cookies</span><span class="o">=</span><span class="n">cookies</span><span class="p">)</span>
+</code></pre></div>
+<p>Point the inbound <code>CookieTokenAuthn</code>'s <code>cookie_name</code> at the same
+<code>access_cookie</code>, and list the login and refresh paths in the security
+middleware's <a href="../../integrations/fastapi/#bind-request-context"><code>anonymous_paths</code></a> —
+otherwise a stale access cookie 401s the very route that would replace it.
+Cookies are always <code>HttpOnly</code> and <code>Secure</code> by default; <code>samesite="lax"</code> (the
+default) is the shipped CSRF defense, and <code>samesite="none"</code> deployments must add
+their own CSRF layer.</p>
 <h3 id="api-key-management">API-key management<a class="headerlink" href="#api-key-management" title="Permanent link">&para;</a></h3>
 <p><code>attach_authn_routes</code> also generates <strong>self-service API-key management</strong> as a
 resource collection (all <code>AuthnRequired</code>): <code>POST /api-keys</code> issues a key for the

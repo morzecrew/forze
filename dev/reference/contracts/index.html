@@ -1948,6 +1948,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/portability/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73zM12 22V12"/><path d="M3.29 7 12 12l8.71-5M7.5 4.27l9 5.15"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Portability
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/observability/" class="md-nav__link">
         
   
@@ -5927,6 +5956,11 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 <td><code>SagaDefinition</code></td>
 <td><code>SagaExecutorDepKey</code></td>
 </tr>
+<tr>
+<td><a href="../../data-events/realtime/">Realtime egress</a></td>
+<td><code>RealtimeEvent</code> catalog</td>
+<td><code>build_realtime_publisher(ctx, …)</code> (<a href="../realtime-protocol/">wire protocol</a>)</td>
+</tr>
 </tbody>
 </table>
 <h2 id="reliability-coordination">Reliability &amp; coordination<a class="headerlink" href="#reliability-coordination" title="Permanent link">&para;</a></h2>
@@ -6039,6 +6073,11 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 <td>Outbound HTTP</td>
 <td><code>HttpServiceSpec</code></td>
 <td><code>ctx.http.service(spec)</code></td>
+</tr>
+<tr>
+<td><a href="../../data-events/inference/">Model inference</a></td>
+<td><code>InferenceSpec</code></td>
+<td><code>ctx.inference.model(spec)</code></td>
 </tr>
 </tbody>
 </table>
