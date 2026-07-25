@@ -9,6 +9,10 @@ It supplies a `SecretsPort` so the rest of Forze — especially the **routed,
 per-tenant clients** — can resolve credentials by reference instead of holding
 them in config.
 
+Works with [OpenBao](https://openbao.org) too: the integration suite passes
+unchanged against it (verified on OpenBao 2.6.1 — KV v2, Transit, key
+provisioning, JWT signing, token renewal).
+
 ## Install
 
 ```bash

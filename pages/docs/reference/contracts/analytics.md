@@ -47,7 +47,7 @@ either direction, so the author declares it:
 | `SYSTEM_OF_RECORD` | the warehouse holds the only copy — the usual shape when events are ingested straight into ClickHouse or BigQuery. A portable export **refuses**: the query port exposes only your named queries, so there is no full-scan read to carry it with and nothing to rebuild it from. Use your warehouse's own tooling. |
 | `UNDECLARED` *(default)* | nobody has said. **Legal at runtime** — it changes nothing about how the port behaves — but a portable export refuses rather than guess. |
 
-It costs nothing until you try to [export](../../running-in-prod/index.md) the application:
+It costs nothing until you try to run a portable export of the application:
 assume *projected* wrongly and the export silently drops the only copy of the data; assume
 *system of record* wrongly and it refuses to carry a table that was never more than a cache.
 "We didn't think about it" must not look like "there was nothing here."

@@ -98,9 +98,13 @@ can't drift.
     | AWS KMS | `forze[kms-aws]` | `AwsKmsKeyManagement` |
     | Google Cloud KMS | `forze[kms-gcp]` | `GcpKmsKeyManagement` |
     | Yandex Cloud KMS | `forze[kms-yc]` | `YcKmsKeyManagement` |
+    | Self-hosted (in-process master keys) | core, no extra | `LocalKeyManagement` |
 
-    `MockKeyManagement` is **dev/test only** (it protects nothing). Any other KMS — Azure,
-    an HSM — is a custom `KeyManagementPort`. See [Cloud KMS](../integrations/kms.md).
+    The self-hosted backend is the one exception to "the KEK is held outside the app":
+    its master keys live in process memory — the operator's host is the trust boundary,
+    and rotation is by key replacement (it has no versions). `MockKeyManagement` is
+    **dev/test only** (it protects nothing). Any other KMS — Azure, an HSM — is a custom
+    `KeyManagementPort`. See [KMS backends](../integrations/kms.md).
 - **`required_encryption` floor:** set it on a deps module and wiring refuses to assemble
   any surface whose derived coverage is weaker — a fail-closed floor checked once at
   startup. See [Encryption → Declaring a minimum](../identity-tenancy-enc/encryption.md#declaring-a-minimum).

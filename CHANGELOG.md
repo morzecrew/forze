@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Self-hosted KMS backend** — `forze_kms.local.LocalKeyManagement` wraps data keys under operator-provided 32-byte master keys, no cloud or extra needed; multi-key map enables the previous-key rotation overlap, a rotated-away key id fails closed, and a one-way `fingerprint` spots fleet key-map drift.
+- **OpenBao compatibility** — `forze_vault` works with OpenBao (verified 2.6.1); the integration suite runs against any compatible engine via `FORZE_VAULT_IMAGE`.
+
 **Identity & authn ergonomics** (from downstream adoption feedback)
 
 - **Cookie-mode authn routes** — `AuthnCookieCarrier` via `attach_authn_routes(cookies=…)`: login/refresh set and rotate HttpOnly cookies and strip token strings from bodies, refresh falls back to its cookie, logout expires both idempotently.
