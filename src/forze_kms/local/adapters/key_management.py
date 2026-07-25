@@ -55,6 +55,7 @@ unwrap errors.
 
 import hashlib
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import final
 
 import attrs
@@ -82,8 +83,8 @@ _KEY_DIGEST_DOMAIN = b"forze-local-kms-key-digest-v1|"
 # ....................... #
 
 
-def _copy_keys(keys: Mapping[str, bytes]) -> dict[str, bytes]:
-    return dict(keys)
+def _copy_keys(keys: Mapping[str, bytes]) -> Mapping[str, bytes]:
+    return MappingProxyType(dict(keys))
 
 
 # ....................... #
@@ -95,8 +96,9 @@ class LocalKeyManagement:
     """Wrap/unwrap data keys under local master keys (AES-256-GCM), by key id."""
 
     keys: Mapping[str, bytes] = attrs.field(repr=False, converter=_copy_keys)
-    """Key id → raw 32-byte key-encryption key; never logged (``repr`` suppressed),
-    copied at construction so mutating the source mapping cannot change the key set.
+    """Key id → raw 32-byte key-encryption key; never logged (``repr`` suppressed).
+    Detached into a read-only view at construction, so neither mutating the source
+    mapping nor writing through this attribute can change the validated key set.
 
     Holds the active key and, during a rotation overlap, the previous one(s) —
     which key seals a new envelope is decided by the directory-resolved
@@ -158,7 +160,7 @@ class LocalKeyManagement:
             digest.update(encoded)
             digest.update(hashlib.sha256(_KEY_DIGEST_DOMAIN + self.keys[key_id]).digest())
 
-        return digest.hexdigest()[:16]
+        return digest.hexdigest()
 
     # ....................... #
 

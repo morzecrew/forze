@@ -177,6 +177,19 @@ def test_source_mapping_is_copied_at_construction() -> None:
     assert kms.unwrap_data_key_sync(wrapped=dek.wrapped, key_ref=KEY_REF) == dek.plaintext
 
 
+def test_key_map_is_read_only_after_construction() -> None:
+    """The exposed mapping refuses writes — the validated key set cannot be
+    extended, replaced, or shrunk behind the frozen instance's back."""
+
+    kms = LocalKeyManagement({"local-v1": MASTER})
+
+    with pytest.raises(TypeError):
+        kms.keys["local-v2"] = MASTER_V2  # type: ignore[index]
+
+    with pytest.raises((TypeError, AttributeError)):
+        del kms.keys["local-v1"]  # type: ignore[attr-defined]
+
+
 # ....................... #
 # Fingerprint (fleet drift comparison)
 
@@ -203,13 +216,15 @@ def test_fingerprint_encoding_is_pinned() -> None:
     """Operators compare fingerprints across nodes that may run different forze
     versions — changing the encoding must be a visible decision, never an accident."""
 
-    assert LocalKeyManagement({"local-v1": MASTER}).fingerprint == "edfe3539b9dd909f"
+    assert LocalKeyManagement({"local-v1": MASTER}).fingerprint == (
+        "edfe3539b9dd909f3567997202e364d06becd611bdef82a388a3b396530ac193"
+    )
 
 
 def test_fingerprint_and_repr_carry_no_key_material() -> None:
     kms = LocalKeyManagement({"local-v1": MASTER})
 
-    assert len(kms.fingerprint) == 16
+    assert len(kms.fingerprint) == 64  # full SHA-256 hex digest
     assert int(kms.fingerprint, 16) >= 0  # hex digest, not material
     assert repr(kms) == "LocalKeyManagement()"  # the keys field is repr-suppressed
 
