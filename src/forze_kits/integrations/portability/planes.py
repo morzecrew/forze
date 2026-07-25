@@ -1,6 +1,6 @@
 """Which planes an export of this version carries, rebuilds, or must refuse.
 
-The plane-completeness doctrine (RFC 0016) says every plane an application binds declares itself
+The plane-completeness doctrine says every plane an application binds declares itself
 *exportable*, *rebuildable*, *drained*, or *refused*, and an export **refuses anything it cannot
 account for** — silence is never read as "nothing to carry". This module is where that doctrine
 meets a *partial* implementation: P1 carries the document plane, and it must refuse a plane it
@@ -147,8 +147,8 @@ def plan_export(registry: FrozenSpecRegistry, *, exclude_identity: bool = False)
         raise exc.precondition(
             "This export version carries the document, storage, graph and counter planes only; it "
             f"cannot yet carry {', '.join(sorted(unsupported))}. Exporting anyway would ship an "
-            f"archive that looks complete and is not. Support arrives in a later phase (RFC 0017 "
-            f"§10)."
+            "archive that looks complete and is not. Support for the remaining planes is "
+            "not shipped yet."
         )
 
     return ExportPlan(

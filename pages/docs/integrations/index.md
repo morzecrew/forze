@@ -25,11 +25,15 @@ extras in `pyproject.toml`; each `forze[<name>]` maps to the `<name>` extra.
 | **Inbound** | `fastapi` · `socketio` · `mcp` |
 | **Identity** | `authn` · `oidc` |
 | **Secrets & keys** | `vault` · `kms-aws` · `kms-gcp` · `kms-yc` |
-| **Outbound** | `http` |
+| **Outbound** | `http` · `inference-http` · `inference-sagemaker` |
 
 Each row maps to a `forze[<extra>]` package; their precise contract coverage is
-on each integration's page. The remaining extras — `dst` and `cli` — are
-tooling, not backend integrations: [deterministic simulation
-testing](../dst/overview.md) and the `forze` command-line tool.
+on each integration's page. Two key backends need no extra at all: the
+[self-hosted local KMS](kms.md) and the in-memory mock.
+
+The remaining extras are not backend integrations: `dst` and `cli` are tooling
+([deterministic simulation testing](../dst/overview.md) and the `forze`
+command-line tool), and `zstd` adds the zstd codec for
+[portable archives](../running-in-prod/portability.md).
 
 Install one or several at once — `uv add 'forze[fastapi,postgres,redis]'`.

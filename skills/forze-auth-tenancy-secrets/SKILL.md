@@ -196,7 +196,7 @@ See [External IdP (OIDC) recipe](https://morzecrew.github.io/forze/latest/recipe
 
 For database-per-tenant Postgres routing, set `PostgresDepsModule.introspector_cache_partition_key` so catalog metadata caches are partitioned per tenant/database.
 
-`AuthnIdentity.tenant_id` is set by the resolver when the assertion carries a `tenant_hint` (e.g. JWT `tid` claim or an OIDC tenant claim). `TenantIdentityResolver` then merges credential-bound tenant id, optional header hint, and `TenantResolverPort` results.
+`AuthnIdentity.tenant_id` is set by the resolver when the assertion carries an issuer tenant hint (e.g. a JWT `tid` claim or an OIDC tenant claim). `SecurityContextMiddleware` then calls `resolve_tenant_identity`, which coalesces the issuer hint with an optional `X-Tenant-Id` header and resolves the pair through `TenantResolverPort` (`ctx.tenancy.resolver()`). An unvalidated header tenant is refused unless `trust_tenant_header=True` declares a trusted gateway in front.
 
 ## Isolation tiers and the declared floor
 
@@ -231,7 +231,7 @@ TenancyDepsModule(
 )
 ```
 
-See [Multi-tenancy](https://morzecrew.github.io/forze/latest/identity-tenancy-enc/multi-tenancy/) for aggregates, adapters, and FastAPI `TenantIdentityResolver` pairing.
+See [Multi-tenancy](https://morzecrew.github.io/forze/latest/identity-tenancy-enc/multi-tenancy/) for aggregates, adapters, and the FastAPI `resolve_tenant_identity` pairing.
 
 ## Tenant selector and admin plane
 

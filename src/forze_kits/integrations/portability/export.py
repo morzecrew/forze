@@ -74,7 +74,7 @@ class ArchiveExporter:
 
     The artifact is **plaintext by construction** — rows are the decrypted read models, so it
     never depends on the source's keys and re-seals under the target's on import. Treat the
-    directory as credential-adjacent (RFC 0017 §9).
+    directory as credential-adjacent.
     """
 
     chunk_size: int = DEFAULT_CHUNK
@@ -83,7 +83,7 @@ class ArchiveExporter:
     allow_fuzzy: bool = False
     """Permit a full-system export whose quiesce did not attest. Off by default: such an artifact
     is stamped ``consistency: fuzzy`` (importable, but not point-consistent), and producing one at
-    all is a deliberate choice, not a silent fallback (RFC 0017 §4)."""
+    all is a deliberate choice, not a silent fallback."""
 
     compression: Compression = "gzip"
     """Codec for the JSONL data files (RFC §5). ``gzip`` needs no extra; ``zstd`` needs the
@@ -540,8 +540,8 @@ async def export_archive(
 
     A thin adapter, mirroring ``quiesce(runtime)``: it reads the runtime's own inventory
     (`runtime.spec_registry`) — a single source of truth, so an export can never disagree with the
-    reconciliation the runtime already ran, and it **refuses to run without one** (RFC 0017
-    decision #2) — and the context of the **already-open scope**. Call it inside
+    reconciliation the runtime already ran, and it **refuses to run without one** — and the
+    context of the **already-open scope**. Call it inside
     ``async with runtime.scope():``. For finer control (a re-used exporter config, a caller that
     already holds a context), use :class:`ArchiveExporter` directly.
 

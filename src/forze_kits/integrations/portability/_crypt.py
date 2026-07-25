@@ -1,4 +1,4 @@
-"""Optional envelope encryption for the archive at rest (RFC 0017 §9).
+"""Optional envelope encryption for the archive at rest.
 
 The archive is plaintext by construction — decrypt-on-read is what makes it portable — so a
 full-system archive on disk is a **credential store**. This seals it. A single random data key

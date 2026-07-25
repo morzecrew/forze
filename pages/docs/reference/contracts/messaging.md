@@ -77,7 +77,7 @@ relay. See [Transactional outbox](../../recipes/transactional-outbox.md).
 | `reclaim_stale_processing` | `reclaim_stale_processing(*, older_than)` | reset stuck rows to pending |
 | `requeue_failed` | `requeue_failed(ids)` | re-drive failed rows; resets `attempts` to 0 |
 
-(Most apps use the `relay_outbox_to_queue` kit rather than these directly.)
+(Most apps use the `bind_outbox` kit rather than these directly.)
 Delivery is at-least-once and ordering is not guaranteed across
 failures/retries — a retrying row never stalls later rows of its
 `ordering_key`. Staging an `ordering_key` makes same-key events partition

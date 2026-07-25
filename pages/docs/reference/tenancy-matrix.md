@@ -38,6 +38,8 @@ A store read under the bound tenant scopes itself — adapters call
 | Redis | cache, counter, idempotency, lock | `namespace` (key prefix) | per-tenant namespace | `RoutedRedisClient` | `dedicated` |
 | S3 / GCS | object storage | `namespace` (path prefix) | per-tenant bucket | routed client | `dedicated` |
 | HTTP outbound | http service | — | — | per-tenant credentials (routed) | `dedicated` |
+| Served models (HTTP) | inference | `tagged` (bound tenant required) | per-tenant `model_name` | `RoutedInferenceHttpClient` | `dedicated` |
+| SageMaker | inference | `tagged` (bound tenant required) | per-tenant `endpoint_name` | `RoutedSageMakerRuntimeClient` | `dedicated` |
 
 † Neo4j reaches `namespace` with a per-tenant database on one driver (the usual
 multi-tenant Neo4j shape); `dedicated` needs a genuinely per-tenant driver/instance,

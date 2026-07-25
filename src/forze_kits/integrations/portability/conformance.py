@@ -1,6 +1,6 @@
 """The portability trust story: a backend-agnostic export → import → re-export round-trip.
 
-RFC 0017 §8. This is the ``forze_dst`` conformance doctrine — a *sharp* equivalence observable
+This is the ``forze_dst`` conformance doctrine — a *sharp* equivalence observable
 plus an allowed-divergence catalog — applied to portability. It cannot live under
 ``forze_dst.conformance`` like the isolation and delivery families do, because those validate
 **core** contracts (``forze.application.contracts.*``) while a round-trip drives the export/import
