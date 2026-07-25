@@ -104,6 +104,11 @@ class SecretsLeaseManager:
         if not self.roles:
             raise exc.configuration("Lease manager needs at least one role")
 
+        if len({ref.path for ref in self.roles}) != len(self.roles):
+            # Two loops for one role would hold two fighting leases and interleave
+            # deliveries of different credentials for the same consumer.
+            raise exc.configuration("Lease manager roles must be distinct")
+
         validate_dynamic_credentials_supported(
             secrets_capabilities_of(self.dynamic), backend=self.backend
         )
@@ -299,7 +304,10 @@ class _LeaseManagerShutdown(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        clock = asyncio.get_running_loop()
+        # One shared deadline, stopped concurrently — the grace budget bounds the
+        # whole step, not each loop in sequence.
+        deadline = asyncio.get_running_loop().time() + DEFAULT_STOP_GRACE_SECONDS
 
-        for control in self.startup.controls:
-            await control.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
+        await asyncio.gather(
+            *(control.stop(deadline=deadline) for control in self.startup.controls)
+        )

@@ -200,3 +200,14 @@ class TestLeaseManager:
             SecretsLeaseManager(
                 dynamic=_ScriptedDynamic(), roles=(), on_credential=_on_credential
             )
+
+    def test_rejects_duplicate_roles(self) -> None:
+        async def _on_credential(ref: SecretRef, leased: LeasedSecret) -> None:
+            pass
+
+        with pytest.raises(CoreException, match="distinct"):
+            SecretsLeaseManager(
+                dynamic=_ScriptedDynamic(),
+                roles=(_ROLE, SecretRef(_ROLE.path)),
+                on_credential=_on_credential,
+            )

@@ -48,6 +48,22 @@ class TestMockVersions:
 
         assert (await port.current_version(_REF)).token == "1"
 
+    async def test_first_put_over_a_seeded_value_advances_the_version(self) -> None:
+        """A seeded entry reads as version 1, so replacing it must not also read
+        as 1 — an unchanged token for a changed value is invisible to watchers."""
+
+        state = MockState()
+        state.identity["secrets"]["db/dsn"] = "seeded"
+        port = MockSecretsPort(state=state)
+
+        initial = await port.current_version(_REF)
+        replaced = await port.put(_REF, "replacement")
+
+        assert replaced != initial
+        assert replaced.token == "2"
+        assert await port.current_version(_REF) == replaced
+        assert (await port.resolve_versioned(_REF)).text == "replacement"
+
     async def test_capabilities_are_full(self) -> None:
         assert MockSecretsPort(state=MockState()).secrets_capabilities == (
             FULL_SECRETS_CAPABILITIES

@@ -28,8 +28,8 @@ from .watcher import DEFAULT_SECRETS_WATCH_INTERVAL, SecretsPollWatcher
 # ----------------------- #
 
 __all__ = [
-    "DEFAULT_SECRET_ROTATIONS_CHANNEL",
     "DEFAULT_SECRETS_WATCH_INTERVAL",
+    "DEFAULT_SECRET_ROTATIONS_CHANNEL",
     "PENDING_SUFFIX",
     "ROTATE_FUNCTION_NAME",
     "DirectorySecretsChangeSource",

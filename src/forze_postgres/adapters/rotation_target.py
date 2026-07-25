@@ -30,6 +30,7 @@ require_psycopg()
 
 # ....................... #
 
+import math
 from datetime import timedelta
 from typing import cast
 from uuid import UUID
@@ -172,7 +173,11 @@ class PostgresRotationTarget(RotationTargetPort):
         try:
             connection = await psycopg.AsyncConnection.connect(
                 dsn,
-                connect_timeout=int(self.verify_timeout.total_seconds()),
+                # Ceil, never truncate: psycopg reads this as int(float(value)) and
+                # treats <= 0 as "use the ~130s default", so a sub-second config
+                # floored to 0 would turn the verify gate into a near-unbounded
+                # wait. (psycopg also enforces a 2s minimum on its own.)
+                connect_timeout=math.ceil(self.verify_timeout.total_seconds()),
             )
 
         except Exception as e:

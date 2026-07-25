@@ -106,7 +106,18 @@ class SecretsHotReloadBinder:
                     continue
 
                 if ref == change.ref:
-                    await client.evict_tenant(tenant_id)
+                    try:
+                        await client.evict_tenant(tenant_id)
+
+                    except Exception:
+                        # One pool's dispose failure must not strand the rest of
+                        # the fleet on stale credentials — dispatch never raises.
+                        logger.warning(
+                            "Secrets hot-reload eviction failed for tenant %s on %s",
+                            tenant_id,
+                            change.ref.path,
+                            exc_info=True,
+                        )
 
         for callback in self.on_change:
             try:
@@ -248,7 +259,10 @@ class _BinderShutdown(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
-        clock = asyncio.get_running_loop()
+        # One shared deadline, stopped concurrently — the grace budget bounds the
+        # whole step, not each loop in sequence.
+        deadline = asyncio.get_running_loop().time() + DEFAULT_STOP_GRACE_SECONDS
 
-        for control in self.startup.controls:
-            await control.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
+        await asyncio.gather(
+            *(control.stop(deadline=deadline) for control in self.startup.controls)
+        )

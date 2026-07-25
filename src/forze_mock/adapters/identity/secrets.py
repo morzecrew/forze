@@ -85,9 +85,18 @@ class MockSecretsPort(SecretsPort, VersionedSecretsPort, SecretsAdminPort):
 
     async def put(self, ref: SecretRef, value: str) -> SecretVersion:
         with self.state.lock:
-            self._store()[ref.path] = value
+            store = self._store()
             versions = self._versions()
-            version = versions.get(ref.path, 0) + 1
+            current = versions.get(ref.path)
+
+            if current is None:
+                # A value seeded directly into state reads as version 1, so the
+                # first overwrite must advance past it — same token for a changed
+                # value would make the change invisible to every watcher.
+                current = 1 if ref.path in store else 0
+
+            version = current + 1
+            store[ref.path] = value
             versions[ref.path] = version
 
         return SecretVersion(str(version))

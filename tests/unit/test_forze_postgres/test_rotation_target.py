@@ -157,6 +157,50 @@ class TestVerify:
 
         assert statements == ["<connect app_b>", "SELECT 1", "<closed>"]
 
+    async def test_sub_second_timeout_never_truncates_to_unlimited(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """psycopg reads connect_timeout as int and treats 0 as ~130s default —
+        a 500ms config must ceil to 1, not floor to 0."""
+
+        from datetime import timedelta
+
+        secrets = MappingSecrets(data={"db/dsn.pending": "postgresql://app_b:pw@db/app"})
+        target, _ = _target(secrets, verify_timeout=timedelta(milliseconds=500))
+        captured: dict[str, Any] = {}
+
+        class _Cursor:
+            async def __aenter__(self) -> "_Cursor":
+                return self
+
+            async def __aexit__(self, *args: Any) -> None:
+                return None
+
+            async def execute(self, query: str) -> None:
+                return None
+
+            async def fetchone(self) -> tuple[int]:
+                return (1,)
+
+        class _Connection:
+            def cursor(self) -> _Cursor:
+                return _Cursor()
+
+            async def close(self) -> None:
+                return None
+
+        async def _connect(dsn: str, **kwargs: Any) -> _Connection:
+            captured.update(kwargs)
+            return _Connection()
+
+        import psycopg
+
+        monkeypatch.setattr(psycopg.AsyncConnection, "connect", _connect)
+
+        await target.verify(None, _PENDING)
+
+        assert captured["connect_timeout"] == 1
+
     async def test_failure_halts_with_a_named_code(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
