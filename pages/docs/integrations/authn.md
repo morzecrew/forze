@@ -39,6 +39,19 @@ deps = DepsRegistry.from_modules(
 A route's [`AuthnSpec`](../identity-tenancy-enc/identity.md) selects verifiers and a resolver
 by profile name; override the defaults via `token_verifiers`, `resolvers`, etc.
 
+By default every wired route checks the authenticating principal against an
+active `policy_principal` document — the posture for deployments running the
+authz plane. A token-only service with no authz plane opts out explicitly:
+
+```python
+AuthnDepsModule(..., eligibility="allow_all")
+```
+
+That is a declared decision, never a silent fallback (an unknown value is
+refused at wiring): with it, deactivating a principal no longer blocks token
+issuance, so revocation rests entirely on credential lifecycle — session revoke
+and API-key revoke.
+
 ## What it provides
 
 | Capability | Default implementation | Dep key |
@@ -54,6 +67,9 @@ by profile name; override the defaults via `token_verifiers`, `resolvers`, etc.
 - **Document-backed:** wire the account / session / identity-mapping specs to a
   document store (Postgres, Mongo, …). `kernel` is required only when a route
   mints first-party tokens.
+- **Browser clients:** the generated login/refresh/logout routes can carry their
+  tokens in `HttpOnly` cookies instead of response bodies — see
+  [cookie mode](../reference/fastapi-routes.md#cookie-mode).
 - Authorization is a sibling plane — `forze_identity.authz` (`AuthzDepsModule`).
 - The conceptual model (verify → resolve, resolver flavors) is in
   [Identity & access](../identity-tenancy-enc/identity.md); this page is the wiring.

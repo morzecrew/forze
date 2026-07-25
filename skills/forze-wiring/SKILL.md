@@ -119,6 +119,22 @@ async with runtime.scope():
 
 `build_runtime(*modules, lifecycle_modules=, lifecycle_steps=, ...)` (from `forze.application.execution`) assembles the same thing in one call — it freezes both plans for you. Production knobs live there too: `drain_timeout=` (graceful drain window on shutdown, default 10s) and `deployment=DeploymentProfile.FLEET` (fails assembly for unguarded shared-state-mutating lifecycle steps when running N replicas; guard them with `forze_kits.lifecycle.singleton_lifecycle_step`). See [`forze-resilience-deadlines`](../forze-resilience-deadlines/SKILL.md).
 
+## Declare the spec inventory
+
+Pass `specs=` and the runtime knows what your application consists of — the dependency registry knows every `(key, route)` it binds but not a single spec, so without an inventory nothing can enumerate your planes:
+
+```python
+from forze.application.contracts.inventory import SpecRegistry
+
+specs = SpecRegistry().register(order_spec, order_search_spec, invoice_blob_spec)
+
+runtime = build_runtime(*modules, specs=specs, lifecycle_steps=steps)
+```
+
+Kits and the identity plane contribute their own entries, including the routes nobody hand-wrote (a kit's search-sync outbox, queue and inbox). At construction `build_runtime` reconciles the inventory against the wiring and **logs** a bound route the inventory does not know — a drift signal, not a gate.
+
+Declare it whenever you may need to export, migrate, or `quiesce()` this application: all three refuse to run without an inventory, because a plane nobody catalogued is a plane they cannot vouch for.
+
 ## Governed aggregates: AggregateKit
 
 For the governed-aggregate case — CRUD plus soft delete, search sync, cross-record invariants, and/or a transactional outbox — **lead with `AggregateKit`** instead of hand-assembling the registries below. One typed declaration composes the wiring (you still write the four models and the `DocumentSpec`; see [`forze-domain-aggregates`](../forze-domain-aggregates/SKILL.md)):
@@ -408,5 +424,6 @@ See [Transactional notifications](https://morzecrew.github.io/forze/latest/recip
 - [Getting started](https://morzecrew.github.io/forze/latest/get-started/quickstart/)
 - [Declare a governed aggregate (AggregateKit)](https://morzecrew.github.io/forze/latest/recipes/governed-aggregate-kit/)
 - [Operation composition](https://morzecrew.github.io/forze/latest/writing-operation/capability-execution/)
+- [Portability](https://morzecrew.github.io/forze/latest/running-in-prod/portability/) — the spec inventory and what depends on it
 - [FastAPI integration](https://morzecrew.github.io/forze/latest/integrations/fastapi/)
 - [Mock integration](https://morzecrew.github.io/forze/latest/integrations/)

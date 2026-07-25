@@ -57,10 +57,10 @@ class PlaneDisposition(StrEnum):
     REFUSED = "refused"
     """Cannot be carried faithfully *and* cannot be safely skipped. Export refuses, loudly.
 
-    Today: ``counter`` (durable state with no read path until a ``CounterAdminPort`` exists —
-    silently skipping it makes a migrated app reissue sequence numbers it has already handed
-    out) and ``analytics`` (which may be a warehouse system of record, and the framework
-    cannot tell)."""
+    Today: an ``analytics`` spec whose provenance is a warehouse system of record — or is
+    left undeclared, which reads the same, since the framework cannot tell a projection from
+    the only copy. (``counter`` was here too until ``CounterAdminPort.list_counters()`` gave
+    operators the read handlers still — correctly — do not get.)"""
 
 
 # ....................... #

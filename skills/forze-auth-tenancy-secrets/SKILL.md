@@ -76,6 +76,28 @@ app.add_middleware(
 
 Handlers read identity only from `ExecutionContext`. The ingress `scheme` and API-key header name are routing hints; the verifier's signature/claims (or HMAC tag) are the security boundary, not the header shape.
 
+### Cookie mode
+
+For browsers that must not hold a token in JavaScript, pair the inbound `CookieTokenAuthn` with the outbound `AuthnCookieCarrier`:
+
+```python
+from forze_fastapi.security import AuthnCookieCarrier
+
+cookies = AuthnCookieCarrier(access_path="/api", refresh_path="/auth/refresh")
+attach_authn_routes(router, registry, ctx_dep=ctx_dep, cookies=cookies)
+```
+
+Login and refresh then set and rotate two `HttpOnly` cookies and strip the token strings from the body (scheme and lifetimes stay); refresh falls back to its cookie; logout expires both idempotently. Point `CookieTokenAuthn(cookie_name=...)` at the same `access_cookie`.
+
+Two things break cookie mode if you skip them:
+
+- **`SecurityContextMiddleware(anonymous_paths={"/auth/login", "/auth/refresh"})`** — otherwise a stale access cookie 401s the exact route that would replace it. On those paths an authentication-kind failure binds no identity instead of refusing; other failure kinds still error.
+- **CSRF posture** — cookies are `HttpOnly` always and `Secure` by default, and `samesite="lax"` (the default) is the shipped CSRF defense. A `samesite="none"` deployment must add its own CSRF layer; the carrier ships none.
+
+### Principal eligibility
+
+Every wired route checks the authenticating principal against an active `policy_principal` document. A token-only service with no authz plane opts out explicitly with `AuthnDepsModule(eligibility="allow_all")` — a declared decision (an unknown value is refused at wiring), and one that moves revocation entirely onto credential lifecycle: with it, deactivating a principal no longer blocks token issuance.
+
 ## Authn dep keys
 
 | Key | Resolves to | Notes |

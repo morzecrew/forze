@@ -38,7 +38,18 @@ Useful knobs: `dek_ttl_seconds` bounds how long a cached data key stays usable �
 | AWS KMS | `forze[kms-aws]` | `AwsKmsKeyManagement` (from `forze_kms.aws`) | CMK id, ARN, or `alias/<name>` |
 | Google Cloud KMS | `forze[kms-gcp]` | `GcpKmsKeyManagement` (from `forze_kms.gcp`) | a CryptoKey resource name (`projects/…/cryptoKeys/…`) |
 | Yandex Cloud KMS | `forze[kms-yc]` | `YcKmsKeyManagement` (from `forze_kms.yc`) | a symmetric key id |
+| Self-hosted local | — | `LocalKeyManagement` (from `forze_kms.local`) | a key id in the master-key map |
 | In-memory (dev/test only) | — | `MockKeyManagement` (from `forze_mock`) | anything — protects nothing |
+
+`LocalKeyManagement` is the no-dependency option for deployments with no cloud KMS: it wraps data keys under operator-provided **32-byte** master keys held in a `{key_id: bytes}` map (a wrong-length key is refused at construction). Unlike the mock, it is real AES-256-GCM envelope encryption — but the master key lives in your process, so your secret delivery is the whole of its trust model.
+
+```python
+from forze_kms.local import LocalKeyManagement
+
+kms = LocalKeyManagement(keys={"app-kek-2": active_key, "app-kek-1": previous_key})
+```
+
+Keep the previous key in the map for the rotation overlap described below: which key *seals* is decided by the directory-resolved `KeyRef`, which key *opens* by the envelope's own id, so a key id rotated out of the map fails closed on read. `kms.fingerprint()` is one-way and safe to log — compare it across replicas to spot a fleet whose key maps have drifted.
 
 All implement the same `KeyManagementPort`, so swapping backends is a one-line change in `CryptoDepsModule`. Each cloud backend ships a client + deps module + lifecycle step; credentials default to the platform's ambient chain (botocore chain / application-default credentials / instance metadata):
 
@@ -66,7 +77,7 @@ lifecycle = LifecyclePlan.from_steps(awskms_lifecycle_step(region_name="eu-centr
 
 GCP and Yandex Cloud follow the same shape (`GcpKmsClient` / `GcpKmsDepsModule` / `gcpkms_lifecycle_step`, `YcKmsClient` / `YcKmsDepsModule` / `yckms_lifecycle_step`). Leave `key_management` unset on the KMS deps module — `CryptoDepsModule` registers that port itself, and registering it twice conflicts.
 
-In tests, `MockDepsModule` wires the whole crypto stack in-memory, so encrypted specs run end-to-end with no KMS.
+In tests, `MockDepsModule` wires the whole crypto stack in-memory, so encrypted specs run end-to-end with no KMS. The mock runs the **real** field-encryption path on every field plane — document, graph, search (hub, federated and snapshots), analytics and procedures all resolve the same fail-closed encrypting codecs as a real backend. Two consequences for your tests: a suite asserting on raw stored values now sees ciphertext, and a text query no longer matches sealed content. That is the point — a query that cannot work in production now fails under the mock too.
 
 ## What gets encrypted
 
@@ -91,7 +102,7 @@ DocumentSpec(
 )
 ```
 
-`encrypted` and `searchable` must be disjoint; sealed fields cannot be sorted or content-searched (that is physics, not a limit). Everything is **fail-closed**: a spec that marks a field but finds no keyring (`CryptoDepsModule` missing) refuses to wire rather than writing plaintext. `required_encryption` on a deps module (e.g. `PostgresDepsModule(required_encryption="field")`) makes coverage prescriptive — any route below the floor fails at startup.
+`encrypted` and `searchable` must be disjoint. Sealed fields are **refused** as filter and sort keys on every backend including the mock — a randomized field cannot be filtered (`core.crypto.encrypted_field_not_filterable`; deterministic `searchable` fields keep equality), and *any* sealed field is refused as a sort key, a spec's default sort included. Previously these returned wrong answers rather than an error. Content search over sealed data is likewise physics, not a limit. Everything is **fail-closed**: a spec that marks a field but finds no keyring (`CryptoDepsModule` missing) refuses to wire rather than writing plaintext. `required_encryption` on a deps module (e.g. `PostgresDepsModule(required_encryption="field")`) makes coverage prescriptive — any route below the floor fails at startup.
 
 ## Strict mode after backfill
 

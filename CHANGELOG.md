@@ -66,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Synchronous key seam** — opt-in synchronous twins of the key-management and directory ports for computation-only key backends (mock and shipped directories only, never a real KMS); same key-ownership guard as the async path.
 - **Every mock field plane seals** — document, graph, search (hub/federated, snapshots), analytics and procedures resolve the same fail-closed encrypting codecs as real backends. **Behavior change** for mock suites asserting raw stored ciphertext; text queries no longer match sealed content.
 
+**Docs & agent skills** — a "Portability" page (spec inventory, plane dispositions, quiesce, export/import/migrate), cookie-mode authn and `anonymous_paths` documented, and new `forze-realtime` / `forze-inference` skills; existing skills carry the breaking changes above.
+
 ### Changed
 
 **Breaking — graph**

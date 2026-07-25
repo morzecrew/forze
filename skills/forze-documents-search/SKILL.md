@@ -83,6 +83,29 @@ Common operators: `$eq`, `$neq`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$
 
 Field keys are **dot-separated paths** into nested objects (`"address.geo.lat"`), usable in filters, sorts, group-bys, and the `fields` list of projected (`raw_*` / `projected_*`) calls — a dotted projection returns a nested shape.
 
+### What the DSL accepts as a value
+
+- `Decimal` is a first-class filter and sort value on every backend — pass the `Decimal`, not a float, when the field is one.
+- Range bounds may be JSON strings; they are cast to the field's own type (an exact `Decimal`, an aware `datetime` normalized to UTC), never locale-guessed. `"NaN"` and `"Infinity"` are refused everywhere.
+- **Sealed fields are refused as filter and sort keys on every backend, including the mock.** Filtering a randomized-encrypted field raises `core.crypto.encrypted_field_not_filterable` (deterministic `searchable` fields keep equality); sorting *any* sealed field is refused, including a spec's default sort. This is a policy check on the declaration, so a query that cannot work in production fails identically under the mock.
+
+## Rebuilding a search index
+
+An index is derived state — it can be refilled from the document plane at any time. `rebuild_search_index` is the idempotent, keyset-paged backfill: it upserts live rows and removes soft-deleted ones, so it converges the index toward the documents rather than merely filling it.
+
+```python
+from forze_kits.integrations.search import rebuild_search_index
+
+report = await rebuild_search_index(
+    ctx.document.query(project_spec),
+    ctx.search.command(project_search),
+    document=project_spec,
+    search=project_search,
+)
+```
+
+Interrupted sweeps are re-run, not repaired. An `AggregateKit` exposes the same thing as `kit.rebuild_search()`. Run it after an import, after a mapping change, or when an index's provenance is unknown — an exact result wants a source that is not being written.
+
 ## Cache-aware documents
 
 Attach `CacheSpec` to `DocumentSpec.cache` and register a matching cache route, usually in `RedisDepsModule.caches`. Reads then serve from the cache on a hit and populate it on a miss; writes invalidate. The facade code is unchanged — caching is pure wiring.
@@ -167,6 +190,8 @@ For bounded-memory **exports**, the query ports stream keyset chunks: documents 
 4. **Using removed flat accessors (`ctx.search_query`, `ctx.doc_read`, `ctx.doc_write`)** — use the namespaced `ctx.document.query` / `ctx.document.command` / `ctx.search.query`.
 5. **Sorting cursor pages without stable key fields** — include a deterministic sort key, usually `id`.
 6. **Bypassing the revision on updates** — always pass the read `rev` through `DocumentUpdateDTO` to preserve optimistic concurrency.
+7. **Filtering or sorting on an encrypted field** — mark it `searchable` (deterministic) for equality, keep a plaintext companion field for ranges and ordering, or accept that the field is write-only to queries.
+8. **Passing a `float` where the field is a `Decimal`** — the DSL carries `Decimal` end to end; converting through `float` reintroduces the rounding the type exists to prevent.
 
 ## Reference
 

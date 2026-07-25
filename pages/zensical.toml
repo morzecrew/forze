@@ -79,6 +79,7 @@ nav = [
             "running-in-prod/resilience.md",
             "running-in-prod/load-shedding.md",
             "running-in-prod/shutdown-and-fleets.md",
+            "running-in-prod/portability.md",
             "running-in-prod/observability.md",
         ] },
         { "Testing" = [
