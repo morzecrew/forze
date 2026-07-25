@@ -13,8 +13,9 @@ set       ``RotationTargetPort.apply`` — make the pending credential  Idempote
           valid at the backend
 test      ``RotationTargetPort.verify`` — a **real** connection       Failure halts the run
                                                                       before promote
-finish    Promote (a second put of the staged value at the primary    Promote is a plain put
-          ref), publish ``SecretRotated`` via outbox                  (idempotent); publish rides
+finish    Promote (CAS put of the staged value at the primary ref),   CAS conflict on our own
+          confirm the backend still honors it (converge if a stale    earlier promote converges
+          apply landed late), publish ``SecretRotated`` via outbox    idempotently; publish rides
                                                                       the outbox
 ========  ==========================================================  =========================
 
@@ -60,7 +61,7 @@ from forze.application.contracts.secrets import (
     validate_versioned_reads_supported,
 )
 from forze.application.execution.context import ExecutionContext
-from forze.base.exceptions import exc
+from forze.base.exceptions import ExceptionKind, exc
 from forze.base.primitives import JsonDict, current_time_source, utcnow
 from forze.base.primitives.entropy_source import secure_token_urlsafe
 from forze_kits.integrations.durable import (
@@ -258,7 +259,40 @@ class SecretRotator:
             # window makes this CAS fail instead of being clobbered by our stale
             # staged value. Two fences, two hazards: staging = unverified text,
             # primary = lost newer promotion.
-            promoted = await admin.put(ref, staged_now.text, expected_version=primary_at_create)
+            try:
+                promoted = await admin.put(ref, staged_now.text, expected_version=primary_at_create)
+
+            except exc as error:
+                if error.kind is not ExceptionKind.CONCURRENCY:
+                    raise
+
+                # A finish retry after a crash between promote and publish trips
+                # its own CAS: the primary advanced because WE advanced it. When
+                # the primary already holds exactly our staged text, converge
+                # idempotently; anything else is a genuine competitor.
+                current_primary = await versioned.resolve_versioned(ref)
+
+                if current_primary.text != staged_now.text:
+                    raise
+
+                promoted = current_primary.version
+
+            # Fence three — the backend itself: an ALTER ROLE (or its analog) is
+            # not a fenceable write, so a competitor's stale apply can commit even
+            # after our promote. The winner therefore confirms the backend still
+            # honors the credential it just promoted, and converges it if not —
+            # post-CAS, the promoted value IS canonical, so re-applying it is
+            # correct by definition. A second failure fails the run loudly (the
+            # secret is promoted but unusable — that must page, not publish).
+            canonical = PendingCredential(ref=ref, version=promoted)
+
+            try:
+                await self.target.verify(tenant_id, canonical)
+
+            except Exception:
+                await self.target.apply(tenant_id, canonical)
+                await self.target.verify(tenant_id, canonical)
+
             event = SecretRotated(
                 ref_path=ref.path,
                 version_token=promoted.token,

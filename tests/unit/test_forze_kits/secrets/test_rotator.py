@@ -101,7 +101,8 @@ class TestFourStepRotation:
         record = await rotator.rotate_now(ctx, _REF)
 
         assert record.status is DurableRunStatus.COMPLETED
-        assert target.calls == ["compose", "apply", "verify"]
+        # The trailing verify is the post-promote backend confirmation.
+        assert target.calls == ["compose", "apply", "verify", "verify"]
 
         secrets = ctx.deps.provide(SecretsDepKey)
         staged = await secrets.resolve_str(SecretRef("db/dsn.pending"))
@@ -209,7 +210,8 @@ class TestCrashResume:
         reloaded = await store.load(record.run_id)
         assert reloaded is not None
         assert reloaded.status is DurableRunStatus.COMPLETED
-        assert target.calls == ["compose", "apply", "verify", "verify"]
+        # Replayed create/set, live verify, then the post-promote confirmation.
+        assert target.calls == ["compose", "apply", "verify", "verify", "verify"]
         assert len(target.minted) == 1  # the crash never re-minted
 
         secrets = ctx.deps.provide(SecretsDepKey)
@@ -300,6 +302,112 @@ class TestPromoteFence:
             await rotator.handler(ctx, {"ref_path": _REF.path, "tenant_id": None})
 
         assert target.calls == []
+
+
+class _ConfirmScriptedTarget(_RecordingTarget):
+    """Distinguishes the post-promote confirmation (canonical = primary ref) from
+    the pre-promote verify, and scripts confirmation failures."""
+
+    def __init__(self, *, fail_confirms: int = 0) -> None:
+        super().__init__()
+        self.fail_confirms = fail_confirms
+
+    async def verify(self, tenant_id: UUID | None, pending: PendingCredential) -> None:
+        if pending.ref == _REF:
+            self.calls.append("confirm")
+
+            if self.fail_confirms > 0:
+                self.fail_confirms -= 1
+                raise RuntimeError("backend disagrees with the promoted credential")
+
+            return
+
+        await super().verify(tenant_id, pending)
+
+    async def apply(self, tenant_id: UUID | None, pending: PendingCredential) -> None:
+        if pending.ref == _REF:
+            self.calls.append("converge")
+            return
+
+        await super().apply(tenant_id, pending)
+
+
+class TestBackendConvergence:
+    async def test_stale_backend_write_is_converged_by_the_winner(self) -> None:
+        """The unfenceable-write race: a competitor's stale ALTER lands after our
+        promote. The winner's confirmation catches the disagreement and re-applies
+        the canonical (promoted) credential."""
+
+        target = _ConfirmScriptedTarget(fail_confirms=1)
+        ctx, rotator, _ = _composition(target, publish=False)
+        await _seed(ctx, "dsn-old")
+
+        record = await rotator.rotate_now(ctx, _REF)
+
+        assert record.status is DurableRunStatus.COMPLETED
+        assert target.calls == [
+            "compose",
+            "apply",
+            "verify",
+            "confirm",  # backend disagrees (the stale write landed)
+            "converge",  # re-assert the canonical credential
+            "confirm",  # and prove it took
+        ]
+
+    async def test_unconvergeable_backend_fails_the_run_loudly(self) -> None:
+        target = _ConfirmScriptedTarget(fail_confirms=2)
+        ctx, rotator, _ = _composition(target, publish=False)
+        await _seed(ctx, "dsn-old")
+
+        with pytest.raises(Exception, match="disagrees"):
+            await rotator.rotate_now(ctx, _REF)
+
+        # Promoted but unusable is a paged failure, never a silent publish; the
+        # primary intentionally keeps the promoted value (it IS canonical).
+        secrets = ctx.deps.provide(SecretsDepKey)
+        assert await secrets.resolve_str(_REF) == f"dsn-for-{target.minted[0]}"
+
+    async def test_finish_retry_after_own_promote_is_idempotent(self) -> None:
+        """A crash between promote and publish makes the retry's CAS trip on OUR
+        OWN earlier write — it must converge, not fail as a competitor."""
+
+        target = _ConfirmScriptedTarget(fail_confirms=2)  # both confirms of attempt 1
+        state = MockState()
+        registry = DurableFunctionRegistry()
+        rotator = SecretRotator(target=target, publish_spec=None)
+        rotator.register(registry)
+        durable_deps, runner, _ = durable_kits_deps(registry=registry)
+        ctx = context_from_deps(MockDepsModule(state=state)(), durable_deps)
+        await _seed(ctx, "dsn-old")
+
+        store = resolve_durable_run_store(ctx)
+        record = await store.enqueue(
+            rotator.function_name, input_json={"ref_path": _REF.path, "tenant_id": None}
+        )
+        assert await store.begin(record.run_id, lease_for=timedelta(minutes=5))
+
+        # Attempt 1 "crashes" after the promote landed (both confirms fail).
+        token = bind_durable_run(
+            DurableRunContext(run_id=record.run_id, name=rotator.function_name)
+        )
+        try:
+            with pytest.raises(RuntimeError, match="disagrees"):
+                await rotator.handler(ctx, {"ref_path": _REF.path, "tenant_id": None})
+        finally:
+            reset_durable_run(token)
+
+        # Reclaim: finish re-runs, its CAS trips on our own promote, recognizes the
+        # primary already holds our staged text, and completes.
+        state.durable_runs[record.run_id]["leased_until"] = utcnow() - timedelta(hours=1)
+        assert await runner.recover(ctx) == 1
+
+        reloaded = await store.load(record.run_id)
+        assert reloaded is not None
+        assert reloaded.status is DurableRunStatus.COMPLETED
+        assert len(target.minted) == 1
+
+        secrets = ctx.deps.provide(SecretsDepKey)
+        assert await secrets.resolve_str(_REF) == f"dsn-for-{target.minted[0]}"
 
 
 class TestPublication:
