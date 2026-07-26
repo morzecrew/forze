@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/get-started/quickstart/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/running-in-prod/credential-rotation/">
       
       
-        <link rel="prev" href="../installation/">
+        <link rel="prev" href="../shutdown-and-fleets/">
       
       
-        <link rel="next" href="../project-structure/">
+        <link rel="next" href="../portability/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Quickstart - Forze</title>
+        <title>Credential rotation - Forze</title>
       
     
     
@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#what-you-will-build" class="md-skip">
+        <a href="#versioned-reads" class="md-skip">
           Skip to content
         </a>
       
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Quickstart
+              Credential rotation
             
           </span>
         </div>
@@ -246,16 +246,14 @@
   
   
   
-    
-  
   
     
       
     
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../introduction/" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../get-started/introduction/" class="md-tabs__link">
           
   
   Get Started
@@ -270,15 +268,7 @@
   
   
   
-  
     
-      
-    
-    
-    
-      
-  
-  
   
   
     
@@ -286,7 +276,19 @@
     
     
     
-      <li class="md-tabs__item">
+      
+  
+  
+  
+    
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
         <a href="../../core-concepts/overview/" class="md-tabs__link">
           
   
@@ -454,31 +456,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
             
   
   
@@ -495,7 +492,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -512,7 +509,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../introduction/" class="md-nav__link">
+      <a href="../../get-started/introduction/" class="md-nav__link">
         
   
   
@@ -541,7 +538,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../installation/" class="md-nav__link">
+      <a href="../../get-started/installation/" class="md-nav__link">
         
   
   
@@ -567,36 +564,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-zap" viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Quickstart
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../get-started/quickstart/" class="md-nav__link">
         
   
   
@@ -613,135 +584,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#what-you-will-build" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        What you will build
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#step-1-create-the-project" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Step 1 — Create the project
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#step-2-define-the-domain-models" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Step 2 — Define the domain models
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#step-3-declare-a-specification" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Step 3 — Declare a specification
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#step-4-build-the-operation-registry" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Step 4 — Build the operation registry
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#step-5-wire-the-runtime" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Step 5 — Wire the runtime
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#step-6-attach-the-routes" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Step 6 — Attach the routes
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#step-7-run-it" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Step 7 — Run it
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-you-just-did" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        What you just did
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#where-to-go-next" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Where to go next
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -754,7 +596,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../project-structure/" class="md-nav__link">
+      <a href="../../get-started/project-structure/" class="md-nav__link">
         
   
   
@@ -783,7 +625,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../changelog/" class="md-nav__link">
+      <a href="../../get-started/changelog/" class="md-nav__link">
         
   
   
@@ -816,26 +658,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -852,7 +699,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -875,17 +722,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
         
           
-          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="">
             
   
   
@@ -1136,17 +986,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
         
           
-          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="">
             
   
   
@@ -1426,17 +1279,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
         
           
-          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="">
             
   
   
@@ -1774,17 +1630,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
         
           
-          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="">
             
   
   
@@ -1939,26 +1798,31 @@
                 
   
   
+    
   
   
+  
     
     
     
     
       
       
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
         
           
-          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="">
             
   
   
@@ -1975,7 +1839,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1992,7 +1856,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running-in-prod/deadlines/" class="md-nav__link">
+      <a href="../deadlines/" class="md-nav__link">
         
   
   
@@ -2021,7 +1885,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running-in-prod/resilience/" class="md-nav__link">
+      <a href="../resilience/" class="md-nav__link">
         
   
   
@@ -2050,7 +1914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running-in-prod/load-shedding/" class="md-nav__link">
+      <a href="../load-shedding/" class="md-nav__link">
         
   
   
@@ -2079,7 +1943,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running-in-prod/shutdown-and-fleets/" class="md-nav__link">
+      <a href="../shutdown-and-fleets/" class="md-nav__link">
         
   
   
@@ -2105,10 +1969,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../running-in-prod/credential-rotation/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-key-round" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Credential rotation
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2125,6 +2015,119 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#versioned-reads" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Versioned reads
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#watching-for-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Watching for changes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hot-reload" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Hot reload
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rotation-notifications-across-containers" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Rotation notifications across containers
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-rotator" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The rotator
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The rotator">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-postgres-target-dual-user-alternation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Postgres target: dual-user alternation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#leases-dynamic-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Leases (dynamic credentials)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security-invariants" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Security invariants
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2137,7 +2140,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running-in-prod/portability/" class="md-nav__link">
+      <a href="../portability/" class="md-nav__link">
         
   
   
@@ -2166,7 +2169,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running-in-prod/observability/" class="md-nav__link">
+      <a href="../observability/" class="md-nav__link">
         
   
   
@@ -2209,17 +2212,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
         
           
-          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="">
             
   
   
@@ -2325,17 +2331,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
         
           
-          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="">
             
   
   
@@ -5715,10 +5724,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#what-you-will-build" class="md-nav__link">
+  <a href="#versioned-reads" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        What you will build
+        Versioned reads
       </span>
     </span>
   </a>
@@ -5726,10 +5735,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-1-create-the-project" class="md-nav__link">
+  <a href="#watching-for-changes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Step 1 — Create the project
+        Watching for changes
       </span>
     </span>
   </a>
@@ -5737,10 +5746,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-2-define-the-domain-models" class="md-nav__link">
+  <a href="#hot-reload" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Step 2 — Define the domain models
+        Hot reload
       </span>
     </span>
   </a>
@@ -5748,10 +5757,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-3-declare-a-specification" class="md-nav__link">
+  <a href="#rotation-notifications-across-containers" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Step 3 — Declare a specification
+        Rotation notifications across containers
       </span>
     </span>
   </a>
@@ -5759,10 +5768,38 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-4-build-the-operation-registry" class="md-nav__link">
+  <a href="#the-rotator" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Step 4 — Build the operation registry
+        The rotator
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The rotator">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-postgres-target-dual-user-alternation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Postgres target: dual-user alternation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#leases-dynamic-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Leases (dynamic credentials)
       </span>
     </span>
   </a>
@@ -5770,54 +5807,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-5-wire-the-runtime" class="md-nav__link">
+  <a href="#security-invariants" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Step 5 — Wire the runtime
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#step-6-attach-the-routes" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Step 6 — Attach the routes
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#step-7-run-it" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Step 7 — Run it
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-you-just-did" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        What you just did
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#where-to-go-next" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Where to go next
+        Security invariants
       </span>
     </span>
   </a>
@@ -5870,12 +5863,45 @@
     
     
     
+      
+  
+  
+    
+    
+    
+    
+    
       <li class="md-path__item">
-        <a href="../introduction/" class="md-path__link">
+        <a href="../../core-concepts/overview/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Get Started
+    Learn
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+    
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../deadlines/" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Running in production
   </span>
 
         </a>
@@ -5895,215 +5921,197 @@
   
 
 
-  <h1 id="__skip">Quickstart</h1>
+  <h1 id="__skip">Credential rotation</h1>
 
-<p>In about ten minutes — and without Docker — you'll have a running REST service
-whose handlers have no idea what's storing the data. Later you point them at
-Postgres by changing wiring, not code.</p>
-<h2 id="what-you-will-build">What you will build<a class="headerlink" href="#what-you-will-build" title="Permanent link">&para;</a></h2>
-<p>A minimal REST service for a <code>User</code> aggregate:</p>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Path</th>
-<th>Action</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>POST</code></td>
-<td><code>/users</code></td>
-<td>Create a user</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/users/{id}</code></td>
-<td>Get one user</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/users</code></td>
-<td>List users</td>
-</tr>
-<tr>
-<td><code>DELETE</code></td>
-<td><code>/users/{id}</code></td>
-<td>Delete a user</td>
-</tr>
-</tbody>
-</table>
-<p>Storage is <strong>in-memory</strong> — no Docker, no migrations. The complete, runnable file
-is <a href="https://github.com/morzecrew/forze/blob/main/examples/quickstart/app.py"><code>examples/quickstart/app.py</code></a>;
-the steps below build it up.</p>
-<h2 id="step-1-create-the-project">Step 1 — Create the project<a class="headerlink" href="#step-1-create-the-project" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>init<span class="w"> </span>forze-quickstart
-<span class="nb">cd</span><span class="w"> </span>forze-quickstart
-uv<span class="w"> </span>add<span class="w"> </span><span class="s1">&#39;forze[fastapi]&#39;</span>
-</code></pre></div>
-<p>Everything below goes into a single <code>main.py</code>, starting with the imports — the
-essentials come from the <code>forze</code> and <code>forze_kits</code> top-level packages:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">uuid</span><span class="w"> </span><span class="kn">import</span> <span class="n">UUID</span>
-
-<span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">computed_field</span>
-
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">BaseDTO</span><span class="p">,</span>
-    <span class="n">Document</span><span class="p">,</span>
-    <span class="n">DocumentSpec</span><span class="p">,</span>
-    <span class="n">DocumentWriteTypes</span><span class="p">,</span>
-    <span class="n">ReadDocument</span><span class="p">,</span>
-    <span class="n">build_runtime</span><span class="p">,</span>
+<p>Every deployment holds credentials that eventually have to change: database
+passwords, API keys, per-tenant DSNs. The dangerous part is not generating a new
+password — it is the window between "the backend accepted the new credential" and
+"every container observed it". Get the ordering wrong in exactly one way (publish
+before verify) and the failure mode is a fleet-wide outage triggered by your own
+rotation signal.</p>
+<p>Forze splits the problem into layers you can adopt one at a time. Each layer is an
+<strong>accelerator</strong> over the one guarantee that is always on:</p>
+<blockquote>
+<p><strong>Signals accelerate, the TTL floor guarantees.</strong> Routed tenant pools re-resolve
+credentials and rebuild when their fingerprint changes; <code>fingerprint_ttl</code> makes
+that happen within a bounded window even if every signal below is lost. Wiring a
+change source does not remove the TTL — it lets you raise it.</p>
+</blockquote>
+<h2 id="versioned-reads">Versioned reads<a class="headerlink" href="#versioned-reads" title="Permanent link">&para;</a></h2>
+<p>Every secrets backend serves <code>resolve_versioned</code> / <code>current_version</code> — a
+<code>SecretVersion</code> is an <strong>opaque, equality-only token</strong> (Vault yields integers, files
+and env yield content hashes). Same token at one ref ⇒ same value; nothing more.
+That contract is what makes change detection universal instead of Vault-only.</p>
+<p>Backends declare what they honor through <code>SecretsCapabilities</code>, and every consumer
+below fails closed (<code>secrets_feature_unsupported</code>) rather than degrading silently —
+a watcher over a backend without versions, a rotator over a read-only store, a
+lease manager over a store without a lease engine all refuse at wiring.</p>
+<h2 id="watching-for-changes">Watching for changes<a class="headerlink" href="#watching-for-changes" title="Permanent link">&para;</a></h2>
+<p>The change feed is its own small contract: <code>SecretChanged(ref, version)</code> delivered
+by a <code>SecretsChangeSource</code>. Events never carry values — a consumer re-resolves
+through its own authenticated store connection, which also makes a spoofed or
+replayed event harmless (it can trigger a refetch, never inject a credential).</p>
+<p>Two shipped sources cover most deployments:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.secrets</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">DirectorySecretsChangeSource</span><span class="p">,</span>
+    <span class="n">SecretsPollWatcher</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">runtime_lifespan</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.exceptions</span><span class="w"> </span><span class="kn">import</span> <span class="n">register_exception_handlers</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits</span><span class="w"> </span><span class="kn">import</span> <span class="n">Paginated</span><span class="p">,</span> <span class="n">build_document_registry</span><span class="p">,</span> <span class="n">document_facade</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.aggregates.document</span><span class="w"> </span><span class="kn">import</span> <span class="n">DocumentIdDTO</span><span class="p">,</span> <span class="n">ListRequestDTO</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_mock</span><span class="w"> </span><span class="kn">import</span> <span class="n">MockDepsModule</span>
+
+<span class="n">watcher</span> <span class="o">=</span> <span class="n">SecretsPollWatcher</span><span class="p">(</span><span class="n">secrets</span><span class="o">=</span><span class="n">versioned_backend</span><span class="p">,</span> <span class="n">refs</span><span class="o">=</span><span class="p">[</span><span class="n">dsn_ref</span><span class="p">])</span>
+<span class="n">step</span> <span class="o">=</span> <span class="n">watcher</span><span class="o">.</span><span class="n">lifecycle_step</span><span class="p">()</span>   <span class="c1"># a supervised 30s tick; first tick primes silently</span>
 </code></pre></div>
-<h2 id="step-2-define-the-domain-models">Step 2 — Define the domain models<a class="headerlink" href="#step-2-define-the-domain-models" title="Permanent link">&para;</a></h2>
-<p>An aggregate needs a <strong>domain model</strong>, a <strong>create command</strong>, and a <strong>read
-model</strong>. <code>Document</code> gives you <code>id</code>, <code>rev</code>, and timestamps for free.</p>
-<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">User</span><span class="p">(</span><span class="n">Document</span><span class="p">):</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">email</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
-
-
-<span class="k">class</span><span class="w"> </span><span class="nc">CreateUserCmd</span><span class="p">(</span><span class="n">BaseDTO</span><span class="p">):</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">email</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
-
-
-<span class="k">class</span><span class="w"> </span><span class="nc">ReadUser</span><span class="p">(</span><span class="n">ReadDocument</span><span class="p">):</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">email</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
-
-    <span class="nd">@computed_field</span>
-    <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">email_provided</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">email</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
-</code></pre></div>
-<details class="question">
-<summary>Why three types?</summary>
 <ul>
-<li><strong>Domain model</strong> — the business entity, with behaviour and invariants.</li>
-<li><strong>Create command</strong> — the frozen input for <code>POST</code>.</li>
-<li><strong>Read model</strong> — the frozen projection returned from <code>GET</code> (here it adds a
-  computed <code>email_provided</code>).</li>
+<li><strong><code>SecretsPollWatcher</code></strong> polls <code>current_version</code> for a ref set and emits on
+  deltas. Thirty seconds is the deliberate default: kubelet's own secret sync is
+  minute-granular, and against Vault a tick is one metadata read per ref.</li>
+<li><strong><code>DirectorySecretsChangeSource</code></strong> watches mounted secret files with Kubernetes
+  semantics: it re-stats the <em>path</em> each tick (kubelet updates a Secret by
+  atomically swapping the <code>..data</code> symlink — an inode watch sees the old file
+  forever), and a stat gate keeps unchanged files at one <code>stat</code> per tick.
+  <strong><code>subPath</code> mounts never update</strong> — that is a Kubernetes fact no watcher can fix.</li>
 </ul>
-<p>Update commands come later; this quickstart skips them on purpose.</p>
-</details>
-<h2 id="step-3-declare-a-specification">Step 3 — Declare a specification<a class="headerlink" href="#step-3-declare-a-specification" title="Permanent link">&para;</a></h2>
-<p>The <a href="../../core-concepts/application-layer/">specification</a> is the logical name —
-<code>"users"</code> — that ties the models to their operations and, later, to adapters.</p>
-<div class="highlight"><pre><span></span><code><span class="n">user_spec</span> <span class="o">=</span> <span class="n">DocumentSpec</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;users&quot;</span><span class="p">,</span>
-    <span class="n">read</span><span class="o">=</span><span class="n">ReadUser</span><span class="p">,</span>
-    <span class="n">write</span><span class="o">=</span><span class="n">DocumentWriteTypes</span><span class="p">(</span><span class="n">domain</span><span class="o">=</span><span class="n">User</span><span class="p">,</span> <span class="n">create_cmd</span><span class="o">=</span><span class="n">CreateUserCmd</span><span class="p">),</span>
+<p>With the <code>watchfiles</code> package installed (an app-level dependency, deliberately not
+a Forze extra), the directory source can also react to OS-native events instead of
+waiting out the poll interval:</p>
+<div class="highlight"><pre><span></span><code><span class="n">steps</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="n">file_source</span><span class="o">.</span><span class="n">lifecycle_step</span><span class="p">(</span><span class="n">interval</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">5</span><span class="p">)),</span>  <span class="c1"># the floor, raised</span>
+    <span class="n">file_source</span><span class="o">.</span><span class="n">native_events_lifecycle_step</span><span class="p">(),</span>                 <span class="c1"># the accelerator</span>
+<span class="p">]</span>
+</code></pre></div>
+<p>Event paths are deliberately never trusted — every native event just triggers the
+same stat-gated diff, so a spurious burst costs one <code>stat</code> per ref. Keep the poll
+step wired: native events let you <em>raise</em> its interval, never remove it.</p>
+<p>Delivery is at-least-once, unordered, and advisory. That costs nothing: eviction on
+an unchanged secret re-resolves, recomputes an equal fingerprint, and rebuilds
+nothing — over-notification is free by design.</p>
+<h2 id="hot-reload">Hot reload<a class="headerlink" href="#hot-reload" title="Permanent link">&para;</a></h2>
+<p>The binder turns changes into evictions:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.secrets</span><span class="w"> </span><span class="kn">import</span> <span class="n">SecretsHotReloadBinder</span>
+
+<span class="n">binder</span> <span class="o">=</span> <span class="n">SecretsHotReloadBinder</span><span class="p">(</span>
+    <span class="n">sources</span><span class="o">=</span><span class="p">[</span><span class="n">watcher</span><span class="p">],</span>
+    <span class="n">routed_clients</span><span class="o">=</span><span class="p">[</span><span class="n">routed_postgres</span><span class="p">,</span> <span class="n">routed_mongo</span><span class="p">],</span>
 <span class="p">)</span>
+<span class="n">steps</span> <span class="o">=</span> <span class="p">[</span><span class="n">watcher</span><span class="o">.</span><span class="n">lifecycle_step</span><span class="p">(),</span> <span class="n">binder</span><span class="o">.</span><span class="n">lifecycle_step</span><span class="p">()]</span>
 </code></pre></div>
-<h2 id="step-4-build-the-operation-registry">Step 4 — Build the operation registry<a class="headerlink" href="#step-4-build-the-operation-registry" title="Permanent link">&para;</a></h2>
-<p><code>build_document_registry</code> assembles the standard CRUD operations; <code>freeze()</code>
-makes the registry immutable and shareable. The request/response DTOs are derived
-from the spec, so you don't restate them — pass an explicit <code>DocumentDTOs</code> only to
-override or to disable an operation.</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># DTOs are derived from the spec; pass an explicit DocumentDTOs only to override.</span>
-<span class="n">registry</span> <span class="o">=</span> <span class="n">build_document_registry</span><span class="p">(</span><span class="n">user_spec</span><span class="p">)</span><span class="o">.</span><span class="n">freeze</span><span class="p">()</span>
+<p>For each event it recomputes the cached tenants' refs against the changed ref and
+calls <code>evict_tenant</code> on the matches; the next access re-resolves and rebuilds.</p>
+<p><strong>Non-routed singleton pools follow a different doctrine: re-resolve at
+connection-establishment time.</strong> A Postgres/MySQL password is checked only at
+connect and established connections survive rotation, so a connect-time
+<code>resolve_str</code> makes the rotation window race-free with or without a signal. The
+binder's <code>on_change</code> callbacks (e.g. a soft pool recycle) only accelerate draining
+of old connections — they are never the correctness mechanism.</p>
+<h2 id="rotation-notifications-across-containers">Rotation notifications across containers<a class="headerlink" href="#rotation-notifications-across-containers" title="Permanent link">&para;</a></h2>
+<p>The rotator publishes <code>SecretRotated {ref, version, at}</code> — never a value — through
+the <strong>outbox</strong>, relayed onto a broadcast pub/sub channel; every app container wires
+a <code>PubSubSecretsChangeSource</code> into its binder exactly like a poll watcher:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.secrets</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">PubSubSecretsChangeSource</span><span class="p">,</span>
+    <span class="n">secret_rotated_pubsub_spec</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">spec</span> <span class="o">=</span> <span class="n">secret_rotated_pubsub_spec</span><span class="p">()</span>
+<span class="n">query</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">deps</span><span class="o">.</span><span class="n">resolve_configurable</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">PubSubQueryDepKey</span><span class="p">,</span> <span class="n">spec</span><span class="p">,</span> <span class="n">route</span><span class="o">=</span><span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+<span class="n">binder</span> <span class="o">=</span> <span class="n">SecretsHotReloadBinder</span><span class="p">(</span><span class="n">sources</span><span class="o">=</span><span class="p">[</span><span class="n">PubSubSecretsChangeSource</span><span class="p">(</span><span class="n">query</span><span class="o">=</span><span class="n">query</span><span class="p">)],</span> <span class="o">...</span><span class="p">)</span>
 </code></pre></div>
-<h2 id="step-5-wire-the-runtime">Step 5 — Wire the runtime<a class="headerlink" href="#step-5-wire-the-runtime" title="Permanent link">&para;</a></h2>
-<p><code>MockDepsModule</code> provides in-memory adapters for every contract. <code>build_runtime</code>
-assembles an <a href="../../core-concepts/runtime/"><code>ExecutionRuntime</code></a> around it. Then
-<code>document_facade(...)</code> returns a small factory: call <code>users()</code> to get a fully-typed
-<a href="../../core-concepts/application-layer/"><code>DocumentFacade</code></a> bound to the runtime's
-current scope context — fresh each call, never cached across requests.</p>
-<div class="highlight"><pre><span></span><code><span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="n">MockDepsModule</span><span class="p">())</span>
+<p>Pub/sub is at-most-once and live-only; a missed message is covered by the TTL
+floor. The channel needs no dedup, ordering, or persistence beyond the outbox's.</p>
+<h2 id="the-rotator">The rotator<a class="headerlink" href="#the-rotator" title="Permanent link">&para;</a></h2>
+<p><code>SecretRotator</code> runs one rotation as a <strong>durable four-step run</strong> per
+<code>(ref, tenant)</code> — create → set → test → finish, the AWS Secrets Manager ordering,
+because it is the known-safe one:</p>
+<ol>
+<li><strong>create</strong> — mint from CSPRNG (<code>SecretEntropy</code>; a seeded simulation source
+   <em>cannot</em> be passed here), compose the pending value through the backend target,
+   stage it at <code>&lt;path&gt;.pending</code>;</li>
+<li><strong>set</strong> — <code>RotationTargetPort.apply</code>: make it valid at the backend (idempotent);</li>
+<li><strong>test</strong> — <code>RotationTargetPort.verify</code>: a <strong>real connection</strong>, not a syntactic
+   check. Failure halts the run before promote — promoting an unverified
+   credential and evicting the fleet onto it is a self-inflicted outage;</li>
+<li><strong>finish</strong> — promote, confirm, then publish <code>SecretRotated</code> via the outbox.
+   Promotion is fenced in depth, because the distributed lock is advisory: the
+   staged version must still be the one this run verified (no unverified text can
+   be promoted); the write to the primary ref is <strong>compare-and-set</strong> against the
+   version observed at create (a competing rotation that already promoted wins;
+   the stale run fails loudly instead of clobbering it); and because a backend
+   write like <code>ALTER ROLE</code> is not fenceable at all, the winner <strong>re-verifies the
+   promoted credential after the promote and converges the backend</strong> if a stale
+   apply landed late — a credential that still fails then fails the run loudly
+   rather than publishing. Finally, a <strong>delayed reconfirmation run</strong>
+   (<code>reconfirm_after</code>, default 90s) re-asserts the canonical credential past the
+   stale apply's whole possible lifetime — client-side pool checkout <em>plus</em> the
+   server-side statement timeout. The shipped Postgres target declares and
+   enforces that composite bound itself, with no opt-out
+   (<code>apply_statement_timeout</code>, default 30s, always applied via <code>SET LOCAL</code>;
+   <code>pool_checkout_allowance</code>, default 30s, covering the wait before the server
+   clock starts); the rotator validates <code>reconfirm_after</code> against the target's
+   declared bound at wiring and warns when a custom target declares none. Apply
+   the same pairing to any custom target.</li>
+</ol>
+<p>The pending ref is what makes this crash-safe: after <strong>set</strong>, the only copy of a
+password already live at the backend exists durably in the secret store. A rotator
+container that dies mid-rotation is reclaimed after its durable lease and resumes
+from the last completed step; step results carry <code>{ref, version}</code> only, so secret
+text never touches a journal. A distributed lock single-flights concurrent
+rotations of one ref across replicas.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.secrets</span><span class="w"> </span><span class="kn">import</span> <span class="n">SecretRotator</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">PostgresRotationTarget</span>
 
-<span class="c1"># A per-call, fully-typed facade factory bound to the runtime&#39;s current context.</span>
-<span class="n">users</span> <span class="o">=</span> <span class="n">document_facade</span><span class="p">(</span><span class="n">runtime</span><span class="p">,</span> <span class="n">registry</span><span class="p">,</span> <span class="n">user_spec</span><span class="p">)</span>
+<span class="n">target</span> <span class="o">=</span> <span class="n">PostgresRotationTarget</span><span class="p">(</span><span class="n">secrets</span><span class="o">=</span><span class="n">secrets</span><span class="p">,</span> <span class="n">client</span><span class="o">=</span><span class="n">admin_pg</span><span class="p">,</span> <span class="n">role_pair</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;app_a&quot;</span><span class="p">,</span> <span class="s2">&quot;app_b&quot;</span><span class="p">))</span>
+<span class="n">rotator</span> <span class="o">=</span> <span class="n">SecretRotator</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">)</span>
+<span class="n">rotator</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">durable_registry</span><span class="p">)</span>
+
+<span class="k">await</span> <span class="n">rotator</span><span class="o">.</span><span class="n">rotate_now</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">dsn_ref</span><span class="p">)</span>                     <span class="c1"># admin trigger</span>
+<span class="k">await</span> <span class="n">rotator</span><span class="o">.</span><span class="n">ensure_cron</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">dsn_ref</span><span class="p">,</span> <span class="n">cron</span><span class="o">=</span><span class="s2">&quot;0 4 * * 0&quot;</span><span class="p">)</span>  <span class="c1"># weekly policy</span>
 </code></pre></div>
-<h2 id="step-6-attach-the-routes">Step 6 — Attach the routes<a class="headerlink" href="#step-6-attach-the-routes" title="Permanent link">&para;</a></h2>
-<p><code>runtime_lifespan</code> runs the runtime inside the app's lifespan. Each route calls
-<code>users()</code> for the facade and runs an operation — the handlers never touch HTTP:</p>
-<div class="highlight"><pre><span></span><code><span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s2">&quot;Users API&quot;</span><span class="p">,</span> <span class="n">lifespan</span><span class="o">=</span><span class="n">runtime_lifespan</span><span class="p">(</span><span class="n">runtime</span><span class="p">))</span>
-<span class="n">register_exception_handlers</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>  <span class="c1"># CoreException → HTTP (e.g. not_found → 404)</span>
+<p>Multi-tenant fleets enqueue one run per tenant (<code>rotator.enqueue_tenants</code>) — one
+failing verify never blocks the rest, and a partial pass resumes where it stopped.</p>
+<h3 id="the-postgres-target-dual-user-alternation">The Postgres target: dual-user alternation<a class="headerlink" href="#the-postgres-target-dual-user-alternation" title="Permanent link">&para;</a></h3>
+<p><code>PostgresRotationTarget</code> defaults to <strong>two roles</strong> (<code>app_a</code>/<code>app_b</code>): the rotation
+sets the minted password on the <em>idle</em> role, verifies it with a live connection,
+and promotes a DSN naming that role. The previously-active role stays valid through
+the whole propagation window and becomes the idle target of the next rotation — no
+moment exists where a credential in flight is invalid.</p>
+<p>Single-role <code>ALTER ROLE ... PASSWORD</code> is available behind an explicit
+<code>single_role_degraded=True</code>: between promote and full propagation, <em>new</em>
+connections with the old password fail (established ones survive), so with
+connect-time re-resolution the blast radius is retry noise — but it is documented
+degraded for a reason.</p>
+<p>Run the rotator as a utility container in the outbox-relay shape: a headless
+<code>build_runtime(...)</code> composition wiring <code>{secrets + secrets_admin, durable, dlock,
+outbox/pubsub, rotation targets, tenant directory}</code> with the durable recovery and
+scheduler steps — no HTTP surface. See the runnable walkthrough in
+<code>examples/recipes/secrets_rotation/</code>.</p>
+<h2 id="leases-dynamic-credentials">Leases (dynamic credentials)<a class="headerlink" href="#leases-dynamic-credentials" title="Permanent link">&para;</a></h2>
+<p>Where a backend adopts a lease engine (Vault database engines), short TTLs <em>are</em>
+the rotation and the rotator becomes unnecessary for that backend. Credentials are
+per-issuance (each container becomes a distinct DB principal) and revocation is
+hard-edged (it kills established connections), so <code>SecretsLeaseManager</code>
+renews at ~⅔ TTL with jitter, <strong>reissues-then-drains</strong> before <code>max_ttl</code>, and on
+renewal failure retries forever while escalating log severity — abandoning means
+certain credential death at TTL.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.secrets</span><span class="w"> </span><span class="kn">import</span> <span class="n">SecretsLeaseManager</span>
 
-
-<span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/users&quot;</span><span class="p">)</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">create_user</span><span class="p">(</span><span class="n">cmd</span><span class="p">:</span> <span class="n">CreateUserCmd</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ReadUser</span><span class="p">:</span>
-    <span class="k">return</span> <span class="k">await</span> <span class="n">users</span><span class="p">()</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span>
-
-
-<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/users/</span><span class="si">{user_id}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_user</span><span class="p">(</span><span class="n">user_id</span><span class="p">:</span> <span class="n">UUID</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ReadUser</span><span class="p">:</span>
-    <span class="k">return</span> <span class="k">await</span> <span class="n">users</span><span class="p">()</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">DocumentIdDTO</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">user_id</span><span class="p">))</span>
-
-
-<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/users&quot;</span><span class="p">)</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">list_users</span><span class="p">(</span><span class="n">page</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="n">size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Paginated</span><span class="p">[</span><span class="n">ReadUser</span><span class="p">]:</span>
-    <span class="k">return</span> <span class="k">await</span> <span class="n">users</span><span class="p">()</span><span class="o">.</span><span class="n">list</span><span class="p">(</span><span class="n">ListRequestDTO</span><span class="p">(</span><span class="n">page</span><span class="o">=</span><span class="n">page</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">size</span><span class="p">))</span>
-
-
-<span class="nd">@app</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="s2">&quot;/users/</span><span class="si">{user_id}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">status_code</span><span class="o">=</span><span class="mi">204</span><span class="p">)</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">delete_user</span><span class="p">(</span><span class="n">user_id</span><span class="p">:</span> <span class="n">UUID</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="k">await</span> <span class="n">users</span><span class="p">()</span><span class="o">.</span><span class="n">kill</span><span class="p">(</span><span class="n">DocumentIdDTO</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">user_id</span><span class="p">))</span>
+<span class="n">manager</span> <span class="o">=</span> <span class="n">SecretsLeaseManager</span><span class="p">(</span>
+    <span class="n">dynamic</span><span class="o">=</span><span class="n">vault_dynamic</span><span class="p">,</span>          <span class="c1"># forze_vault.VaultDynamicSecrets</span>
+    <span class="n">roles</span><span class="o">=</span><span class="p">[</span><span class="n">SecretRef</span><span class="p">(</span><span class="s2">&quot;app-readwrite&quot;</span><span class="p">)],</span>
+    <span class="n">on_credential</span><span class="o">=</span><span class="n">rebuild_pool</span><span class="p">,</span>     <span class="c1"># the same hot-reload path as any rotation</span>
+<span class="p">)</span>
+<span class="n">step</span> <span class="o">=</span> <span class="n">manager</span><span class="o">.</span><span class="n">lifecycle_step</span><span class="p">()</span>
 </code></pre></div>
-<div class="admonition note">
-<p class="admonition-title">How context resolution works</p>
-<p>When a facade operation runs, its registered handler asks the execution context
-for the port wired to the <code>"users"</code> specification. The route never learns whether
-that port comes from Postgres, Mongo, or an in-memory fake. The
-<a href="../../writing-operation/wiring/">Wiring</a> page explains the full resolution flow.</p>
-</div>
-<p><code>register_exception_handlers</code> maps a <code>CoreException</code> to a response, so a missing
-user comes back as a <code>404</code>. (Routes are hand-wired here to show the moving
-parts — <a href="../../integrations/fastapi/#generated-routes">generated routes</a> can
-attach the CRUD endpoints from the registry instead.)</p>
-<h2 id="step-7-run-it">Step 7 — Run it<a class="headerlink" href="#step-7-run-it" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>uvicorn<span class="w"> </span>main:app<span class="w"> </span>--reload
-</code></pre></div>
-<p>Open <a href="http://localhost:8000/docs">http://localhost:8000/docs</a> for the interactive
-explorer, or try it from the shell:</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># Create — note the id in the response</span>
-curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:8000/users<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;Content-Type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;name&quot;: &quot;Ada&quot;, &quot;email&quot;: &quot;ada@example.com&quot;}&#39;</span>
-
-curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:8000/users<span class="w">            </span><span class="c1"># list</span>
-curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:8000/users/&lt;id&gt;<span class="w">       </span><span class="c1"># get one</span>
-curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>http://127.0.0.1:8000/users/&lt;id&gt;<span class="w">   </span><span class="c1"># delete</span>
-</code></pre></div>
-<h2 id="what-you-just-did">What you just did<a class="headerlink" href="#what-you-just-did" title="Permanent link">&para;</a></h2>
-<p>You built a complete service without a single line of HTTP or storage code in
-your domain:</p>
+<h2 id="security-invariants">Security invariants<a class="headerlink" href="#security-invariants" title="Permanent link">&para;</a></h2>
 <ul>
-<li>A <strong><code>User</code> aggregate</strong> with its command and read models — pure Python, no
-  infrastructure.</li>
-<li>A <strong>specification</strong> and a frozen <strong>operation registry</strong> — the named operations
-  the service exposes.</li>
-<li>An <strong><code>ExecutionRuntime</code></strong> wired to in-memory adapters, opened for the app's
-  lifetime.</li>
-<li><strong>Routes</strong> that resolve operations from the context and return read models.</li>
+<li><strong>Values never leave the resolve path.</strong> Not in change events, not in rotation
+  notifications, not in durable journals, not in logs, not in watcher snapshots.
+  Everything except <code>resolve_*</code> / <code>issue</code> traffics in <code>{ref, version}</code>.</li>
+<li><strong>No caching inside secrets adapters.</strong> Freshness is the entire point of this
+  plane; a resolve-path cache reintroduces exactly the staleness the watcher exists
+  to kill.</li>
+<li>New secrets are minted from <code>SecretEntropy</code> only — the type split makes a
+  replayable entropy source unpassable, so a simulated rotator can never produce a
+  predictable production credential.</li>
 </ul>
-<p>The only thing tying this to "in-memory" is <code>MockDepsModule</code> in Step 5. Swap it
-for <code>PostgresDepsModule</code> + <code>RedisDepsModule</code> and the domain, spec, registry, and
-routes don't change — that's the whole point. The
-<a href="../../integrations/postgres/">PostgreSQL integration</a> shows the swap.</p>
-<h2 id="where-to-go-next">Where to go next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
-<div class="grid cards fz-cards">
-<ul>
-<li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16.24 7.76-1.804 5.411a2 2 0 0 1-1.265 1.265L7.76 16.24l1.804-5.411a2 2 0 0 1 1.265-1.265z"/></svg></span> <strong><a href="../../core-concepts/overview/">Core concepts</a></strong></p>
-<hr />
-<p>Understand the layers, contracts, and runtime behind what you just built.</p>
-</li>
-<li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg></span> <strong><a href="../../recipes/crud-fastapi-postgres/">Back it with Postgres</a></strong></p>
-<hr />
-<p>Swap the in-memory adapters for real infrastructure.</p>
-</li>
-</ul>
-</div>
 
 
 
@@ -6144,7 +6152,7 @@ routes don't change — that's the whole point. The
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../installation/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Installation">
+          <a href="../shutdown-and-fleets/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Shutdown &amp; fleets">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -6154,20 +6162,20 @@ routes don't change — that's the whole point. The
                 Previous
               </span>
               <div class="md-ellipsis">
-                Installation
+                Shutdown & fleets
               </div>
             </div>
           </a>
         
         
           
-          <a href="../project-structure/" class="md-footer__link md-footer__link--next" aria-label="Next: Project structure">
+          <a href="../portability/" class="md-footer__link md-footer__link--next" aria-label="Next: Portability">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Project structure
+                Portability
               </div>
             </div>
             <div class="md-footer__button md-icon">

@@ -1948,6 +1948,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/credential-rotation/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-key-round" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Credential rotation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/portability/" class="md-nav__link">
         
   
@@ -5819,6 +5848,21 @@ provisioning, JWT signing, token renewal).</p>
 <td><code>SecretsDepKey</code></td>
 </tr>
 <tr>
+<td>Versioned reads (<code>resolve_versioned</code>, <code>current_version</code>)</td>
+<td><code>VaultKvSecrets</code> (native KV v2 versions)</td>
+<td><code>SecretsDepKey</code></td>
+</tr>
+<tr>
+<td>Control-plane writes (<code>put</code>, rotator-facing)</td>
+<td><code>VaultKvSecrets</code></td>
+<td><code>SecretsAdminDepKey</code></td>
+</tr>
+<tr>
+<td>Dynamic credentials (leases)</td>
+<td><code>VaultDynamicSecrets</code> (database engine)</td>
+<td><code>SecretsLeaseDepKey</code> (opt-in)</td>
+</tr>
+<tr>
 <td>Raw client</td>
 <td><code>VaultClient</code></td>
 <td><code>VaultClientDepKey</code></td>
@@ -5854,6 +5898,15 @@ provisioning, JWT signing, token renewal).</p>
   leaves Vault), <code>VaultTransitTenantProvisioner</code> creates a tenant's Transit key
   on onboarding, and <code>VaultTransitSigner</code> signs JWTs (RS256/ES256) without the
   private key leaving Vault.</li>
+<li>KV v2 assigns <strong>native version tokens</strong>, so the secrets lifecycle plane
+  (watchers, hot reload, the rotator) works over Vault without content hashing —
+  and <code>current_version</code> is served from KV metadata, never reading the payload.
+  See <a href="../../running-in-prod/credential-rotation/">Credential rotation</a>.</li>
+<li><strong>Dynamic credentials</strong> need the database secrets engine enabled
+  (<code>VaultConfig.database_mount</code>, default <code>database</code>); register
+  <code>VaultDynamicSecrets</code> via <code>VaultDepsModule(dynamic_secrets=…)</code> and pair it with
+  the kit lease manager. Where you adopt leases for a backend, short TTLs <em>are</em>
+  the rotation — skip the rotator there.</li>
 </ul>
 
 
