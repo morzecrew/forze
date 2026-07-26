@@ -133,6 +133,28 @@ class PostgresRotationTarget(RotationTargetPort):
         if self.pool_checkout_allowance.total_seconds() < 0:
             raise exc.configuration("Pool checkout allowance must not be negative")
 
+        self._validate_checkout_allowance()
+
+    # ....................... #
+
+    def _validate_checkout_allowance(self) -> None:
+        """Tie the allowance to the client's CONFIGURED acquire timeout, not an
+        independent estimate: an allowance below the real wait understates
+        ``apply_latency_bound`` and reopens the late-commit window. Checked at
+        construction and again at apply time (the authoritative moment — a
+        client initialized after this target was built carries its final value
+        by then)."""
+
+        configured = getattr(self.client, "acquire_timeout", None)
+
+        if isinstance(configured, timedelta) and configured > self.pool_checkout_allowance:
+            raise exc.configuration(
+                f"pool_checkout_allowance ({self.pool_checkout_allowance}) understates "
+                f"the client's configured acquire timeout ({configured}); the declared "
+                "apply-latency bound would be shorter than a stale apply's real "
+                "lifetime.",
+            )
+
     # ....................... #
 
     @property
@@ -185,6 +207,10 @@ class PostgresRotationTarget(RotationTargetPort):
 
     async def apply(self, tenant_id: UUID | None, pending: PendingCredential) -> None:
         """Set the pending DSN's password on its role (idempotent — a retry re-applies)."""
+
+        # Authoritative re-check: initialize() may have set the client's acquire
+        # timeout after this target was constructed.
+        self._validate_checkout_allowance()
 
         params = self._parse_dsn(await self.secrets.resolve_str(pending.ref))
         user = params.get("user")

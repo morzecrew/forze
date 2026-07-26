@@ -9,6 +9,7 @@ require_psycopg()
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Sequence
 from contextlib import AbstractAsyncContextManager
+from datetime import timedelta
 from typing import (
     Any,
     Literal,
@@ -81,6 +82,14 @@ class PostgresClientPort(Protocol):
     ) -> AbstractAsyncContextManager[AsyncConnection | None]: ...  # pragma: no cover
 
     def detached(self) -> AbstractAsyncContextManager[None]: ...  # pragma: no cover
+
+    @property
+    def acquire_timeout(self) -> timedelta:
+        """Pool-connection acquire timeout — the client-side wait a statement can
+        spend queued before its server-side clocks start. Exposed so consumers
+        declaring latency bounds (e.g. rotation targets) can validate against the
+        configured truth instead of an independent estimate."""
+        ...  # pragma: no cover
 
     @overload
     def execute(

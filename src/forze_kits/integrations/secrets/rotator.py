@@ -36,7 +36,7 @@ lock single-flights concurrent rotations of the same ref across replicas.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import timedelta
 from typing import Final, cast
 from uuid import UUID
@@ -44,7 +44,11 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel, Field
 
-from forze.application.contracts.dlock import DistributedLockSpec
+from forze.application.contracts.dlock import (
+    AcquiredLock,
+    DistributedLockCommandPort,
+    DistributedLockSpec,
+)
 from forze.application.contracts.durable.function import DurableRunRecord, DurableScheduleRecord
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.contracts.secrets import (
@@ -102,6 +106,28 @@ def pending_ref_for(ref: SecretRef, *, suffix: str = PENDING_SUFFIX) -> SecretRe
     """The staging ref paired with *ref*."""
 
     return SecretRef(f"{ref.path}{suffix}")
+
+
+def _ownership_probe(
+    cmd: DistributedLockCommandPort,
+    lock: AcquiredLock,
+    ref: SecretRef,
+) -> Callable[[], Awaitable[None]]:
+    """Explicit ownership assertion for write points.
+
+    ``reset`` extends the held generation and returns ``False`` once the lock has
+    expired or been stolen — so a heartbeat-detected loss aborts the run *before*
+    the next write instead of surfacing only at scope exit."""
+
+    async def _assert_owned() -> None:
+        if not await cmd.reset(lock.key, lock.owner):
+            raise exc.concurrency(
+                f"Rotation lock for {ref.path!r} was lost; refusing to write.",
+                code="rotation_lock_lost",
+                details={"ref": ref.path},
+            )
+
+    return _assert_owned
 
 
 # ....................... #
@@ -228,8 +254,9 @@ class SecretRotator:
         if self.lock is None:
             return await self._rotate(ctx, ref, payload.tenant_id)
 
+        cmd = ctx.dlock.command(self.lock)
         scope = DistributedLockScope(
-            cmd=ctx.dlock.command(self.lock),
+            cmd=cmd,
             owner_provider=lambda: f"secrets_rotator:{current_time_source().uuid()}",
             # A rotation step (a real verify connection against a struggling
             # backend) can outlive the lock TTL; the heartbeat keeps single-flight
@@ -238,13 +265,22 @@ class SecretRotator:
             extend_interval=self.lock.ttl / 3,
         )
 
-        async with scope.scope(f"secrets_rotate:{ref.path}"):
-            return await self._rotate(ctx, ref, payload.tenant_id)
+        async with scope.scope(f"secrets_rotate:{ref.path}") as lock:
+            return await self._rotate(
+                ctx,
+                ref,
+                payload.tenant_id,
+                assert_owned=_ownership_probe(cmd, lock, ref),
+            )
 
     # ....................... #
 
     async def _rotate(
-        self, ctx: ExecutionContext, ref: SecretRef, tenant_id: UUID | None
+        self,
+        ctx: ExecutionContext,
+        ref: SecretRef,
+        tenant_id: UUID | None,
+        assert_owned: Callable[[], Awaitable[None]] | None = None,
     ) -> JsonDict:
         secrets = ctx.deps.provide(SecretsDepKey)
         admin = ctx.deps.provide(SecretsAdminDepKey)
@@ -286,6 +322,12 @@ class SecretRotator:
         primary_at_create = SecretVersion(str(staged["current_version_token"]))
 
         async def _set() -> JsonDict:
+            # A heartbeat-detected loss must abort BEFORE the unfenceable backend
+            # write, not at scope exit — a known-unauthorized ALTER is the one
+            # write no downstream fence can undo.
+            if assert_owned is not None:
+                await assert_owned()
+
             await self.target.apply(tenant_id, pending)
             return {}
 
@@ -299,6 +341,11 @@ class SecretRotator:
         await step.run("test", _test)
 
         async def _finish() -> JsonDict:
+            # Early ownership abort: the store writes below are CAS-fenced anyway,
+            # but a known-lost owner should stop doing work at all.
+            if assert_owned is not None:
+                await assert_owned()
+
             staged_now = await versioned.resolve_versioned(pending.ref)
 
             if staged_now.version != pending.version:
@@ -411,20 +458,27 @@ class SecretRotator:
         # superseded. The bounded wait rides out a rotation in progress; a still
         # -held lock past it fails this run loudly (and the concurrent rotation's
         # own confirm chain covers the backend meanwhile).
+        cmd = ctx.dlock.command(self.lock)
         scope = DistributedLockScope(
-            cmd=ctx.dlock.command(self.lock),
+            cmd=cmd,
             owner_provider=lambda: f"secrets_rotator:{current_time_source().uuid()}",
             extend_interval=self.lock.ttl / 3,
             wait_timeout=self.lock.ttl,
         )
 
-        async with scope.scope(f"secrets_rotate:{ref.path}"):
-            return await self._confirm(ctx, ref, payload)
+        async with scope.scope(f"secrets_rotate:{ref.path}") as lock:
+            return await self._confirm(
+                ctx, ref, payload, assert_owned=_ownership_probe(cmd, lock, ref)
+            )
 
     # ....................... #
 
     async def _confirm(
-        self, ctx: ExecutionContext, ref: SecretRef, payload: RotationInput
+        self,
+        ctx: ExecutionContext,
+        ref: SecretRef,
+        payload: RotationInput,
+        assert_owned: Callable[[], Awaitable[None]] | None = None,
     ) -> JsonDict:
         secrets = ctx.deps.provide(SecretsDepKey)
 
@@ -449,6 +503,12 @@ class SecretRotator:
 
             except Exception:
                 drift = True
+
+                # Same bar as the rotation body: no backend write after a
+                # heartbeat-detected loss.
+                if assert_owned is not None:
+                    await assert_owned()
+
                 await self.target.apply(payload.tenant_id, canonical)
                 await self.target.verify(payload.tenant_id, canonical)
 

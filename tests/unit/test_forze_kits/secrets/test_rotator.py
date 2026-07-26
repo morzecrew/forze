@@ -218,6 +218,64 @@ class TestCrashResume:
         assert await secrets.resolve_str(_REF) == f"dsn-for-{target.minted[0]}"
 
 
+class TestOwnershipProbe:
+    async def test_known_lock_loss_aborts_before_the_backend_write(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A worker whose lock is already lost must not run its ALTER at all —
+        the probe aborts the set step before `target.apply`, not at scope exit."""
+
+        from forze_mock.adapters.dlock import MockDistributedLockAdapter
+
+        target = _RecordingTarget()
+        ctx, rotator, _ = _composition(target, publish=False)
+        await _seed(ctx, "dsn-old")
+
+        async def _lost_reset(self: object, key: str, owner: str) -> bool:
+            return False  # heartbeat/probe view: expired or stolen
+
+        monkeypatch.setattr(MockDistributedLockAdapter, "reset", _lost_reset)
+
+        with pytest.raises(Exception, match="lock .* was lost|refusing to write"):
+            await rotator.rotate_now(ctx, _REF)
+
+        # create staged (store write, fenced downstream) — but the unfenceable
+        # backend write never happened.
+        assert target.calls == ["compose"]
+
+    async def test_confirm_corrective_apply_is_probed_too(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from forze_mock.adapters.dlock import MockDistributedLockAdapter
+
+        target = _ConfirmScriptedTarget()
+        state = MockState()
+        registry = DurableFunctionRegistry()
+        rotator = SecretRotator(target=target, publish_spec=None, reconfirm_after=timedelta(0))
+        rotator.register(registry)
+        durable_deps, runner, _ = durable_kits_deps(registry=registry)
+        ctx = context_from_deps(MockDepsModule(state=state)(), durable_deps)
+        await _seed(ctx, "dsn-old")
+
+        await rotator.rotate_now(ctx, _REF)
+
+        # The delayed round finds drift, but its lock is gone: the corrective
+        # apply must be refused (run FAILED), never a stale backend write.
+        target.fail_confirms = 1
+
+        async def _lost_reset(self: object, key: str, owner: str) -> bool:
+            return False
+
+        monkeypatch.setattr(MockDistributedLockAdapter, "reset", _lost_reset)
+
+        await runner.recover(ctx)
+
+        admin = resolve_durable_run_admin(ctx)
+        page = await admin.list_runs(name=rotator.confirm_function_name)
+        assert [r.status for r in page.records] == [DurableRunStatus.FAILED]
+        assert "converge" not in target.calls
+
+
 class TestPromoteFence:
     async def test_restaged_ref_after_verify_refuses_promotion(self) -> None:
         """The lost-lock race: a competing rotator overwrites the staging ref after

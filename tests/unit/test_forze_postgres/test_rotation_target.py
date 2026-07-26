@@ -299,6 +299,40 @@ class TestConfig:
                 role_pair=("app", "app"),
             )
 
+    async def test_allowance_must_cover_the_clients_acquire_timeout(self) -> None:
+        """The allowance is validated against the client's CONFIGURED acquire
+        timeout — an independent estimate below the real wait would understate
+        the declared apply-latency bound."""
+
+        from datetime import timedelta
+
+        secrets = MappingSecrets(data={"db/dsn.pending": "postgresql://app_b:pw@db/app"})
+
+        eager = _FakeClient()
+        eager.acquire_timeout = timedelta(seconds=60)  # type: ignore[attr-defined]
+
+        with pytest.raises(CoreException, match="understates"):
+            PostgresRotationTarget(
+                secrets=secrets,
+                client=eager,  # type: ignore[arg-type]
+                role_pair=("app_a", "app_b"),
+            )
+
+        # Authoritative apply-time recheck: the client was initialized (and its
+        # acquire timeout raised) only after the target was constructed.
+        late = _FakeClient()
+        target = PostgresRotationTarget(
+            secrets=secrets,
+            client=late,  # type: ignore[arg-type]
+            role_pair=("app_a", "app_b"),
+        )
+        late.acquire_timeout = timedelta(minutes=5)  # type: ignore[attr-defined]
+
+        with pytest.raises(CoreException, match="understates"):
+            await target.apply(None, _PENDING)
+
+        assert late.executed == []  # refused before any statement
+
     def test_rejects_non_positive_verify_timeout(self) -> None:
         from datetime import timedelta
 
