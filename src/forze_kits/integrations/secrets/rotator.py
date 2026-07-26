@@ -42,7 +42,7 @@ from typing import Final, cast
 from uuid import UUID
 
 import attrs
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from forze.application.contracts.dlock import DistributedLockSpec
 from forze.application.contracts.durable.function import DurableRunRecord, DurableScheduleRecord
@@ -107,7 +107,7 @@ class RotationInput(BaseModel):
     ref_path: str
     tenant_id: UUID | None = None
 
-    confirm_round: int = 1
+    confirm_round: int = Field(default=1, ge=1)
     """Reconfirmation round (confirm runs only): drift detected in one round
     schedules the next, until a round passes quiet or the round cap is hit."""
 
@@ -426,18 +426,21 @@ class SecretRotator:
             await self.target.apply(payload.tenant_id, canonical)
             await self.target.verify(payload.tenant_id, canonical)
 
-            # Recheck after the corrective write: in a lock-less wiring (or past a
-            # lost lock) a rotation may have promoted a newer canonical while we
-            # asserted this one — the chained round below then converges to the
-            # NEW canonical instead of resting on a superseded success.
-            recheck = await versioned.resolve_versioned(ref)
+        # Recheck on BOTH paths: in a lock-less wiring (or past a lost lock) a
+        # rotation may have promoted a newer canonical while this round read,
+        # verified, or corrected the older one — even a quiet verify can have
+        # raced the promote. A version advance is drift by definition: the
+        # chained round below converges to the NEW canonical instead of resting
+        # on a superseded verdict.
+        recheck = await versioned.resolve_versioned(ref)
 
-            if recheck.version != current.version:
-                logger.warning(
-                    "Canonical credential at %s advanced during reconfirmation; "
-                    "the next round converges to it",
-                    ref.path,
-                )
+        if recheck.version != current.version:
+            drift = True
+            logger.warning(
+                "Canonical credential at %s advanced during reconfirmation; "
+                "the next round converges to it",
+                ref.path,
+            )
 
         if drift and self.reconfirm_after is not None:
             if payload.confirm_round >= MAX_RECONFIRM_ROUNDS:

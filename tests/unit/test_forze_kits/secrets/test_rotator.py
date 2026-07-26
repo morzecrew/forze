@@ -529,6 +529,68 @@ class TestBackendConvergence:
         assert newest.output_json is not None
         assert newest.output_json["version_token"] == canonical_now.version.token
 
+    async def test_quiet_verify_raced_by_a_promote_still_chains(self) -> None:
+        """The symmetric race: verify passes quietly, but a concurrent rotation
+        promoted a newer canonical during the round. The post-verify recheck marks
+        drift and the chained round converges to the new canonical."""
+
+        class _RacingTarget(_ConfirmScriptedTarget):
+            admin: Any = None
+            _ref_verifies: int = 0
+
+            async def verify(self, tenant_id: UUID | None, pending: PendingCredential) -> None:
+                await super().verify(tenant_id, pending)
+
+                if pending.ref == _REF:
+                    self._ref_verifies += 1
+
+                    # Call 1 is the in-run finish confirm; the promote lands
+                    # during the DELAYED round's quiet verify (call 2).
+                    if self._ref_verifies == 2:
+                        await self.admin.put(_REF, "newer-canonical-dsn")
+
+        target = _RacingTarget()
+        state = MockState()
+        registry = DurableFunctionRegistry()
+        rotator = SecretRotator(
+            target=target, publish_spec=None, lock=None, reconfirm_after=timedelta(0)
+        )
+        rotator.register(registry)
+        durable_deps, runner, _ = durable_kits_deps(registry=registry)
+        ctx = context_from_deps(MockDepsModule(state=state)(), durable_deps)
+        target.admin = ctx.deps.provide(SecretsAdminDepKey)
+        await _seed(ctx, "dsn-old")
+
+        await rotator.rotate_now(ctx, _REF)
+
+        assert await runner.recover(ctx) == 1  # round 1: quiet verify, recheck drifts
+        assert await runner.recover(ctx) == 1  # round 2: quiet on the new canonical
+        assert await runner.recover(ctx) == 0
+
+        secrets = ctx.deps.provide(SecretsDepKey)
+        canonical_now = await secrets.resolve_versioned(_REF)
+        assert canonical_now.text == "newer-canonical-dsn"
+
+        admin = resolve_durable_run_admin(ctx)
+        page = await admin.list_runs(name=rotator.confirm_function_name)
+        assert len(page.records) == 2
+        newest = max(page.records, key=lambda record: record.created_at)
+        assert newest.output_json is not None
+        assert newest.output_json["version_token"] == canonical_now.version.token
+
+    def test_confirm_round_must_be_positive(self) -> None:
+        from pydantic import ValidationError
+
+        from forze_kits.integrations.secrets import RotationInput
+
+        with pytest.raises(ValidationError):
+            RotationInput(ref_path="db/dsn", confirm_round=0)
+
+        with pytest.raises(ValidationError):
+            RotationInput(ref_path="db/dsn", confirm_round=-3)
+
+        assert RotationInput(ref_path="db/dsn").confirm_round == 1
+
     async def test_reconfirm_window_must_exceed_the_targets_latency_bound(self) -> None:
         """Fail closed at wiring: a reconfirmation that fires while a stale apply
         can still commit proves nothing."""
