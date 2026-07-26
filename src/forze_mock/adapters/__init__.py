@@ -20,7 +20,7 @@ from forze_mock.adapters.durable import (
 )
 from forze_mock.adapters.embeddings import MockHashEmbeddingsProvider
 from forze_mock.adapters.events import RecordingAuthnEventSink
-from forze_mock.adapters.graph import MockGraphAdapter
+from forze_mock.adapters.graph import MockGraphAdapter, MockGraphManagementAdapter
 from forze_mock.adapters.http import MockHttpRegistry, MockHttpServiceAdapter
 from forze_mock.adapters.idempotency import MockIdempotencyAdapter
 from forze_mock.adapters.inbox import MockInboxAdapter
@@ -76,6 +76,7 @@ __all__ = [
     "MockHubSearchAdapter",
     "MockFederatedSearchAdapter",
     "MockGraphAdapter",
+    "MockGraphManagementAdapter",
     "MockHttpServiceAdapter",
     "MockHttpRegistry",
     "MockCounterAdapter",

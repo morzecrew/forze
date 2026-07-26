@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New `normalize_property_filter` in `contracts.graph`; graph `property_filter` values are coerced the way properties are stored, so a `UUID`/`datetime`/`Decimal` filter now matches. **Behaviour change:** such a filter previously returned no rows on the mock and raised on Neo4j.
 - A duplicate vertex key now raises `graph_vertex_conflict` on Neo4j (was a generic `core.conflict`). Requires `ensure_schema()`; without it Cypher `CREATE` cannot detect a duplicate.
+- New `MockGraphManagementAdapter` under the `graph_management` key — `ctx.graph.management(spec)` now resolves on the mock, where it previously raised. `ensure_schema`/`drop_schema` are no-ops there: the in-memory store's key uniqueness is intrinsic and not droppable.
 
 **Counter value domain** — counters are signed 64-bit on every backend, now declared and enforced instead of assumed.
 

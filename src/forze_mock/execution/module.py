@@ -74,6 +74,7 @@ from forze.application.contracts.embeddings import (
 )
 from forze.application.contracts.graph import (
     GraphCommandDepKey,
+    GraphManagementDepKey,
     GraphQueryDepKey,
     GraphRawQueryDepKey,
 )
@@ -203,6 +204,7 @@ from forze_mock.execution.factories import (
     ConfigurableMockEmbeddings,
     ConfigurableMockFederatedSearch,
     ConfigurableMockGraph,
+    ConfigurableMockGraphManagement,
     ConfigurableMockHttpService,
     ConfigurableMockHubSearch,
     ConfigurableMockIdempotency,
@@ -409,6 +411,7 @@ class MockDepsModule(DepsModule):
             GraphQueryDepKey: graph,
             GraphCommandDepKey: graph,
             GraphRawQueryDepKey: graph,
+            GraphManagementDepKey: ConfigurableMockGraphManagement(module=self),
             HttpServiceDepKey: ConfigurableMockHttpService(module=self),
             TransactionManagerDepKey: self._txmanager_factory(),
             QueueQueryDepKey: ConfigurableMockQueue(module=self),
