@@ -67,6 +67,7 @@ from the `ExecutionContext`. Capabilities with a dedicated reference page are li
 | [Authorization](contracts/identity.md#authorization) | `AuthzSpec` | `ctx.authz.decision(spec)` / `ctx.authz.scope(spec)` |
 | [Tenancy](tenancy-matrix.md) | — | `ctx.tenancy` |
 | Secrets | `SecretRef` | `SecretsPort` (`SecretsDepKey`) |
+| [Counterparty-rotated credentials](../running-in-prod/credential-rotation.md#when-the-other-side-rotates-it) | `SecretRef` | `RotatingCredentialStorePort` (`RotatingCredentialsDepKey`) |
 
 ## Integration
 

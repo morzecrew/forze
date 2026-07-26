@@ -161,6 +161,7 @@ nav = [
             "recipes/external-bootstrap-forze-jwt.md",
             "recipes/external-idp-oidc.md",
             "recipes/social-sign-in.md",
+            "recipes/rotating-oauth-credentials.md",
         ] },
         { "Messaging & workflows" = [
             "recipes/end-to-end-saga-outbox-inbox.md",

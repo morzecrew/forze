@@ -19,7 +19,12 @@ from .changes import (
     SecretRotated,
     SecretsChangeSource,
 )
-from .deps import SecretsAdminDepKey, SecretsDepKey, SecretsLeaseDepKey
+from .deps import (
+    RotatingCredentialsDepKey,
+    SecretsAdminDepKey,
+    SecretsDepKey,
+    SecretsLeaseDepKey,
+)
 from .lease import DynamicSecretsPort, LeasedSecret
 from .ports import SecretsPort
 from .resolution import (
@@ -27,6 +32,16 @@ from .resolution import (
     resolve_str_for_tenant,
     resolve_structured,
     secret_ref_for_tenant,
+)
+from .rotating import (
+    BURNT_CREDENTIAL_CODE,
+    CREDENTIAL_EXCHANGE_TIMEOUT_CODE,
+    CREDENTIAL_PERSIST_LOST_CODE,
+    INVALID_GRANT_CODE,
+    CredentialExchangerPort,
+    ExchangedCredential,
+    RotatingCredential,
+    RotatingCredentialStorePort,
 )
 from .rotation import PendingCredential, RotationTargetPort
 from .value_objects import SecretRef
@@ -76,4 +91,14 @@ __all__ = [
     # leases
     "DynamicSecretsPort",
     "LeasedSecret",
+    # counterparty-rotated credentials
+    "RotatingCredentialsDepKey",
+    "BURNT_CREDENTIAL_CODE",
+    "CREDENTIAL_EXCHANGE_TIMEOUT_CODE",
+    "CREDENTIAL_PERSIST_LOST_CODE",
+    "INVALID_GRANT_CODE",
+    "CredentialExchangerPort",
+    "ExchangedCredential",
+    "RotatingCredential",
+    "RotatingCredentialStorePort",
 ]

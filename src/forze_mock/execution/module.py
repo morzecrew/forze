@@ -108,6 +108,8 @@ from forze.application.contracts.search import (
     SearchResultSnapshotDepKey,
 )
 from forze.application.contracts.secrets import (
+    CredentialExchangerPort,
+    RotatingCredentialsDepKey,
     SecretsAdminDepKey,
     SecretsDepKey,
     SecretsLeaseDepKey,
@@ -171,6 +173,7 @@ from forze_mock.adapters.identity import (
     MockPrincipalRegistryPort,
     MockPrincipalResolverPort,
     MockRoleAssignmentPort,
+    MockRotatingCredentialStore,
     MockSecretsPort,
     MockTenantManagementPort,
     MockTenantResolverPort,
@@ -288,6 +291,16 @@ class MockDepsModule(DepsModule):
     ``None`` leaves a ``query_params`` document read unprogrammed (a bound read raises
     ``code="mock.query_parameters.unprogrammed"``); pass a :class:`MockQueryParamsRegistry` whose
     sources produce rows from the bound params + :class:`MockState`, over which the DSL composes."""
+
+    rotating_credentials: CredentialExchangerPort | None = attrs.field(default=None)
+    """Exchanger backing an in-memory ``RotatingCredentialStorePort`` (default off).
+
+    Counterparty-rotated credentials are the one store that cannot be wired without the
+    application: the exchange is a call to *their* provider, so there is no default worth
+    guessing. Pass an exchanger and the store is registered under
+    ``RotatingCredentialsDepKey``; leave it ``None`` and the key stays unregistered, so a
+    handler asking for a store it never wired fails at resolution rather than silently
+    holding a credential nobody can rotate."""
 
     resilience: Literal["passthrough", "real"] = "passthrough"
     domain_events: DomainEventRegistry | None = attrs.field(default=None)
@@ -443,6 +456,12 @@ class MockDepsModule(DepsModule):
             KeyringDepKey: crypto_keyring,
             DeterministicCipherDepKey: crypto_deterministic,
         }
+
+        if self.rotating_credentials is not None:
+            deps[RotatingCredentialsDepKey] = MockRotatingCredentialStore(
+                state=self.state,
+                exchanger=self.rotating_credentials,
+            )
 
         if self.routed_state is not None:
             deps[MockRoutedStateDepKey] = self.routed_state

@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Rotation notifications** — `SecretRotated` (refs/versions only) via outbox → broadcast pub/sub; `PubSubSecretsChangeSource` consumes it through the same binder seam.
 - **Durable rotator** — `SecretRotator`: create→set→test→finish per `(ref, tenant)` with `<path>.pending` staging and fenced promotion (verify-before-promote, CAS via `SecretsAdminPort.put(expected_version=…)`, delayed reconfirmation via `reconfirm_after`); triggers `rotate_now`/`enqueue_tenants`/`ensure_cron`; `forze_postgres.PostgresRotationTarget` defaults to dual-user alternation, single-role behind `single_role_degraded=True`.
 - **Leases** — `DynamicSecretsPort`/`LeasedSecret`, `forze_vault.VaultDynamicSecrets`, and `SecretsLeaseManager` (renew at ~⅔ TTL, reissue before `max_ttl`); a leased backend needs no rotator.
+- **Counterparty-rotated credentials** — `RotatingCredentialStorePort` (`rotating_credentials` key) for single-use OAuth refresh tokens: `get`/`refresh(observed=…)`/`put`/`burn` over an app-supplied `CredentialExchangerPort` (raise `INVALID_GRANT_CODE` for a permanent rejection, anything else for transient). New codes `credential_burnt` (terminal; cleared by `put`), `credential_exchange_timeout`, `credential_persist_lost`. Stores: `forze_postgres.PostgresRotatingCredentialStore` (app-provided table, DDL on the class) and `MockDepsModule(rotating_credentials=…)`.
+- New `forze.base.primitives.StripedAsyncLocks` — keyed in-process serialization over a bounded lock set.
 - Full mock parity (`MockSecretsChangeSource`, `MockDynamicSecretsPort`), new `RoutedTenantClientBase.cached_tenant_ids()`, runnable walkthrough in `examples/recipes/secrets_rotation/`.
 
 ## [0.5.1] - 2026-07-25

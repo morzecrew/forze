@@ -74,6 +74,7 @@ from .selector import StrKeySelector, str_key_selector
 from .sequence import AbstractSequence
 from .sketch import DDSketch, WindowedDDSketch
 from .string import normalize_string
+from .striped_locks import LOCK_STRIPES, StripedAsyncLocks
 from .time_source import (
     FrozenTimeSource,
     SystemTimeSource,
@@ -144,6 +145,8 @@ __all__ = [
     "ContextualBuffer",
     "ContextVarTrace",
     "OnceCell",
+    "LOCK_STRIPES",
+    "StripedAsyncLocks",
     "normalize_string",
     "clamp",
     "MISSING",
