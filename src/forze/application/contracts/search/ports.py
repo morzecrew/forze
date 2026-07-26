@@ -241,11 +241,21 @@ class SearchManagementPort(Protocol):
     """
 
     def ensure_index(self) -> Awaitable[None]:
-        """Create or update the backing index settings for the configured search surface."""
+        """Create or update the backing index settings for the configured search surface.
+
+        Idempotent: calling it on an already-provisioned surface reconciles its settings
+        rather than failing, so it is safe at every startup.
+        """
         ...  # pragma: no cover
 
     def delete_all(self) -> Awaitable[None]:
-        """Remove all documents from the search index."""
+        """Remove all documents from the search index.
+
+        A postcondition, not an operation on an existing thing: an index that was never
+        provisioned already holds no documents, so the wipe is a **no-op** there rather
+        than an error. That is what makes the documented wipe-then-rebuild workflow safe
+        on a fresh deployment, where nothing has created the index yet.
+        """
         ...  # pragma: no cover
 
 

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Search plane** — conformance across the mock, Postgres FTS, Mongo text and Meilisearch.
+
+- **Behaviour change:** `SearchManagementPort.delete_all()` on an index that was never provisioned is a no-op on every backend (Meilisearch raised `index_not_found`), so the documented wipe-then-rebuild workflow works on a fresh deployment.
+- **Behaviour change:** a Meilisearch task rejected as `invalid_request` now raises `precondition` instead of `infrastructure`, and carries the engine's own message rather than only a task id.
+
 **Inference plane** — conformance across the mock, in-process, KServe-V2 and MLflow adapters closed three divergences.
 
 - **Behaviour change:** a declared `max_batch_size` now **sub-batches** an oversized `predict_stream` chunk on every adapter instead of refusing it. `predict_many` still refuses whole — all-or-nothing.
