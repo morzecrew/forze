@@ -228,7 +228,9 @@ async def test_roundtrip_through_real_postgres_preserves_rich_types(
     assert export.total_rows == 4
 
     target = _pg_ctx(pg_client, target_table)
-    result = await ArchiveImporter()(target, _registry(), archive)
+    # A per-tenant archive names its tenant in a plaintext manifest, so import needs the
+    # partition confirmed out of band — the same tenant the export was scoped to.
+    result = await ArchiveImporter(tenant=tenant)(target, _registry(), archive)
     assert result.total_imported == 4
 
     restored = await _read_all(target, list(seeded))
@@ -257,7 +259,7 @@ async def test_export_postgres_import_mongo_preserves_rich_types(
 
     db_name = (await mongo_client.db()).name
     mongo = _mongo_ctx(mongo_client, db_name, f"orders_{uuid4().hex[:8]}")
-    result = await ArchiveImporter()(mongo, _registry(), archive)
+    result = await ArchiveImporter(tenant=tenant)(mongo, _registry(), archive)
     assert result.total_imported == 4
 
     restored = await _read_all(mongo, list(seeded))
@@ -292,7 +294,7 @@ async def test_export_mongo_import_postgres_preserves_rich_types(
     table = f"orders_{uuid4().hex[:8]}"
     await _create_pg_table(pg_client, table)
     target = _pg_ctx(pg_client, table)
-    result = await ArchiveImporter()(target, _registry(), archive)
+    result = await ArchiveImporter(tenant=tenant)(target, _registry(), archive)
     assert result.total_imported == 4
 
     restored = await _read_all(target, list(seeded))
@@ -335,7 +337,7 @@ async def test_reexport_from_mongo_equals_the_original_export(
 
     db_name = (await mongo_client.db()).name
     mongo = _mongo_ctx(mongo_client, db_name, f"orders_{uuid4().hex[:8]}")
-    await ArchiveImporter()(mongo, _registry(), archive_a)
+    await ArchiveImporter(tenant=tenant)(mongo, _registry(), archive_a)
 
     archive_b = tmp_path / "b"
     await ArchiveExporter()(mongo, _registry(), archive_b, scope=TenantScope(tenant_id=tenant))
