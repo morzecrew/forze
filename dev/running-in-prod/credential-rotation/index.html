@@ -2103,6 +2103,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#when-the-other-side-rotates-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When the other side rotates it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#leases-dynamic-credentials" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4486,6 +4497,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../recipes/rotating-oauth-credentials/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-repeat" viewBox="0 0 24 24"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Survive single-use OAuth refresh tokens
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -5796,6 +5836,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#when-the-other-side-rotates-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When the other side rotates it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#leases-dynamic-credentials" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6083,6 +6134,59 @@ degraded for a reason.</p>
 outbox/pubsub, rotation targets, tenant directory}</code> with the durable recovery and
 scheduler steps — no HTTP surface. See the runnable walkthrough in
 <code>examples/recipes/secrets_rotation/</code>.</p>
+<h2 id="when-the-other-side-rotates-it">When the other side rotates it<a class="headerlink" href="#when-the-other-side-rotates-it" title="Permanent link">&para;</a></h2>
+<p>Everything above rotates a credential <em>you</em> control. Some third parties invert that:
+a provider doing refresh-token rotation burns the token you present and hands back a
+replacement, so the rotation has already happened by the time you learn of it. There
+is nothing to promote and nothing to verify — the only question is whether you
+survive it, and two failures make that a crash-consistency problem rather than a
+convenience.</p>
+<p>The provider commits the burn <em>before</em> you can commit anything, so a process that
+dies holding an unpersisted replacement has destroyed the credential: the old token
+is dead, the new one is gone, and only a human re-authorization recovers it. And a
+concurrent exchange is destructive rather than merely wasteful — reuse detection
+treats a replayed refresh token as an attack and may revoke the entire token family.</p>
+<p><code>RotatingCredentialStorePort</code> owns both. Read, and when the token is spent hand the
+version you read back:</p>
+<div class="highlight"><pre><span></span><code><span class="n">credential</span> <span class="o">=</span> <span class="k">await</span> <span class="n">store</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">SecretRef</span><span class="p">(</span><span class="s2">&quot;oauth/crm&quot;</span><span class="p">))</span>
+
+<span class="k">if</span> <span class="n">credential</span><span class="o">.</span><span class="n">expires_before</span><span class="p">(</span><span class="n">utcnow</span><span class="p">()):</span>
+    <span class="n">credential</span> <span class="o">=</span> <span class="k">await</span> <span class="n">store</span><span class="o">.</span><span class="n">refresh</span><span class="p">(</span><span class="n">SecretRef</span><span class="p">(</span><span class="s2">&quot;oauth/crm&quot;</span><span class="p">),</span> <span class="n">observed</span><span class="o">=</span><span class="n">credential</span><span class="o">.</span><span class="n">version</span><span class="p">)</span>
+</code></pre></div>
+<p>That <code>observed</code> version is the whole single-flight mechanism. Under a per-credential
+lock — in-process, plus a row lock across processes — the store re-reads first: if the
+stored version has moved past yours, someone already exchanged and you get <em>their</em>
+credential instead of a second exchange. The replacement is committed before
+<code>refresh</code> returns, so nothing ever observes a credential that is not durable, and a
+write or commit that fails after a successful exchange raises <code>credential_persist_lost</code>
+rather than a retryable-looking storage error — no retry can undo the provider's burn.</p>
+<p>The converse matters just as much: <strong>once a token has been presented it is never presented
+again.</strong> Any ending that loses the outcome — a failed commit, or a timeout where no answer
+came back — leaves the grant marked unusable instead of restoring a row that still looks
+refreshable, because the next worker would otherwise replay a possibly-consumed token into
+the provider's reuse detection and lose the whole family. A timeout is transient for the
+network and terminal for the credential.</p>
+<p>Your half is the exchanger: one bounded call to the provider's token endpoint. Its
+one hard obligation is classification. Report a permanent rejection with
+<code>code=INVALID_GRANT_CODE</code> and the store records a terminal burn notice
+(<code>credential_burnt</code>), so callers escalate to re-authorization instead of hammering a
+provider that has already said no. Report anything transient — timeout, 5xx, reset —
+as anything else, and the stored credential is left untouched. Reporting a network
+blip as an invalid grant destroys a working credential, so when the answer is
+ambiguous, call it transient.</p>
+<p>The refresh token never appears in a caller-facing type: <code>get</code> returns the access
+token only, and the store hands the refresh token straight to the exchanger. A caller
+cannot replay a rotated token because it never holds one.</p>
+<p>Because every row is a replayable credential, the stored payload is <strong>sealed at rest by
+default</strong> — plaintext requires an explicit <code>acknowledge_plaintext=True</code>, and wiring fails
+closed if encryption is on with no keyring. The envelope's associated data binds each
+credential to its <code>(tenant, ref)</code>, so a row copied into another ref or tenant fails
+authentication rather than decrypting into the wrong grant. <code>expires_at</code> stays a plain
+column, so operators keep visibility into expiring grants without holding a key. Turning
+sealing on needs no migration: existing plaintext reads through and seals on next write.</p>
+<p><code>forze_postgres.PostgresRotatingCredentialStore</code> is the shipped store (one row per
+<code>(tenant_id, ref)</code>, <code>SELECT … FOR UPDATE</code>); see the runnable walkthrough in
+<code>examples/recipes/rotating_credentials/</code>.</p>
 <h2 id="leases-dynamic-credentials">Leases (dynamic credentials)<a class="headerlink" href="#leases-dynamic-credentials" title="Permanent link">&para;</a></h2>
 <p>Where a backend adopts a lease engine (Vault database engines), short TTLs <em>are</em>
 the rotation and the rotator becomes unnecessary for that backend. Credentials are

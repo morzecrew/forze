@@ -5399,6 +5399,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../recipes/rotating-oauth-credentials/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-repeat" viewBox="0 0 24 24"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Survive single-use OAuth refresh tokens
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -7753,6 +7782,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><strong>Rotation notifications</strong> — <code>SecretRotated</code> (refs/versions only) via outbox → broadcast pub/sub; <code>PubSubSecretsChangeSource</code> consumes it through the same binder seam.</li>
 <li><strong>Durable rotator</strong> — <code>SecretRotator</code>: create→set→test→finish per <code>(ref, tenant)</code> with <code>&lt;path&gt;.pending</code> staging and fenced promotion (verify-before-promote, CAS via <code>SecretsAdminPort.put(expected_version=…)</code>, delayed reconfirmation via <code>reconfirm_after</code>); triggers <code>rotate_now</code>/<code>enqueue_tenants</code>/<code>ensure_cron</code>; <code>forze_postgres.PostgresRotationTarget</code> defaults to dual-user alternation, single-role behind <code>single_role_degraded=True</code>.</li>
 <li><strong>Leases</strong> — <code>DynamicSecretsPort</code>/<code>LeasedSecret</code>, <code>forze_vault.VaultDynamicSecrets</code>, and <code>SecretsLeaseManager</code> (renew at ~⅔ TTL, reissue before <code>max_ttl</code>); a leased backend needs no rotator.</li>
+<li><strong>Counterparty-rotated credentials</strong> — <code>RotatingCredentialStorePort</code> (<code>rotating_credentials</code> key) for single-use OAuth refresh tokens: <code>get</code>/<code>refresh(observed=…)</code>/<code>put</code>/<code>burn</code> over an app-supplied <code>CredentialExchangerPort</code> (raise <code>INVALID_GRANT_CODE</code> for a permanent rejection, anything else for transient). New codes <code>credential_burnt</code> (terminal; cleared by <code>put</code>), <code>credential_exchange_timeout</code>, <code>credential_persist_lost</code>. Stores: <code>forze_postgres.PostgresRotatingCredentialStore</code> (app-provided table, DDL on the class) and <code>MockDepsModule(rotating_credentials=…)</code>.</li>
+<li><strong>Credentials sealed at rest by default</strong> — <code>PostgresRotatingCredentialsConfig.encrypt</code> defaults to <code>True</code> (unlike other stores' opt-in flags), <abbr title="Additional Authenticated Data">AAD</abbr>-bound to <code>(tenant, ref)</code> so a row lifted across refs or tenants fails authentication. Plaintext requires <code>acknowledge_plaintext=True</code>; encryption without a wired keyring fails closed at resolve. Existing plaintext rows read through and seal on next write — no migration. Only <code>payload</code> is sealed; <code>expires_at</code> stays queryable.</li>
+<li>New <code>forze.base.primitives.StripedAsyncLocks</code> — keyed in-process serialization over a bounded lock set.</li>
 <li>Full mock parity (<code>MockSecretsChangeSource</code>, <code>MockDynamicSecretsPort</code>), new <code>RoutedTenantClientBase.cached_tenant_ids()</code>, runnable walkthrough in <code>examples/recipes/secrets_rotation/</code>.</li>
 </ul>
 <h2 id="051-2026-07-25"><a href="https://github.com/morzecrew/forze/compare/v0.5.0...v0.5.1">0.5.1</a> - 2026-07-25<a class="headerlink" href="#051-2026-07-25" title="Permanent link">&para;</a></h2>

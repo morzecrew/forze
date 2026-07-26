@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/data-events/messaging-delivery-models/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/recipes/rotating-oauth-credentials/">
       
       
-        <link rel="prev" href="../events-sagas/">
+        <link rel="prev" href="../social-sign-in/">
       
       
-        <link rel="next" href="../realtime/">
+        <link rel="next" href="../end-to-end-saga-outbox-inbox/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Messaging delivery models - Forze</title>
+        <title>Survive single-use OAuth refresh tokens - Forze</title>
       
     
     
@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#the-four-models" class="md-skip">
+        <a href="#the-table" class="md-skip">
           Skip to content
         </a>
       
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Messaging delivery models
+              Survive single-use OAuth refresh tokens
             
           </span>
         </div>
@@ -268,8 +268,6 @@
   
   
   
-    
-  
   
     
       
@@ -280,15 +278,13 @@
   
   
   
-    
-  
   
     
       
     
     
     
-      <li class="md-tabs__item md-tabs__item--active">
+      <li class="md-tabs__item">
         <a href="../../core-concepts/overview/" class="md-tabs__link">
           
   
@@ -329,15 +325,7 @@
   
   
   
-  
     
-      
-    
-    
-    
-      
-  
-  
   
   
     
@@ -345,8 +333,20 @@
     
     
     
-      <li class="md-tabs__item">
-        <a href="../../recipes/crud-fastapi-postgres/" class="md-tabs__link">
+      
+  
+  
+  
+    
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../crud-fastapi-postgres/" class="md-tabs__link">
           
   
   Recipes
@@ -658,31 +658,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
             
   
   
@@ -699,7 +694,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -722,20 +717,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
         
           
-          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
             
   
   
@@ -986,20 +978,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
         
           
-          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
             
   
   
@@ -1270,31 +1259,26 @@
                 
   
   
-    
   
   
-  
     
     
     
     
       
       
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
         
           
-          
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
             
   
   
@@ -1311,7 +1295,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1328,7 +1312,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reading-data/" class="md-nav__link">
+      <a href="../../data-events/reading-data/" class="md-nav__link">
         
   
   
@@ -1357,7 +1341,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../query-parameters/" class="md-nav__link">
+      <a href="../../data-events/query-parameters/" class="md-nav__link">
         
   
   
@@ -1386,7 +1370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../procedures/" class="md-nav__link">
+      <a href="../../data-events/procedures/" class="md-nav__link">
         
   
   
@@ -1415,7 +1399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../analytics/" class="md-nav__link">
+      <a href="../../data-events/analytics/" class="md-nav__link">
         
   
   
@@ -1444,7 +1428,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../inference/" class="md-nav__link">
+      <a href="../../data-events/inference/" class="md-nav__link">
         
   
   
@@ -1473,7 +1457,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../caching/" class="md-nav__link">
+      <a href="../../data-events/caching/" class="md-nav__link">
         
   
   
@@ -1502,7 +1486,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../events-sagas/" class="md-nav__link">
+      <a href="../../data-events/events-sagas/" class="md-nav__link">
         
   
   
@@ -1528,36 +1512,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-split" viewBox="0 0 24 24"><path d="M16 3h5v5M8 3H3v5"/><path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3M15 9l6-6"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Messaging delivery models
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../data-events/messaging-delivery-models/" class="md-nav__link">
         
   
   
@@ -1574,91 +1532,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#the-four-models" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The four models
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#queue" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Queue
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#ack-stream-redis-class" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Ack-stream (Redis-class)
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#commit-stream-kafka-class" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Commit-stream (Kafka-class)
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#pubsub" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Pub/sub
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#choosing" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Choosing
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1671,7 +1544,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../realtime/" class="md-nav__link">
+      <a href="../../data-events/realtime/" class="md-nav__link">
         
   
   
@@ -1700,7 +1573,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../durable-execution/" class="md-nav__link">
+      <a href="../../data-events/durable-execution/" class="md-nav__link">
         
   
   
@@ -1743,20 +1616,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
         
           
-          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
             
   
   
@@ -1920,20 +1790,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
         
           
-          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
             
   
   
@@ -2184,20 +2051,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
         
           
-          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
             
   
   
@@ -2303,20 +2167,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
         
           
-          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
             
   
   
@@ -3753,26 +3614,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
         
           
-          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
             
   
   
@@ -3789,7 +3655,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3812,17 +3678,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_1" >
         
           
-          <label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="">
             
   
   
@@ -3856,7 +3725,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/crud-fastapi-postgres/" class="md-nav__link">
+      <a href="../crud-fastapi-postgres/" class="md-nav__link">
         
   
   
@@ -3885,7 +3754,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/governed-aggregate-kit/" class="md-nav__link">
+      <a href="../governed-aggregate-kit/" class="md-nav__link">
         
   
   
@@ -3914,7 +3783,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/read-only-document-api/" class="md-nav__link">
+      <a href="../read-only-document-api/" class="md-nav__link">
         
   
   
@@ -3943,7 +3812,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/cache-reads-with-redis/" class="md-nav__link">
+      <a href="../cache-reads-with-redis/" class="md-nav__link">
         
   
   
@@ -3972,7 +3841,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/analytics-over-a-data-lake/" class="md-nav__link">
+      <a href="../analytics-over-a-data-lake/" class="md-nav__link">
         
   
   
@@ -4001,7 +3870,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/expose-an-aggregate-over-mcp/" class="md-nav__link">
+      <a href="../expose-an-aggregate-over-mcp/" class="md-nav__link">
         
   
   
@@ -4044,17 +3913,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
         
           
-          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="">
             
   
   
@@ -4088,7 +3960,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/add-idempotency/" class="md-nav__link">
+      <a href="../add-idempotency/" class="md-nav__link">
         
   
   
@@ -4117,7 +3989,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/two-phase-handler/" class="md-nav__link">
+      <a href="../two-phase-handler/" class="md-nav__link">
         
   
   
@@ -4146,7 +4018,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/offload-cpu-work/" class="md-nav__link">
+      <a href="../offload-cpu-work/" class="md-nav__link">
         
   
   
@@ -4180,26 +4052,31 @@
                 
   
   
+    
   
   
+  
     
     
     
     
       
       
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
         
           
-          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="">
             
   
   
@@ -4216,7 +4093,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_5_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -4233,7 +4110,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/authn-authz-tenancy-fastapi/" class="md-nav__link">
+      <a href="../authn-authz-tenancy-fastapi/" class="md-nav__link">
         
   
   
@@ -4262,7 +4139,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/provision-identity-postgres/" class="md-nav__link">
+      <a href="../provision-identity-postgres/" class="md-nav__link">
         
   
   
@@ -4291,7 +4168,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/password-reset/" class="md-nav__link">
+      <a href="../password-reset/" class="md-nav__link">
         
   
   
@@ -4320,7 +4197,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/tenant-selector-and-admin/" class="md-nav__link">
+      <a href="../tenant-selector-and-admin/" class="md-nav__link">
         
   
   
@@ -4349,7 +4226,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/local-identity/" class="md-nav__link">
+      <a href="../local-identity/" class="md-nav__link">
         
   
   
@@ -4378,7 +4255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/external-bootstrap-forze-jwt/" class="md-nav__link">
+      <a href="../external-bootstrap-forze-jwt/" class="md-nav__link">
         
   
   
@@ -4407,7 +4284,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/external-idp-oidc/" class="md-nav__link">
+      <a href="../external-idp-oidc/" class="md-nav__link">
         
   
   
@@ -4436,7 +4313,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/social-sign-in/" class="md-nav__link">
+      <a href="../social-sign-in/" class="md-nav__link">
         
   
   
@@ -4462,10 +4339,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../recipes/rotating-oauth-credentials/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-repeat" viewBox="0 0 24 24"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Survive single-use OAuth refresh tokens
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -4482,6 +4385,113 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The table
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sealing-at-rest" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sealing at rest
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-exchanger" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The exchanger
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#wiring" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Wiring
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Using it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#getting-the-first-grant-and-getting-back-from-a-burn" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Getting the first grant, and getting back from a burn
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-errors-mean" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What the errors mean
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trust-but-verify" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Trust but verify
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4508,17 +4518,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
         
           
-          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="">
             
   
   
@@ -4552,7 +4565,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/end-to-end-saga-outbox-inbox/" class="md-nav__link">
+      <a href="../end-to-end-saga-outbox-inbox/" class="md-nav__link">
         
   
   
@@ -4581,7 +4594,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/transactional-outbox/" class="md-nav__link">
+      <a href="../transactional-outbox/" class="md-nav__link">
         
   
   
@@ -4610,7 +4623,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/transactional-notifications/" class="md-nav__link">
+      <a href="../transactional-notifications/" class="md-nav__link">
         
   
   
@@ -4639,7 +4652,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/realtime-offline-delivery/" class="md-nav__link">
+      <a href="../realtime-offline-delivery/" class="md-nav__link">
         
   
   
@@ -4668,7 +4681,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/tenant-sharded-realtime/" class="md-nav__link">
+      <a href="../tenant-sharded-realtime/" class="md-nav__link">
         
   
   
@@ -4697,7 +4710,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/background-workflow/" class="md-nav__link">
+      <a href="../background-workflow/" class="md-nav__link">
         
   
   
@@ -4726,7 +4739,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/scheduled-queue-jobs/" class="md-nav__link">
+      <a href="../scheduled-queue-jobs/" class="md-nav__link">
         
   
   
@@ -5725,10 +5738,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#the-four-models" class="md-nav__link">
+  <a href="#the-table" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The four models
+        The table
       </span>
     </span>
   </a>
@@ -5736,10 +5749,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#queue" class="md-nav__link">
+  <a href="#sealing-at-rest" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Queue
+        Sealing at rest
       </span>
     </span>
   </a>
@@ -5747,10 +5760,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#ack-stream-redis-class" class="md-nav__link">
+  <a href="#the-exchanger" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Ack-stream (Redis-class)
+        The exchanger
       </span>
     </span>
   </a>
@@ -5758,10 +5771,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#commit-stream-kafka-class" class="md-nav__link">
+  <a href="#wiring" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Commit-stream (Kafka-class)
+        Wiring
       </span>
     </span>
   </a>
@@ -5769,10 +5782,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#pubsub" class="md-nav__link">
+  <a href="#using-it" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Pub/sub
+        Using it
       </span>
     </span>
   </a>
@@ -5780,10 +5793,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#choosing" class="md-nav__link">
+  <a href="#getting-the-first-grant-and-getting-back-from-a-burn" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Choosing
+        Getting the first grant, and getting back from a burn
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-errors-mean" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What the errors mean
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trust-but-verify" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Trust but verify
       </span>
     </span>
   </a>
@@ -5845,11 +5880,11 @@
     
     
       <li class="md-path__item">
-        <a href="../../core-concepts/overview/" class="md-path__link">
+        <a href="../crud-fastapi-postgres/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Learn
+    Recipes
   </span>
 
         </a>
@@ -5870,11 +5905,11 @@
     
     
       <li class="md-path__item">
-        <a href="../reading-data/" class="md-path__link">
+        <a href="../authn-authz-tenancy-fastapi/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Data & events
+    Identity
   </span>
 
         </a>
@@ -5894,110 +5929,267 @@
   
 
 
-  <h1 id="__skip">Messaging delivery models</h1>
+  <h1 id="__skip">Survive single-use OAuth refresh tokens</h1>
 
-<p>Forze separates its messaging ports by <strong>delivery model</strong>, not by backend. The model decides
-what a consumer is promised — whether a message survives a crash, whether it can be replayed,
-how a stalled consumer recovers — so choosing the model is the real decision; the backend is
-an implementation detail behind it. There are four.</p>
-<h2 id="the-four-models">The four models<a class="headerlink" href="#the-four-models" title="Permanent link">&para;</a></h2>
+<p>Some providers rotate the credential <em>at</em> you. Every refresh burns the token you
+presented and returns a replacement, so by the time your code learns anything, the
+rotation is already committed on their side. That makes two ordinary-looking failures
+severe. A crash between the exchange and your write destroys the grant — the old token
+is dead and the replacement is gone, recoverable only by a human re-consenting. And two
+workers refreshing at once is not a wasted round trip: reuse detection treats a replayed
+refresh token as an attack and may revoke the whole token family.</p>
+<p><code>RotatingCredentialStorePort</code> exists for exactly this shape. This recipe wires the
+Postgres store, writes the exchanger, and shows the call pattern.</p>
+<h2 id="the-table">The table<a class="headerlink" href="#the-table" title="Permanent link">&para;</a></h2>
+<p>Provisioning is yours, and the store is deliberately narrow about what it needs — every
+access is a point lookup, so the primary key is the only index:</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">rotating_credentials</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">tenant_id</span><span class="w">    </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="k">ref</span><span class="w">          </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">payload</span><span class="w">      </span><span class="n">jsonb</span><span class="w">       </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">expires_at</span><span class="w">   </span><span class="n">timestamptz</span><span class="p">,</span>
+<span class="w">    </span><span class="k">version</span><span class="w">      </span><span class="nb">bigint</span><span class="w">      </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">burnt_reason</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">created_at</span><span class="w">   </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">updated_at</span><span class="w">   </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">tenant_id</span><span class="p">,</span><span class="w"> </span><span class="k">ref</span><span class="p">)</span>
+<span class="p">);</span>
+</code></pre></div>
+<p><code>tenant_id</code> is part of the key rather than a filter beside it — a table keyed on <code>ref</code>
+alone hands one tenant another tenant's grant. An unbound tenant stores as the empty
+string. <code>payload</code> holds both tokens and the provider metadata; <code>expires_at</code> is lifted out
+as a column so an operator can find grants about to expire without reading secrets.</p>
+<h2 id="sealing-at-rest">Sealing at rest<a class="headerlink" href="#sealing-at-rest" title="Permanent link">&para;</a></h2>
+<p><code>payload</code> is <strong>sealed by default</strong> — this is the one store whose every row is a replayable
+long-lived credential, so a plaintext table turns a leaked logical backup or a read-only
+replica into working third-party access for every tenant. It needs a keyring wired
+(<code>CryptoDepsModule</code>; <code>forze_kms.local</code> is enough — no cloud <abbr title="Key Management Service">KMS</abbr> required), and wiring fails
+closed if encryption is on without one.</p>
+<p>The envelope's associated data binds each credential to its <code>(tenant, ref)</code>, which buys
+something worth having quite apart from confidentiality: a row copied into another ref or
+another tenant fails authentication instead of decrypting into the wrong grant. Only
+<code>payload</code> is sealed, so <code>expires_at</code> stays queryable for operators.</p>
+<p>Enabling it on an existing table needs no migration and no flag day — a plaintext row is
+passed through on read and sealed on its next write, so the table converts as its grants
+rotate. Going the other way is not symmetric: rows already sealed still need the key, and a
+store wired without a cipher refuses them rather than returning garbage.</p>
+<p>Storing credentials in the clear is possible and has to be said out loud:</p>
+<div class="highlight"><pre><span></span><code><span class="n">PostgresRotatingCredentialsConfig</span><span class="p">(</span>
+    <span class="n">relation</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;public&quot;</span><span class="p">,</span> <span class="s2">&quot;rotating_credentials&quot;</span><span class="p">),</span>
+    <span class="n">exchanger</span><span class="o">=</span><span class="n">CrmTokenExchanger</span><span class="p">(</span><span class="n">http</span><span class="o">=...</span><span class="p">),</span>
+    <span class="n">encrypt</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">acknowledge_plaintext</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>   <span class="c1"># required — `encrypt=False` alone is refused</span>
+<span class="p">)</span>
+</code></pre></div>
+<h2 id="the-exchanger">The exchanger<a class="headerlink" href="#the-exchanger" title="Permanent link">&para;</a></h2>
+<p>The framework cannot supply this: it is a call to someone else's provider. Its one hard
+obligation beyond being bounded is <strong>classification</strong>, because the store treats the two
+cases oppositely.</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">DemoOAuthProvider</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Stands in for the third party: rotates refresh tokens, and punishes reuse.</span>
+
+<span class="sd">    A production provider behaves this way whether or not you are ready for it — which is</span>
+<span class="sd">    the whole reason this plane exists.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">live_access</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">live_refresh</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">spent</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">grant_revoked</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">exchanges</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_generation</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">authorize</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;What a human completing the consent flow hands you, once.&quot;&quot;&quot;</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_generation</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">live_access</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;access-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_generation</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">live_refresh</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;refresh-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_generation</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">grant_revoked</span> <span class="o">=</span> <span class="kc">False</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">live_access</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">live_refresh</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">accepts</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">access_token</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">grant_revoked</span> <span class="ow">and</span> <span class="n">access_token</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">live_access</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">expire_access_token</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Time passing, from the provider&#39;s point of view.&quot;&quot;&quot;</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">live_access</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">revoke</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">grant_revoked</span> <span class="o">=</span> <span class="kc">True</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">exchange</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">refresh_token</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">exchanges</span> <span class="o">+=</span> <span class="mi">1</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">grant_revoked</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">PermissionError</span><span class="p">(</span><span class="s2">&quot;invalid_grant: the grant was revoked&quot;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">refresh_token</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">spent</span><span class="p">:</span>
+            <span class="c1"># Reuse detection: the whole family dies, not just this call.</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">grant_revoked</span> <span class="o">=</span> <span class="kc">True</span>
+
+            <span class="k">raise</span> <span class="ne">PermissionError</span><span class="p">(</span><span class="s2">&quot;invalid_grant: refresh token reuse detected&quot;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">refresh_token</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">live_refresh</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">PermissionError</span><span class="p">(</span><span class="s2">&quot;invalid_grant: unknown refresh token&quot;</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">spent</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">refresh_token</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">authorize</span><span class="p">()</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">DemoTokenExchanger</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The application&#39;s half: one bounded call to the provider&#39;s token endpoint.</span>
+
+<span class="sd">    A production exchanger issues an HTTP request (typically over ``forze_http``). The only</span>
+<span class="sd">    thing it must get right beyond that is the classification below — a transient failure</span>
+<span class="sd">    reported as an invalid grant destroys a working credential.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">provider</span><span class="p">:</span> <span class="n">DemoOAuthProvider</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">provider</span> <span class="o">=</span> <span class="n">provider</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">exchange</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">ref</span><span class="p">:</span> <span class="n">SecretRef</span><span class="p">,</span>
+        <span class="o">*</span><span class="p">,</span>
+        <span class="n">refresh_token</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">metadata</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExchangedCredential</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">access</span><span class="p">,</span> <span class="n">refresh</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">provider</span><span class="o">.</span><span class="n">exchange</span><span class="p">(</span><span class="n">refresh_token</span><span class="p">)</span>
+
+        <span class="k">except</span> <span class="ne">PermissionError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="c1"># Permanent: the provider has rejected the grant itself, so the store records a</span>
+            <span class="c1"># burn notice and callers route to re-authorization instead of retrying.</span>
+            <span class="k">raise</span> <span class="n">exc</span><span class="o">.</span><span class="n">precondition</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">),</span> <span class="n">code</span><span class="o">=</span><span class="n">INVALID_GRANT_CODE</span><span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span>
+
+        <span class="k">return</span> <span class="n">ExchangedCredential</span><span class="p">(</span>
+            <span class="n">access_token</span><span class="o">=</span><span class="n">access</span><span class="p">,</span>
+            <span class="n">refresh_token</span><span class="o">=</span><span class="n">refresh</span><span class="p">,</span>
+            <span class="n">expires_at</span><span class="o">=</span><span class="n">utcnow</span><span class="p">()</span> <span class="o">+</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">hours</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span>
+            <span class="n">metadata</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">metadata</span><span class="p">),</span>
+        <span class="p">)</span>
+</code></pre></div>
+<p>A permanent rejection — <code>invalid_grant</code> and its equivalents — is raised with
+<code>code=INVALID_GRANT_CODE</code>, and the store records a terminal burn notice. Anything
+transient (timeout, 5xx, connection reset) is raised as anything else, and the stored
+credential is left exactly as it was. Reporting a transient failure as an invalid grant
+destroys a working credential, so when the provider's answer is ambiguous, report it as
+transient.</p>
+<h2 id="wiring">Wiring<a class="headerlink" href="#wiring" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">PostgresDepsModule</span><span class="p">,</span> <span class="n">PostgresRotatingCredentialsConfig</span>
+
+<span class="n">module</span> <span class="o">=</span> <span class="n">PostgresDepsModule</span><span class="p">(</span>
+    <span class="n">rotating_credentials</span><span class="o">=</span><span class="n">PostgresRotatingCredentialsConfig</span><span class="p">(</span>
+        <span class="n">relation</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;public&quot;</span><span class="p">,</span> <span class="s2">&quot;rotating_credentials&quot;</span><span class="p">),</span>
+        <span class="n">exchanger</span><span class="o">=</span><span class="n">CrmTokenExchanger</span><span class="p">(</span><span class="n">http</span><span class="o">=...</span><span class="p">),</span>
+        <span class="n">exchange_timeout</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">15</span><span class="p">),</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><code>exchange_timeout</code> is doing more than it looks. The store holds the credential's row lock
+across the provider call, and derives the transaction's own
+<code>idle_in_transaction_session_timeout</code> and <code>lock_timeout</code> from this bound. Without the
+first of those, a server-side idle reaper could kill the transaction <em>between</em> a
+successful exchange and its commit — manufacturing precisely the lockout the plane
+exists to prevent. There is no unbounded setting.</p>
+<h2 id="using-it">Using it<a class="headerlink" href="#using-it" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">call_api</span><span class="p">(</span><span class="n">store</span><span class="p">:</span> <span class="n">RotatingCredentialStorePort</span><span class="p">,</span> <span class="n">provider</span><span class="p">:</span> <span class="n">DemoOAuthProvider</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Use the credential, refreshing it when the provider stops accepting it.</span>
+
+<span class="sd">    The whole pattern: read, and if the token is spent, hand the version you read back to</span>
+<span class="sd">    ``refresh``. That version is what lets the store tell &quot;nobody has rotated yet&quot; from</span>
+<span class="sd">    &quot;somebody already did&quot; — the loser of a race gets the winner&#39;s credential instead of</span>
+<span class="sd">    burning a token twice.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">credential</span> <span class="o">=</span> <span class="k">await</span> <span class="n">store</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">GRANT_REF</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">provider</span><span class="o">.</span><span class="n">accepts</span><span class="p">(</span><span class="n">credential</span><span class="o">.</span><span class="n">access_token</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s2">&quot;ok&quot;</span>
+
+    <span class="n">fresh</span> <span class="o">=</span> <span class="k">await</span> <span class="n">store</span><span class="o">.</span><span class="n">refresh</span><span class="p">(</span><span class="n">GRANT_REF</span><span class="p">,</span> <span class="n">observed</span><span class="o">=</span><span class="n">credential</span><span class="o">.</span><span class="n">version</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="s2">&quot;ok&quot;</span> <span class="k">if</span> <span class="n">provider</span><span class="o">.</span><span class="n">accepts</span><span class="p">(</span><span class="n">fresh</span><span class="o">.</span><span class="n">access_token</span><span class="p">)</span> <span class="k">else</span> <span class="s2">&quot;rejected&quot;</span>
+</code></pre></div>
+<p>The <code>observed</code> version is the entire single-flight mechanism. Under the per-credential
+lock the store re-reads first: if the stored version has moved past yours, someone
+already exchanged and you get <em>their</em> credential rather than a second exchange. The
+replacement is committed before <code>refresh</code> returns, so nothing observes a credential that
+is not durable.</p>
+<p>The refresh token never appears in what you hold — <code>get</code> returns the access token only,
+and the store hands the refresh token straight to the exchanger. You cannot replay a
+rotated token because you never have one.</p>
+<h2 id="getting-the-first-grant-and-getting-back-from-a-burn">Getting the first grant, and getting back from a burn<a class="headerlink" href="#getting-the-first-grant-and-getting-back-from-a-burn" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">authorize</span><span class="p">(</span><span class="n">store</span><span class="p">:</span> <span class="n">RotatingCredentialStorePort</span><span class="p">,</span> <span class="n">provider</span><span class="p">:</span> <span class="n">DemoOAuthProvider</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Store a freshly consented grant — the entry point, and the only way back from a burn.&quot;&quot;&quot;</span>
+
+    <span class="n">access</span><span class="p">,</span> <span class="n">refresh</span> <span class="o">=</span> <span class="n">provider</span><span class="o">.</span><span class="n">authorize</span><span class="p">()</span>
+
+    <span class="k">await</span> <span class="n">store</span><span class="o">.</span><span class="n">put</span><span class="p">(</span>
+        <span class="n">GRANT_REF</span><span class="p">,</span>
+        <span class="n">ExchangedCredential</span><span class="p">(</span>
+            <span class="n">access_token</span><span class="o">=</span><span class="n">access</span><span class="p">,</span>
+            <span class="n">refresh_token</span><span class="o">=</span><span class="n">refresh</span><span class="p">,</span>
+            <span class="n">expires_at</span><span class="o">=</span><span class="n">utcnow</span><span class="p">()</span> <span class="o">+</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">hours</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span>
+            <span class="c1"># Carried forward on every rotation, so an account-specific endpoint stays</span>
+            <span class="c1"># addressable without a second lookup.</span>
+            <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;host&quot;</span><span class="p">:</span> <span class="s2">&quot;crm.example&quot;</span><span class="p">},</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+</code></pre></div>
+<p><code>put</code> is unconditional by design. A human has just proven possession of a new grant, so
+there is no earlier version worth defending — and refusing the write would leave a burnt
+credential permanently unrecoverable.</p>
+<h2 id="what-the-errors-mean">What the errors mean<a class="headerlink" href="#what-the-errors-mean" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Model</th>
-<th>Guarantee</th>
-<th>Recovery unit</th>
-<th>Replayable</th>
-<th>Fits</th>
+<th>Code</th>
+<th>Meaning</th>
+<th>What to do</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>Queue</strong></td>
-<td>at-least-once</td>
-<td>per-message <code>ack</code> / <code>nack(requeue)</code></td>
-<td>no</td>
-<td>work items, jobs, commands</td>
+<td><code>credential_burnt</code></td>
+<td>The provider has permanently rejected this grant</td>
+<td>Re-authorize; retrying cannot help</td>
 </tr>
 <tr>
-<td><strong>Ack-stream</strong></td>
-<td>at-least-once, per group</td>
-<td>per-message <code>ack</code> + explicit <code>claim</code></td>
-<td>from group creation</td>
-<td>ordered events, competing consumers</td>
+<td><code>credential_exchange_timeout</code></td>
+<td>The token was presented and no answer came back</td>
+<td>Re-authorize. The grant is marked unusable, because the token may already be spent</td>
 </tr>
 <tr>
-<td><strong>Commit-stream</strong></td>
-<td>at-least-once, per group</td>
-<td>per-partition offset <code>commit</code>; broker rebalance</td>
-<td>any offset / timestamp</td>
-<td>high-throughput logs, event sourcing</td>
-</tr>
-<tr>
-<td><strong>Pub/sub</strong></td>
-<td>at-most-once</td>
-<td>none</td>
-<td>no</td>
-<td>lossy broadcast (presence, cache-bust)</td>
+<td><code>credential_persist_lost</code></td>
+<td>The exchange succeeded and the commit did not</td>
+<td>Re-authorize. The presented token is already burned, so no retry recovers it. Alert on this one</td>
 </tr>
 </tbody>
 </table>
-<p>Three of the four — queue, ack-stream, commit-stream — are at-least-once at the transport, and
-those three reach <strong>exactly-once <em>effect</em></strong> when paired with the
-<a href="../../reference/contracts/messaging/">inbox</a>: the consumer dedups on a stable message id inside
-the same transaction as its writes, so a redelivery is a no-op. The inbox only turns <em>at-least</em>
--once into exactly-once — it cannot recover a message the transport never delivered, so it does
-<strong>not</strong> apply to pub/sub, which is at-most-once and can drop a message before the inbox ever
-sees it. Choose an at-least-once model whenever a consumer must eventually see every message.</p>
-<h2 id="queue">Queue<a class="headerlink" href="#queue" title="Permanent link">&para;</a></h2>
-<p><code>QueueSpec[M]</code> — a competing-consumers work queue. Each message is delivered to one consumer,
-which <code>ack</code>s on success or <code>nack</code>s (with or without requeue) on failure; the broker redelivers
-after a visibility timeout. No offsets, no replay — once acked, a message is gone. Reach for it
-for <strong>jobs and commands</strong> where order across items does not matter and each item is handled
-once.</p>
-<h2 id="ack-stream-redis-class">Ack-stream (Redis-class)<a class="headerlink" href="#ack-stream-redis-class" title="Permanent link">&para;</a></h2>
-<p><code>AckStreamGroupQueryPort</code> — an ordered, replayable log consumed by a <strong>consumer group</strong> with a
-Pending Entries List. Each entry is delivered to exactly one consumer in the group and stays
-<em>pending</em> until that consumer <code>ack</code>s it; a consumer that crashes strands its pending entries,
-and any worker recovers them with <code>claim</code> (transferring ownership of entries idle past a
-threshold). Use it for <strong>ordered events with competing consumers</strong> on a Redis-class backend,
-where you want per-message acks and explicit stranded-work recovery.</p>
-<h2 id="commit-stream-kafka-class">Commit-stream (Kafka-class)<a class="headerlink" href="#commit-stream-kafka-class" title="Permanent link">&para;</a></h2>
-<p><code>CommitStreamGroupQueryPort</code> — a <strong>partitioned, offset-committed log</strong>. Instead of acking each
-message, a consumer <code>commit</code>s a <code>StreamPosition</code>, and that single offset acknowledges every
-message up to it on that partition (a high-water mark). Partitions are assigned across live
-group members by the broker, so recovery from a crash is a <strong>rebalance</strong>, not a per-message
-claim. The control plane (<code>CommitStreamGroupAdminPort</code>) provisions topics, positions a group,
-inspects <code>lag</code>, and <code>reset_offsets</code> to <strong>replay</strong> from any offset or timestamp.</p>
-<p>Consume it with the <code>CommitStreamGroupConsumer</code> runner, which commits the offset only <strong>after</strong>
-<code>process_with_inbox</code> succeeds — never auto-commit, which would decouple the commit from
-processing and silently drop the guarantee. On a poison message it either produces to a
-dead-letter stream and commits past it (freeing the partition) or, with no dead-letter route,
-pauses and alerts — never a silent skip. Reach for it for <strong>high-throughput logs and event
-sourcing</strong> where partitioned ordering and replay matter. The production backend is
-<a href="../../integrations/kafka/">Kafka</a> (or any Kafka-protocol broker).</p>
-<div class="admonition note">
-<p class="admonition-title">Ack vs commit</p>
-<p>Both are consumer groups over an ordered log; the difference is the acknowledgment unit —
-per-message id (<code>ack</code>) versus per-partition offset (<code>commit</code>). That one axis is why the
-ports carry the <code>Ack</code> / <code>Commit</code> prefix.</p>
-</div>
-<h2 id="pubsub">Pub/sub<a class="headerlink" href="#pubsub" title="Permanent link">&para;</a></h2>
-<p><code>PubSubSpec[M]</code> — fire-and-forget fan-out to whoever is listening <strong>right now</strong>. A subscriber
-offline at publish time misses the message; there is no ack and no replay. It is <strong>at-most-once
-past the broker</strong> — legitimate for lossy broadcast (cache invalidation, presence, live
-notifications), wrong for anything that must eventually be seen. When in doubt, pick a queue or
-a stream.</p>
-<h2 id="choosing">Choosing<a class="headerlink" href="#choosing" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Must every item be handled, order-independent?</strong> → <strong>Queue</strong>.</li>
-<li><strong>Ordered events, competing consumers, per-message acks?</strong> → <strong>Ack-stream</strong>.</li>
-<li><strong>Partitioned high-throughput log, replay, offset commits?</strong> → <strong>Commit-stream</strong>.</li>
-<li><strong>Lossy broadcast to live listeners only?</strong> → <strong>Pub/sub</strong>.</li>
-</ul>
-<p>The contract surface for each lives in
-<a href="../../reference/contracts/streaming/">Streaming &amp; pub/sub</a> and
-<a href="../../reference/contracts/messaging/">Messaging &amp; the outbox</a>.</p>
+<p>The last two share a rule worth stating plainly: <strong>once a refresh token has been presented,
+it is never presented again.</strong> A timeout is transient for the network but terminal for the
+credential — the store cannot tell "they never saw it" from "they consumed it and the reply
+was lost", and presenting a consumed token is reuse, which revokes the grant family. So the
+store marks the grant unusable rather than leaving a row that still looks refreshable to the
+next worker. The cost is a re-authorization that occasionally was not strictly necessary;
+the alternative risks losing the whole family.</p>
+<p><code>credential_persist_lost</code> is the outcome worth wiring an alert to. It is rare, it is
+logged at critical, and it always means one specific thing: a human has to re-consent.</p>
+<h2 id="trust-but-verify">Trust but verify<a class="headerlink" href="#trust-but-verify" title="Permanent link">&para;</a></h2>
+<p>Every store implementation runs the same conformance battery, and the Postgres store runs
+it against a live database — including a failure injected at the write <em>and</em> one injected
+at the commit, a two-connection race proving <code>FOR UPDATE</code> serializes across processes rather
+than only across coroutines, and the at-rest legs: tokens unreadable on disk, a row lifted
+across refs or tenants refused by the <abbr title="Additional Authenticated Data">AAD</abbr>, and a legacy plaintext row still readable. If you implement the port over another backend, run that
+battery: the properties it checks are the reason the contract exists, and an
+implementation that stores documents correctly while getting the ordering wrong is not one.</p>
+<p>The runnable version of this recipe is <code>examples/recipes/rotating_credentials/</code>.</p>
 
 
 
@@ -6038,7 +6230,7 @@ a stream.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../events-sagas/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Events &amp; sagas">
+          <a href="../social-sign-in/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Social sign-in">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -6048,20 +6240,20 @@ a stream.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Events & sagas
+                Social sign-in
               </div>
             </div>
           </a>
         
         
           
-          <a href="../realtime/" class="md-footer__link md-footer__link--next" aria-label="Next: Realtime push">
+          <a href="../end-to-end-saga-outbox-inbox/" class="md-footer__link md-footer__link--next" aria-label="Next: End-to-end: saga → outbox → inbox">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Realtime push
+                End-to-end: saga → outbox → inbox
               </div>
             </div>
             <div class="md-footer__button md-icon">

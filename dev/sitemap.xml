@@ -280,6 +280,9 @@
         <loc>https://morzecrew.github.io/forze/dev/recipes/social-sign-in/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/rotating-oauth-credentials/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/recipes/end-to-end-saga-outbox-inbox/</loc>
       </url>
       <url>
