@@ -24,6 +24,7 @@ from .authz import (
     MockPrincipalRegistryPort,
     MockRoleAssignmentPort,
 )
+from .rotating_credentials import MockRotatingCredentialStore
 from .secrets import MockDynamicSecretsPort, MockSecretsChangeSource, MockSecretsPort
 from .tenancy import MockTenantManagementPort, MockTenantResolverPort
 
@@ -31,6 +32,7 @@ __all__ = [
     "MockSecretsPort",
     "MockSecretsChangeSource",
     "MockDynamicSecretsPort",
+    "MockRotatingCredentialStore",
     "MockPasswordVerifierPort",
     "MockTokenVerifierPort",
     "MockApiKeyVerifierPort",

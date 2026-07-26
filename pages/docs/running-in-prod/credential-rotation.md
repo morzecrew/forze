@@ -197,6 +197,71 @@ outbox/pubsub, rotation targets, tenant directory}` with the durable recovery an
 scheduler steps — no HTTP surface. See the runnable walkthrough in
 `examples/recipes/secrets_rotation/`.
 
+## When the other side rotates it
+
+Everything above rotates a credential *you* control. Some third parties invert that:
+a provider doing refresh-token rotation burns the token you present and hands back a
+replacement, so the rotation has already happened by the time you learn of it. There
+is nothing to promote and nothing to verify — the only question is whether you
+survive it, and two failures make that a crash-consistency problem rather than a
+convenience.
+
+The provider commits the burn *before* you can commit anything, so a process that
+dies holding an unpersisted replacement has destroyed the credential: the old token
+is dead, the new one is gone, and only a human re-authorization recovers it. And a
+concurrent exchange is destructive rather than merely wasteful — reuse detection
+treats a replayed refresh token as an attack and may revoke the entire token family.
+
+`RotatingCredentialStorePort` owns both. Read, and when the token is spent hand the
+version you read back:
+
+```python
+credential = await store.get(SecretRef("oauth/crm"))
+
+if credential.expires_before(utcnow()):
+    credential = await store.refresh(SecretRef("oauth/crm"), observed=credential.version)
+```
+
+That `observed` version is the whole single-flight mechanism. Under a per-credential
+lock — in-process, plus a row lock across processes — the store re-reads first: if the
+stored version has moved past yours, someone already exchanged and you get *their*
+credential instead of a second exchange. The replacement is committed before
+`refresh` returns, so nothing ever observes a credential that is not durable, and a
+write or commit that fails after a successful exchange raises `credential_persist_lost`
+rather than a retryable-looking storage error — no retry can undo the provider's burn.
+
+The converse matters just as much: **once a token has been presented it is never presented
+again.** Any ending that loses the outcome — a failed commit, or a timeout where no answer
+came back — leaves the grant marked unusable instead of restoring a row that still looks
+refreshable, because the next worker would otherwise replay a possibly-consumed token into
+the provider's reuse detection and lose the whole family. A timeout is transient for the
+network and terminal for the credential.
+
+Your half is the exchanger: one bounded call to the provider's token endpoint. Its
+one hard obligation is classification. Report a permanent rejection with
+`code=INVALID_GRANT_CODE` and the store records a terminal burn notice
+(`credential_burnt`), so callers escalate to re-authorization instead of hammering a
+provider that has already said no. Report anything transient — timeout, 5xx, reset —
+as anything else, and the stored credential is left untouched. Reporting a network
+blip as an invalid grant destroys a working credential, so when the answer is
+ambiguous, call it transient.
+
+The refresh token never appears in a caller-facing type: `get` returns the access
+token only, and the store hands the refresh token straight to the exchanger. A caller
+cannot replay a rotated token because it never holds one.
+
+Because every row is a replayable credential, the stored payload is **sealed at rest by
+default** — plaintext requires an explicit `acknowledge_plaintext=True`, and wiring fails
+closed if encryption is on with no keyring. The envelope's associated data binds each
+credential to its `(tenant, ref)`, so a row copied into another ref or tenant fails
+authentication rather than decrypting into the wrong grant. `expires_at` stays a plain
+column, so operators keep visibility into expiring grants without holding a key. Turning
+sealing on needs no migration: existing plaintext reads through and seals on next write.
+
+`forze_postgres.PostgresRotatingCredentialStore` is the shipped store (one row per
+`(tenant_id, ref)`, `SELECT … FOR UPDATE`); see the runnable walkthrough in
+`examples/recipes/rotating_credentials/`.
+
 ## Leases (dynamic credentials)
 
 Where a backend adopts a lease engine (Vault database engines), short TTLs *are*

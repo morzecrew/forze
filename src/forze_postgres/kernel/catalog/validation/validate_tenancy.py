@@ -27,6 +27,7 @@ PostgresTenancyRouteKind = Literal[
     "outbox",
     "inbox",
     "counter",
+    "rotating_credentials",
 ]
 
 # ....................... #

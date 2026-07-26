@@ -44,6 +44,7 @@ from forze.application.contracts.search import (
     HubSearchQueryDepKey,
     SearchQueryDepKey,
 )
+from forze.application.contracts.secrets import RotatingCredentialsDepKey
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
@@ -74,6 +75,7 @@ from .configs import (
     PostgresOutboxConfig,
     PostgresProcedureConfig,
     PostgresReadOnlyDocumentConfig,
+    PostgresRotatingCredentialsConfig,
     PostgresSearchConfig,
 )
 from .factories import (
@@ -94,6 +96,7 @@ from .factories import (
     ConfigurablePostgresOutboxQuery,
     ConfigurablePostgresProcedure,
     ConfigurablePostgresReadOnlyDocument,
+    ConfigurablePostgresRotatingCredentials,
     ConfigurablePostgresSearch,
     postgres_txmanager,
 )
@@ -245,6 +248,15 @@ class PostgresDepsModule(DepsModule):
     When set, registers the ``DurableScheduleStorePort`` over a ``durable_schedule`` table
     so recurring cron triggers fire runs on a cadence (driven by the ``forze_kits`` durable
     scheduler lifecycle step)."""
+
+    rotating_credentials: PostgresRotatingCredentialsConfig | None = attrs.field(default=None)
+    """Optional store for credentials a counterparty rotates on use (execution-scoped).
+
+    When set, registers the ``RotatingCredentialStorePort`` over a table holding one grant
+    per ``(tenant_id, ref)``, so single-use refresh tokens survive concurrent use and
+    crashes. Requires the config's ``exchanger`` — the call to the provider's token
+    endpoint — because no default for someone else's provider could exist. Unset leaves
+    the key unregistered."""
 
     # ....................... #
 
@@ -450,6 +462,25 @@ class PostgresDepsModule(DepsModule):
                     tenant_aware=counter_cfg.tenant_aware,
                     fields=[("relation", counter_cfg.relation)],
                 )
+
+        if self.rotating_credentials is not None:
+            # The store holding third-party credentials must clear the same isolation floor
+            # as any other route — leaving it out would let a deployment declare
+            # ``dedicated`` and still serve every tenant's grants from one shared table.
+            routes.append(
+                PostgresTenancyRouteSpec(
+                    name="rotating_credentials",
+                    tenant_aware=self.rotating_credentials.tenant_aware,
+                    kind="rotating_credentials",
+                    has_namespace_routing=callable(self.rotating_credentials.relation),
+                ),
+            )
+            warn_dynamic_relation_with_tenant_aware(
+                route_name="rotating_credentials",
+                kind="rotating_credentials",
+                tenant_aware=self.rotating_credentials.tenant_aware,
+                fields=[("relation", self.rotating_credentials.relation)],
+            )
 
         # Namespace tier is now tracked per route (a DYNAMIC per-tenant relation /
         # query_schema resolver on that route) so a declared floor is enforced route by route.
@@ -664,6 +695,19 @@ class PostgresDepsModule(DepsModule):
                 }
             )
 
+        rotating_credentials_deps = Deps()
+
+        if self.rotating_credentials is not None:
+            # Execution-scoped store (SimpleDepPort): plain registration, resolved per
+            # invocation so the ambient tenant scopes the row it reads.
+            rotating_credentials_deps = Deps.plain(
+                {
+                    RotatingCredentialsDepKey: ConfigurablePostgresRotatingCredentials(
+                        config=self.rotating_credentials
+                    ),
+                }
+            )
+
         durable_step_deps = Deps()
 
         if self.durable_step is not None:
@@ -714,6 +758,7 @@ class PostgresDepsModule(DepsModule):
             idempotency_deps,
             counter_deps,
             hlc_checkpoint_deps,
+            rotating_credentials_deps,
             durable_step_deps,
             durable_run_deps,
             durable_schedule_deps,

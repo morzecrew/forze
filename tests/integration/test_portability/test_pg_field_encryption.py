@@ -111,9 +111,7 @@ class _SecretUpdate(BaseDTO):
 VAULT_SPEC: DocumentSpec[_SecretRead, _SecretDoc, _SecretCreate, _SecretUpdate] = DocumentSpec(
     name="vault",
     read=_SecretRead,
-    write=DocumentWriteTypes(
-        domain=_SecretDoc, create_cmd=_SecretCreate, update_cmd=_SecretUpdate
-    ),
+    write=DocumentWriteTypes(domain=_SecretDoc, create_cmd=_SecretCreate, update_cmd=_SecretUpdate),
     encryption=FieldEncryption(encrypted=frozenset({"secret"})),
 )
 
@@ -307,7 +305,9 @@ async def test_export_archive_carries_plaintext_not_ciphertext(
     await _seed(source, tenant, _ROWS)
 
     archive = tmp_path / "archive"
-    report = await ArchiveExporter()(
+    # A plaintext archive of sealed fields is precisely what this test asserts, so the
+    # acknowledgment is the claim stated at the call site rather than a way around a guard.
+    report = await ArchiveExporter(acknowledge_plaintext=True)(
         source, _registry(), archive, scope=TenantScope(tenant_id=tenant)
     )
     assert report.total_rows == 2
@@ -344,10 +344,12 @@ async def test_import_reseals_under_the_targets_cmk(
     await _seed(source, tenant, _ROWS)
 
     archive = tmp_path / "archive"
-    await ArchiveExporter()(source, _registry(), archive, scope=TenantScope(tenant_id=tenant))
+    await ArchiveExporter(acknowledge_plaintext=True)(
+        source, _registry(), archive, scope=TenantScope(tenant_id=tenant)
+    )
 
     target = _pg_ctx(pg_client, target_table, key_id=TARGET_CMK)
-    result = await ArchiveImporter()(target, _registry(), archive)
+    result = await ArchiveImporter(tenant=tenant)(target, _registry(), archive)
     assert result.total_imported == 2
 
     for doc_id, _, secret in _ROWS:
@@ -383,10 +385,12 @@ async def test_imported_rows_survive_the_sources_cmk_being_bricked(
     await _seed(source, tenant, _ROWS)
 
     archive = tmp_path / "archive"
-    await ArchiveExporter()(source, _registry(), archive, scope=TenantScope(tenant_id=tenant))
+    await ArchiveExporter(acknowledge_plaintext=True)(
+        source, _registry(), archive, scope=TenantScope(tenant_id=tenant)
+    )
 
     target = _pg_ctx(pg_client, target_table, key_id=TARGET_CMK)
-    await ArchiveImporter()(target, _registry(), archive)
+    await ArchiveImporter(tenant=tenant)(target, _registry(), archive)
 
     ids = [doc_id for doc_id, _, _ in _ROWS]
 

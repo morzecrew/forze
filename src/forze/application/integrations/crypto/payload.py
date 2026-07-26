@@ -41,12 +41,22 @@ MESSAGE_PAYLOAD_DOMAIN = "message"
 """Shared AAD domain for the messaging plane (outbox relay + direct queue/stream/pub-sub),
 so a message encrypted by either path decrypts identically at any consumer."""
 
+ROTATING_CREDENTIAL_PAYLOAD_DOMAIN = "rotating_credential"
+"""AAD domain for counterparty-rotated credential documents.
+
+Lives here rather than beside one adapter because every store of the plane must produce
+byte-identical AAD: a grant sealed by the Postgres store has to open in a process wired to
+the mock and vice versa, so the domain cannot belong to either package. Paired with
+``record_id`` = the credential's ref, the binding means a row lifted into another ref or
+another tenant fails authentication rather than decrypting into the wrong grant."""
+
 PAYLOAD_CIPHER_MISSING_CODE = "core.crypto.payload_cipher_missing"
 PAYLOAD_BASE64_INVALID_CODE = "core.crypto.payload_base64_invalid"
 PAYLOAD_HEADER_MISSING_CODE = "core.crypto.payload_header_missing"
 
 __all__ = [
     "MESSAGE_PAYLOAD_DOMAIN",
+    "ROTATING_CREDENTIAL_PAYLOAD_DOMAIN",
     "PAYLOAD_CIPHER_MISSING_CODE",
     "PAYLOAD_BASE64_INVALID_CODE",
     "PAYLOAD_HEADER_MISSING_CODE",

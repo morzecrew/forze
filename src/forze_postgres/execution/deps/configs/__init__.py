@@ -20,6 +20,7 @@ from .idempotency import PostgresIdempotencyConfig
 from .inbox import PostgresInboxConfig
 from .outbox import PostgresOutboxConfig
 from .procedure import PostgresProcedureConfig
+from .rotating_credentials import PostgresRotatingCredentialsConfig
 from .search import (
     FtsEngine,
     PgroongaAuto,
@@ -61,6 +62,7 @@ __all__ = [
     "PostgresProcedureConfig",
     "PostgresQueryConfig",
     "PostgresReadOnlyDocumentConfig",
+    "PostgresRotatingCredentialsConfig",
     "PostgresSearchConfig",
     "SearchEngine",
     "SearchEngineSpec",
