@@ -139,9 +139,18 @@ class TestApply:
         with pytest.raises(CoreException, match="must be set and positive"):
             _target(secrets, apply_statement_timeout=timedelta(0))
 
-        # And the declared bound is always the enforced one.
-        target, _ = _target(secrets, apply_statement_timeout=timedelta(seconds=5))
-        assert target.apply_latency_bound == timedelta(seconds=5)
+        # The declared bound covers the statement's WHOLE possible lifetime:
+        # client-side checkout wait (before the server clock starts) + the
+        # server-side statement timeout.
+        target, _ = _target(
+            secrets,
+            apply_statement_timeout=timedelta(seconds=5),
+            pool_checkout_allowance=timedelta(seconds=10),
+        )
+        assert target.apply_latency_bound == timedelta(seconds=15)
+
+        with pytest.raises(CoreException, match="allowance"):
+            _target(secrets, pool_checkout_allowance=timedelta(seconds=-1))
 
     async def test_pending_dsn_missing_credentials_fails_closed(self) -> None:
         secrets = MappingSecrets(data={"db/dsn.pending": "host=db dbname=app user=app_b"})

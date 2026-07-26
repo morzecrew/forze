@@ -157,14 +157,15 @@ class SecretRotator:
     """Single-flight lock per ref across replicas (``None`` relies on durable-run
     idempotency keys alone)."""
 
-    reconfirm_after: timedelta | None = timedelta(seconds=60)
+    reconfirm_after: timedelta | None = timedelta(seconds=90)
     """Delay before the follow-up reconfirmation run (``None`` disables it).
 
     The in-run confirmation cannot catch a stale backend write that commits
-    *after* it — an unfenceable statement's only real bound is the stale worker's
-    own statement timeout. Set this above that bound (and DO set a statement
-    timeout on rotation-admin connections) so the delayed run re-converges every
-    physically possible latecomer."""
+    *after* it — a stale apply's real lifetime is bounded by the target's
+    ``apply_latency_bound`` (client-side waits plus the server-side statement
+    timeout). This window must sit strictly past that bound (validated at
+    construction against the target's declaration) so the delayed run
+    re-converges every physically possible latecomer."""
 
     # ....................... #
 

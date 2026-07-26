@@ -145,14 +145,15 @@ because it is the known-safe one:
    promoted credential after the promote and converges the backend** if a stale
    apply landed late — a credential that still fails then fails the run loudly
    rather than publishing. Finally, a **delayed reconfirmation run**
-   (`reconfirm_after`, default 60s) re-asserts the canonical credential past the
-   only physical bound a stale in-flight statement has — the stale worker's own
-   statement timeout. The shipped Postgres target enforces that bound itself,
-   with no opt-out (`apply_statement_timeout`, default 30s — the `ALTER ROLE`
-   always runs under a server-side `SET LOCAL statement_timeout`); the rotator
-   validates `reconfirm_after` against the target's declared bound at wiring and
-   warns when a custom target declares none. Apply the same pairing to any
-   custom target.
+   (`reconfirm_after`, default 90s) re-asserts the canonical credential past the
+   stale apply's whole possible lifetime — client-side pool checkout *plus* the
+   server-side statement timeout. The shipped Postgres target declares and
+   enforces that composite bound itself, with no opt-out
+   (`apply_statement_timeout`, default 30s, always applied via `SET LOCAL`;
+   `pool_checkout_allowance`, default 30s, covering the wait before the server
+   clock starts); the rotator validates `reconfirm_after` against the target's
+   declared bound at wiring and warns when a custom target declares none. Apply
+   the same pairing to any custom target.
 
 The pending ref is what makes this crash-safe: after **set**, the only copy of a
 password already live at the backend exists durably in the secret store. A rotator

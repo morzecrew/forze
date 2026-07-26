@@ -86,8 +86,16 @@ class PostgresRotationTarget(RotationTargetPort):
     server-side and can never commit late. An unbounded ALTER would defeat the
     delayed-reconfirmation physics entirely, so there is deliberately no opt-out;
     a deployment bounding statements at the connection or role level sets this
-    to match. Keep it below the rotator's ``reconfirm_after`` (validated at
-    rotator wiring via :attr:`apply_latency_bound`)."""
+    to match."""
+
+    pool_checkout_allowance: timedelta = timedelta(seconds=30)
+    """Client-side latency a stale apply can spend *before* the server clock starts.
+
+    The statement timeout only ticks once the ALTER reaches the server; a stale
+    worker's apply can first wait out a pool checkout (and connection
+    establishment) — ``PostgresConfig.reconnect_timeout`` here, psycopg_pool's own
+    default elsewhere. Set this to at least that wait so
+    :attr:`apply_latency_bound` covers the statement's whole possible lifetime."""
 
     # ....................... #
 
@@ -122,14 +130,18 @@ class PostgresRotationTarget(RotationTargetPort):
                 "ALTER ROLE defeats the delayed-reconfirmation bound.",
             )
 
+        if self.pool_checkout_allowance.total_seconds() < 0:
+            raise exc.configuration("Pool checkout allowance must not be negative")
+
     # ....................... #
 
     @property
     def apply_latency_bound(self) -> timedelta:
-        """The server-side statement timeout IS the apply-latency bound: an ALTER the
-        server hasn't run within it is killed and can never commit later."""
+        """Upper bound on a stale apply's whole lifetime: pool checkout (client-side,
+        before the server clock starts) plus the server-side statement timeout. An
+        ALTER that hasn't committed within this bound never will."""
 
-        return self.apply_statement_timeout
+        return self.apply_statement_timeout + self.pool_checkout_allowance
 
     # ....................... #
 
