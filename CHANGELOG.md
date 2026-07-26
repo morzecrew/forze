@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Idempotency plane** — conformance across the mock, Postgres and Redis stores.
+
+- **Behaviour change:** reusing an idempotency key with a different payload now raises `conflict` on the Redis store, matching the mock and Postgres; it previously raised `precondition`, so the same client error rendered as 400 there and 409 elsewhere. `IdempotencyPort.begin` documents the kind as contract.
+
 **Search plane** — conformance across the mock, Postgres FTS, Mongo text and Meilisearch.
 
 - **Behaviour change:** `SearchManagementPort.delete_all()` on an index that was never provisioned is a no-op on every backend (Meilisearch raised `index_not_found`), so the documented wipe-then-rebuild workflow works on a fresh deployment.

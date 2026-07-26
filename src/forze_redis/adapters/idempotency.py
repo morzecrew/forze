@@ -144,7 +144,12 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter):
         data_ph = str(data.get("ph", ""))
 
         if data_ph != payload_hash:
-            raise exc.precondition("Payload hash mismatch")
+            # conflict, not precondition: the key is already bound to another payload, which
+            # is a clash with stored state rather than a malformed request. The kinds are not
+            # interchangeable at the boundary — they render as 409 and 400 — so raising the
+            # other one here made the same client mistake answer differently depending on
+            # which idempotency store the deployment happened to wire.
+            raise exc.conflict("Payload hash mismatch")
 
         if data_st == _PENDING:
             raise exc.conflict("Idempotency is in progress (pending)")

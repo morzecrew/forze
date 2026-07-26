@@ -50,8 +50,13 @@ class IdempotencyPort(Protocol):
         :param key: Idempotency key supplied by the boundary (``None`` skips idempotency).
         :param payload_hash: Hash of the normalized operation arguments.
         :returns: A stored :class:`IdempotencyRecord` when the operation already
-            completed, else ``None`` after a fresh claim. Raises on a payload-hash
-            mismatch or an in-progress duplicate.
+            completed, else ``None`` after a fresh claim.
+        :raises CoreException: ``conflict`` when the key is already bound to a different
+            ``payload_hash``, and ``conflict`` when a claim for it is still in progress.
+            The kind is part of the contract rather than each store's choice: it is what
+            the boundary renders (409, not 400), so a client telling "you reused a key with
+            different arguments" from "your request was malformed" must not get a different
+            answer depending on which store the deployment wired.
         """
         ...  # pragma: no cover
 
