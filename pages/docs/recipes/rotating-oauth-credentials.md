@@ -39,8 +39,34 @@ alone hands one tenant another tenant's grant. An unbound tenant stores as the e
 string. `payload` holds both tokens and the provider metadata; `expires_at` is lifted out
 as a column so an operator can find grants about to expire without reading secrets.
 
-Both tokens are stored in the clear. Protect this table the way you protect the
-credentials it holds, and keep it out of logical backups that travel.
+## Sealing at rest
+
+`payload` is **sealed by default** — this is the one store whose every row is a replayable
+long-lived credential, so a plaintext table turns a leaked logical backup or a read-only
+replica into working third-party access for every tenant. It needs a keyring wired
+(`CryptoDepsModule`; `forze_kms.local` is enough — no cloud KMS required), and wiring fails
+closed if encryption is on without one.
+
+The envelope's associated data binds each credential to its `(tenant, ref)`, which buys
+something worth having quite apart from confidentiality: a row copied into another ref or
+another tenant fails authentication instead of decrypting into the wrong grant. Only
+`payload` is sealed, so `expires_at` stays queryable for operators.
+
+Enabling it on an existing table needs no migration and no flag day — a plaintext row is
+passed through on read and sealed on its next write, so the table converts as its grants
+rotate. Going the other way is not symmetric: rows already sealed still need the key, and a
+store wired without a cipher refuses them rather than returning garbage.
+
+Storing credentials in the clear is possible and has to be said out loud:
+
+```python
+PostgresRotatingCredentialsConfig(
+    relation=("public", "rotating_credentials"),
+    exchanger=CrmTokenExchanger(http=...),
+    encrypt=False,
+    acknowledge_plaintext=True,   # required — `encrypt=False` alone is refused
+)
+```
 
 ## The exchanger
 
@@ -121,8 +147,9 @@ logged at critical, and it always means one specific thing: a human has to re-co
 
 Every store implementation runs the same conformance battery, and the Postgres store runs
 it against a live database — including a failure injected at the write *and* one injected
-at the commit, and a two-connection race proving `FOR UPDATE` serializes across processes,
-not just across coroutines. If you implement the port over another backend, run that
+at the commit, a two-connection race proving `FOR UPDATE` serializes across processes rather
+than only across coroutines, and the at-rest legs: tokens unreadable on disk, a row lifted
+across refs or tenants refused by the AAD, and a legacy plaintext row still readable. If you implement the port over another backend, run that
 battery: the properties it checks are the reason the contract exists, and an
 implementation that stores documents correctly while getting the ordering wrong is not one.
 

@@ -16,14 +16,26 @@ from typing import Any
 
 import pytest
 
+from forze.application.contracts.crypto import (
+    AesGcmAead,
+    KeyRef,
+    StaticKeyDirectory,
+)
 from forze.application.contracts.secrets import (
     ExchangedCredential,
     RotatingCredentialsDepKey,
     SecretRef,
 )
+from forze.application.integrations.crypto import Keyring
 from forze.base.exceptions import CoreException
+from forze.base.primitives import JsonDict
 from forze.testing import context_from_modules
-from forze_mock import MockDepsModule, MockRotatingCredentialStore, MockState
+from forze_mock import (
+    MockDepsModule,
+    MockKeyManagement,
+    MockRotatingCredentialStore,
+    MockState,
+)
 from tests.support.rotating_credentials import (
     EXCHANGE_TIMEOUT,
     REF,
@@ -41,12 +53,31 @@ from tests.support.rotating_credentials import (
 def harness(monkeypatch: pytest.MonkeyPatch) -> RotatingStoreHarness:
     counterparty = FakeCounterparty()
     tenant = TenantCell()
+    state = MockState()
+    # A real keyring over the mock KMS — the battery's crypto legs must exercise genuine
+    # envelope sealing, not a stub that would make the AAD assertions vacuous.
     store = MockRotatingCredentialStore(
-        state=MockState(),
+        state=state,
         exchanger=counterparty,
         exchange_timeout=EXCHANGE_TIMEOUT,
         tenant_provider=tenant,
+        cipher=Keyring(
+            kms=MockKeyManagement(),
+            aead=AesGcmAead(),
+            directory=StaticKeyDirectory(KeyRef(key_id="cmk-rotating")),
+        ),
     )
+
+    def _document(ref: SecretRef) -> dict[str, Any]:
+        key = f"{'' if tenant.tenant_id is None else tenant.tenant_id}|{ref.path}"
+
+        return state.identity["rotating_credentials"][key]
+
+    async def stored_payload(ref: SecretRef) -> JsonDict:
+        return dict(_document(ref)["payload"])
+
+    async def write_stored_payload(ref: SecretRef, payload: JsonDict) -> None:
+        _document(ref)["payload"] = dict(payload)
 
     @contextlib.asynccontextmanager
     async def break_persist() -> AsyncIterator[None]:
@@ -68,6 +99,8 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> RotatingStoreHarness:
         counterparty=counterparty,
         tenant=tenant,
         break_persist=break_persist,
+        stored_payload=stored_payload,
+        write_stored_payload=write_stored_payload,
     )
 
 
@@ -102,7 +135,12 @@ class TestMockWiring:
 
     async def test_documents_live_in_the_shared_state(self) -> None:
         """The store writes into the same ``MockState`` the rest of the plane shares, so a
-        test can seed or inspect a grant directly."""
+        test can seed or inspect a grant directly.
+
+        The document shape mirrors the Postgres row — the credential in a nested ``payload``
+        that sealing replaces wholesale, ``expires_at`` a readable sibling — so the shared
+        battery's at-rest assertions mean the same thing on both stores.
+        """
 
         state = MockState()
         store = MockRotatingCredentialStore(state=state, exchanger=FakeCounterparty())
@@ -112,7 +150,9 @@ class TestMockWiring:
         documents = state.identity["rotating_credentials"]
 
         assert list(documents) == [f"|{REF.path}"]
-        assert documents[f"|{REF.path}"]["refresh_token"] == "r"
+
+        # No cipher wired, so the payload is stored in the clear.
+        assert documents[f"|{REF.path}"]["payload"]["refresh_token"] == "r"
 
     def test_unbounded_exchange_is_refused(self) -> None:
         with pytest.raises(CoreException, match="Exchange timeout must be positive"):

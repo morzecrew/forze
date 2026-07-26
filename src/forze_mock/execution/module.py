@@ -461,6 +461,10 @@ class MockDepsModule(DepsModule):
             deps[RotatingCredentialsDepKey] = MockRotatingCredentialStore(
                 state=self.state,
                 exchanger=self.rotating_credentials,
+                # Sealed by default, matching the Postgres store: a mock that kept
+                # credentials in the clear would make the at-rest behaviour differ from
+                # production on the one store where that difference matters most.
+                cipher=crypto_keyring,
             )
 
         if self.routed_state is not None:

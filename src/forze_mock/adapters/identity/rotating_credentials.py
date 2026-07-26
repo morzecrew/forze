@@ -9,6 +9,7 @@ from uuid import UUID
 
 import attrs
 
+from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.secrets import (
     BURNT_CREDENTIAL_CODE,
     CREDENTIAL_EXCHANGE_TIMEOUT_CODE,
@@ -22,9 +23,14 @@ from forze.application.contracts.secrets import (
     SecretVersion,
 )
 from forze.application.contracts.tenancy import TenancyMixin
+from forze.application.integrations.crypto.payload import (
+    ROTATING_CREDENTIAL_PAYLOAD_DOMAIN,
+    decrypt_payload,
+    encrypt_payload,
+)
 from forze.base.exceptions import CoreException, exc
 from forze.base.logging import get_logger
-from forze.base.primitives import StripedAsyncLocks
+from forze.base.primitives import JsonDict, StripedAsyncLocks
 from forze_mock.state import MockState
 
 # ----------------------- #
@@ -48,12 +54,22 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
 
     What the mock cannot model is a *process* crash. The battery covers that axis against
     the real Postgres store; here the equivalent is a persist that raises.
+
+    At-rest sealing is real here too, and deliberately so: the same envelope helpers under the
+    same AAD domain as the Postgres store, so the battery's crypto legs — round-trip, and a
+    row lifted across refs or tenants failing authentication — run identically against both.
+    A mock that stored credentials in the clear while the real store sealed them would leave
+    the AAD binding proven on exactly one adapter.
     """
 
     state: MockState
 
     exchanger: CredentialExchangerPort
     """The counterparty call. Invoked only under the per-credential lock."""
+
+    cipher: BytesCipherPort | None = None
+    """Keyring sealing the stored payload. ``None`` keeps credentials in the clear — which is
+    also how a legacy plaintext document is modelled on the read path."""
 
     exchange_timeout: timedelta = timedelta(seconds=30)
     """Bound on the counterparty call. The credential's lock is held for its duration, so
@@ -86,27 +102,87 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
 
     # ....................... #
 
-    def _key(self, ref: SecretRef) -> str:
-        # The tenant belongs in the key, not beside it: one shared store keyed on the ref
-        # alone would hand tenant B tenant A's grant.
+    def _scope(self, ref: SecretRef) -> tuple[UUID | None, str]:
+        """The ambient tenant and the storage key it produces, resolved once.
+
+        The tenant belongs *in* the key, not beside it: one shared store keyed on the ref
+        alone would hand tenant B tenant A's grant. The same tenant also anchors the AAD, so
+        resolving once keeps the two from disagreeing.
+        """
+
         tenant: UUID | None = self._tenant_id_for_resolve()
 
-        return f"{'' if tenant is None else tenant}|{ref.path}"
+        return tenant, f"{'' if tenant is None else tenant}|{ref.path}"
 
     # ....................... #
 
     @staticmethod
-    def _view(document: dict[str, Any]) -> RotatingCredential:
-        """Project the stored document to the caller-facing view (no refresh token)."""
+    def _view(document: dict[str, Any], payload: dict[str, Any]) -> RotatingCredential:
+        """Project a document plus its opened payload to the caller-facing view."""
 
         expires_at = document.get("expires_at")
-        metadata = document.get("metadata")
+        metadata = payload.get("metadata")
 
         return RotatingCredential(
-            access_token=str(document.get("access_token", "")),
+            access_token=str(payload.get("access_token", "")),
             version=SecretVersion(str(document["version"])),
             expires_at=expires_at if isinstance(expires_at, datetime) else None,
             metadata=dict(metadata) if isinstance(metadata, dict) else {},  # pyright: ignore[reportUnknownArgumentType]
+        )
+
+    # ....................... #
+
+    @staticmethod
+    def _view_of(credential: ExchangedCredential, version: int) -> RotatingCredential:
+        """The view of a credential this call just wrote — no read-back, no second open."""
+
+        return RotatingCredential(
+            access_token=credential.access_token,
+            version=SecretVersion(str(version)),
+            expires_at=credential.expires_at,
+            metadata=dict(credential.metadata),
+        )
+
+    # ....................... #
+
+    async def _open(
+        self,
+        document: dict[str, Any],
+        ref: SecretRef,
+        tenant_id: UUID | None,
+    ) -> dict[str, Any]:
+        """Decrypt a stored payload, passing legacy plaintext through unchanged."""
+
+        payload = document.get("payload")
+        opened = await decrypt_payload(
+            self.cipher,
+            payload if isinstance(payload, dict) else {},  # pyright: ignore[reportUnknownArgumentType]
+            domain=ROTATING_CREDENTIAL_PAYLOAD_DOMAIN,
+            tenant_id=tenant_id,
+            record_id=ref.path,
+        )
+
+        return dict(opened)
+
+    # ....................... #
+
+    async def _seal(
+        self,
+        payload: JsonDict,
+        ref: SecretRef,
+        tenant_id: UUID | None,
+    ) -> JsonDict:
+        """Seal a payload for storage, or return it as-is when no cipher is wired."""
+
+        if self.cipher is None:
+            return payload
+
+        return await encrypt_payload(
+            self.cipher,
+            payload,
+            domain=ROTATING_CREDENTIAL_PAYLOAD_DOMAIN,
+            tenant_id=tenant_id,
+            record_id=ref.path,
         )
 
     # ....................... #
@@ -135,17 +211,22 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
     def _persist(
         self,
         key: str,
+        payload: JsonDict,
         credential: ExchangedCredential,
         *,
         version: int,
     ) -> dict[str, Any]:
-        """Write the replacement. The single durable write the whole plane pivots on."""
+        """Write the replacement. The single durable write the whole plane pivots on.
+
+        Takes the payload already sealed: the write itself stays synchronous under the state
+        lock, so the crypto happens before it rather than inside it.
+        """
 
         document: dict[str, Any] = {
-            "access_token": credential.access_token,
-            "refresh_token": credential.refresh_token,
+            # Mirrors the Postgres row: the credential lives in one nested payload that
+            # sealing can replace wholesale, while expires_at stays a readable sibling.
+            "payload": payload,
             "expires_at": credential.expires_at,
-            "metadata": dict(credential.metadata),
             "version": version,
             "burnt_reason": None,
         }
@@ -181,17 +262,19 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
     async def _exchange(
         self,
         ref: SecretRef,
-        document: dict[str, Any],
+        payload: dict[str, Any],
         key: str,
     ) -> ExchangedCredential:
-        """Run the bounded counterparty call, mapping only a permanent rejection to a burn."""
+        """Run the bounded counterparty call over an already-opened payload."""
+
+        metadata = payload.get("metadata")
 
         try:
             async with asyncio.timeout(self.exchange_timeout.total_seconds()):
                 return await self.exchanger.exchange(
                     ref,
-                    refresh_token=str(document["refresh_token"]),
-                    metadata=dict(document["metadata"]),
+                    refresh_token=str(payload.get("refresh_token", "")),
+                    metadata=dict(metadata) if isinstance(metadata, dict) else {},  # pyright: ignore[reportUnknownArgumentType]
                 )
 
         except TimeoutError as e:
@@ -218,28 +301,60 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
 
     # ....................... #
 
+    async def _sealed_payload(
+        self,
+        credential: ExchangedCredential,
+        ref: SecretRef,
+        tenant_id: UUID | None,
+    ) -> JsonDict:
+        """Build the stored payload for *credential* and seal it."""
+
+        return await self._seal(
+            {
+                "access_token": credential.access_token,
+                "refresh_token": credential.refresh_token,
+                "metadata": {str(key): str(value) for key, value in credential.metadata.items()},
+            },
+            ref,
+            tenant_id,
+        )
+
+    # ....................... #
+
     async def get(self, ref: SecretRef) -> RotatingCredential:
-        return self._view(self._load(self._key(ref), ref))
+        tenant_id, key = self._scope(ref)
+        document = self._load(key, ref)
+
+        return self._view(document, await self._open(document, ref, tenant_id))
 
     # ....................... #
 
     async def refresh(self, ref: SecretRef, *, observed: SecretVersion) -> RotatingCredential:
-        key = self._key(ref)
+        tenant_id, key = self._scope(ref)
 
         async with self._locks.for_key(key):
             document = self._load(key, ref)
             current = SecretVersion(str(document["version"]))
+            payload = await self._open(document, ref, tenant_id)
 
             if current != observed:
                 # Single-flight: another worker already exchanged, so its document is
                 # canonical. Calling the counterparty again would present a token it has
                 # already burned, and reuse detection can revoke the whole grant family.
-                return self._view(document)
+                return self._view(document, payload)
 
-            exchanged = await self._exchange(ref, document, key)
+            exchanged = await self._exchange(ref, payload, key)
 
             try:
-                stored = self._persist(key, exchanged, version=int(document["version"]) + 1)
+                # Sealing is inside the guard: it happens *after* the exchange, so a keyring
+                # failure here loses an already-burned credential exactly as a failed write
+                # would, and must be reported the same way.
+                stored = self._persist(
+                    key,
+                    await self._sealed_payload(exchanged, ref, tenant_id),
+                    exchanged,
+                    version=int(document["version"]) + 1,
+                )
 
             except Exception as e:
                 # The counterparty already burned the presented token, so the grant is
@@ -259,24 +374,27 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
                     details={"ref": ref.path},
                 ) from e
 
-            return self._view(stored)
+            return self._view_of(exchanged, int(stored["version"]))
 
     # ....................... #
 
     async def put(self, ref: SecretRef, credential: ExchangedCredential) -> RotatingCredential:
-        key = self._key(ref)
+        tenant_id, key = self._scope(ref)
 
         async with self._locks.for_key(key):
             with self.state.lock:
                 existing = self._documents().get(key)
                 version = 0 if existing is None else int(existing["version"])
 
-            return self._view(self._persist(key, credential, version=version + 1))
+            payload = await self._sealed_payload(credential, ref, tenant_id)
+            stored = self._persist(key, payload, credential, version=version + 1)
+
+            return self._view_of(credential, int(stored["version"]))
 
     # ....................... #
 
     async def burn(self, ref: SecretRef, *, reason: str) -> None:
-        key = self._key(ref)
+        _, key = self._scope(ref)
 
         async with self._locks.for_key(key):
             self._mark_burnt(key, reason)

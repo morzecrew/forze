@@ -12,7 +12,11 @@ the *ordering* wrong is not an implementation of it:
 3. **reuse never reaches the counterparty** — a caller holding a stale version cannot
    trigger an exchange;
 4. **the burn notice is terminal and typed**, cleared only by re-authorization;
-5. **tenant isolation** — one tenant's grant is unreachable from another's.
+5. **tenant isolation** — one tenant's grant is unreachable from another's;
+6. **sealed at rest** — the tokens are not readable on disk, the AAD binds each credential to
+   its ``(tenant, ref)`` so a lifted row fails authentication rather than decrypting into the
+   wrong grant, and a legacy plaintext row still reads so enabling encryption needs no
+   migration.
 
 There is no live third party to differential against, so :class:`FakeCounterparty` *is*
 the specification of provider behaviour: it burns each presented token and revokes the
@@ -43,9 +47,10 @@ from forze.application.contracts.secrets import (
     RotatingCredentialStorePort,
     SecretRef,
 )
+from forze.application.contracts.crypto import is_encrypted_payload
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze.base.primitives import utcnow
+from forze.base.primitives import JsonDict, utcnow
 
 # ----------------------- #
 
@@ -169,6 +174,20 @@ class RotatingStoreHarness:
 
     Supplied per adapter because a faithful failure is storage-specific: the mock breaks
     its write, the Postgres store gets a trigger that raises inside the real transaction.
+    """
+
+    stored_payload: Callable[[SecretRef], Awaitable[JsonDict]]
+    """Read the payload exactly as it sits at rest, bypassing the store.
+
+    The only way to assert that a credential is *not* in the clear on disk, and the only way
+    to stage the tampering the AAD is supposed to reject.
+    """
+
+    write_stored_payload: Callable[[SecretRef, JsonDict], Awaitable[None]]
+    """Overwrite the at-rest payload, bypassing the store.
+
+    Stages two things no public method can: a row lifted out of another ref or tenant, and a
+    legacy plaintext document written before a keyring was ever wired.
     """
 
     # ....................... #
@@ -464,6 +483,128 @@ async def check_burn_of_an_absent_grant_sticks(h: RotatingStoreHarness) -> None:
 # ....................... #
 
 
+async def check_credentials_are_sealed_at_rest(h: RotatingStoreHarness) -> None:
+    """Every row here is a replayable credential, so the tokens must not be readable on disk.
+
+    Asserting the *absence* of the plaintext is what makes this meaningful — a test that only
+    checked the round-trip would pass just as well against a store that sealed nothing.
+    """
+
+    await h.seed()
+    at_rest = await h.stored_payload(REF)
+
+    assert is_encrypted_payload(at_rest), "the stored payload is not an envelope"
+    assert SEED_REFRESH not in str(at_rest), "the refresh token is readable at rest"
+    assert SEED_ACCESS not in str(at_rest), "the access token is readable at rest"
+
+    # And it still opens: sealing that cannot round-trip is just data loss.
+    opened = await h.store.get(REF)
+    assert opened.access_token == SEED_ACCESS
+    assert opened.metadata["host"] == "acme.example"
+
+    # A rotation re-seals rather than silently dropping to plaintext.
+    rotated = await h.store.refresh(REF, observed=opened.version)
+    resealed = await h.stored_payload(REF)
+
+    assert is_encrypted_payload(resealed)
+    assert rotated.access_token not in str(resealed)
+
+
+# ....................... #
+
+
+async def check_a_row_lifted_to_another_ref_fails_authentication(
+    h: RotatingStoreHarness,
+) -> None:
+    """The AAD binds a credential to its ref, so a copied row cannot be opened elsewhere.
+
+    Worth having quite apart from confidentiality: without the binding, anyone able to write
+    the table could promote one tenant's grant into another ref and have it decrypt cleanly.
+    """
+
+    other = SecretRef("oauth/other")
+    await h.seed()
+    await h.seed(other)
+
+    # Lift the first grant's sealed bytes into the second ref's row.
+    await h.write_stored_payload(other, await h.stored_payload(REF))
+
+    with pytest.raises(CoreException) as rejected:
+        await h.store.get(other)
+
+    # The AEAD refuses it; what matters is that it is refused, not decrypted.
+    assert rejected.value.code != BURNT_CREDENTIAL_CODE
+
+    # The untouched ref still reads, so the failure is the binding and not a broken keyring.
+    assert (await h.store.get(REF)).access_token == SEED_ACCESS
+
+
+# ....................... #
+
+
+async def check_a_row_lifted_to_another_tenant_fails_authentication(
+    h: RotatingStoreHarness,
+) -> None:
+    """The same binding on the tenant axis — the one that would leak across customers."""
+
+    first, second = uuid4(), uuid4()
+
+    h.tenant.tenant_id = first
+    await h.seed()
+    sealed = await h.stored_payload(REF)
+
+    h.tenant.tenant_id = second
+    await h.seed()
+    await h.write_stored_payload(REF, sealed)
+
+    with pytest.raises(CoreException) as rejected:
+        await h.store.get(REF)
+
+    assert rejected.value.code != BURNT_CREDENTIAL_CODE
+
+    h.tenant.tenant_id = first
+    assert (await h.store.get(REF)).access_token == SEED_ACCESS
+
+    h.tenant.tenant_id = None
+
+
+# ....................... #
+
+
+async def check_legacy_plaintext_rows_still_read(h: RotatingStoreHarness) -> None:
+    """Enabling encryption must not need a migration or a flag day.
+
+    A row written before a keyring was wired is plaintext; it has to keep reading, and seal on
+    its next write. Without the pass-through, turning encryption on would brick every existing
+    grant at once.
+    """
+
+    await h.seed()
+    await h.write_stored_payload(
+        REF,
+        {
+            "access_token": "legacy-access",
+            "refresh_token": "legacy-refresh",
+            "metadata": {"host": "legacy.example"},
+        },
+    )
+
+    legacy = await h.store.get(REF)
+
+    assert legacy.access_token == "legacy-access"
+    assert legacy.metadata["host"] == "legacy.example"
+
+    # The next write seals it, so a plaintext table converts as its grants rotate.
+    rotated = await h.store.refresh(REF, observed=legacy.version)
+
+    assert h.counterparty.presented == ["legacy-refresh"], "it used the legacy token"
+    assert is_encrypted_payload(await h.stored_payload(REF))
+    assert (await h.store.get(REF)).access_token == rotated.access_token
+
+
+# ....................... #
+
+
 async def check_tenants_are_isolated(h: RotatingStoreHarness) -> None:
     first, second = uuid4(), uuid4()
 
@@ -510,5 +651,9 @@ ROTATING_STORE_BATTERY: tuple[Check, ...] = (
     check_burn_then_put_restores,
     check_burn_of_an_absent_grant_sticks,
     check_tenants_are_isolated,
+    check_credentials_are_sealed_at_rest,
+    check_a_row_lifted_to_another_ref_fails_authentication,
+    check_a_row_lifted_to_another_tenant_fails_authentication,
+    check_legacy_plaintext_rows_still_read,
 )
 """Every check, in the order a reader should meet them. An adapter runs all of them."""

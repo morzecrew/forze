@@ -11,27 +11,49 @@ import contextlib
 from collections.abc import Mapping
 from datetime import timedelta
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
 pytest.importorskip("psycopg")
 
+from forze.application.contracts.crypto import (
+    AesGcmAead,
+    KeyRef,
+    KeyringDepKey,
+    StaticKeyDirectory,
+    is_encrypted_payload,
+)
 from forze.application.contracts.secrets import (
     ExchangedCredential,
     SecretRef,
     SecretVersion,
 )
+from forze.application.integrations.crypto import Keyring
 from forze.base.exceptions import CoreException
+from forze_mock import MockKeyManagement
 from forze_postgres.adapters.rotating_credentials import PostgresRotatingCredentialStore
+from forze_postgres.execution.deps.configs import PostgresRotatingCredentialsConfig
+from forze_postgres.execution.deps.factories import ConfigurablePostgresRotatingCredentials
+from forze_postgres.execution.deps.keys import PostgresClientDepKey
 
 # ----------------------- #
 
 _REF = SecretRef("oauth/acme")
 
 
+def _keyring() -> Keyring:
+    return Keyring(
+        kms=MockKeyManagement(),
+        aead=AesGcmAead(),
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk-rotating")),
+    )
+
+
 class _FakeClient:
     def __init__(self, row: dict[str, Any] | None) -> None:
         self.statements: list[str] = []
+        self.bound_params: list[Any] = []
         self.transactions = 0
         self.detached_scopes = 0
         self.require_transaction_calls = 0
@@ -48,7 +70,8 @@ class _FakeClient:
         self._record(query)
 
     async def fetch_one(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
-        _ = params, kwargs
+        _ = kwargs
+        self.bound_params.append(params)
         rendered = self._record(query)
 
         if rendered.lstrip().upper().startswith("SELECT"):
@@ -185,6 +208,23 @@ class TestConfig:
         with pytest.raises(CoreException, match="Exchange timeout must be positive"):
             _store(dict(_LIVE_ROW), exchange_timeout=timedelta(seconds=-1))
 
+    async def test_a_sealed_row_never_holds_the_tokens_in_the_clear(self) -> None:
+        """The write path seals before it reaches SQL, so the bound payload is an envelope."""
+
+        store, client, _ = _store(dict(_LIVE_ROW), cipher=_keyring())
+
+        await store.put(
+            _REF,
+            ExchangedCredential(access_token="fresh-access", refresh_token="fresh-refresh"),
+        )
+
+        bound = client.bound_params[-1]
+        payload = bound["payload"].obj  # psycopg Jsonb wrapper
+
+        assert is_encrypted_payload(payload)
+        assert "fresh-refresh" not in str(payload)
+        assert "fresh-access" not in str(payload)
+
     async def test_the_tenant_is_part_of_the_key_not_a_filter(self) -> None:
         """An unbound tenant stores as the empty string; the predicate always names it, so
         one tenant's ref can never resolve to another's row."""
@@ -195,3 +235,72 @@ class TestConfig:
 
         assert "tenant_id = " in client.statements[0]
         assert "ref = " in client.statements[0]
+
+
+def _factory_ctx(*, keyring: bool) -> Any:
+    """A fake context providing a client and, optionally, a keyring."""
+
+    ctx = MagicMock()
+    client, keyring_obj = MagicMock(name="client"), MagicMock(name="keyring")
+
+    def _provide(key: Any) -> Any:
+        if key is PostgresClientDepKey:
+            return client
+
+        if key is KeyringDepKey:
+            return keyring_obj
+
+        raise KeyError(key)
+
+    ctx.deps.provide.side_effect = _provide
+    ctx.deps.exists.side_effect = lambda key: keyring and key is KeyringDepKey
+    ctx.inv_ctx.get_tenant = lambda: None
+
+    return ctx
+
+
+def _config(**overrides: Any) -> PostgresRotatingCredentialsConfig:
+    options: dict[str, Any] = {
+        "relation": ("public", "rotating_credentials"),
+        "exchanger": _StubExchanger(),
+    }
+    options.update(overrides)
+
+    return PostgresRotatingCredentialsConfig(**options)
+
+
+class TestEncryptionWiring:
+    def test_sealing_is_on_by_default(self) -> None:
+        """Every row is a replayable credential, so this is the one store whose ``encrypt``
+        defaults to ``True`` rather than following the plane's usual opt-in."""
+
+        assert _config().encrypt is True
+
+    def test_plaintext_requires_an_explicit_acknowledgment(self) -> None:
+        with pytest.raises(CoreException, match="acknowledge_plaintext=True"):
+            _config(encrypt=False)
+
+        # Spoken aloud, it is allowed — the name is what makes the choice visible in wiring.
+        assert _config(encrypt=False, acknowledge_plaintext=True).encrypt is False
+
+    def test_encryption_without_a_keyring_fails_closed_at_resolve(self) -> None:
+        """Fail at wiring, not at the first write: a store that silently fell back to
+        plaintext would be indistinguishable from a working one until a breach."""
+
+        factory = ConfigurablePostgresRotatingCredentials(config=_config())
+
+        with pytest.raises(CoreException, match="no keyring is wired"):
+            factory(_factory_ctx(keyring=False))
+
+    def test_encryption_with_a_keyring_builds_a_sealing_store(self) -> None:
+        factory = ConfigurablePostgresRotatingCredentials(config=_config())
+
+        assert factory(_factory_ctx(keyring=True)).cipher is not None
+
+    def test_acknowledged_plaintext_builds_without_a_cipher(self) -> None:
+        factory = ConfigurablePostgresRotatingCredentials(
+            config=_config(encrypt=False, acknowledge_plaintext=True)
+        )
+
+        # No keyring needed, and none silently used.
+        assert factory(_factory_ctx(keyring=False)).cipher is None

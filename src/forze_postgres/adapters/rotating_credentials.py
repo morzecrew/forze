@@ -41,10 +41,21 @@ table keyed on ``ref`` alone would hand one tenant another's grant. An unbound t
 stores as the empty string.
 
 ``payload`` holds the credential itself (``access_token``, ``refresh_token``,
-``metadata``); ``expires_at`` is lifted out as a column so an operator can find grants
-about to expire without reading secrets. Both tokens are stored in the clear — protect this
-table the way you protect the credentials it holds, and keep it out of logical backups that
-travel.
+``metadata``); ``expires_at`` is lifted out as a column so an operator can find grants about
+to expire without reading secrets.
+
+**The payload is sealed at rest by default.** Every row here is a replayable long-lived
+credential, so a plaintext table turns a leaked logical backup or a read-only replica into
+working third-party access for every tenant. With a :attr:`cipher` wired, ``payload`` is
+stored as a self-describing envelope whose AAD binds it to
+``(domain, tenant, ref)`` — so a row lifted into another ref or another tenant fails
+authentication instead of decrypting into the wrong grant, which is worth having quite apart
+from confidentiality. Only ``payload`` is sealed; the ``expires_at`` column stays readable.
+
+Enabling encryption needs no migration: an unsealed payload is passed through on read and
+sealed on its next write, so an existing plaintext table converts as its grants rotate.
+Turning it *off* on a table that already holds envelopes is not symmetric — those rows still
+need the key, and a store wired without a cipher refuses them rather than returning garbage.
 """
 
 from forze_postgres._compat import require_psycopg
@@ -62,6 +73,7 @@ import attrs
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
+from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.secrets import (
     BURNT_CREDENTIAL_CODE,
     CREDENTIAL_EXCHANGE_TIMEOUT_CODE,
@@ -75,6 +87,11 @@ from forze.application.contracts.secrets import (
     SecretVersion,
 )
 from forze.application.contracts.tenancy import TenancyMixin
+from forze.application.integrations.crypto.payload import (
+    ROTATING_CREDENTIAL_PAYLOAD_DOMAIN,
+    decrypt_payload,
+    encrypt_payload,
+)
 from forze.base.exceptions import CoreException, exc
 from forze.base.logging import get_logger
 from forze.base.primitives import JsonDict, StripedAsyncLocks, utcnow
@@ -98,6 +115,10 @@ Both bounds must *exceed* the exchange, never merely match it:
   in flight, and being reaped there would lose an already-burned credential;
 - ``lock_timeout`` — a racer should be able to wait out one full exchange *and its commit*
   and then converge on the winner, which is a better outcome than erroring.
+
+The multiple also buys headroom for everything else the locked transaction does around the
+exchange: the locked read, opening and sealing the payload (a cold data key may cost one KMS
+round trip), and the upsert plus commit.
 """
 
 _ROW_COLUMNS: Final[str] = "payload, expires_at, version, burnt_reason"
@@ -125,6 +146,15 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
     An unbounded exchange would hold a row lock — and a pooled connection — for as long as
     the provider is willing to stall."""
 
+    cipher: BytesCipherPort | None = None
+    """Keyring sealing :attr:`payload` at rest. ``None`` stores credentials in the clear —
+    only ever the result of an explicit acknowledgment at the wiring layer.
+
+    Sealing and opening happen inside the row-locked transaction, because the refresh token
+    the exchange needs is what is sealed. The keyring caches unwrapped data keys, so this is
+    a local computation after the first grant, and the transaction's bound leaves room for
+    the cold case (see :data:`_TRANSACTION_BOUND_FACTOR`)."""
+
     _locks: StripedAsyncLocks = attrs.field(factory=StripedAsyncLocks, init=False, repr=False)
     """First line of serialization: collapses same-process racers before any of them checks
     out a connection to queue on the row lock."""
@@ -145,12 +175,18 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
 
     # ....................... #
 
-    def _tenant_key(self) -> str:
-        # Part of the primary key, so it must be a value and never NULL — an unbound tenant
-        # is the empty string, matching the counter store's convention.
+    def _tenant_scope(self) -> tuple[UUID | None, str]:
+        """The ambient tenant, as the AAD needs it and as the primary key needs it.
+
+        Resolved once per call and threaded, so the key a row is written under and the AAD it
+        is sealed under can never disagree. The key is part of the primary key, so it must be
+        a value and never NULL — an unbound tenant is the empty string, matching the counter
+        store's convention; the AAD keeps the honest ``None``.
+        """
+
         tenant: UUID | None = self._tenant_id_for_resolve()
 
-        return "" if tenant is None else str(tenant)
+        return tenant, "" if tenant is None else str(tenant)
 
     # ....................... #
 
@@ -195,10 +231,13 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
     # ....................... #
 
     @classmethod
-    def _view(cls, row: JsonDict) -> RotatingCredential:
-        """Project a stored row to the caller-facing view (no refresh token)."""
+    def _view(cls, row: JsonDict, payload: dict[str, object]) -> RotatingCredential:
+        """Project a row plus its already-opened payload to the caller-facing view.
 
-        payload = cls._payload(row)
+        Takes the opened payload rather than re-reading ``row["payload"]`` so a sealed row is
+        never decrypted twice on one call.
+        """
+
         expires_at = row["expires_at"]
 
         return RotatingCredential(
@@ -206,6 +245,64 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
             version=SecretVersion(str(row["version"])),
             expires_at=expires_at if isinstance(expires_at, datetime) else None,
             metadata=cls._metadata(payload),
+        )
+
+    # ....................... #
+
+    @staticmethod
+    def _view_of(credential: ExchangedCredential, version: object) -> RotatingCredential:
+        """The view of a credential this call just wrote — no read-back, no second decrypt."""
+
+        return RotatingCredential(
+            access_token=credential.access_token,
+            version=SecretVersion(str(version)),
+            expires_at=credential.expires_at,
+            metadata=dict(credential.metadata),
+        )
+
+    # ....................... #
+
+    async def _open(
+        self,
+        row: JsonDict,
+        ref: SecretRef,
+        tenant_id: UUID | None,
+    ) -> dict[str, object]:
+        """Decrypt a stored payload, passing legacy plaintext through unchanged.
+
+        The pass-through is what makes enabling encryption migration-free: rows written
+        before the keyring was wired keep reading, and each seals on its next write.
+        """
+
+        opened = await decrypt_payload(
+            self.cipher,
+            cast(JsonDict, self._payload(row)),
+            domain=ROTATING_CREDENTIAL_PAYLOAD_DOMAIN,
+            tenant_id=tenant_id,
+            record_id=ref.path,
+        )
+
+        return cast(dict[str, object], opened)
+
+    # ....................... #
+
+    async def _seal(
+        self,
+        payload: JsonDict,
+        ref: SecretRef,
+        tenant_id: UUID | None,
+    ) -> JsonDict:
+        """Seal a payload for storage, or return it as-is when no cipher is wired."""
+
+        if self.cipher is None:
+            return payload
+
+        return await encrypt_payload(
+            self.cipher,
+            payload,
+            domain=ROTATING_CREDENTIAL_PAYLOAD_DOMAIN,
+            tenant_id=tenant_id,
+            record_id=ref.path,
         )
 
     # ....................... #
@@ -263,15 +360,20 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
         credential: ExchangedCredential,
         *,
         version: int,
+        tenant_id: UUID | None,
     ) -> JsonDict:
         """Write the replacement, clearing any burn notice by construction."""
 
         now = utcnow()
-        payload: JsonDict = {
-            "access_token": credential.access_token,
-            "refresh_token": credential.refresh_token,
-            "metadata": {str(key): str(value) for key, value in credential.metadata.items()},
-        }
+        payload: JsonDict = await self._seal(
+            {
+                "access_token": credential.access_token,
+                "refresh_token": credential.refresh_token,
+                "metadata": {str(key): str(value) for key, value in credential.metadata.items()},
+            },
+            ref,
+            tenant_id,
+        )
         row = await self.client.fetch_one(
             sql.SQL(
                 """
@@ -362,10 +464,12 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
 
     # ....................... #
 
-    async def _exchange(self, ref: SecretRef, row: JsonDict) -> ExchangedCredential:
-        """Run the bounded counterparty call."""
-
-        payload = self._payload(row)
+    async def _exchange(
+        self,
+        ref: SecretRef,
+        payload: dict[str, object],
+    ) -> ExchangedCredential:
+        """Run the bounded counterparty call over an already-opened payload."""
 
         try:
             async with asyncio.timeout(self.exchange_timeout.total_seconds()):
@@ -387,23 +491,25 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
     # ....................... #
 
     async def get(self, ref: SecretRef) -> RotatingCredential:
+        tenant_id, tenant = self._tenant_scope()
         table = await self._table()
-        row = await self._read(table, self._tenant_key(), ref, for_update=False)
+        row = self._guard_live(await self._read(table, tenant, ref, for_update=False), ref)
 
-        return self._view(self._guard_live(row, ref))
+        return self._view(row, await self._open(row, ref, tenant_id))
 
     # ....................... #
 
     async def refresh(self, ref: SecretRef, *, observed: SecretVersion) -> RotatingCredential:
-        tenant = self._tenant_key()
+        tenant_id, tenant = self._tenant_scope()
 
         async with self._locks.for_key(f"{tenant}|{ref.path}"):
-            return await self._rotate_under_row_lock(tenant, ref, observed)
+            return await self._rotate_under_row_lock(tenant_id, tenant, ref, observed)
 
     # ....................... #
 
     async def _rotate_under_row_lock(
         self,
+        tenant_id: UUID | None,
         tenant: str,
         ref: SecretRef,
         observed: SecretVersion,
@@ -431,15 +537,16 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
 
                 row = self._guard_live(await self._read(table, tenant, ref, for_update=True), ref)
                 current = SecretVersion(str(row["version"]))
+                payload = await self._open(row, ref, tenant_id)
 
                 if current != observed:
                     # Single-flight: the version moved while we queued on the row lock, so
                     # another worker already exchanged. Presenting the stored token again
                     # would be reuse, and reuse detection can revoke the whole family.
-                    return self._view(row)
+                    return self._view(row, payload)
 
                 try:
-                    credential = await self._exchange(ref, row)
+                    credential = await self._exchange(ref, payload)
                     exchanged = True
 
                 except CoreException as e:
@@ -454,15 +561,18 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
                     await self._mark_burnt(table, tenant, ref, burn_reason)
 
                 elif credential is not None:
-                    rotated = self._view(
-                        await self._persist(
-                            table,
-                            tenant,
-                            ref,
-                            credential,
-                            version=int(str(row["version"])) + 1,
-                        )
+                    stored = await self._persist(
+                        table,
+                        tenant,
+                        ref,
+                        credential,
+                        version=int(str(row["version"])) + 1,
+                        tenant_id=tenant_id,
                     )
+                    # Built from the credential we just wrote, not from the row we read back:
+                    # the stored payload is sealed, and re-opening it would decrypt what this
+                    # frame already holds in the clear.
+                    rotated = self._view_of(credential, stored["version"])
 
         except Exception as e:
             if not exchanged:
@@ -504,7 +614,7 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
     # ....................... #
 
     async def put(self, ref: SecretRef, credential: ExchangedCredential) -> RotatingCredential:
-        tenant = self._tenant_key()
+        tenant_id, tenant = self._tenant_scope()
 
         async with self._locks.for_key(f"{tenant}|{ref.path}"):
             table = await self._table()
@@ -514,15 +624,21 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
 
                 row = await self._read(table, tenant, ref, for_update=True)
                 version = 0 if row is None else int(str(row["version"]))
-
-                return self._view(
-                    await self._persist(table, tenant, ref, credential, version=version + 1)
+                stored = await self._persist(
+                    table,
+                    tenant,
+                    ref,
+                    credential,
+                    version=version + 1,
+                    tenant_id=tenant_id,
                 )
+
+                return self._view_of(credential, stored["version"])
 
     # ....................... #
 
     async def burn(self, ref: SecretRef, *, reason: str) -> None:
-        tenant = self._tenant_key()
+        _, tenant = self._tenant_scope()
 
         async with self._locks.for_key(f"{tenant}|{ref.path}"):
             table = await self._table()

@@ -21,9 +21,18 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from psycopg import sql
+from psycopg.types.json import Jsonb
 
-from forze.application.contracts.secrets import ExchangedCredential
+from forze.application.contracts.crypto import (
+    AesGcmAead,
+    KeyRef,
+    StaticKeyDirectory,
+)
+from forze.application.contracts.secrets import ExchangedCredential, SecretRef
+from forze.application.integrations.crypto import Keyring
 from forze.base.exceptions import CoreException
+from forze.base.primitives import JsonDict
+from forze_mock import MockKeyManagement
 from forze_postgres.adapters.rotating_credentials import PostgresRotatingCredentialStore
 from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 from tests.support.rotating_credentials import (
@@ -77,7 +86,37 @@ async def harness(
         exchanger=counterparty,
         exchange_timeout=EXCHANGE_TIMEOUT,
         tenant_provider=tenant,
+        # A real keyring: the point of running the battery here is that the envelope
+        # survives a genuine jsonb round-trip, not just a dict in memory.
+        cipher=Keyring(
+            kms=MockKeyManagement(),
+            aead=AesGcmAead(),
+            directory=StaticKeyDirectory(KeyRef(key_id="cmk-rotating")),
+        ),
     )
+
+    def _key() -> str:
+        return "" if tenant.tenant_id is None else str(tenant.tenant_id)
+
+    async def stored_payload(ref: SecretRef) -> JsonDict:
+        row = await pg_client.fetch_one(
+            sql.SQL(
+                "SELECT payload FROM {table} WHERE tenant_id = %(tenant)s AND ref = %(ref)s"
+            ).format(table=sql.Identifier("public", credentials_table)),
+            {"tenant": _key(), "ref": ref.path},
+        )
+
+        assert row is not None
+        return dict(row["payload"])
+
+    async def write_stored_payload(ref: SecretRef, payload: JsonDict) -> None:
+        await pg_client.execute(
+            sql.SQL(
+                "UPDATE {table} SET payload = %(payload)s "
+                "WHERE tenant_id = %(tenant)s AND ref = %(ref)s"
+            ).format(table=sql.Identifier("public", credentials_table)),
+            {"payload": Jsonb(payload), "tenant": _key(), "ref": ref.path},
+        )
 
     @contextlib.asynccontextmanager
     async def break_persist() -> AsyncIterator[None]:
@@ -126,6 +165,8 @@ async def harness(
         counterparty=counterparty,
         tenant=tenant,
         break_persist=break_persist,
+        stored_payload=stored_payload,
+        write_stored_payload=write_stored_payload,
     )
 
 

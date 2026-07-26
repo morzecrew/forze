@@ -243,6 +243,14 @@ The refresh token never appears in a caller-facing type: `get` returns the acces
 token only, and the store hands the refresh token straight to the exchanger. A caller
 cannot replay a rotated token because it never holds one.
 
+Because every row is a replayable credential, the stored payload is **sealed at rest by
+default** — plaintext requires an explicit `acknowledge_plaintext=True`, and wiring fails
+closed if encryption is on with no keyring. The envelope's associated data binds each
+credential to its `(tenant, ref)`, so a row copied into another ref or tenant fails
+authentication rather than decrypting into the wrong grant. `expires_at` stays a plain
+column, so operators keep visibility into expiring grants without holding a key. Turning
+sealing on needs no migration: existing plaintext reads through and seals on next write.
+
 `forze_postgres.PostgresRotatingCredentialStore` is the shipped store (one row per
 `(tenant_id, ref)`, `SELECT … FOR UPDATE`); see the runnable walkthrough in
 `examples/recipes/rotating_credentials/`.
