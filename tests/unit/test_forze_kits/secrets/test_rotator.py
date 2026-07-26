@@ -478,6 +478,57 @@ class TestBackendConvergence:
         assert len(page.records) == MAX_RECONFIRM_ROUNDS
         assert all(record.status is DurableRunStatus.COMPLETED for record in page.records)
 
+    async def test_reconfirmation_never_rests_on_a_superseded_canonical(self) -> None:
+        """A concurrent rotation promotes a newer credential while the corrective
+        apply asserts the older one (lock-less wiring): the post-apply recheck
+        sees the advance and the chained round converges to the NEW canonical."""
+
+        class _SupersedingTarget(_ConfirmScriptedTarget):
+            admin: Any = None
+            superseded: bool = False
+
+            async def apply(self, tenant_id: UUID | None, pending: PendingCredential) -> None:
+                await super().apply(tenant_id, pending)
+
+                if pending.ref == _REF and not self.superseded:
+                    # The concurrent rotation's promote lands mid-corrective-apply.
+                    self.superseded = True
+                    await self.admin.put(_REF, "newer-canonical-dsn")
+
+        target = _SupersedingTarget()
+        state = MockState()
+        registry = DurableFunctionRegistry()
+        rotator = SecretRotator(
+            target=target,
+            publish_spec=None,
+            lock=None,  # the exposed wiring — the recheck is the remaining net
+            reconfirm_after=timedelta(0),
+        )
+        rotator.register(registry)
+        durable_deps, runner, _ = durable_kits_deps(registry=registry)
+        ctx = context_from_deps(MockDepsModule(state=state)(), durable_deps)
+        target.admin = ctx.deps.provide(SecretsAdminDepKey)
+        await _seed(ctx, "dsn-old")
+
+        await rotator.rotate_now(ctx, _REF)
+        target.fail_confirms = 1  # round 1 drifts → corrective apply → superseded
+
+        assert await runner.recover(ctx) == 1  # round 1: converge + recheck + chain
+        assert await runner.recover(ctx) == 1  # round 2: quiet, on the NEW canonical
+        assert await runner.recover(ctx) == 0
+
+        secrets = ctx.deps.provide(SecretsDepKey)
+        canonical_now = await secrets.resolve_versioned(_REF)
+        assert canonical_now.text == "newer-canonical-dsn"
+
+        admin = resolve_durable_run_admin(ctx)
+        page = await admin.list_runs(name=rotator.confirm_function_name)
+        assert len(page.records) == 2
+        # The chained round asserted the newer canonical, not the superseded one.
+        newest = max(page.records, key=lambda record: record.created_at)
+        assert newest.output_json is not None
+        assert newest.output_json["version_token"] == canonical_now.version.token
+
     async def test_reconfirm_window_must_exceed_the_targets_latency_bound(self) -> None:
         """Fail closed at wiring: a reconfirmation that fires while a stale apply
         can still commit proves nothing."""

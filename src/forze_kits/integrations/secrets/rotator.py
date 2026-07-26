@@ -383,12 +383,38 @@ class SecretRotator:
 
         payload = RotationInput.model_validate(input_json or {})
         ref = SecretRef(payload.ref_path)
+
+        if self.lock is None:
+            return await self._confirm(ctx, ref, payload)
+
+        # The same per-ref lock the rotation body holds: a corrective apply must
+        # never interleave with a live rotation — the confirm's read→apply window
+        # could otherwise restore a credential a concurrent promote just
+        # superseded. The bounded wait rides out a rotation in progress; a still
+        # -held lock past it fails this run loudly (and the concurrent rotation's
+        # own confirm chain covers the backend meanwhile).
+        scope = DistributedLockScope(
+            cmd=ctx.dlock.command(self.lock),
+            owner_provider=lambda: f"secrets_rotator:{current_time_source().uuid()}",
+            extend_interval=self.lock.ttl / 3,
+            wait_timeout=self.lock.ttl,
+        )
+
+        async with scope.scope(f"secrets_rotate:{ref.path}"):
+            return await self._confirm(ctx, ref, payload)
+
+    # ....................... #
+
+    async def _confirm(
+        self, ctx: ExecutionContext, ref: SecretRef, payload: RotationInput
+    ) -> JsonDict:
         secrets = ctx.deps.provide(SecretsDepKey)
 
         validate_versioned_reads_supported(
             secrets_capabilities_of(secrets), backend=type(secrets).__name__
         )
-        current = await cast(VersionedSecretsPort, secrets).resolve_versioned(ref)
+        versioned = cast(VersionedSecretsPort, secrets)
+        current = await versioned.resolve_versioned(ref)
         canonical = PendingCredential(ref=ref, version=current.version)
         drift = False
 
@@ -399,6 +425,19 @@ class SecretRotator:
             drift = True
             await self.target.apply(payload.tenant_id, canonical)
             await self.target.verify(payload.tenant_id, canonical)
+
+            # Recheck after the corrective write: in a lock-less wiring (or past a
+            # lost lock) a rotation may have promoted a newer canonical while we
+            # asserted this one — the chained round below then converges to the
+            # NEW canonical instead of resting on a superseded success.
+            recheck = await versioned.resolve_versioned(ref)
+
+            if recheck.version != current.version:
+                logger.warning(
+                    "Canonical credential at %s advanced during reconfirmation; "
+                    "the next round converges to it",
+                    ref.path,
+                )
 
         if drift and self.reconfirm_after is not None:
             if payload.confirm_round >= MAX_RECONFIRM_ROUNDS:
