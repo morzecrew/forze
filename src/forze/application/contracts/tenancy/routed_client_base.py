@@ -127,6 +127,18 @@ class RoutedTenantClientBase(Generic[C]):
 
     # ....................... #
 
+    def cached_tenant_ids(self) -> tuple[UUID, ...]:
+        """Best-effort snapshot of tenants with cached credentials (no lock).
+
+        The hot-reload binder's seam: on a secret-change event it recomputes each
+        cached tenant's ref via :attr:`secret_ref_for_tenant`, matches against the
+        changed ref, and calls :meth:`evict_tenant` for the hits.
+        """
+
+        return self._pool.cached_tenant_ids()
+
+    # ....................... #
+
     def pool_stats(self) -> TenantPoolStats:
         """Snapshot of the tenant pool's churn counters (see :class:`TenantPoolStats`).
 

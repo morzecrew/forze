@@ -24,11 +24,13 @@ from .authz import (
     MockPrincipalRegistryPort,
     MockRoleAssignmentPort,
 )
-from .secrets import MockSecretsPort
+from .secrets import MockDynamicSecretsPort, MockSecretsChangeSource, MockSecretsPort
 from .tenancy import MockTenantManagementPort, MockTenantResolverPort
 
 __all__ = [
     "MockSecretsPort",
+    "MockSecretsChangeSource",
+    "MockDynamicSecretsPort",
     "MockPasswordVerifierPort",
     "MockTokenVerifierPort",
     "MockApiKeyVerifierPort",

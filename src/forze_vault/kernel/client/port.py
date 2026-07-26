@@ -29,6 +29,45 @@ class VaultClientPort(Protocol):
 
         ...  # pragma: no cover
 
+    def read_kv_data_versioned(self, path: str) -> Awaitable[tuple[dict[str, Any], int]]:
+        """Read secret data and its KV v2 version in one request (no TOCTOU)."""
+
+        ...  # pragma: no cover
+
+    def read_kv_metadata(self, path: str) -> Awaitable[dict[str, Any]]:
+        """Read KV v2 metadata for *path* (``current_version``, timestamps) without
+        the secret payload."""
+
+        ...  # pragma: no cover
+
+    def write_kv_data(
+        self, path: str, data: dict[str, Any], *, cas: int | None = None
+    ) -> Awaitable[int]:
+        """Write *data* as the new current version at *path*, returning the version.
+
+        With *cas* set, the write is KV v2 check-and-set: it succeeds only while the
+        current version equals *cas*, and raises a ``CONCURRENCY``-kind error
+        otherwise."""
+
+        ...  # pragma: no cover
+
+    def db_generate_credentials(self, role: str) -> Awaitable[dict[str, Any]]:
+        """Mint dynamic database credentials for *role*, returning the raw lease
+        response (``lease_id``, ``lease_duration``, ``renewable``, ``data``)."""
+
+        ...  # pragma: no cover
+
+    def renew_lease(self, lease_id: str, increment_seconds: int) -> Awaitable[int]:
+        """Renew a lease via ``sys/leases/renew``, returning the granted TTL in
+        seconds (backends may grant less than asked)."""
+
+        ...  # pragma: no cover
+
+    def revoke_lease(self, lease_id: str) -> Awaitable[None]:
+        """Revoke a lease via ``sys/leases/revoke``, dropping what it minted."""
+
+        ...  # pragma: no cover
+
     def health(self) -> Awaitable[tuple[str, bool]]:
         """Return ``(message, ok)``; must not raise."""
 

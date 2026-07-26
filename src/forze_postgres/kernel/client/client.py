@@ -504,6 +504,18 @@ class PostgresClient(PostgresClientPort):
                     )
 
     # ....................... #
+
+    @property
+    def acquire_timeout(self) -> timedelta:
+        """Pool-connection acquire timeout (the value passed to :meth:`initialize`).
+
+        The client-side wait a statement can spend queued before any server-side
+        clock starts — latency-bound consumers (rotation targets) validate their
+        declared allowances against this."""
+
+        return self.__acquire_timeout
+
+    # ....................... #
     # Transaction API
 
     def is_in_transaction(self) -> bool:

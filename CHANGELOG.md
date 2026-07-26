@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+**Secrets lifecycle plane** — versions, change feed, hot reload, durable rotator, leases; `SecretsPort` unchanged.
+
+- **Versioned reads + admin writes** — `resolve_versioned`/`current_version` (opaque equality-only `SecretVersion`) on every backend, `SecretsAdminPort.put` under a new `secrets_admin` dep key; per-backend `SecretsCapabilities` fail closed (`secrets_feature_unsupported`).
+- **Change feed + hot reload** — `SecretChanged`/`SecretsChangeSource` contract, `SecretsPollWatcher` (30s default), Kubernetes-aware `DirectorySecretsChangeSource` with an optional OS-native event accelerator (`native_events_lifecycle_step`; needs app-installed `watchfiles`, fails closed without it), and `SecretsHotReloadBinder` evicting affected routed-pool tenants; the `fingerprint_ttl` floor stays on.
+- **Rotation notifications** — `SecretRotated` (refs/versions only) via outbox → broadcast pub/sub; `PubSubSecretsChangeSource` consumes it through the same binder seam.
+- **Durable rotator** — `SecretRotator`: create→set→test→finish per `(ref, tenant)` with `<path>.pending` staging and fenced promotion (verify-before-promote, CAS via `SecretsAdminPort.put(expected_version=…)`, delayed reconfirmation via `reconfirm_after`); triggers `rotate_now`/`enqueue_tenants`/`ensure_cron`; `forze_postgres.PostgresRotationTarget` defaults to dual-user alternation, single-role behind `single_role_degraded=True`.
+- **Leases** — `DynamicSecretsPort`/`LeasedSecret`, `forze_vault.VaultDynamicSecrets`, and `SecretsLeaseManager` (renew at ~⅔ TTL, reissue before `max_ttl`); a leased backend needs no rotator.
+- Full mock parity (`MockSecretsChangeSource`, `MockDynamicSecretsPort`), new `RoutedTenantClientBase.cached_tenant_ids()`, runnable walkthrough in `examples/recipes/secrets_rotation/`.
+
 ## [0.5.1] - 2026-07-25
 
 ### Added

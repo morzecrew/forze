@@ -51,6 +51,8 @@ from .adapters import (
 )
 from .adapters.embeddings import MockHashEmbeddingsProvider
 from .adapters.identity import (
+    MockDynamicSecretsPort,
+    MockSecretsChangeSource,
     MockSecretsPort,
     MockTenantManagementPort,
     MockTenantResolverPort,
@@ -123,6 +125,8 @@ __all__ = [
     "MockDurableRunStore",
     "MockDurableScheduleStore",
     "MockSecretsPort",
+    "MockSecretsChangeSource",
+    "MockDynamicSecretsPort",
     "MockKeyManagement",
     "MockTenantResolverPort",
     "MockTenantManagementPort",

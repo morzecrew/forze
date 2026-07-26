@@ -41,6 +41,9 @@ lifecycle = LifecyclePlan.from_steps(vault_lifecycle_step())
 | Contract | Implementation | Dep key |
 |----------|---------------|---------|
 | Secrets (`resolve_str`, `exists`) | `VaultKvSecrets` (KV v2) | `SecretsDepKey` |
+| Versioned reads (`resolve_versioned`, `current_version`) | `VaultKvSecrets` (native KV v2 versions) | `SecretsDepKey` |
+| Control-plane writes (`put`, rotator-facing) | `VaultKvSecrets` | `SecretsAdminDepKey` |
+| Dynamic credentials (leases) | `VaultDynamicSecrets` (database engine) | `SecretsLeaseDepKey` (opt-in) |
 | Raw client | `VaultClient` | `VaultClientDepKey` |
 | Key management (envelope encryption) | `VaultTransitKeyManagement` (Transit) | `KeyManagementDepKey` |
 | Per-tenant KEK provisioning | `VaultTransitTenantProvisioner` (Transit) | via `TenantProvisionerPort` |
@@ -60,3 +63,12 @@ lifecycle = LifecyclePlan.from_steps(vault_lifecycle_step())
   leaves Vault), `VaultTransitTenantProvisioner` creates a tenant's Transit key
   on onboarding, and `VaultTransitSigner` signs JWTs (RS256/ES256) without the
   private key leaving Vault.
+- KV v2 assigns **native version tokens**, so the secrets lifecycle plane
+  (watchers, hot reload, the rotator) works over Vault without content hashing —
+  and `current_version` is served from KV metadata, never reading the payload.
+  See [Credential rotation](../running-in-prod/credential-rotation.md).
+- **Dynamic credentials** need the database secrets engine enabled
+  (`VaultConfig.database_mount`, default `database`); register
+  `VaultDynamicSecrets` via `VaultDepsModule(dynamic_secrets=…)` and pair it with
+  the kit lease manager. Where you adopt leases for a backend, short TTLs *are*
+  the rotation — skip the rotator there.
