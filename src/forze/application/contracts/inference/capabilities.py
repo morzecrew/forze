@@ -40,9 +40,18 @@ class InferenceCapabilities:
     but a caller sizing batches can use it to reason about cost and latency."""
 
     max_batch_size: int | None = None
-    """Hard per-call instance cap imposed by the backend, or ``None`` for unbounded. An
-    adapter with a cap refuses an oversized ``predict_many`` up front (precondition) rather
-    than silently splitting a call the caller asked to be atomic (all-or-nothing)."""
+    """Hard per-call instance cap imposed by the backend, or ``None`` for unbounded.
+
+    The cap is enforced differently by the two batch methods, and both halves are binding:
+
+    - ``predict_many`` **refuses** an oversized batch up front (precondition) rather than
+      silently splitting a call the caller asked to be atomic (all-or-nothing).
+    - ``predict_stream`` **sub-batches** an oversized chunk into several backend calls,
+      preserving the caller's chunk boundaries. A stream chunk is a bounded-memory
+      convenience, not an atomicity request, so a cap must not turn it into a refusal.
+
+    An adapter that refuses in both places is stricter than the contract, and code written
+    against the contract then fails only against that adapter."""
 
     supports_stream: bool = False
     """Whether ``predict_stream`` (bounded-memory chunked scoring) is honored. Backends
@@ -108,7 +117,9 @@ def validate_batch_size(
     """Raise cleanly if a ``predict_many`` batch exceeds the backend's hard cap.
 
     ``predict_many`` is all-or-nothing, so an oversized batch is refused whole rather
-    than silently split into several backend calls the caller did not ask for.
+    than silently split into several backend calls the caller did not ask for. For
+    ``predict_stream`` the same cap sub-batches instead (see
+    :attr:`InferenceCapabilities.max_batch_size`) — do not call this from there.
     """
 
     if caps.max_batch_size is not None and size > caps.max_batch_size:

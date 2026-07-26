@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from forze.application.contracts.inference import InferenceSpec
+from forze.application.integrations.inference import scalar_output_field
 from forze.base.exceptions import exc
 
 # ----------------------- #
@@ -24,9 +25,13 @@ def wrap_scalar_predictions(
     A mapping item passes through; a scalar item wraps into the output model's single
     field — the response-side twin of "a scalar prediction wraps in a one-field model".
     A scalar response against a multi-field output model is a wire mismatch.
+
+    The wrapping *rule* is the shared boundary one
+    (:func:`~forze.application.integrations.inference.scalar_output_field`), so the wire
+    decoders and the output shaping every adapter runs cannot drift apart on it. This
+    helper only applies it early, while the response is still records.
     """
 
-    fields = list(spec.output.model_fields)
     records: list[Mapping[str, Any]] = []
 
     for item in predictions:
@@ -35,14 +40,7 @@ def wrap_scalar_predictions(
             records.append(cast(Mapping[str, Any], item))
             continue
 
-        if len(fields) != 1:
-            raise exc.validation(
-                f"Inference {spec.name!r}: the {backend!r} backend returned scalar "
-                f"predictions but {spec.output.__name__} has {len(fields)} fields.",
-                code="inference_output_mismatch",
-            )
-
-        records.append({fields[0]: item})
+        records.append({scalar_output_field(spec, backend=backend): item})
 
     return records
 

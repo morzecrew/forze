@@ -20,6 +20,7 @@ from forze.application.contracts.resolution import resolve_scoped_namespace
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.inference import (
     bind_run_options,
+    ensure_budget,
     shape_outputs,
     validated_instances,
 )
@@ -83,6 +84,8 @@ class SageMakerInferenceAdapter[In: BaseModel, Out: BaseModel](
 
     async def _score(self, prepared: Sequence[In]) -> Sequence[Out]:
         """One endpoint invocation for one already-validated, already-capped batch."""
+
+        ensure_budget(backend=SAGEMAKER_BACKEND)
 
         endpoint = await self._endpoint_name()
 

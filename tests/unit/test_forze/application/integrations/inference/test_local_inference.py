@@ -180,7 +180,12 @@ class TestLocalInferenceAdapter:
 
         with pytest.raises(CoreException) as ei:
             await port.predict(_Features(x=1.0), options={"timeout": timedelta(0)})
-        assert ei.value.code == "cpu_offload_deadline"
+
+        # The shared pre-flight code, not the CPU seam's own: a spent budget refuses the
+        # same way on every inference backend, so a caller can tell "the model was never
+        # asked" from a mid-call timeout without knowing which adapter answered. The CPU
+        # seam still owns a deadline that expires *during* an offload.
+        assert ei.value.code == "inference_budget_exhausted"
 
     @pytest.mark.asyncio
     async def test_capabilities_reflect_config(self) -> None:

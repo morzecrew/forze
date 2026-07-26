@@ -36,7 +36,12 @@ from forze.base.exceptions import exc
 from forze.base.primitives import OnceCell, run_cpu
 from forze.base.primitives.deadline import remaining_time
 
-from .adapter_common import bind_run_options, shape_outputs, validated_instances
+from .adapter_common import (
+    bind_run_options,
+    ensure_budget,
+    shape_outputs,
+    validated_instances,
+)
 
 # ----------------------- #
 
@@ -315,6 +320,8 @@ class LocalInferenceAdapter[In: BaseModel, Out: BaseModel](InferencePort[In, Out
         model = await self.host.model()
 
         with bind_run_options(options):
+            ensure_budget(backend=LOCAL_INFERENCE_BACKEND)
+
             raw = await self.host.run(model, prepared)
 
         return shape_outputs(

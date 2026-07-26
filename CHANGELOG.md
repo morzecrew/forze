@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Inference plane** — conformance across the mock, in-process, KServe-V2 and MLflow adapters closed three divergences.
+
+- **Behaviour change:** a declared `max_batch_size` now **sub-batches** an oversized `predict_stream` chunk on every adapter instead of refusing it. `predict_many` still refuses whole — all-or-nothing.
+- **Behaviour change:** a spent invocation budget raises `timeout` with new `inference_budget_exhausted` (`BUDGET_EXHAUSTED_CODE`) from every adapter before the backend is called, replacing `cpu_offload_deadline` for the in-process pre-flight case.
+- Predictions arriving as one bare value per instance (`sklearn.predict` shape) now wrap into a single-field output model on **every** adapter via new `scalar_output_field`; previously the MLflow/SageMaker dialects only.
+
 **Storage plane** — conformance across the mock, two S3 implementations and GCS closed four divergences.
 
 - `delete` and `abort_upload` are now **idempotent on every backend**; a missing object or an already-aborted session is a no-op rather than a backend-dependent error.
