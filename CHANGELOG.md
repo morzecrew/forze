@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Graph plane** — mock↔Neo4j conformance closed two divergences.
+
+- New `normalize_property_filter` in `contracts.graph`; graph `property_filter` values are coerced the way properties are stored, so a `UUID`/`datetime`/`Decimal` filter now matches. **Behaviour change:** such a filter previously returned no rows on the mock and raised on Neo4j.
+- A duplicate vertex key now raises `graph_vertex_conflict` on Neo4j (was a generic `core.conflict`). Requires `ensure_schema()`; without it Cypher `CREATE` cannot detect a duplicate.
+
 **Counter value domain** — counters are signed 64-bit on every backend, now declared and enforced instead of assumed.
 
 - New `COUNTER_MIN_VALUE`/`COUNTER_MAX_VALUE`, `COUNTER_VALUE_OUT_OF_RANGE_CODE` and `validate_counter_value` in `contracts.counter`. **Behaviour change:** `reset` outside the int64 range now raises `counter_value_out_of_range` on every backend (Redis previously accepted it, failing the next allocation instead), and the mock now refuses values it used to allow. Contract now pins: fresh counters read 0, `incr(by=0)` reads without moving, negative values legal.

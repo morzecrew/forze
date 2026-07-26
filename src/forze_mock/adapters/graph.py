@@ -37,6 +37,7 @@ from forze.application.contracts.graph import (
     ShortestPathParams,
     ShortestPathResult,
     VertexRef,
+    normalize_property_filter,
     validate_property_filter_keys,
 )
 from forze.application.integrations.graph import (
@@ -241,7 +242,12 @@ class MockGraphAdapter(MockTenancyMixin):
         if not property_filter:
             return True
 
-        return all(props.get(k) == v for k, v in property_filter.items())
+        # Stored properties went through ``model_dump(mode="json")``, so the filter values
+        # are normalized the same way — otherwise a filter carrying a UUID would compare a
+        # UUID against its own string form and quietly match nothing.
+        normalized = normalize_property_filter(property_filter) or {}
+
+        return all(props.get(k) == v for k, v in normalized.items())
 
     async def neighbors(
         self,

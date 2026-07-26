@@ -16,7 +16,11 @@ from .deps import (
     GraphRawQueryDepKey,
     GraphRawQueryDepPort,
 )
-from .filters import is_valid_filter_key, validate_property_filter_keys
+from .filters import (
+    is_valid_filter_key,
+    normalize_property_filter,
+    validate_property_filter_keys,
+)
 from .ports import (
     BaseGraphModulePort,
     GraphCommandPort,
@@ -101,5 +105,6 @@ __all__ = [
     "resolve_query_directions",
     "assert_key_field_not_sealed",
     "validate_graph_module_spec",
+    "normalize_property_filter",
     "validate_property_filter_keys",
 ]
