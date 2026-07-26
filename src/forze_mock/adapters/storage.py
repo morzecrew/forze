@@ -16,6 +16,7 @@ from typing import (
 import attrs
 
 from forze.application.contracts.storage import (
+    SELF_COPY_CODE,
     DownloadedObject,
     ObjectHead,
     PresignedUrl,
@@ -541,7 +542,17 @@ class MockStorageAdapter(
         the upload time refreshed from the bound ``TimeSource``; the ETag (a
         stable MD5 of the bytes) matches the source since the bytes are
         identical.
+
+        A copy onto its own key is refused, as the real adapter refuses it — the mock allowed
+        it, and a same-key copy is exactly the caller mistake that AWS S3 and MinIO reject.
         """
+
+        if src_key == dst_key:
+            raise exc.validation(
+                f"Cannot copy an object onto itself ({src_key!r}); a copy needs a "
+                "destination key that differs from its source.",
+                code=SELF_COPY_CODE,
+            )
 
         return await self.__copy(src_key, dst_key, delete_source=False)
 
@@ -645,6 +656,10 @@ class MockStorageAdapter(
             rows = list(self._objects().values())
         if prefix:
             rows = [row for row in rows if row.key.startswith(prefix)]
+        # Lexicographic by key, as an object store lists. The mock returned insertion order,
+        # which happens to agree while keys are generated (uuid7 sorts by time) and diverges
+        # the moment a caller supplies its own — an archived key on an import, say.
+        rows.sort(key=lambda row: row.key)
         total = len(rows)
         return rows[offset : offset + limit], total
 

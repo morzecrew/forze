@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Storage plane** — conformance across the mock, two S3 implementations and GCS closed four divergences.
+
+- `delete` and `abort_upload` are now **idempotent on every backend**; a missing object or an already-aborted session is a no-op rather than a backend-dependent error.
+- **Behaviour change:** `copy` onto the same key is refused with new `SELF_COPY_CODE` (`core.storage.self_copy`); it was previously allowed on some backends.
+- **Behaviour change:** mock `list` is ordered lexicographically by key (was insertion order), matching the real backends. S3 maps `NoSuchUpload` to `not_found`, not `infrastructure`.
+
 **Graph plane** — mock↔Neo4j conformance closed two divergences.
 
 - New `normalize_property_filter` in `contracts.graph`; graph `property_filter` values are coerced the way properties are stored, so a `UUID`/`datetime`/`Decimal` filter now matches. **Behaviour change:** such a filter previously returned no rows on the mock and raised on Neo4j.

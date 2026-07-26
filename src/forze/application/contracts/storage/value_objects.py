@@ -13,6 +13,15 @@ fallback (e.g. the FastAPI streaming route) reference one symbol and cannot drif
 
 # ....................... #
 
+SELF_COPY_CODE: Final[str] = "core.storage.self_copy"
+"""Error code (``validation`` kind) for a copy whose destination key equals its source.
+
+Enforced by the adapter rather than left to the backend because object stores disagree: AWS S3
+and MinIO reject a no-op same-key ``CopyObject`` while other implementations accept it, so
+without this guard the outcome of a caller's mistake would depend on which server is wired."""
+
+# ....................... #
+
 RANGE_NOT_SATISFIABLE_CODE: Final[str] = "range_not_satisfiable"
 """Error code (``precondition`` kind) raised when a ranged read starts past the end of the
 object — the HTTP 416 equivalent. The *plaintext* end: on a client-side-encrypting route only
