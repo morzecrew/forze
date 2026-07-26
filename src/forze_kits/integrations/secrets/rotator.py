@@ -65,6 +65,7 @@ from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import ExceptionKind, exc
 from forze.base.primitives import JsonDict, current_time_source, utcnow
 from forze.base.primitives.entropy_source import secure_token_urlsafe
+from forze_kits.integrations._logger import logger
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
     resolve_durable_runner,
@@ -85,6 +86,11 @@ stores have)."""
 ROTATE_FUNCTION_NAME: Final[str] = "secrets_rotate"
 """Default durable-function name the rotator registers under."""
 
+MAX_RECONFIRM_ROUNDS: Final[int] = 5
+"""Ceiling on drift-triggered reconfirmation rounds. Five consecutive rounds each
+finding fresh drift means something is systematically rewriting the backend
+credential — more rounds add churn, not safety; the exhaustion is logged critical."""
+
 
 def pending_ref_for(ref: SecretRef, *, suffix: str = PENDING_SUFFIX) -> SecretRef:
     """The staging ref paired with *ref*."""
@@ -100,6 +106,10 @@ class RotationInput(BaseModel):
 
     ref_path: str
     tenant_id: UUID | None = None
+
+    confirm_round: int = 1
+    """Reconfirmation round (confirm runs only): drift detected in one round
+    schedules the next, until a round passes quiet or the round cap is hit."""
 
 
 # ....................... #
@@ -161,6 +171,17 @@ class SecretRotator:
 
         if self.reconfirm_after is not None and self.reconfirm_after.total_seconds() < 0:
             raise exc.configuration("Reconfirm delay must not be negative")
+
+        bound = getattr(self.target, "apply_latency_bound", None)
+
+        if self.reconfirm_after is not None and bound is not None and self.reconfirm_after <= bound:
+            # A reconfirmation that fires while a stale apply can still commit
+            # proves nothing — the window must sit strictly past the target's
+            # declared apply-latency bound.
+            raise exc.configuration(
+                f"reconfirm_after ({self.reconfirm_after}) must exceed the rotation "
+                f"target's apply-latency bound ({bound}).",
+            )
 
     # ....................... #
 
@@ -352,6 +373,12 @@ class SecretRotator:
         Idempotent as a whole (no steps): it re-reads the primary at execution
         time, so even if newer rotations happened since it was scheduled, it
         asserts whatever is canonical *now* — always correct, at worst a no-op.
+
+        A quiet round (no drift) ends the chain. A round that HAD to converge is
+        evidence a stale writer was recently active, so it schedules the next
+        round — the chain only rests after one full window with no drift, capped
+        at :data:`MAX_RECONFIRM_ROUNDS` (exhaustion is logged critical: something
+        is systematically rewriting the credential).
         """
 
         payload = RotationInput.model_validate(input_json or {})
@@ -363,15 +390,49 @@ class SecretRotator:
         )
         current = await cast(VersionedSecretsPort, secrets).resolve_versioned(ref)
         canonical = PendingCredential(ref=ref, version=current.version)
+        drift = False
 
         try:
             await self.target.verify(payload.tenant_id, canonical)
 
         except Exception:
+            drift = True
             await self.target.apply(payload.tenant_id, canonical)
             await self.target.verify(payload.tenant_id, canonical)
 
-        return {"ref_path": ref.path, "version_token": current.version.token}
+        if drift and self.reconfirm_after is not None:
+            if payload.confirm_round >= MAX_RECONFIRM_ROUNDS:
+                logger.critical(
+                    "Secrets reconfirmation for %s found drift in %d consecutive "
+                    "rounds; something is rewriting the backend credential",
+                    ref.path,
+                    payload.confirm_round,
+                )
+
+            else:
+                next_round = payload.confirm_round + 1
+                await resolve_durable_runner(ctx).enqueue(
+                    ctx,
+                    self.confirm_function_name,
+                    RotationInput(
+                        ref_path=ref.path,
+                        tenant_id=payload.tenant_id,
+                        confirm_round=next_round,
+                    ).model_dump(mode="json"),
+                    idempotency_key=(
+                        f"{self.confirm_function_name}:{ref.path}:"
+                        f"{current.version.token}:round-{next_round}"
+                    ),
+                    tenant_id=payload.tenant_id,
+                    run_at=utcnow() + self.reconfirm_after,
+                )
+
+        return {
+            "ref_path": ref.path,
+            "version_token": current.version.token,
+            "drift": drift,
+            "round": payload.confirm_round,
+        }
 
     # ....................... #
 

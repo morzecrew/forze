@@ -117,6 +117,15 @@ class PostgresRotationTarget(RotationTargetPort):
 
     # ....................... #
 
+    @property
+    def apply_latency_bound(self) -> timedelta | None:
+        """The server-side statement timeout IS the apply-latency bound: an ALTER the
+        server hasn't run within it is killed and can never commit later."""
+
+        return self.apply_statement_timeout
+
+    # ....................... #
+
     @staticmethod
     def _parse_dsn(value: str) -> dict[str, str]:
         try:

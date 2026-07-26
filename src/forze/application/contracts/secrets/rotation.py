@@ -8,6 +8,7 @@ connection).
 """
 
 from collections.abc import Awaitable
+from datetime import timedelta
 from typing import Protocol, final
 from uuid import UUID
 
@@ -46,6 +47,18 @@ class RotationTargetPort(Protocol):
     the rotator kit. Implementations resolve the staged value through their injected
     :class:`~forze.application.contracts.secrets.SecretsPort` at call time.
     """
+
+    @property
+    def apply_latency_bound(self) -> timedelta | None:
+        """Upper bound on how late an in-flight :meth:`apply` can still commit.
+
+        A target that enforces a server-side timeout on its write declares it here
+        so the rotator can fail closed at wiring when a delayed-reconfirmation
+        window is configured at or below it. ``None`` means undeclared — the
+        rotator then relies on drift-triggered reconfirmation rounds alone.
+        """
+
+        return None
 
     def compose(
         self,

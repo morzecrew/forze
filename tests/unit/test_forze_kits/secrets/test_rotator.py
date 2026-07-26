@@ -395,10 +395,11 @@ class TestBackendConvergence:
         page = await admin.list_runs(name=rotator.confirm_function_name)
         assert page.records == []
 
-    async def test_delayed_reconfirmation_converges_a_late_stale_write(self) -> None:
+    async def test_delayed_reconfirmation_converges_and_chains_until_quiet(self) -> None:
         """The latecomer beyond the in-run confirm: a stale ALTER commits after the
-        rotation completed. The delayed run re-verifies the canonical credential
-        and converges the backend."""
+        rotation completed. The delayed run converges — and because drift is
+        evidence of a recently active stale writer, it schedules another round;
+        the chain rests only after a full quiet window."""
 
         target = _ConfirmScriptedTarget()
         state = MockState()
@@ -420,14 +421,84 @@ class TestBackendConvergence:
         # longer agrees with the promoted credential.
         target.fail_confirms = 1
 
-        assert await runner.recover(ctx) == 1  # the delayed reconfirmation run
-
+        assert await runner.recover(ctx) == 1  # round 1: drift → converge
         assert target.calls[-3:] == ["confirm", "converge", "confirm"]
+
+        assert await runner.recover(ctx) == 1  # round 2: quiet → chain ends
+        assert target.calls[-1] == "confirm"
+        assert await runner.recover(ctx) == 0  # nothing further scheduled
 
         admin = resolve_durable_run_admin(ctx)
         page = await admin.list_runs(name=rotator.confirm_function_name)
-        assert len(page.records) == 1
-        assert page.records[0].status is DurableRunStatus.COMPLETED
+        assert len(page.records) == 2
+        assert all(record.status is DurableRunStatus.COMPLETED for record in page.records)
+
+    async def test_reconfirmation_rounds_are_capped(self) -> None:
+        """Perpetual drift must not chain forever — the cap ends the churn (with a
+        critical log) instead of re-enqueueing indefinitely."""
+
+        from forze_kits.integrations.secrets.rotator import MAX_RECONFIRM_ROUNDS
+
+        class _AlwaysDriftingTarget(_ConfirmScriptedTarget):
+            """Every round's first confirm drifts; the converge-confirm passes —
+            fresh drift each window, forever."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self._confirms = 0
+
+            async def verify(
+                self, tenant_id: UUID | None, pending: PendingCredential
+            ) -> None:
+                if pending.ref == _REF:
+                    self._confirms += 1
+                    self.fail_confirms = 1 if self._confirms % 2 == 1 else 0
+
+                await super().verify(tenant_id, pending)
+
+        target = _AlwaysDriftingTarget()
+        state = MockState()
+        registry = DurableFunctionRegistry()
+        rotator = SecretRotator(
+            target=target, publish_spec=None, reconfirm_after=timedelta(0)
+        )
+        rotator.register(registry)
+        durable_deps, runner, _ = durable_kits_deps(registry=registry)
+        ctx = context_from_deps(MockDepsModule(state=state)(), durable_deps)
+        await _seed(ctx, "dsn-old")
+
+        await rotator.rotate_now(ctx, _REF)
+
+        for _ in range(MAX_RECONFIRM_ROUNDS + 3):
+            if await runner.recover(ctx) == 0:
+                break
+
+        admin = resolve_durable_run_admin(ctx)
+        page = await admin.list_runs(name=rotator.confirm_function_name)
+        assert len(page.records) == MAX_RECONFIRM_ROUNDS
+        assert all(record.status is DurableRunStatus.COMPLETED for record in page.records)
+
+    async def test_reconfirm_window_must_exceed_the_targets_latency_bound(self) -> None:
+        """Fail closed at wiring: a reconfirmation that fires while a stale apply
+        can still commit proves nothing."""
+
+        class _BoundedTarget(_RecordingTarget):
+            @property
+            def apply_latency_bound(self) -> timedelta:
+                return timedelta(seconds=30)
+
+        with pytest.raises(CoreException, match="must exceed"):
+            SecretRotator(
+                target=_BoundedTarget(),
+                publish_spec=None,
+                reconfirm_after=timedelta(seconds=10),
+            )
+
+        # Strictly above the bound (or disabled entirely) wires fine.
+        SecretRotator(
+            target=_BoundedTarget(), publish_spec=None, reconfirm_after=timedelta(seconds=60)
+        )
+        SecretRotator(target=_BoundedTarget(), publish_spec=None, reconfirm_after=None)
 
     async def test_finish_retry_after_own_promote_is_idempotent(self) -> None:
         """A crash between promote and publish makes the retry's CAS trip on OUR
