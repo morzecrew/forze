@@ -91,6 +91,12 @@ MAX_RECONFIRM_ROUNDS: Final[int] = 5
 finding fresh drift means something is systematically rewriting the backend
 credential — more rounds add churn, not safety; the exhaustion is logged critical."""
 
+MAX_INROUND_CONVERGENCES: Final[int] = 3
+"""Ceiling on immediate (same-round) convergences when the canonical version keeps
+advancing mid-round. A known-diverged backend never waits out a reconfirm window,
+but a store advancing three times within one round is churn to escalate, not chase
+— the chained round remains the backstop."""
+
 
 def pending_ref_for(ref: SecretRef, *, suffix: str = PENDING_SUFFIX) -> SecretRef:
     """The staging ref paired with *ref*."""
@@ -415,32 +421,51 @@ class SecretRotator:
         )
         versioned = cast(VersionedSecretsPort, secrets)
         current = await versioned.resolve_versioned(ref)
-        canonical = PendingCredential(ref=ref, version=current.version)
         drift = False
+        attempts = 0
 
-        try:
-            await self.target.verify(payload.tenant_id, canonical)
+        while True:
+            canonical = PendingCredential(ref=ref, version=current.version)
 
-        except Exception:
+            try:
+                await self.target.verify(payload.tenant_id, canonical)
+
+            except Exception:
+                drift = True
+                await self.target.apply(payload.tenant_id, canonical)
+                await self.target.verify(payload.tenant_id, canonical)
+
+            # Recheck on BOTH paths: in a lock-less wiring (or past a lost lock)
+            # a rotation may have promoted a newer canonical while this round
+            # read, verified, or corrected the older one — even a quiet verify
+            # can have raced the promote. A version advance is drift by
+            # definition, and a KNOWN-diverged backend must not wait out a
+            # reconfirm window: converge to the new canonical NOW; the chained
+            # round below stays the deferred quiet-window proof.
+            recheck = await versioned.resolve_versioned(ref)
+
+            if recheck.version == current.version:
+                break
+
             drift = True
-            await self.target.apply(payload.tenant_id, canonical)
-            await self.target.verify(payload.tenant_id, canonical)
+            attempts += 1
 
-        # Recheck on BOTH paths: in a lock-less wiring (or past a lost lock) a
-        # rotation may have promoted a newer canonical while this round read,
-        # verified, or corrected the older one — even a quiet verify can have
-        # raced the promote. A version advance is drift by definition: the
-        # chained round below converges to the NEW canonical instead of resting
-        # on a superseded verdict.
-        recheck = await versioned.resolve_versioned(ref)
+            if attempts >= MAX_INROUND_CONVERGENCES:
+                logger.critical(
+                    "Canonical credential at %s kept advancing through %d in-round "
+                    "convergences; leaving the rest to the chained round",
+                    ref.path,
+                    attempts,
+                )
+                current = recheck
+                break
 
-        if recheck.version != current.version:
-            drift = True
             logger.warning(
                 "Canonical credential at %s advanced during reconfirmation; "
-                "the next round converges to it",
+                "converging to it in-round",
                 ref.path,
             )
+            current = recheck
 
         if drift and self.reconfirm_after is not None:
             if payload.confirm_round >= MAX_RECONFIRM_ROUNDS:

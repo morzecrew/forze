@@ -524,10 +524,12 @@ class TestBackendConvergence:
         admin = resolve_durable_run_admin(ctx)
         page = await admin.list_runs(name=rotator.confirm_function_name)
         assert len(page.records) == 2
-        # The chained round asserted the newer canonical, not the superseded one.
-        newest = max(page.records, key=lambda record: record.created_at)
-        assert newest.output_json is not None
-        assert newest.output_json["version_token"] == canonical_now.version.token
+        # BOTH rounds settled on the newer canonical: round 1 converged to it
+        # in-round (a known-diverged backend never waits out a reconfirm window),
+        # round 2 is the quiet-window proof.
+        for record in page.records:
+            assert record.output_json is not None
+            assert record.output_json["version_token"] == canonical_now.version.token
 
     async def test_quiet_verify_raced_by_a_promote_still_chains(self) -> None:
         """The symmetric race: verify passes quietly, but a concurrent rotation
@@ -574,9 +576,54 @@ class TestBackendConvergence:
         admin = resolve_durable_run_admin(ctx)
         page = await admin.list_runs(name=rotator.confirm_function_name)
         assert len(page.records) == 2
-        newest = max(page.records, key=lambda record: record.created_at)
-        assert newest.output_json is not None
-        assert newest.output_json["version_token"] == canonical_now.version.token
+        # Round 1 already settled on the raced-in canonical in-round.
+        for record in page.records:
+            assert record.output_json is not None
+            assert record.output_json["version_token"] == canonical_now.version.token
+
+    async def test_runaway_canonical_advances_are_capped_in_round(self) -> None:
+        """A store that advances on every look must not trap the round in an
+        endless in-round chase — the cap breaks out, the chained round remains."""
+
+        from forze_kits.integrations.secrets.rotator import MAX_INROUND_CONVERGENCES
+
+        class _EverAdvancingTarget(_ConfirmScriptedTarget):
+            admin: Any = None
+            confirm_verifies: int = 0
+
+            async def verify(self, tenant_id: UUID | None, pending: PendingCredential) -> None:
+                await super().verify(tenant_id, pending)
+
+                if pending.ref == _REF:
+                    self.confirm_verifies += 1
+                    await self.admin.put(_REF, f"advancing-{self.confirm_verifies}")
+
+        target = _EverAdvancingTarget()
+        state = MockState()
+        registry = DurableFunctionRegistry()
+        rotator = SecretRotator(
+            target=target, publish_spec=None, lock=None, reconfirm_after=timedelta(0)
+        )
+        rotator.register(registry)
+        durable_deps, runner, _ = durable_kits_deps(registry=registry)
+        ctx = context_from_deps(MockDepsModule(state=state)(), durable_deps)
+        target.admin = ctx.deps.provide(SecretsAdminDepKey)
+        await _seed(ctx, "dsn-old")
+
+        await rotator.rotate_now(ctx, _REF)
+        verifies_before = target.confirm_verifies
+
+        assert await runner.recover(ctx) == 1  # round 1 completes despite the churn
+
+        # Bounded chase: initial verify + one per allowed in-round convergence.
+        assert target.confirm_verifies - verifies_before == MAX_INROUND_CONVERGENCES
+
+        admin = resolve_durable_run_admin(ctx)
+        page = await admin.list_runs(name=rotator.confirm_function_name)
+        completed = [r for r in page.records if r.status is DurableRunStatus.COMPLETED]
+        pending = [r for r in page.records if r.status is DurableRunStatus.PENDING]
+        assert len(completed) == 1  # the capped round finished cleanly
+        assert len(pending) == 1  # the chained round stays as the backstop
 
     def test_confirm_round_must_be_positive(self) -> None:
         from pydantic import ValidationError
