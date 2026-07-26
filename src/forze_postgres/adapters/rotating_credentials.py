@@ -417,6 +417,62 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
 
     # ....................... #
 
+    async def _poison(
+        self,
+        table: PostgresQualifiedName,
+        tenant: str,
+        ref: SecretRef,
+        *,
+        reason: str,
+        version: int,
+    ) -> None:
+        """Mark a grant unusable after its token was presented but the outcome was lost.
+
+        Runs in its own transaction: the one that presented the token has already rolled
+        back, and leaving the row untouched is what makes it dangerous — it still *looks*
+        live at the version a waiting worker holds, so the next refresh would present a
+        token the counterparty may already have consumed and trip reuse detection.
+
+        Fenced on the version we read, so a re-authorization that landed in the meantime is
+        never clobbered. Best effort by nature: if this write fails too, the caller still
+        learns its own outcome, and the log carries the rest.
+        """
+
+        try:
+            async with self.client.detached(), self.client.transaction():
+                await self.client.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {table} SET burnt_reason = {reason}, updated_at = {now}
+                        WHERE tenant_id = {tenant} AND ref = {ref}
+                          AND version = {version} AND burnt_reason IS NULL
+                        """
+                    ).format(
+                        table=table.ident(),
+                        reason=sql.Placeholder("reason"),
+                        now=sql.Placeholder("now"),
+                        tenant=sql.Placeholder("tenant"),
+                        ref=sql.Placeholder("ref"),
+                        version=sql.Placeholder("version"),
+                    ),
+                    {
+                        "reason": reason,
+                        "now": utcnow(),
+                        "tenant": tenant,
+                        "ref": ref.path,
+                        "version": version,
+                    },
+                )
+
+        except Exception as e:
+            log.critical(
+                "could not mark a spent rotating credential unusable",
+                ref=ref.path,
+                error=str(e),
+            )
+
+    # ....................... #
+
     async def _mark_burnt(
         self,
         table: PostgresQualifiedName,
@@ -516,13 +572,22 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
     ) -> RotatingCredential:
         """Exchange and commit under the row lock, classifying every way it can end.
 
-        The three non-happy endings are genuinely different and must not be collapsed:
-        a *stale* caller converges silently, a *dead grant* commits its burn notice and
-        then raises, and a *failed persist after a successful exchange* is unrecoverable.
+        The non-happy endings are genuinely different and must not be collapsed: a *stale*
+        caller converges silently, a *dead grant* commits its burn notice and then raises,
+        and anything that goes wrong *after the token was presented* leaves a credential
+        that must never be presented again.
+
+        That last one is the invariant the whole method is arranged around. A refresh token
+        is single-use, so the moment it reaches the counterparty it is spent-or-unknown, and
+        a rollback that restores the row hides exactly that: the grant looks live at the
+        version a waiting worker still holds. Both ways of losing the outcome — a commit
+        that failed after a successful exchange, and a timeout that left us without an
+        answer — therefore end the same way, with the row marked unusable.
         """
 
         table = await self._table()
         exchanged = False
+        locked_version: int | None = None
         credential: ExchangedCredential | None = None
         burn_reason: str | None = None
         rotated: RotatingCredential | None = None
@@ -537,6 +602,7 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
 
                 row = self._guard_live(await self._read(table, tenant, ref, for_update=True), ref)
                 current = SecretVersion(str(row["version"]))
+                locked_version = int(str(row["version"]))
                 payload = await self._open(row, ref, tenant_id)
 
                 if current != observed:
@@ -575,9 +641,38 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
                     rotated = self._view_of(credential, stored["version"])
 
         except Exception as e:
+            timed_out = isinstance(e, CoreException) and e.code == CREDENTIAL_EXCHANGE_TIMEOUT_CODE
+
+            if not exchanged and not timed_out:
+                # The token never reached the counterparty (per the exchanger's own
+                # classification), or the burn notice itself failed to store: an ordinary
+                # failure, and the stored credential is still safe to present.
+                raise
+
+            if locked_version is not None:
+                # Presented, outcome unknown or unrecorded — the stored token is spent or
+                # may be. Marking it unusable is what stops the next worker replaying it
+                # into the counterparty's reuse detection.
+                await self._poison(
+                    table,
+                    tenant,
+                    ref,
+                    reason=(
+                        "exchange succeeded but its replacement could not be committed"
+                        if exchanged
+                        else "exchange timed out with the token already presented"
+                    ),
+                    version=locked_version,
+                )
+
             if not exchanged:
-                # Nothing was consumed at the counterparty (or the burn notice itself
-                # failed to store): an ordinary failure, and the credential is intact.
+                # A timeout: transient for the network, terminal for this credential.
+                log.critical(
+                    "rotating credential left unusable by an ambiguous exchange",
+                    ref=ref.path,
+                    error=str(e),
+                )
+
                 raise
 
             # The counterparty already burned the presented token and this frame holds the

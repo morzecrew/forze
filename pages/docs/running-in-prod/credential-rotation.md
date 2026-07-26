@@ -230,6 +230,13 @@ credential instead of a second exchange. The replacement is committed before
 write or commit that fails after a successful exchange raises `credential_persist_lost`
 rather than a retryable-looking storage error — no retry can undo the provider's burn.
 
+The converse matters just as much: **once a token has been presented it is never presented
+again.** Any ending that loses the outcome — a failed commit, or a timeout where no answer
+came back — leaves the grant marked unusable instead of restoring a row that still looks
+refreshable, because the next worker would otherwise replay a possibly-consumed token into
+the provider's reuse detection and lose the whole family. A timeout is transient for the
+network and terminal for the credential.
+
 Your half is the exchanger: one bounded call to the provider's token endpoint. Its
 one hard obligation is classification. Report a permanent rejection with
 `code=INVALID_GRANT_CODE` and the store records a terminal burn notice

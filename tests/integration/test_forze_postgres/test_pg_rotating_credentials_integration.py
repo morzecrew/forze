@@ -136,9 +136,14 @@ async def harness(
             ).format(fn=sql.Identifier(trigger))
         )
         await pg_client.execute(
+            # Scoped to writes that actually change the credential. A real persist failure
+            # (constraint, serialization, commit) breaks *that* write; it does not disable
+            # every future update, and the store's recovery path has to be able to mark the
+            # spent grant unusable afterwards.
             sql.SQL(
                 "CREATE TRIGGER {trigger} BEFORE UPDATE ON {table} "
-                "FOR EACH ROW EXECUTE FUNCTION {fn}()"
+                "FOR EACH ROW WHEN (NEW.payload IS DISTINCT FROM OLD.payload) "
+                "EXECUTE FUNCTION {fn}()"
             ).format(
                 trigger=sql.Identifier(trigger),
                 table=sql.Identifier("public", credentials_table),
@@ -261,9 +266,13 @@ async def test_a_failure_at_commit_is_also_a_lost_credential(
         ).format(fn=sql.Identifier(trigger))
     )
     await pg_client.execute(
+        # Scoped to the credential write, like the immediate-failure trigger: the commit
+        # that fails is the one carrying the new payload, and the store must still be able
+        # to mark the spent grant unusable afterwards.
         sql.SQL(
             "CREATE CONSTRAINT TRIGGER {trigger} AFTER UPDATE ON {table} "
-            "DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION {fn}()"
+            "DEFERRABLE INITIALLY DEFERRED FOR EACH ROW "
+            "WHEN (NEW.payload IS DISTINCT FROM OLD.payload) EXECUTE FUNCTION {fn}()"
         ).format(
             trigger=sql.Identifier(trigger),
             table=sql.Identifier("public", credentials_table),
@@ -290,8 +299,13 @@ async def test_a_failure_at_commit_is_also_a_lost_credential(
         )
         await pg_client.execute(sql.SQL("DROP FUNCTION {fn}()").format(fn=sql.Identifier(trigger)))
 
-    # Nothing was half-applied: the stored grant is still the one the exchange superseded.
-    assert (await harness.store.get(REF)).version == before.version
+    # Nothing was half-applied, and nothing was left replayable either: the token that
+    # reached the counterparty is spent, so the grant is marked unusable rather than
+    # restored to a version a waiting worker would happily refresh again.
+    with pytest.raises(CoreException) as poisoned:
+        await harness.store.get(REF)
+
+    assert poisoned.value.code == "credential_burnt"
 
 
 # ....................... #

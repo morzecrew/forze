@@ -238,6 +238,25 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
 
     # ....................... #
 
+    def _poison(self, key: str, *, reason: str, version: int) -> None:
+        """Mark a grant unusable after its token was presented but the outcome was lost.
+
+        Fenced on the version read under the lock, so a re-authorization that landed in the
+        meantime is never clobbered.
+        """
+
+        with self.state.lock:
+            document = self._documents().get(key)
+
+            if (
+                document is not None
+                and document.get("burnt_reason") is None
+                and int(document["version"]) == version
+            ):
+                document["burnt_reason"] = reason
+
+    # ....................... #
+
     def _mark_burnt(self, key: str, reason: str) -> None:
         """Record the burn notice without taking the lock — callers already hold it."""
 
@@ -343,7 +362,30 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
                 # already burned, and reuse detection can revoke the whole grant family.
                 return self._view(document, payload)
 
-            exchanged = await self._exchange(ref, payload, key)
+            locked_version = int(document["version"])
+
+            try:
+                exchanged = await self._exchange(ref, payload, key)
+
+            except CoreException as e:
+                if e.code != CREDENTIAL_EXCHANGE_TIMEOUT_CODE:
+                    raise
+
+                # Presented, no answer: the token is spent or may be, so the stored grant
+                # must stop looking live at the version a waiting worker holds — otherwise
+                # the next refresh replays it into the counterparty's reuse detection.
+                self._poison(
+                    key,
+                    reason="exchange timed out with the token already presented",
+                    version=locked_version,
+                )
+                log.critical(
+                    "rotating credential left unusable by an ambiguous exchange",
+                    ref=ref.path,
+                    error=str(e),
+                )
+
+                raise
 
             try:
                 # Sealing is inside the guard: it happens *after* the exchange, so a keyring
@@ -353,13 +395,18 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
                     key,
                     await self._sealed_payload(exchanged, ref, tenant_id),
                     exchanged,
-                    version=int(document["version"]) + 1,
+                    version=locked_version + 1,
                 )
 
             except Exception as e:
                 # The counterparty already burned the presented token, so the grant is
                 # dead and the replacement is gone with this frame. Say so precisely —
                 # a generic storage error would read as retryable, and it is not.
+                self._poison(
+                    key,
+                    reason="exchange succeeded but its replacement could not be persisted",
+                    version=locked_version,
+                )
                 log.critical(
                     "rotating credential lost after a successful exchange",
                     ref=ref.path,

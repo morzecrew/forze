@@ -137,8 +137,16 @@ credential permanently unrecoverable.
 | Code | Meaning | What to do |
 | --- | --- | --- |
 | `credential_burnt` | The provider has permanently rejected this grant | Re-authorize; retrying cannot help |
-| `credential_exchange_timeout` | The store abandoned the exchange at its bound | Retry — the stored credential is untouched |
+| `credential_exchange_timeout` | The token was presented and no answer came back | Re-authorize. The grant is marked unusable, because the token may already be spent |
 | `credential_persist_lost` | The exchange succeeded and the commit did not | Re-authorize. The presented token is already burned, so no retry recovers it. Alert on this one |
+
+The last two share a rule worth stating plainly: **once a refresh token has been presented,
+it is never presented again.** A timeout is transient for the network but terminal for the
+credential — the store cannot tell "they never saw it" from "they consumed it and the reply
+was lost", and presenting a consumed token is reuse, which revokes the grant family. So the
+store marks the grant unusable rather than leaving a row that still looks refreshable to the
+next worker. The cost is a re-authorization that occasionally was not strictly necessary;
+the alternative risks losing the whole family.
 
 `credential_persist_lost` is the outcome worth wiring an alert to. It is rare, it is
 logged at critical, and it always means one specific thing: a human has to re-consent.

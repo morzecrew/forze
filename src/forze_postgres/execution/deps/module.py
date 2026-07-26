@@ -463,6 +463,25 @@ class PostgresDepsModule(DepsModule):
                     fields=[("relation", counter_cfg.relation)],
                 )
 
+        if self.rotating_credentials is not None:
+            # The store holding third-party credentials must clear the same isolation floor
+            # as any other route — leaving it out would let a deployment declare
+            # ``dedicated`` and still serve every tenant's grants from one shared table.
+            routes.append(
+                PostgresTenancyRouteSpec(
+                    name="rotating_credentials",
+                    tenant_aware=self.rotating_credentials.tenant_aware,
+                    kind="rotating_credentials",
+                    has_namespace_routing=callable(self.rotating_credentials.relation),
+                ),
+            )
+            warn_dynamic_relation_with_tenant_aware(
+                route_name="rotating_credentials",
+                kind="rotating_credentials",
+                tenant_aware=self.rotating_credentials.tenant_aware,
+                fields=[("relation", self.rotating_credentials.relation)],
+            )
+
         # Namespace tier is now tracked per route (a DYNAMIC per-tenant relation /
         # query_schema resolver on that route) so a declared floor is enforced route by route.
         validate_postgres_tenancy_wiring(

@@ -5,8 +5,11 @@ its real storage. The properties it checks are not adapter details — they are 
 reason the contract exists, so an adapter that stores documents correctly while getting
 the *ordering* wrong is not an implementation of it:
 
-1. **persist before use** — a caller never observes a credential that is not durable, and
-   a persist that fails after a successful exchange says so unmistakably;
+1. **persist before use** — a caller never observes a credential that is not durable, and a
+   persist that fails after a successful exchange says so unmistakably. Its converse matters
+   just as much: a token that has been *presented* is spent-or-unknown, so any ending that
+   loses the outcome must leave the grant unusable rather than restoring a row that still
+   looks live;
 2. **single-flight** — concurrent refreshes produce exactly one exchange, because a second
    exchange with a burned token can revoke the whole grant family;
 3. **reuse never reaches the counterparty** — a caller holding a stale version cannot
@@ -392,7 +395,17 @@ async def check_transient_failure_preserves_the_credential(h: RotatingStoreHarne
 # ....................... #
 
 
-async def check_exchange_timeout_is_transient(h: RotatingStoreHarness) -> None:
+async def check_an_ambiguous_timeout_leaves_no_replayable_token(
+    h: RotatingStoreHarness,
+) -> None:
+    """A timeout is transient for the network and terminal for the credential.
+
+    The token was presented; the store simply never learned whether the counterparty
+    consumed it. Leaving the row live would let the next worker present the same token, and
+    if it *was* consumed that is reuse — which revokes the grant family. So the row is
+    marked unusable and the caller is told to re-authorize.
+    """
+
     await h.seed()
     before = await h.store.get(REF)
     h.counterparty.delay = EXCHANGE_TIMEOUT.total_seconds() * 10
@@ -402,13 +415,26 @@ async def check_exchange_timeout_is_transient(h: RotatingStoreHarness) -> None:
 
     assert timed_out.value.code == CREDENTIAL_EXCHANGE_TIMEOUT_CODE
 
-    # The store never learned whether the counterparty processed the request, so the
-    # stored credential is left exactly as it was.
     h.counterparty.delay = 0.0
-    intact = await h.store.get(REF)
+    presented = list(h.counterparty.presented)
 
-    assert intact.access_token == before.access_token
-    assert intact.version == before.version
+    # The grant no longer looks live, so nobody replays the token it was holding.
+    with pytest.raises(CoreException) as poisoned:
+        await h.store.get(REF)
+
+    assert poisoned.value.code == BURNT_CREDENTIAL_CODE
+
+    with pytest.raises(CoreException):
+        await h.store.refresh(REF, observed=before.version)
+
+    assert h.counterparty.presented == presented, "the spent token must not be presented again"
+    assert not h.counterparty.family_revoked
+
+    # Re-authorization is the way back, as for any other burnt grant.
+    await h.store.put(
+        REF, ExchangedCredential(access_token="access-reauth", refresh_token="refresh-reauth")
+    )
+    assert (await h.store.get(REF)).access_token == "access-reauth"
 
 
 # ....................... #
@@ -427,12 +453,20 @@ async def check_persist_loss_is_loud_and_leaves_no_phantom(h: RotatingStoreHarne
     assert lost.value.code == CREDENTIAL_PERSIST_LOST_CODE
     assert h.counterparty.presented == [SEED_REFRESH]
 
-    # Persist before use: the caller never observed the replacement, and the store did
-    # not half-apply it either. The stored grant is the (now dead) old one — recorded
-    # honestly rather than replaced by a credential nobody can prove is durable.
-    stale = await h.store.get(REF)
-    assert stale.access_token == before.access_token
-    assert stale.version == before.version
+    # Persist before use: the caller never observed the replacement, and the store did not
+    # half-apply it either. Nor did it leave the old row looking live — that token is spent
+    # at the counterparty, so a worker still holding `before.version` would otherwise replay
+    # it straight into reuse detection.
+    with pytest.raises(CoreException) as poisoned:
+        await h.store.get(REF)
+
+    assert poisoned.value.code == BURNT_CREDENTIAL_CODE
+
+    with pytest.raises(CoreException):
+        await h.store.refresh(REF, observed=before.version)
+
+    assert h.counterparty.presented == [SEED_REFRESH], "the spent token must not be presented again"
+    assert not h.counterparty.family_revoked
 
 
 # ....................... #
@@ -646,7 +680,7 @@ ROTATING_STORE_BATTERY: tuple[Check, ...] = (
     check_stale_observed_never_exchanges,
     check_invalid_grant_burns_terminally,
     check_transient_failure_preserves_the_credential,
-    check_exchange_timeout_is_transient,
+    check_an_ambiguous_timeout_leaves_no_replayable_token,
     check_persist_loss_is_loud_and_leaves_no_phantom,
     check_burn_then_put_restores,
     check_burn_of_an_absent_grant_sticks,

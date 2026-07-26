@@ -86,6 +86,57 @@ def test_required_dedicated_isolation_rejects_shared_client_with_analytics() -> 
         )
 
 
+def test_rotating_credentials_route_is_validated_against_isolation_floor() -> None:
+    # The floor is enforced per route, so an unscoped sibling must not hide behind a
+    # compliant one. A tenant-aware document satisfies "tagged" on its own; the credential
+    # store next to it does not, and omitting it from validation is exactly how every
+    # tenant's third-party grants end up sharing one unfiltered table under a declared floor.
+    from collections.abc import Mapping
+
+    from forze.application.contracts.secrets import ExchangedCredential, SecretRef
+    from forze_postgres.execution.deps.configs import (
+        PostgresDocumentConfig,
+        PostgresRotatingCredentialsConfig,
+    )
+
+    class _Exchanger:
+        async def exchange(
+            self,
+            ref: SecretRef,
+            *,
+            refresh_token: str,
+            metadata: Mapping[str, str],
+        ) -> ExchangedCredential:  # pragma: no cover — wiring never calls it
+            raise NotImplementedError
+
+    def _module(**extra: object) -> PostgresDepsModule:
+        return PostgresDepsModule(
+            client=PostgresClient(),
+            required_tenant_isolation="tagged",
+            rw_documents={
+                "orders": PostgresDocumentConfig(
+                    read=("public", "orders"),
+                    write=("public", "orders"),
+                    bookkeeping_strategy="application",
+                    tenant_aware=True,
+                ),
+            },
+            **extra,  # type: ignore[arg-type]
+        )
+
+    # The compliant sibling alone passes the floor.
+    assert _module() is not None
+
+    with pytest.raises(CoreException, match="postgres_tenancy_validation_failed"):
+        _module(
+            rotating_credentials=PostgresRotatingCredentialsConfig(
+                relation=("public", "rotating_credentials"),
+                exchanger=_Exchanger(),
+                tenant_aware=False,
+            ),
+        )
+
+
 def test_outbox_route_is_validated_against_isolation_floor() -> None:
     # A tenant-aware outbox route is now included in tenancy validation (was excluded):
     # a "dedicated" floor on a shared client rejects it.

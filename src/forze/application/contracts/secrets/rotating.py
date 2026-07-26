@@ -53,16 +53,20 @@ routes to re-authorization instead of a retry loop. Cleared only by
 INVALID_GRANT_CODE: Final[str] = "credential_grant_invalid"
 """Error code an exchanger raises to mean *the counterparty rejected this grant for good*.
 
-The one signal that makes a store record a burn notice. Every other failure leaves the
-stored credential untouched."""
+The one signal that makes a store record a burn notice *for a reason the counterparty gave*.
+Any other exception is taken to mean the request never reached them, and leaves the stored
+credential untouched — so an exchanger that cannot rule out delivery (a read timeout, a 5xx
+after send, a reset mid-flight) should raise :data:`CREDENTIAL_EXCHANGE_TIMEOUT_CODE`
+instead, which tells the store the token is spent-or-unknown."""
 
 CREDENTIAL_EXCHANGE_TIMEOUT_CODE: Final[str] = "credential_exchange_timeout"
 """Error code for an exchange a store abandoned at its own bound.
 
-Transient by classification: the store never learns whether the counterparty processed
-the request, so it leaves the stored credential alone. A grant that keeps timing out is
-indistinguishable from one lost this way, which is why the bound exists at all — an
-unbounded exchange would hold the credential's lock indefinitely."""
+Transient for the *network* and terminal for the *credential*. The token was presented and
+the store never learned whether the counterparty consumed it, so the stored token is
+spent-or-unknown: a store marks the grant burnt rather than leaving a row that still looks
+refreshable, because presenting a consumed token is reuse and reuse revokes the grant
+family. Retrying the call is safe; retrying it *with the same token* is what is not."""
 
 CREDENTIAL_PERSIST_LOST_CODE: Final[str] = "credential_persist_lost"
 """Error code for the one unrecoverable outcome: the exchange succeeded and the persist
@@ -71,7 +75,8 @@ did not.
 The counterparty has already burned the presented token, so the grant is dead and the
 replacement is unrecoverable. A store raises this instead of a generic storage error so
 the condition is greppable and alertable — it always means *this credential needs
-re-authorization by a human*."""
+re-authorization by a human* — and marks the stored grant burnt on the way out, so a worker
+still holding the old version cannot replay the spent token."""
 
 
 # ....................... #
@@ -237,17 +242,24 @@ class RotatingCredentialStorePort(Protocol):
         second exchange with a burned token can revoke the whole grant family. Otherwise
         the exchanger runs and its replacement is durably persisted *before* this returns.
 
+        Once the token has been presented it is spent-or-unknown, so **every** ending that
+        loses the outcome leaves the grant burnt rather than restoring a row that still
+        looks refreshable at *observed*. Otherwise the next worker would replay a consumed
+        token into the counterparty's reuse detection.
+
         :param ref: Credential reference.
         :param observed: Version the caller last saw (from
             :attr:`RotatingCredential.version`). A stale value is the single-flight
             signal, not an error.
         :returns: The current credential — freshly exchanged, or the winner's document.
-        :raises CoreException: ``precondition`` with ``code=``
-            :data:`BURNT_CREDENTIAL_CODE` when the grant is already burnt (and after this
-            call burns it); ``internal`` with ``code=``
-            :data:`CREDENTIAL_PERSIST_LOST_CODE` when the exchange succeeded but the
-            persist did not; the exchanger's own error, unchanged, for a transient
-            failure.
+        :raises CoreException: ``not_found`` when no grant is stored for *ref*;
+            ``precondition`` with ``code=`` :data:`BURNT_CREDENTIAL_CODE` when the grant is
+            already burnt, or when this call burns it; ``infrastructure`` with ``code=``
+            :data:`CREDENTIAL_EXCHANGE_TIMEOUT_CODE` when the exchange exceeded the store's
+            bound — the grant is burnt too, since the token was presented; ``internal`` with
+            ``code=`` :data:`CREDENTIAL_PERSIST_LOST_CODE` when the exchange succeeded but
+            the persist did not, likewise burning the grant; the exchanger's own error,
+            unchanged, when it reports that the request never reached the counterparty.
         """
 
         ...  # pragma: no cover
