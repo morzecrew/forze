@@ -189,6 +189,17 @@ class SecretRotator:
                 f"target's apply-latency bound ({bound}).",
             )
 
+        if self.reconfirm_after is not None and bound is None:
+            # An undeclared bound cannot be validated: the reconfirmation window
+            # only proves quiet past a latecomer's physical lifetime if the target
+            # actually has one. Loud, not fatal — test doubles and demo targets
+            # legitimately stay undeclared.
+            logger.warning(
+                "Rotation target %s declares no apply_latency_bound; the "
+                "reconfirmation window cannot be validated against it",
+                type(self.target).__name__,
+            )
+
     # ....................... #
 
     @property

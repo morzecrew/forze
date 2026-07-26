@@ -123,22 +123,25 @@ class TestApply:
         assert statement.startswith('ALTER ROLE "app_b" WITH PASSWORD ')
         assert "fresh-pw" in statement
 
-    async def test_apply_without_statement_timeout_is_a_single_statement(self) -> None:
+    async def test_statement_timeout_has_no_unbounded_escape_hatch(self) -> None:
+        """An unbounded ALTER would defeat the delayed-reconfirmation physics —
+        None and non-positive bounds are refused at construction."""
+
         from datetime import timedelta
 
         secrets = MappingSecrets(
             data={"db/dsn.pending": "postgresql://app_b:fresh-pw@db:5432/app"}
         )
-        target, client = _target(secrets, apply_statement_timeout=None)
 
-        await target.apply(None, _PENDING)
+        with pytest.raises(CoreException, match="must be set and positive"):
+            _target(secrets, apply_statement_timeout=None)
 
-        assert client.transactions == 0
-        assert len(client.executed) == 1
-        assert client.executed[0].startswith('ALTER ROLE "app_b"')
-
-        with pytest.raises(CoreException, match="statement timeout"):
+        with pytest.raises(CoreException, match="must be set and positive"):
             _target(secrets, apply_statement_timeout=timedelta(0))
+
+        # And the declared bound is always the enforced one.
+        target, _ = _target(secrets, apply_statement_timeout=timedelta(seconds=5))
+        assert target.apply_latency_bound == timedelta(seconds=5)
 
     async def test_pending_dsn_missing_credentials_fails_closed(self) -> None:
         secrets = MappingSecrets(data={"db/dsn.pending": "host=db dbname=app user=app_b"})
@@ -153,13 +156,12 @@ class TestApply:
         secrets = MappingSecrets(
             data={"db/dsn.pending": "host=db dbname=app user='x\";DROP ROLE a;--' password=p"}
         )
-        target, client = _target(
-            secrets, role_pair=None, single_role_degraded=True, apply_statement_timeout=None
-        )
+        target, client = _target(secrets, role_pair=None, single_role_degraded=True)
 
         await target.apply(None, _PENDING)
 
-        assert client.executed[0].startswith('ALTER ROLE "x"";DROP ROLE a;--"')
+        # executed[0] is the SET LOCAL statement_timeout; the ALTER follows.
+        assert client.executed[1].startswith('ALTER ROLE "x"";DROP ROLE a;--"')
 
 
 class TestVerify:

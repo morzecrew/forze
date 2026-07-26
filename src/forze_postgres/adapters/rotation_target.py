@@ -78,14 +78,16 @@ class PostgresRotationTarget(RotationTargetPort):
     verify_timeout: timedelta = timedelta(seconds=10)
     """Connect timeout for the verification connection."""
 
-    apply_statement_timeout: timedelta | None = timedelta(seconds=30)
-    """Server-side ``statement_timeout`` for the ``ALTER ROLE`` (``None`` disables).
+    apply_statement_timeout: timedelta = timedelta(seconds=30)
+    """Server-side ``statement_timeout`` for the ``ALTER ROLE`` — always enforced.
 
     This is what makes a stale in-flight apply *boundedly* stale: a lock-losing
     worker's ALTER that the server hasn't executed within this bound is killed
-    server-side and can never commit late. Keep it below the rotator's
-    ``reconfirm_after`` so the delayed reconfirmation runs strictly after any
-    latecomer could still land."""
+    server-side and can never commit late. An unbounded ALTER would defeat the
+    delayed-reconfirmation physics entirely, so there is deliberately no opt-out;
+    a deployment bounding statements at the connection or role level sets this
+    to match. Keep it below the rotator's ``reconfirm_after`` (validated at
+    rotator wiring via :attr:`apply_latency_bound`)."""
 
     # ....................... #
 
@@ -110,15 +112,20 @@ class PostgresRotationTarget(RotationTargetPort):
             raise exc.configuration("Verify timeout must be positive")
 
         if (
-            self.apply_statement_timeout is not None
-            and self.apply_statement_timeout.total_seconds() <= 0
+            not isinstance(self.apply_statement_timeout, timedelta)  # pyright: ignore[reportUnnecessaryIsInstance]
+            or self.apply_statement_timeout.total_seconds() <= 0
         ):
-            raise exc.configuration("Apply statement timeout must be positive")
+            # No unbounded escape hatch: the delayed reconfirmation's coverage is
+            # only as real as this bound.
+            raise exc.configuration(
+                "Apply statement timeout must be set and positive; an unbounded "
+                "ALTER ROLE defeats the delayed-reconfirmation bound.",
+            )
 
     # ....................... #
 
     @property
-    def apply_latency_bound(self) -> timedelta | None:
+    def apply_latency_bound(self) -> timedelta:
         """The server-side statement timeout IS the apply-latency bound: an ALTER the
         server hasn't run within it is killed and can never commit later."""
 
@@ -183,26 +190,22 @@ class PostgresRotationTarget(RotationTargetPort):
         )
 
         # Detached: a role password must never ride (or die with) an ambient
-        # transaction the durable runner happens to hold open. Inside the scope,
-        # transaction() opens a fresh root on its own connection.
-        async with self.client.detached():
-            if self.apply_statement_timeout is None:
-                await self.client.execute(alter)
-                return
-
-            # SET LOCAL bounds the ALTER server-side: a stale worker's apply that
-            # the server hasn't run within the bound is killed and can never
-            # commit late (the fence the delayed reconfirmation relies on).
-            async with self.client.transaction():
-                await self.client.execute(
-                    cast(
-                        QueryNoTemplate,
-                        sql.SQL("SET LOCAL statement_timeout = {}").format(
-                            sql.Literal(int(self.apply_statement_timeout.total_seconds() * 1000))
-                        ),
-                    )
+        # transaction the durable runner happens to hold open; transaction() then
+        # opens a fresh root on its own connection. SET LOCAL bounds the ALTER
+        # server-side: a stale worker's apply that the server hasn't run within
+        # the bound is killed and can never commit late (the fence the delayed
+        # reconfirmation relies on). Always enforced — an unbounded ALTER has no
+        # place in this plane.
+        async with self.client.detached(), self.client.transaction():
+            await self.client.execute(
+                cast(
+                    QueryNoTemplate,
+                    sql.SQL("SET LOCAL statement_timeout = {}").format(
+                        sql.Literal(int(self.apply_statement_timeout.total_seconds() * 1000))
+                    ),
                 )
-                await self.client.execute(alter)
+            )
+            await self.client.execute(alter)
 
     # ....................... #
 
