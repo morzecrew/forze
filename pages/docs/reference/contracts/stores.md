@@ -50,9 +50,8 @@ write through). See
 
 ## Counter
 
-`ctx.counter(spec)` returns a `CounterPort` — an atomic, monotonic sequence within
-the spec's namespace (`CounterSpec` carries only a name). `suffix` partitions counters
-under one spec.
+`ctx.counter(spec)` returns a `CounterPort` — an atomic sequence within the spec's
+namespace (`CounterSpec` carries only a name). `suffix` partitions counters under one spec.
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
@@ -64,6 +63,26 @@ under one spec.
 There is **no read verb**, deliberately: a counter's value is only meaningful at the
 instant it is allocated, so a handler that read one would be holding a number another
 allocation has already moved past. Allocate and use the value you were given.
+
+### What every backend guarantees
+
+These hold identically on Postgres, MongoDB, Redis, Firestore and the in-memory mock,
+because one shared conformance battery asserts them against each:
+
+- an untouched counter reads as **0**, so the first `incr()` returns 1;
+- values are **signed 64-bit**. An allocation or reset that would leave that range is
+  refused and the stored value is unchanged — never wrapped, never clamped. A `reset`
+  is checked before it is stored, so it cannot succeed and break the *next* allocation;
+- counters are **not** required to be non-negative: `decr` below zero is legal, and a
+  negative `by` is an ordinary decrease;
+- `incr(by=0)` returns the current value without moving it — the one read the port offers.
+  It still creates the counter at 0 if it did not exist.
+
+The value domain is the reason the mock enforces a bound it could easily exceed: a mock
+that accepts allocations no real store can hold certifies bugs instead of catching them.
+One residue is deliberate and worth knowing — when an *allocation* (not a reset) crosses
+the boundary, the refusal comes from the store itself, so its error kind is the backend's
+own. What is uniform is that it refuses and changes nothing.
 
 Allocations also **never join the caller's transaction** — on every backend (Redis,
 Postgres, Mongo, Firestore) the statement runs on its own connection, so a rolled-back

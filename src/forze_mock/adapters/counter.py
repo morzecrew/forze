@@ -13,6 +13,7 @@ from forze.application.contracts.counter import (
     CounterAdminPort,
     CounterEntry,
     CounterPort,
+    validate_counter_value,
 )
 from forze.base.exceptions import exc
 from forze_mock.state import MockState
@@ -44,6 +45,10 @@ class MockCounterAdapter(_MockCounterBase, CounterPort):
         with self.state.lock:
             key = self._key(suffix)
             value = self.state.counters.get(key, 0) + by
+            # Python integers are unbounded and every real backend's are not, so the mock
+            # has to refuse here or it would accept allocations that only fail in
+            # production — the one divergence that makes a mock actively harmful.
+            validate_counter_value(value, operation="increment")
             self.state.counters[key] = value
             return value
 
@@ -61,6 +66,7 @@ class MockCounterAdapter(_MockCounterBase, CounterPort):
             key = self._key(suffix)
             prev = self.state.counters.get(key, 0)
             curr = prev + size
+            validate_counter_value(curr, operation="batch allocation")
             self.state.counters[key] = curr
             return list(range(prev + 1, curr + 1))
 
@@ -70,12 +76,15 @@ class MockCounterAdapter(_MockCounterBase, CounterPort):
         with self.state.lock:
             key = self._key(suffix)
             value = self.state.counters.get(key, 0) - by
+            validate_counter_value(value, operation="decrement")
             self.state.counters[key] = value
             return value
 
     # ....................... #
 
     async def reset(self, value: int = 1, *, suffix: str | None = None) -> int:
+        validate_counter_value(value, operation="reset")
+
         with self.state.lock:
             self.state.counters[self._key(suffix)] = value
             return value

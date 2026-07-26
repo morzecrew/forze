@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Counter value domain** — counters are signed 64-bit on every backend, now declared and enforced instead of assumed.
+
+- New `COUNTER_MIN_VALUE`/`COUNTER_MAX_VALUE`, `COUNTER_VALUE_OUT_OF_RANGE_CODE` and `validate_counter_value` in `contracts.counter`. **Behaviour change:** `reset` outside the int64 range now raises `counter_value_out_of_range` on every backend (Redis previously accepted it, failing the next allocation instead), and the mock now refuses values it used to allow. Contract now pins: fresh counters read 0, `incr(by=0)` reads without moving, negative values legal.
+
 **Secrets lifecycle plane** — versions, change feed, hot reload, durable rotator, leases; `SecretsPort` unchanged.
 
 - **Versioned reads + admin writes** — `resolve_versioned`/`current_version` (opaque equality-only `SecretVersion`) on every backend, `SecretsAdminPort.put` under a new `secrets_admin` dep key; per-backend `SecretsCapabilities` fail closed (`secrets_feature_unsupported`).

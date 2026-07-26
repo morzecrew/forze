@@ -13,6 +13,7 @@ from forze.application.contracts.counter import (
     CounterAdminPort,
     CounterEntry,
     CounterPort,
+    validate_counter_value,
 )
 from forze.base.exceptions import exc
 
@@ -110,6 +111,10 @@ class RedisCounterAdapter(CounterPort, RedisBaseAdapter):
     # ....................... #
 
     async def reset(self, value: int = 1, *, suffix: str | None = None) -> int:
+        # Known up front, so it is refused here rather than by the backend — or, on
+        # Redis, silently accepted and left to break the *next* allocation.
+        validate_counter_value(value, operation="reset")
+
         await self._prepare_keys()
         key = self.__key(suffix)
 
