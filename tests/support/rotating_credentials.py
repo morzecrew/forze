@@ -440,6 +440,48 @@ async def check_an_ambiguous_timeout_leaves_no_replayable_token(
 # ....................... #
 
 
+async def check_a_cancelled_exchange_leaves_no_replayable_token(
+    h: RotatingStoreHarness,
+) -> None:
+    """Cancellation is the third way to lose the outcome, and the easiest one to miss.
+
+    ``CancelledError`` is not an ``Exception``, so a handler that guards the other two
+    endings does nothing here — and a shutdown landing mid-exchange is the ordinary way it
+    happens. The token is in the counterparty's hands either way, so the grant must end up
+    just as unusable as after a timeout.
+    """
+
+    await h.seed()
+    before = await h.store.get(REF)
+    h.counterparty.delay = 5.0
+
+    rotating = asyncio.ensure_future(h.store.refresh(REF, observed=before.version))
+    await asyncio.sleep(0.05)  # let it reach the counterparty
+    rotating.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await rotating
+
+    assert h.counterparty.presented == [SEED_REFRESH]
+
+    h.counterparty.delay = 0.0
+    presented = list(h.counterparty.presented)
+
+    with pytest.raises(CoreException) as poisoned:
+        await h.store.get(REF)
+
+    assert poisoned.value.code == BURNT_CREDENTIAL_CODE
+
+    with pytest.raises(CoreException):
+        await h.store.refresh(REF, observed=before.version)
+
+    assert h.counterparty.presented == presented, "the spent token must not be presented again"
+    assert not h.counterparty.family_revoked
+
+
+# ....................... #
+
+
 async def check_persist_loss_is_loud_and_leaves_no_phantom(h: RotatingStoreHarness) -> None:
     await h.seed()
     before = await h.store.get(REF)
@@ -681,6 +723,7 @@ ROTATING_STORE_BATTERY: tuple[Check, ...] = (
     check_invalid_grant_burns_terminally,
     check_transient_failure_preserves_the_credential,
     check_an_ambiguous_timeout_leaves_no_replayable_token,
+    check_a_cancelled_exchange_leaves_no_replayable_token,
     check_persist_loss_is_loud_and_leaves_no_phantom,
     check_burn_then_put_restores,
     check_burn_of_an_absent_grant_sticks,

@@ -436,10 +436,15 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
         Fenced on the version we read, so a re-authorization that landed in the meantime is
         never clobbered. Best effort by nature: if this write fails too, the caller still
         learns its own outcome, and the log carries the rest.
+
+        Bounded like every other transaction here: this one takes the credential's row lock
+        too, and a recovery path that can block indefinitely behind a live rotation is not a
+        recovery path.
         """
 
         try:
             async with self.client.detached(), self.client.transaction():
+                await self._bound_transaction()
                 await self.client.execute(
                     sql.SQL(
                         """
@@ -587,6 +592,7 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
 
         table = await self._table()
         exchanged = False
+        presented = False
         locked_version: int | None = None
         credential: ExchangedCredential | None = None
         burn_reason: str | None = None
@@ -612,6 +618,9 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
                     return self._view(row, payload)
 
                 try:
+                    # Set before the await, not after: from here on the token may be in the
+                    # counterparty's hands, and every way out has to assume it was.
+                    presented = True
                     credential = await self._exchange(ref, payload)
                     exchanged = True
 
@@ -639,6 +648,29 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
                     # the stored payload is sealed, and re-opening it would decrypt what this
                     # frame already holds in the clear.
                     rotated = self._view_of(credential, stored["version"])
+
+        except asyncio.CancelledError:
+            # Cancellation is not an Exception, so it would otherwise unwind straight past
+            # the handler below — rolling back to a row that still looks refreshable while
+            # the token sits in the counterparty's hands. A shutdown mid-exchange is the
+            # ordinary way this happens.
+            if presented and locked_version is not None:
+                log.critical(
+                    "rotating credential left unusable by a cancelled exchange",
+                    ref=ref.path,
+                )
+                # Shielded: the write has to survive the cancellation that prompted it.
+                await asyncio.shield(
+                    self._poison(
+                        table,
+                        tenant,
+                        ref,
+                        reason="exchange was cancelled with the token already presented",
+                        version=locked_version,
+                    )
+                )
+
+            raise
 
         except Exception as e:
             timed_out = isinstance(e, CoreException) and e.code == CREDENTIAL_EXCHANGE_TIMEOUT_CODE

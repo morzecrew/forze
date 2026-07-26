@@ -367,6 +367,22 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
             try:
                 exchanged = await self._exchange(ref, payload, key)
 
+            except asyncio.CancelledError:
+                # Cancellation is not an Exception and would unwind straight past the
+                # handlers below, leaving a grant that still looks refreshable while the
+                # token sits in the counterparty's hands.
+                self._poison(
+                    key,
+                    reason="exchange was cancelled with the token already presented",
+                    version=locked_version,
+                )
+                log.critical(
+                    "rotating credential left unusable by a cancelled exchange",
+                    ref=ref.path,
+                )
+
+                raise
+
             except CoreException as e:
                 if e.code != CREDENTIAL_EXCHANGE_TIMEOUT_CODE:
                     raise
