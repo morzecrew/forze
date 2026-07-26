@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from datetime import timedelta
 from typing import (
     Any,
     final,
@@ -72,6 +73,14 @@ class RoutedMongoClient(DsnRoutedTenantClientBase[MongoClient], MongoClientPort)
 
     def access_fingerprint_extra_parts(self, tenant_id: UUID) -> Sequence[str]:
         return [self.database_name_for_tenant(tenant_id)]
+
+    # ....................... #
+
+    @property
+    def command_dispatch_bound(self) -> timedelta:
+        # Read straight off the config every per-tenant client is built with, so the answer
+        # holds before any tenant has been routed to.
+        return self.mongo_config.server_selection_timeout + self.mongo_config.connect_timeout
 
     # ....................... #
 

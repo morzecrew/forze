@@ -37,6 +37,26 @@ def mongo_container() -> MongoDbContainer:
 
 
 @pytest.fixture(scope="session")
+def mongo_rotation_container() -> MongoDbContainer:
+    """Authenticated MongoDB with test commands enabled.
+
+    Rotation tests manage real users, so auth must be on. ``enableTestCommands`` is what
+    lets a test install a ``failCommand`` failpoint to stall an ``updateUser`` — the only
+    way to prove the server actually kills a command that outruns its ``maxTimeMS`` rather
+    than letting it land late. The failpoint only simulates slowness; the enforcement it
+    exposes is ordinary production behaviour.
+    """
+
+    _ensure_docker()
+
+    container = MongoDbContainer(image="mongo:8.0-noble")
+    container.with_command("mongod --setParameter enableTestCommands=1")
+
+    with container as mongo:
+        yield mongo
+
+
+@pytest.fixture(scope="session")
 def mongo_replica_container() -> DockerContainer:
     """Start a MongoDB replica set container for transaction tests."""
 
@@ -104,9 +124,7 @@ async def mongo_client_replica(mongo_replica_container: DockerContainer) -> Mong
     await client.close()
 
 
-def _wait_container_healthy(
-    container: DockerContainer, *, timeout_s: float = 300.0
-) -> None:
+def _wait_container_healthy(container: DockerContainer, *, timeout_s: float = 300.0) -> None:
     """Block until the Docker healthcheck reports ``healthy``."""
 
     docker = from_env()

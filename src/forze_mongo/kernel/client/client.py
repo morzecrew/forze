@@ -17,6 +17,7 @@ import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from contextvars import ContextVar
+from datetime import timedelta
 from typing import (
     Any,
     Concatenate,
@@ -141,6 +142,9 @@ class MongoClient(MongoClientPort):
 
     __db_name: str | None = attrs.field(default=None, init=False, repr=False)
 
+    __connect_bound: timedelta = attrs.field(default=timedelta(seconds=20), init=False)
+    """Client-side wait a command can spend before it reaches a server, from config."""
+
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
     # ....................... #
@@ -172,6 +176,7 @@ class MongoClient(MongoClientPort):
             self.__db_name = db_name
             self.__lazy_tx = config.lazy_transaction
             self._push_deadline = config.push_invocation_deadline
+            self.__connect_bound = config.server_selection_timeout + config.connect_timeout
             self.__client = AsyncMongoClient(
                 uri,
                 appname=config.appname,
@@ -232,6 +237,12 @@ class MongoClient(MongoClientPort):
 
     # ....................... #
     # DB/collection helpers
+
+    @property
+    def command_dispatch_bound(self) -> timedelta:
+        return self.__connect_bound
+
+    # ....................... #
 
     async def db(self, name: str | None = None) -> AsyncDatabase[JsonDict]:
         """Return an async database handle.
