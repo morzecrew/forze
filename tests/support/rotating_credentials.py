@@ -440,6 +440,33 @@ async def check_an_ambiguous_timeout_leaves_no_replayable_token(
 # ....................... #
 
 
+async def _settle(h: RotatingStoreHarness, stale: SecretVersion) -> None:
+    """Wait until an abandoned rotation has recorded an outcome.
+
+    A store that keeps a presented-token section running past the caller's cancellation
+    finishes a moment later, so the assertion has to wait for the state to stop moving —
+    either the grant is unusable, or it advanced past the version the caller held.
+    """
+
+    for _ in range(100):
+        try:
+            if (await h.store.get(REF)).version != stale:
+                return
+
+        except CoreException as e:
+            if e.code == BURNT_CREDENTIAL_CODE:
+                return
+
+            raise
+
+        await asyncio.sleep(0.02)
+
+    raise AssertionError("the cancelled rotation never recorded an outcome")
+
+
+# ....................... #
+
+
 async def check_a_cancelled_exchange_leaves_no_replayable_token(
     h: RotatingStoreHarness,
 ) -> None:
@@ -464,13 +491,14 @@ async def check_a_cancelled_exchange_leaves_no_replayable_token(
 
     assert h.counterparty.presented == [SEED_REFRESH]
 
-    h.counterparty.delay = 0.0
+    # The outcome is asserted, not the mechanism. A store may mark the grant unusable, or
+    # (if it declines to abandon a section that has already presented the token) carry the
+    # rotation through to a new credential. Both satisfy the invariant; a row left live at
+    # the version the caller passed in does not.
+    await _settle(h, before.version)
+
     presented = list(h.counterparty.presented)
-
-    with pytest.raises(CoreException) as poisoned:
-        await h.store.get(REF)
-
-    assert poisoned.value.code == BURNT_CREDENTIAL_CODE
+    h.counterparty.delay = 0.0
 
     with pytest.raises(CoreException):
         await h.store.refresh(REF, observed=before.version)

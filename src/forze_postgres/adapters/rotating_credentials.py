@@ -126,6 +126,20 @@ _ROW_COLUMNS: Final[str] = "payload, expires_at, version, burnt_reason"
 log = get_logger(__name__)
 
 
+def _discard_outcome(rotation: "asyncio.Future[RotatingCredential]") -> None:
+    """Collect an abandoned rotation's result so it cannot surface as a stray warning.
+
+    A caller that cancelled its refresh is no longer waiting, but the rotation itself was
+    shielded and runs on to record an outcome. Whatever it ends with — a fresh credential, or
+    the mark that the old one is spent — has already been logged and committed by the time it
+    gets here; retrieving it just keeps the event loop from complaining about a result nobody
+    read.
+    """
+
+    if not rotation.cancelled():
+        rotation.exception()
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
@@ -584,7 +598,26 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
         tenant_id, tenant = self._tenant_scope()
 
         async with self._locks.for_key(f"{tenant}|{ref.path}"):
-            return await self._rotate_under_row_lock(tenant_id, tenant, ref, observed)
+            # Shielded, because the row-locked section must not be abandoned once the token
+            # may be in the counterparty's hands. A cancellation delivered here would
+            # otherwise unwind through the transaction's rollback — releasing the lock to a
+            # waiting worker and handing it a row that still looks refreshable, which is a
+            # race no after-the-fact cleanup can win. Shielding lets the section run to its
+            # own bounded end (it commits either the new credential or the mark that the old
+            # one is spent) while the caller still sees the cancellation immediately.
+            rotation = asyncio.ensure_future(
+                self._rotate_under_row_lock(tenant_id, tenant, ref, observed)
+            )
+
+            try:
+                return await asyncio.shield(rotation)
+
+            except asyncio.CancelledError:
+                # It keeps running; make sure its outcome is collected rather than surfacing
+                # later as an unretrieved-exception warning.
+                rotation.add_done_callback(_discard_outcome)
+
+                raise
 
     # ....................... #
 

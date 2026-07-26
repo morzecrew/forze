@@ -298,6 +298,62 @@ async def test_a_waiting_worker_never_sees_a_failed_rotation_as_live(
 # ....................... #
 
 
+async def test_a_cancelled_rotation_does_not_hand_the_row_back_live(
+    postgres_container,
+    pg_client: PostgresClient,
+    credentials_table: str,
+    harness: RotatingStoreHarness,
+) -> None:
+    """Cancellation must not release the row lock to a waiter with the token still spent.
+
+    The rollback that a cancellation triggers is the one unwind an after-the-fact mark can
+    never win: it hands the lock straight to the queued worker. So the locked section
+    declines to be abandoned, and the waiter's first sight of the row is an outcome rather
+    than a restored version it would refresh again.
+    """
+
+    url = postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
+    second_client = PostgresClient()
+    await second_client.initialize(dsn=url, config=PostgresConfig(min_size=1, max_size=3))
+
+    try:
+        contender = PostgresRotatingCredentialStore(
+            client=second_client,
+            relation=("public", credentials_table),
+            exchanger=harness.counterparty,
+            cipher=harness.store.cipher,  # type: ignore[attr-defined]
+        )
+
+        await harness.seed()
+        before = await harness.store.get(REF)
+        harness.counterparty.delay = 5.0  # outlives the store's own exchange bound
+
+        rotating = asyncio.ensure_future(harness.store.refresh(REF, observed=before.version))
+        await asyncio.sleep(0.05)  # the token is presented; the row lock is held
+
+        contending = asyncio.ensure_future(contender.refresh(REF, observed=before.version))
+        await asyncio.sleep(0.05)  # the contender is now queued on that row
+
+        rotating.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await rotating
+
+        # Whatever the contender is granted, it must not be a live row at `before.version`.
+        with pytest.raises(CoreException):
+            await contending
+
+        assert harness.counterparty.presented == ["refresh-seed"], "presented exactly once"
+        assert not harness.counterparty.family_revoked
+
+    finally:
+        harness.counterparty.delay = 0.0
+        await second_client.close()
+
+
+# ....................... #
+
+
 async def test_a_failure_at_commit_is_also_a_lost_credential(
     pg_client: PostgresClient,
     credentials_table: str,
