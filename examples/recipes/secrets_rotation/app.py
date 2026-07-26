@@ -149,7 +149,7 @@ async def main() -> None:
     await secrets.put(DSN_REF, "app_a:seed")
 
     rotator = SecretRotator(
-        target=DemoRotationTarget(database, secrets),
+        target=DemoRotationTarget(database, secrets),  # pyright: ignore[reportArgumentType]
         publish_spec=None,  # notification fan-out needs a broker; the poll floor covers us here
     )
     rotator.register(registry)

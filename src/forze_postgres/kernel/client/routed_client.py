@@ -70,7 +70,7 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
     pool_config: PostgresConfig = attrs.field(factory=PostgresConfig)
     """Pool configuration applied to each per-tenant :class:`PostgresClient`."""
 
-    acquire_timeout: timedelta = attrs.field(default=timedelta(seconds=5))
+    acquire_timeout: timedelta = attrs.field(default=timedelta(seconds=5))  # pyright: ignore[reportIncompatibleMethodOverride]
     """Pool checkout timeout passed to each inner client."""
 
     max_cached_tenants: int = 100
@@ -146,10 +146,7 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
 
         client = self._pool.peek(tid)
 
-        if client is None:
-            return False
-
-        return client.is_in_transaction()
+        return False if client is None else client.is_in_transaction()
 
     # ....................... #
 
