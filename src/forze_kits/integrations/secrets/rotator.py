@@ -436,6 +436,11 @@ class SecretRotator:
         drift = False
         attempts = 0
 
+        # THE INVARIANT (every prior hole in this family was an exit violating
+        # it): a confirm round may COMPLETE only at the fixpoint — verify
+        # succeeded at a version that was re-read AFTERWARDS and found still
+        # canonical. Every other exit raises, with the chain kept alive first.
+        # A completed round is therefore a certificate, never a best effort.
         while True:
             canonical = PendingCredential(ref=ref, version=current.version)
 
@@ -457,20 +462,24 @@ class SecretRotator:
             recheck = await versioned.resolve_versioned(ref)
 
             if recheck.version == current.version:
-                break
+                break  # the fixpoint — the only way a round completes
 
             drift = True
             attempts += 1
 
             if attempts >= MAX_INROUND_CONVERGENCES:
-                logger.critical(
-                    "Canonical credential at %s kept advancing through %d in-round "
-                    "convergences; leaving the rest to the chained round",
-                    ref.path,
-                    attempts,
+                # A store advancing this fast is concurrent rotations (each
+                # carrying its own confirm chain) or a rogue writer. This round
+                # must not certify a version it never verified: keep the chain
+                # alive, then fail loudly.
+                await self._schedule_next_confirm_round(ctx, ref, payload, recheck.version)
+                raise exc.concurrency(
+                    f"Canonical credential at {ref.path!r} kept advancing through "
+                    f"{attempts} in-round convergences; refusing to certify an "
+                    "unverified version.",
+                    code="rotation_reconfirm_unstable",
+                    details={"ref": ref.path},
                 )
-                current = recheck
-                break
 
             logger.warning(
                 "Canonical credential at %s advanced during reconfirmation; "
@@ -479,32 +488,8 @@ class SecretRotator:
             )
             current = recheck
 
-        if drift and self.reconfirm_after is not None:
-            if payload.confirm_round >= MAX_RECONFIRM_ROUNDS:
-                logger.critical(
-                    "Secrets reconfirmation for %s found drift in %d consecutive "
-                    "rounds; something is rewriting the backend credential",
-                    ref.path,
-                    payload.confirm_round,
-                )
-
-            else:
-                next_round = payload.confirm_round + 1
-                await resolve_durable_runner(ctx).enqueue(
-                    ctx,
-                    self.confirm_function_name,
-                    RotationInput(
-                        ref_path=ref.path,
-                        tenant_id=payload.tenant_id,
-                        confirm_round=next_round,
-                    ).model_dump(mode="json"),
-                    idempotency_key=(
-                        f"{self.confirm_function_name}:{ref.path}:"
-                        f"{current.version.token}:round-{next_round}"
-                    ),
-                    tenant_id=payload.tenant_id,
-                    run_at=utcnow() + self.reconfirm_after,
-                )
+        if drift:
+            await self._schedule_next_confirm_round(ctx, ref, payload, current.version)
 
         return {
             "ref_path": ref.path,
@@ -512,6 +497,45 @@ class SecretRotator:
             "drift": drift,
             "round": payload.confirm_round,
         }
+
+    # ....................... #
+
+    async def _schedule_next_confirm_round(
+        self,
+        ctx: ExecutionContext,
+        ref: SecretRef,
+        payload: RotationInput,
+        version: SecretVersion,
+    ) -> None:
+        """Keep the reconfirmation chain alive (round cap and disabled-mode aware)."""
+
+        if self.reconfirm_after is None:
+            return
+
+        if payload.confirm_round >= MAX_RECONFIRM_ROUNDS:
+            logger.critical(
+                "Secrets reconfirmation for %s found drift in %d consecutive "
+                "rounds; something is rewriting the backend credential",
+                ref.path,
+                payload.confirm_round,
+            )
+            return
+
+        next_round = payload.confirm_round + 1
+        await resolve_durable_runner(ctx).enqueue(
+            ctx,
+            self.confirm_function_name,
+            RotationInput(
+                ref_path=ref.path,
+                tenant_id=payload.tenant_id,
+                confirm_round=next_round,
+            ).model_dump(mode="json"),
+            idempotency_key=(
+                f"{self.confirm_function_name}:{ref.path}:{version.token}:round-{next_round}"
+            ),
+            tenant_id=payload.tenant_id,
+            run_at=utcnow() + self.reconfirm_after,
+        )
 
     # ....................... #
 

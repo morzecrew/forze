@@ -581,9 +581,10 @@ class TestBackendConvergence:
             assert record.output_json is not None
             assert record.output_json["version_token"] == canonical_now.version.token
 
-    async def test_runaway_canonical_advances_are_capped_in_round(self) -> None:
-        """A store that advances on every look must not trap the round in an
-        endless in-round chase — the cap breaks out, the chained round remains."""
+    async def test_runaway_canonical_advances_fail_the_round_loudly(self) -> None:
+        """A store that advances on every look must neither trap the round in an
+        endless chase nor let it COMPLETE while certifying a version it never
+        verified — at the cap the round fails loudly, chain kept alive."""
 
         from forze_kits.integrations.secrets.rotator import MAX_INROUND_CONVERGENCES
 
@@ -613,17 +614,20 @@ class TestBackendConvergence:
         await rotator.rotate_now(ctx, _REF)
         verifies_before = target.confirm_verifies
 
-        assert await runner.recover(ctx) == 1  # round 1 completes despite the churn
+        await runner.recover(ctx)  # round 1 hits the cap
 
         # Bounded chase: initial verify + one per allowed in-round convergence.
         assert target.confirm_verifies - verifies_before == MAX_INROUND_CONVERGENCES
 
         admin = resolve_durable_run_admin(ctx)
         page = await admin.list_runs(name=rotator.confirm_function_name)
-        completed = [r for r in page.records if r.status is DurableRunStatus.COMPLETED]
+        failed = [r for r in page.records if r.status is DurableRunStatus.FAILED]
         pending = [r for r in page.records if r.status is DurableRunStatus.PENDING]
-        assert len(completed) == 1  # the capped round finished cleanly
-        assert len(pending) == 1  # the chained round stays as the backstop
+        # A completed round is a certificate; this one could not certify, so it
+        # FAILED (paged) — while the chained round stays as the backstop.
+        assert len(failed) == 1
+        assert len(pending) == 1
+        assert not [r for r in page.records if r.status is DurableRunStatus.COMPLETED]
 
     def test_confirm_round_must_be_positive(self) -> None:
         from pydantic import ValidationError
