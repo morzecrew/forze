@@ -414,6 +414,22 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
                     version=locked_version + 1,
                 )
 
+            except asyncio.CancelledError:
+                # Sealing is awaited in here, so a cancellation landing between the exchange
+                # and the write would otherwise slip past the handler below — leaving the
+                # consumed token refreshable.
+                self._poison(
+                    key,
+                    reason="exchange was cancelled before its replacement was persisted",
+                    version=locked_version,
+                )
+                log.critical(
+                    "rotating credential lost to a cancelled persist",
+                    ref=ref.path,
+                )
+
+                raise
+
             except Exception as e:
                 # The counterparty already burned the presented token, so the grant is
                 # dead and the replacement is gone with this frame. Say so precisely —

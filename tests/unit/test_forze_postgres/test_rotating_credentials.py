@@ -147,9 +147,11 @@ class TestRefreshStatements:
         await store.refresh(_REF, observed=SecretVersion("1"))
 
         # Own root transaction on its own connection: a caller's rollback must not be able
-        # to discard a credential the counterparty has already burned.
+        # to discard a credential the counterparty has already burned. The second scope is
+        # the savepoint around the write, which keeps the root (and its row lock) usable so
+        # a failed persist can be marked unusable before the lock is released.
         assert client.detached_scopes == 1
-        assert client.transactions == 1
+        assert client.transactions == 2
 
         # Both bounds precede the lock, and both exceed the exchange — the second one is
         # what stops a server-side idle reaper killing us between exchange and commit.

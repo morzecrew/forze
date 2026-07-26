@@ -239,6 +239,65 @@ async def test_the_row_lock_serializes_two_independent_connections(
 # ....................... #
 
 
+async def test_a_waiting_worker_never_sees_a_failed_rotation_as_live(
+    postgres_container,
+    pg_client: PostgresClient,
+    credentials_table: str,
+    harness: RotatingStoreHarness,
+) -> None:
+    """The race the in-place poison exists to close.
+
+    A second process blocks on the row lock while the first rotates. When the first fails
+    after presenting the token, whatever the second sees the instant the lock is released is
+    what decides whether the spent token gets replayed. Poisoning after the lock is gone
+    loses that race by construction; poisoning under it cannot.
+    """
+
+    url = postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
+    second_client = PostgresClient()
+    await second_client.initialize(dsn=url, config=PostgresConfig(min_size=1, max_size=3))
+
+    try:
+        contender = PostgresRotatingCredentialStore(
+            client=second_client,
+            relation=("public", credentials_table),
+            exchanger=harness.counterparty,
+            cipher=harness.store.cipher,  # type: ignore[attr-defined]
+        )
+
+        await harness.seed()
+        before = await harness.store.get(REF)
+
+        # Slow enough that the contender is genuinely queued on the row lock while the
+        # first worker is mid-exchange — the only arrangement in which the race exists.
+        harness.counterparty.delay = 0.15
+
+        async def _rotate_and_fail() -> None:
+            async with harness.break_persist():
+                with pytest.raises(CoreException):
+                    await harness.store.refresh(REF, observed=before.version)
+
+        async def _contend() -> None:
+            # Queues on the row lock, then acts on whatever it finds when granted.
+            await asyncio.sleep(0.05)
+
+            with pytest.raises(CoreException):
+                await contender.refresh(REF, observed=before.version)
+
+        await asyncio.gather(_rotate_and_fail(), _contend())
+
+        # One presentation, total: the contender found the grant already unusable rather
+        # than a restored row it would have replayed the spent token into.
+        assert harness.counterparty.presented == ["refresh-seed"]
+        assert not harness.counterparty.family_revoked
+
+    finally:
+        await second_client.close()
+
+
+# ....................... #
+
+
 async def test_a_failure_at_commit_is_also_a_lost_credential(
     pg_client: PostgresClient,
     credentials_table: str,

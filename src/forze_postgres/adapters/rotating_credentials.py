@@ -445,29 +445,7 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
         try:
             async with self.client.detached(), self.client.transaction():
                 await self._bound_transaction()
-                await self.client.execute(
-                    sql.SQL(
-                        """
-                        UPDATE {table} SET burnt_reason = {reason}, updated_at = {now}
-                        WHERE tenant_id = {tenant} AND ref = {ref}
-                          AND version = {version} AND burnt_reason IS NULL
-                        """
-                    ).format(
-                        table=table.ident(),
-                        reason=sql.Placeholder("reason"),
-                        now=sql.Placeholder("now"),
-                        tenant=sql.Placeholder("tenant"),
-                        ref=sql.Placeholder("ref"),
-                        version=sql.Placeholder("version"),
-                    ),
-                    {
-                        "reason": reason,
-                        "now": utcnow(),
-                        "tenant": tenant,
-                        "ref": ref.path,
-                        "version": version,
-                    },
-                )
+                await self._write_poison(table, tenant, ref, reason=reason, version=version)
 
         except Exception as e:
             log.critical(
@@ -475,6 +453,48 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
                 ref=ref.path,
                 error=str(e),
             )
+
+    # ....................... #
+
+    async def _write_poison(
+        self,
+        table: PostgresQualifiedName,
+        tenant: str,
+        ref: SecretRef,
+        *,
+        reason: str,
+        version: int,
+    ) -> None:
+        """The fenced mark-unusable write. The caller owns the transaction.
+
+        Called in place — under the row lock the rotation already holds — whenever that
+        transaction is still usable, so the poison commits with the lock rather than after
+        it. :meth:`_poison` is the fallback for when it is not.
+        """
+
+        await self.client.execute(
+            sql.SQL(
+                """
+                UPDATE {table} SET burnt_reason = {reason}, updated_at = {now}
+                WHERE tenant_id = {tenant} AND ref = {ref}
+                  AND version = {version} AND burnt_reason IS NULL
+                """
+            ).format(
+                table=table.ident(),
+                reason=sql.Placeholder("reason"),
+                now=sql.Placeholder("now"),
+                tenant=sql.Placeholder("tenant"),
+                ref=sql.Placeholder("ref"),
+                version=sql.Placeholder("version"),
+            ),
+            {
+                "reason": reason,
+                "now": utcnow(),
+                "tenant": tenant,
+                "ref": ref.path,
+                "version": version,
+            },
+        )
 
     # ....................... #
 
@@ -593,10 +613,12 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
         table = await self._table()
         exchanged = False
         presented = False
-        locked_version: int | None = None
+        locked_version = 0
         credential: ExchangedCredential | None = None
         burn_reason: str | None = None
         rotated: RotatingCredential | None = None
+        deferred: CoreException | None = None
+        persist_error: Exception | None = None
 
         try:
             # Detached: the row lock and the bounded transaction must be this store's own
@@ -625,36 +647,69 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
                     exchanged = True
 
                 except CoreException as e:
-                    if e.code != INVALID_GRANT_CODE:
-                        raise
+                    if e.code == INVALID_GRANT_CODE:
+                        # Hold the reason and commit the notice below: raising from inside
+                        # the transaction would roll it back and lose the one fact worth
+                        # keeping.
+                        burn_reason = e.summary
 
-                    # Hold the reason and commit the notice below: raising from inside the
-                    # transaction would roll it back and lose the one fact worth keeping.
-                    burn_reason = e.summary
+                    elif e.code == CREDENTIAL_EXCHANGE_TIMEOUT_CODE:
+                        # Presented, no answer. Mark it here rather than on the way out: the
+                        # transaction is still usable (the failure was ours, not the
+                        # database's), so the poison commits with the row lock instead of
+                        # racing the worker waiting on it.
+                        deferred = e
+                        await self._write_poison(
+                            table,
+                            tenant,
+                            ref,
+                            reason="exchange timed out with the token already presented",
+                            version=locked_version,
+                        )
+
+                    else:
+                        raise
 
                 if burn_reason is not None:
                     await self._mark_burnt(table, tenant, ref, burn_reason)
 
                 elif credential is not None:
-                    stored = await self._persist(
-                        table,
-                        tenant,
-                        ref,
-                        credential,
-                        version=int(str(row["version"])) + 1,
-                        tenant_id=tenant_id,
-                    )
-                    # Built from the credential we just wrote, not from the row we read back:
-                    # the stored payload is sealed, and re-opening it would decrypt what this
-                    # frame already holds in the clear.
-                    rotated = self._view_of(credential, stored["version"])
+                    try:
+                        # Savepoint: a failed write must not abort the transaction holding
+                        # the row lock, because the poison has to be written under that same
+                        # lock. Rolling back to here keeps it usable.
+                        async with self.client.transaction():
+                            stored = await self._persist(
+                                table,
+                                tenant,
+                                ref,
+                                credential,
+                                version=locked_version + 1,
+                                tenant_id=tenant_id,
+                            )
+
+                    except Exception as e:
+                        persist_error = e
+                        await self._write_poison(
+                            table,
+                            tenant,
+                            ref,
+                            reason=("exchange succeeded but its replacement could not be stored"),
+                            version=locked_version,
+                        )
+
+                    else:
+                        # Built from the credential we just wrote, not from the row we read
+                        # back: the stored payload is sealed, and re-opening it would decrypt
+                        # what this frame already holds in the clear.
+                        rotated = self._view_of(credential, stored["version"])
 
         except asyncio.CancelledError:
             # Cancellation is not an Exception, so it would otherwise unwind straight past
             # the handler below — rolling back to a row that still looks refreshable while
             # the token sits in the counterparty's hands. A shutdown mid-exchange is the
             # ordinary way this happens.
-            if presented and locked_version is not None:
+            if presented and locked_version > 0:
                 log.critical(
                     "rotating credential left unusable by a cancelled exchange",
                     ref=ref.path,
@@ -681,10 +736,11 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
                 # failure, and the stored credential is still safe to present.
                 raise
 
-            if locked_version is not None:
-                # Presented, outcome unknown or unrecorded — the stored token is spent or
-                # may be. Marking it unusable is what stops the next worker replaying it
-                # into the counterparty's reuse detection.
+            if locked_version > 0:
+                # The fallback path: the transaction that held the row lock is gone (its
+                # COMMIT failed), so this poison races the worker waiting on that row. The
+                # in-place writes above cover every failure that leaves the transaction
+                # usable; a failed commit is the residue that cannot.
                 await self._poison(
                     table,
                     tenant,
@@ -722,6 +778,33 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
                 code=CREDENTIAL_PERSIST_LOST_CODE,
                 details={"ref": ref.path},
             ) from e
+
+        if persist_error is not None:
+            # The poison committed with the row lock, so no waiting worker ever saw the row
+            # live again. The caller still learns the grant is gone.
+            log.critical(
+                "rotating credential lost after a successful exchange",
+                ref=ref.path,
+                error=str(persist_error),
+            )
+
+            raise exc.internal(
+                f"Exchanged credential for {ref.path!r} could not be stored; the presented "
+                "token is already burned, so this grant needs re-authorization.",
+                code=CREDENTIAL_PERSIST_LOST_CODE,
+                details={"ref": ref.path},
+            ) from persist_error
+
+        if deferred is not None:
+            # A timeout whose poison is already committed: transient for the network,
+            # terminal for this credential.
+            log.critical(
+                "rotating credential left unusable by an ambiguous exchange",
+                ref=ref.path,
+                error=str(deferred),
+            )
+
+            raise deferred
 
         if burn_reason is not None:
             raise exc.precondition(

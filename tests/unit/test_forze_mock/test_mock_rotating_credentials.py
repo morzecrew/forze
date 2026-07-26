@@ -162,6 +162,73 @@ class TestMockWiring:
                 exchange_timeout=timedelta(0),
             )
 
+    async def test_cancellation_while_sealing_leaves_no_replayable_token(self) -> None:
+        """The window between a consumed token and its stored replacement.
+
+        The store awaits the keyring in there, so a cancellation can land *after* the
+        counterparty burned the token and *before* anything was written — and
+        ``CancelledError`` slips past an ``except Exception`` guarding the write. Blocking
+        inside the cipher makes that window deterministic instead of a race.
+        """
+
+        reached_sealing = asyncio.Event()
+        inner = Keyring(
+            kms=MockKeyManagement(),
+            aead=AesGcmAead(),
+            directory=StaticKeyDirectory(KeyRef(key_id="cmk-rotating")),
+        )
+
+        class _BlockingCipher:
+            def __init__(self) -> None:
+                self.block = False
+
+            async def encrypt(self, data: bytes, **kwargs: Any) -> bytes:
+                if self.block:
+                    reached_sealing.set()
+                    await asyncio.Event().wait()  # held until cancelled
+
+                return await inner.encrypt(data, **kwargs)
+
+            async def decrypt(self, blob: bytes, **kwargs: Any) -> bytes:
+                return await inner.decrypt(blob, **kwargs)
+
+        cipher = _BlockingCipher()
+        counterparty = FakeCounterparty()
+        store = MockRotatingCredentialStore(
+            state=MockState(),
+            exchanger=counterparty,
+            cipher=cipher,  # type: ignore[arg-type]
+        )
+
+        await store.put(
+            REF, ExchangedCredential(access_token="access-seed", refresh_token="refresh-seed")
+        )
+        before = await store.get(REF)
+
+        cipher.block = True
+        rotating = asyncio.ensure_future(store.refresh(REF, observed=before.version))
+        await reached_sealing.wait()  # the token is spent; nothing is stored yet
+        rotating.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await rotating
+
+        assert counterparty.presented == ["refresh-seed"]
+
+        cipher.block = False
+
+        with pytest.raises(CoreException) as poisoned:
+            await store.get(REF)
+
+        assert poisoned.value.code == "credential_burnt"
+
+        # And the spent token is never offered again.
+        with pytest.raises(CoreException):
+            await store.refresh(REF, observed=before.version)
+
+        assert counterparty.presented == ["refresh-seed"]
+        assert not counterparty.family_revoked
+
     async def test_a_second_ref_is_not_serialized_behind_the_first(self) -> None:
         """Per-credential locking must not degenerate into one global lock — a slow
         exchange for one grant cannot stall an unrelated one."""
