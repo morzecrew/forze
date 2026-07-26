@@ -7,7 +7,11 @@ require_psycopg()
 # ....................... #
 
 from ._logging import FORZE_POSTGRES_LOGGER_NAMES, ForzePostgresLogger
-from .adapters import PostgresRotationTarget, PostgresSchemaTenantProvisioner
+from .adapters import (
+    PostgresRotatingCredentialStore,
+    PostgresRotationTarget,
+    PostgresSchemaTenantProvisioner,
+)
 from .execution import (
     POSTGRES_CLIENT_CAPABILITY,
     FtsEngine,
@@ -24,6 +28,7 @@ from .execution import (
     PostgresHubSearchMemberConfig,
     PostgresLifecycleModule,
     PostgresReadOnlyDocumentConfig,
+    PostgresRotatingCredentialsConfig,
     PostgresSearchConfig,
     SearchEngineSpec,
     VectorEngine,
@@ -54,6 +59,8 @@ __all__ = [
     "ForzePostgresLogger",
     "PostgresDepsModule",
     "PostgresRotationTarget",
+    "PostgresRotatingCredentialStore",
+    "PostgresRotatingCredentialsConfig",
     "PostgresSchemaTenantProvisioner",
     "PostgresClient",
     "PostgresClientPort",

@@ -62,7 +62,7 @@ transient.
 ## Wiring
 
 ```python
-from forze_postgres.execution.deps.configs import PostgresRotatingCredentialsConfig
+from forze_postgres import PostgresDepsModule, PostgresRotatingCredentialsConfig
 
 module = PostgresDepsModule(
     rotating_credentials=PostgresRotatingCredentialsConfig(
