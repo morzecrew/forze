@@ -9,47 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**Idempotency plane** — conformance across the mock, Postgres and Redis stores.
+**Cross-backend conformance** — shared batteries across the counter, graph, storage, inference, search and idempotency planes, so every port with more than one implementation has one. Each behaviour change below now holds on *all* backends of that plane.
 
-- **Behaviour change:** reusing an idempotency key with a different payload now raises `conflict` on the Redis store, matching the mock and Postgres; it previously raised `precondition`, so the same client error rendered as 400 there and 409 elsewhere. `IdempotencyPort.begin` documents the kind as contract.
-
-**Search plane** — conformance across the mock, Postgres FTS, Mongo text and Meilisearch.
-
-- **Behaviour change:** `SearchManagementPort.delete_all()` on an index that was never provisioned is a no-op on every backend (Meilisearch raised `index_not_found`), so the documented wipe-then-rebuild workflow works on a fresh deployment.
-- **Behaviour change:** a Meilisearch task rejected as `invalid_request` now raises `precondition` instead of `infrastructure`, and carries the engine's own message rather than only a task id.
-
-**Inference plane** — conformance across the mock, in-process, KServe-V2 and MLflow adapters closed three divergences.
-
-- **Behaviour change:** a declared `max_batch_size` now **sub-batches** an oversized `predict_stream` chunk on every adapter instead of refusing it. `predict_many` still refuses whole — all-or-nothing.
-- **Behaviour change:** a spent invocation budget raises `timeout` with new `inference_budget_exhausted` (`BUDGET_EXHAUSTED_CODE`) from every adapter before the backend is called, replacing `cpu_offload_deadline` for the in-process pre-flight case.
-- Predictions arriving as one bare value per instance (`sklearn.predict` shape) now wrap into a single-field output model on **every** adapter via new `scalar_output_field`; previously the MLflow/SageMaker dialects only.
-
-**Storage plane** — conformance across the mock, two S3 implementations and GCS closed four divergences.
-
-- `delete` and `abort_upload` are now **idempotent on every backend**; a missing object or an already-aborted session is a no-op rather than a backend-dependent error.
-- **Behaviour change:** `copy` onto the same key is refused with new `SELF_COPY_CODE` (`core.storage.self_copy`); it was previously allowed on some backends.
-- **Behaviour change:** mock `list` is ordered lexicographically by key (was insertion order), matching the real backends. S3 maps `NoSuchUpload` to `not_found`, not `infrastructure`.
-
-**Graph plane** — mock↔Neo4j conformance closed two divergences.
-
-- New `normalize_property_filter` in `contracts.graph`; graph `property_filter` values are coerced the way properties are stored, so a `UUID`/`datetime`/`Decimal` filter now matches. **Behaviour change:** such a filter previously returned no rows on the mock and raised on Neo4j.
-- A duplicate vertex key now raises `graph_vertex_conflict` on Neo4j (was a generic `core.conflict`). Requires `ensure_schema()`; without it Cypher `CREATE` cannot detect a duplicate.
-- New `MockGraphManagementAdapter` under the `graph_management` key — `ctx.graph.management(spec)` now resolves on the mock, where it previously raised. `ensure_schema`/`drop_schema` are no-ops there: the in-memory store's key uniqueness is intrinsic and not droppable.
-
-**Counter value domain** — counters are signed 64-bit on every backend, now declared and enforced instead of assumed.
-
-- New `COUNTER_MIN_VALUE`/`COUNTER_MAX_VALUE`, `COUNTER_VALUE_OUT_OF_RANGE_CODE` and `validate_counter_value` in `contracts.counter`. **Behaviour change:** `reset` outside the int64 range now raises `counter_value_out_of_range` on every backend (Redis previously accepted it, failing the next allocation instead), and the mock now refuses values it used to allow. Contract now pins: fresh counters read 0, `incr(by=0)` reads without moving, negative values legal.
+- **Counters** are signed 64-bit: new `COUNTER_MIN_VALUE`/`COUNTER_MAX_VALUE`, `COUNTER_VALUE_OUT_OF_RANGE_CODE` and `validate_counter_value` in `contracts.counter`. **Behaviour change:** `reset` outside the range raises `counter_value_out_of_range` (Redis previously accepted it and failed the *next* allocation).
+- **Storage. Behaviour change:** `delete` and `abort_upload` are idempotent; `copy` onto the same key is refused with new `SELF_COPY_CODE` (`core.storage.self_copy`); mock `list` is lexicographic by key (was insertion order); S3 maps `NoSuchUpload` to `not_found`, not `infrastructure`.
+- **Inference. Behaviour change:** a `max_batch_size` cap sub-batches an oversized `predict_stream` chunk instead of refusing it (`predict_many` still refuses whole); a spent budget raises new `inference_budget_exhausted` before the backend is called, replacing `cpu_offload_deadline` for the in-process pre-flight case; scalar predictions wrap into a single-field output model on every adapter via new `scalar_output_field`.
+- **Search. Behaviour change:** `SearchManagementPort.delete_all()` on an index that was never provisioned is a no-op, so the documented wipe-then-rebuild works on a fresh deployment; a Meilisearch task rejected as `invalid_request` raises `precondition` (was `infrastructure`) and carries the engine's message.
+- **Graph:** new `normalize_property_filter` in `contracts.graph`, and new `MockGraphManagementAdapter` so `ctx.graph.management(spec)` resolves on the mock. **Behaviour change:** `UUID`/`datetime`/`Decimal` `property_filter` values now match (previously no rows on the mock, an error on Neo4j); a duplicate vertex key raises `graph_vertex_conflict` on Neo4j, which requires `ensure_schema()`.
+- **Idempotency. Behaviour change:** reusing a key with a different payload raises `conflict` on the Redis store (was `precondition` — 409 vs 400 for one client error); `IdempotencyPort.begin` documents the kind as contract.
 
 **Secrets lifecycle plane** — versions, change feed, hot reload, durable rotator, leases; `SecretsPort` unchanged.
 
 - **Versioned reads + admin writes** — `resolve_versioned`/`current_version` (opaque equality-only `SecretVersion`) on every backend, `SecretsAdminPort.put` under a new `secrets_admin` dep key; per-backend `SecretsCapabilities` fail closed (`secrets_feature_unsupported`).
-- **Change feed + hot reload** — `SecretChanged`/`SecretsChangeSource` contract, `SecretsPollWatcher` (30s default), Kubernetes-aware `DirectorySecretsChangeSource` with an optional OS-native event accelerator (`native_events_lifecycle_step`; needs app-installed `watchfiles`, fails closed without it), and `SecretsHotReloadBinder` evicting affected routed-pool tenants; the `fingerprint_ttl` floor stays on.
+- **Change feed + hot reload** — `SecretChanged`/`SecretsChangeSource` contract, `SecretsPollWatcher` (30s default), Kubernetes-aware `DirectorySecretsChangeSource` with an optional OS-native event accelerator (`native_events_lifecycle_step`; needs app-installed `watchfiles`, fails closed without it), and `SecretsHotReloadBinder`; the `fingerprint_ttl` floor stays on.
 - **Rotation notifications** — `SecretRotated` (refs/versions only) via outbox → broadcast pub/sub; `PubSubSecretsChangeSource` consumes it through the same binder seam.
 - **Durable rotator** — `SecretRotator`: create→set→test→finish per `(ref, tenant)` with `<path>.pending` staging and fenced promotion (verify-before-promote, CAS via `SecretsAdminPort.put(expected_version=…)`, delayed reconfirmation via `reconfirm_after`); triggers `rotate_now`/`enqueue_tenants`/`ensure_cron`; `forze_postgres.PostgresRotationTarget` defaults to dual-user alternation, single-role behind `single_role_degraded=True`.
 - **Leases** — `DynamicSecretsPort`/`LeasedSecret`, `forze_vault.VaultDynamicSecrets`, and `SecretsLeaseManager` (renew at ~⅔ TTL, reissue before `max_ttl`); a leased backend needs no rotator.
-- **Counterparty-rotated credentials** — `RotatingCredentialStorePort` (`rotating_credentials` key) for single-use OAuth refresh tokens: `get`/`refresh(observed=…)`/`put`/`burn` over an app-supplied `CredentialExchangerPort` (raise `INVALID_GRANT_CODE` for a permanent rejection, anything else for transient). New codes `credential_burnt` (terminal; cleared by `put`), `credential_exchange_timeout`, `credential_persist_lost`. Stores: `forze_postgres.PostgresRotatingCredentialStore` (app-provided table, DDL on the class) and `MockDepsModule(rotating_credentials=…)`.
-- **Credentials sealed at rest by default** — `PostgresRotatingCredentialsConfig.encrypt` defaults to `True` (unlike other stores' opt-in flags), AAD-bound to `(tenant, ref)` so a row lifted across refs or tenants fails authentication. Plaintext requires `acknowledge_plaintext=True`; encryption without a wired keyring fails closed at resolve. Existing plaintext rows read through and seal on next write — no migration. Only `payload` is sealed; `expires_at` stays queryable.
-- **`forze_mongo.MongoRotationTarget`** — dual-user rotation over `updateUser` (`user_pair=…`, single-user behind `single_user_degraded=True`), bounded server-side by `maxTimeMS` and declaring `apply_latency_bound`. New `MongoClientPort.command_dispatch_bound` exposes the client's configured server-selection plus connect wait, which the target validates its `dispatch_allowance` against. URI credential swapping via `forze_mongo.kernel.uri` preserves hosts, options and `mongodb+srv://`.
+- **Counterparty-rotated credentials** — `RotatingCredentialStorePort` (`rotating_credentials` key) for single-use OAuth refresh tokens: `get`/`refresh(observed=…)`/`put`/`burn` over an app-supplied `CredentialExchangerPort` (`INVALID_GRANT_CODE` = permanent, anything else transient). New codes `credential_burnt` (terminal; cleared by `put`), `credential_exchange_timeout`, `credential_persist_lost`. Stores: `forze_postgres.PostgresRotatingCredentialStore` (app-provided table, DDL on the class) and `MockDepsModule(rotating_credentials=…)`.
+- **Credentials sealed at rest by default** — `PostgresRotatingCredentialsConfig.encrypt` defaults to `True` (unlike other stores' opt-in flags), AAD-bound to `(tenant, ref)`. Plaintext requires `acknowledge_plaintext=True`; encryption without a wired keyring fails closed at resolve. Existing plaintext rows read through and seal on next write — no migration. Only `payload` is sealed; `expires_at` stays queryable.
+- **`forze_mongo.MongoRotationTarget`** — dual-user rotation over `updateUser` (`user_pair=…`, single-user behind `single_user_degraded=True`), bounded server-side by `maxTimeMS` and declaring `apply_latency_bound`. New `MongoClientPort.command_dispatch_bound`, which the target validates `dispatch_allowance` against; URI credential swapping via `forze_mongo.kernel.uri` preserves hosts, options and `mongodb+srv://`.
 - New `forze.base.primitives.StripedAsyncLocks` — keyed in-process serialization over a bounded lock set.
 - Full mock parity (`MockSecretsChangeSource`, `MockDynamicSecretsPort`), new `RoutedTenantClientBase.cached_tenant_ids()`, runnable walkthrough in `examples/recipes/secrets_rotation/`.
 
