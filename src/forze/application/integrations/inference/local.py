@@ -19,6 +19,7 @@ coroutines, never as blocked worker threads inside the shared CPU pool.
 import asyncio
 import contextlib
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
+from itertools import batched
 from typing import Any, Protocol, final
 
 import attrs
@@ -39,6 +40,7 @@ from forze.base.primitives.deadline import remaining_time
 from .adapter_common import (
     bind_run_options,
     ensure_budget,
+    resolve_wire_cap,
     shape_outputs,
     validated_instances,
 )
@@ -342,7 +344,37 @@ class LocalInferenceAdapter[In: BaseModel, Out: BaseModel](InferencePort[In, Out
         *,
         options: InferenceRunOptions | None = None,
     ) -> AsyncGenerator[Sequence[Out]]:
-        # Each chunk goes through predict_many, so every chunk boundary is a deadline
-        # check and a cancellation point (run_cpu_map semantics without the buffering).
+        # The per-call cap sub-batches here exactly as it does on the served adapters. There
+        # is no transport limit to declare in-process, so this route's own cap stays None —
+        # but the caller's hint is still meaningful, and arguably most meaningful here: the
+        # whole chunk otherwise enters a single ``run_cpu`` dispatch and sits in the worker
+        # thread at once. Ignoring it made the one knob for bounding that a no-op on the one
+        # adapter where nothing else bounds it.
+        wire_cap = resolve_wire_cap(
+            options,
+            self.inference_capabilities,
+            backend=LOCAL_INFERENCE_BACKEND,
+        )
+
         async for chunk in instances:
-            yield await self.predict_many(chunk, options=options)
+            # Validate the whole chunk before scoring any of it, like the served adapters:
+            # an off-spec instance in a later sub-batch must not follow a dispatch that
+            # already ran the model.
+            prepared = validated_instances(self.spec, chunk)
+
+            if not prepared:
+                yield []
+                continue
+
+            if wire_cap is None:
+                yield await self.predict_many(prepared, options=options)
+                continue
+
+            # Each sub-batch goes through predict_many, so every dispatch is a deadline
+            # check and a cancellation point (run_cpu_map semantics without the buffering).
+            scored: list[Out] = []
+
+            for sub_batch in batched(prepared, wire_cap, strict=False):
+                scored.extend(await self.predict_many(list(sub_batch), options=options))
+
+            yield scored
