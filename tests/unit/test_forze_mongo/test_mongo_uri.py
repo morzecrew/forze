@@ -9,6 +9,8 @@ rotation, which is the worst moment for it.
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 import pytest
 
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -69,7 +71,7 @@ class TestSwappingCredentials:
         swapped = with_mongo_credentials(_SRV, username="app_b", password="next")
 
         assert swapped.startswith("mongodb+srv://")
-        assert "cluster.example.net" in swapped
+        assert urlparse(swapped).hostname == "cluster.example.net"
         assert mongo_uri_username(swapped) == "app_b"
 
     def test_special_characters_are_encoded_on_the_way_in(self) -> None:
