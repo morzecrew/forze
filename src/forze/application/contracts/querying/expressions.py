@@ -264,7 +264,7 @@ class AggregateComputedFunctionApplication(TypedDict, total=False):
 AggregateComputedFunctionExpression = TypedDict(
     "AggregateComputedFunctionExpression",
     {
-        "$count": str | None | AggregateComputedFunctionApplication,
+        "$count": str | AggregateComputedFunctionApplication | None,
         "$count_distinct": str | AggregateComputedFunctionApplication,
         "$sum": str | AggregateComputedFunctionApplication,
         "$avg": str | AggregateComputedFunctionApplication,

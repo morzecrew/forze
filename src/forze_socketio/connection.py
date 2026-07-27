@@ -139,7 +139,7 @@ class RealtimeConnection:
 
 ConnectionResolver = Callable[
     [SocketIOConnect],
-    "RealtimeConnection | None | Awaitable[RealtimeConnection | None]",
+    "RealtimeConnection | Awaitable[RealtimeConnection | None] | None",
 ]
 """Resolve a connection's identity at connect time. Return ``None`` for anonymous
 (no principal room joined), or raise a client-safe :class:`CoreException`

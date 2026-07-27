@@ -200,3 +200,137 @@ def test_untenanted_adapter_does_not_stamp_tenant() -> None:
     adapter = _adapter(MagicMock(), wait_for_tasks=False)
     doc = adapter.to_index_document(_Doc(id="1", title="A"))
     assert "tenant_id" not in doc
+
+
+# ....................... #
+
+
+def _failed_task(error: object) -> MagicMock:
+    task = MagicMock()
+    task.status = "failed"
+    task.error = error
+    return task
+
+
+class TestFailedTaskClassification:
+    """A failed Meilisearch task is not automatically an infrastructure fault.
+
+    Meilisearch tags a rejected request ``invalid_request`` — a missing index, a document
+    the schema refuses, a filter on an unfilterable attribute. Reporting those as
+    infrastructure implied a retryable server fault for something that will fail identically
+    forever, and the circuit breaker counted them against the engine's health. The engine's
+    own message rides along too: "task 7 did not succeed" gives a caller nothing to act on.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_rejected_request_is_a_precondition_carrying_the_engine_message(
+        self,
+    ) -> None:
+        index = MagicMock()
+        index.add_documents = AsyncMock(return_value=MagicMock(task_uid=7))
+        client = _client_with_index(index)
+        client.wait_for_task = AsyncMock(
+            return_value=_failed_task(
+                {
+                    "code": "invalid_document_id",
+                    "type": "invalid_request",
+                    "message": "Document identifier `bad id` is invalid.",
+                }
+            )
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await _adapter(client).upsert([_Doc(id="x", title="t")])
+
+        assert ei.value.kind == ExceptionKind.PRECONDITION
+        assert "invalid_document_id" in str(ei.value)
+        assert "Document identifier" in str(ei.value)
+        assert ei.value.details["meili_code"] == "invalid_document_id"
+
+    @pytest.mark.asyncio
+    async def test_an_engine_side_failure_stays_infrastructure(self) -> None:
+        """The other branch: a genuine server fault is still retryable."""
+
+        index = MagicMock()
+        index.add_documents = AsyncMock(return_value=MagicMock(task_uid=8))
+        client = _client_with_index(index)
+        client.wait_for_task = AsyncMock(
+            return_value=_failed_task(
+                {"code": "internal", "type": "internal", "message": "index corrupted"}
+            )
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await _adapter(client).upsert([_Doc(id="x", title="t")])
+
+        assert ei.value.kind == ExceptionKind.INFRASTRUCTURE
+        assert "index corrupted" in str(ei.value)
+
+    @pytest.mark.asyncio
+    async def test_an_unexpected_error_shape_still_reaches_the_caller(self) -> None:
+        """The SDK hands back a mapping; anything else is stringified rather than dropped,
+        so a shape change cannot turn a real failure into an empty message."""
+
+        index = MagicMock()
+        index.add_documents = AsyncMock(return_value=MagicMock(task_uid=9))
+        client = _client_with_index(index)
+        client.wait_for_task = AsyncMock(return_value=_failed_task("a bare string failure"))
+
+        with pytest.raises(CoreException) as ei:
+            await _adapter(client).upsert([_Doc(id="x", title="t")])
+
+        assert ei.value.kind == ExceptionKind.INFRASTRUCTURE
+        assert "a bare string failure" in str(ei.value)
+
+    @pytest.mark.asyncio
+    async def test_delete_all_tolerates_a_missing_index_but_nothing_else(self) -> None:
+        """The tolerate list is per call, not global.
+
+        Wiping an index that was never provisioned already satisfies "the index holds no
+        documents". The same code from any other operation still means the write went
+        nowhere, so it must not be swallowed there.
+        """
+
+        missing = _failed_task(
+            {
+                "code": "index_not_found",
+                "type": "invalid_request",
+                "message": "Index `items_idx` not found.",
+            }
+        )
+
+        index = MagicMock()
+        index.delete_all_documents = AsyncMock(return_value=MagicMock(task_uid=10))
+        index.add_documents = AsyncMock(return_value=MagicMock(task_uid=11))
+        client = _client_with_index(index)
+        client.wait_for_task = AsyncMock(return_value=missing)
+
+        spec = SearchSpec(name="items", model_type=_Doc, fields=["title"])
+        management = MeilisearchSearchManagementAdapter(
+            spec=spec,
+            config=MeilisearchSearchConfig(index_uid="items_idx"),
+            client=client,
+        )
+
+        # Tolerated here...
+        await management.delete_all()
+
+        # ...and not tolerated on a write, where it means the documents were not indexed.
+        with pytest.raises(CoreException) as ei:
+            await _adapter(client).upsert([_Doc(id="x", title="t")])
+
+        assert ei.value.kind == ExceptionKind.PRECONDITION
+
+    @pytest.mark.asyncio
+    async def test_a_failed_task_is_not_awaited_when_waiting_is_off(self) -> None:
+        """``wait_for_tasks=False`` is fire-and-forget by construction: nothing is inspected,
+        so nothing can be classified."""
+
+        index = MagicMock()
+        index.add_documents = AsyncMock(return_value=MagicMock(task_uid=12))
+        client = _client_with_index(index)
+        client.wait_for_task = AsyncMock()
+
+        await _adapter(client, wait_for_tasks=False).upsert([_Doc(id="x", title="t")])
+
+        client.wait_for_task.assert_not_awaited()

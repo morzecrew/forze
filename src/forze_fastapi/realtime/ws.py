@@ -189,7 +189,7 @@ class WsConnection:
         return resolve_client_key(self.client, fallback=fallback)
 
 
-WsConnectionResolver = Callable[[WsConnect], "WsConnection | None | Awaitable[WsConnection | None]"]
+WsConnectionResolver = Callable[[WsConnect], "WsConnection | Awaitable[WsConnection | None] | None"]
 """Resolve a connection's identity from the upgrade request (and reauth payloads).
 
 Return ``None`` for anonymous — which this route refuses (replay, ack, and command

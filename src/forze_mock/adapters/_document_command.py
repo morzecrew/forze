@@ -469,7 +469,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: bool = True,
         return_diff: bool = False,
-    ) -> R | JsonDict | None | tuple[R, JsonDict]:
+    ) -> R | JsonDict | tuple[R, JsonDict] | None:
         self._ensure_writable()
         # ``encode_mapping`` is the codec's non-encrypting path, so the patch is
         # plaintext: it merges cleanly into the decrypted domain and the single

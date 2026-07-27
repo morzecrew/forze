@@ -68,7 +68,7 @@ HandlerResolverPort = Callable[[StrKey, ExecutionContext], Handler[Any, Any]]
 
 IdentityResolverPort = Callable[
     ["SocketIOConnect"],
-    AuthnIdentity | None | Awaitable[AuthnIdentity | None],
+    AuthnIdentity | Awaitable[AuthnIdentity | None] | None,
 ]
 """Resolver that authenticates a Socket.IO connection.
 

@@ -20,7 +20,7 @@ from forze.application.contracts.graph import (
     VertexRef,
 )
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_neo4j.adapters import Neo4jGraphAdapter
 
 # ----------------------- #
@@ -622,3 +622,56 @@ async def test_multi_endpoint_edge_routes_to_declared_pair() -> None:
     query, _params = client.calls[-1]
     # The A→B pair drives the MATCH labels; routing hints are not stored as props.
     assert "(a:`A`" in query and "(b:`B`" in query
+
+
+# ....................... #
+
+
+class TestVertexConflictTranslation:
+    """The shared duplicate-key translation, and what it must *not* swallow.
+
+    ``create_vertex`` and ``create_vertices`` both run their write inside this, so it is the
+    one place the portable ``graph_vertex_conflict`` code is minted. The re-raise branch is
+    the load-bearing half: everything that is not a uniqueness refusal has to pass through
+    unchanged, or an unrelated failure would be reported to the caller as a duplicate key.
+    """
+
+    def test_a_conflict_becomes_the_portable_duplicate_key_code(self) -> None:
+        from forze_neo4j.adapters.graph import (
+            _vertex_conflict,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        with pytest.raises(CoreException) as ei, _vertex_conflict("Person"):
+            raise exc.conflict("Neo4j constraint violation.")
+
+        assert ei.value.code == "graph_vertex_conflict"
+        assert "Person" in str(ei.value)
+
+    @pytest.mark.parametrize(
+        "raised",
+        [
+            exc.not_found("no such node"),
+            exc.infrastructure("driver died"),
+            exc.concurrency("deadlock, retry"),
+            exc.validation("bad property"),
+        ],
+        ids=lambda e: str(e.kind),
+    )
+    def test_every_other_kind_passes_through_untouched(self, raised: CoreException) -> None:
+        from forze_neo4j.adapters.graph import (
+            _vertex_conflict,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        with pytest.raises(CoreException) as ei, _vertex_conflict("Person"):
+            raise raised
+
+        assert ei.value is raised
+        assert ei.value.code != "graph_vertex_conflict"
+
+    def test_a_clean_write_is_not_touched(self) -> None:
+        from forze_neo4j.adapters.graph import (
+            _vertex_conflict,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        with _vertex_conflict("Person"):
+            pass
