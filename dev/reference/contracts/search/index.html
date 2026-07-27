@@ -6271,15 +6271,18 @@ cannot provision or wipe an index.</p>
 <tr>
 <td><code>ensure_index</code></td>
 <td><code>ensure_index()</code></td>
-<td>create / update the index settings</td>
+<td>create / update the index settings; idempotent</td>
 </tr>
 <tr>
 <td><code>delete_all</code></td>
 <td><code>delete_all()</code></td>
-<td>empty the index</td>
+<td>empty the index; a no-op if it was never provisioned</td>
 </tr>
 </tbody>
 </table>
+<p>Both are postconditions rather than operations on an existing thing, so both are safe to
+repeat and safe to call first: <code>delete_all()</code> on a surface nothing has created yet succeeds,
+because an index that does not exist already holds no documents.</p>
 <h2 id="rebuilding-an-index">Rebuilding an index<a class="headerlink" href="#rebuilding-an-index" title="Permanent link">&para;</a></h2>
 <p>An external index is kept in step by the index-sync bindings (<code>AggregateKit(search=…)</code>, or
 <code>bind_search_sync</code> / <code>bind_search_sync_outbox</code> directly), and those are <strong>incremental</strong>: they

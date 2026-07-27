@@ -6187,7 +6187,15 @@ traversals the typed ports don't express.</p>
 <h2 id="management-port-ctxgraphmanagementspec">Management port  (<code>ctx.graph.management(spec)</code>)<a class="headerlink" href="#management-port-ctxgraphmanagementspec" title="Permanent link">&para;</a></h2>
 <p>Control-plane schema provisioning, separate from the data-plane command port:
 <code>ensure_schema()</code> creates constraints/indexes for the declared kinds; <code>drop_schema()</code>
-removes them.</p>
+removes them. Both are idempotent, and safe to call in either order — a teardown that
+runs before anything was provisioned succeeds.</p>
+<p>On Neo4j this is <strong>required for correctness, not just speed</strong>: node-key uniqueness is the
+constraint <code>ensure_schema()</code> creates, and without it Cypher <code>CREATE</code> will happily write a
+second node under a key that is supposed to identify one. Run it at startup.</p>
+<p>The mock implements the port so that startup step is exercisable in tests, but both
+methods are no-ops there: the in-memory store keys vertices directly, so uniqueness is a
+property of the data structure and <code>drop_schema()</code> cannot take it away. Observing what an
+engine does <em>without</em> its constraints needs that engine.</p>
 <h2 id="implemented-by">Implemented by<a class="headerlink" href="#implemented-by" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

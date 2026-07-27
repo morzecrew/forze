@@ -2087,10 +2087,21 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#the-postgres-target-dual-user-alternation" class="md-nav__link">
+  <a href="#the-targets-dual-principal-alternation" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The Postgres target: dual-user alternation
+        The targets: dual-principal alternation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#which-backends-have-a-target-and-why-the-rest-dont" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Which backends have a target, and why the rest don't
       </span>
     </span>
   </a>
@@ -5820,10 +5831,21 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#the-postgres-target-dual-user-alternation" class="md-nav__link">
+  <a href="#the-targets-dual-principal-alternation" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The Postgres target: dual-user alternation
+        The targets: dual-principal alternation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#which-backends-have-a-target-and-why-the-rest-dont" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Which backends have a target, and why the rest don't
       </span>
     </span>
   </a>
@@ -6118,7 +6140,7 @@ rotations of one ref across replicas.</p>
 </code></pre></div>
 <p>Multi-tenant fleets enqueue one run per tenant (<code>rotator.enqueue_tenants</code>) — one
 failing verify never blocks the rest, and a partial pass resumes where it stopped.</p>
-<h3 id="the-postgres-target-dual-user-alternation">The Postgres target: dual-user alternation<a class="headerlink" href="#the-postgres-target-dual-user-alternation" title="Permanent link">&para;</a></h3>
+<h3 id="the-targets-dual-principal-alternation">The targets: dual-principal alternation<a class="headerlink" href="#the-targets-dual-principal-alternation" title="Permanent link">&para;</a></h3>
 <p><code>PostgresRotationTarget</code> defaults to <strong>two roles</strong> (<code>app_a</code>/<code>app_b</code>): the rotation
 sets the minted password on the <em>idle</em> role, verifies it with a live connection,
 and promotes a DSN naming that role. The previously-active role stays valid through
@@ -6129,11 +6151,91 @@ moment exists where a credential in flight is invalid.</p>
 connections with the old password fail (established ones survive), so with
 connect-time re-resolution the blast radius is retry noise — but it is documented
 degraded for a reason.</p>
+<p><code>MongoRotationTarget</code> is the same shape on MongoDB: two users, <code>updateUser</code> on the idle
+one, a real authenticated <code>ping</code> to verify, and <code>single_user_degraded=True</code> for the
+one-user case. It rotates the credential inside a <code>mongodb://</code> or <code>mongodb+srv://</code> URI and
+leaves every other part of it — hosts, replica set, options — byte-identical.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_mongo</span><span class="w"> </span><span class="kn">import</span> <span class="n">MongoRotationTarget</span>
+
+<span class="n">target</span> <span class="o">=</span> <span class="n">MongoRotationTarget</span><span class="p">(</span>
+    <span class="n">secrets</span><span class="o">=</span><span class="n">secrets</span><span class="p">,</span> <span class="n">client</span><span class="o">=</span><span class="n">admin_mongo</span><span class="p">,</span> <span class="n">user_pair</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;app_a&quot;</span><span class="p">,</span> <span class="s2">&quot;app_b&quot;</span><span class="p">)</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Both targets declare an <code>apply_latency_bound</code> the rotator validates the reconfirmation
+window against, and both enforce it <em>at the server</em>: <code>statement_timeout</code> on one,
+<code>maxTimeMS</code> on the other. One MongoDB detail worth knowing if you manage those users
+yourself: an <code>updateUser</code> carrying <code>pwd</code> recomputes the user's SCRAM mechanism set back to
+the server default, so a deliberately narrowed mechanism list does not survive a rotation.</p>
 <p>Run the rotator as a utility container in the outbox-relay shape: a headless
 <code>build_runtime(...)</code> composition wiring <code>{secrets + secrets_admin, durable, dlock,
 outbox/pubsub, rotation targets, tenant directory}</code> with the durable recovery and
 scheduler steps — no HTTP surface. See the runnable walkthrough in
 <code>examples/recipes/secrets_rotation/</code>.</p>
+<h3 id="which-backends-have-a-target-and-why-the-rest-dont">Which backends have a target, and why the rest don't<a class="headerlink" href="#which-backends-have-a-target-and-why-the-rest-dont" title="Permanent link">&para;</a></h3>
+<p>A rotation target only exists where the framework can administer the backend's own
+principals. Everywhere else the answer is a <em>different</em> mechanism, not a missing one — so
+here is every credential-holding integration and the doctrine it falls under. "No target" is
+a decision on this page, never an omission.</p>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th>Doctrine</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Postgres</td>
+<td><strong>target</strong> (shipped)</td>
+<td>Named roles, settable passwords, dual-user alternation</td>
+</tr>
+<tr>
+<td>MongoDB</td>
+<td><strong>target</strong> (shipped)</td>
+<td><code>updateUser</code> over two users; same alternation</td>
+</tr>
+<tr>
+<td>ClickHouse</td>
+<td>target (planned)</td>
+<td>Per-request auth makes the overlap window the <em>only</em> protection, so single-user mode is refused rather than degraded</td>
+</tr>
+<tr>
+<td>Redis, RabbitMQ</td>
+<td><strong>leases</strong></td>
+<td>A Vault engine exists, and neither can bound a late write server-side (see below) — short TTLs are the better mechanism</td>
+</tr>
+<tr>
+<td>Kafka, Meilisearch, Neo4j</td>
+<td>undecided</td>
+<td>No confirmed server-side bound; demand-gated until there is one</td>
+</tr>
+<tr>
+<td>S3, SQS, GCS, BigQuery, Firestore</td>
+<td><strong>platform IAM</strong></td>
+<td>The credential is a cloud IAM artifact. Prefer ambient identity (IRSA, workload identity) and hold no static secret at all</td>
+</tr>
+<tr>
+<td>Temporal, Inngest, outbound HTTP</td>
+<td><strong>operator-rotated</strong></td>
+<td>Keys are minted in a vendor console with no admin API; the framework's job ends at hot reload</td>
+</tr>
+<tr>
+<td>Third-party OAuth grants</td>
+<td><strong>counterparty-rotated</strong></td>
+<td>The provider rotates at you — see <a href="#when-the-other-side-rotates-it">below</a></td>
+</tr>
+</tbody>
+</table>
+<p>The line that decides the hard cases is whether the backend can <strong>kill a late write itself</strong>.
+A rotator's delayed reconfirmation is only meaningful if a stale apply has a real deadline,
+and a client-side timeout is not one: abandoning a request does not stop a write already at
+the server. Postgres has <code>SET LOCAL statement_timeout</code>, MongoDB has <code>maxTimeMS</code> on
+<code>updateUser</code> — both verified against live servers rather than assumed. Redis cannot: a stale
+<code>ACL SETUSER</code> sitting in a socket buffer executes whenever the server gets to it, with no age
+check. That is why Redis is a leases backend and not a target.</p>
+<p>Every shipped target runs the same conformance battery against its real backend, including a
+deliberately stalled apply that must fail rather than land late.</p>
 <h2 id="when-the-other-side-rotates-it">When the other side rotates it<a class="headerlink" href="#when-the-other-side-rotates-it" title="Permanent link">&para;</a></h2>
 <p>Everything above rotates a credential <em>you</em> control. Some third parties invert that:
 a provider doing refresh-token rotation burns the token you present and hands back a

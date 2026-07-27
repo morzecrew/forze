@@ -6008,8 +6008,10 @@ the CPU-offload seam (bounded pool, deadline enforcement, cancellation):</p>
 <span class="n">steps</span> <span class="o">=</span> <span class="p">[</span><span class="n">local_inference_lifecycle_step</span><span class="p">(</span><span class="n">inference_module</span><span class="p">)]</span>
 </code></pre></div>
 <p>The framework never deserializes artifacts itself — unpickling is arbitrary code
-execution, and that trust decision stays in your loader. Two behaviors worth
-knowing:</p>
+execution, and that trust decision stays in your loader. <code>predict_batch</code> may
+return output models, plain records, or one bare value per instance — the array
+shape <code>sklearn</code>'s own <code>predict</code> gives you — so a wrapper is rarely needed. Two
+behaviors worth knowing:</p>
 <ul>
 <li><strong>Warm by default.</strong> <code>warm_on_startup=True</code> loads the model at boot through
   the lifecycle step and <strong>fails startup closed</strong> on a loader error: a service
@@ -6068,15 +6070,31 @@ silent degradation. The failure taxonomy at the boundary:</p>
 <td><code>inference_feature_unsupported</code></td>
 </tr>
 <tr>
-<td>Per-call timeout / invocation deadline expired</td>
+<td>Budget already spent when the call starts</td>
 <td><code>timeout</code></td>
-<td><code>cpu_offload_deadline</code> (local)</td>
+<td><code>inference_budget_exhausted</code></td>
+</tr>
+<tr>
+<td>Deadline expired mid-call</td>
+<td><code>timeout</code></td>
+<td>backend-specific (<code>cpu_offload_deadline</code>, <code>inference_timeout</code>)</td>
 </tr>
 </tbody>
 </table>
 <p>Per-call options tighten, never extend: <code>options={"timeout": timedelta(...)}</code>
 binds a deadline that is the earlier of the per-call budget and the ambient
 invocation deadline.</p>
+<p>The two timeout rows are worth telling apart. <code>inference_budget_exhausted</code> is a
+pre-flight refusal — the model was never asked, so nothing ran, nothing was
+billed, and there is no side effect to reason about. Every adapter raises the
+same code for it, so a caller can branch on it without knowing which backend
+answered. A mid-call expiry leaves all of that open, and keeps the backend's own
+code.</p>
+<p>A hard batch cap is enforced differently by the two batch methods, and both
+halves hold on every backend: <code>predict_many</code> <strong>refuses</strong> an oversized batch (you
+asked for one atomic call), while <code>predict_stream</code> <strong>sub-batches</strong> an oversized
+chunk into several backend calls and still yields it as one chunk (your chunking
+is a memory bound, not an atomicity request).</p>
 <h2 id="features-in-traces">Features in traces<a class="headerlink" href="#features-in-traces" title="Permanent link">&para;</a></h2>
 <p>Simulation value capture masks every input field by default:</p>
 <div class="highlight"><pre><span></span><code><span class="n">FRAUD_SCORER</span> <span class="o">=</span> <span class="n">InferenceSpec</span><span class="p">(</span>

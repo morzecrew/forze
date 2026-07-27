@@ -5923,7 +5923,13 @@ model</strong>, maintained explicitly (not auto-synced from your document store)
   management surface: <code>ctx.search.management(spec).ensure_index()</code> applies the
   searchable/filterable/sortable attributes and the <code>max_total_hits</code> ceiling, and
   <code>delete_all()</code> wipes the route's documents (scoped to the current tenant when
-  <code>tenant_aware</code>) — neither is reachable from the command port.</li>
+  <code>tenant_aware</code>) — neither is reachable from the command port. Both are
+  repeatable, and <code>delete_all()</code> on an index that does not exist yet is a no-op,
+  so a wipe-then-rebuild works on a fresh deployment.</li>
+<li><strong>A rejected request is a <code>precondition</code>, not <code>infrastructure</code>.</strong> Meilisearch
+  reports a missing index, an unfilterable attribute or a refused document as
+  <code>invalid_request</code>; those raise <code>precondition</code> carrying the engine's message, so
+  resilience does not retry something that will fail identically forever.</li>
 <li>Cursor pagination and hub search aren't supported here; the filter language is
   a subset of the <a href="../../reference/query-syntax/">Query DSL</a>.</li>
 <li>Federated routes merge ≥2 member indexes (<code>federation</code> or in-process <abbr title="Reciprocal Rank Fusion">RRF</abbr>).</li>

@@ -5024,6 +5024,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#what-every-backend-guarantees" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What every backend guarantees
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#enumerating-counters-admin" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5732,6 +5743,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#what-every-backend-guarantees" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What every backend guarantees
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#enumerating-counters-admin" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5997,9 +6019,8 @@ lifetime alone (the seam the
 write through). See
 <a href="../../../recipes/cache-reads-with-redis/">Cache reads with Redis</a>.</p>
 <h2 id="counter">Counter<a class="headerlink" href="#counter" title="Permanent link">&para;</a></h2>
-<p><code>ctx.counter(spec)</code> returns a <code>CounterPort</code> — an atomic, monotonic sequence within
-the spec's namespace (<code>CounterSpec</code> carries only a name). <code>suffix</code> partitions counters
-under one spec.</p>
+<p><code>ctx.counter(spec)</code> returns a <code>CounterPort</code> — an atomic sequence within the spec's
+namespace (<code>CounterSpec</code> carries only a name). <code>suffix</code> partitions counters under one spec.</p>
 <table>
 <thead>
 <tr>
@@ -6034,6 +6055,24 @@ under one spec.</p>
 <p>There is <strong>no read verb</strong>, deliberately: a counter's value is only meaningful at the
 instant it is allocated, so a handler that read one would be holding a number another
 allocation has already moved past. Allocate and use the value you were given.</p>
+<h3 id="what-every-backend-guarantees">What every backend guarantees<a class="headerlink" href="#what-every-backend-guarantees" title="Permanent link">&para;</a></h3>
+<p>These hold identically on Postgres, MongoDB, Redis, Firestore and the in-memory mock,
+because one shared conformance battery asserts them against each:</p>
+<ul>
+<li>an untouched counter reads as <strong>0</strong>, so the first <code>incr()</code> returns 1;</li>
+<li>values are <strong>signed 64-bit</strong>. An allocation or reset that would leave that range is
+  refused and the stored value is unchanged — never wrapped, never clamped. A <code>reset</code>
+  is checked before it is stored, so it cannot succeed and break the <em>next</em> allocation;</li>
+<li>counters are <strong>not</strong> required to be non-negative: <code>decr</code> below zero is legal, and a
+  negative <code>by</code> is an ordinary decrease;</li>
+<li><code>incr(by=0)</code> returns the current value without moving it — the one read the port offers.
+  It still creates the counter at 0 if it did not exist.</li>
+</ul>
+<p>The value domain is the reason the mock enforces a bound it could easily exceed: a mock
+that accepts allocations no real store can hold certifies bugs instead of catching them.
+One residue is deliberate and worth knowing — when an <em>allocation</em> (not a reset) crosses
+the boundary, the refusal comes from the store itself, so its error kind is the backend's
+own. What is uniform is that it refuses and changes nothing.</p>
 <p>Allocations also <strong>never join the caller's transaction</strong> — on every backend (Redis,
 Postgres, Mongo, Firestore) the statement runs on its own connection, so a rolled-back
 transaction does not hand the number back. A sequence that could roll back would
