@@ -52,6 +52,15 @@ class SageMakerInferenceConfig(TenantAwareIntegrationConfig):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        # Caught here rather than at the first stream call: a cap below 1 makes
+        # predict_many refuse everything and predict_stream have no servable sub-batch,
+        # so it is a wiring mistake and should cost a boot, not a request.
+        if self.max_batch_size is not None and self.max_batch_size < 1:
+            raise exc.configuration(
+                f"SageMakerInferenceConfig.max_batch_size={self.max_batch_size} must be "
+                "at least 1; omit it (None) for an endpoint with no batch limit."
+            )
+
         if not self.acknowledge_data_egress:
             raise exc.configuration(
                 "SageMakerInferenceConfig requires acknowledge_data_egress=True: this "

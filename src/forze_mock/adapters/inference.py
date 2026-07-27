@@ -39,6 +39,7 @@ from forze.application.contracts.inference import (
 from forze.application.integrations.inference.adapter_common import (
     bind_run_options,
     ensure_budget,
+    resolve_wire_cap,
     shape_outputs,
     validated_instances,
 )
@@ -212,15 +213,11 @@ class MockInferenceAdapter[In: BaseModel, Out: BaseModel](InferencePort[In, Out]
         # predict_many instead made the oracle refuse a chunk the mirrored backend serves
         # by splitting its wire calls, so correct streaming code failed under the mock and
         # only under the mock.
-        caps = [
-            cap
-            for cap in (
-                (options or {}).get("max_batch_size"),
-                self.inference_capabilities.max_batch_size,
-            )
-            if cap is not None
-        ]
-        wire_cap = min(caps) if caps else None
+        wire_cap = resolve_wire_cap(
+            options,
+            self.inference_capabilities,
+            backend=MOCK_INFERENCE_BACKEND,
+        )
 
         async for chunk in instances:
             prepared = validated_instances(self.spec, chunk)

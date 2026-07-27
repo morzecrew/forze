@@ -19,7 +19,11 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
-from forze.application.contracts.inference import InferenceRunOptions, InferenceSpec
+from forze.application.contracts.inference import (
+    InferenceCapabilities,
+    InferenceRunOptions,
+    InferenceSpec,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import bind_deadline, remaining_time
 
@@ -167,6 +171,42 @@ def shape_outputs[Out: BaseModel](
             ) from e
 
     return shaped
+
+
+# ....................... #
+
+
+def resolve_wire_cap(
+    options: InferenceRunOptions | None,
+    caps: InferenceCapabilities,
+    *,
+    backend: str,
+) -> int | None:
+    """The effective per-call batch size for ``predict_stream``, or ``None`` for unbounded.
+
+    The tighter of the caller's ``max_batch_size`` hint and the backend's declared cap.
+    Shared because all three streaming adapters need the same answer, and because the
+    result feeds :func:`itertools.batched`, which raises a bare ``ValueError`` below 1 —
+    a caller passing ``0`` would crash the stream instead of being refused. The declared
+    cap is already validated at construction
+    (:class:`~forze.application.contracts.inference.capabilities.InferenceCapabilities`),
+    so only the per-call hint is checked here, and as a caller error rather than a
+    configuration one.
+
+    :raises CoreException: ``precondition`` when the per-call hint is below 1.
+    """
+
+    requested = (options or {}).get("max_batch_size")
+
+    if requested is not None and requested < 1:
+        raise exc.precondition(
+            f"Inference max_batch_size={requested} must be at least 1; omit it for the "
+            f"{backend!r} backend's own cap.",
+        )
+
+    caps_list = [cap for cap in (requested, caps.max_batch_size) if cap is not None]
+
+    return min(caps_list) if caps_list else None
 
 
 # ....................... #

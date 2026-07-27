@@ -14,6 +14,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.inference import InferenceCapabilities, InferenceSpec
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.testing import context_from_modules
 from forze_mock import MockDepsModule, MockInferenceRegistry
 from tests.support.inference_conformance import (
@@ -123,6 +124,40 @@ async def test_a_stream_chunk_over_the_cap_is_split_into_capped_calls() -> None:
     assert sizes == [2, 2, 1]
     assert len(served) == 1
     assert [s.y for s in served[0]] == [0.0, 2.0, 4.0, 6.0, 8.0]
+
+
+async def test_a_non_positive_declared_cap_is_refused_at_declaration() -> None:
+    """A cap below 1 is a wiring mistake, caught where it is written.
+
+    Left through, the two batch methods read it differently: ``predict_many`` refuses every
+    call, while ``predict_stream`` hands it to ``itertools.batched`` and gets a bare
+    ``ValueError`` — an untyped crash from a typed contract.
+    """
+
+    for cap in (0, -1):
+        with pytest.raises(CoreException) as ei:
+            InferenceCapabilities(max_batch_size=cap)
+
+        assert ei.value.kind == ExceptionKind.CONFIGURATION, cap
+
+
+async def test_a_non_positive_per_call_cap_is_refused_as_a_caller_error() -> None:
+    """The per-call hint is a caller error, not a wiring one — and never reaches batched.
+
+    ``InferenceRunOptions`` is a ``TypedDict``, so there is no construction to validate:
+    the stream path is the only place this can be caught.
+    """
+
+    port = _route()
+
+    async def _chunk():
+        yield [Features(x=1.0)]
+
+    with pytest.raises(CoreException) as ei:
+        async for _ in port.predict_stream(_chunk(), options={"max_batch_size": 0}):
+            pass  # pragma: no cover — refused before the first chunk is scored
+
+    assert ei.value.kind == ExceptionKind.PRECONDITION
 
 
 async def test_an_exhausted_budget_never_reaches_the_scoring_function() -> None:

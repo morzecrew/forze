@@ -66,6 +66,19 @@ class InferenceCapabilities:
     or a seeded temperature-zero configuration). Relevant to simulation oracles — a
     sampling model must leave it off."""
 
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # A cap below 1 describes no servable batch at all, and the two batch methods would
+        # read it differently: predict_many refuses every call through validate_batch_size,
+        # while predict_stream hands it to itertools.batched, which raises a bare
+        # ValueError. Rejected at declaration so neither reading can happen.
+        if self.max_batch_size is not None and self.max_batch_size < 1:
+            raise exc.configuration(
+                f"InferenceCapabilities.max_batch_size={self.max_batch_size} must be at "
+                "least 1; use None for an unbounded backend.",
+            )
+
 
 # ....................... #
 
