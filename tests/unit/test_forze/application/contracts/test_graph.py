@@ -7,6 +7,7 @@ protocols, so they are exercised via ``isinstance`` structural checks.
 """
 
 from enum import StrEnum
+from uuid import uuid4
 
 import pytest
 from pydantic import BaseModel
@@ -33,8 +34,10 @@ from forze.application.contracts.graph import (
     ShortestPathParams,
     ShortestPathResult,
     VertexRef,
+    normalize_property_filter,
     resolve_query_directions,
     validate_graph_module_spec,
+    validate_property_filter_keys,
 )
 from forze.base.exceptions import CoreException
 
@@ -784,3 +787,34 @@ def attrs_frozen_error() -> type[Exception]:
     import attrs
 
     return attrs.exceptions.FrozenInstanceError
+
+
+# ....................... #
+
+
+class TestPropertyFilterHelpers:
+    """The empty/absent-filter short circuits both helpers take before doing any work."""
+
+    @pytest.mark.parametrize("empty", [None, {}])
+    def test_key_validation_accepts_an_absent_filter(self, empty: dict[str, object] | None) -> None:
+        """No filter is not a malformed filter — a caller passing none must not be refused."""
+
+        validate_property_filter_keys(empty)
+
+    @pytest.mark.parametrize("empty", [None, {}])
+    def test_normalization_of_an_absent_filter_is_none(
+        self, empty: dict[str, object] | None
+    ) -> None:
+        """``None`` rather than an empty dict, so an adapter can branch on "no filter" and
+        skip building a WHERE clause at all."""
+
+        assert normalize_property_filter(empty) is None
+
+    def test_normalization_converts_only_the_values(self) -> None:
+        """Keys are left alone (``validate_property_filter_keys`` owns those); values are
+        coerced to what ``model_dump(mode="json")`` writes."""
+
+        ref = uuid4()
+        normalized = normalize_property_filter({"ref": ref, "count": 3, "name": "x"})
+
+        assert normalized == {"ref": str(ref), "count": 3, "name": "x"}

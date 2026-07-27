@@ -113,3 +113,33 @@ async def test_routed_mongo_requires_tenant() -> None:
     await routed.startup()
     with pytest.raises(CoreException, match="Tenant ID"):
         await routed.health()
+
+
+# ....................... #
+
+
+def test_command_dispatch_bound_reads_the_shared_config() -> None:
+    """Answerable before any tenant has been routed to — which is the point.
+
+    ``MongoRotationTarget`` validates its ``dispatch_allowance`` against this at
+    construction, long before a rotation picks a tenant, so the routed client has to answer
+    from the config every per-tenant client is built with rather than from a live connection.
+    """
+
+    from datetime import timedelta
+
+    from forze_mongo.kernel.client.value_objects import MongoConfig
+
+    secrets = _MemSecrets({_T1: "mongodb://localhost:27017"})
+    routed = RoutedMongoClient(
+        secrets=secrets,
+        secret_ref_for_tenant=_ref,
+        tenant_provider=lambda: _T1,
+        database_name_for_tenant=lambda _tid: "app",
+        mongo_config=MongoConfig(
+            server_selection_timeout=timedelta(seconds=7),
+            connect_timeout=timedelta(seconds=3),
+        ),
+    )
+
+    assert routed.command_dispatch_bound == timedelta(seconds=10)

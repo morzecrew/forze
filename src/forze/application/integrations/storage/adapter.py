@@ -1498,8 +1498,9 @@ class ObjectStorageAdapter(
                 sse=self.sse,
             )
             h = await self.client.head_object(bucket=bucket, key=dst_key)
-            if src_key != dst_key:
-                await self.client.delete_object(bucket=bucket, key=src_key)
+            # Unconditional: validate_distinct_copy_keys above already refused a self-move,
+            # so the source is never the destination by the time the delete runs.
+            await self.client.delete_object(bucket=bucket, key=src_key)
 
         return ObjectHead(
             content_type=h.content_type,

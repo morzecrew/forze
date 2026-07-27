@@ -339,7 +339,7 @@ class DocumentCommandMixin(
         *,
         return_new: bool = True,
         return_diff: bool = False,
-    ) -> R | JsonDict | None | tuple[R, JsonDict]:
+    ) -> R | JsonDict | tuple[R, JsonDict] | None:
         """Update a document and refresh the cache.
 
         :param pk: Document primary key.

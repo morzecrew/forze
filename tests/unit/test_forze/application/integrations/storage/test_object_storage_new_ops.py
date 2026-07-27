@@ -12,14 +12,19 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.crypto import BytesCipherPort
-from forze.application.contracts.storage import SELF_COPY_CODE, ObjectHead, RangedDownload
+from forze.application.contracts.storage import (
+    SELF_COPY_CODE,
+    ObjectHead,
+    RangedDownload,
+    UploadSession,
+)
 from forze.application.integrations.storage import (
     ObjectBody,
     ObjectStorageAdapter,
     ObjectStorageHead,
 )
 from forze.application.integrations.storage.adapter import default_b64_codec
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 
@@ -39,7 +44,10 @@ async def _resolve_static_bucket(_spec: str, _tenant_id: UUID | None) -> str:
 def _adapter(**kw) -> ObjectStorageAdapter:
     client = MagicMock()
     client.client.return_value.__aenter__ = AsyncMock()
-    client.client.return_value.__aexit__ = AsyncMock()
+    # return_value=False, not a bare AsyncMock: a truthy __aexit__ *suppresses* whatever was
+    # raised inside the `async with`, which silently turned every "this must raise" test in
+    # this file into one that could not fail.
+    client.client.return_value.__aexit__ = AsyncMock(return_value=False)
     return ObjectStorageAdapter(
         client=client,
         bucket_spec="test-bucket",
@@ -495,3 +503,71 @@ async def test_put_object_tags_rejects_traversal_key(
         await adapter.put_object_tags("../../secret", {"a": "b"})
 
     adapter.client.put_object_tags.assert_not_called()
+
+
+# ----------------------- #
+# idempotent delete / abort_upload
+
+
+@pytest.mark.asyncio
+async def test_delete_swallows_a_not_found_from_the_backend() -> None:
+    """S3 answers 204 for a missing key, the GCS API answers 404 — so the adapter owns it.
+
+    Without this the same cleanup path raised on one object store and returned quietly on
+    the other, and a caller had to know which one was wired to write a correct teardown.
+    """
+
+    adapter = _adapter()
+    adapter.client.delete_object = AsyncMock(side_effect=CoreException.not_found("gone"))
+
+    await adapter.delete("docs/missing.txt")
+
+    adapter.client.delete_object.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_delete_still_propagates_every_other_failure() -> None:
+    """The load-bearing half: only *absence* is swallowed. A denied or unreachable delete
+    must not read as a successful one, or a cleanup that never happened looks done."""
+
+    adapter = _adapter()
+    adapter.client.delete_object = AsyncMock(
+        side_effect=CoreException.infrastructure("access denied")
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.delete("docs/forbidden.txt")
+
+    assert ei.value.kind is ExceptionKind.INFRASTRUCTURE
+
+
+@pytest.mark.asyncio
+async def test_abort_upload_swallows_a_not_found_from_the_backend() -> None:
+    """The port already promised aborting an unknown session does not error; one S3
+    implementation answered ``NoSuchUpload`` anyway."""
+
+    adapter = _adapter()
+    adapter.client.abort_multipart_upload = AsyncMock(
+        side_effect=CoreException.not_found("no such upload")
+    )
+
+    await adapter.abort_upload(
+        UploadSession(key="multi/part.bin", upload_id="u-1", content_type="text/plain")
+    )
+
+    adapter.client.abort_multipart_upload.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_abort_upload_still_propagates_every_other_failure() -> None:
+    adapter = _adapter()
+    adapter.client.abort_multipart_upload = AsyncMock(
+        side_effect=CoreException.infrastructure("broker down")
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.abort_upload(
+            UploadSession(key="multi/part.bin", upload_id="u-1", content_type="text/plain")
+        )
+
+    assert ei.value.kind is ExceptionKind.INFRASTRUCTURE

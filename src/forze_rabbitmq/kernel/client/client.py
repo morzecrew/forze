@@ -20,6 +20,7 @@ from aio_pika.abc import (
     AbstractQueue,
     AbstractRobustConnection,
 )
+from yarl import URL
 
 from forze.application.contracts.queue import resolve_delivery_delay
 from forze.base.exceptions import exc
@@ -30,6 +31,25 @@ from .errors import exc_interceptor
 from .port import RabbitMQClientPort
 from .types import RabbitMQQueueMessage
 from .value_objects import RabbitMQConfig
+
+# ----------------------- #
+
+
+def _with_heartbeat(dsn: str, heartbeat: timedelta) -> URL:
+    """Return *dsn* carrying the configured AMQP heartbeat as a query parameter.
+
+    Not a ``heartbeat=`` keyword to ``connect_robust``: aio-pika's ``make_url`` returns a
+    supplied URL untouched and drops every other keyword with it, so the value never reached
+    the broker and the connection silently used the driver default. The keyword also stopped
+    type-checking in aio-pika 10, which is what surfaced it — the call had been a no-op for
+    as long as a DSN was passed, which is always.
+
+    The configured value wins over one already in the DSN: it is the explicit setting, and
+    ``RabbitMQConfig`` validates it.
+    """
+
+    return URL(dsn).update_query(heartbeat=str(int(heartbeat.total_seconds())))
+
 
 # ----------------------- #
 
@@ -131,9 +151,8 @@ class RabbitMQClient(RabbitMQClientPort):
 
             self.__config = config
             self.__connection = await connect_robust(
-                resolved_dsn,
+                _with_heartbeat(resolved_dsn, config.heartbeat),
                 timeout=config.connect_timeout.total_seconds(),
-                heartbeat=config.heartbeat.total_seconds(),
             )
             logger.trace("RabbitMQ connection opened")
 

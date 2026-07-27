@@ -598,7 +598,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: bool = True,
         return_diff: bool = False,
-    ) -> Awaitable[R | JsonDict | None | tuple[R, JsonDict]]:
+    ) -> Awaitable[R | JsonDict | tuple[R, JsonDict] | None]:
         """Apply a partial update to a document identified by ``pk``."""
         ...  # pragma: no cover
 

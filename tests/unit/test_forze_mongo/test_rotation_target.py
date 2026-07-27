@@ -193,6 +193,24 @@ class TestConfig:
         with pytest.raises(CoreException, match="distinct"):
             _target(user_pair=("app", "app"))
 
+    def test_the_verify_timeout_must_be_positive(self) -> None:
+        """Verify-before-promote is the gate; an unbounded or zero verify is not a gate."""
+
+        for bad in (timedelta(0), timedelta(seconds=-1)):
+            with pytest.raises(CoreException, match="Verify timeout must be positive"):
+                _target(verify_timeout=bad)
+
+    def test_the_dispatch_allowance_must_not_be_negative(self) -> None:
+        """It is added to the server-side bound to declare apply_latency_bound, so a
+        negative value would understate the window the rotator reconfirms over."""
+
+        with pytest.raises(CoreException, match="must not be negative"):
+            _target(dispatch_allowance=timedelta(seconds=-1))
+
+        # Zero is legal: it means "no client-side wait is budgeted beyond maxTimeMS".
+        target, _ = _target(dispatch_allowance=timedelta(0))
+        assert target.apply_latency_bound == target.apply_max_time
+
     def test_the_apply_bound_has_no_unbounded_escape_hatch(self) -> None:
         with pytest.raises(CoreException, match="at least 1ms"):
             _target(apply_max_time=timedelta(0))

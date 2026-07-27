@@ -370,8 +370,10 @@ def _predicate_edges(
                             (
                                 scanner.name,
                                 writer.name,
-                                f"rw predicate {scan.namespace}@{scan.seq} matched "
-                                f"{wv.key[1]}@{wv.rev}",
+                                (
+                                    f"rw predicate {scan.namespace}@{scan.seq} matched "
+                                    f"{wv.key[1]}@{wv.rev}"
+                                ),
                             )
                         )
                         break  # one matching row establishes the S→W edge

@@ -596,7 +596,8 @@ class MockStorageAdapter(
             self._payloads()[dst_key] = payload
             self._record_sse(dst_key)
 
-            if delete_source and src_key != dst_key:
+            # No self-move guard needed: both callers validate distinct keys first.
+            if delete_source:
                 self._objects().pop(src_key, None)
                 self._payloads().pop(src_key, None)
                 self.state.storage_sse.get(self._bucket(), {}).pop(src_key, None)
