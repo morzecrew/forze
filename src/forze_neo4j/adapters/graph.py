@@ -36,7 +36,8 @@ require_neo4j()
 
 # ....................... #
 
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
+from contextlib import contextmanager
 from typing import Any, Literal, final
 
 import attrs
@@ -92,6 +93,44 @@ from ._logger import logger
 # Yen's is exhausted, so a valid bounded path is never dropped for hiding behind more than the
 # buffer's worth of cheaper over-long ones.
 _WEIGHTED_HOP_CANDIDATE_BUFFER = 32
+
+# ....................... #
+
+
+@contextmanager
+def _vertex_conflict(node_kind: str) -> Generator[None]:
+    """Translate a uniqueness refusal on a vertex ``CREATE`` into the portable code.
+
+    Shared by the single and bulk create paths, which is the point: they used to disagree,
+    so the same duplicate key raised ``graph_vertex_conflict`` from one and a generic
+    ``core.conflict`` from the other, and a caller could not branch on either.
+
+    Wrap **only the write**. Anything else inside — resolving the database, encoding the
+    properties — can raise a conflict of its own that has nothing to do with a duplicate key.
+
+    Scope note: this names any uniqueness refusal on the write a key conflict. Narrowing it
+    to the framework's own node-key constraint would take the constraint name, which the
+    client's error mapper does not preserve, leaving only the driver's message text —
+    matching on that is the fragile sniffing this codebase has declined before. An
+    app-defined unique constraint on the same label is still a uniqueness conflict on this
+    vertex, so the code is imprecise rather than wrong.
+
+    Only fires when ``ensure_schema()`` has been run: Cypher ``CREATE`` cannot enforce
+    uniqueness on its own.
+    """
+
+    try:
+        yield
+
+    except CoreException as e:
+        if e.kind is not ExceptionKind.CONFLICT:
+            raise
+
+        raise exc.conflict(
+            f"Graph vertex of kind {node_kind!r} already exists with that key.",
+            code="graph_vertex_conflict",
+        ) from e
+
 
 # ----------------------- #
 
@@ -725,26 +764,14 @@ class Neo4jGraphAdapter(TenancyMixin):
     ) -> BaseModel | None:
         query = builders.create_vertex(node_kind)
         props = await self._encode(cmd, self._node_cipher(node_kind))
+        database = await self._resolved_database()
 
-        try:
+        with _vertex_conflict(node_kind):
             rows = await self.client.run(
                 query,
                 {"props": props, **self._params()},
-                database=await self._resolved_database(),
+                database=database,
             )
-
-        except CoreException as e:
-            if e.kind is not ExceptionKind.CONFLICT:
-                raise
-
-            # The key-uniqueness constraint refused it. Name the same code the mock raises,
-            # so a caller can branch on a duplicate key without knowing which backend it is
-            # talking to. Note this only fires when `ensure_schema()` has been run — Cypher
-            # `CREATE` cannot enforce uniqueness on its own.
-            raise exc.conflict(
-                f"Graph vertex of kind {node_kind!r} already exists with that key.",
-                code="graph_vertex_conflict",
-            ) from e
 
         if not return_new:
             return None
@@ -1585,11 +1612,13 @@ class Neo4jGraphAdapter(TenancyMixin):
 
         for kind, entries in by_kind.items():
             query = builders.create_vertices(kind)
-            rows = await self.client.run(
-                query,
-                {"rows": [props for _, props in entries], **self._params()},
-                database=database,
-            )
+
+            with _vertex_conflict(kind):
+                rows = await self.client.run(
+                    query,
+                    {"rows": [props for _, props in entries], **self._params()},
+                    database=database,
+                )
 
             # Skip the per-row decode/decrypt unless the caller wants the models back — the
             # insert above is the only work a ``return_new=False`` bulk create needs.

@@ -12,7 +12,7 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.crypto import BytesCipherPort
-from forze.application.contracts.storage import ObjectHead, RangedDownload
+from forze.application.contracts.storage import SELF_COPY_CODE, ObjectHead, RangedDownload
 from forze.application.integrations.storage import (
     ObjectBody,
     ObjectStorageAdapter,
@@ -187,22 +187,28 @@ async def test_move_copies_then_deletes_source(
 
 
 @pytest.mark.asyncio
-async def test_self_move_skips_delete_no_data_loss(
+async def test_self_move_is_refused_before_touching_the_backend(
     adapter: ObjectStorageAdapter,
 ) -> None:
-    # move(k, k): copy-then-delete would destroy the object, so the delete must
-    # be skipped and the head of the (intact) object returned.
+    # move(k, k) is refused outright rather than silently doing nothing. The skip-the-delete
+    # guard below it still exists and still prevents data loss, but it only ever protected
+    # against *this* process: the copy half still went to the server, where AWS and MinIO
+    # reject a same-key CopyObject while floci and GCS accept it — so the caller's mistake
+    # produced an error on one backend and a quiet no-op on another. A mocked client cannot
+    # show that, which is why this test used to pass while the behaviour diverged.
     adapter.client.copy_object = AsyncMock()
     adapter.client.delete_object = AsyncMock()
     adapter.client.head_object = AsyncMock(
         return_value=ObjectStorageHead(content_type="text/plain", size=3, etag="e"),
     )
 
-    head = await adapter.move("same/k", "same/k")
+    with pytest.raises(CoreException) as refused:
+        await adapter.move("same/k", "same/k")
 
+    assert refused.value.code == SELF_COPY_CODE
+
+    adapter.client.copy_object.assert_not_called()
     adapter.client.delete_object.assert_not_called()
-    assert head.etag == "e"
-    assert head.size == 3
 
 
 # ----------------------- #

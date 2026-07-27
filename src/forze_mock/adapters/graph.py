@@ -252,7 +252,14 @@ class MockGraphAdapter(MockTenancyMixin):
         # UUID against its own string form and quietly match nothing.
         normalized = normalize_property_filter(property_filter) or {}
 
-        return all(props.get(k) == v for k, v in normalized.items())
+        # A ``None`` filter value matches nothing, mirroring Cypher's three-valued logic
+        # (``n.k = null`` is never true). Comparing with ``props.get(k)`` instead made an
+        # absent key compare None-to-None and match — so a filter on a property no vertex
+        # carries returned the *entire* set, the widest possible wrong answer, while Neo4j
+        # returned none of it.
+        return all(
+            value is not None and props.get(key) == value for key, value in normalized.items()
+        )
 
     async def neighbors(
         self,

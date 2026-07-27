@@ -66,6 +66,10 @@ def normalize_property_filter(
     Values already JSON-native pass through untouched.
 
     Keys are left alone; :func:`validate_property_filter_keys` owns those.
+
+    A ``None`` value is not a way to ask for "unset": equality against null matches nothing
+    on every backend, following Cypher's three-valued logic. Filtering for absent properties
+    needs a predicate the equality filter does not express.
     """
 
     if not property_filter:

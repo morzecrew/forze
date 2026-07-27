@@ -4,6 +4,8 @@ from typing import Final, Literal, final
 
 import attrs
 
+from forze.base.exceptions import exc
+
 # ----------------------- #
 
 RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE: Final[str] = "core.storage.range_whole_payload_unsupported"
@@ -19,6 +21,27 @@ SELF_COPY_CODE: Final[str] = "core.storage.self_copy"
 Enforced by the adapter rather than left to the backend because object stores disagree: AWS S3
 and MinIO reject a no-op same-key ``CopyObject`` while other implementations accept it, so
 without this guard the outcome of a caller's mistake would depend on which server is wired."""
+
+
+def validate_distinct_copy_keys(src_key: str, dst_key: str) -> None:
+    """Refuse a copy or move whose destination equals its source.
+
+    Shared by both verbs and both adapters. ``move`` is a copy followed by a delete, so it
+    inherits the same backend disagreement — and it read worse than ``copy`` did: the copy
+    half raised on AWS/MinIO and silently did nothing elsewhere, while the delete half was
+    skipped, leaving a call that "succeeded" without moving anything on some servers and
+    failed on others.
+
+    :raises CoreException: ``validation`` with code :data:`SELF_COPY_CODE`.
+    """
+
+    if src_key == dst_key:
+        raise exc.validation(
+            f"Cannot copy an object onto itself ({src_key!r}); a copy needs a "
+            "destination key that differs from its source.",
+            code=SELF_COPY_CODE,
+        )
+
 
 # ....................... #
 

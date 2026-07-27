@@ -109,6 +109,26 @@ async def check_copying_onto_the_same_key_is_refused(h: StorageHarness) -> None:
     assert other.size == 3
 
 
+async def check_moving_onto_the_same_key_is_refused(h: StorageHarness) -> None:
+    """``move`` inherits the rule, because it is a copy — and a delete.
+
+    Left unguarded it read worse than the copy it wraps: the copy half raised on AWS/MinIO
+    and did nothing elsewhere, while the delete half was skipped, so the call "succeeded"
+    without moving anything on some servers and failed on others. Same mistake, same code.
+    """
+
+    stored = await h.cmd.upload(UploadedObject(filename="selfmove.txt", data=b"abcd"))
+
+    with pytest.raises(CoreException) as refused:
+        await h.cmd.move(stored.key, stored.key)
+
+    assert refused.value.code == SELF_COPY_CODE
+
+    # The source survived the refusal, and a real move still works.
+    moved = await h.cmd.move(stored.key, h.key("moved/other.txt"))
+    assert moved.size == 4
+
+
 # ....................... #
 
 
@@ -192,6 +212,7 @@ STORAGE_BATTERY: tuple[Check, ...] = (
     check_deleting_a_missing_object_is_a_no_op,
     check_aborting_an_upload_twice_is_a_no_op,
     check_copying_onto_the_same_key_is_refused,
+    check_moving_onto_the_same_key_is_refused,
     check_listing_is_ordered_by_key,
     check_unconditional_overwrite_creates_a_missing_object,
     check_conditional_overwrite_of_a_missing_object_fails,

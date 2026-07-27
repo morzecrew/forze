@@ -28,6 +28,26 @@ from forze_meilisearch.kernel.client.port import MeilisearchClientPort
 _BATCH_SIZE = 1000
 
 
+def _task_error(task: Any) -> tuple[str, str, str]:
+    """A failed task's ``(code, type, message)``, normalized.
+
+    The SDK hands the error back as a plain mapping; anything else is stringified whole
+    rather than dropped, so an unexpected shape still reaches the caller as text instead of
+    becoming an empty message.
+    """
+
+    raw_error = cast(Any, getattr(task, "error", None))
+    fields: Mapping[str, Any] = (
+        cast(Mapping[str, Any], raw_error) if isinstance(raw_error, Mapping) else {}
+    )
+
+    return (
+        str(fields.get("code") or ""),
+        str(fields.get("type") or ""),
+        str(fields.get("message") or "") or f"{raw_error}",
+    )
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class _MeilisearchSearchWriteBase[M: BaseModel](MeilisearchSearchGateway[M]):
     """Shared client + task-await plumbing for the write and management adapters."""
@@ -70,15 +90,7 @@ class _MeilisearchSearchWriteBase[M: BaseModel](MeilisearchSearchGateway[M]):
         if not status or status == "succeeded":
             return
 
-        # The SDK hands the task error back as a plain mapping (``code`` / ``type`` /
-        # ``message``); anything else is stringified whole rather than dropped.
-        raw_error = cast(Any, getattr(task, "error", None))
-        fields: Mapping[str, Any] = (
-            cast(Mapping[str, Any], raw_error) if isinstance(raw_error, Mapping) else {}
-        )
-        code = str(fields.get("code") or "")
-        kind = str(fields.get("type") or "")
-        message = str(fields.get("message") or "") or f"{raw_error}"
+        code, kind, message = _task_error(task)
 
         if code in tolerate:
             return

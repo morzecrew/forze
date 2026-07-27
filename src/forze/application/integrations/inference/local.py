@@ -317,11 +317,14 @@ class LocalInferenceAdapter[In: BaseModel, Out: BaseModel](InferencePort[In, Out
         if not prepared:
             return []
 
-        model = await self.host.model()
-
         with bind_run_options(options):
+            # Before resolving the model, not after: loading runs with ``deadline=False`` so
+            # a request cannot kill a warm-up others will reuse, which also means an already
+            # expired request would otherwise pay for — and trigger — that load before being
+            # told it had no budget left. A spent budget now does no work at all.
             ensure_budget(backend=LOCAL_INFERENCE_BACKEND)
 
+            model = await self.host.model()
             raw = await self.host.run(model, prepared)
 
         return shape_outputs(

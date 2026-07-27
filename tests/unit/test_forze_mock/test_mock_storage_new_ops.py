@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from forze.application.contracts.storage import SELF_COPY_CODE
 from forze.base.exceptions import CoreException
 from forze.base.primitives import FrozenTimeSource, bind_time_source
 from forze_mock.adapters.storage import MockStorageAdapter
@@ -229,16 +230,21 @@ async def test_move_deletes_source(adapter: MockStorageAdapter) -> None:
 
 
 @pytest.mark.asyncio
-async def test_self_move_is_noop_no_data_loss(adapter: MockStorageAdapter) -> None:
-    # move(k, k) is copy-then-delete; without the guard the delete would destroy
-    # the object. It must be a no-op that leaves the object intact.
+async def test_self_move_is_refused_and_leaves_the_object_intact(
+    adapter: MockStorageAdapter,
+) -> None:
+    # move(k, k) is copy-then-delete, so it used to be a silent no-op here to avoid
+    # destroying the object. It is now refused outright, matching copy() and the real
+    # adapter — the object still survives, which is what this test has always been for.
     src = await _upload(adapter, b"payload")
 
-    head = await adapter.move(src.key, src.key)
+    with pytest.raises(CoreException) as refused:
+        await adapter.move(src.key, src.key)
+
+    assert refused.value.code == SELF_COPY_CODE
 
     intact = await adapter.download(src.key)
     assert intact.data == b"payload"
-    assert head.size == len(b"payload")
 
 
 @pytest.mark.asyncio

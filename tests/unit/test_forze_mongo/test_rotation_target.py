@@ -194,8 +194,19 @@ class TestConfig:
             _target(user_pair=("app", "app"))
 
     def test_the_apply_bound_has_no_unbounded_escape_hatch(self) -> None:
-        with pytest.raises(CoreException, match="must be positive"):
+        with pytest.raises(CoreException, match="at least 1ms"):
             _target(apply_max_time=timedelta(0))
+
+        # Sub-millisecond is the *sharper* hole: it passes a "must be positive" check, then
+        # reaches the server as int(seconds * 1000) == 0 — and Mongo reads maxTimeMS=0 as
+        # unlimited. The tightest-looking setting was the one that turned the bound off.
+        for sub_ms in (timedelta(microseconds=1), timedelta(microseconds=999)):
+            with pytest.raises(CoreException, match="at least 1ms"):
+                _target(apply_max_time=sub_ms)
+
+        # The smallest value that survives conversion is accepted.
+        target, _ = _target(apply_max_time=timedelta(milliseconds=1))
+        assert target.apply_max_time == timedelta(milliseconds=1)
 
         # The declared bound covers the command's whole lifetime: the client-side wait
         # before it reaches a server, plus the server-side maxTimeMS.

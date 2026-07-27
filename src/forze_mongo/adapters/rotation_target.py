@@ -126,12 +126,14 @@ class MongoRotationTarget(RotationTargetPort):
         if self.verify_timeout.total_seconds() <= 0:
             raise exc.configuration("Verify timeout must be positive")
 
-        if self.apply_max_time.total_seconds() <= 0:
-            # No unbounded escape hatch: the delayed reconfirmation's coverage is only as
-            # real as this bound.
+        # At least a millisecond, not merely positive: the bound reaches the server as
+        # ``int(seconds * 1000)``, and Mongo reads ``maxTimeMS=0`` as *unlimited*. A
+        # sub-millisecond value therefore produced the exact unbounded command this check
+        # exists to prevent — the tightest-looking setting turning the bound off.
+        if self.apply_max_time < timedelta(milliseconds=1):
             raise exc.configuration(
-                "Apply max time must be positive; an unbounded updateUser defeats the "
-                "delayed-reconfirmation bound.",
+                "Apply max time must be at least 1ms; it is sent as an integer maxTimeMS, "
+                "where 0 means unlimited and would defeat the delayed-reconfirmation bound.",
             )
 
         if self.dispatch_allowance.total_seconds() < 0:

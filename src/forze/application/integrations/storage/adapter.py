@@ -28,7 +28,6 @@ from forze.application.contracts.storage.ports import (
 )
 from forze.application.contracts.storage.value_objects import (
     RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE,
-    SELF_COPY_CODE,
     DownloadedObject,
     ObjectHead,
     ObjectMetadata,
@@ -39,6 +38,7 @@ from forze.application.contracts.storage.value_objects import (
     UploadedObject,
     UploadPart,
     UploadSession,
+    validate_distinct_copy_keys,
 )
 from forze.application.contracts.tenancy import TenancyMixin, TenantIdentity
 from forze.application.integrations.storage.client import (
@@ -1446,12 +1446,7 @@ class ObjectStorageAdapter(
         self._validate_key(src_key)
         self._validate_key(dst_key)
 
-        if src_key == dst_key:
-            raise exc.validation(
-                f"Cannot copy an object onto itself ({src_key!r}); a copy needs a "
-                "destination key that differs from its source.",
-                code=SELF_COPY_CODE,
-            )
+        validate_distinct_copy_keys(src_key, dst_key)
 
         bucket = await self._resolved_bucket()
 
@@ -1491,6 +1486,8 @@ class ObjectStorageAdapter(
         self._reject_copy_when_encrypted()
         self._validate_key(src_key)
         self._validate_key(dst_key)
+        validate_distinct_copy_keys(src_key, dst_key)
+
         bucket = await self._resolved_bucket()
 
         async with self.client.client():

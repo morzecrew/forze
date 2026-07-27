@@ -637,3 +637,38 @@ async def test_mock_matches_neo4j_detach_delete_and_directions(
     assert mock_snap["q_still_there"] is True
     assert mock_snap["q_degree_in"] == 1
     assert mock_snap["q_degree_out"] == 0
+
+
+async def test_mock_matches_neo4j_null_property_filter(neo4j_client: Neo4jClient) -> None:
+    """A ``None`` filter value matches nothing on both sides, not everything on one.
+
+    The mock compared with ``props.get(key)``, so a filter value of ``None`` compared
+    None-to-None against a key no vertex carries and matched **every** vertex — the widest
+    possible wrong answer, and the opposite of Neo4j, where ``n.k = null`` is never true.
+    """
+
+    spec = _typed_spec()
+    mock_cmd, mock_qry, neo_cmd, neo_qry = _planes(spec, neo4j_client)
+
+    async def snapshot(cmd: Any, qry: Any) -> dict[str, Any]:
+        await cmd.create_vertex("Thing", TypedCreate(id="n1", ref=uuid4()))
+        await cmd.create_vertex("Thing", TypedCreate(id="n2", ref=uuid4()))
+
+        return {
+            "null_on_absent_key": await qry.count_vertices(
+                "Thing", property_filter={"never_present": None}
+            ),
+            "null_on_known_key": await qry.count_vertices(
+                "Thing", property_filter={"ref": None}
+            ),
+            "total": await qry.count_vertices("Thing"),
+        }
+
+    mock_snap = await snapshot(mock_cmd, mock_qry)
+    neo_snap = await snapshot(neo_cmd, neo_qry)
+
+    assert mock_snap == neo_snap
+    # Absolute, so "both return everything" cannot pass as agreement.
+    assert mock_snap["null_on_absent_key"] == 0
+    assert mock_snap["null_on_known_key"] == 0
+    assert mock_snap["total"] == 2
