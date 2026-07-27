@@ -82,6 +82,16 @@ def _s3_eh(  # skipcq: PY-R1000
                     details=details,
                 )
 
+            # A multipart session that is not there is the same class of fact as a missing
+            # object — caller-named and not retryable — and classifying it as infrastructure
+            # made an abort of an already-aborted session look like a server fault instead of
+            # the no-op the port promises.
+            if code == "NoSuchUpload":
+                return CoreException.not_found(
+                    "S3 multipart upload not found.",
+                    details=details,
+                )
+
             # A missing bucket is a deployment/provisioning fault, not a caller miss.
             if code == "NoSuchBucket":
                 return CoreException.infrastructure(

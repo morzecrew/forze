@@ -17,6 +17,7 @@ from .value_objects import (
     OVERWRITE_PRECONDITION_FAILED_CODE,
     RANGE_NOT_SATISFIABLE_CODE,
     RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE,
+    SELF_COPY_CODE,
     DownloadedObject,
     ObjectHead,
     ObjectMetadata,
@@ -27,6 +28,7 @@ from .value_objects import (
     UploadedObject,
     UploadPart,
     UploadSession,
+    validate_distinct_copy_keys,
 )
 
 # ----------------------- #
@@ -43,6 +45,8 @@ __all__ = [
     "ObjectHead",
     "OVERWRITE_PRECONDITION_FAILED_CODE",
     "RANGE_NOT_SATISFIABLE_CODE",
+    "SELF_COPY_CODE",
+    "validate_distinct_copy_keys",
     "RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE",
     "RangedDownload",
     "StreamedDownload",

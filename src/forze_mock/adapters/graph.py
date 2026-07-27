@@ -8,6 +8,10 @@ Neo4j's traversal ordering/tie-breaking is only partly specified, the differenti
 conformance test compares invariants (step multisets, path lengths/costs, reachable target
 sets), not byte-identical output. ``k_shortest_paths`` and the raw escape hatch raise
 ``NotImplementedError`` — use ``forze_neo4j`` for those.
+
+:class:`MockGraphManagementAdapter` covers the control plane (``ensure_schema`` /
+``drop_schema``) so an application's provisioning step is resolvable and runnable against
+the oracle; see its docstring for why both are no-ops here.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from forze.application.contracts.graph import (
     ExportedEdge,
     GraphDirection,
     GraphEdgeSpec,
+    GraphManagementPort,
     GraphModuleSpec,
     GraphNodeSpec,
     GraphPathStep,
@@ -37,6 +42,7 @@ from forze.application.contracts.graph import (
     ShortestPathParams,
     ShortestPathResult,
     VertexRef,
+    normalize_property_filter,
     validate_property_filter_keys,
 )
 from forze.application.integrations.graph import (
@@ -241,7 +247,19 @@ class MockGraphAdapter(MockTenancyMixin):
         if not property_filter:
             return True
 
-        return all(props.get(k) == v for k, v in property_filter.items())
+        # Stored properties went through ``model_dump(mode="json")``, so the filter values
+        # are normalized the same way — otherwise a filter carrying a UUID would compare a
+        # UUID against its own string form and quietly match nothing.
+        normalized = normalize_property_filter(property_filter) or {}
+
+        # A ``None`` filter value matches nothing, mirroring Cypher's three-valued logic
+        # (``n.k = null`` is never true). Comparing with ``props.get(k)`` instead made an
+        # absent key compare None-to-None and match — so a filter on a property no vertex
+        # carries returned the *entire* set, the widest possible wrong answer, while Neo4j
+        # returned none of it.
+        return all(
+            value is not None and props.get(key) == value for key, value in normalized.items()
+        )
 
     async def neighbors(
         self,
@@ -1040,6 +1058,42 @@ class MockGraphAdapter(MockTenancyMixin):
                 rec = self._find_edge_rec(ref, store)
                 if rec is not None:
                     store.remove(rec)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MockGraphManagementAdapter(GraphManagementPort):
+    """Schema provisioning for the in-memory graph — the constraints are already there.
+
+    A real engine needs :meth:`ensure_schema` to *create* the uniqueness constraints that
+    make a node key identify one node; without it Cypher ``CREATE`` happily writes a second
+    node under the same key. The in-memory store keys its vertices by ``(kind, key)``
+    directly, so that uniqueness is a property of the data structure and cannot be absent.
+
+    The adapter exists anyway, because provisioning is a real step in an application's
+    startup and it must be exercisable against the oracle: without it, ``ctx.graph.management``
+    could not even be resolved, so the one line every graph app is told to run at boot was
+    the one line no unit test or simulation could cover.
+
+    **Ceiling, stated rather than faked:** the mock cannot represent an *unprovisioned*
+    graph, so :meth:`drop_schema` does not relax key uniqueness. A test that needs to observe
+    what an engine does without its constraints has to run against that engine — modelling it
+    here would mean making the oracle silently accept duplicate keys by default, which is the
+    permissive direction that lets a real bug pass.
+    """
+
+    spec: GraphModuleSpec
+
+    # ....................... #
+
+    async def ensure_schema(self) -> None:
+        """No-op: the in-memory store's key uniqueness is intrinsic and always in force."""
+
+    async def drop_schema(self) -> None:
+        """No-op: see the class docstring — uniqueness here is not droppable."""
 
 
 # ----------------------- #

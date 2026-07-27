@@ -194,6 +194,11 @@ class StorageQueryPort(Protocol):
         bucket raises, so a reader that needs *absent* told apart from *empty*
         (the re-encryption sweep) keeps that distinction.
 
+        Results are ordered **lexicographically by key**, which is how an object store lists
+        and therefore what ``offset`` paginates through. With generated keys that coincides
+        with creation order (uuid7 sorts by time); with caller-supplied keys it does not, and
+        the ordering is the key's, not the insertion's.
+
         :param limit: Maximum number of objects to return.
         :param offset: Offset into the result set.
         :param prefix: Optional prefix filter.
@@ -333,7 +338,12 @@ class StorageCommandPort(Protocol):
         ...  # pragma: no cover
 
     def delete(self, key: str) -> Awaitable[None]:
-        """Delete an object identified by ``key``."""
+        """Delete an object identified by ``key``. **Idempotent.**
+
+        A key that is not there is a no-op, not an error: the backends disagree (S3 answers a
+        missing key with 204, the GCS API with 404) and a caller writing a cleanup path should
+        not have to know which one is wired. The adapter absorbs the difference.
+        """
         ...  # pragma: no cover
 
     def copy(
@@ -353,9 +363,16 @@ class StorageCommandPort(Protocol):
         than that need multipart copy, which is out of scope here and surfaces
         as a backend error. GCS rewrite handles arbitrarily large objects.
 
+        ``dst_key`` must differ from ``src_key``: a copy onto itself is refused with
+        ``core.storage.self_copy``. The backends disagree about it — AWS S3 and MinIO reject
+        a no-op same-key copy, others accept it — so the guard lives here to keep a caller
+        mistake from behaving differently per deployment.
+
         :param src_key: Existing object key to copy from.
         :param dst_key: New object key to copy to.
         :returns: The head of the newly created destination object.
+        :raises CoreException: ``validation`` with ``code="core.storage.self_copy"`` when
+            the two keys are equal.
         """
         ...  # pragma: no cover
 
@@ -563,8 +580,11 @@ class StorageUploadSessionPort(Protocol):
 
         S3 ``AbortMultipartUpload`` drops the uploaded parts; GCS deletes the
         temp part objects. After this the session cannot be completed.
-        Idempotent on a best-effort basis — aborting an already-aborted or
-        never-started session does not error.
+
+        **Idempotent** — aborting an already-aborted or never-started session does not error.
+        The adapter enforces this rather than the server: S3 implementations disagree, some
+        answering a second abort with 204 and others with ``NoSuchUpload``, so a cleanup path
+        written against one would otherwise break against another.
 
         :param session: The session from :meth:`begin_upload`.
         """

@@ -19,7 +19,7 @@ from forze.application.integrations.inference import (
     shape_outputs,
     validated_instances,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.serialization import default_model_codec
 from forze.testing import context_from_modules
 from forze_inference.http import (
@@ -316,3 +316,61 @@ class TestHttpClientLifecycle:
 
         with pytest.raises(CoreException, match="not initialized"):
             await client.post_json("/invocations", {"instances": []})
+
+
+# ....................... #
+
+
+class TestBatchCapRefusals:
+    """A batch cap below 1 is refusable in three places, and refused in all of them.
+
+    ``itertools.batched`` raises a bare ``ValueError`` under 1, so an unchecked cap turned a
+    typed contract into an untyped crash — and only on the streaming path: ``predict_many``
+    already refused every call through ``validate_batch_size``. One config, two failure
+    modes, neither of them the documented one.
+    """
+
+    @pytest.mark.parametrize("cap", [0, -1])
+    def test_a_wiring_cap_below_one_fails_at_config_construction(self, cap: int) -> None:
+        """A wiring mistake costs a boot, not the first streaming request."""
+
+        with pytest.raises(CoreException) as ei:
+            HttpInferenceConfig(
+                protocol="kserve_v2",
+                model_name="m",
+                acknowledge_data_egress=True,
+                max_batch_size=cap,
+            )
+
+        assert ei.value.kind == ExceptionKind.CONFIGURATION
+
+    @pytest.mark.parametrize("cap", [0, -1])
+    def test_a_sagemaker_wiring_cap_below_one_fails_the_same_way(self, cap: int) -> None:
+        """The second remote adapter shares the rule, not just the code path."""
+
+        from forze_inference.sagemaker import SageMakerInferenceConfig
+
+        with pytest.raises(CoreException) as ei:
+            SageMakerInferenceConfig(
+                endpoint_name="e",
+                acknowledge_data_egress=True,
+                max_batch_size=cap,
+            )
+
+        assert ei.value.kind == ExceptionKind.CONFIGURATION
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("cap", [0, -1])
+    async def test_a_per_call_cap_below_one_is_a_precondition(self, cap: int) -> None:
+        """The caller's hint has no construction to validate, so the stream path refuses it."""
+
+        port = await _port(lambda request: httpx.Response(200, json={"predictions": [{"y": 1.0}]}))
+
+        async def _chunk():
+            yield [_Features(x=1.0)]
+
+        with pytest.raises(CoreException) as ei:
+            async for _ in port.predict_stream(_chunk(), options={"max_batch_size": cap}):
+                pass  # pragma: no cover — refused before the first wire call
+
+        assert ei.value.kind == ExceptionKind.PRECONDITION

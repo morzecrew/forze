@@ -139,7 +139,9 @@ default.
   unknown endpoint/model → `configuration` (`inference_route_mismatch`),
   payload rejection / model error → `validation` (`inference_output_mismatch`),
   unreachable / 5xx → `infrastructure` (`inference_endpoint_unavailable`),
-  budget expiry → `timeout` (`inference_timeout`). Retryability follows the
-  standard egress policy, so resilience retries the right ones.
+  mid-call budget expiry → `timeout` (`inference_timeout`), a budget already
+  spent before the call → `timeout` (`inference_budget_exhausted`, raised without
+  reaching the endpoint, so it cannot be a billed invocation). Retryability
+  follows the standard egress policy, so resilience retries the right ones.
 - **Deadlines propagate.** The remaining invocation budget bounds every wire
   call; a per-call `options={"timeout": ...}` can only tighten it.

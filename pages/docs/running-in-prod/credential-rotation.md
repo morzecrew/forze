@@ -177,7 +177,7 @@ await rotator.ensure_cron(ctx, dsn_ref, cron="0 4 * * 0")  # weekly policy
 Multi-tenant fleets enqueue one run per tenant (`rotator.enqueue_tenants`) — one
 failing verify never blocks the rest, and a partial pass resumes where it stopped.
 
-### The Postgres target: dual-user alternation
+### The targets: dual-principal alternation
 
 `PostgresRotationTarget` defaults to **two roles** (`app_a`/`app_b`): the rotation
 sets the minted password on the *idle* role, verifies it with a live connection,
@@ -191,11 +191,59 @@ connections with the old password fail (established ones survive), so with
 connect-time re-resolution the blast radius is retry noise — but it is documented
 degraded for a reason.
 
+`MongoRotationTarget` is the same shape on MongoDB: two users, `updateUser` on the idle
+one, a real authenticated `ping` to verify, and `single_user_degraded=True` for the
+one-user case. It rotates the credential inside a `mongodb://` or `mongodb+srv://` URI and
+leaves every other part of it — hosts, replica set, options — byte-identical.
+
+```python
+from forze_mongo import MongoRotationTarget
+
+target = MongoRotationTarget(
+    secrets=secrets, client=admin_mongo, user_pair=("app_a", "app_b")
+)
+```
+
+Both targets declare an `apply_latency_bound` the rotator validates the reconfirmation
+window against, and both enforce it *at the server*: `statement_timeout` on one,
+`maxTimeMS` on the other. One MongoDB detail worth knowing if you manage those users
+yourself: an `updateUser` carrying `pwd` recomputes the user's SCRAM mechanism set back to
+the server default, so a deliberately narrowed mechanism list does not survive a rotation.
+
 Run the rotator as a utility container in the outbox-relay shape: a headless
 `build_runtime(...)` composition wiring `{secrets + secrets_admin, durable, dlock,
 outbox/pubsub, rotation targets, tenant directory}` with the durable recovery and
 scheduler steps — no HTTP surface. See the runnable walkthrough in
 `examples/recipes/secrets_rotation/`.
+
+### Which backends have a target, and why the rest don't
+
+A rotation target only exists where the framework can administer the backend's own
+principals. Everywhere else the answer is a *different* mechanism, not a missing one — so
+here is every credential-holding integration and the doctrine it falls under. "No target" is
+a decision on this page, never an omission.
+
+| Backend | Doctrine | Why |
+| --- | --- | --- |
+| Postgres | **target** (shipped) | Named roles, settable passwords, dual-user alternation |
+| MongoDB | **target** (shipped) | `updateUser` over two users; same alternation |
+| ClickHouse | target (planned) | Per-request auth makes the overlap window the *only* protection, so single-user mode is refused rather than degraded |
+| Redis, RabbitMQ | **leases** | A Vault engine exists, and neither can bound a late write server-side (see below) — short TTLs are the better mechanism |
+| Kafka, Meilisearch, Neo4j | undecided | No confirmed server-side bound; demand-gated until there is one |
+| S3, SQS, GCS, BigQuery, Firestore | **platform IAM** | The credential is a cloud IAM artifact. Prefer ambient identity (IRSA, workload identity) and hold no static secret at all |
+| Temporal, Inngest, outbound HTTP | **operator-rotated** | Keys are minted in a vendor console with no admin API; the framework's job ends at hot reload |
+| Third-party OAuth grants | **counterparty-rotated** | The provider rotates at you — see [below](#when-the-other-side-rotates-it) |
+
+The line that decides the hard cases is whether the backend can **kill a late write itself**.
+A rotator's delayed reconfirmation is only meaningful if a stale apply has a real deadline,
+and a client-side timeout is not one: abandoning a request does not stop a write already at
+the server. Postgres has `SET LOCAL statement_timeout`, MongoDB has `maxTimeMS` on
+`updateUser` — both verified against live servers rather than assumed. Redis cannot: a stale
+`ACL SETUSER` sitting in a socket buffer executes whenever the server gets to it, with no age
+check. That is why Redis is a leases backend and not a target.
+
+Every shipped target runs the same conformance battery against its real backend, including a
+deliberately stalled apply that must fail rather than land late.
 
 ## When the other side rotates it
 

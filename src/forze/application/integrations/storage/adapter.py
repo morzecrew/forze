@@ -38,6 +38,7 @@ from forze.application.contracts.storage.value_objects import (
     UploadedObject,
     UploadPart,
     UploadSession,
+    validate_distinct_copy_keys,
 )
 from forze.application.contracts.tenancy import TenancyMixin, TenantIdentity
 from forze.application.integrations.storage.client import (
@@ -61,7 +62,7 @@ from forze.base.crypto import (
     is_envelope,
     parse_frame,
 )
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict, OnceCell, utcnow, uuid7
 
 # ----------------------- #
@@ -1402,13 +1403,24 @@ class ObjectStorageAdapter(
     # ....................... #
 
     async def delete(self, key: str) -> None:
-        """Delete an object from the bucket by key."""
+        """Delete an object from the bucket by key. Idempotent.
+
+        Deleting a key that is not there is a no-op, not an error — S3 answers a missing key
+        with 204 while the GCS API answers 404, and a caller should not have to know which
+        object store it is talking to in order to write a cleanup path. The absent object is
+        the outcome the caller asked for either way.
+        """
 
         self._validate_key(key)
         bucket = await self._resolved_bucket()
 
-        async with self.client.client():
-            await self.client.delete_object(bucket=bucket, key=key)
+        try:
+            async with self.client.client():
+                await self.client.delete_object(bucket=bucket, key=key)
+
+        except CoreException as e:
+            if e.kind is not ExceptionKind.NOT_FOUND:
+                raise
 
     # ....................... #
 
@@ -1423,11 +1435,19 @@ class ObjectStorageAdapter(
         Refused when client-side encryption is enabled: the encryption AAD binds
         the ciphertext to the source key, so a server-side copy to a new key
         produces an object that cannot be decrypted at the destination.
+
+        A copy onto its own key is refused too. Object stores disagree about it — AWS S3 and
+        MinIO reject a same-key ``CopyObject`` that changes nothing, while other
+        implementations quietly accept it — so leaving it to the server would make the
+        outcome depend on which one is behind the port. It is a caller mistake either way.
         """
 
         self._reject_copy_when_encrypted()
         self._validate_key(src_key)
         self._validate_key(dst_key)
+
+        validate_distinct_copy_keys(src_key, dst_key)
+
         bucket = await self._resolved_bucket()
 
         async with self.client.client():
@@ -1466,6 +1486,8 @@ class ObjectStorageAdapter(
         self._reject_copy_when_encrypted()
         self._validate_key(src_key)
         self._validate_key(dst_key)
+        validate_distinct_copy_keys(src_key, dst_key)
+
         bucket = await self._resolved_bucket()
 
         async with self.client.client():
@@ -1765,18 +1787,30 @@ class ObjectStorageAdapter(
     # ....................... #
 
     async def abort_upload(self, session: UploadSession) -> None:
-        """Discard an unfinished session and free its in-progress data."""
+        """Discard an unfinished session and free its in-progress data. Idempotent.
+
+        The port promises that aborting an already-aborted or never-started session does not
+        error, and that promise has to be kept here rather than by the server: S3
+        implementations disagree — some answer a second abort with 204, others with
+        ``NoSuchUpload`` — so a cleanup path written against one would break against
+        another. A session that is already gone is the outcome an abort wants.
+        """
 
         self._reject_multipart_when_encrypted()
         self._validate_key(session.key)
         bucket = await self._resolved_bucket()
 
-        async with self.client.client():
-            await self.client.abort_multipart_upload(
-                bucket=bucket,
-                key=session.key,
-                upload_id=session.upload_id,
-            )
+        try:
+            async with self.client.client():
+                await self.client.abort_multipart_upload(
+                    bucket=bucket,
+                    key=session.key,
+                    upload_id=session.upload_id,
+                )
+
+        except CoreException as e:
+            if e.kind is not ExceptionKind.NOT_FOUND:
+                raise
 
     # ....................... #
 

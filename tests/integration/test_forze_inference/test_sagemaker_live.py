@@ -13,6 +13,7 @@ fidelity for SageMaker is an env-gated real-endpoint concern.
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import timedelta
 
 import pytest
 import pytest_asyncio
@@ -167,3 +168,22 @@ class TestSageMakerLive:
         seen = [[o.y for o in chunk] async for chunk in port.predict_stream(chunks())]
 
         assert seen == [[2.0, 4.0, 6.0]]  # caller chunk preserved, wire calls split
+
+    @pytest.mark.asyncio
+    async def test_exhausted_budget_refuses_before_invoking_the_endpoint(
+        self,
+        client: SageMakerRuntimeClient,
+        sagemaker_results: Callable[..., None],
+    ) -> None:
+        # The shared pre-flight refusal, which matters most on a paid endpoint: a spent
+        # budget must not turn into a billed invocation. The queued response proves it —
+        # the refused call cannot have consumed it, so the control call still gets it.
+        sagemaker_results({"predictions": [{"y": 2.0}]})
+
+        port = _port(client, _config())
+
+        with pytest.raises(CoreException) as ei:
+            await port.predict(_Features(x=1.0), options={"timeout": timedelta(0)})
+
+        assert ei.value.code == "inference_budget_exhausted"
+        assert (await port.predict(_Features(x=1.0))).y == 2.0

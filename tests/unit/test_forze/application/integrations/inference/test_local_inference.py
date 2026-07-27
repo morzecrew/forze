@@ -17,7 +17,7 @@ from forze.application.integrations.inference import (
     LocalInferenceDepsModule,
     local_inference_lifecycle_step,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.testing import context_from_modules
 
 # ----------------------- #
@@ -180,7 +180,12 @@ class TestLocalInferenceAdapter:
 
         with pytest.raises(CoreException) as ei:
             await port.predict(_Features(x=1.0), options={"timeout": timedelta(0)})
-        assert ei.value.code == "cpu_offload_deadline"
+
+        # The shared pre-flight code, not the CPU seam's own: a spent budget refuses the
+        # same way on every inference backend, so a caller can tell "the model was never
+        # asked" from a mid-call timeout without knowing which adapter answered. The CPU
+        # seam still owns a deadline that expires *during* an offload.
+        assert ei.value.code == "inference_budget_exhausted"
 
     @pytest.mark.asyncio
     async def test_capabilities_reflect_config(self) -> None:
@@ -533,3 +538,109 @@ class TestLocalInferenceLifecycle:
 
         with pytest.raises(CoreException, match="returned None"):
             await port.predict(_Features(x=1.0))
+
+
+# ....................... #
+
+
+class TestStreamSubBatching:
+    """The per-call ``max_batch_size`` hint applies in-process too.
+
+    The local route declares no cap of its own — there is no transport to impose one — but
+    the caller's hint still means something here, arguably more than anywhere else: without
+    it the whole chunk enters a single ``run_cpu`` dispatch and sits in the worker thread at
+    once. Three of the four adapters honoured the hint; this one silently dropped it, so the
+    one knob for bounding that was a no-op on the one adapter nothing else bounds.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_per_call_cap_splits_the_dispatches(self) -> None:
+        """Counting dispatches is the only way to see it — a split and an unsplit call
+        return the same predictions, so the port surface cannot distinguish them."""
+
+        sizes: list[int] = []
+
+        class _Recording:
+            def predict_batch(self, instances: Sequence[_Features]) -> Sequence[_Score]:
+                sizes.append(len(instances))
+                return [_Score(y=i.x * 2.0) for i in instances]
+
+        module = LocalInferenceDepsModule(
+            models={"doubler": LocalInferenceConfig(loader=_CountingLoader(_Recording()))},
+        )
+        port = _ctx(module).inference.model(_spec())
+
+        async def chunks():
+            yield [_Features(x=float(n)) for n in range(5)]
+
+        served = [
+            [o.y for o in chunk]
+            async for chunk in port.predict_stream(chunks(), options={"max_batch_size": 2})
+        ]
+
+        assert sizes == [2, 2, 1]
+        # One yielded chunk per input chunk: the caller's boundary survives the split.
+        assert served == [[0.0, 2.0, 4.0, 6.0, 8.0]]
+
+    @pytest.mark.asyncio
+    async def test_without_a_cap_the_chunk_is_one_dispatch(self) -> None:
+        """The control: the split above is the cap talking, not the default behaviour."""
+
+        sizes: list[int] = []
+
+        class _Recording:
+            def predict_batch(self, instances: Sequence[_Features]) -> Sequence[_Score]:
+                sizes.append(len(instances))
+                return [_Score(y=i.x * 2.0) for i in instances]
+
+        module = LocalInferenceDepsModule(
+            models={"doubler": LocalInferenceConfig(loader=_CountingLoader(_Recording()))},
+        )
+        port = _ctx(module).inference.model(_spec())
+
+        async def chunks():
+            yield [_Features(x=float(n)) for n in range(5)]
+
+        async for _ in port.predict_stream(chunks()):
+            pass
+
+        assert sizes == [5]
+
+    @pytest.mark.asyncio
+    async def test_a_non_positive_per_call_cap_is_refused(self) -> None:
+        """Refused here as on every other adapter, rather than silently ignored."""
+
+        module = LocalInferenceDepsModule(
+            models={"doubler": LocalInferenceConfig(loader=_CountingLoader())},
+        )
+        port = _ctx(module).inference.model(_spec())
+
+        async def chunks():
+            yield [_Features(x=1.0)]
+
+        with pytest.raises(CoreException) as ei:
+            async for _ in port.predict_stream(chunks(), options={"max_batch_size": 0}):
+                pass  # pragma: no cover — refused before the first dispatch
+
+        assert ei.value.kind == ExceptionKind.PRECONDITION
+
+    @pytest.mark.asyncio
+    async def test_an_empty_chunk_still_yields_an_empty_chunk_under_a_cap(self) -> None:
+        """Sub-batching must not swallow or shift the empty chunk between two real ones."""
+
+        module = LocalInferenceDepsModule(
+            models={"doubler": LocalInferenceConfig(loader=_CountingLoader())},
+        )
+        port = _ctx(module).inference.model(_spec())
+
+        async def chunks():
+            yield [_Features(x=1.0)]
+            yield []
+            yield [_Features(x=2.0), _Features(x=3.0)]
+
+        served = [
+            [o.y for o in chunk]
+            async for chunk in port.predict_stream(chunks(), options={"max_batch_size": 1})
+        ]
+
+        assert served == [[2.0], [], [4.0, 6.0]]

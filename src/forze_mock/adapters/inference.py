@@ -8,8 +8,9 @@ inputs keeps simulation replays exact — which is also why the mock defaults to
 capability surface including ``deterministic``. A route standing in for a *specific*
 backend should register that backend's declared capabilities
 (``registry.on(..., capabilities=...)``): the mock then enforces them (batch cap, stream
-refusal), so a capability gate fails against the oracle exactly where production would
-instead of only in production.
+refusal) **the way the real adapters enforce theirs** — refusing an oversized
+``predict_many`` whole, sub-batching an oversized stream chunk — so a capability gate
+fails against the oracle exactly where production would, and only where it would.
 
 Outputs pass through the same boundary shaping as every real adapter
 (:func:`~forze.application.integrations.inference.adapter_common.shape_outputs`), so a
@@ -20,6 +21,7 @@ production — the differential-conformance property.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
+from itertools import batched
 from typing import Any, final
 
 import attrs
@@ -36,6 +38,8 @@ from forze.application.contracts.inference import (
 )
 from forze.application.integrations.inference.adapter_common import (
     bind_run_options,
+    ensure_budget,
+    resolve_wire_cap,
     shape_outputs,
     validated_instances,
 )
@@ -144,6 +148,31 @@ class MockInferenceAdapter[In: BaseModel, Out: BaseModel](InferencePort[In, Out]
 
     # ....................... #
 
+    def _score(self, prepared: Sequence[In]) -> Sequence[Out]:
+        """One scoring call for one already-validated, already-capped batch."""
+
+        predict = self.registry.predictor_for(str(self.spec.name))
+
+        if predict is None:
+            raise exc.configuration(
+                f"MockInference {self.spec.name!r}: no scoring function registered — "
+                "register one via MockInferenceRegistry.on()",
+                code="mock.inference.unprogrammed",
+            )
+
+        # Every real adapter refuses a spent budget before touching its backend; the
+        # oracle must too, or a deadline is unobservable anywhere but production.
+        ensure_budget(backend=MOCK_INFERENCE_BACKEND)
+
+        return shape_outputs(
+            self.spec,
+            predict(prepared),
+            expected=len(prepared),
+            backend=MOCK_INFERENCE_BACKEND,
+        )
+
+    # ....................... #
+
     async def predict_many(
         self,
         instances: Sequence[In],
@@ -164,24 +193,8 @@ class MockInferenceAdapter[In: BaseModel, Out: BaseModel](InferencePort[In, Out]
             backend=MOCK_INFERENCE_BACKEND,
         )
 
-        predict = self.registry.predictor_for(str(self.spec.name))
-
-        if predict is None:
-            raise exc.configuration(
-                f"MockInference {self.spec.name!r}: no scoring function registered — "
-                "register one via MockInferenceRegistry.on()",
-                code="mock.inference.unprogrammed",
-            )
-
         with bind_run_options(options):
-            raw = predict(prepared)
-
-        return shape_outputs(
-            self.spec,
-            raw,
-            expected=len(prepared),
-            backend=MOCK_INFERENCE_BACKEND,
-        )
+            return self._score(prepared)
 
     # ....................... #
 
@@ -195,5 +208,34 @@ class MockInferenceAdapter[In: BaseModel, Out: BaseModel](InferencePort[In, Out]
         # without chunked streaming (a no-op under the full default).
         validate_stream_supported(self.inference_capabilities, backend=MOCK_INFERENCE_BACKEND)
 
+        # A declared batch cap *sub-batches* a stream chunk, it does not refuse it — the
+        # cap is an all-or-nothing promise for predict_many only. Routing chunks through
+        # predict_many instead made the oracle refuse a chunk the mirrored backend serves
+        # by splitting its wire calls, so correct streaming code failed under the mock and
+        # only under the mock.
+        wire_cap = resolve_wire_cap(
+            options,
+            self.inference_capabilities,
+            backend=MOCK_INFERENCE_BACKEND,
+        )
+
         async for chunk in instances:
-            yield await self.predict_many(chunk, options=options)
+            prepared = validated_instances(self.spec, chunk)
+
+            if not prepared:
+                yield []
+                continue
+
+            scored: list[Out]
+
+            with bind_run_options(options):
+                if wire_cap is None:
+                    scored = list(self._score(prepared))
+
+                else:
+                    scored = []
+
+                    for sub_batch in batched(prepared, wire_cap, strict=False):
+                        scored.extend(self._score(list(sub_batch)))
+
+            yield scored

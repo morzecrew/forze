@@ -7,7 +7,10 @@ surface (not merely "some subset works").
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel
@@ -461,3 +464,211 @@ async def test_mock_matches_neo4j_read_surface(neo4j_client: Neo4jClient) -> Non
     neo_snap = await _read_snapshot(neo)
 
     assert mock_snap == neo_snap
+
+
+# ....................... #
+# Divergences found by probing the two planes against each other, now pinned.
+
+
+class TypedRead(BaseModel):
+    id: str
+    ref: UUID | None = None
+    at: datetime | None = None
+    amount: Decimal | None = None
+
+
+class TypedCreate(BaseModel):
+    id: str
+    ref: UUID | None = None
+    at: datetime | None = None
+    amount: Decimal | None = None
+
+
+class TypedLinkRead(BaseModel):
+    weight: int | None = None
+
+
+class TypedLinkCreate(BaseModel):
+    from_key: str
+    to_key: str
+    weight: int | None = None
+
+
+def _typed_spec() -> GraphModuleSpec:
+    return GraphModuleSpec(
+        name="typed",
+        nodes=(GraphNodeSpec(name="Thing", read=TypedRead, create=TypedCreate),),
+        edges=(
+            GraphEdgeSpec(
+                name="LINK",
+                read=TypedLinkRead,
+                identity="endpoints",
+                endpoints=(GraphEdgeEndpoint(from_kind="Thing", to_kind="Thing"),),
+                directionality=GraphEdgeDirectionality.DIRECTED,
+            ),
+        ),
+    )
+
+
+def _planes(spec: GraphModuleSpec, client: Neo4jClient) -> tuple[Any, Any, Any, Any]:
+    """``(mock_cmd, mock_query, neo_cmd, neo_query)`` over one spec."""
+
+    ctx: ExecutionContext = context_from_deps(MockDepsModule(state=MockState())())
+    neo = Neo4jGraphAdapter(spec=spec, client=client)
+
+    return ctx.graph.command(spec), ctx.graph.query(spec), neo, neo
+
+
+async def test_mock_matches_neo4j_typed_properties_and_filters(
+    neo4j_client: Neo4jClient,
+) -> None:
+    """Typed properties round-trip, and a filter carrying the *same* type matches.
+
+    The filter half was a real divergence: properties are stored through
+    ``model_dump(mode="json")``, so a ``UUID`` is a string at rest. Filtering by the ``UUID``
+    itself matched nothing on the mock — an empty result that reads as "no such vertex" —
+    while the Neo4j driver refused the parameter type outright. Two different wrong answers,
+    and the mock's was the more dangerous one.
+    """
+
+    spec = _typed_spec()
+    ref, at, amount = uuid4(), datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC), Decimal("12.34")
+    mock_cmd, mock_qry, neo_cmd, neo_qry = _planes(spec, neo4j_client)
+
+    async def snapshot(cmd: Any, qry: Any) -> dict[str, Any]:
+        await cmd.create_vertex("Thing", TypedCreate(id="t", ref=ref, at=at, amount=amount))
+
+        return {
+            "read_back": (await qry.get_vertex(VertexRef(kind="Thing", key="t"))).model_dump(),
+            "by_uuid": await qry.count_vertices("Thing", property_filter={"ref": ref}),
+            "by_uuid_str": await qry.count_vertices("Thing", property_filter={"ref": str(ref)}),
+            "by_datetime": await qry.count_vertices("Thing", property_filter={"at": at}),
+            "by_decimal": await qry.count_vertices("Thing", property_filter={"amount": amount}),
+            "no_match": await qry.count_vertices("Thing", property_filter={"ref": uuid4()}),
+        }
+
+    mock_snap = await snapshot(mock_cmd, mock_qry)
+    neo_snap = await snapshot(neo_cmd, neo_qry)
+
+    assert mock_snap == neo_snap
+    # Absolute too, so an identical *wrong* answer on both cannot pass.
+    assert mock_snap["by_uuid"] == 1
+    assert mock_snap["by_datetime"] == 1
+    assert mock_snap["by_decimal"] == 1
+    assert mock_snap["no_match"] == 0
+
+
+async def test_mock_matches_neo4j_duplicate_key_conflict(neo4j_client: Neo4jClient) -> None:
+    """A duplicate key is refused with the same code — once a schema exists.
+
+    Cypher ``CREATE`` cannot enforce uniqueness on its own, so on Neo4j this is exactly what
+    ``ensure_schema()`` buys: without it a second vertex with the same key is silently
+    created and the key stops addressing one thing. With it, both planes raise
+    ``graph_vertex_conflict``.
+    """
+
+    spec = _typed_spec()
+    mock_cmd, _, neo_cmd, _ = _planes(spec, neo4j_client)
+    await neo_cmd.ensure_schema()
+
+    async def conflict_of(cmd: Any) -> tuple[Any, str | None]:
+        await cmd.create_vertex("Thing", TypedCreate(id="dup"))
+
+        with pytest.raises(CoreException) as excinfo:
+            await cmd.create_vertex("Thing", TypedCreate(id="dup"))
+
+        return excinfo.value.kind, excinfo.value.code
+
+    mock_outcome = await conflict_of(mock_cmd)
+    neo_outcome = await conflict_of(neo_cmd)
+
+    assert mock_outcome == neo_outcome
+    assert mock_outcome[1] == "graph_vertex_conflict", "the shared code, not a generic one"
+
+
+async def test_mock_matches_neo4j_detach_delete_and_directions(
+    neo4j_client: Neo4jClient,
+) -> None:
+    """Cascade on delete, every direction, and a self-loop.
+
+    None of these were compared before: the existing write snapshot deletes its vertex only
+    *after* removing the edge, every traversal case used ``OUT`` (while ``BOTH`` is the
+    default for degree/neighbours), and no test in the repo had ever created an ``a → a``
+    edge on either plane.
+    """
+
+    spec = _typed_spec()
+    mock_cmd, mock_qry, neo_cmd, neo_qry = _planes(spec, neo4j_client)
+
+    async def snapshot(cmd: Any, qry: Any) -> dict[str, Any]:
+        for key in ("p", "q", "s"):
+            await cmd.create_vertex("Thing", TypedCreate(id=key))
+
+        await cmd.create_edge("LINK", TypedLinkCreate(from_key="p", to_key="q"))
+        await cmd.create_edge("LINK", TypedLinkCreate(from_key="s", to_key="s"))
+
+        out: dict[str, Any] = {}
+
+        for direction in (GraphDirection.OUT, GraphDirection.IN, GraphDirection.BOTH):
+            loop = VertexRef(kind="Thing", key="s")
+            out[f"loop_degree_{direction.value}"] = await qry.vertex_degree(
+                loop, direction=direction
+            )
+            out[f"loop_neighbors_{direction.value}"] = await qry.count_neighbors(
+                loop, direction=direction
+            )
+            out[f"q_degree_{direction.value}"] = await qry.vertex_degree(
+                VertexRef(kind="Thing", key="q"), direction=direction
+            )
+
+        # Deleting an endpoint takes its edges with it; the self-loop is untouched.
+        await cmd.delete_vertex(VertexRef(kind="Thing", key="p"))
+        out["edges_after_cascade"] = await qry.count_edges("LINK")
+        out["q_still_there"] = await qry.vertex_exists(VertexRef(kind="Thing", key="q"))
+
+        return out
+
+    mock_snap = await snapshot(mock_cmd, mock_qry)
+    neo_snap = await snapshot(neo_cmd, neo_qry)
+
+    assert mock_snap == neo_snap
+    # Absolutes: the cascade removed the p→q edge and left the self-loop.
+    assert mock_snap["edges_after_cascade"] == 1
+    assert mock_snap["q_still_there"] is True
+    assert mock_snap["q_degree_in"] == 1
+    assert mock_snap["q_degree_out"] == 0
+
+
+async def test_mock_matches_neo4j_null_property_filter(neo4j_client: Neo4jClient) -> None:
+    """A ``None`` filter value matches nothing on both sides, not everything on one.
+
+    The mock compared with ``props.get(key)``, so a filter value of ``None`` compared
+    None-to-None against a key no vertex carries and matched **every** vertex — the widest
+    possible wrong answer, and the opposite of Neo4j, where ``n.k = null`` is never true.
+    """
+
+    spec = _typed_spec()
+    mock_cmd, mock_qry, neo_cmd, neo_qry = _planes(spec, neo4j_client)
+
+    async def snapshot(cmd: Any, qry: Any) -> dict[str, Any]:
+        await cmd.create_vertex("Thing", TypedCreate(id="n1", ref=uuid4()))
+        await cmd.create_vertex("Thing", TypedCreate(id="n2", ref=uuid4()))
+
+        return {
+            "null_on_absent_key": await qry.count_vertices(
+                "Thing", property_filter={"never_present": None}
+            ),
+            "null_on_known_key": await qry.count_vertices(
+                "Thing", property_filter={"ref": None}
+            ),
+            "total": await qry.count_vertices("Thing"),
+        }
+
+    mock_snap = await snapshot(mock_cmd, mock_qry)
+    neo_snap = await snapshot(neo_cmd, neo_qry)
+
+    assert mock_snap == neo_snap
+    # Absolute, so "both return everything" cannot pass as agreement.
+    assert mock_snap["null_on_absent_key"] == 0
+    assert mock_snap["null_on_known_key"] == 0
+    assert mock_snap["total"] == 2

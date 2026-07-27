@@ -61,7 +61,13 @@ lifecycle = LifecyclePlan.from_steps(meilisearch_lifecycle_step(url="http://loca
   management surface: `ctx.search.management(spec).ensure_index()` applies the
   searchable/filterable/sortable attributes and the `max_total_hits` ceiling, and
   `delete_all()` wipes the route's documents (scoped to the current tenant when
-  `tenant_aware`) — neither is reachable from the command port.
+  `tenant_aware`) — neither is reachable from the command port. Both are
+  repeatable, and `delete_all()` on an index that does not exist yet is a no-op,
+  so a wipe-then-rebuild works on a fresh deployment.
+- **A rejected request is a `precondition`, not `infrastructure`.** Meilisearch
+  reports a missing index, an unfilterable attribute or a refused document as
+  `invalid_request`; those raise `precondition` carrying the engine's message, so
+  resilience does not retry something that will fail identically forever.
 - Cursor pagination and hub search aren't supported here; the filter language is
   a subset of the [Query DSL](../reference/query-syntax.md).
 - Federated routes merge ≥2 member indexes (`federation` or in-process RRF).

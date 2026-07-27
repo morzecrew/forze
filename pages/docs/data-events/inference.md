@@ -89,8 +89,10 @@ steps = [local_inference_lifecycle_step(inference_module)]
 ```
 
 The framework never deserializes artifacts itself — unpickling is arbitrary code
-execution, and that trust decision stays in your loader. Two behaviors worth
-knowing:
+execution, and that trust decision stays in your loader. `predict_batch` may
+return output models, plain records, or one bare value per instance — the array
+shape `sklearn`'s own `predict` gives you — so a wrapper is rarely needed. Two
+behaviors worth knowing:
 
 - **Warm by default.** `warm_on_startup=True` loads the model at boot through
   the lifecycle step and **fails startup closed** on a loader error: a service
@@ -136,11 +138,25 @@ silent degradation. The failure taxonomy at the boundary:
 | Instance is not the spec's input model | `validation` | `core.validation` |
 | Backend response doesn't fit the output model | `validation` | `inference_output_mismatch` |
 | Feature the backend lacks | `precondition` | `inference_feature_unsupported` |
-| Per-call timeout / invocation deadline expired | `timeout` | `cpu_offload_deadline` (local) |
+| Budget already spent when the call starts | `timeout` | `inference_budget_exhausted` |
+| Deadline expired mid-call | `timeout` | backend-specific (`cpu_offload_deadline`, `inference_timeout`) |
 
 Per-call options tighten, never extend: `options={"timeout": timedelta(...)}`
 binds a deadline that is the earlier of the per-call budget and the ambient
 invocation deadline.
+
+The two timeout rows are worth telling apart. `inference_budget_exhausted` is a
+pre-flight refusal — the model was never asked, so nothing ran, nothing was
+billed, and there is no side effect to reason about. Every adapter raises the
+same code for it, so a caller can branch on it without knowing which backend
+answered. A mid-call expiry leaves all of that open, and keeps the backend's own
+code.
+
+A hard batch cap is enforced differently by the two batch methods, and both
+halves hold on every backend: `predict_many` **refuses** an oversized batch (you
+asked for one atomic call), while `predict_stream` **sub-batches** an oversized
+chunk into several backend calls and still yields it as one chunk (your chunking
+is a memory bound, not an atomicity request).
 
 ## Features in traces
 

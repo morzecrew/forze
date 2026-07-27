@@ -12,6 +12,7 @@ from forze.application.contracts.counter import (
     CounterAdminPort,
     CounterEntry,
     CounterPort,
+    validate_counter_value,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
@@ -213,6 +214,10 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
     # ....................... #
 
     async def reset(self, value: int = 1, *, suffix: str | None = None) -> int:
+        # Known up front, so it is refused here rather than by the backend — or, on
+        # Redis, silently accepted and left to break the *next* allocation.
+        validate_counter_value(value, operation="reset")
+
         table = await self._table()
 
         logger.debug("Resetting counter suffix '%s' to %s", suffix, value)

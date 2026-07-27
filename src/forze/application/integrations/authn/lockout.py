@@ -101,8 +101,11 @@ class LoginLockoutGuard:
 
     .. note::
        ``CounterPort`` is command-style with no read method, so :meth:`is_locked`
-       reads via ``incr(0)`` — both shipped adapters (Redis ``INCRBY key 0`` and
-       the mock) return the current value unchanged for a zero increment.
+       reads via ``incr(0)``. That a zero increment returns the current value without
+       moving it is now a pinned contract property rather than an observation about the
+       adapters that happened to ship — the shared counter conformance battery asserts it
+       on every backend. It does still *create* the counter at zero when absent, so a
+       lockout check on an unseen digest materializes a partition.
     """
 
     counter: CounterPort

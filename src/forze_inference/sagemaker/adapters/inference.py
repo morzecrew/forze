@@ -20,6 +20,8 @@ from forze.application.contracts.resolution import resolve_scoped_namespace
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.inference import (
     bind_run_options,
+    ensure_budget,
+    resolve_wire_cap,
     shape_outputs,
     validated_instances,
 )
@@ -83,6 +85,8 @@ class SageMakerInferenceAdapter[In: BaseModel, Out: BaseModel](
 
     async def _score(self, prepared: Sequence[In]) -> Sequence[Out]:
         """One endpoint invocation for one already-validated, already-capped batch."""
+
+        ensure_budget(backend=SAGEMAKER_BACKEND)
 
         endpoint = await self._endpoint_name()
 
@@ -154,15 +158,11 @@ class SageMakerInferenceAdapter[In: BaseModel, Out: BaseModel](
         # Streaming sub-batches its wire calls to the effective cap (the tighter of the
         # per-call option and the endpoint's hard cap) while preserving the caller's
         # chunk boundaries: one yielded chunk per input chunk.
-        caps = [
-            cap
-            for cap in (
-                (options or {}).get("max_batch_size"),
-                self.config.max_batch_size,
-            )
-            if cap is not None
-        ]
-        wire_cap = min(caps) if caps else None
+        wire_cap = resolve_wire_cap(
+            options,
+            self.inference_capabilities,
+            backend=SAGEMAKER_BACKEND,
+        )
 
         async for chunk in instances:
             prepared = validated_instances(self.spec, chunk)

@@ -1,8 +1,12 @@
 """Shared inference integration pieces + the dependency-free in-process local adapter."""
 
 from .adapter_common import (
+    BUDGET_EXHAUSTED_CODE,
     OUTPUT_MISMATCH_CODE,
     bind_run_options,
+    ensure_budget,
+    resolve_wire_cap,
+    scalar_output_field,
     shape_outputs,
     validated_instances,
 )
@@ -23,6 +27,7 @@ from .local import (
 # ----------------------- #
 
 __all__ = [
+    "BUDGET_EXHAUSTED_CODE",
     "LOCAL_INFERENCE_BACKEND",
     "OUTPUT_MISMATCH_CODE",
     "ConfigurableLocalInference",
@@ -33,7 +38,10 @@ __all__ = [
     "LocalModel",
     "LocalModelHost",
     "bind_run_options",
+    "ensure_budget",
     "local_inference_lifecycle_step",
+    "resolve_wire_cap",
+    "scalar_output_field",
     "shape_outputs",
     "validated_instances",
 ]

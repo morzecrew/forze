@@ -15,6 +15,7 @@ from forze.application.contracts.counter import (
     CounterAdminPort,
     CounterEntry,
     CounterPort,
+    validate_counter_value,
 )
 from forze.application.contracts.resilience import (
     BackoffStrategy,
@@ -202,6 +203,11 @@ class FirestoreCounterAdapter(_FirestoreCounterBase, CounterPort):
             legacy = None if current else await self.client.get_document(coll, legacy_id)
             base = int(current["value"]) if current else (int(legacy["value"]) if legacy else 0)
             new_value = base + by
+            # Unlike the other backends, the arithmetic happens here in Python rather than
+            # in the store, so an out-of-range result would only surface as a serialization
+            # failure at the write. Refusing it here keeps the error the same one every
+            # other adapter raises.
+            validate_counter_value(new_value, operation="increment" if by >= 0 else "decrement")
 
             await self.client.set_document(
                 coll,
@@ -252,6 +258,10 @@ class FirestoreCounterAdapter(_FirestoreCounterBase, CounterPort):
     # ....................... #
 
     async def reset(self, value: int = 1, *, suffix: str | None = None) -> int:
+        # Known up front, so it is refused here rather than by the backend — or, on
+        # Redis, silently accepted and left to break the *next* allocation.
+        validate_counter_value(value, operation="reset")
+
         coll = await self._collection()
         tenant_id = self.require_tenant_if_aware()
 

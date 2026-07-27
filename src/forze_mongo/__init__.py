@@ -6,6 +6,7 @@ require_mongo()
 
 # ....................... #
 
+from .adapters import MongoRotationTarget
 from .execution import (
     MongoClientDepKey,
     MongoDepsModule,
@@ -38,6 +39,7 @@ from .kernel.relation import (
 
 __all__ = [
     "MongoDepsModule",
+    "MongoRotationTarget",
     "MongoClient",
     "MongoClientPort",
     "MongoConfig",

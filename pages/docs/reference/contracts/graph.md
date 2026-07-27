@@ -154,7 +154,17 @@ traversals the typed ports don't express.
 
 Control-plane schema provisioning, separate from the data-plane command port:
 `ensure_schema()` creates constraints/indexes for the declared kinds; `drop_schema()`
-removes them.
+removes them. Both are idempotent, and safe to call in either order — a teardown that
+runs before anything was provisioned succeeds.
+
+On Neo4j this is **required for correctness, not just speed**: node-key uniqueness is the
+constraint `ensure_schema()` creates, and without it Cypher `CREATE` will happily write a
+second node under a key that is supposed to identify one. Run it at startup.
+
+The mock implements the port so that startup step is exercisable in tests, but both
+methods are no-ops there: the in-memory store keys vertices directly, so uniqueness is a
+property of the data structure and `drop_schema()` cannot take it away. Observing what an
+engine does *without* its constraints needs that engine.
 
 ## Implemented by
 

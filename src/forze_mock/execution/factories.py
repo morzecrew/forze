@@ -102,6 +102,7 @@ from forze_mock.adapters import (
     MockDurableWorkflowScheduleQueryAdapter,
     MockFederatedSearchAdapter,
     MockGraphAdapter,
+    MockGraphManagementAdapter,
     MockHttpRegistry,
     MockHttpServiceAdapter,
     MockHubSearchAdapter,
@@ -679,6 +680,21 @@ class ConfigurableMockGraph(_MockFactoryBase):
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
         )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockGraphManagement(_MockFactoryBase):
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: GraphModuleSpec,
+    ) -> MockGraphManagementAdapter:
+        # No state and no per-route config: the in-memory store's key uniqueness is
+        # intrinsic, so provisioning has nothing to build (see the adapter's docstring).
+        _ = context
+
+        return MockGraphManagementAdapter(spec=spec)
 
 
 @final

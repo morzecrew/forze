@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Awaitable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
+from datetime import timedelta
 from typing import (
     Any,
     Protocol,
@@ -27,6 +28,18 @@ class MongoClientPort(Protocol):
     def close(self) -> Awaitable[None]: ...  # pragma: no cover
 
     def health(self) -> Awaitable[tuple[str, bool]]: ...  # pragma: no cover
+
+    @property
+    def command_dispatch_bound(self) -> timedelta:
+        """Client-side wait a command can spend before it reaches a server.
+
+        Server selection plus connection establishment — everything that happens before
+        the server's own ``maxTimeMS`` clock starts. Exposed so consumers declaring latency
+        bounds (rotation targets) can validate against the configured truth rather than an
+        independent estimate, the same reason ``PostgresClientPort.acquire_timeout`` is.
+        """
+
+        ...  # pragma: no cover
 
     def db(
         self, name: str | None = None

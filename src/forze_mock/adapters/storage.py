@@ -28,6 +28,7 @@ from forze.application.contracts.storage import (
     UploadedObject,
     UploadPart,
     UploadSession,
+    validate_distinct_copy_keys,
 )
 from forze.application.integrations.storage.adapter import (
     _reject_duplicate_part_numbers,  # pyright: ignore[reportPrivateUsage]
@@ -541,14 +542,25 @@ class MockStorageAdapter(
         the upload time refreshed from the bound ``TimeSource``; the ETag (a
         stable MD5 of the bytes) matches the source since the bytes are
         identical.
+
+        A copy onto its own key is refused, as the real adapter refuses it — the mock allowed
+        it, and a same-key copy is exactly the caller mistake that AWS S3 and MinIO reject.
         """
+
+        validate_distinct_copy_keys(src_key, dst_key)
 
         return await self.__copy(src_key, dst_key, delete_source=False)
 
     # ....................... #
 
     async def move(self, src_key: str, dst_key: str) -> ObjectHead:
-        """Copy to *dst_key* then delete *src_key* (non-atomic), return the head."""
+        """Copy to *dst_key* then delete *src_key* (non-atomic), return the head.
+
+        A self-move is refused for the same reason a self-copy is: it is a caller mistake
+        whose outcome would otherwise depend on the backend.
+        """
+
+        validate_distinct_copy_keys(src_key, dst_key)
 
         return await self.__copy(src_key, dst_key, delete_source=True)
 
@@ -645,6 +657,10 @@ class MockStorageAdapter(
             rows = list(self._objects().values())
         if prefix:
             rows = [row for row in rows if row.key.startswith(prefix)]
+        # Lexicographic by key, as an object store lists. The mock returned insertion order,
+        # which happens to agree while keys are generated (uuid7 sorts by time) and diverges
+        # the moment a caller supplies its own — an archived key on an import, say.
+        rows.sort(key=lambda row: row.key)
         total = len(rows)
         return rows[offset : offset + limit], total
 

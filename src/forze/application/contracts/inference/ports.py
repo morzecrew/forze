@@ -74,9 +74,19 @@ class InferencePort[In: BaseModel, Out: BaseModel](BaseInferencePort, Protocol):
         :func:`~forze.application.contracts.inference.capabilities.validate_batch_size`)
         rather than splitting a call the caller asked to be atomic.
 
+        An empty *instances* is a no-op: it returns ``[]`` without calling the backend.
+        A prediction the backend returns as a bare scalar wraps into a single-field
+        output model; against a multi-field one it is a boundary mismatch.
+
         :param instances: Input instances (``InferenceSpec.input`` models).
         :param options: Optional per-call knobs (timeout).
         :returns: Predictions, one per input, in input order.
+        :raises CoreException: ``validation`` when an instance or a prediction does not
+            fit the spec's models, or the backend's prediction count differs from the
+            instance count; ``precondition`` (``inference_feature_unsupported``) when the
+            batch exceeds the backend's cap; ``timeout``
+            (``inference_budget_exhausted``) when the invocation budget is already spent,
+            in which case the backend was never called.
         """
         ...  # pragma: no cover
 
@@ -99,6 +109,13 @@ class InferencePort[In: BaseModel, Out: BaseModel](BaseInferencePort, Protocol):
 
         Backends that cannot serve it refuse up front via
         :func:`~forze.application.contracts.inference.capabilities.validate_stream_supported`.
+
+        A backend batch cap **sub-batches** a chunk here rather than refusing it: a chunk
+        larger than the cap is scored in several backend calls and still yielded as one
+        chunk. Unlike ``predict_many``, a stream chunk is a bounded-memory convenience
+        rather than an atomicity request, so the caller's chunking is independent of the
+        backend's transport limit. An empty input chunk yields an empty output chunk
+        without calling the backend.
 
         :param instances: Chunked input instances, consumed lazily.
         :param options: Optional per-call knobs (timeout, per-chunk sub-batching cap).

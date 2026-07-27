@@ -18,6 +18,14 @@ create duplicate keyed edges, not just the in-query ``MERGE`` — and tenant-pro
 It is opt-in (run it at startup); the constraints are Community-edition uniqueness (a NODE KEY
 constraint, which also enforces existence, is Enterprise-only).
 
+**Run it.** Cypher ``CREATE`` cannot enforce key uniqueness by itself, so without those
+constraints :meth:`create_vertex` on an existing key silently creates a *second* node and the
+key stops addressing one thing — no error anywhere. With them, a duplicate raises
+``graph_vertex_conflict``, the same code the in-memory mock raises, which is what makes the
+two planes interchangeable. The differential conformance suite asserts that agreement with
+the schema in place; the unguarded case is a deployment mistake the framework cannot detect
+for you.
+
 Tenancy uses property partition: a ``tenant_property`` is stamped on writes and constrains
 anchor-node matches.
 """
@@ -28,7 +36,8 @@ require_neo4j()
 
 # ....................... #
 
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
+from contextlib import contextmanager
 from typing import Any, Literal, final
 
 import attrs
@@ -49,6 +58,7 @@ from forze.application.contracts.graph import (
     ShortestPathParams,
     ShortestPathResult,
     VertexRef,
+    normalize_property_filter,
     validate_property_filter_keys,
 )
 from forze.application.contracts.resolution import (
@@ -66,7 +76,7 @@ from forze.application.integrations.graph import (
     resolve_write_endpoint,
     stream_keyset_pages,
 )
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict, OnceCell, uuid4
 from forze.base.serialization import default_model_codec
 
@@ -83,6 +93,44 @@ from ._logger import logger
 # Yen's is exhausted, so a valid bounded path is never dropped for hiding behind more than the
 # buffer's worth of cheaper over-long ones.
 _WEIGHTED_HOP_CANDIDATE_BUFFER = 32
+
+# ....................... #
+
+
+@contextmanager
+def _vertex_conflict(node_kind: str) -> Generator[None]:
+    """Translate a uniqueness refusal on a vertex ``CREATE`` into the portable code.
+
+    Shared by the single and bulk create paths, which is the point: they used to disagree,
+    so the same duplicate key raised ``graph_vertex_conflict`` from one and a generic
+    ``core.conflict`` from the other, and a caller could not branch on either.
+
+    Wrap **only the write**. Anything else inside — resolving the database, encoding the
+    properties — can raise a conflict of its own that has nothing to do with a duplicate key.
+
+    Scope note: this names any uniqueness refusal on the write a key conflict. Narrowing it
+    to the framework's own node-key constraint would take the constraint name, which the
+    client's error mapper does not preserve, leaving only the driver's message text —
+    matching on that is the fragile sniffing this codebase has declined before. An
+    app-defined unique constraint on the same label is still a uniqueness conflict on this
+    vertex, so the code is imprecise rather than wrong.
+
+    Only fires when ``ensure_schema()`` has been run: Cypher ``CREATE`` cannot enforce
+    uniqueness on its own.
+    """
+
+    try:
+        yield
+
+    except CoreException as e:
+        if e.kind is not ExceptionKind.CONFLICT:
+            raise
+
+        raise exc.conflict(
+            f"Graph vertex of kind {node_kind!r} already exists with that key.",
+            code="graph_vertex_conflict",
+        ) from e
+
 
 # ----------------------- #
 
@@ -275,7 +323,12 @@ class Neo4jGraphAdapter(TenancyMixin):
                 code="graph_filter_on_encrypted_field",
             )
 
-        return {f"pf_{k}": v for k, v in property_filter.items()}
+        # Normalized to the form properties are stored in: the driver rejects a raw UUID or
+        # Decimal parameter outright, and a caller filtering by the value they wrote should
+        # not have to know that.
+        normalized = normalize_property_filter(property_filter) or {}
+
+        return {f"pf_{k}": v for k, v in normalized.items()}
 
     # ....................... #
     # tenancy helpers
@@ -711,11 +764,14 @@ class Neo4jGraphAdapter(TenancyMixin):
     ) -> BaseModel | None:
         query = builders.create_vertex(node_kind)
         props = await self._encode(cmd, self._node_cipher(node_kind))
-        rows = await self.client.run(
-            query,
-            {"props": props, **self._params()},
-            database=await self._resolved_database(),
-        )
+        database = await self._resolved_database()
+
+        with _vertex_conflict(node_kind):
+            rows = await self.client.run(
+                query,
+                {"props": props, **self._params()},
+                database=database,
+            )
 
         if not return_new:
             return None
@@ -1556,11 +1612,13 @@ class Neo4jGraphAdapter(TenancyMixin):
 
         for kind, entries in by_kind.items():
             query = builders.create_vertices(kind)
-            rows = await self.client.run(
-                query,
-                {"rows": [props for _, props in entries], **self._params()},
-                database=database,
-            )
+
+            with _vertex_conflict(kind):
+                rows = await self.client.run(
+                    query,
+                    {"rows": [props for _, props in entries], **self._params()},
+                    database=database,
+                )
 
             # Skip the per-row decode/decrypt unless the caller wants the models back — the
             # insert above is the only work a ``return_new=False`` bulk create needs.

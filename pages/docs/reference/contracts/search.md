@@ -161,8 +161,12 @@ cannot provision or wipe an index.
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
-| `ensure_index` | `ensure_index()` | create / update the index settings |
-| `delete_all` | `delete_all()` | empty the index |
+| `ensure_index` | `ensure_index()` | create / update the index settings; idempotent |
+| `delete_all` | `delete_all()` | empty the index; a no-op if it was never provisioned |
+
+Both are postconditions rather than operations on an existing thing, so both are safe to
+repeat and safe to call first: `delete_all()` on a surface nothing has created yet succeeds,
+because an index that does not exist already holds no documents.
 
 ## Rebuilding an index
 

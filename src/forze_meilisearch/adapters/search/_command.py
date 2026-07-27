@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, cast, final
 
 import attrs
@@ -28,6 +28,26 @@ from forze_meilisearch.kernel.client.port import MeilisearchClientPort
 _BATCH_SIZE = 1000
 
 
+def _task_error(task: Any) -> tuple[str, str, str]:
+    """A failed task's ``(code, type, message)``, normalized.
+
+    The SDK hands the error back as a plain mapping; anything else is stringified whole
+    rather than dropped, so an unexpected shape still reaches the caller as text instead of
+    becoming an empty message.
+    """
+
+    raw_error = cast(Any, getattr(task, "error", None))
+    fields: Mapping[str, Any] = (
+        cast(Mapping[str, Any], raw_error) if isinstance(raw_error, Mapping) else {}
+    )
+
+    return (
+        str(fields.get("code") or ""),
+        str(fields.get("type") or ""),
+        str(fields.get("message") or "") or f"{raw_error}",
+    )
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class _MeilisearchSearchWriteBase[M: BaseModel](MeilisearchSearchGateway[M]):
     """Shared client + task-await plumbing for the write and management adapters."""
@@ -43,7 +63,18 @@ class _MeilisearchSearchWriteBase[M: BaseModel](MeilisearchSearchGateway[M]):
 
     # ....................... #
 
-    async def _await_task(self, task_info: Any) -> None:
+    async def _await_task(
+        self,
+        task_info: Any,
+        *,
+        tolerate: frozenset[str] = frozenset(),
+    ) -> None:
+        """Await *task_info*, raising unless it succeeded or failed with a tolerated code.
+
+        *tolerate* holds Meilisearch error codes whose failure already satisfies the
+        caller's postcondition, so the task is not an error for that specific call.
+        """
+
         if not self._wait_tasks:
             return
 
@@ -56,12 +87,32 @@ class _MeilisearchSearchWriteBase[M: BaseModel](MeilisearchSearchGateway[M]):
         # status other than ``succeeded`` as an error rather than silent success.
         status = str(getattr(task, "status", "") or "").lower()
 
-        if status and status != "succeeded":
-            error = getattr(task, "error", None)
-            raise exc.infrastructure(
-                f"Meilisearch task {uid} did not succeed (status={status})",
-                details={"task_uid": uid, "status": status, "error": str(error)},
+        if not status or status == "succeeded":
+            return
+
+        code, kind, message = _task_error(task)
+
+        if code in tolerate:
+            return
+
+        details = {"task_uid": uid, "status": status, "meili_code": code, "error": message}
+
+        # Meilisearch labels a rejected request ``invalid_request``: the caller named a
+        # missing index, sent a document the schema refuses, filtered on an attribute that
+        # is not filterable. Classifying those as infrastructure implied a retryable server
+        # fault for something that will fail identically forever, and the breaker counted
+        # them against the engine's health. The engine's own message rides along, because
+        # "task N did not succeed" alone gives a caller nothing to act on.
+        if kind == "invalid_request":
+            raise exc.precondition(
+                f"Meilisearch rejected the request ({code or 'invalid_request'}): {message}",
+                details=details,
             )
+
+        raise exc.infrastructure(
+            f"Meilisearch task {uid} did not succeed (status={status}): {message}",
+            details=details,
+        )
 
 
 @final
@@ -218,4 +269,11 @@ class MeilisearchSearchManagementAdapter[M: BaseModel](
         else:
             task = await index.delete_all_documents()
 
-        await self._await_task(task)
+        # An index that does not exist yet already satisfies "the index holds no
+        # documents", so the wipe is a no-op rather than a failure. The documented
+        # rebuild-from-scratch workflow is exactly delete_all-then-rebuild, which on a
+        # fresh deployment runs before anything has provisioned the index — and it
+        # succeeded against the in-memory adapter, so the failure only ever showed up
+        # in a real one. Tolerated per call, not globally: the same code from an upsert
+        # or a filtered delete still means the write went nowhere.
+        await self._await_task(task, tolerate=frozenset({"index_not_found"}))
