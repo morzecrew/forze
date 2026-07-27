@@ -116,11 +116,13 @@ class TestHeartbeatReachesTheBroker:
 
         assert url.query["heartbeat"] == "60"
 
-    def test_a_sub_second_heartbeat_does_not_truncate_to_zero(self) -> None:
-        """AMQP reads heartbeat=0 as *disabled*, so truncation would silently turn it off.
+    def test_a_positive_sub_second_heartbeat_is_refused(self) -> None:
+        """The fail-open case: AMQP reads heartbeat=0 as *disabled*.
 
-        ``RabbitMQConfig`` already refuses a non-positive heartbeat, which is what keeps the
-        integer conversion honest — this pins that the two agree.
+        A sub-second value passed the old "must be positive" check and then truncated to 0
+        on the way to the URL, so the tightest-looking setting silently turned heartbeats
+        off — the same shape as a maxTimeMS of 0 meaning unlimited. Refused at the config,
+        which is what makes the int() conversion downstream lossless.
         """
 
         from datetime import timedelta
@@ -130,12 +132,54 @@ class TestHeartbeatReachesTheBroker:
         from forze.base.exceptions import CoreException
         from forze_rabbitmq.kernel.client import RabbitMQConfig
 
-        with _pytest.raises(CoreException, match="Heartbeat must be positive"):
-            RabbitMQConfig(heartbeat=timedelta(0))
+        for sub_second in (
+            timedelta(milliseconds=1),
+            timedelta(milliseconds=500),
+            timedelta(milliseconds=999),
+        ):
+            with _pytest.raises(CoreException, match="at least 1s"):
+                RabbitMQConfig(heartbeat=sub_second)
 
-        # The smallest value the config accepts still survives conversion as a whole second.
+    def test_a_fractional_heartbeat_is_refused_rather_than_rounded(self) -> None:
+        """1.5s is not 1s and not 2s; the wire drops the fraction, so silently picking one
+        would give the operator a heartbeat they did not ask for."""
+
+        from datetime import timedelta
+
+        import pytest as _pytest
+
+        from forze.base.exceptions import CoreException
+        from forze_rabbitmq.kernel.client import RabbitMQConfig
+
+        with _pytest.raises(CoreException, match="whole number of seconds"):
+            RabbitMQConfig(heartbeat=timedelta(seconds=1, milliseconds=500))
+
+    def test_a_non_positive_heartbeat_is_still_refused(self) -> None:
+        from datetime import timedelta
+
+        import pytest as _pytest
+
+        from forze.base.exceptions import CoreException
+        from forze_rabbitmq.kernel.client import RabbitMQConfig
+
+        for bad in (timedelta(0), timedelta(seconds=-5)):
+            with _pytest.raises(CoreException, match="at least 1s"):
+                RabbitMQConfig(heartbeat=bad)
+
+    def test_every_accepted_heartbeat_survives_conversion_intact(self) -> None:
+        """The property the config validation exists to guarantee: whatever it accepts
+        reaches the URL unchanged and never as 0."""
+
+        from datetime import timedelta
+
+        from forze_rabbitmq.kernel.client import RabbitMQConfig
         from forze_rabbitmq.kernel.client.client import (
             _with_heartbeat,  # pyright: ignore[reportPrivateUsage]
         )
 
-        assert _with_heartbeat("amqp://h/", timedelta(seconds=1)).query["heartbeat"] == "1"
+        for seconds in (1, 2, 30, 60, 3600):
+            config = RabbitMQConfig(heartbeat=timedelta(seconds=seconds))
+            rendered = _with_heartbeat("amqp://h/", config.heartbeat).query["heartbeat"]
+
+            assert rendered == str(seconds)
+            assert rendered != "0"

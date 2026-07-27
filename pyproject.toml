@@ -352,11 +352,6 @@ warn_unused_ignores = false
 module = ["aiokafka.*", "grpc.*", "zstandard"]
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-# pyarrow ships no py.typed marker and no bundled stubs (pyarrow-stubs is a separate,
-# third-party package). The DuckDB integration only names its types at the client boundary.
-module = ["pyarrow", "pyarrow.*"]
-ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 # The yandexcloud SDK re-exports `SDK` implicitly (it is not in `__all__`), and its

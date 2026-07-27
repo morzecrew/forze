@@ -52,8 +52,22 @@ class RabbitMQConfig:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.heartbeat.total_seconds() <= 0:
-            raise exc.configuration("Heartbeat must be positive")
+        # Whole seconds, not merely positive: AMQP carries the heartbeat as an integer
+        # number of seconds, and 0 means *disabled*. A sub-second value passed a
+        # "must be positive" check and then truncated to 0 on the way to the URL — the
+        # tightest-looking setting silently turning heartbeats off. There is no way to ask
+        # for 0 deliberately here, so nothing is lost by refusing everything below 1s.
+        if self.heartbeat < timedelta(seconds=1):
+            raise exc.configuration(
+                "Heartbeat must be at least 1s: AMQP carries it as whole seconds, and a "
+                "sub-second value truncates to 0, which the broker reads as disabled."
+            )
+
+        if self.heartbeat % timedelta(seconds=1):
+            raise exc.configuration(
+                f"Heartbeat must be a whole number of seconds, got {self.heartbeat}: the "
+                "fractional part is dropped on the wire rather than rounded."
+            )
 
         if self.connect_timeout.total_seconds() <= 0:
             raise exc.configuration("Connect timeout must be positive")

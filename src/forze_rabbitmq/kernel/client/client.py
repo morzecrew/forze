@@ -46,6 +46,11 @@ def _with_heartbeat(dsn: str, heartbeat: timedelta) -> URL:
 
     The configured value wins over one already in the DSN: it is the explicit setting, and
     ``RabbitMQConfig`` validates it.
+
+    The ``int`` conversion is lossless because ``RabbitMQConfig`` refuses anything that is
+    not a whole number of seconds ≥ 1 — AMQP carries the heartbeat as whole seconds and
+    reads 0 as *disabled*, so truncating here would silently turn off the very thing being
+    configured.
     """
 
     return URL(dsn).update_query(heartbeat=str(int(heartbeat.total_seconds())))
