@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Quantitative clean-run verdict** — new `forze_dst.stats` (`detection_upper_bound`, `format_clean_verdict`): clean sweeps print the exact exclusion bound on per-seed detection probability instead of a bare pass — in `SweepResult`/`CoverageStats`/`ConfidenceReport` `format()` (new `ConfidenceReport.violations_seen`; `assess_confidence`/`ConfidenceProbe.report` accept `violations=`), the `forze dst run`/`coverage` clean paths, and the pytest plugin's terminal summary (one per-test line for each clean `assert_no_violation` scenario sweep).
 - **Isolation battery: Adya labels + low-end completion** — every `AnomalyCase` carries new `adya` and `berenson` fields; two new cases, `dirty_write` (G0) and `intermediate_read` (G1b), prevented at every level on all conformance backends.
 - **Fidelity matrix** — new `forze_dst.conformance` report surface (`CellVerdict`, `collect_verdicts`, `FidelityMatrix.pair`, `Classification`, `write_matrix`, `render_markdown`): mock↔real verdict agreement as a durable artifact split by divergence direction; unexplained divergence fails the differential. `just dst-fidelity` regenerates `pages/docs/dst/_generated/fidelity.{json,md}`.
+- **Contract-misuse corpus schema** — new `forze_dst.misuse` (`MisuseMutant`, `MisuseControl`, `MisuseCase`, `MisuseFamily`, `TransferTier`, `GroundTruth`): known-bug twins with replayable killing seeds and depth labels, plus known-correct negative controls, as reviewed registry data.
 
 ## [0.5.1] - 2026-07-25
 
