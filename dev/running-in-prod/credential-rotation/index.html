@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.50">
+      <meta name="generator" content="zensical-0.0.51">
     
     
       
@@ -6289,6 +6289,16 @@ sealing on needs no migration: existing plaintext reads through and seals on nex
 <p><code>forze_postgres.PostgresRotatingCredentialStore</code> is the shipped store (one row per
 <code>(tenant_id, ref)</code>, <code>SELECT … FOR UPDATE</code>); see the runnable walkthrough in
 <code>examples/recipes/rotating_credentials/</code>.</p>
+<p>On-demand refresh keeps a grant alive only while something uses it — and providers expire
+refresh tokens from <strong>non-use</strong> (weeks to months, reset by every exchange), so an idle
+tenant's grant dies silently no matter how correct the on-demand path is.
+<code>CredentialSweeper</code> closes that gap: a scheduled durable sweep asks the control-plane scan
+(<code>RotatingCredentialsAdminPort.due_for_refresh</code>) which grants sit unexchanged past a
+configured idle window and enqueues one refresh run per grant, converging with live
+traffic through the store's own single-flight. Burnt grants come back as a
+<code>needs_reauthorization</code> list instead of retries. The idle window is per-provider
+configuration set well inside the documented inactivity limit; see the
+<a href="../../recipes/rotating-oauth-credentials/#keeping-idle-grants-alive">recipe</a>.</p>
 <h2 id="leases-dynamic-credentials">Leases (dynamic credentials)<a class="headerlink" href="#leases-dynamic-credentials" title="Permanent link">&para;</a></h2>
 <p>Where a backend adopts a lease engine (Vault database engines), short TTLs <em>are</em>
 the rotation and the rotator becomes unnecessary for that backend. Credentials are

@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.50">
+      <meta name="generator" content="zensical-0.0.51">
     
     
       
@@ -4478,6 +4478,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#keeping-idle-grants-alive" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Keeping idle grants alive
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#trust-but-verify" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5815,6 +5826,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#keeping-idle-grants-alive" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Keeping idle grants alive
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#trust-but-verify" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5942,7 +5964,8 @@ refresh token as an attack and may revoke the whole token family.</p>
 Postgres store, writes the exchanger, and shows the call pattern.</p>
 <h2 id="the-table">The table<a class="headerlink" href="#the-table" title="Permanent link">&para;</a></h2>
 <p>Provisioning is yours, and the store is deliberately narrow about what it needs — every
-access is a point lookup, so the primary key is the only index:</p>
+access the <em>store</em> makes is a point lookup on the primary key. The second index serves the
+control-plane idleness scan (see <a href="#keeping-idle-grants-alive">keeping idle grants alive</a>):</p>
 <div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">rotating_credentials</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="n">tenant_id</span><span class="w">    </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
 <span class="w">    </span><span class="k">ref</span><span class="w">          </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
@@ -5954,6 +5977,7 @@ access is a point lookup, so the primary key is the only index:</p>
 <span class="w">    </span><span class="n">updated_at</span><span class="w">   </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
 <span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">tenant_id</span><span class="p">,</span><span class="w"> </span><span class="k">ref</span><span class="p">)</span>
 <span class="p">);</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">rotating_credentials</span><span class="w"> </span><span class="p">(</span><span class="n">tenant_id</span><span class="p">,</span><span class="w"> </span><span class="n">updated_at</span><span class="p">);</span>
 </code></pre></div>
 <p><code>tenant_id</code> is part of the key rather than a filter beside it — a table keyed on <code>ref</code>
 alone hands one tenant another tenant's grant. An unbound tenant stores as the empty
@@ -6181,11 +6205,104 @@ next worker. The cost is a re-authorization that occasionally was not strictly n
 the alternative risks losing the whole family.</p>
 <p><code>credential_persist_lost</code> is the outcome worth wiring an alert to. It is rare, it is
 logged at critical, and it always means one specific thing: a human has to re-consent.</p>
+<h2 id="keeping-idle-grants-alive">Keeping idle grants alive<a class="headerlink" href="#keeping-idle-grants-alive" title="Permanent link">&para;</a></h2>
+<p>On-demand refresh has a blind spot that no amount of on-demand logic can close: providers
+expire a refresh token after a period of <strong>non-use</strong> — Google after six months, many
+providers after 30–90 days — and the clock is reset by every exchange. A tenant with no
+traffic never triggers a refresh, so its grant dies silently and permanently, and the next
+real request finds a credential only a human can restore.</p>
+<p>Two clocks, two mechanisms. <code>expires_at</code> is the <em>access token's</em> clock and drives
+on-demand refresh. The refresh token's clock is idleness, and it is what
+<code>CredentialSweeper</code> watches:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">build_context</span><span class="p">(</span>
+    <span class="n">provider</span><span class="p">:</span> <span class="n">DemoOAuthProvider</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">refresh_if_idle_for</span><span class="p">:</span> <span class="n">timedelta</span> <span class="o">=</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">30</span><span class="p">),</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">ExecutionContext</span><span class="p">,</span> <span class="n">MockState</span><span class="p">,</span> <span class="n">DurableFunctionRunner</span><span class="p">,</span> <span class="n">CredentialSweeper</span><span class="p">]:</span>
+    <span class="c1"># The exchanger is the one thing the framework cannot default: it is a call to someone</span>
+    <span class="c1"># else&#39;s provider, so passing it is what registers the store at all.</span>
+    <span class="n">state</span> <span class="o">=</span> <span class="n">MockState</span><span class="p">()</span>
+
+    <span class="c1"># The sweeper is two durable functions on the app&#39;s registry: a per-tenant sweep that</span>
+    <span class="c1"># scans for idle grants, and a per-grant refresh it enqueues — so one dead provider</span>
+    <span class="c1"># costs one failing run, never a stalled pass. The idle window is per-provider</span>
+    <span class="c1"># configuration: set it well inside their documented inactivity limit.</span>
+    <span class="n">registry</span> <span class="o">=</span> <span class="n">DurableFunctionRegistry</span><span class="p">()</span>
+    <span class="n">sweeper</span> <span class="o">=</span> <span class="n">CredentialSweeper</span><span class="p">(</span><span class="n">refresh_if_idle_for</span><span class="o">=</span><span class="n">refresh_if_idle_for</span><span class="p">)</span>
+    <span class="n">sweeper</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">registry</span><span class="p">)</span>
+    <span class="n">durable_deps</span><span class="p">,</span> <span class="n">runner</span><span class="p">,</span> <span class="n">_scheduler</span> <span class="o">=</span> <span class="n">durable_kits_deps</span><span class="p">(</span><span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">)</span>
+
+    <span class="n">ctx</span> <span class="o">=</span> <span class="n">ExecutionContext</span><span class="p">(</span>
+        <span class="n">deps</span><span class="o">=</span><span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_deps</span><span class="p">(</span>
+            <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">state</span><span class="o">=</span><span class="n">state</span><span class="p">,</span> <span class="n">rotating_credentials</span><span class="o">=</span><span class="n">DemoTokenExchanger</span><span class="p">(</span><span class="n">provider</span><span class="p">))(),</span>
+            <span class="n">durable_deps</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="o">.</span><span class="n">freeze</span><span class="p">()</span>
+        <span class="o">.</span><span class="n">resolve</span><span class="p">()</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">ctx</span><span class="p">,</span> <span class="n">state</span><span class="p">,</span> <span class="n">runner</span><span class="p">,</span> <span class="n">sweeper</span>
+</code></pre></div>
+<p>Driving it is one schedule plus, when you want a pass right now, one inline run:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">sweep_act</span><span class="p">(</span>
+    <span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">,</span>
+    <span class="n">runner</span><span class="p">:</span> <span class="n">DurableFunctionRunner</span><span class="p">,</span>
+    <span class="n">sweeper</span><span class="p">:</span> <span class="n">CredentialSweeper</span><span class="p">,</span>
+    <span class="n">provider</span><span class="p">:</span> <span class="n">DemoOAuthProvider</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The half on-demand refresh cannot do: keep a grant alive that nobody is using.</span>
+
+<span class="sd">    Providers expire refresh tokens from *non-use* — weeks to months, reset by every</span>
+<span class="sd">    exchange — so a tenant that goes quiet loses its grant permanently unless something</span>
+<span class="sd">    exchanges on its behalf before the deadline. Nothing in this act calls the API.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># Production wires the cadence once; each firing becomes a durable sweep run.</span>
+    <span class="n">schedule</span> <span class="o">=</span> <span class="k">await</span> <span class="n">sweeper</span><span class="o">.</span><span class="n">ensure_cron</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">cron</span><span class="o">=</span><span class="s2">&quot;0 4 * * *&quot;</span><span class="p">)</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;sweep scheduled&quot;</span><span class="p">,</span> <span class="n">schedule_id</span><span class="o">=</span><span class="n">schedule</span><span class="o">.</span><span class="n">schedule_id</span><span class="p">)</span>
+
+    <span class="c1"># A quarter with no traffic goes by (compressed: the demo window is milliseconds</span>
+    <span class="c1"># where production uses days, purely so this example runs in the blink of an eye).</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.05</span><span class="p">)</span>
+
+    <span class="n">exchanges_before</span> <span class="o">=</span> <span class="n">provider</span><span class="o">.</span><span class="n">exchanges</span>
+    <span class="n">record</span> <span class="o">=</span> <span class="k">await</span> <span class="n">sweeper</span><span class="o">.</span><span class="n">sweep_now</span><span class="p">(</span><span class="n">ctx</span><span class="p">)</span>  <span class="c1"># what the cron fires, run inline</span>
+
+    <span class="c1"># The sweep enqueued one durable refresh run per due grant; a worker drains them.</span>
+    <span class="k">while</span> <span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">recover</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">limit</span><span class="o">=</span><span class="mi">10</span><span class="p">):</span>
+        <span class="k">pass</span>
+
+    <span class="n">outcome</span> <span class="o">=</span> <span class="n">record</span><span class="o">.</span><span class="n">output_json</span> <span class="ow">or</span> <span class="p">{}</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+        <span class="s2">&quot;idle grant kept alive without a single API call&quot;</span><span class="p">,</span>
+        <span class="n">due</span><span class="o">=</span><span class="n">outcome</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;due&quot;</span><span class="p">),</span>
+        <span class="n">exchanges_spent</span><span class="o">=</span><span class="n">provider</span><span class="o">.</span><span class="n">exchanges</span> <span class="o">-</span> <span class="n">exchanges_before</span><span class="p">,</span>
+        <span class="c1"># Not named *authorization*: the log masker redacts matching keys, and this is a</span>
+        <span class="c1"># list of ref paths — operator routing data, never a secret.</span>
+        <span class="n">re_consent_needed</span><span class="o">=</span><span class="n">outcome</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;needs_reauthorization&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+</code></pre></div>
+<p>Daily is almost always right for the cadence: the idle window is weeks, so it only has to
+be dense enough that missing a couple of passes still lands well inside it.</p>
+<p>Each pass asks the control-plane scan (<code>RotatingCredentialsAdminPort.due_for_refresh</code>,
+registered automatically beside the store) which grants sit unexchanged past the window,
+oldest first, and enqueues <strong>one durable refresh run per grant</strong> — a dead provider costs
+one failing run, never a stalled sweep. The runs call the same <code>refresh(observed=…)</code> as
+live traffic with the version the scan saw, so a concurrent on-demand refresh converges to
+one exchange instead of two; safety comes from the store, not from the sweeper.</p>
+<p>Burnt grants show up in the sweep's result under <code>needs_reauthorization</code> rather than being
+retried — "these N tenants need a human" is a queryable fact, not an alert someone may
+have missed. Multi-tenant fleets drive the same sweep per tenant with
+<code>sweeper.enqueue_tenants(...)</code>.</p>
+<p>The idle window is per-provider <strong>configuration</strong>: an inactivity limit is a fact about
+their product, and probing for it would spend a token. When in doubt, halve the documented
+window.</p>
 <h2 id="trust-but-verify">Trust but verify<a class="headerlink" href="#trust-but-verify" title="Permanent link">&para;</a></h2>
 <p>Every store implementation runs the same conformance battery, and the Postgres store runs
 it against a live database — including a failure injected at the write <em>and</em> one injected
 at the commit, a two-connection race proving <code>FOR UPDATE</code> serializes across processes rather
-than only across coroutines, and the at-rest legs: tokens unreadable on disk, a row lifted
+than only across coroutines, the idleness-scan legs (an exchange resets the clock, the
+scan is bounded, oldest first and tenant-scoped, burnt grants reported), and the at-rest legs: tokens unreadable on disk, a row lifted
 across refs or tenants refused by the <abbr title="Additional Authenticated Data">AAD</abbr>, and a legacy plaintext row still readable. If you implement the port over another backend, run that
 battery: the properties it checks are the reason the contract exists, and an
 implementation that stores documents correctly while getting the ordering wrong is not one.</p>
