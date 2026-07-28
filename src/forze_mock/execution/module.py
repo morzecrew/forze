@@ -110,6 +110,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.contracts.secrets import (
     CredentialExchangerPort,
+    RotatingCredentialsAdminDepKey,
     RotatingCredentialsDepKey,
     SecretsAdminDepKey,
     SecretsDepKey,
@@ -174,6 +175,7 @@ from forze_mock.adapters.identity import (
     MockPrincipalRegistryPort,
     MockPrincipalResolverPort,
     MockRoleAssignmentPort,
+    MockRotatingCredentialsAdmin,
     MockRotatingCredentialStore,
     MockSecretsPort,
     MockTenantManagementPort,
@@ -468,6 +470,11 @@ class MockDepsModule(DepsModule):
                 # credentials in the clear would make the at-rest behaviour differ from
                 # production on the one store where that difference matters most.
                 cipher=crypto_keyring,
+            )
+            # The control-plane scan rides the same opt-in: a wired store without its
+            # sweep visibility would leave idle-grant liveness untestable on the oracle.
+            deps[RotatingCredentialsAdminDepKey] = MockRotatingCredentialsAdmin(
+                state=self.state,
             )
 
         if self.routed_state is not None:

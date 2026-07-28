@@ -4,7 +4,7 @@ from ..deps import DepKey
 from .admin import SecretsAdminPort
 from .lease import DynamicSecretsPort
 from .ports import SecretsPort
-from .rotating import RotatingCredentialStorePort
+from .rotating import RotatingCredentialsAdminPort, RotatingCredentialStorePort
 
 # ----------------------- #
 
@@ -25,3 +25,11 @@ Separate from :data:`SecretsDepKey` because the plane is different in kind: thes
 credentials are written on the read path (a counterparty rotates them as we use them),
 so the store is inherently read-write and must never be mistaken for a resolve-only
 secrets backend."""
+
+RotatingCredentialsAdminDepKey = DepKey[RotatingCredentialsAdminPort]("rotating_credentials_admin")
+"""Key used to register a :class:`RotatingCredentialsAdminPort` implementation.
+
+Control plane beside :data:`RotatingCredentialsDepKey`, mirroring the
+``secrets`` / ``secrets_admin`` split: the idleness scan is a list power the data-plane
+store must never acquire, and a sweep runner resolves this key without gaining the
+ability to read tokens."""

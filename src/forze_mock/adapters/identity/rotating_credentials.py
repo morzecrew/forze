@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any, Final, final
 from uuid import UUID
@@ -16,8 +17,10 @@ from forze.application.contracts.secrets import (
     CREDENTIAL_PERSIST_LOST_CODE,
     INVALID_GRANT_CODE,
     CredentialExchangerPort,
+    DueCredential,
     ExchangedCredential,
     RotatingCredential,
+    RotatingCredentialsAdminPort,
     RotatingCredentialStorePort,
     SecretRef,
     SecretVersion,
@@ -30,7 +33,7 @@ from forze.application.integrations.crypto.payload import (
 )
 from forze.base.exceptions import CoreException, exc
 from forze.base.logging import get_logger
-from forze.base.primitives import JsonDict, StripedAsyncLocks
+from forze.base.primitives import JsonDict, StripedAsyncLocks, utcnow
 from forze_mock.state import MockState
 
 # ----------------------- #
@@ -229,6 +232,9 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
             "expires_at": credential.expires_at,
             "version": version,
             "burnt_reason": None,
+            # The idleness clock (ambient time seam, so simulated time drives the scan):
+            # every exchange and every put resets it, exactly as Postgres stamps its column.
+            "updated_at": utcnow(),
         }
 
         with self.state.lock:
@@ -254,6 +260,7 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
                 and int(document["version"]) == version
             ):
                 document["burnt_reason"] = reason
+                document["updated_at"] = utcnow()
 
     # ....................... #
 
@@ -270,11 +277,12 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
                 # a bare "not found". The placeholder holds no token fields at all — there
                 # is no credential to describe, and an empty one would only invite a caller
                 # to try using it.
-                documents[key] = {"version": 0, "burnt_reason": reason}
+                documents[key] = {"version": 0, "burnt_reason": reason, "updated_at": utcnow()}
 
                 return
 
             document["burnt_reason"] = reason
+            document["updated_at"] = utcnow()
 
     # ....................... #
 
@@ -477,3 +485,70 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
 
         async with self._locks.for_key(key):
             self._mark_burnt(key, reason)
+
+
+# ----------------------- #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MockRotatingCredentialsAdmin(TenancyMixin, RotatingCredentialsAdminPort):
+    """:class:`RotatingCredentialsAdminPort` over the same in-memory documents.
+
+    Control plane only, like its Postgres twin: the scan reads scheduling facts and never
+    opens a payload, so it behaves identically over sealed and plaintext documents. Reads
+    the ambient time seam through the stored ``updated_at`` stamps, so a simulation driving
+    a frozen clock can age grants into dueness without sleeping.
+    """
+
+    state: MockState
+
+    # ....................... #
+
+    def _documents(self) -> dict[str, dict[str, Any]]:
+        identity = self.state.identity
+        store = identity.setdefault(_SUBSTORE, {})
+
+        if not isinstance(store, dict):
+            raise exc.internal(f"Mock identity {_SUBSTORE!r} substore must be a dict.")
+
+        return store  # pyright: ignore[reportUnknownVariableType]
+
+    # ....................... #
+
+    async def due_for_refresh(
+        self,
+        *,
+        idle_since: datetime,
+        limit: int,
+    ) -> Sequence[DueCredential]:
+        if limit < 1:
+            raise exc.precondition(
+                f"due_for_refresh limit must be positive, got {limit}.",
+            )
+
+        tenant: UUID | None = self._tenant_id_for_resolve()
+        prefix = f"{'' if tenant is None else tenant}|"
+
+        with self.state.lock:
+            due = [
+                (key, document)
+                for key, document in self._documents().items()
+                # The prefix match is the tenant boundary: keys embed the tenant exactly so
+                # one shared store cannot leak another tenant's refs into a scan.
+                if key.startswith(prefix)
+                and isinstance(document.get("updated_at"), datetime)
+                and document["updated_at"] < idle_since
+            ]
+
+        due.sort(key=lambda entry: entry[1]["updated_at"])
+
+        return [
+            DueCredential(
+                ref=SecretRef(path=key.removeprefix(prefix)),
+                version=SecretVersion(str(document["version"])),
+                last_exchanged_at=document["updated_at"],
+                burnt_reason=document.get("burnt_reason"),
+            )
+            for key, document in due[:limit]
+        ]

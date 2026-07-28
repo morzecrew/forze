@@ -34,11 +34,15 @@ The table is provided by the application; expected schema::
         updated_at   timestamptz NOT NULL,
         PRIMARY KEY (tenant_id, ref)
     );
+    CREATE INDEX ON <relation> (tenant_id, updated_at);
 
-The primary key is the only index the store needs — every access is a point lookup on
-``(tenant_id, ref)``. ``tenant_id`` is part of that key rather than a filter beside it: a
-table keyed on ``ref`` alone would hand one tenant another's grant. An unbound tenant
-stores as the empty string.
+The primary key covers every access *this store* makes — each one a point lookup on
+``(tenant_id, ref)``, with ``tenant_id`` part of the key rather than a filter beside it
+because a table keyed on ``ref`` alone would hand one tenant another's grant. The second
+index belongs to the control plane: :class:`PostgresRotatingCredentialsAdmin` scans by
+idleness (``WHERE tenant_id = … AND updated_at < … ORDER BY updated_at``) to find grants
+whose refresh token is dying of non-use, and that ordering is not answerable from the
+primary key. An unbound tenant stores as the empty string.
 
 ``payload`` holds the credential itself (``access_token``, ``refresh_token``,
 ``metadata``); ``expires_at`` is lifted out as a column so an operator can find grants about
@@ -65,6 +69,7 @@ require_psycopg()
 # ....................... #
 
 import asyncio
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Final, cast, final
 from uuid import UUID
@@ -80,8 +85,10 @@ from forze.application.contracts.secrets import (
     CREDENTIAL_PERSIST_LOST_CODE,
     INVALID_GRANT_CODE,
     CredentialExchangerPort,
+    DueCredential,
     ExchangedCredential,
     RotatingCredential,
+    RotatingCredentialsAdminPort,
     RotatingCredentialStorePort,
     SecretRef,
     SecretVersion,
@@ -887,3 +894,80 @@ class PostgresRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort)
             table = await self._table()
 
             await self._mark_burnt(table, tenant, ref, reason)
+
+
+# ----------------------- #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PostgresRotatingCredentialsAdmin(TenancyMixin, RotatingCredentialsAdminPort):
+    """:class:`RotatingCredentialsAdminPort` over the same table as the store.
+
+    Control plane only: this adapter never opens ``payload``, so it works identically over
+    sealed and plaintext rows and cannot leak a token — the scan reads scheduling columns
+    (``version``, ``burnt_reason``, ``updated_at``) and nothing else.
+
+    The scan orders and filters on ``updated_at``, which the primary key does not cover, so
+    the documented DDL adds one index for this port::
+
+        CREATE INDEX ON <relation> (tenant_id, updated_at);
+
+    ``tenant_id`` leads it because the scan is always tenant-scoped — a fleet sweep is one
+    scan per tenant, so the index prefix matches every query this port ever issues. Without
+    the index the scan still answers correctly by sequential scan, which is tolerable for
+    tens of grants and not for tens of thousands.
+    """
+
+    client: PostgresClientPort
+    """Client the scan reads through. No transaction and no locks — it is a plain SELECT."""
+
+    relation: RelationSpec = attrs.field(converter=coerce_relation_spec)
+    """The store's table. Shared with :class:`PostgresRotatingCredentialStore`, which is
+    the point: the scan surfaces exactly what the store persisted."""
+
+    # ....................... #
+
+    async def due_for_refresh(
+        self,
+        *,
+        idle_since: datetime,
+        limit: int,
+    ) -> Sequence[DueCredential]:
+        if limit < 1:
+            raise exc.precondition(
+                f"due_for_refresh limit must be positive, got {limit}.",
+            )
+
+        tenant: UUID | None = self._tenant_id_for_resolve()
+        table = await resolve_postgres_qname(self.relation, tenant)
+
+        statement = sql.SQL(
+            "SELECT ref, version, burnt_reason, updated_at FROM {table} "
+            "WHERE tenant_id = {tenant} AND updated_at < {cutoff} "
+            "ORDER BY updated_at ASC LIMIT {limit}"
+        ).format(
+            table=table.ident(),
+            tenant=sql.Placeholder("tenant"),
+            cutoff=sql.Placeholder("cutoff"),
+            limit=sql.Placeholder("limit"),
+        )
+
+        rows = await self.client.fetch_all(
+            statement,
+            {
+                "tenant": "" if tenant is None else str(tenant),
+                "cutoff": idle_since,
+                "limit": limit,
+            },
+        )
+
+        return [
+            DueCredential(
+                ref=SecretRef(path=str(row["ref"])),
+                version=SecretVersion(str(row["version"])),
+                last_exchanged_at=cast(datetime, row["updated_at"]),
+                burnt_reason=cast("str | None", row["burnt_reason"]),
+            )
+            for row in rows
+        ]

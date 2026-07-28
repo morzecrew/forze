@@ -33,7 +33,10 @@ from forze.application.integrations.crypto import Keyring
 from forze.base.exceptions import CoreException
 from forze.base.primitives import JsonDict
 from forze_mock import MockKeyManagement
-from forze_postgres.adapters.rotating_credentials import PostgresRotatingCredentialStore
+from forze_postgres.adapters.rotating_credentials import (
+    PostgresRotatingCredentialsAdmin,
+    PostgresRotatingCredentialStore,
+)
 from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 from tests.support.rotating_credentials import (
     EXCHANGE_TIMEOUT,
@@ -68,6 +71,12 @@ async def credentials_table(pg_client: PostgresClient) -> str:
             )
             """
         ).format(table=sql.Identifier("public", table))
+    )
+    # The control-plane scan's documented index — the battery runs against the real DDL.
+    await pg_client.execute(
+        sql.SQL("CREATE INDEX ON {table} (tenant_id, updated_at)").format(
+            table=sql.Identifier("public", table)
+        )
     )
 
     return table
@@ -169,6 +178,11 @@ async def harness(
         store=store,
         counterparty=counterparty,
         tenant=tenant,
+        admin=PostgresRotatingCredentialsAdmin(
+            client=pg_client,
+            relation=("public", credentials_table),
+            tenant_provider=tenant,
+        ),
         break_persist=break_persist,
         stored_payload=stored_payload,
         write_stored_payload=write_stored_payload,

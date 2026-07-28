@@ -310,6 +310,17 @@ sealing on needs no migration: existing plaintext reads through and seals on nex
 `(tenant_id, ref)`, `SELECT … FOR UPDATE`); see the runnable walkthrough in
 `examples/recipes/rotating_credentials/`.
 
+On-demand refresh keeps a grant alive only while something uses it — and providers expire
+refresh tokens from **non-use** (weeks to months, reset by every exchange), so an idle
+tenant's grant dies silently no matter how correct the on-demand path is.
+`CredentialSweeper` closes that gap: a scheduled durable sweep asks the control-plane scan
+(`RotatingCredentialsAdminPort.due_for_refresh`) which grants sit unexchanged past a
+configured idle window and enqueues one refresh run per grant, converging with live
+traffic through the store's own single-flight. Burnt grants come back as a
+`needs_reauthorization` list instead of retries. The idle window is per-provider
+configuration set well inside the documented inactivity limit; see the
+[recipe](../recipes/rotating-oauth-credentials.md#keeping-idle-grants-alive).
+
 ## Leases (dynamic credentials)
 
 Where a backend adopts a lease engine (Vault database engines), short TTLs *are*

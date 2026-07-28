@@ -33,6 +33,7 @@ from forze.testing import context_from_modules
 from forze_mock import (
     MockDepsModule,
     MockKeyManagement,
+    MockRotatingCredentialsAdmin,
     MockRotatingCredentialStore,
     MockState,
 )
@@ -98,6 +99,7 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> RotatingStoreHarness:
         store=store,
         counterparty=counterparty,
         tenant=tenant,
+        admin=MockRotatingCredentialsAdmin(state=state, tenant_provider=tenant),
         break_persist=break_persist,
         stored_payload=stored_payload,
         write_stored_payload=write_stored_payload,

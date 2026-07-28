@@ -44,7 +44,10 @@ from forze.application.contracts.search import (
     HubSearchQueryDepKey,
     SearchQueryDepKey,
 )
-from forze.application.contracts.secrets import RotatingCredentialsDepKey
+from forze.application.contracts.secrets import (
+    RotatingCredentialsAdminDepKey,
+    RotatingCredentialsDepKey,
+)
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
@@ -97,6 +100,7 @@ from .factories import (
     ConfigurablePostgresProcedure,
     ConfigurablePostgresReadOnlyDocument,
     ConfigurablePostgresRotatingCredentials,
+    ConfigurablePostgresRotatingCredentialsAdmin,
     ConfigurablePostgresSearch,
     postgres_txmanager,
 )
@@ -703,6 +707,12 @@ class PostgresDepsModule(DepsModule):
             rotating_credentials_deps = Deps.plain(
                 {
                     RotatingCredentialsDepKey: ConfigurablePostgresRotatingCredentials(
+                        config=self.rotating_credentials
+                    ),
+                    # The control-plane scan rides on the same config: one wiring decision
+                    # covers both planes, and the sweep can never see a different table
+                    # than the store writes.
+                    RotatingCredentialsAdminDepKey: ConfigurablePostgresRotatingCredentialsAdmin(
                         config=self.rotating_credentials
                     ),
                 }

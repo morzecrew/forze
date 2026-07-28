@@ -18,7 +18,8 @@ Postgres store, writes the exchanger, and shows the call pattern.
 ## The table
 
 Provisioning is yours, and the store is deliberately narrow about what it needs — every
-access is a point lookup, so the primary key is the only index:
+access the *store* makes is a point lookup on the primary key. The second index serves the
+control-plane idleness scan (see [keeping idle grants alive](#keeping-idle-grants-alive)):
 
 ```sql
 CREATE TABLE rotating_credentials (
@@ -32,6 +33,7 @@ CREATE TABLE rotating_credentials (
     updated_at   timestamptz NOT NULL,
     PRIMARY KEY (tenant_id, ref)
 );
+CREATE INDEX ON rotating_credentials (tenant_id, updated_at);
 ```
 
 `tenant_id` is part of the key rather than a filter beside it — a table keyed on `ref`
@@ -151,12 +153,56 @@ the alternative risks losing the whole family.
 `credential_persist_lost` is the outcome worth wiring an alert to. It is rare, it is
 logged at critical, and it always means one specific thing: a human has to re-consent.
 
+## Keeping idle grants alive
+
+On-demand refresh has a blind spot that no amount of on-demand logic can close: providers
+expire a refresh token after a period of **non-use** — Google after six months, many
+providers after 30–90 days — and the clock is reset by every exchange. A tenant with no
+traffic never triggers a refresh, so its grant dies silently and permanently, and the next
+real request finds a credential only a human can restore.
+
+Two clocks, two mechanisms. `expires_at` is the *access token's* clock and drives
+on-demand refresh. The refresh token's clock is idleness, and it is what
+`CredentialSweeper` watches:
+
+```python
+from forze_kits.integrations.secrets import CredentialSweeper
+
+sweeper = CredentialSweeper(
+    # Set well inside the provider's documented inactivity window, with margin —
+    # a missed sweep pass must not be fatal.
+    refresh_if_idle_for=timedelta(days=30),
+)
+sweeper.register(durable_registry)
+
+# Daily is almost always right: the idle window is weeks, the cadence just has to be
+# dense enough that missing a couple of passes still lands well inside it.
+await sweeper.ensure_cron(ctx, cron="0 4 * * *")
+```
+
+Each pass asks the control-plane scan (`RotatingCredentialsAdminPort.due_for_refresh`,
+registered automatically beside the store) which grants sit unexchanged past the window,
+oldest first, and enqueues **one durable refresh run per grant** — a dead provider costs
+one failing run, never a stalled sweep. The runs call the same `refresh(observed=…)` as
+live traffic with the version the scan saw, so a concurrent on-demand refresh converges to
+one exchange instead of two; safety comes from the store, not from the sweeper.
+
+Burnt grants show up in the sweep's result under `needs_reauthorization` rather than being
+retried — "these N tenants need a human" is a queryable fact, not an alert someone may
+have missed. Multi-tenant fleets drive the same sweep per tenant with
+`sweeper.enqueue_tenants(...)`.
+
+The idle window is per-provider **configuration**: an inactivity limit is a fact about
+their product, and probing for it would spend a token. When in doubt, halve the documented
+window.
+
 ## Trust but verify
 
 Every store implementation runs the same conformance battery, and the Postgres store runs
 it against a live database — including a failure injected at the write *and* one injected
 at the commit, a two-connection race proving `FOR UPDATE` serializes across processes rather
-than only across coroutines, and the at-rest legs: tokens unreadable on disk, a row lifted
+than only across coroutines, the idleness-scan legs (an exchange resets the clock, the
+scan is bounded, oldest first and tenant-scoped, burnt grants reported), and the at-rest legs: tokens unreadable on disk, a row lifted
 across refs or tenants refused by the AAD, and a legacy plaintext row still readable. If you implement the port over another backend, run that
 battery: the properties it checks are the reason the contract exists, and an
 implementation that stores documents correctly while getting the ordering wrong is not one.

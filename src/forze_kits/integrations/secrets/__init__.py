@@ -7,6 +7,13 @@ Posture throughout: **signals accelerate, the TTL floor guarantees.**
 """
 
 from .binder import SecretsHotReloadBinder
+from .credential_sweep import (
+    REFRESH_FUNCTION_NAME,
+    SWEEP_FUNCTION_NAME,
+    CredentialSweeper,
+    SweepInput,
+    SweepRefreshInput,
+)
 from .file_source import DirectorySecretsChangeSource
 from .lease_manager import SecretsLeaseManager
 from .notify import (
@@ -35,7 +42,12 @@ __all__ = [
     "DirectorySecretsChangeSource",
     "PubSubSecretsChangeSource",
     "RotationInput",
+    "REFRESH_FUNCTION_NAME",
+    "SWEEP_FUNCTION_NAME",
+    "CredentialSweeper",
     "SecretRotator",
+    "SweepInput",
+    "SweepRefreshInput",
     "SecretsHotReloadBinder",
     "SecretsLeaseManager",
     "SecretsPollWatcher",

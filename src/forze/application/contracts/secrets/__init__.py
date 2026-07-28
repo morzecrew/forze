@@ -20,6 +20,7 @@ from .changes import (
     SecretsChangeSource,
 )
 from .deps import (
+    RotatingCredentialsAdminDepKey,
     RotatingCredentialsDepKey,
     SecretsAdminDepKey,
     SecretsDepKey,
@@ -39,8 +40,10 @@ from .rotating import (
     CREDENTIAL_PERSIST_LOST_CODE,
     INVALID_GRANT_CODE,
     CredentialExchangerPort,
+    DueCredential,
     ExchangedCredential,
     RotatingCredential,
+    RotatingCredentialsAdminPort,
     RotatingCredentialStorePort,
 )
 from .rotation import PendingCredential, RotationTargetPort
@@ -92,6 +95,8 @@ __all__ = [
     "DynamicSecretsPort",
     "LeasedSecret",
     # counterparty-rotated credentials
+    "DueCredential",
+    "RotatingCredentialsAdminDepKey",
     "RotatingCredentialsDepKey",
     "BURNT_CREDENTIAL_CODE",
     "CREDENTIAL_EXCHANGE_TIMEOUT_CODE",
@@ -100,5 +105,6 @@ __all__ = [
     "CredentialExchangerPort",
     "ExchangedCredential",
     "RotatingCredential",
+    "RotatingCredentialsAdminPort",
     "RotatingCredentialStorePort",
 ]
