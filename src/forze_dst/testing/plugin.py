@@ -5,12 +5,15 @@ Enable it in your ``conftest.py``::
     pytest_plugins = ["forze_dst.testing.plugin"]
 
 The :func:`~forze_dst.testing.assert_no_violation` helper works **without** this plugin — it is
-a plain assertion. The plugin adds two things on top:
+a plain assertion. The plugin adds three things on top:
 
 * ``--dst-seeds=N`` (or ini ``dst_seeds``) — override every sweep's seed count, so one test runs
   quick locally and exhaustive in CI with no code change.
 * the ``dst`` marker — tag DST tests (``@pytest.mark.dst``) so a suite can select or skip them
   (``pytest -m dst`` / ``-m "not dst"``), e.g. to run the heavy ones nightly only.
+* a **clean-run verdict summary** — after the run, one line per clean scenario sweep stating the
+  exact exclusion bound it established (``0 violations in N seeds → per-seed detection
+  probability < …``) instead of leaving green as an empty claim.
 
 It is **not** auto-loaded: importing the DST package costs roughly a third of a second, so it
 stays off until a project opts in rather than taxing every pytest session.
@@ -20,7 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from forze_dst.testing._options import DstOptions, set_active
+from forze_dst.testing._options import DstOptions, drain_clean_sweeps, set_active
 
 # ----------------------- #
 
@@ -75,6 +78,30 @@ def pytest_configure(config: Any) -> None:
     save_bundle = config.getoption("--dst-save-bundle") or config.getini("dst_save_bundle")
 
     set_active(DstOptions(seeds=seeds, save_bundle=save_bundle or None))
+
+
+# ....................... #
+
+
+def pytest_terminal_summary(terminalreporter: Any) -> None:
+    """Print one quantitative verdict line per clean scenario sweep the session ran.
+
+    Each line is scoped to its own test (scenario × strategy × oracle set) — the bounds are never
+    aggregated across tests, because a combined number would claim more than any single sweep
+    established.
+    """
+
+    records = drain_clean_sweeps()
+    if not records:
+        return
+
+    # Local import: the DST facade is heavy (~⅓ s), and a record existing means the helper
+    # already loaded it — an empty session never pays the cost.
+    from forze_dst.stats import format_clean_verdict
+
+    terminalreporter.write_sep("-", "DST clean-run verdicts")
+    for record in records:
+        terminalreporter.write_line(f"{record.label}: {format_clean_verdict(record.runs)}")
 
 
 # ....................... #

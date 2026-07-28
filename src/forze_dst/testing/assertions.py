@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from pathlib import Path
 
 import attrs
 
 from forze_dst.artifacts import FailureBundle, bundle_from_report, config_from_dict
-from forze_dst.config import SimulationConfig
+from forze_dst.config import SimulationConfig, Strategy
 from forze_dst.engines.cases import OperationCase
 from forze_dst.harness import Simulation
 from forze_dst.oracle import ViolationReport
 from forze_dst.scenario import Scenario
-from forze_dst.testing._options import DstOptions, active
+from forze_dst.testing._options import CleanSweep, DstOptions, active, record_clean_sweep
 
 # ----------------------- #
 
@@ -66,6 +67,22 @@ def assert_no_violation(
             _save_bundle(report, cfg, options.save_bundle)
 
         raise AssertionError("DST found a violation:\n" + report.format())
+
+    # Clean → record for the plugin's terminal-summary verdict line. Scenario strategy only: the
+    # other strategies explore interleavings/examples, not independent seeds, so a per-seed
+    # exclusion bound would be dishonest there (same rule as the CLI clean path).
+    if options is not None and cfg.strategy is Strategy.SCENARIO:
+        record_clean_sweep(CleanSweep(label=_current_test_label(), runs=len(cfg.seeds)))
+
+
+# ....................... #
+
+
+def _current_test_label(default: str = "assert_no_violation") -> str:
+    """The running test's id (pytest exports it in ``PYTEST_CURRENT_TEST``), stage suffix stripped."""
+
+    current = os.environ.get("PYTEST_CURRENT_TEST", "")
+    return current.rsplit(" (", 1)[0] if current else default
 
 
 # ....................... #
@@ -162,8 +179,6 @@ def _is_self_replayable(config: SimulationConfig) -> bool:
     ``HYPOTHESIS`` / ``DPOR``, and crash runs). False for ``OP_CASE``, whose workload is the
     caller's ``cases=`` — never stored in a bundle, so dispatch would raise on replay.
     """
-
-    from forze_dst.config import Strategy
 
     return config.strategy is not Strategy.OP_CASE
 
