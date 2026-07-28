@@ -65,15 +65,15 @@ class PaymentRead(ReadDocument):
 
 
 class Reservation(Document):
-    user: int
+    guest: int
 
 
 class ReservationCreate(CreateDocumentCmd):
-    user: int
+    guest: int
 
 
 class ReservationRead(ReadDocument):
-    user: int
+    guest: int
 
 
 ORDER_SPEC = DocumentSpec(
@@ -101,7 +101,7 @@ class PayCmd(BaseModel):
 
 
 class ReserveCmd(BaseModel):
-    user: int
+    guest: int
 
 
 # ....................... #
@@ -188,11 +188,11 @@ class _ReserveCheckThenAct(Handler[ReserveCmd, None]):
         # MUTANT (T5 check_then_act): an unguarded read-check-write — two concurrent reservers
         # both see zero and both insert (TOCTOU over the aggregate).
         count = await self.ctx.document.query(RESERVATION_SPEC).count(
-            {"$values": {"user": args.user}}
+            {"$values": {"guest": args.guest}}
         )
         if count == 0:
             await self.ctx.document.command(RESERVATION_SPEC).create(
-                ReservationCreate(user=args.user)
+                ReservationCreate(guest=args.guest)
             )
 
 
@@ -205,7 +205,7 @@ class _ReserveUniqueKey(Handler[ReserveCmd, None]):
     async def __call__(self, args: ReserveCmd) -> None:
         try:
             await self.ctx.document.command(RESERVATION_SPEC).create(
-                ReservationCreate(user=args.user), id=UUID(int=args.user)
+                ReservationCreate(guest=args.guest), id=UUID(int=args.guest)
             )
         except CoreException as error:
             if error.kind is not ExceptionKind.CONFLICT:
@@ -223,7 +223,7 @@ _PAY_SCENARIO = Scenario(
 )
 _RESERVE_SCENARIO = Scenario(
     state=ModelState,
-    act=(Rule(op="reserve", arg=lambda _state, _rng: ReserveCmd(user=USER)),),
+    act=(Rule(op="reserve", arg=lambda _state, _rng: ReserveCmd(guest=USER)),),
 )
 
 
@@ -273,7 +273,7 @@ def _reserve_case(handler_factory) -> MisuseCase:  # type: ignore[no-untyped-def
     ).freeze()
 
     async def observe(ctx: ExecutionContext) -> None:
-        total = await ctx.document.query(RESERVATION_SPEC).count({"$values": {"user": USER}})
+        total = await ctx.document.query(RESERVATION_SPEC).count({"$values": {"guest": USER}})
         record_event("reservations", total=total)
 
     return MisuseCase(

@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Isolation battery: Adya labels + low-end completion** — every `AnomalyCase` carries new `adya` and `berenson` fields; two new cases, `dirty_write` (G0) and `intermediate_read` (G1b), prevented at every level on all conformance backends.
 - **Fidelity matrix** — new `forze_dst.conformance` report surface (`CellVerdict`, `collect_verdicts`, `FidelityMatrix.pair`, `Classification`, `write_matrix`, `render_markdown`): mock↔real verdict agreement as a durable artifact split by divergence direction; unexplained divergence fails the differential. `just dst-fidelity` regenerates `pages/docs/dst/_generated/fidelity.{json,md}`.
 - **Contract-misuse corpus schema** — new `forze_dst.misuse` (`MisuseMutant`, `MisuseControl`, `MisuseCase`, `MisuseFamily`, `TransferTier`, `GroundTruth`): known-bug twins with replayable killing seeds and depth labels, plus known-correct negative controls, as reviewed registry data.
+- **Corpus transfer seam** — new `forze_dst.conformance.transfer` (`TransferScript`, `run_transfer`, `TransferRecord`, `Detection`, `TransferClassification`, `divergences`, `write_transfer`): run a corpus instance on the mock and a real backend and compare bug verdicts, divergences split by direction.
 
 ## [0.5.1] - 2026-07-25
 

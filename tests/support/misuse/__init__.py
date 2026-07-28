@@ -16,7 +16,13 @@ suffices). Mechanical depth extraction (1-minimal choice vectors) lands with the
 from __future__ import annotations
 
 from forze_dst.artifacts.corpus import RegressionEntry
-from forze_dst.misuse import MisuseControl, MisuseFamily, MisuseMutant, TransferTier
+from forze_dst.misuse import (
+    GroundTruth,
+    MisuseControl,
+    MisuseFamily,
+    MisuseMutant,
+    TransferTier,
+)
 
 # ----------------------- #
 
@@ -75,6 +81,7 @@ CORPUS: tuple[MisuseMutant, ...] = (
         depth_evidence=_D2_EVIDENCE,
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
     ),
     MisuseMutant(
         mutant_id="T2-charge-before-guard",
@@ -116,6 +123,7 @@ CORPUS: tuple[MisuseMutant, ...] = (
         depth_evidence=_D2_EVIDENCE,
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
     ),
     MisuseMutant(
         mutant_id="T5-unchecked-reservation",
@@ -127,7 +135,7 @@ CORPUS: tuple[MisuseMutant, ...] = (
         expected_invariants=("expect",),
         killing=_kill(
             "tests.support.misuse.transactions:t5_unchecked_reservation",
-            fingerprint="sha256:292b6f3408a7231c3191a6acbc43241c6cd45797c6ace987e120afac0e206ca0",
+            fingerprint="sha256:e36af77a168eae1f093ae2ca7aa7602723dadaa054f4f34c0fddc489a9a93642",
             invariants=("expect",),
             explore=_CONCURRENT,
         ),
@@ -135,6 +143,7 @@ CORPUS: tuple[MisuseMutant, ...] = (
         depth_evidence=_D2_EVIDENCE,
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
     ),
     MisuseMutant(
         mutant_id="I1-retry-without-key",
@@ -154,6 +163,7 @@ CORPUS: tuple[MisuseMutant, ...] = (
         depth_evidence=_D1_EVIDENCE,
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
         notes="Transfer is a plain re-invocation — no forced interleaving needed.",
     ),
     MisuseMutant(
@@ -174,6 +184,7 @@ CORPUS: tuple[MisuseMutant, ...] = (
         depth_evidence=_D1_EVIDENCE,
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
         notes="Transfer is a plain re-delivery — no forced interleaving needed.",
     ),
 )
