@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, final
 import attrs
 
 from forze_dst.oracle.recorder import History
+from forze_dst.stats import format_clean_verdict
 
 if TYPE_CHECKING:
     from forze_dst.oracle import ViolationReport
@@ -198,5 +199,7 @@ class CoverageStats:
         if self.violation is not None:
             names = ", ".join(sorted({v.invariant for v in self.violation.violations}))
             lines.append(f"  ✗ violation at seed {self.violation.seed}: {names}")
+        elif self.seeds_run > 0:
+            lines.append(f"  ✓ {format_clean_verdict(self.seeds_run)}")
 
         return "\n".join(lines)

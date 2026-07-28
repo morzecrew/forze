@@ -57,6 +57,15 @@ from .realtime import (
     RealtimeBridge,
     run_gateway_crash_delivery,
 )
+from .report import (
+    CellVerdict,
+    Classification,
+    FidelityMatrix,
+    MatrixCell,
+    collect_verdicts,
+    render_markdown,
+    write_matrix,
+)
 
 # ----------------------- #
 
@@ -64,6 +73,13 @@ __all__ = [
     "AnomalyCase",
     "BATTERY",
     "expected_verdict",
+    "CellVerdict",
+    "Classification",
+    "FidelityMatrix",
+    "MatrixCell",
+    "collect_verdicts",
+    "render_markdown",
+    "write_matrix",
     "ConformanceBackend",
     "Verdict",
     "is_serialization_conflict",

@@ -115,5 +115,5 @@ def run_coverage(
         plateaued=plateaued,
         violation=violation,
         reachability=reachability,
-        confidence=probe.report(faults=config.faults),
+        confidence=probe.report(faults=config.faults, violations=0 if violation is None else 1),
     )

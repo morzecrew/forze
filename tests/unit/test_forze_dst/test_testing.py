@@ -20,7 +20,14 @@ from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig
 from forze_dst.invariants import expect, operation_succeeds
 from forze_dst.markers import record_event
 from forze_dst.testing import assert_no_regressions, assert_no_violation, plugin
-from forze_dst.testing._options import DstOptions, active, set_active
+from forze_dst.testing._options import (
+    CleanSweep,
+    DstOptions,
+    active,
+    drain_clean_sweeps,
+    record_clean_sweep,
+    set_active,
+)
 from forze_dst.testing.assertions import _resolve_config
 from forze_mock import MockDepsModule
 
@@ -208,6 +215,104 @@ class TestSeedOverride:
             assert_no_violation(_clean_sim(), scenario=_MAKE_SCENARIO)
         finally:
             set_active(None)
+
+
+class TestCleanRunVerdicts:
+    """A clean scenario sweep under the plugin records its exclusion bound for the summary."""
+
+    def test_clean_scenario_sweep_records_under_the_plugin(self) -> None:
+        set_active(DstOptions())
+        try:
+            assert_no_violation(_clean_sim(), SimulationConfig.quick(), scenario=_MAKE_SCENARIO)
+            records = drain_clean_sweeps()
+        finally:
+            set_active(None)
+
+        (record,) = records
+        assert record.runs == len(SimulationConfig.quick().seeds)
+        # The label is this very test (pytest exports PYTEST_CURRENT_TEST), stage suffix stripped.
+        assert record.label.endswith("test_clean_scenario_sweep_records_under_the_plugin")
+        assert "(call)" not in record.label
+
+    def test_no_recording_without_the_plugin(self) -> None:
+        set_active(None)  # plugin not enabled → the helper stays a plain assertion
+
+        assert_no_violation(_clean_sim(), SimulationConfig.quick(), scenario=_MAKE_SCENARIO)
+
+        assert drain_clean_sweeps() == ()
+
+    def test_violation_records_nothing(self) -> None:
+        set_active(DstOptions())
+        try:
+            with pytest.raises(AssertionError, match="lost deposit"):
+                assert_no_violation(
+                    _racy_sim(),
+                    SimulationConfig(seeds=range(40), act_count=6, concurrency=6),
+                    scenario=_DEPOSIT_SCENARIO,
+                )
+            assert drain_clean_sweeps() == ()
+        finally:
+            set_active(None)
+
+    def test_zero_seed_sweep_records_nothing(self) -> None:
+        # ``--dst-seeds=0`` runs an empty sweep: it establishes nothing, and a runs=0 record
+        # would make the summary's bound undefined — so it must not be recorded at all.
+        set_active(DstOptions(seeds=0))
+        try:
+            assert_no_violation(_clean_sim(), scenario=_MAKE_SCENARIO)
+            assert drain_clean_sweeps() == ()
+        finally:
+            set_active(None)
+
+    def test_set_active_resets_stale_records(self) -> None:
+        # A new session (configure) must not inherit a previous in-process session's verdicts.
+        record_clean_sweep(CleanSweep(label="stale", runs=10))
+
+        set_active(DstOptions())
+        try:
+            assert drain_clean_sweeps() == ()
+        finally:
+            set_active(None)
+
+    def test_terminal_summary_prints_one_scoped_line_per_sweep(self) -> None:
+        class _Reporter:
+            def __init__(self) -> None:
+                self.lines: list[str] = []
+
+            def write_sep(self, sep: str, title: str) -> None:
+                self.lines.append(title)
+
+            def write_line(self, line: str) -> None:
+                self.lines.append(line)
+
+        record_clean_sweep(CleanSweep(label="test_a", runs=1000))
+        record_clean_sweep(CleanSweep(label="test_b", runs=20))
+        reporter = _Reporter()
+
+        plugin.pytest_terminal_summary(reporter)
+
+        assert reporter.lines[0] == "DST clean-run verdicts"
+        assert reporter.lines[1].startswith("test_a: 0 violations in 1000 seeds")
+        assert "< 0.30%" in reporter.lines[1]
+        assert reporter.lines[2].startswith("test_b: 0 violations in 20 seeds")
+        # Drained: a second summary (or the next session) starts empty.
+        assert drain_clean_sweeps() == ()
+
+    def test_terminal_summary_is_silent_with_no_records(self) -> None:
+        class _Reporter:
+            def __init__(self) -> None:
+                self.lines: list[str] = []
+
+            def write_sep(self, sep: str, title: str) -> None:
+                self.lines.append(title)
+
+            def write_line(self, line: str) -> None:
+                self.lines.append(line)
+
+        reporter = _Reporter()
+        plugin.pytest_terminal_summary(reporter)
+
+        assert reporter.lines == []
 
 
 class TestPluginHooks:

@@ -28,17 +28,55 @@ class DstOptions:
 
 # ....................... #
 
+
+@attrs.define(frozen=True, kw_only=True, slots=True)
+class CleanSweep:
+    """One clean sweep the session ran: which test, and how many seeds came back clean.
+
+    The raw material for the terminal-summary verdict lines — the *count* is recorded here (this
+    module stays import-light); the exclusion bound is computed at render time by the plugin.
+    """
+
+    label: str
+    """The pytest test id the sweep ran under (or the helper's name when unknown)."""
+
+    runs: int
+    """How many seeds the clean sweep ran."""
+
+
+# ....................... #
+
 _ACTIVE: DstOptions | None = None
+_CLEAN_SWEEPS: list[CleanSweep] = []
 
 
 def set_active(options: DstOptions | None) -> None:
-    """Install (or clear) the session's options — called by the plugin's configure hooks."""
+    """Install (or clear) the session's options — called by the plugin's configure hooks.
+
+    Either way the clean-sweep records reset: a new session must not inherit a previous
+    in-process session's verdicts (pytester-style nested runs), and unconfigure leaves nothing.
+    """
 
     global _ACTIVE
     _ACTIVE = options  # pyright: ignore[reportConstantRedefinition]
+    _CLEAN_SWEEPS.clear()
 
 
 def active() -> DstOptions | None:
     """The current session's options, or ``None`` when the plugin is not enabled."""
 
     return _ACTIVE
+
+
+def record_clean_sweep(record: CleanSweep) -> None:
+    """Append one clean sweep for the session's terminal summary (helper-side)."""
+
+    _CLEAN_SWEEPS.append(record)
+
+
+def drain_clean_sweeps() -> tuple[CleanSweep, ...]:
+    """The session's recorded clean sweeps, clearing the buffer (summary-side, called once)."""
+
+    records = tuple(_CLEAN_SWEEPS)
+    _CLEAN_SWEEPS.clear()
+    return records

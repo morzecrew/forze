@@ -10,8 +10,10 @@ deviate from the textbook is a reviewed, justified strengthening.
 
 The cases span every level boundary Forze models:
 
-- ``dirty_read`` must be prevented at every level (no transaction observes an uncommitted write) —
-  the case that drove the mock's faithful read-committed isolation;
+- ``dirty_write``, ``dirty_read``, and ``intermediate_read`` (the Adya low-end G0/G1a/G1b) must be
+  prevented at every level — interleaved uncommitted writes must never mix, no transaction observes
+  an uncommitted later-rolled-back write (the case that drove the mock's faithful read-committed
+  isolation), and no transaction observes a middle version of a multi-write transaction;
 - ``non_repeatable_read``, ``read_skew``, and ``phantom`` discriminate READ_COMMITTED from SNAPSHOT
   (``phantom`` is the predicate analogue — a re-run scan seeing a concurrent insert, not a re-read row);
 - ``write_skew``, ``predicate_write_skew``, and ``read_only_anomaly`` discriminate SNAPSHOT from
@@ -20,6 +22,32 @@ The cases span every level boundary Forze models:
   read-only transaction;
 - ``lost_update`` documents the rev-OCC strengthening (prevented at every level, vs the textbook
   permitting it under READ_COMMITTED).
+
+Every case carries its phenomenon label (:attr:`AnomalyCase.adya` — the primary key, the vocabulary
+Adya/Elle/Jepsen speak — and :attr:`AnomalyCase.berenson`, the legacy ANSI name people search for).
+The reviewed mapping::
+
+    case                    adya       legacy / note
+    ----------------------  ---------  ---------------------------------------------
+    dirty_write             G0         P0 (dirty write)
+    dirty_read              G1a        P1 — the aborted-read shape: the writer rolls
+                                       back and the reader commits, so G1a's owner
+    intermediate_read       G1b        P1 (intermediate version)
+    non_repeatable_read     G-single   P2 (fuzzy read; item-level rw/wr cycle)
+    read_skew               G-single   A5A (read skew)
+    phantom                 PMP        P3 (predicate re-scan)
+    lost_update             G-single   P4 (rw/ww cycle; rev-OCC strengthening)
+    write_skew              G2-item    A5B (write skew)
+    predicate_write_skew    G2         A5B, predicate variant (phantom conflict)
+    read_only_anomaly       G2         Fekete et al. 2004 (3-txn, no ANSI name)
+    fresh_read_update       —          probe: RC write-path freshness
+    duplicate_key_insert    —          probe: unique-constraint race
+    for_update_lost_update  —          probe: explicit-lock lost update
+
+``—`` marks a *probe* — a case pinning a strengthening or mechanism rather than instantiating a
+G-phenomenon. G1c (circular information flow), general G2 cycles over arbitrary histories, and OTV
+need history-cycle detection (Elle-adjacent machinery), not a fixed 2–3 session schedule, and are
+deliberately absent — a documented boundary, not an oversight.
 
 The forced interleaving assumes an **abort-based** engine (snapshot/serializable that aborts the
 loser, like the mock, Postgres, and Mongo): a participant either proceeds or aborts, never blocks. A
@@ -106,6 +134,16 @@ class AnomalyCase:
 
     run: Callable[[ConformanceBackend, IsolationLevel], Awaitable[Verdict]]
     """Run the interleaving against a backend at a level; return the observed verdict."""
+
+    adya: str
+    """The Adya G-phenomenon this case instantiates (``"G0"``, ``"G1a"``, ``"G-single"``,
+    ``"G2-item"``, …) — the primary label, the vocabulary Adya/Elle/Jepsen speak. ``"—"`` marks a
+    *probe*: a case pinning a strengthening or mechanism rather than a phenomenon (see the module
+    docstring's mapping table)."""
+
+    berenson: str | None = None
+    """The legacy ANSI/Berenson name (``"P1 (dirty read)"``, ``"A5A (read skew)"``, …) — kept as an
+    alias because it is the vocabulary practitioners search for. ``None`` where no ANSI name exists."""
 
     abort_engine_only: bool = False
     """This case races for a resource one participant holds, so the **vanilla** one-at-a-time
@@ -397,6 +435,49 @@ async def _run_dirty_read(
 
     # A dirty read = the reader observed the writer's uncommitted, later-rolled-back value (99).
     return _PERMIT if seen.get("value") == 99 else _PREVENT
+
+
+# ....................... #
+# Intermediate read (G1b): a transaction updates the same row twice; a concurrent reader must never
+# observe the middle version — only the initial committed value (the reader runs before the writer's
+# commit, so the final version is out of reach here). A write-through engine exposes the first
+# write's value inside the window; MVCC (mock overlay, real last-committed reads) shows the initial
+# value. The reader COMMITS having read, completing the formal G1b shape.
+
+
+async def _run_intermediate_read(
+    backend: ConformanceBackend,
+    level: IsolationLevel,
+) -> Verdict:
+    sessions = backend.contexts(2)
+    writer, reader = sessions[0], sessions[1]
+    scope = backend.scope_name
+
+    async with writer.tx_ctx.scope(scope):
+        cid = (await writer.document.command(CELL).create(CellCreate(value=0))).id
+
+    seen: dict[str, int] = {}
+
+    async def write_twice(gate: Gate) -> None:
+        async with writer.tx_ctx.scope(scope, isolation=level):
+            first = await writer.document.query(CELL).get(cid)
+            await writer.document.command(CELL).update(cid, first.rev, CellUpdate(value=1))
+            await gate.checkpoint()  # the intermediate version (1) exists, uncommitted
+            # Re-read own write for the fresh rev (in-transaction read-your-writes).
+            middle = await writer.document.query(CELL).get(cid)
+            await writer.document.command(CELL).update(cid, middle.rev, CellUpdate(value=2))
+
+    async def read_during_window(gate: Gate) -> None:
+        await gate.checkpoint()
+        async with reader.tx_ctx.scope(scope, isolation=level):
+            seen["value"] = (await reader.document.query(CELL).get(cid)).value
+
+    await Conductor(schedule=("reader", "writer")).run(
+        {"writer": write_twice, "reader": read_during_window}
+    )
+
+    # G1b = the reader observed the intermediate version (1); the clean read is the initial 0.
+    return _PERMIT if seen.get("value") == 1 else _PREVENT
 
 
 # ....................... #
@@ -848,56 +929,185 @@ async def _run_for_update_lost_update(
 
 
 # ....................... #
+# Dirty write (G0): two transactions blind-write the same two rows in the interleaved order
+# w1[x] w2[x] w2[y] w1[y]. Prevented at every level by every real engine — a lock-based engine
+# blocks the second writer on the first's uncommitted row (then proceeds or serialization-aborts);
+# an MVCC engine buffers each transaction's writes and publishes them atomically at commit (or
+# aborts one on write-write conflict) — so the final (x, y) pair always comes from ONE writer. A
+# write-through engine without row locks interleaves them (x from one writer, y from the other) —
+# the anomaly. Blind writes via ``update_matching`` (no rev guard) isolate the dirty-write
+# protection itself, exactly as the FOR UPDATE case does; the holder's uncommitted write to x is
+# the contested resource, so this runs through the block-aware ``_drive_lock_race`` driver.
+
+_DIRTY_WRITE_VALUES = {"holder": 1, "contender": 2}
+
+
+def _dirty_write_session(
+    ctx: ExecutionContext,
+    *,
+    x: UUID,
+    y: UUID,
+    value: int,
+    level: IsolationLevel,
+    scope: str,
+    outcomes: dict[str, str],
+    name: str,
+    is_holder: bool,
+) -> Session:
+    async def session(gate: Gate) -> None:
+        if not is_holder:
+            await gate.checkpoint()  # start gate: let the holder write x first
+        async with record_outcome(outcomes, name), ctx.tx_ctx.scope(scope, isolation=level):
+            if not is_holder:
+                # The blind UPDATE of x blocks on the holder's uncommitted row (Postgres) or
+                # buffers (mock); announce it so the driver commits the holder to release it.
+                await gate.arrive_blocking()
+            await ctx.document.command(CELL).update_matching(
+                {"$values": {"id": {"$eq": x}}},
+                CellUpdate(value=value),
+                return_new=False,
+            )
+            if is_holder:
+                await gate.checkpoint()  # x written, uncommitted — hold while the contender writes
+            await ctx.document.command(CELL).update_matching(
+                {"$values": {"id": {"$eq": y}}},
+                CellUpdate(value=value),
+                return_new=False,
+            )
+
+    return session
+
+
+async def _run_dirty_write(backend: ConformanceBackend, level: IsolationLevel) -> Verdict:
+    sessions = backend.contexts(2)
+    holder_ctx, contender_ctx = sessions[0], sessions[1]
+    scope = backend.scope_name
+
+    async with holder_ctx.tx_ctx.scope(scope):
+        command = holder_ctx.document.command(CELL)
+        x = (await command.create(CellCreate(value=0))).id
+        y = (await command.create(CellCreate(value=0))).id
+
+    outcomes: dict[str, str] = {}
+    await _drive_lock_race(
+        _dirty_write_session(
+            holder_ctx,
+            x=x,
+            y=y,
+            value=_DIRTY_WRITE_VALUES["holder"],
+            level=level,
+            scope=scope,
+            outcomes=outcomes,
+            name="holder",
+            is_holder=True,
+        ),
+        _dirty_write_session(
+            contender_ctx,
+            x=x,
+            y=y,
+            value=_DIRTY_WRITE_VALUES["contender"],
+            level=level,
+            scope=scope,
+            outcomes=outcomes,
+            name="contender",
+            is_holder=False,
+        ),
+    )
+
+    async with holder_ctx.tx_ctx.scope(scope):
+        query = holder_ctx.document.query(CELL)
+        final_x = (await query.get(x)).value
+        final_y = (await query.get(y)).value
+
+    # G0 = the writes interleaved: the final pair mixes the two writers (x from one, y from the
+    # other). Any consistent pair — both from one writer, or untouched after aborts — is prevention.
+    return _PERMIT if final_x != final_y else _PREVENT
+
+
+# ....................... #
 
 
 BATTERY: tuple[AnomalyCase, ...] = (
+    AnomalyCase(
+        name="dirty_write",
+        summary="Two transactions' blind writes to the same rows interleave (w1[x] w2[x] w2[y] w1[y]).",
+        contract={_RC: _PREVENT, _SI: _PREVENT, _SER: _PREVENT},
+        run=_run_dirty_write,
+        adya="G0",
+        berenson="P0 (dirty write)",
+        abort_engine_only=True,
+    ),
     AnomalyCase(
         name="dirty_read",
         summary="A transaction reads another transaction's uncommitted (later rolled-back) write.",
         contract={_RC: _PREVENT, _SI: _PREVENT, _SER: _PREVENT},
         run=_run_dirty_read,
+        adya="G1a",
+        berenson="P1 (dirty read)",
+    ),
+    AnomalyCase(
+        name="intermediate_read",
+        summary="A transaction updates a row twice; a concurrent reader observes the middle version.",
+        contract={_RC: _PREVENT, _SI: _PREVENT, _SER: _PREVENT},
+        run=_run_intermediate_read,
+        adya="G1b",
+        berenson="P1 (intermediate version)",
     ),
     AnomalyCase(
         name="non_repeatable_read",
         summary="A transaction reads a row twice and sees a concurrent commit between the reads.",
         contract={_RC: _PERMIT, _SI: _PREVENT, _SER: _PREVENT},
         run=_run_non_repeatable_read,
+        adya="G-single",
+        berenson="P2 (fuzzy read)",
     ),
     AnomalyCase(
         name="read_skew",
         summary="A transaction reads one row old and a related row new (inconsistent cross-item read).",
         contract={_RC: _PERMIT, _SI: _PREVENT, _SER: _PREVENT},
         run=_run_read_skew,
+        adya="G-single",
+        berenson="A5A (read skew)",
     ),
     AnomalyCase(
         name="phantom",
         summary="A predicate scan run twice sees a row a concurrent transaction inserted between.",
         contract={_RC: _PERMIT, _SI: _PREVENT, _SER: _PREVENT},
         run=_run_phantom,
+        adya="PMP",
+        berenson="P3 (phantom)",
     ),
     AnomalyCase(
         name="write_skew",
         summary="Disjoint writes on an overlapping read set break a cross-item invariant.",
         contract={_RC: _PERMIT, _SI: _PERMIT, _SER: _PREVENT},
         run=_run_write_skew,
+        adya="G2-item",
+        berenson="A5B (write skew)",
     ),
     AnomalyCase(
         name="predicate_write_skew",
         summary="Two predicate scans each insert a matching row, together breaking a predicate invariant.",
         contract={_RC: _PERMIT, _SI: _PERMIT, _SER: _PREVENT},
         run=_run_predicate_write_skew,
+        adya="G2",
+        berenson="A5B (predicate variant)",
     ),
     AnomalyCase(
         name="read_only_anomaly",
         summary="A read-only transaction observes a 3-transaction state no serial order admits (SI only).",
         contract={_RC: _PERMIT, _SI: _PERMIT, _SER: _PREVENT},
         run=_run_read_only_anomaly,
+        adya="G2",
+        berenson=None,
     ),
     AnomalyCase(
         name="lost_update",
         summary="Two transactions read then write the same row; one update would be lost.",
         contract={_RC: _PERMIT, _SI: _PREVENT, _SER: _PREVENT},
         run=_run_lost_update,
+        adya="G-single",
+        berenson="P4 (lost update)",
     ),
     AnomalyCase(
         name="fresh_read_update",
@@ -907,12 +1117,16 @@ BATTERY: tuple[AnomalyCase, ...] = (
         ),
         contract={_RC: _PERMIT, _SI: _PREVENT, _SER: _PREVENT},
         run=_run_fresh_read_update,
+        adya="—",
+        berenson=None,
     ),
     AnomalyCase(
         name="duplicate_key_insert",
         summary="Two transactions insert the same primary key; the duplicate must be rejected, not merged.",
         contract={_RC: _PREVENT, _SI: _PREVENT, _SER: _PREVENT},
         run=_run_duplicate_key_insert,
+        adya="—",
+        berenson=None,
         abort_engine_only=True,
     ),
     AnomalyCase(
@@ -920,10 +1134,12 @@ BATTERY: tuple[AnomalyCase, ...] = (
         summary="Two transactions lock the same row (FOR UPDATE) then blind-write it; the lock prevents the lost update.",
         contract={_RC: _PREVENT, _SI: _PREVENT, _SER: _PREVENT},
         run=_run_for_update_lost_update,
+        adya="—",
+        berenson="P4 (via explicit lock)",
         abort_engine_only=True,
     ),
 )
-"""The isolation anomaly battery, weakest-discriminator first."""
+"""The isolation anomaly battery — the Adya low-end (G0/G1a/G1b) first, then by discriminator."""
 
 
 # ....................... #

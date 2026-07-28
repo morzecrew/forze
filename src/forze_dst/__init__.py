@@ -35,6 +35,7 @@ from . import (
     oracle,
     runtime,
     scheduler,
+    stats,
     workload,
 )
 
@@ -74,6 +75,7 @@ __all__ = [
     "artifacts",
     "runtime",
     "oracle",
+    "stats",
     "workload",
     "explore_guided",
     "derive",

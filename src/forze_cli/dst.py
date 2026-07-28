@@ -23,6 +23,7 @@ from forze_dst.artifacts import (
 )
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.latency import Constant, LatencyProfile, LatencyRule
+from forze_dst.stats import format_clean_verdict
 
 # ----------------------- #
 
@@ -281,6 +282,11 @@ def run(
         if stats is not None and stats.confidence is not None:
             typer.echo("")
             typer.echo(stats.confidence.format())
+        elif strategy is Strategy.SCENARIO:
+            # The confidence report (which carries the bound) was skipped; still quantify the
+            # clean run. dpor/hypothesis explore interleavings/examples, not independent seeds,
+            # so the per-seed bound would be dishonest there.
+            typer.echo(f"✓ {format_clean_verdict(len(seed_list))}")
         return
 
     typer.echo(report.format())

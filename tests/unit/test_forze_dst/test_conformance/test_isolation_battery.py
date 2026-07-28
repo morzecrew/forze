@@ -23,6 +23,7 @@ from forze_dst.conformance import (
     expected_verdict,
 )
 from forze_mock import MockDepsModule, MockState
+from tests.support.isolation_conformance import MockConformanceBackend
 
 # ----------------------- #
 
@@ -31,17 +32,6 @@ _LEVELS = (
     IsolationLevel.SNAPSHOT,
     IsolationLevel.SERIALIZABLE,
 )
-
-
-@attrs.define
-class MockConformanceBackend:
-    """N independent mock sessions over one fresh shared ``MockState`` per anomaly run."""
-
-    scope_name: str = "mock"
-
-    def contexts(self, n: int) -> Sequence[ExecutionContext]:
-        state = MockState()
-        return [context_from_modules(MockDepsModule(state=state)) for _ in range(n)]
 
 
 # ....................... #
@@ -75,6 +65,33 @@ class TestIsolationBattery:
                 f"unregistered divergence: {case.name}@{level.name} "
                 f"observed={observed.value} contract={case.contract[level].value}"
             )
+
+
+# ....................... #
+
+
+class TestPhenomenonLabels:
+    """Every case carries its Adya label, and each low-end G-phenomenon has one unambiguous owner."""
+
+    def test_every_case_carries_an_adya_label(self) -> None:
+        for case in BATTERY:
+            assert case.adya, f"{case.name} has no adya label"
+
+    def test_low_end_phenomena_have_one_owner_each(self) -> None:
+        owners: dict[str, list[str]] = {}
+        for case in BATTERY:
+            if case.adya in {"G0", "G1a", "G1b"}:
+                owners.setdefault(case.adya, []).append(case.name)
+
+        assert owners == {
+            "G0": ["dirty_write"],
+            "G1a": ["dirty_read"],
+            "G1b": ["intermediate_read"],
+        }
+
+    def test_probes_are_marked_not_force_fitted(self) -> None:
+        probes = {case.name for case in BATTERY if case.adya == "—"}
+        assert probes == {"fresh_read_update", "duplicate_key_insert", "for_update_lost_update"}
 
 
 # ....................... #

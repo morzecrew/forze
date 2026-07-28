@@ -25,6 +25,7 @@ aborted transaction.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 
 import attrs
@@ -35,8 +36,17 @@ from forze.application.contracts.resilience import ResilienceExecutorDepKey
 from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution import Deps, ExecutionContext
 from forze.testing import context_from_deps
-from forze_dst.conformance import BATTERY, Verdict, expected_verdict
+from forze_dst.conformance import (
+    BATTERY,
+    Classification,
+    FidelityMatrix,
+    Verdict,
+    collect_verdicts,
+    expected_verdict,
+    write_matrix,
+)
 from forze_mock.adapters.resilience import PassthroughResilienceExecutor
+from tests.support.isolation_conformance import MockConformanceBackend
 from forze_mongo.execution.deps import MongoDepsModule, MongoDocumentConfig
 from forze_mongo.kernel.client import MongoClient
 
@@ -161,6 +171,45 @@ class TestMongoWriteConflictRaceDifferential:
     ) -> None:
         observed = await case.run(mongo_conformance, level)
         assert observed == expected_verdict(case, level, engine="mongo")
+
+
+@pytest.mark.integration
+class TestMongoFidelityMatrix:
+    """The measuring layer over the Mongo differential — the leg with real, explained divergence.
+
+    Mongo's transactions read one WiredTiger snapshot regardless of read concern, so at
+    READ_COMMITTED the mock (faithful textbook RC) permits the read-path anomalies Mongo prevents —
+    four cells diverge in the mock-weaker (false-alarm) direction, each explained by the reviewed
+    engine-scoped strengthening. The gate: exactly those four, all explained, none mock-stricter
+    (the ship-a-bug direction), and no SERIALIZABLE row exists (the level is absent on this engine,
+    not skipped). With `FORZE_FIDELITY_OUT` set, writes the per-backend JSON artifact.
+    """
+
+    async def test_matrix_diverges_only_where_the_catalog_says(
+        self, mongo_conformance: MongoConformanceBackend
+    ) -> None:
+        mock_cells = await collect_verdicts(MockConformanceBackend(), levels=_LEVELS)
+        real_cells = await collect_verdicts(mongo_conformance, levels=_LEVELS)
+
+        matrix = FidelityMatrix.pair(mock_cells, real_cells, engine="mongo")
+
+        assert len(matrix.cells) == len(BATTERY) * len(_LEVELS)
+        assert matrix.levels == _LEVELS  # no SERIALIZABLE row — absent level, not a skip
+        assert matrix.unexplained == ()
+        assert matrix.mock_strict == ()  # the ship-a-bug direction: must be empty
+
+        weak = {(cell.case, cell.level) for cell in matrix.mock_weak}
+        assert weak == {
+            (name, IsolationLevel.READ_COMMITTED)
+            for name in ("non_repeatable_read", "read_skew", "phantom", "fresh_read_update")
+        }
+        assert all(
+            cell.explained_by and cell.classification is Classification.MOCK_WEAK
+            for cell in matrix.mock_weak
+        )
+
+        if out := os.environ.get("FORZE_FIDELITY_OUT"):
+            write_matrix(matrix, out)
 
 
 @pytest.mark.integration
