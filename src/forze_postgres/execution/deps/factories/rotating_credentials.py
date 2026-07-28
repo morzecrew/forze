@@ -9,7 +9,10 @@ import attrs
 from forze.application.contracts.crypto import KeyringDepKey
 from forze.base.exceptions import exc
 
-from ....adapters.rotating_credentials import PostgresRotatingCredentialStore
+from ....adapters.rotating_credentials import (
+    PostgresRotatingCredentialsAdmin,
+    PostgresRotatingCredentialStore,
+)
 from ..configs.rotating_credentials import PostgresRotatingCredentialsConfig
 from ..keys import PostgresClientDepKey
 
@@ -50,6 +53,31 @@ class ConfigurablePostgresRotatingCredentials:
             exchanger=self.config.exchanger,
             exchange_timeout=self.config.exchange_timeout,
             cipher=cipher,
+            tenant_aware=self.config.tenant_aware,
+            tenant_provider=ctx.inv_ctx.get_tenant,
+        )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ConfigurablePostgresRotatingCredentialsAdmin:
+    """Build a :class:`PostgresRotatingCredentialsAdmin` for the control-plane scan.
+
+    Registered alongside the store from the same config, so the scan reads exactly the
+    table the store writes. Needs no exchanger and no keyring — the admin plane never
+    opens a payload.
+    """
+
+    config: PostgresRotatingCredentialsConfig
+    """The store's configuration; only ``relation`` and ``tenant_aware`` are read."""
+
+    def __call__(self, ctx: ExecutionContext) -> PostgresRotatingCredentialsAdmin:
+        return PostgresRotatingCredentialsAdmin(
+            client=ctx.deps.provide(PostgresClientDepKey),
+            relation=self.config.relation,
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )

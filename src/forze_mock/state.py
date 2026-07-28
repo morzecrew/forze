@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, final
 
 import attrs
 
+from forze.base.primitives import StripedAsyncLocks
+
 if TYPE_CHECKING:
     from forze.application.contracts.authn import AuthnEvent
 
@@ -99,6 +101,14 @@ class MockState:
     cache_pointers: dict[str, dict[str, str]] = attrs.field(factory=dict)
     cache_bodies: dict[str, dict[tuple[str, str], Any]] = attrs.field(factory=dict)
     idempotency: dict[tuple[str, str, str], tuple[str, str, Any | None]] = attrs.field(factory=dict)
+    rotating_credential_locks: StripedAsyncLocks = attrs.field(factory=StripedAsyncLocks)
+    """Per-credential single-flight for the rotating-credential store.
+
+    Lives on the state rather than the adapter so that per-scope store instances — the
+    shape tenancy needs, since a tenant provider only exists per execution context — still
+    serialize the exchange across every scope sharing this state. On the adapter it was a
+    per-instance stripe, which is single-flight only for callers holding the *same*
+    adapter."""
     inbox: set[tuple[str, str, str]] = attrs.field(factory=set)
     tx_read_only_calls: list[bool] = attrs.field(factory=list)
     """Records the ``read_only`` flag of each mock transaction (test observability)."""

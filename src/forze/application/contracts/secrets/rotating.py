@@ -28,7 +28,7 @@ store hands the refresh token straight to its :class:`CredentialExchangerPort`. 
 cannot present a rotated token because it never holds one.
 """
 
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Mapping, Sequence
 from datetime import datetime
 from types import MappingProxyType
 from typing import Final, Protocol, final
@@ -289,6 +289,95 @@ class RotatingCredentialStorePort(Protocol):
 
         :param ref: Credential reference.
         :param reason: Operator-facing explanation, stored as-is. Never secret.
+        """
+
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class DueCredential:
+    """One grant the idleness scan surfaced — a scheduling fact, never a secret.
+
+    Carries what a sweep needs to act (the ref to refresh and the version to pass as
+    ``observed``) and what an operator needs to triage (when it was last exchanged, and
+    whether it is already beyond refreshing). No token of either kind appears here: the
+    scan is control-plane and its output may reasonably end up in logs and dashboards.
+    """
+
+    ref: SecretRef
+    """The credential, addressable by the ambient tenant that ran the scan."""
+
+    version: SecretVersion
+    """Store version at scan time. Passing it to
+    :meth:`RotatingCredentialStorePort.refresh` as ``observed`` gives the sweep the same
+    single-flight convergence a live caller gets — if traffic refreshed the grant between
+    the scan and the sweep, the version has moved and the store returns the winner's
+    document instead of exchanging again."""
+
+    last_exchanged_at: datetime
+    """When the stored refresh token last changed — the clock the provider's inactivity
+    window runs against. Reset by every successful exchange and by ``put``."""
+
+    burnt_reason: str | None = None
+    """Why the grant is beyond refreshing, when it is.
+
+    Burnt grants are *reported, not skipped*: "these N tenants need re-authorization" is a
+    fact an operator queries, not an alert someone may have missed. A sweep must never
+    exchange one — there is nothing left to present."""
+
+    # ....................... #
+
+    @property
+    def burnt(self) -> bool:
+        """Whether this grant needs human re-authorization rather than a refresh."""
+
+        return self.burnt_reason is not None
+
+
+# ....................... #
+
+
+class RotatingCredentialsAdminPort(Protocol):
+    """Control-plane visibility over the grants a tenant holds.
+
+    Separate from :class:`RotatingCredentialStorePort` for the same reason every plane
+    splits management from data: the data-plane store must not gain scan/list powers as a
+    side effect of someone needing a sweep. Tenancy is ambient here exactly as on the
+    store — the scan answers for the bound tenant only, so a fleet-wide sweep is one scan
+    per tenant, never one privileged scan across all of them.
+
+    Exists because on-demand refresh is structurally blind to idleness: a refresh token
+    expires from *non-use* on a provider-side clock, so the grants most at risk are
+    precisely the ones no caller is touching. This port is how a scheduled sweep finds
+    them before the provider does.
+    """
+
+    def due_for_refresh(
+        self,
+        *,
+        idle_since: datetime,
+        limit: int,
+    ) -> Awaitable[Sequence[DueCredential]]:
+        """Grants whose last exchange predates *idle_since*, oldest first.
+
+        Oldest first, so the grants closest to their provider's inactivity deadline are
+        served in the earliest pass — with a bounded *limit*, ordering is what turns "a
+        sweep eventually reaches everything" into "the most endangered grant is reached
+        first". A grant the pass fails to refresh is simply still due on the next scan.
+
+        :param idle_since: Cutoff — a grant last exchanged at or after this moment is not
+            due. Callers derive it as ``now - refresh_if_idle_for``, with the idle window
+            set well inside the provider's documented inactivity limit so a missed sweep
+            is not fatal.
+        :param limit: Hard cap on the returned batch (must be positive). Bounds a pass so
+            a huge backlog is worked in slices rather than one unbounded scan.
+        :returns: Due grants for the ambient tenant, oldest first — burnt ones included,
+            flagged via :attr:`DueCredential.burnt_reason`.
+        :raises CoreException: ``precondition`` when *limit* is not positive.
         """
 
         ...  # pragma: no cover

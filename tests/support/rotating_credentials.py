@@ -19,7 +19,13 @@ the *ordering* wrong is not an implementation of it:
 6. **sealed at rest** — the tokens are not readable on disk, the AAD binds each credential to
    its ``(tenant, ref)`` so a lifted row fails authentication rather than decrypting into the
    wrong grant, and a legacy plaintext row still reads so enabling encryption needs no
-   migration.
+   migration;
+7. **the idleness scan tells the truth** — ``due_for_refresh`` surfaces exactly the grants
+   whose last exchange predates the cutoff (oldest first, bounded, tenant-scoped, burnt ones
+   flagged rather than hidden), an exchange resets the clock, and refreshing with the
+   *scanned* version converges instead of double-exchanging when live traffic got there
+   first. This is the plane RFC-style proactive refresh stands on: a scan that lies about
+   dueness silently loses idle grants.
 
 There is no live third party to differential against, so :class:`FakeCounterparty` *is*
 the specification of provider behaviour: it burns each presented token and revokes the
@@ -33,13 +39,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import final
 from uuid import UUID, uuid4
 
 import attrs
 import pytest
 
+from forze.application.contracts.crypto import is_encrypted_payload
 from forze.application.contracts.secrets import (
     BURNT_CREDENTIAL_CODE,
     CREDENTIAL_EXCHANGE_TIMEOUT_CODE,
@@ -47,10 +54,11 @@ from forze.application.contracts.secrets import (
     INVALID_GRANT_CODE,
     CredentialExchangerPort,
     ExchangedCredential,
+    RotatingCredentialsAdminPort,
     RotatingCredentialStorePort,
     SecretRef,
+    SecretVersion,
 )
-from forze.application.contracts.crypto import is_encrypted_payload
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict, utcnow
@@ -171,6 +179,13 @@ class RotatingStoreHarness:
     store: RotatingCredentialStorePort
     counterparty: FakeCounterparty
     tenant: TenantCell
+
+    admin: RotatingCredentialsAdminPort
+    """The control-plane scan over the same storage the store writes.
+
+    A separate port on purpose (the data plane must not gain list powers), but the battery
+    holds both because its checks are exactly about their agreement: what the store
+    persists is what the scan must surface."""
 
     break_persist: Callable[[], AbstractAsyncContextManager[None]]
     """Make the durable write fail for the duration of the scope.
@@ -741,6 +756,172 @@ async def check_tenants_are_isolated(h: RotatingStoreHarness) -> None:
 # ....................... #
 
 
+# ....................... #
+
+
+FAR_FUTURE_CUTOFF = timedelta(hours=1)
+"""Cutoff offset that makes every existing grant due — dueness is relative to the stamp,
+so the battery ages grants by moving the cutoff, never by sleeping or freezing clocks."""
+
+
+def _cutoff(offset: timedelta) -> datetime:
+    return utcnow() + offset
+
+
+async def check_the_scan_surfaces_idle_grants_and_exchange_resets_the_clock(
+    h: RotatingStoreHarness,
+) -> None:
+    """Proof 1: an idle grant is due, and exchanging it makes it not due.
+
+    The clock reset is the property the whole sweep stands on: without it a refreshed grant
+    would stay due forever and every pass would exchange it again — each exchange a burn.
+    """
+
+    await h.seed()
+
+    due = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
+
+    assert [d.ref.path for d in due] == [REF.path]
+    assert due[0].burnt_reason is None
+    stamped_at = due[0].last_exchanged_at
+
+    # A cutoff at the stamp itself is strict: the grant is NOT due (guards the boundary).
+    assert await h.admin.due_for_refresh(idle_since=stamped_at, limit=10) == []
+
+    refreshed = await h.store.refresh(REF, observed=due[0].version)
+
+    # The exchange moved the stamp forward: at a cutoff that previously included the
+    # grant, it is no longer due — and the scan agrees the stamp advanced.
+    just_after_seed = stamped_at + timedelta(microseconds=1)
+    assert await h.admin.due_for_refresh(idle_since=just_after_seed, limit=10) == []
+
+    again = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
+    assert [d.ref.path for d in again] == [REF.path]
+    assert again[0].last_exchanged_at > stamped_at
+    assert again[0].version == refreshed.version
+
+
+async def check_a_sweep_with_a_scanned_version_converges_after_live_traffic(
+    h: RotatingStoreHarness,
+) -> None:
+    """Proof 2: scan → live refresh → sweep refresh = exactly one exchange.
+
+    The sweep passes the version it *scanned*; when live traffic exchanged in between,
+    that version is stale and the store must return the winner's document without calling
+    the counterparty — the single-flight property, re-entered through the scan's output.
+    """
+
+    await h.seed()
+    scanned = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
+
+    # Live traffic gets there first.
+    live = await h.store.refresh(REF, observed=scanned[0].version)
+    exchanges_after_live = len(h.counterparty.presented)
+
+    # The sweep arrives with the scanned (now stale) version: converges, no second exchange.
+    swept = await h.store.refresh(REF, observed=scanned[0].version)
+
+    assert len(h.counterparty.presented) == exchanges_after_live
+    assert swept.version == live.version
+    assert swept.access_token == live.access_token
+    assert not h.counterparty.family_revoked
+
+
+async def check_the_scan_reports_burnt_grants_instead_of_hiding_them(
+    h: RotatingStoreHarness,
+) -> None:
+    """Proof 3: a burnt grant is queryable output, and refreshing it never exchanges."""
+
+    await h.seed()
+    await h.store.burn(REF, reason="provider revoked via webhook")
+
+    due = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
+
+    assert [d.ref.path for d in due] == [REF.path]
+    assert due[0].burnt
+    assert due[0].burnt_reason == "provider revoked via webhook"
+
+    presented_before = len(h.counterparty.presented)
+
+    with pytest.raises(CoreException) as burnt:
+        await h.store.refresh(REF, observed=due[0].version)
+
+    assert burnt.value.code == BURNT_CREDENTIAL_CODE
+    assert len(h.counterparty.presented) == presented_before, "a burnt grant must never be presented"
+
+
+async def check_a_burn_notice_for_an_unknown_ref_reaches_the_scan(
+    h: RotatingStoreHarness,
+) -> None:
+    """A grant that was never stored but is known dead still shows up in the sweep's view.
+
+    ``burn`` on an absent ref writes a placeholder precisely so "needs re-authorization"
+    is recorded; a scan that skipped placeholder rows would silently drop those grants
+    from the operator's queryable list — the exact alert-someone-missed failure the
+    reporting exists to prevent.
+    """
+
+    await h.store.burn(ABSENT_REF, reason="authorization was revoked before first use")
+
+    due = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
+
+    assert [d.ref.path for d in due] == [ABSENT_REF.path]
+    assert due[0].burnt
+    assert due[0].burnt_reason == "authorization was revoked before first use"
+
+
+async def check_the_scan_is_bounded_and_oldest_first(h: RotatingStoreHarness) -> None:
+    """Proof 5: ``limit`` caps a pass, and the most endangered grant comes first.
+
+    Oldest-first is what turns a bounded pass into a safe one — the grant closest to its
+    provider's deadline is served before the cap cuts the batch.
+    """
+
+    first = SecretRef("oauth/oldest")
+    second = SecretRef("oauth/middle")
+    third = SecretRef("oauth/newest")
+
+    for ref in (first, second, third):
+        await h.seed(ref)
+
+    everything = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
+
+    assert [d.ref.path for d in everything] == [first.path, second.path, third.path]
+
+    capped = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=2)
+
+    assert [d.ref.path for d in capped] == [first.path, second.path]
+
+    with pytest.raises(CoreException) as refused:
+        await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=0)
+
+    assert refused.value.kind == ExceptionKind.PRECONDITION
+
+
+async def check_the_scan_is_tenant_scoped(h: RotatingStoreHarness) -> None:
+    """Proof 6: a sweep never surfaces another tenant's refs.
+
+    The isolation axis of the data plane, re-proven on the control plane — a scan that
+    leaked refs across tenants would hand one tenant's sweep the addresses of another's
+    grants, and the refresh runs it enqueues would then operate cross-tenant.
+    """
+
+    tenant_a, tenant_b = uuid4(), uuid4()
+
+    h.tenant.tenant_id = tenant_a
+    await h.seed()
+
+    h.tenant.tenant_id = tenant_b
+    await h.seed(SecretRef("oauth/other-tenant"))
+
+    b_due = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
+    assert [d.ref.path for d in b_due] == ["oauth/other-tenant"]
+
+    h.tenant.tenant_id = tenant_a
+    a_due = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
+    assert [d.ref.path for d in a_due] == [REF.path]
+
+
 ROTATING_STORE_BATTERY: tuple[Check, ...] = (
     check_counterparty_burns_reused_tokens,
     check_put_then_get_round_trip,
@@ -760,5 +941,11 @@ ROTATING_STORE_BATTERY: tuple[Check, ...] = (
     check_a_row_lifted_to_another_ref_fails_authentication,
     check_a_row_lifted_to_another_tenant_fails_authentication,
     check_legacy_plaintext_rows_still_read,
+    check_the_scan_surfaces_idle_grants_and_exchange_resets_the_clock,
+    check_a_sweep_with_a_scanned_version_converges_after_live_traffic,
+    check_the_scan_reports_burnt_grants_instead_of_hiding_them,
+    check_a_burn_notice_for_an_unknown_ref_reaches_the_scan,
+    check_the_scan_is_bounded_and_oldest_first,
+    check_the_scan_is_tenant_scoped,
 )
 """Every check, in the order a reader should meet them. An adapter runs all of them."""

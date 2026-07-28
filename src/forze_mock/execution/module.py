@@ -110,6 +110,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.contracts.secrets import (
     CredentialExchangerPort,
+    RotatingCredentialsAdminDepKey,
     RotatingCredentialsDepKey,
     SecretsAdminDepKey,
     SecretsDepKey,
@@ -174,6 +175,7 @@ from forze_mock.adapters.identity import (
     MockPrincipalRegistryPort,
     MockPrincipalResolverPort,
     MockRoleAssignmentPort,
+    MockRotatingCredentialsAdmin,
     MockRotatingCredentialStore,
     MockSecretsPort,
     MockTenantManagementPort,
@@ -461,14 +463,44 @@ class MockDepsModule(DepsModule):
         }
 
         if self.rotating_credentials is not None:
-            deps[RotatingCredentialsDepKey] = MockRotatingCredentialStore(
-                state=self.state,
-                exchanger=self.rotating_credentials,
-                # Sealed by default, matching the Postgres store: a mock that kept
-                # credentials in the clear would make the at-rest behaviour differ from
-                # production on the one store where that difference matters most.
-                cipher=crypto_keyring,
-            )
+            exchanger = self.rotating_credentials
+            # Tenancy mirrors the Postgres config flag through the route table: a route
+            # config named "rotating_credentials" with tenant_aware=True makes the oracle
+            # require a bound tenant fail-closed, exactly as
+            # PostgresRotatingCredentialsConfig(tenant_aware=True) does — without it, a
+            # deployment that demands tagged tenancy could not be modelled here at all.
+            rotating_route = (self.routes or {}).get("rotating_credentials")
+            rotating_tenant_aware = rotating_route.tenant_aware if rotating_route else False
+
+            # Factories, not singletons, for the same reason the Postgres wiring is: the
+            # tenant provider only exists per execution context, and a singleton without
+            # one stores every tenant's grant under the unbound key — so a per-tenant
+            # sweep tested against the oracle silently degenerated to a global scan.
+            # Single-flight survives the change because the lock stripe lives on the
+            # shared MockState, not on the per-scope adapter.
+            def _rotating_store(ctx: ExecutionContext) -> MockRotatingCredentialStore:
+                return MockRotatingCredentialStore(
+                    state=self.state,
+                    exchanger=exchanger,
+                    # Sealed by default, matching the Postgres store: a mock that kept
+                    # credentials in the clear would make the at-rest behaviour differ
+                    # from production on the one store where that difference matters most.
+                    cipher=crypto_keyring,
+                    tenant_aware=rotating_tenant_aware,
+                    tenant_provider=ctx.inv_ctx.get_tenant,
+                )
+
+            # The control-plane scan rides the same opt-in: a wired store without its
+            # sweep visibility would leave idle-grant liveness untestable on the oracle.
+            def _rotating_admin(ctx: ExecutionContext) -> MockRotatingCredentialsAdmin:
+                return MockRotatingCredentialsAdmin(
+                    state=self.state,
+                    tenant_aware=rotating_tenant_aware,
+                    tenant_provider=ctx.inv_ctx.get_tenant,
+                )
+
+            deps[RotatingCredentialsDepKey] = _rotating_store
+            deps[RotatingCredentialsAdminDepKey] = _rotating_admin
 
         if self.routed_state is not None:
             deps[MockRoutedStateDepKey] = self.routed_state

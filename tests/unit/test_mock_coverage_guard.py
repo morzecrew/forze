@@ -52,6 +52,12 @@ _EXEMPTIONS: dict[str, tuple[str, str]] = {
         "MockDepsModule(hlc_checkpoint=True) wires MockHlcCheckpointAdapter; off by default "
         "so existing scenarios see no checkpoint and the outbox flush resolves none.",
     ),
+    "rotating_credentials_admin": (
+        _OPT_IN,
+        "Registered together with the store when MockDepsModule(rotating_credentials=…) is "
+        "passed — the control-plane scan is meaningless without a store writing the "
+        "documents it reads, so the two share one opt-in.",
+    ),
     "rotating_credentials": (
         _OPT_IN,
         "MockDepsModule(rotating_credentials=<exchanger>) wires the in-memory store. The "
@@ -180,6 +186,7 @@ def test_opt_in_exemptions_actually_register_when_enabled() -> None:
     enabled: dict[str, MockDepsModule] = {
         "hlc_checkpoint": MockDepsModule(hlc_checkpoint=True),
         "rotating_credentials": MockDepsModule(rotating_credentials=_NullExchanger()),
+        "rotating_credentials_admin": MockDepsModule(rotating_credentials=_NullExchanger()),
     }
 
     opt_ins = {name for name, (category, _) in _EXEMPTIONS.items() if category == _OPT_IN}

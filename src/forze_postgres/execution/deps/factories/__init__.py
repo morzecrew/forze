@@ -24,7 +24,10 @@ from .outbox import (
     ConfigurablePostgresOutboxQuery,
 )
 from .procedure import ConfigurablePostgresProcedure
-from .rotating_credentials import ConfigurablePostgresRotatingCredentials
+from .rotating_credentials import (
+    ConfigurablePostgresRotatingCredentials,
+    ConfigurablePostgresRotatingCredentialsAdmin,
+)
 from .search import (
     ConfigurablePostgresSearch,
     postgres_search_port_for_config,
@@ -53,6 +56,7 @@ __all__ = [
     "ConfigurablePostgresProcedure",
     "ConfigurablePostgresReadOnlyDocument",
     "ConfigurablePostgresRotatingCredentials",
+    "ConfigurablePostgresRotatingCredentialsAdmin",
     "ConfigurablePostgresSearch",
     "build_hub_leg_runtimes",
     "postgres_search_port_for_config",

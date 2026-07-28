@@ -33,7 +33,10 @@ from forze.application.integrations.crypto import Keyring
 from forze.base.exceptions import CoreException
 from forze.base.primitives import JsonDict
 from forze_mock import MockKeyManagement
-from forze_postgres.adapters.rotating_credentials import PostgresRotatingCredentialStore
+from forze_postgres.adapters.rotating_credentials import (
+    PostgresRotatingCredentialsAdmin,
+    PostgresRotatingCredentialStore,
+)
 from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 from tests.support.rotating_credentials import (
     EXCHANGE_TIMEOUT,
@@ -68,6 +71,12 @@ async def credentials_table(pg_client: PostgresClient) -> str:
             )
             """
         ).format(table=sql.Identifier("public", table))
+    )
+    # The control-plane scan's documented index — the battery runs against the real DDL.
+    await pg_client.execute(
+        sql.SQL("CREATE INDEX ON {table} (tenant_id, updated_at)").format(
+            table=sql.Identifier("public", table)
+        )
     )
 
     return table
@@ -169,6 +178,11 @@ async def harness(
         store=store,
         counterparty=counterparty,
         tenant=tenant,
+        admin=PostgresRotatingCredentialsAdmin(
+            client=pg_client,
+            relation=("public", credentials_table),
+            tenant_provider=tenant,
+        ),
         break_persist=break_persist,
         stored_payload=stored_payload,
         write_stored_payload=write_stored_payload,
@@ -451,3 +465,102 @@ async def test_a_burn_notice_survives_the_transaction_that_recorded_it(
         await harness.store.get(REF)
 
     assert still_burnt.value.code == "credential_burnt"
+
+
+# ....................... #
+
+
+class TestCredentialSweepEndToEnd:
+    """The sweeper against the real Postgres store and scan — the full 0037 loop.
+
+    The kit's unit tests run over the mock; this is the leg that catches wire-format
+    facts the oracle cannot: the scanned ``SecretVersion`` token is a Postgres bigint
+    rendered to text, it rides through a durable run's JSON input, and it must come back
+    as exactly the ``observed`` the store's row-locked recheck compares against. It also
+    caught the resolution bug the mock's original singleton wiring masked — the sweeper
+    resolving deps with ``provide`` worked against a singleton and would have returned
+    the factory raw against this wiring.
+    """
+
+    async def test_sweep_scan_refresh_loop_against_postgres(
+        self,
+        pg_client: PostgresClient,
+        credentials_table: str,
+    ) -> None:
+        from datetime import timedelta
+
+        from forze.application.contracts.secrets import (
+            ExchangedCredential,
+            RotatingCredentialsAdminDepKey,
+            RotatingCredentialsDepKey,
+        )
+        from forze.application.execution import Deps
+        from forze_kits.integrations.durable import durable_kits_deps
+        from forze_kits.integrations.durable.registry import DurableFunctionRegistry
+        from forze_kits.integrations.secrets import CredentialSweeper
+        from forze_mock import MockDepsModule, MockState
+        from tests.support.execution_context import context_from_deps
+
+        counterparty = FakeCounterparty()
+        store = PostgresRotatingCredentialStore(
+            client=pg_client,
+            relation=("public", credentials_table),
+            exchanger=counterparty,
+            exchange_timeout=EXCHANGE_TIMEOUT,
+        )
+        admin = PostgresRotatingCredentialsAdmin(
+            client=pg_client,
+            relation=("public", credentials_table),
+        )
+
+        registry = DurableFunctionRegistry()
+        sweeper = CredentialSweeper(refresh_if_idle_for=timedelta(microseconds=1))
+        sweeper.register(registry)
+        durable_deps, runner, _ = durable_kits_deps(registry=registry)
+
+        # Mock durable substrate under a real credential store: the sweep's run journal
+        # is not what this leg is about, the Postgres row round-trip is.
+        ctx = context_from_deps(
+            MockDepsModule(state=MockState())(),
+            durable_deps,
+            Deps.plain(
+                {
+                    # Factories, as the real modules register them: resolve_simple invokes
+                    # the registered value with the context.
+                    RotatingCredentialsDepKey: lambda _ctx: store,
+                    RotatingCredentialsAdminDepKey: lambda _ctx: admin,
+                }
+            ),
+        )
+
+        ref = SecretRef("oauth/pg-sweep")
+        await store.put(
+            ref,
+            ExchangedCredential(access_token="access-0", refresh_token="refresh-0"),
+        )
+        before = await store.get(ref)
+
+        sweep = await sweeper.sweep_now(ctx)
+        assert sweep.output_json is not None
+        assert sweep.output_json["enqueued"] == 1
+
+        drained = 0
+        while claimed := await runner.recover(ctx, limit=10):
+            drained += claimed
+        assert drained == 1
+
+        # The exchange happened exactly once, and the persisted version moved on.
+        assert counterparty.presented == ["refresh-0"]
+        after = await store.get(ref)
+        assert after.version != before.version
+
+        # The clock reset: the grant is no longer due at a cutoff just past its seed
+        # stamp, and a second full pass converges without presenting another token.
+        second = await sweeper.sweep_now(ctx, idempotency_key="second-pass")
+        assert second.output_json is not None
+
+        while await runner.recover(ctx, limit=10):
+            pass
+
+        assert len(counterparty.presented) <= 2  # at most the refreshed token, once
+        assert not counterparty.family_revoked
