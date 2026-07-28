@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Contract-misuse corpus schema** — new `forze_dst.misuse` (`MisuseMutant`, `MisuseControl`, `MisuseCase`, `MisuseFamily`, `TransferTier`, `GroundTruth`): known-bug twins with replayable killing seeds and depth labels, plus known-correct negative controls, as reviewed registry data.
 - **Corpus transfer seam** — new `forze_dst.conformance.transfer` (`TransferScript`, `run_transfer`, `TransferRecord`, `Detection`, `TransferClassification`, `divergences`, `write_transfer`): run a corpus instance on the mock and a real backend and compare bug verdicts, divergences split by direction.
 - **Survival-analysis kernel** — `forze_dst.stats` grows `SurvivalCurve.fit` (Kaplan–Meier with right censoring + Greenwood bands; `median`/`quantile` return `None` under heavy censoring), `log_rank`, `binomial_ci` (exact Clopper–Pearson), and `geometric_p_hat` — stdlib-only, no scipy.
+- **Detection-time campaigns** — new `forze_dst.campaign` (`run_mutant_campaigns`, `run_control_band`, `CampaignStrategy`/`DEFAULT_STRATEGIES`, `write_records`, `summarize`) and `forze dst campaign`: censored seeds-to-detection per (mutant, strategy) reproducible from one master seed, plus the false-positive rate on negative controls with exact bounds.
 
 ## [0.5.1] - 2026-07-25
 

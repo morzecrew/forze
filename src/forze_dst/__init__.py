@@ -24,6 +24,7 @@ from __future__ import annotations
 # Namespaces — depth on demand (``forze_dst.<namespace>``).
 from . import (
     artifacts,
+    campaign,
     cluster,
     conformance,
     derive,
@@ -66,6 +67,7 @@ __all__ = [
     "Cluster",
     "ViolationReport",
     # Namespaces
+    "campaign",
     "invariants",
     "markers",
     "faults",

@@ -107,6 +107,17 @@ fuzz *args='tests/unit/test_forze_dst':
     uv run pytest -m fuzz {{ args }}
 
 
+# Run the DST detection-time pilot campaign (writes pages/docs/dst/_generated/campaign_pilot.md)
+dst-campaign:
+    {{ _uv_sync }}
+
+    PYTHONPATH=. uv run forze dst campaign tests.support.misuse:CORPUS \
+        --controls tests.support.misuse:CONTROLS \
+        --campaigns 100 --ceiling 2000 --fp-runs 400 --master-seed 0 \
+        --out dst-campaigns.jsonl \
+        --summary pages/docs/dst/_generated/campaign_pilot.md
+
+
 # Regenerate the DST fidelity matrix artifact (needs Docker; writes pages/docs/dst/_generated/)
 dst-fidelity:
     {{ _uv_sync }}
