@@ -23,6 +23,7 @@ import attrs
 
 from forze_dst.oracle.recorder import History
 from forze_dst.oracle.report import CausalGraph
+from forze_dst.stats import format_clean_verdict
 
 if TYPE_CHECKING:
     from forze_dst.faults import FaultPolicy
@@ -69,6 +70,10 @@ class ConfidenceReport:
 
     faults_fired: tuple[str, ...] = ()
     """The declared fault rules that actually triggered on some seed."""
+
+    violations_seen: int = 0
+    """How many violating seeds the sweep hit (``0`` = clean). The quantitative clean-run bound
+    prints only when the sweep was actually clean — this field is how the report knows."""
 
     # ....................... #
 
@@ -140,6 +145,11 @@ class ConfidenceReport:
         else:
             lines.append("  ✓ every operation raced and every declared fault fired")
 
+        # The quantitative verdict sits adjacent to the gaps so the bound is never read as
+        # stronger than the coverage supports.
+        if self.violations_seen == 0 and self.seeds_run > 0:
+            lines.append(f"  ✓ {format_clean_verdict(self.seeds_run)}")
+
         return "\n".join(lines)
 
 
@@ -186,8 +196,12 @@ class ConfidenceProbe:
 
     # ....................... #
 
-    def report(self, *, faults: FaultPolicy | None = None) -> ConfidenceReport:
-        """Build the report; *faults* is the declared policy whose rules are checked for firing."""
+    def report(self, *, faults: FaultPolicy | None = None, violations: int = 0) -> ConfidenceReport:
+        """Build the report; *faults* is the declared policy whose rules are checked for firing.
+
+        *violations* is how many violating seeds the sweep hit — the probe itself only sees
+        histories, so the caller supplies it; it gates the clean-run bound in the report.
+        """
 
         declared: list[str] = []
         fired: list[str] = []
@@ -208,6 +222,7 @@ class ConfidenceProbe:
             raced_ops=tuple(sorted(self._raced)),
             faults_declared=tuple(declared),
             faults_fired=tuple(fired),
+            violations_seen=violations,
         )
 
 
@@ -215,17 +230,18 @@ class ConfidenceProbe:
 
 
 def assess_confidence(
-    histories: Iterable[History], *, faults: FaultPolicy | None = None
+    histories: Iterable[History], *, faults: FaultPolicy | None = None, violations: int = 0
 ) -> ConfidenceReport:
     """Read a sweep's recorded *histories* into a :class:`ConfidenceReport`.
 
     *faults* is the config's declared :class:`~forze_dst.faults.FaultPolicy` (if any), so the
-    report can name the rules that were declared but never triggered. Folds the histories in one
-    pass, so an iterator/generator works without materializing every run.
+    report can name the rules that were declared but never triggered. *violations* is how many
+    of those runs violated (histories alone can't tell — it gates the clean-run bound). Folds
+    the histories in one pass, so an iterator/generator works without materializing every run.
     """
 
     probe = ConfidenceProbe()
     for history in histories:
         probe.observe(history)
 
-    return probe.report(faults=faults)
+    return probe.report(faults=faults, violations=violations)

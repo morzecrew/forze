@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`forze_mongo.MongoRotationTarget`** — `apply_max_time` must be at least 1ms (it is sent as an integer `maxTimeMS`, where 0 means *unlimited*); dual-user rotation over `updateUser` (`user_pair=…`, single-user behind `single_user_degraded=True`), bounded server-side by `maxTimeMS` and declaring `apply_latency_bound`. New `MongoClientPort.command_dispatch_bound`, which the target validates `dispatch_allowance` against; URI credential swapping via `forze_mongo.kernel.uri` preserves hosts, options and `mongodb+srv://`.
 - New `forze.base.primitives.StripedAsyncLocks` — keyed in-process serialization over a bounded lock set.
 - Full mock parity (`MockSecretsChangeSource`, `MockDynamicSecretsPort`), new `RoutedTenantClientBase.cached_tenant_ids()`, runnable walkthrough in `examples/recipes/secrets_rotation/`.
+- **DST quantitative clean-run verdict** — new `forze_dst.stats` (`detection_upper_bound`, `format_clean_verdict`): clean sweeps print the exact exclusion bound on per-seed detection probability instead of a bare pass — in `SweepResult`/`CoverageStats`/`ConfidenceReport` `format()` (new `ConfidenceReport.violations_seen`; `assess_confidence`/`ConfidenceProbe.report` accept `violations=`) and the `forze dst run`/`coverage` clean paths.
 
 ## [0.5.1] - 2026-07-25
 

@@ -32,6 +32,7 @@ from forze_dst.latency import Constant, LatencyProfile, LatencyRule
 from forze_dst.oracle.coverage import Behavior
 from forze_dst.oracle.reachability import ReachabilityReport
 from forze_dst.scheduler import FIFOScheduler, PCTScheduler, RandomScheduler
+from forze_dst.stats import format_clean_verdict
 
 # ----------------------- #
 
@@ -160,6 +161,8 @@ class SweepResult:
             lines.append(
                 f"  ✗ violations:   {len(self.violations)} (first at seed {self.first_violation})"
             )
+        elif self.runs > 0:
+            lines.append(f"  ✓ {format_clean_verdict(self.runs)}")
 
         return "\n".join(lines)
 
