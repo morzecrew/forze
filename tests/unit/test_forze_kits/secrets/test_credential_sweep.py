@@ -75,7 +75,7 @@ def _composition(
 
 
 async def _seed(ctx: Any, ref: SecretRef) -> None:
-    await ctx.deps.provide(RotatingCredentialsDepKey).put(
+    await ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey).put(
         ref,
         ExchangedCredential(access_token=f"access-{ref.path}", refresh_token=f"refresh-{ref.path}"),
     )
@@ -142,7 +142,7 @@ class TestSweep:
 
         ctx, sweeper, counterparty, runner = _composition()
         await _seed(ctx, _HEALTHY)
-        store = ctx.deps.provide(RotatingCredentialsDepKey)
+        store = ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey)
         await store.burn(_HEALTHY, reason="revoked by provider webhook")
 
         record = await sweeper.sweep_now(ctx)
@@ -165,7 +165,7 @@ class TestSweep:
         assert sweep.output_json is not None and sweep.output_json["enqueued"] == 1
 
         # Burnt after the scan, before the run executes.
-        await ctx.deps.provide(RotatingCredentialsDepKey).burn(_HEALTHY, reason="late webhook")
+        await ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey).burn(_HEALTHY, reason="late webhook")
 
         await _drain(runner, ctx)
 
@@ -184,7 +184,7 @@ class TestSweep:
         assert sweep.output_json is not None and sweep.output_json["enqueued"] == 1
 
         # Live traffic gets there first.
-        store = ctx.deps.provide(RotatingCredentialsDepKey)
+        store = ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey)
         live = await store.get(_HEALTHY)
         await store.refresh(_HEALTHY, observed=live.version)
         exchanges_after_live = len(counterparty.presented)
@@ -225,3 +225,112 @@ class TestConfigValidation:
     def test_the_limit_must_be_at_least_one(self) -> None:
         with pytest.raises(CoreException, match="at least 1"):
             CredentialSweeper(refresh_if_idle_for=timedelta(days=30), limit=0)
+
+
+class TestTenantScopedSweep:
+    """The per-tenant fan-out really partitions — through the module wiring, not just the
+    battery's hand-built harness.
+
+    This is the test the original wiring failed: the mock module registered the store and
+    the scan as tenant-blind singletons (no tenant provider), so every tenant's grants
+    landed under the unbound key and tenant A's sweep saw — and refreshed — tenant B's
+    grants. The PG wiring threaded ``ctx.inv_ctx.get_tenant`` all along; the oracle now
+    does the same via per-scope factories, with single-flight preserved through the lock
+    stripe on ``MockState``.
+    """
+
+    async def test_each_tenants_sweep_touches_only_its_own_grants(self) -> None:
+        from uuid import uuid4
+
+        from forze.application.contracts.tenancy import TenantIdentity
+
+        ctx, sweeper, counterparty, runner = _composition()
+        tenant_a, tenant_b = uuid4(), uuid4()
+
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant_a)):
+            await _seed(ctx, SecretRef("oauth/a-grant"))
+
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant_b)):
+            await _seed(ctx, SecretRef("oauth/b-grant"))
+
+        assert await sweeper.enqueue_tenants(ctx, tenants=[tenant_a]) == 1
+        await _drain(runner, ctx)
+
+        # Only tenant A's grant was exchanged; B's sat untouched.
+        assert counterparty.presented == ["refresh-oauth/a-grant"]
+
+        assert await sweeper.enqueue_tenants(ctx, tenants=[tenant_b]) == 1
+        await _drain(runner, ctx)
+
+        assert sorted(counterparty.presented) == [
+            "refresh-oauth/a-grant",
+            "refresh-oauth/b-grant",
+        ]
+
+    async def test_single_flight_survives_the_per_scope_factories(self) -> None:
+        """The wiring fix's own regression guard: two concurrently resolved store
+        instances still collapse concurrent refreshes to one exchange, because the lock
+        stripe lives on the shared state rather than the adapter."""
+
+        import asyncio
+
+        counterparty = FakeCounterparty(delay=0.05)  # widen the race window
+        registry = DurableFunctionRegistry()
+        CredentialSweeper(refresh_if_idle_for=_IDLE_WINDOW).register(registry)
+        durable_deps, _, _ = durable_kits_deps(registry=registry)
+        module_deps = MockDepsModule(state=MockState(), rotating_credentials=counterparty)()
+
+        # Two execution contexts over one deps blob — the real shape of two concurrent
+        # scopes, each resolving its own adapter instance.
+        ctx = context_from_deps(module_deps, durable_deps)
+        ctx_two = context_from_deps(module_deps, durable_deps)
+        await _seed(ctx, _HEALTHY)
+
+        store_one = ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey)
+        store_two = ctx_two.deps.resolve_simple(ctx_two, RotatingCredentialsDepKey)
+        assert store_one is not store_two
+
+        current = await store_one.get(_HEALTHY)
+        results = await asyncio.gather(
+            store_one.refresh(_HEALTHY, observed=current.version),
+            store_two.refresh(_HEALTHY, observed=current.version),
+        )
+
+        assert len(counterparty.presented) == 1, "two instances must share single-flight"
+        assert results[0].version == results[1].version
+        assert not counterparty.family_revoked
+
+
+class TestFleetTriggers:
+    async def test_enqueue_tenants_converges_on_the_idempotency_prefix(self) -> None:
+        """A re-submitted fleet pass resumes instead of duplicating."""
+
+        from uuid import uuid4
+
+        ctx, sweeper, _counterparty, runner = _composition()
+        tenants = [uuid4(), uuid4()]
+
+        assert await sweeper.enqueue_tenants(ctx, tenants=tenants, idempotency_prefix="pass-1") == 2
+        assert await sweeper.enqueue_tenants(ctx, tenants=tenants, idempotency_prefix="pass-1") == 2
+
+        # Convergence happened at the run store: draining executes two runs, not four.
+        assert await _drain(runner, ctx) == 2
+
+    async def test_ensure_cron_is_idempotent_per_tenant(self) -> None:
+        from uuid import uuid4
+
+        from forze_kits.integrations.durable import resolve_durable_scheduler
+
+        ctx, sweeper, _counterparty, _runner = _composition()
+        tenant = uuid4()
+
+        first = await sweeper.ensure_cron(ctx, cron="0 4 * * *", tenant_id=tenant)
+        second = await sweeper.ensure_cron(ctx, cron="0 4 * * *", tenant_id=tenant)
+
+        assert first.schedule_id == second.schedule_id
+
+        # A different tenant gets its own schedule, so per-tenant cadences can differ.
+        other = await sweeper.ensure_cron(ctx, cron="0 5 * * *", tenant_id=uuid4())
+        assert other.schedule_id != first.schedule_id
+
+        _ = resolve_durable_scheduler(ctx)  # resolvable in this composition — wiring sanity

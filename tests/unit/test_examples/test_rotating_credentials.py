@@ -20,7 +20,7 @@ from forze.base.exceptions import CoreException
 async def test_concurrent_callers_rotate_once_and_keep_the_grant_alive() -> None:
     provider = DemoOAuthProvider()
     ctx, _ = build_context(provider)
-    store = ctx.deps.provide(RotatingCredentialsDepKey)
+    store = ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey)
 
     await authorize(store, provider)
     assert await call_api(store, provider) == "ok"
@@ -42,7 +42,7 @@ async def test_concurrent_callers_rotate_once_and_keep_the_grant_alive() -> None
 async def test_a_revoked_grant_burns_and_re_authorization_restores_it() -> None:
     provider = DemoOAuthProvider()
     ctx, _ = build_context(provider)
-    store = ctx.deps.provide(RotatingCredentialsDepKey)
+    store = ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey)
 
     await authorize(store, provider)
     provider.revoke()
@@ -72,7 +72,7 @@ async def test_the_stored_grant_carries_provider_metadata_forward() -> None:
 
     provider = DemoOAuthProvider()
     ctx, _ = build_context(provider)
-    store = ctx.deps.provide(RotatingCredentialsDepKey)
+    store = ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey)
 
     await authorize(store, provider)
     provider.expire_access_token()

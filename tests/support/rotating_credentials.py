@@ -850,6 +850,26 @@ async def check_the_scan_reports_burnt_grants_instead_of_hiding_them(
     assert len(h.counterparty.presented) == presented_before, "a burnt grant must never be presented"
 
 
+async def check_a_burn_notice_for_an_unknown_ref_reaches_the_scan(
+    h: RotatingStoreHarness,
+) -> None:
+    """A grant that was never stored but is known dead still shows up in the sweep's view.
+
+    ``burn`` on an absent ref writes a placeholder precisely so "needs re-authorization"
+    is recorded; a scan that skipped placeholder rows would silently drop those grants
+    from the operator's queryable list — the exact alert-someone-missed failure the
+    reporting exists to prevent.
+    """
+
+    await h.store.burn(ABSENT_REF, reason="authorization was revoked before first use")
+
+    due = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
+
+    assert [d.ref.path for d in due] == [ABSENT_REF.path]
+    assert due[0].burnt
+    assert due[0].burnt_reason == "authorization was revoked before first use"
+
+
 async def check_the_scan_is_bounded_and_oldest_first(h: RotatingStoreHarness) -> None:
     """Proof 5: ``limit`` caps a pass, and the most endangered grant comes first.
 
@@ -924,6 +944,7 @@ ROTATING_STORE_BATTERY: tuple[Check, ...] = (
     check_the_scan_surfaces_idle_grants_and_exchange_resets_the_clock,
     check_a_sweep_with_a_scanned_version_converges_after_live_traffic,
     check_the_scan_reports_burnt_grants_instead_of_hiding_them,
+    check_a_burn_notice_for_an_unknown_ref_reaches_the_scan,
     check_the_scan_is_bounded_and_oldest_first,
     check_the_scan_is_tenant_scoped,
 )

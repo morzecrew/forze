@@ -206,7 +206,9 @@ def build_context(provider: DemoOAuthProvider) -> tuple[ExecutionContext, MockSt
 async def main() -> None:
     provider = DemoOAuthProvider()
     ctx, _ = build_context(provider)
-    store = ctx.deps.provide(RotatingCredentialsDepKey)
+    # resolve_simple, not provide: the store registers as a per-scope factory (it carries
+    # the scope's tenant provider), on the mock exactly as on Postgres.
+    store = ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey)
 
     await authorize(store, provider)
     log.info("authorized", exchanges=provider.exchanges)

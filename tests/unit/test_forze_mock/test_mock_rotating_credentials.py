@@ -23,6 +23,7 @@ from forze.application.contracts.crypto import (
 )
 from forze.application.contracts.secrets import (
     ExchangedCredential,
+    RotatingCredentialsAdminDepKey,
     RotatingCredentialsDepKey,
     SecretRef,
 )
@@ -131,9 +132,17 @@ class TestMockWiring:
             MockDepsModule(state=MockState(), rotating_credentials=FakeCounterparty())
         )
 
-        assert isinstance(
-            wired.deps.provide(RotatingCredentialsDepKey), MockRotatingCredentialStore
-        )
+        # Factories now, not singletons: the store resolves per scope so it can carry the
+        # scope's tenant provider — resolve_simple invokes the factory, provide would
+        # return it raw.
+        store = wired.deps.resolve_simple(wired, RotatingCredentialsDepKey)
+        assert isinstance(store, MockRotatingCredentialStore)
+        assert store.tenant_provider is not None, "the wiring must thread the ambient tenant"
+
+        # The control-plane scan rides the same opt-in.
+        admin = wired.deps.resolve_simple(wired, RotatingCredentialsAdminDepKey)
+        assert isinstance(admin, MockRotatingCredentialsAdmin)
+        assert admin.tenant_provider is not None
 
     async def test_documents_live_in_the_shared_state(self) -> None:
         """The store writes into the same ``MockState`` the rest of the plane shares, so a

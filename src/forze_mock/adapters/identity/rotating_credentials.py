@@ -79,9 +79,17 @@ class MockRotatingCredentialStore(TenancyMixin, RotatingCredentialStorePort):
     an unbounded exchange would block every other worker on this credential
     indefinitely."""
 
-    _locks: StripedAsyncLocks = attrs.field(factory=StripedAsyncLocks, init=False, repr=False)
-    """In-process serialization. A single mock store has no cross-process peer, so this is
-    the only layer — the Postgres store adds the row lock."""
+    @property
+    def _locks(self) -> StripedAsyncLocks:
+        """In-process serialization, shared through :class:`MockState`.
+
+        The only layer the mock has (the Postgres store adds the row lock), which is why it
+        must live on the shared state: stores are built per execution scope so each can
+        carry that scope's tenant provider, and a per-instance stripe would serialize each
+        scope only against itself.
+        """
+
+        return self.state.rotating_credential_locks
 
     # ....................... #
 

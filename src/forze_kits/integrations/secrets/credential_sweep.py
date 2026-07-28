@@ -138,7 +138,7 @@ class CredentialSweeper:
         """One tenant's pass: scan for due grants, enqueue one refresh run per grant."""
 
         payload = SweepInput.model_validate(input_json or {})
-        admin = ctx.deps.provide(RotatingCredentialsAdminDepKey)
+        admin = ctx.deps.resolve_simple(ctx, RotatingCredentialsAdminDepKey)
         runner = resolve_durable_runner(ctx)
 
         due = await admin.due_for_refresh(
@@ -194,7 +194,7 @@ class CredentialSweeper:
         """
 
         payload = SweepRefreshInput.model_validate(input_json or {})
-        store = ctx.deps.provide(RotatingCredentialsDepKey)
+        store = ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey)
         ref = SecretRef(payload.ref_path)
 
         try:
