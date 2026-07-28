@@ -177,13 +177,14 @@ MECHANISM_DIVERGENCES: tuple[MechanismDivergence, ...] = (
     MechanismDivergence(
         name="lock-block-vs-abort-conductor",
         reason=(
-            "A duplicate-key insert race and a `FOR UPDATE` lock contention both BLOCK the contender "
-            "on Postgres (it waits for the holder to commit, then raises 23505 / re-reads the fresh "
-            "row) — which would wedge a one-participant-at-a-time forced interleaving. The mock is "
-            "abort-based, so it surfaces the same outcome (unique violation / no lost update) by "
-            "conflicting at commit instead of blocking. The block is converted into the same explicit "
-            "signal by the `_drive_lock_race` driver (arrive_blocking → commit the holder → release "
-            "the contender), so both `abort_engine_only` cases run against real Postgres too; the "
+            "A duplicate-key insert race, a blind-UPDATE dirty-write race (G0), and a `FOR UPDATE` "
+            "lock contention all BLOCK the contender on Postgres (it waits for the holder to commit, "
+            "then raises 23505 / proceeds on the fresh row / re-reads it) — which would wedge a "
+            "one-participant-at-a-time forced interleaving. The mock is abort-based, so it surfaces "
+            "the same outcome (unique violation / unmixed writes / no lost update) by conflicting at "
+            "commit instead of blocking. The block is converted into the same explicit signal by the "
+            "`_drive_lock_race` driver (arrive_blocking → commit the holder → release the "
+            "contender), so the `abort_engine_only` cases run against real Postgres too; the "
             "generic parametrized legs (vanilla one-at-a-time Conductor) skip them, and a dedicated "
             "lock-race differential asserts the outcome against the real engine. Note the FOR UPDATE "
             "verdict is the final value (was an update lost?), not whether a transaction aborted: "

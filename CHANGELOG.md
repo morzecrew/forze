@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `forze.base.primitives.StripedAsyncLocks` — keyed in-process serialization over a bounded lock set.
 - Full mock parity (`MockSecretsChangeSource`, `MockDynamicSecretsPort`), new `RoutedTenantClientBase.cached_tenant_ids()`, runnable walkthrough in `examples/recipes/secrets_rotation/`.
 - **DST quantitative clean-run verdict** — new `forze_dst.stats` (`detection_upper_bound`, `format_clean_verdict`): clean sweeps print the exact exclusion bound on per-seed detection probability instead of a bare pass — in `SweepResult`/`CoverageStats`/`ConfidenceReport` `format()` (new `ConfidenceReport.violations_seen`; `assess_confidence`/`ConfidenceProbe.report` accept `violations=`) and the `forze dst run`/`coverage` clean paths.
+- **Isolation battery: Adya labels + low-end completion** — every `AnomalyCase` carries new `adya` (G-phenomenon, the primary label) and `berenson` (legacy ANSI alias) fields; two new cases, `dirty_write` (G0) and `intermediate_read` (G1b), prevented at every level on all conformance backends.
 
 ## [0.5.1] - 2026-07-25
 

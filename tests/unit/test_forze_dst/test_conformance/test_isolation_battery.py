@@ -80,6 +80,33 @@ class TestIsolationBattery:
 # ....................... #
 
 
+class TestPhenomenonLabels:
+    """Every case carries its Adya label, and each low-end G-phenomenon has one unambiguous owner."""
+
+    def test_every_case_carries_an_adya_label(self) -> None:
+        for case in BATTERY:
+            assert case.adya, f"{case.name} has no adya label"
+
+    def test_low_end_phenomena_have_one_owner_each(self) -> None:
+        owners: dict[str, list[str]] = {}
+        for case in BATTERY:
+            if case.adya in {"G0", "G1a", "G1b"}:
+                owners.setdefault(case.adya, []).append(case.name)
+
+        assert owners == {
+            "G0": ["dirty_write"],
+            "G1a": ["dirty_read"],
+            "G1b": ["intermediate_read"],
+        }
+
+    def test_probes_are_marked_not_force_fitted(self) -> None:
+        probes = {case.name for case in BATTERY if case.adya == "—"}
+        assert probes == {"fresh_read_update", "duplicate_key_insert", "for_update_lost_update"}
+
+
+# ....................... #
+
+
 class TestLevelDiscrimination:
     """The battery as a whole distinguishes all three levels (it is not SI masquerading as SSI)."""
 
