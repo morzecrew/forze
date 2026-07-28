@@ -7,24 +7,24 @@ detection times are heavy-tailed and censored.
 
 | mutant | strategy | campaigns | detected | median | [q25, q75] | p̂ per seed [95% CI] |
 |---|---|---|---|---|---|---|
-| `I1-retry-without-key` | pct-d2 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `I1-retry-without-key` | pct-d3 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `I1-retry-without-key` | random | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `M2-consumer-without-inbox` | pct-d2 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `M2-consumer-without-inbox` | pct-d3 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `M2-consumer-without-inbox` | random | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `T1-blind-write-payment` | pct-d2 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `T1-blind-write-payment` | pct-d3 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `T1-blind-write-payment` | random | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `T2-charge-before-guard` | pct-d2 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `T2-charge-before-guard` | pct-d3 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `T2-charge-before-guard` | random | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `T3-payment-outside-tx` | pct-d2 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `T3-payment-outside-tx` | pct-d3 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `T3-payment-outside-tx` | random | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `T5-unchecked-reservation` | pct-d2 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `T5-unchecked-reservation` | pct-d3 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
-| `T5-unchecked-reservation` | random | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
+| `I1-retry-without-key` | pct-d2 | 100 | 100 | 11 | [6, 21] | 0.063 [0.052, 0.076] |
+| `I1-retry-without-key` | pct-d3 | 100 | 100 | 12 | [6, 21] | 0.069 [0.056, 0.083] |
+| `I1-retry-without-key` | random | 100 | 100 | 11 | [6, 24] | 0.062 [0.050, 0.074] |
+| `M2-consumer-without-inbox` | pct-d2 | 100 | 100 | 12 | [5, 22] | 0.064 [0.053, 0.078] |
+| `M2-consumer-without-inbox` | pct-d3 | 100 | 100 | 11 | [5, 22] | 0.061 [0.050, 0.073] |
+| `M2-consumer-without-inbox` | random | 100 | 100 | 12 | [6, 22] | 0.060 [0.049, 0.073] |
+| `T1-blind-write-payment` | pct-d2 | 100 | 100 | 12 | [5, 18] | 0.067 [0.055, 0.081] |
+| `T1-blind-write-payment` | pct-d3 | 100 | 100 | 11 | [5, 18] | 0.071 [0.058, 0.085] |
+| `T1-blind-write-payment` | random | 100 | 100 | 17 | [6, 29] | 0.052 [0.042, 0.062] |
+| `T2-charge-before-guard` | pct-d2 | 100 | 100 | 10 | [5, 20] | 0.068 [0.056, 0.082] |
+| `T2-charge-before-guard` | pct-d3 | 100 | 100 | 13 | [5, 25] | 0.059 [0.049, 0.072] |
+| `T2-charge-before-guard` | random | 100 | 100 | 12 | [6, 23] | 0.061 [0.050, 0.074] |
+| `T3-payment-outside-tx` | pct-d2 | 100 | 100 | 11 | [5, 22] | 0.064 [0.053, 0.078] |
+| `T3-payment-outside-tx` | pct-d3 | 100 | 100 | 12 | [4, 23] | 0.061 [0.050, 0.073] |
+| `T3-payment-outside-tx` | random | 100 | 100 | 12 | [5, 22] | 0.059 [0.048, 0.072] |
+| `T5-unchecked-reservation` | pct-d2 | 100 | 100 | 12 | [5, 26] | 0.054 [0.044, 0.065] |
+| `T5-unchecked-reservation` | pct-d3 | 100 | 100 | 10 | [5, 20] | 0.058 [0.048, 0.070] |
+| `T5-unchecked-reservation` | random | 100 | 100 | 13 | [5, 23] | 0.064 [0.053, 0.078] |
 
 ## False positives (negative controls)
 

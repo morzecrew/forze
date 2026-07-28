@@ -90,13 +90,20 @@ class _ChargeWithKey(Handler[ChargeCmd, None]):
 
 _TX_PLAN = OperationPlan().bind_tx().set_route("mock").finish(deep=False)
 
+_CAMPAIGN_POOL = tuple(range(100, 116))
+"""The de-saturated campaign pool: two draws from 16 collide with probability ≈ 1/16."""
+
 _RETRY_SCENARIO = Scenario(
     state=ModelState,
     act=(Rule(op="charge", arg=lambda _state, rng: ChargeCmd(command=rng.choice(_POOL))),),
 )
+_CAMPAIGN_SCENARIO = Scenario(
+    state=ModelState,
+    act=(Rule(op="charge", arg=lambda _state, rng: ChargeCmd(command=rng.choice(_CAMPAIGN_POOL))),),
+)
 
 
-def _case(handler_factory) -> MisuseCase:  # type: ignore[no-untyped-def]
+def _case(handler_factory, *, pooled: bool = False) -> MisuseCase:  # type: ignore[no-untyped-def]
     registry = OperationRegistry(
         handlers={"charge": handler_factory},
         plans={"charge": _TX_PLAN},
@@ -107,8 +114,10 @@ def _case(handler_factory) -> MisuseCase:  # type: ignore[no-untyped-def]
         },
     ).freeze()
 
+    pool = _CAMPAIGN_POOL if pooled else _POOL
+
     async def observe(ctx: ExecutionContext) -> None:
-        for command in _POOL:
+        for command in pool:
             total = await ctx.document.query(CHARGE_SPEC).count({"$values": {"command": command}})
             record_event("charge_rows", command=command, total=total)
 
@@ -125,12 +134,16 @@ def _case(handler_factory) -> MisuseCase:  # type: ignore[no-untyped-def]
                 )
             ],
         ),
-        scenario=_RETRY_SCENARIO,
+        scenario=_CAMPAIGN_SCENARIO if pooled else _RETRY_SCENARIO,
     )
 
 
 def i1_retry_without_key() -> MisuseCase:
     return _case(lambda ctx: _ChargeWithoutKey(ctx=ctx))
+
+
+def i1_retry_without_key_campaign() -> MisuseCase:
+    return _case(lambda ctx: _ChargeWithoutKey(ctx=ctx), pooled=True)
 
 
 def ctrl_retry_with_key() -> MisuseCase:

@@ -95,6 +95,13 @@ RESERVATION_SPEC = DocumentSpec(
 ORDER_ID = UUID(int=1)
 USER = 7
 
+CAMPAIGN_POOL = 16
+"""Collision-pool size for the campaign regime: the race fires only when two concurrent ops draw
+the same entity, so the per-seed detection probability is ≈ 1/pool — de-saturated and tunable."""
+
+_POOL_ORDER_IDS = tuple(UUID(int=100 + index) for index in range(CAMPAIGN_POOL))
+_POOL_GUESTS = tuple(range(100, 100 + CAMPAIGN_POOL))
+
 
 class PayCmd(BaseModel):
     order_id: UUID
@@ -227,7 +234,7 @@ _RESERVE_SCENARIO = Scenario(
 )
 
 
-def _pay_case(handler_factory, *, tx: bool, marker_oracle: bool = False) -> MisuseCase:  # type: ignore[no-untyped-def]
+def _pay_case(handler_factory, *, tx: bool, marker_oracle: bool = False, pooled: bool = False) -> MisuseCase:  # type: ignore[no-untyped-def]
     registry = OperationRegistry(
         handlers={"pay": handler_factory},
         plans={"pay": _TX_PLAN} if tx else {},
@@ -236,17 +243,37 @@ def _pay_case(handler_factory, *, tx: bool, marker_oracle: bool = False) -> Misu
         },
     ).freeze()
 
+    order_ids = _POOL_ORDER_IDS if pooled else (ORDER_ID,)
+
     async def setup(ctx: ExecutionContext) -> None:
-        await ctx.document.command(ORDER_SPEC).create(OrderCreate(), id=ORDER_ID)
+        for order_id in order_ids:
+            await ctx.document.command(ORDER_SPEC).create(OrderCreate(), id=order_id)
 
     async def observe(ctx: ExecutionContext) -> None:
-        total = await ctx.document.query(PAYMENT_SPEC).count({"$values": {"order_id": ORDER_ID}})
-        record_event("payments", total=total)
+        for order_id in order_ids:
+            total = await ctx.document.query(PAYMENT_SPEC).count(
+                {"$values": {"order_id": order_id}}
+            )
+            record_event("payments", order=str(order_id), total=total)
 
     invariants = (
         [no_duplicate_effect("charged", by="order")]
         if marker_oracle
         else [expect("payments", lambda e: e.fields["total"] <= 1, message="charged more than once")]
+    )
+
+    scenario = (
+        Scenario(
+            state=ModelState,
+            act=(
+                Rule(
+                    op="pay",
+                    arg=lambda _state, rng: PayCmd(order_id=rng.choice(_POOL_ORDER_IDS)),
+                ),
+            ),
+        )
+        if pooled
+        else _PAY_SCENARIO
     )
 
     return MisuseCase(
@@ -257,11 +284,11 @@ def _pay_case(handler_factory, *, tx: bool, marker_oracle: bool = False) -> Misu
             observe=observe,
             invariants=invariants,
         ),
-        scenario=_PAY_SCENARIO,
+        scenario=scenario,
     )
 
 
-def _reserve_case(handler_factory) -> MisuseCase:  # type: ignore[no-untyped-def]
+def _reserve_case(handler_factory, *, pooled: bool = False) -> MisuseCase:  # type: ignore[no-untyped-def]
     registry = OperationRegistry(
         handlers={"reserve": handler_factory},
         plans={"reserve": _TX_PLAN},
@@ -272,9 +299,26 @@ def _reserve_case(handler_factory) -> MisuseCase:  # type: ignore[no-untyped-def
         },
     ).freeze()
 
+    guests = _POOL_GUESTS if pooled else (USER,)
+
     async def observe(ctx: ExecutionContext) -> None:
-        total = await ctx.document.query(RESERVATION_SPEC).count({"$values": {"guest": USER}})
-        record_event("reservations", total=total)
+        for guest in guests:
+            total = await ctx.document.query(RESERVATION_SPEC).count({"$values": {"guest": guest}})
+            record_event("reservations", guest=guest, total=total)
+
+    scenario = (
+        Scenario(
+            state=ModelState,
+            act=(
+                Rule(
+                    op="reserve",
+                    arg=lambda _state, rng: ReserveCmd(guest=rng.choice(_POOL_GUESTS)),
+                ),
+            ),
+        )
+        if pooled
+        else _RESERVE_SCENARIO
+    )
 
     return MisuseCase(
         simulation=Simulation(
@@ -285,7 +329,7 @@ def _reserve_case(handler_factory) -> MisuseCase:  # type: ignore[no-untyped-def
                 expect("reservations", lambda e: e.fields["total"] <= 1, message="double booking")
             ],
         ),
-        scenario=_RESERVE_SCENARIO,
+        scenario=scenario,
     )
 
 
@@ -324,3 +368,24 @@ def ctrl_row_before_guard_in_tx() -> MisuseCase:
 
 def ctrl_unique_reservation() -> MisuseCase:
     return _reserve_case(lambda ctx: _ReserveUniqueKey(ctx=ctx))
+
+
+# ....................... #
+# Campaign-regime factories — the de-saturated collision-pool variants (same handlers, same
+# oracles; only the workload changes: the race fires only on a same-entity draw).
+
+
+def t1_blind_write_payment_campaign() -> MisuseCase:
+    return _pay_case(lambda ctx: _PayBlind(ctx=ctx), tx=True, pooled=True)
+
+
+def t2_charge_before_guard_campaign() -> MisuseCase:
+    return _pay_case(lambda ctx: _PayChargeBefore(ctx=ctx), tx=True, marker_oracle=True, pooled=True)
+
+
+def t3_payment_outside_tx_campaign() -> MisuseCase:
+    return _pay_case(lambda ctx: _PayRowBeforeGuard(ctx=ctx), tx=False, pooled=True)
+
+
+def t5_unchecked_reservation_campaign() -> MisuseCase:
+    return _reserve_case(lambda ctx: _ReserveCheckThenAct(ctx=ctx), pooled=True)

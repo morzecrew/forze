@@ -32,17 +32,22 @@ _SCHEDULE_SEED = 4223464447449377271  # derive_seed(0, "schedule") — recorded 
 _CONCURRENT = {"strategy": "scenario", "act_count": 4, "concurrency": 3}
 _SEQUENTIAL = {"strategy": "scenario", "act_count": 4, "concurrency": 1}
 
+_T_CAMPAIGN = {"strategy": "scenario", "act_count": 2, "concurrency": 2, "pool": 16}
+_SEQ_CAMPAIGN = {"strategy": "scenario", "act_count": 2, "concurrency": 1, "pool": 16}
+
 SMOKE_CONTROL_EXPLORE = _CONCURRENT
 """The corpus-wide explore knobs every control's clean band runs under (mutants replay their own)."""
 
-_D2_EVIDENCE = (
-    "manual: requires two in-flight operations interleaved between the read and the guarded "
-    "write — verified clean at concurrency=1 over seeds 0..199, kills at concurrency=3; "
-    "mechanical 1-minimal choice-vector extraction lands with the P2 tooling"
+_T_MECHANICAL = (
+    "mechanical (extract_depth): d = 1 + 0 non-FIFO choices — the 1-minimal schedule is EMPTY: "
+    "plain FIFO at the recorded knobs (act_count=4, concurrency=3, workload seed 0) already "
+    "violates. CORRECTS the earlier manual d=2 label, which conflated workload concurrency "
+    "(two in-flight ops ARE required — clean at concurrency=1 over seeds 0..199) with scheduler "
+    "ordering constraints: under the locked PCT-aligned definition the scheduler needs zero."
 )
-_D1_EVIDENCE = (
-    "manual: kills under concurrency=1 (seed 0) — the duplicated delivery in the workload "
-    "alone suffices, no ordering constraint; mechanical extraction lands with the P2 tooling"
+_D1_MECHANICAL = (
+    "mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal schedule () "
+    "(act_count=4, concurrency=1, workload seed 0) — the duplicated delivery alone suffices."
 )
 
 _PAY_FINGERPRINT = "sha256:7265dbffb577ac90c9a619bf2eb522d26a3067129409cf425ee30dc6f43cb0f9"
@@ -68,6 +73,8 @@ CORPUS: tuple[MisuseMutant, ...] = (
         operator="T1 drop_rev_guard",
         family=MisuseFamily.TRANSACTIONS,
         base="tests.support.misuse.transactions:t1_blind_write_payment",
+        campaign_base="tests.support.misuse.transactions:t1_blind_write_payment_campaign",
+        campaign_explore=_T_CAMPAIGN,
         summary="The pay transition uses a blind bulk write instead of the rev-guarded update; "
         "every concurrent payer wins and charges.",
         expected_invariants=("expect",),
@@ -77,8 +84,8 @@ CORPUS: tuple[MisuseMutant, ...] = (
             invariants=("expect",),
             explore=_CONCURRENT,
         ),
-        depth=2,
-        depth_evidence=_D2_EVIDENCE,
+        depth=1,
+        depth_evidence=_T_MECHANICAL,
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
@@ -88,6 +95,8 @@ CORPUS: tuple[MisuseMutant, ...] = (
         operator="T2 effect_before_guard",
         family=MisuseFamily.TRANSACTIONS,
         base="tests.support.misuse.transactions:t2_charge_before_guard",
+        campaign_base="tests.support.misuse.transactions:t2_charge_before_guard_campaign",
+        campaign_explore=_T_CAMPAIGN,
         summary="An external (non-transactional) charge fires before the rev-guarded transition; "
         "the loser's rollback cannot recall it.",
         expected_invariants=("no_duplicate_effect",),
@@ -97,8 +106,8 @@ CORPUS: tuple[MisuseMutant, ...] = (
             invariants=("no_duplicate_effect",),
             explore=_CONCURRENT,
         ),
-        depth=2,
-        depth_evidence=_D2_EVIDENCE,
+        depth=1,
+        depth_evidence=_T_MECHANICAL,
         port_observable=False,
         transfer_tier=TransferTier.NOT_TRANSFERABLE,
         notes="The external charge is a trace-level marker by design (an effect that leaves the "
@@ -110,6 +119,8 @@ CORPUS: tuple[MisuseMutant, ...] = (
         operator="T3 write_outside_tx",
         family=MisuseFamily.TRANSACTIONS,
         base="tests.support.misuse.transactions:t3_payment_outside_tx",
+        campaign_base="tests.support.misuse.transactions:t3_payment_outside_tx_campaign",
+        campaign_explore=_T_CAMPAIGN,
         summary="The row-before-guard handler with its transaction boundary removed; the loser's "
         "charge row survives its failed transition.",
         expected_invariants=("expect",),
@@ -119,8 +130,8 @@ CORPUS: tuple[MisuseMutant, ...] = (
             invariants=("expect",),
             explore=_CONCURRENT,
         ),
-        depth=2,
-        depth_evidence=_D2_EVIDENCE,
+        depth=1,
+        depth_evidence=_T_MECHANICAL,
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
@@ -130,6 +141,8 @@ CORPUS: tuple[MisuseMutant, ...] = (
         operator="T5 check_then_act",
         family=MisuseFamily.TRANSACTIONS,
         base="tests.support.misuse.transactions:t5_unchecked_reservation",
+        campaign_base="tests.support.misuse.transactions:t5_unchecked_reservation_campaign",
+        campaign_explore=_T_CAMPAIGN,
         summary="Unguarded read-check-insert over the reservation aggregate (TOCTOU); two "
         "concurrent reservers both see zero and both insert.",
         expected_invariants=("expect",),
@@ -139,8 +152,8 @@ CORPUS: tuple[MisuseMutant, ...] = (
             invariants=("expect",),
             explore=_CONCURRENT,
         ),
-        depth=2,
-        depth_evidence=_D2_EVIDENCE,
+        depth=1,
+        depth_evidence=_T_MECHANICAL,
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
@@ -150,6 +163,8 @@ CORPUS: tuple[MisuseMutant, ...] = (
         operator="I1 drop_idempotency_key",
         family=MisuseFamily.IDEMPOTENCY,
         base="tests.support.misuse.idempotency:i1_retry_without_key",
+        campaign_base="tests.support.misuse.idempotency:i1_retry_without_key_campaign",
+        campaign_explore=_SEQ_CAMPAIGN,
         summary="A retried command appends a fresh charge row per delivery — no idempotency key "
         "to collapse the duplicates.",
         expected_invariants=("expect",),
@@ -160,7 +175,7 @@ CORPUS: tuple[MisuseMutant, ...] = (
             explore=_SEQUENTIAL,
         ),
         depth=1,
-        depth_evidence=_D1_EVIDENCE,
+        depth_evidence=_D1_MECHANICAL,
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
@@ -171,6 +186,8 @@ CORPUS: tuple[MisuseMutant, ...] = (
         operator="M2 drop_inbox_dedup",
         family=MisuseFamily.MESSAGING,
         base="tests.support.misuse.messaging:m2_consumer_without_inbox",
+        campaign_base="tests.support.misuse.messaging:m2_consumer_without_inbox_campaign",
+        campaign_explore=_SEQ_CAMPAIGN,
         summary="A consumer applies its effect on every delivery — no inbox table, so a "
         "redelivered message is processed twice.",
         expected_invariants=("expect",),
@@ -181,7 +198,7 @@ CORPUS: tuple[MisuseMutant, ...] = (
             explore=_SEQUENTIAL,
         ),
         depth=1,
-        depth_evidence=_D1_EVIDENCE,
+        depth_evidence=_D1_MECHANICAL,
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,

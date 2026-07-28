@@ -66,6 +66,19 @@ class TestRegistryCompleteness:
         for entry in (*CORPUS, *CONTROLS):
             _resolve(entry.base)
 
+    def test_campaign_regimes_are_complete_and_resolvable(self) -> None:
+        # A campaign regime comes whole or not at all: pooled factory + its recorded knobs,
+        # sharing the smoke factory's operation catalog (the fingerprint gate spans regimes).
+        for mutant in CORPUS:
+            assert (mutant.campaign_base is None) == (mutant.campaign_explore is None)
+            if mutant.campaign_base is not None:
+                case = _resolve(mutant.campaign_base)
+                assert case.simulation.fingerprint() == mutant.killing.registry_fingerprint
+
+    def test_depth_labels_are_mechanical(self) -> None:
+        for mutant in CORPUS:
+            assert mutant.depth_evidence.startswith("mechanical"), mutant.mutant_id
+
 
 # ....................... #
 

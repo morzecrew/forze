@@ -145,6 +145,17 @@ class MisuseMutant:
     ground_truth: GroundTruth = GroundTruth.UNDETERMINED
     """Starts undetermined; only the real-backend transfer run may set it."""
 
+    campaign_base: str | None = None
+    """Optional second factory (``module:attr`` → :class:`MisuseCase`): the **campaign** workload
+    regime. The kill-fast smoke workload saturates (nearly every seed detects — no discriminating
+    power between strategies), so detection-time campaigns run a de-saturated collision-pool
+    variant where the race only fires when concurrent operations draw the same entity from a pool
+    of size ``P`` (per-seed detection probability ≈ ``1/P``, tunable). ``None`` = campaigns fall
+    back to :attr:`base`."""
+
+    campaign_explore: dict[str, object] | None = None
+    """The campaign regime's exploration knobs, recorded like ``killing.explore``."""
+
     notes: str = ""
 
     # ....................... #

@@ -161,13 +161,19 @@ def run_mutant_campaigns(
     if campaigns < 1 or ceiling < 1:
         raise ValueError("campaigns and ceiling must both be >= 1")
 
-    case = _resolve_case(mutant.base)
+    # Prefer the mutant's campaign regime (the de-saturated collision-pool workload) when it
+    # declares one; the kill-fast smoke regime is the fallback, and an explicit *explore*
+    # override beats both. The campaign factory shares the smoke factory's operation catalog,
+    # so the fingerprint gate holds across regimes.
+    case = _resolve_case(mutant.campaign_base or mutant.base)
     if case.simulation.fingerprint() != mutant.killing.registry_fingerprint:
         raise RuntimeError(
             f"{mutant.mutant_id}: registry fingerprint drifted — re-mine before measuring"
         )
 
-    act_count, concurrency = _knobs(explore or mutant.killing.explore, mutant.mutant_id)
+    act_count, concurrency = _knobs(
+        explore or mutant.campaign_explore or mutant.killing.explore, mutant.mutant_id
+    )
     records: list[CampaignRecord] = []
 
     for strategy in strategies:
