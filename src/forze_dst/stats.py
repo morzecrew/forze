@@ -56,6 +56,15 @@ def _render_probability(bound: float) -> str:
 # ....................... #
 
 
+def _render_confidence(confidence: float) -> str:
+    """Percent with trailing zeros trimmed, so 0.95 → ``95%`` but 0.999 → ``99.9%``, never ``100%``."""
+
+    return f"{confidence:.4%}".removesuffix("%").rstrip("0").rstrip(".") + "%"
+
+
+# ....................... #
+
+
 def format_clean_verdict(runs: int, *, confidence: float = 0.95) -> str:
     """The locked one-line verdict a clean run prints instead of a bare "passed".
 
@@ -68,6 +77,6 @@ def format_clean_verdict(runs: int, *, confidence: float = 0.95) -> str:
 
     return (
         f"0 violations in {runs} {plural} → per-seed detection probability "
-        f"< {_render_probability(bound)} ({confidence:.0%}, exact) "
+        f"< {_render_probability(bound)} ({_render_confidence(confidence)}, exact) "
         "for this scenario × strategy × oracle set (independent seeds)"
     )

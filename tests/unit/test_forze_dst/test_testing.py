@@ -254,6 +254,16 @@ class TestCleanRunVerdicts:
         finally:
             set_active(None)
 
+    def test_zero_seed_sweep_records_nothing(self) -> None:
+        # ``--dst-seeds=0`` runs an empty sweep: it establishes nothing, and a runs=0 record
+        # would make the summary's bound undefined — so it must not be recorded at all.
+        set_active(DstOptions(seeds=0))
+        try:
+            assert_no_violation(_clean_sim(), scenario=_MAKE_SCENARIO)
+            assert drain_clean_sweeps() == ()
+        finally:
+            set_active(None)
+
     def test_set_active_resets_stale_records(self) -> None:
         # A new session (configure) must not inherit a previous in-process session's verdicts.
         record_clean_sweep(CleanSweep(label="stale", runs=10))

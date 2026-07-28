@@ -70,8 +70,9 @@ def assert_no_violation(
 
     # Clean → record for the plugin's terminal-summary verdict line. Scenario strategy only: the
     # other strategies explore interleavings/examples, not independent seeds, so a per-seed
-    # exclusion bound would be dishonest there (same rule as the CLI clean path).
-    if options is not None and cfg.strategy is Strategy.SCENARIO:
+    # exclusion bound would be dishonest there (same rule as the CLI clean path). Zero seeds
+    # (e.g. ``--dst-seeds=0``) establish nothing and would make the bound undefined — not recorded.
+    if options is not None and cfg.strategy is Strategy.SCENARIO and len(cfg.seeds) > 0:
         record_clean_sweep(CleanSweep(label=_current_test_label(), runs=len(cfg.seeds)))
 
 

@@ -70,6 +70,12 @@ class TestFormatCleanVerdict:
     def test_non_default_confidence_is_stated(self) -> None:
         assert "(99%, exact)" in format_clean_verdict(100, confidence=0.99)
 
+    def test_high_precision_confidence_never_rounds_to_100(self) -> None:
+        out = format_clean_verdict(1000, confidence=0.999)
+
+        assert "(99.9%, exact)" in out
+        assert "100%" not in out
+
     def test_tiny_bound_falls_back_to_scientific_never_zero_percent(self) -> None:
         out = format_clean_verdict(10_000_000)
 
