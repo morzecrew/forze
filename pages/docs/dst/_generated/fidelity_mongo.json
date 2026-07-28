@@ -1,0 +1,243 @@
+{
+  "engine": "mongo",
+  "levels": [
+    "READ_COMMITTED",
+    "SNAPSHOT"
+  ],
+  "cells": [
+    {
+      "case": "dirty_write",
+      "adya": "G0",
+      "level": "READ_COMMITTED",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "dirty_write",
+      "adya": "G0",
+      "level": "SNAPSHOT",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "dirty_read",
+      "adya": "G1a",
+      "level": "READ_COMMITTED",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "dirty_read",
+      "adya": "G1a",
+      "level": "SNAPSHOT",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "intermediate_read",
+      "adya": "G1b",
+      "level": "READ_COMMITTED",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "intermediate_read",
+      "adya": "G1b",
+      "level": "SNAPSHOT",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "non_repeatable_read",
+      "adya": "G-single",
+      "level": "READ_COMMITTED",
+      "mock": "permitted",
+      "real": "prevented",
+      "classification": "mock_weak",
+      "explained_by": "strengthening:non_repeatable_read@READ_COMMITTED[mongo]"
+    },
+    {
+      "case": "non_repeatable_read",
+      "adya": "G-single",
+      "level": "SNAPSHOT",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "read_skew",
+      "adya": "G-single",
+      "level": "READ_COMMITTED",
+      "mock": "permitted",
+      "real": "prevented",
+      "classification": "mock_weak",
+      "explained_by": "strengthening:read_skew@READ_COMMITTED[mongo]"
+    },
+    {
+      "case": "read_skew",
+      "adya": "G-single",
+      "level": "SNAPSHOT",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "phantom",
+      "adya": "PMP",
+      "level": "READ_COMMITTED",
+      "mock": "permitted",
+      "real": "prevented",
+      "classification": "mock_weak",
+      "explained_by": "strengthening:phantom@READ_COMMITTED[mongo]"
+    },
+    {
+      "case": "phantom",
+      "adya": "PMP",
+      "level": "SNAPSHOT",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "write_skew",
+      "adya": "G2-item",
+      "level": "READ_COMMITTED",
+      "mock": "permitted",
+      "real": "permitted",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "write_skew",
+      "adya": "G2-item",
+      "level": "SNAPSHOT",
+      "mock": "permitted",
+      "real": "permitted",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "predicate_write_skew",
+      "adya": "G2",
+      "level": "READ_COMMITTED",
+      "mock": "permitted",
+      "real": "permitted",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "predicate_write_skew",
+      "adya": "G2",
+      "level": "SNAPSHOT",
+      "mock": "permitted",
+      "real": "permitted",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "read_only_anomaly",
+      "adya": "G2",
+      "level": "READ_COMMITTED",
+      "mock": "permitted",
+      "real": "permitted",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "read_only_anomaly",
+      "adya": "G2",
+      "level": "SNAPSHOT",
+      "mock": "permitted",
+      "real": "permitted",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "lost_update",
+      "adya": "G-single",
+      "level": "READ_COMMITTED",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "lost_update",
+      "adya": "G-single",
+      "level": "SNAPSHOT",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "fresh_read_update",
+      "adya": "\u2014",
+      "level": "READ_COMMITTED",
+      "mock": "permitted",
+      "real": "prevented",
+      "classification": "mock_weak",
+      "explained_by": "strengthening:fresh_read_update@READ_COMMITTED[mongo]"
+    },
+    {
+      "case": "fresh_read_update",
+      "adya": "\u2014",
+      "level": "SNAPSHOT",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "duplicate_key_insert",
+      "adya": "\u2014",
+      "level": "READ_COMMITTED",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "duplicate_key_insert",
+      "adya": "\u2014",
+      "level": "SNAPSHOT",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "for_update_lost_update",
+      "adya": "\u2014",
+      "level": "READ_COMMITTED",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    },
+    {
+      "case": "for_update_lost_update",
+      "adya": "\u2014",
+      "level": "SNAPSHOT",
+      "mock": "prevented",
+      "real": "prevented",
+      "classification": "agree",
+      "explained_by": null
+    }
+  ]
+}

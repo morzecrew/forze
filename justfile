@@ -107,6 +107,20 @@ fuzz *args='tests/unit/test_forze_dst':
     uv run pytest -m fuzz {{ args }}
 
 
+# Regenerate the DST fidelity matrix artifact (needs Docker; writes pages/docs/dst/_generated/)
+dst-fidelity:
+    {{ _uv_sync }}
+
+    FORZE_FIDELITY_OUT=pages/docs/dst/_generated uv run pytest \
+        "tests/integration/test_forze_postgres/test_pg_isolation_conformance.py::TestPostgresFidelityMatrix" \
+        "tests/integration/test_forze_mongo/test_mongo_isolation_conformance.py::TestMongoFidelityMatrix" \
+        -q
+    uv run python .github/scripts/render_fidelity.py \
+        pages/docs/dst/_generated/fidelity_postgres.json \
+        pages/docs/dst/_generated/fidelity_mongo.json \
+        --out pages/docs/dst/_generated/fidelity.md
+
+
 # Run all quality checks
 [arg("strict", long, short="s", value="true", help="Enable strict mode (fail on error in any check)")]
 quality strict="false":

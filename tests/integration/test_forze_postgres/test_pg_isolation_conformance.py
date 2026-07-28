@@ -13,6 +13,7 @@ all three levels, and every battery row each level promises passes here against 
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 
 import attrs
@@ -23,8 +24,16 @@ from forze.application.contracts.resilience import ResilienceExecutorDepKey
 from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution import Deps, ExecutionContext
 from forze.testing import context_from_deps
-from forze_dst.conformance import BATTERY, Verdict, expected_verdict
+from forze_dst.conformance import (
+    BATTERY,
+    FidelityMatrix,
+    Verdict,
+    collect_verdicts,
+    expected_verdict,
+    write_matrix,
+)
 from forze_mock.adapters.resilience import PassthroughResilienceExecutor
+from tests.support.isolation_conformance import MockConformanceBackend
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.kernel.client.client import PostgresClient
@@ -163,6 +172,37 @@ class TestPostgresLockRaceDifferential:
     ) -> None:
         observed = await case.run(PostgresConformanceBackend(client=pg_client), level)
         assert observed == expected_verdict(case, level)
+
+
+@pytest.mark.integration
+class TestPostgresFidelityMatrix:
+    """The measuring layer over the same differential: collect-then-assert, direction-split.
+
+    The per-cell tests above gate each cell with sharp failure locality; this test runs the whole
+    battery on BOTH backends in one process, pairs the verdicts into a `FidelityMatrix`, and gates
+    on the fold: no unexplained divergence in either direction. On Postgres every cell must agree
+    outright (no engine-scoped strengthening exists for it). With `FORZE_FIDELITY_OUT` set (the
+    `just dst-fidelity` recipe), the matrix is written as the per-backend JSON artifact the
+    generated fidelity document renders.
+    """
+
+    async def test_matrix_agrees_everywhere_and_measures(
+        self, pg_client: PostgresClient, conformance_tables
+    ) -> None:
+        mock_cells = await collect_verdicts(MockConformanceBackend(), levels=_LEVELS)
+        real_cells = await collect_verdicts(
+            PostgresConformanceBackend(client=pg_client), levels=_LEVELS
+        )
+
+        matrix = FidelityMatrix.pair(mock_cells, real_cells, engine="postgres")
+
+        assert len(matrix.cells) == len(BATTERY) * len(_LEVELS)
+        assert matrix.unexplained == ()
+        assert matrix.mock_strict == ()  # the ship-a-bug direction: must be empty on Postgres
+        assert matrix.mock_weak == ()  # the false-alarm direction: must be empty on Postgres
+
+        if out := os.environ.get("FORZE_FIDELITY_OUT"):
+            write_matrix(matrix, out)
 
 
 @pytest.mark.integration

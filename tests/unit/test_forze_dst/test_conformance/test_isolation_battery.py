@@ -23,6 +23,7 @@ from forze_dst.conformance import (
     expected_verdict,
 )
 from forze_mock import MockDepsModule, MockState
+from tests.support.isolation_conformance import MockConformanceBackend
 
 # ----------------------- #
 
@@ -31,17 +32,6 @@ _LEVELS = (
     IsolationLevel.SNAPSHOT,
     IsolationLevel.SERIALIZABLE,
 )
-
-
-@attrs.define
-class MockConformanceBackend:
-    """N independent mock sessions over one fresh shared ``MockState`` per anomaly run."""
-
-    scope_name: str = "mock"
-
-    def contexts(self, n: int) -> Sequence[ExecutionContext]:
-        state = MockState()
-        return [context_from_modules(MockDepsModule(state=state)) for _ in range(n)]
 
 
 # ....................... #
