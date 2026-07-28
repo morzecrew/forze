@@ -540,7 +540,12 @@ class MockRotatingCredentialsAdmin(TenancyMixin, RotatingCredentialsAdminPort):
 
         with self.state.lock:
             due = [
-                (key, document)
+                # Snapshot each row while the lock is held: the sort and the view
+                # construction below run after it releases, and MockState's contract is a
+                # *threading* lock — a poison/burn mutating the live dict in place from
+                # another thread could otherwise tear a row mid-read (a timestamp that
+                # passed the cutoff paired with a burn notice written after it).
+                (key, dict(document))
                 for key, document in self._documents().items()
                 # The prefix match is the tenant boundary: keys embed the tenant exactly so
                 # one shared store cannot leak another tenant's refs into a scan.
