@@ -166,19 +166,17 @@ on-demand refresh. The refresh token's clock is idleness, and it is what
 `CredentialSweeper` watches:
 
 ```python
-from forze_kits.integrations.secrets import CredentialSweeper
-
-sweeper = CredentialSweeper(
-    # Set well inside the provider's documented inactivity window, with margin —
-    # a missed sweep pass must not be fatal.
-    refresh_if_idle_for=timedelta(days=30),
-)
-sweeper.register(durable_registry)
-
-# Daily is almost always right: the idle window is weeks, the cadence just has to be
-# dense enough that missing a couple of passes still lands well inside it.
-await sweeper.ensure_cron(ctx, cron="0 4 * * *")
+--8<-- "recipes/rotating_credentials/app.py:sweep-wiring"
 ```
+
+Driving it is one schedule plus, when you want a pass right now, one inline run:
+
+```python
+--8<-- "recipes/rotating_credentials/app.py:sweep"
+```
+
+Daily is almost always right for the cadence: the idle window is weeks, so it only has to
+be dense enough that missing a couple of passes still lands well inside it.
 
 Each pass asks the control-plane scan (`RotatingCredentialsAdminPort.due_for_refresh`,
 registered automatically beside the store) which grants sit unexchanged past the window,

@@ -464,6 +464,13 @@ class MockDepsModule(DepsModule):
 
         if self.rotating_credentials is not None:
             exchanger = self.rotating_credentials
+            # Tenancy mirrors the Postgres config flag through the route table: a route
+            # config named "rotating_credentials" with tenant_aware=True makes the oracle
+            # require a bound tenant fail-closed, exactly as
+            # PostgresRotatingCredentialsConfig(tenant_aware=True) does — without it, a
+            # deployment that demands tagged tenancy could not be modelled here at all.
+            rotating_route = (self.routes or {}).get("rotating_credentials")
+            rotating_tenant_aware = rotating_route.tenant_aware if rotating_route else False
 
             # Factories, not singletons, for the same reason the Postgres wiring is: the
             # tenant provider only exists per execution context, and a singleton without
@@ -479,6 +486,7 @@ class MockDepsModule(DepsModule):
                     # credentials in the clear would make the at-rest behaviour differ
                     # from production on the one store where that difference matters most.
                     cipher=crypto_keyring,
+                    tenant_aware=rotating_tenant_aware,
                     tenant_provider=ctx.inv_ctx.get_tenant,
                 )
 
@@ -487,6 +495,7 @@ class MockDepsModule(DepsModule):
             def _rotating_admin(ctx: ExecutionContext) -> MockRotatingCredentialsAdmin:
                 return MockRotatingCredentialsAdmin(
                     state=self.state,
+                    tenant_aware=rotating_tenant_aware,
                     tenant_provider=ctx.inv_ctx.get_tenant,
                 )
 

@@ -263,3 +263,65 @@ class TestMockWiring:
         # Both rotated, and each presented its own token.
         assert first.access_token != second.access_token
         assert set(counterparty.presented) == {f"r-{REF.path}", f"r-{other.path}"}
+
+
+class TestTenantAwareWiring:
+    """`routes["rotating_credentials"].tenant_aware` mirrors the Postgres config flag.
+
+    Without it the oracle could not model a deployment that *requires* tagged tenancy:
+    `PostgresRotatingCredentialsConfig(tenant_aware=True)` fails closed on an unbound
+    tenant, and code written for that deployment needs the same refusal from the mock —
+    an unbound call silently landing in the global partition is the permissive direction
+    that hides real bugs.
+    """
+
+    async def test_tenant_aware_route_fails_closed_without_a_bound_tenant(self) -> None:
+        from forze_mock.execution.configs import MockRouteConfig
+
+        ctx = context_from_modules(
+            MockDepsModule(
+                state=MockState(),
+                rotating_credentials=FakeCounterparty(),
+                routes={"rotating_credentials": MockRouteConfig(tenant_aware=True)},
+            )
+        )
+        store = ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey)
+        admin = ctx.deps.resolve_simple(ctx, RotatingCredentialsAdminDepKey)
+
+        with pytest.raises(CoreException) as no_tenant_store:
+            await store.get(SecretRef("oauth/acme"))
+
+        assert no_tenant_store.value.code == "tenant_required"
+
+        from datetime import UTC, datetime
+
+        with pytest.raises(CoreException) as no_tenant_scan:
+            await admin.due_for_refresh(idle_since=datetime.now(UTC), limit=10)
+
+        assert no_tenant_scan.value.code == "tenant_required"
+
+    async def test_a_bound_tenant_satisfies_the_same_route(self) -> None:
+        """The control: the refusal above is the missing tenant, not broken wiring."""
+
+        from uuid import uuid4
+
+        from forze.application.contracts.secrets import ExchangedCredential
+        from forze.application.contracts.tenancy import TenantIdentity
+        from forze_mock.execution.configs import MockRouteConfig
+
+        ctx = context_from_modules(
+            MockDepsModule(
+                state=MockState(),
+                rotating_credentials=FakeCounterparty(),
+                routes={"rotating_credentials": MockRouteConfig(tenant_aware=True)},
+            )
+        )
+
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=uuid4())):
+            store = ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey)
+            stored = await store.put(
+                SecretRef("oauth/acme"),
+                ExchangedCredential(access_token="a", refresh_token="r"),
+            )
+
+            assert (await store.get(SecretRef("oauth/acme"))).version == stored.version

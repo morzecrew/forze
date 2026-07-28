@@ -34,6 +34,9 @@ from forze.base.exceptions import exc
 from forze.base.logging import configure_logging
 from forze.base.logging.constants import LogLevel
 from forze.base.primitives import utcnow
+from forze_kits.integrations.durable import DurableFunctionRegistry, durable_kits_deps
+from forze_kits.integrations.durable.runner import DurableFunctionRunner
+from forze_kits.integrations.secrets import CredentialSweeper
 from forze_mock import MockDepsModule, MockState
 
 _LOGGER_NAME = "rotating_credentials"
@@ -188,24 +191,45 @@ async def authorize(store: RotatingCredentialStorePort, provider: DemoOAuthProvi
 # --8<-- [end:authorize]
 
 
-def build_context(provider: DemoOAuthProvider) -> tuple[ExecutionContext, MockState]:
+# --8<-- [start:sweep-wiring]
+def build_context(
+    provider: DemoOAuthProvider,
+    *,
+    refresh_if_idle_for: timedelta = timedelta(days=30),
+) -> tuple[ExecutionContext, MockState, DurableFunctionRunner, CredentialSweeper]:
     # The exchanger is the one thing the framework cannot default: it is a call to someone
     # else's provider, so passing it is what registers the store at all.
     state = MockState()
+
+    # The sweeper is two durable functions on the app's registry: a per-tenant sweep that
+    # scans for idle grants, and a per-grant refresh it enqueues — so one dead provider
+    # costs one failing run, never a stalled pass. The idle window is per-provider
+    # configuration: set it well inside their documented inactivity limit.
+    registry = DurableFunctionRegistry()
+    sweeper = CredentialSweeper(refresh_if_idle_for=refresh_if_idle_for)
+    sweeper.register(registry)
+    durable_deps, runner, _scheduler = durable_kits_deps(registry=registry)
+
     ctx = ExecutionContext(
-        deps=DepsRegistry.from_modules(
-            MockDepsModule(state=state, rotating_credentials=DemoTokenExchanger(provider))
+        deps=DepsRegistry.from_deps(
+            MockDepsModule(state=state, rotating_credentials=DemoTokenExchanger(provider))(),
+            durable_deps,
         )
         .freeze()
         .resolve()
     )
 
-    return ctx, state
+    return ctx, state, runner, sweeper
+
+
+# --8<-- [end:sweep-wiring]
 
 
 async def main() -> None:
     provider = DemoOAuthProvider()
-    ctx, _ = build_context(provider)
+    # A tiny idle window so the demo's sweep finds the grant due within milliseconds;
+    # production uses days (see sweep_act).
+    ctx, _, runner, sweeper = build_context(provider, refresh_if_idle_for=timedelta(milliseconds=10))
     # resolve_simple, not provide: the store registers as a per-scope factory (it carries
     # the scope's tenant provider), on the mock exactly as on Postgres.
     store = ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey)
@@ -250,6 +274,51 @@ async def main() -> None:
     # Re-authorization is the documented way back.
     await authorize(store, provider)
     log.info("re-authorized", result=await call_api(store, provider))
+
+    await sweep_act(ctx, runner, sweeper, provider)
+
+
+# --8<-- [start:sweep]
+async def sweep_act(
+    ctx: ExecutionContext,
+    runner: DurableFunctionRunner,
+    sweeper: CredentialSweeper,
+    provider: DemoOAuthProvider,
+) -> None:
+    """The half on-demand refresh cannot do: keep a grant alive that nobody is using.
+
+    Providers expire refresh tokens from *non-use* — weeks to months, reset by every
+    exchange — so a tenant that goes quiet loses its grant permanently unless something
+    exchanges on its behalf before the deadline. Nothing in this act calls the API.
+    """
+
+    # Production wires the cadence once; each firing becomes a durable sweep run.
+    schedule = await sweeper.ensure_cron(ctx, cron="0 4 * * *")
+    log.info("sweep scheduled", schedule_id=schedule.schedule_id)
+
+    # A quarter with no traffic goes by (compressed: the demo window is milliseconds
+    # where production uses days, purely so this example runs in the blink of an eye).
+    await asyncio.sleep(0.05)
+
+    exchanges_before = provider.exchanges
+    record = await sweeper.sweep_now(ctx)  # what the cron fires, run inline
+
+    # The sweep enqueued one durable refresh run per due grant; a worker drains them.
+    while await runner.recover(ctx, limit=10):
+        pass
+
+    outcome = record.output_json or {}
+    log.info(
+        "idle grant kept alive without a single API call",
+        due=outcome.get("due"),
+        exchanges_spent=provider.exchanges - exchanges_before,
+        # Not named *authorization*: the log masker redacts matching keys, and this is a
+        # list of ref paths — operator routing data, never a secret.
+        re_consent_needed=outcome.get("needs_reauthorization"),
+    )
+
+
+# --8<-- [end:sweep]
 
 
 if __name__ == "__main__":
