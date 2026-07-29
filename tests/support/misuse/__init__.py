@@ -185,6 +185,33 @@ CORPUS: tuple[MisuseMutant, ...] = (
         "not just concurrent overlap.",
     ),
     MisuseMutant(
+        mutant_id="T4-weakened-oncall",
+        operator="T4 weaken_isolation",
+        family=MisuseFamily.TRANSACTIONS,
+        base="tests.support.misuse.transactions:t4_weakened_oncall",
+        campaign_base="tests.support.misuse.transactions:t4_weakened_oncall_campaign",
+        campaign_explore={"strategy": "scenario", "act_count": 2, "concurrency": 2, "pool": 16},
+        summary="The on-call rota's read-both/write-own constraint declared at SNAPSHOT instead "
+        "of SERIALIZABLE — write skew takes both doctors off call at once.",
+        expected_invariants=("expect",),
+        killing=_kill(
+            "tests.support.misuse.transactions:t4_weakened_oncall",
+            fingerprint="sha256:ef08758d8ca05fd5ae459fbd248cc6c63d6e361489a845d9f836b444a421f356",
+            invariants=("expect",),
+            explore=_CONCURRENT,
+        ),
+        depth=1,
+        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal "
+        "schedule () (act_count=2, concurrency=2, workload seed 2) — overlap alone suffices: "
+        "FIFO lockstep already lands both reads before either commit, the write-skew shape.",
+        port_observable=True,
+        transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
+        notes="The seeded misuse is the declared IsolationLevel alone — the handler is byte-for-"
+        "byte the control's. The campaign trigger needs a same-rota AND distinct-doctor "
+        "concurrent pair, so p_trigger ≈ 1/(2·pool), not 1/pool.",
+    ),
+    MisuseMutant(
         mutant_id="T5-unchecked-reservation",
         operator="T5 check_then_act",
         family=MisuseFamily.TRANSACTIONS,
@@ -228,6 +255,33 @@ CORPUS: tuple[MisuseMutant, ...] = (
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
         notes="Transfer is a plain re-invocation — no forced interleaving needed.",
+    ),
+    MisuseMutant(
+        mutant_id="I2-naive-retry-loop",
+        operator="I2 retry_without_idempotency",
+        family=MisuseFamily.IDEMPOTENCY,
+        base="tests.support.misuse.idempotency:i2_retry_without_idempotency",
+        campaign_base="tests.support.misuse.idempotency:i2_retry_without_idempotency_campaign",
+        campaign_explore=_SEQ_CAMPAIGN,
+        summary="A naive in-handler retry loop around a non-idempotent effect: the receipt "
+        "commits in its own transaction, the per-order ack conflicts for the duplicate "
+        "submission, and the re-run mints a second receipt for the same command.",
+        expected_invariants=("expect",),
+        killing=_kill(
+            "tests.support.misuse.idempotency:i2_retry_without_idempotency",
+            fingerprint="sha256:5879f7faf8612fbfde07510800369b1fcccad4ab8cb40403f4857b3ce8c6c9ee",
+            invariants=("expect",),
+            explore=_SEQUENTIAL,
+        ),
+        depth=1,
+        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal "
+        "schedule () (act_count=4, concurrency=1, workload seed 0) — the duplicate submission "
+        "alone suffices; the loser's ack conflict fires sequentially too.",
+        port_observable=True,
+        transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
+        notes="Distinct from I1: the retry is self-inflicted (an in-handler loop), and the "
+        "effect escapes because it commits before the ack that detects the duplicate.",
     ),
     MisuseMutant(
         mutant_id="M1-dual-write-shipment",
@@ -336,6 +390,32 @@ CORPUS: tuple[MisuseMutant, ...] = (
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
+    ),
+    MisuseMutant(
+        mutant_id="D2-early-lease-release",
+        operator="D2 early_lock_release",
+        family=MisuseFamily.DISTRIBUTED,
+        base="tests.support.misuse.dlock:d2_early_lock_release",
+        summary="The lease is released inside the critical section — after the read, before the "
+        "write — so a spinning waiter acquires and reads the stale balance while the ex-holder's "
+        "write is still in flight.",
+        expected_invariants=("expect",),
+        killing=RegressionEntry(
+            seed=2, schedule_seed=None,
+            target="tests.support.misuse.dlock:d2_early_lock_release",
+            registry_fingerprint="sha256:4fd3491e5da74cf76363e0b3a3ee610f61f0a574a293d93ca5b790df4f606f44",
+            invariants=("expect",), found_at=_FOUND_AT,
+            explore=_CONCURRENT,
+        ),
+        depth=1,
+        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal "
+        "schedule () (act_count=2, concurrency=2, workload seed 0) — FIFO lockstep itself walks "
+        "the waiter's spin into the release→write hole before the ex-holder's write lands.",
+        port_observable=True,
+        transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
+        notes="Naturally de-saturated without a pool: detection is a window lottery (the waiter "
+        "must acquire inside the release→write hole), p̂ ≈ 0.5–0.8 under random schedules.",
     ),
     MisuseMutant(
         mutant_id="D3-nonatomic-acquire",
@@ -450,6 +530,30 @@ CONTROLS: tuple[MisuseControl, ...] = (
         base="tests.support.misuse.idempotency:ctrl_retry_with_key",
         summary="Retry SHAPED but correct: the same duplicated workload, deduplicated by the "
         "command-id-derived row key.",
+        adversarial=True,
+        clean_band=(0, 32),
+    ),
+    MisuseControl(
+        control_id="ctrl-idempotent-retry",
+        base="tests.support.misuse.idempotency:ctrl_idempotent_retry",
+        summary="The same naive retry loop as the I2 mutant, but the receipt id derives from "
+        "the command — a re-run re-creates the same row and collapses into already-done.",
+        adversarial=True,
+        clean_band=(0, 32),
+    ),
+    MisuseControl(
+        control_id="ctrl-serializable-oncall",
+        base="tests.support.misuse.transactions:ctrl_serializable_oncall",
+        summary="The identical on-call handler declared at SERIALIZABLE — the serialization "
+        "abort is caught and the doctor stays on call.",
+        adversarial=True,
+        clean_band=(0, 32),
+    ),
+    MisuseControl(
+        control_id="ctrl-release-after-write",
+        base="tests.support.misuse.dlock:ctrl_release_after_write",
+        summary="The same spin-acquire lease protocol as the D2 mutant, releasing only after "
+        "the critical-section write commits.",
         adversarial=True,
         clean_band=(0, 32),
     ),

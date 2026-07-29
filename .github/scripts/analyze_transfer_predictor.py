@@ -48,9 +48,24 @@ MAPPING: dict[str, tuple[str, str] | tuple[None, str]] = {
         "predicate_write_skew",
         "both sessions evaluate the no-reservation predicate, then both insert (G2 shape)",
     ),
+    "T4-weakened-oncall": (
+        "write_skew",
+        "the read-both/write-own rota constraint at SNAPSHOT is the write-skew shape verbatim "
+        "(G2-item)",
+    ),
     "I1-retry-without-key": (
         None,
         "idempotency-plane defect — a duplicate re-invocation, no isolation phenomenon involved",
+    ),
+    "I2-naive-retry-loop": (
+        None,
+        "retry-plane defect — the duplicate comes from re-running a non-idempotent block; the "
+        "conflict that triggers the retry is correct behavior, not an anomaly",
+    ),
+    "D2-early-lease-release": (
+        "lost_update",
+        "with the lease dropped mid-section, the waiter's read-modify-blind-write overlaps the "
+        "holder's — a lost update on the document plane",
     ),
     "M1-dual-write-shipment": (
         None,

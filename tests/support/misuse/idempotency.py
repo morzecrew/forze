@@ -281,6 +281,164 @@ def ctrl_process_then_ack() -> MisuseCase:
 
 
 # ....................... #
+# I2 — retry_without_idempotency: a naive in-handler retry loop around a NON-idempotent effect.
+# The effect (a receipt row) commits in its own transaction — it is out the door — and the ack
+# (a per-order submission marker) conflicts for the loser of a duplicate submission; the naive
+# loop then re-runs the whole block, minting a second receipt for the same command. The correct
+# twin runs the *same* retry loop with the receipt keyed by the command id, so a re-run re-creates
+# the same row and the duplicate collapses into an already-done conflict.
+
+
+class ReceiptRow(Document):
+    command: int
+
+
+class ReceiptRowCreate(CreateDocumentCmd):
+    command: int
+
+
+class ReceiptRowRead(ReadDocument):
+    command: int
+
+
+class SubmissionRow(Document):
+    booking: int
+
+
+class SubmissionRowCreate(CreateDocumentCmd):
+    booking: int
+
+
+class SubmissionRowRead(ReadDocument):
+    booking: int
+
+
+RECEIPT_SPEC = DocumentSpec(
+    name="receipts",
+    read=ReceiptRowRead,
+    write=DocumentWriteTypes(domain=ReceiptRow, create_cmd=ReceiptRowCreate),
+)
+SUBMISSION_SPEC = DocumentSpec(
+    name="submissions",
+    read=SubmissionRowRead,
+    write=DocumentWriteTypes(domain=SubmissionRow, create_cmd=SubmissionRowCreate),
+)
+
+_ORDER_POOL = (0, 1)
+_ORDER_CAMPAIGN_POOL = tuple(range(300, 316))
+
+
+class SubmitCmd(BaseModel):
+    order: int
+    command: int
+
+
+@attrs.define(slots=True, kw_only=True)
+class _Submit(Handler[SubmitCmd, None]):
+    """``keyed=False`` is the MUTANT (I2 retry_without_idempotency); ``True`` the correct twin."""
+
+    ctx: ExecutionContext
+    keyed: bool
+
+    async def __call__(self, args: SubmitCmd) -> None:
+        for _attempt in range(2):
+            if self.keyed:
+                try:
+                    async with self.ctx.tx_ctx.scope("mock"):
+                        await self.ctx.document.command(RECEIPT_SPEC).create(
+                            ReceiptRowCreate(command=args.command),
+                            id=UUID(int=30000 + args.command),
+                        )
+                except CoreException as error:
+                    if error.kind is not ExceptionKind.CONFLICT:
+                        raise  # already receipted — the re-run collapses into a no-op
+            else:
+                # MUTANT (I2 retry_without_idempotency): a fresh receipt row per attempt —
+                # committed before the ack, so the loser's re-run double-charges the command.
+                async with self.ctx.tx_ctx.scope("mock"):
+                    await self.ctx.document.command(RECEIPT_SPEC).create(
+                        ReceiptRowCreate(command=args.command)
+                    )
+
+            try:
+                async with self.ctx.tx_ctx.scope("mock"):
+                    await self.ctx.document.command(SUBMISSION_SPEC).create(
+                        SubmissionRowCreate(booking=args.order), id=UUID(int=40000 + args.order)
+                    )
+                return
+            except CoreException as error:
+                if error.kind is not ExceptionKind.CONFLICT:
+                    raise
+                continue  # naive retry: re-run the WHOLE effect block
+
+
+def _submit_scenario(pool: tuple[int, ...]) -> Scenario:
+    commands = iter(range(1_000_000))
+
+    return Scenario(
+        state=ModelState,
+        act=(
+            Rule(
+                op="submit",
+                arg=lambda _state, rng: SubmitCmd(
+                    order=rng.choice(pool), command=next(commands)
+                ),
+            ),
+        ),
+    )
+
+
+def _submit_case(*, keyed: bool, pooled: bool = False) -> MisuseCase:
+    registry = OperationRegistry(
+        handlers={"submit": lambda ctx: _Submit(ctx=ctx, keyed=keyed)},
+        descriptors={
+            "submit": OperationDescriptor(
+                input_type=SubmitCmd, output_type=None, description="Submit an order."
+            )
+        },
+    ).freeze()
+
+    async def observe(ctx: ExecutionContext) -> None:
+        async with ctx.tx_ctx.scope("mock"):
+            rows = await ctx.document.query(RECEIPT_SPEC).find_many(
+                {"$values": {"command": {"$gte": 0}}}
+            )
+        totals: dict[int, int] = {}
+        for row in rows.hits:
+            totals[row.command] = totals.get(row.command, 0) + 1
+        for command, total in sorted(totals.items()):
+            record_event("receipt_rows", command=command, total=total)
+
+    return MisuseCase(
+        simulation=Simulation(
+            operations=registry,
+            deps=lambda: MockDepsModule(),
+            observe=observe,
+            invariants=[
+                expect(
+                    "receipt_rows",
+                    lambda e: e.fields["total"] <= 1,
+                    message="a command receipted more than once through the naive retry loop",
+                )
+            ],
+        ),
+        scenario=_submit_scenario(_ORDER_CAMPAIGN_POOL if pooled else _ORDER_POOL),
+    )
+
+
+def i2_retry_without_idempotency() -> MisuseCase:
+    return _submit_case(keyed=False)
+
+
+def i2_retry_without_idempotency_campaign() -> MisuseCase:
+    return _submit_case(keyed=False, pooled=True)
+
+
+def ctrl_idempotent_retry() -> MisuseCase:
+    return _submit_case(keyed=True)
+
+
+# ....................... #
 
 
 def i1_retry_without_key() -> MisuseCase:

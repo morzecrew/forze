@@ -17,6 +17,7 @@ from __future__ import annotations
 import itertools
 from uuid import UUID
 
+from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions.model import CoreException, ExceptionKind
 from forze.testing import Conductor, Gate
@@ -43,9 +44,13 @@ from .idempotency import (
     ACK_SPEC,
     CHARGE_SPEC,
     EFFECT_SPEC,
+    RECEIPT_SPEC,
+    SUBMISSION_SPEC,
     AckRowCreate,
     ChargeRowCreate,
     EffectRowCreate,
+    ReceiptRowCreate,
+    SubmissionRowCreate,
 )
 from .messaging import (
     HANDLED_SPEC,
@@ -69,9 +74,12 @@ from .tenancy import (
     TenantRowCreate,
 )
 from .transactions import (
+    ONCALL_SPEC,
     ORDER_SPEC,
     PAYMENT_SPEC,
     RESERVATION_SPEC,
+    OnCallSlotCreate,
+    OnCallSlotUpdate,
     OrderCreate,
     OrderUpdate,
     PaymentCreate,
@@ -592,6 +600,196 @@ async def _ctrl_process_then_ack(backend: ConformanceBackend) -> Detection:
 # ....................... #
 
 
+# ....................... #
+# I2 — the naive in-handler retry loop; a plain sequential duplicate submission provokes it
+# (the ack conflict fires without any interleaving, exactly like the corpus workload).
+
+_i2_order_seq = itertools.count(23000)
+
+
+async def _run_naive_retry(backend: ConformanceBackend, *, keyed: bool) -> Detection:
+    ctx = backend.contexts(1)[0]
+    scope = backend.scope_name
+    order = next(_i2_order_seq)
+    commands = (next(_command_seq), next(_command_seq))
+
+    for command in commands:  # two submitters for the same order — the second one loses
+        for _attempt in range(2):
+            if keyed:
+                try:
+                    async with ctx.tx_ctx.scope(scope):
+                        await ctx.document.command(RECEIPT_SPEC).create(
+                            ReceiptRowCreate(command=command), id=UUID(int=700000 + command)
+                        )
+                except CoreException as error:
+                    _swallow_conflict(error)  # already receipted — the re-run is a no-op
+            else:
+                # MUTANT (I2): a fresh receipt per attempt, committed before the ack.
+                async with ctx.tx_ctx.scope(scope):
+                    await ctx.document.command(RECEIPT_SPEC).create(
+                        ReceiptRowCreate(command=command)
+                    )
+
+            try:
+                async with ctx.tx_ctx.scope(scope):
+                    await ctx.document.command(SUBMISSION_SPEC).create(
+                        SubmissionRowCreate(booking=order), id=UUID(int=800000 + order)
+                    )
+                break
+            except CoreException as error:
+                _swallow_conflict(error)  # naive retry: re-run the WHOLE effect block
+
+    async with ctx.tx_ctx.scope(scope):
+        worst = 0
+        for command in commands:
+            total = await ctx.document.query(RECEIPT_SPEC).count(
+                {"$values": {"command": command}}
+            )
+            worst = max(worst, total)
+
+    return Detection.DETECTED if worst > 1 else Detection.CLEAN
+
+
+# ....................... #
+# T4 — write skew at the declared level: the battery's on-call weave (both read before either
+# commits), run at SNAPSHOT (mutant) vs SERIALIZABLE (control) — the level is the only knob.
+
+_rota_seq = itertools.count(24000)
+
+
+async def _run_weakened_oncall(backend: ConformanceBackend, *, serializable: bool) -> Detection:
+    sessions = backend.contexts(2)
+    a_ctx, b_ctx = sessions[0], sessions[1]
+    scope = backend.scope_name
+    rota = next(_rota_seq)
+    slots = {doctor: UUID(int=900000 + rota * 2 + doctor) for doctor in (0, 1)}
+    level = IsolationLevel.SERIALIZABLE if serializable else IsolationLevel.SNAPSHOT
+
+    async with a_ctx.tx_ctx.scope(scope):
+        command = a_ctx.document.command(ONCALL_SPEC)
+        for doctor, slot_id in slots.items():
+            await command.create(
+                OnCallSlotCreate(rota=rota, doctor=doctor, on_call=True), id=slot_id
+            )
+
+    def go_off(ctx: ExecutionContext, doctor: int):  # type: ignore[no-untyped-def]
+        async def session(gate: Gate) -> None:
+            try:
+                async with ctx.tx_ctx.scope(scope, isolation=level):
+                    query = ctx.document.query(ONCALL_SPEC)
+                    mine = await query.get(slots[doctor])
+                    other = await query.get(slots[1 - doctor])
+                    await gate.checkpoint()  # both sessions have read before either writes
+
+                    if mine.on_call and other.on_call:
+                        await ctx.document.command(ONCALL_SPEC).update(
+                            mine.id, mine.rev, OnCallSlotUpdate(on_call=False)
+                        )
+                    await gate.checkpoint()  # commit happens on scope exit, after this
+            except CoreException as error:
+                if not is_serialization_conflict(error):
+                    raise  # the serialization abort is the control's back-off path
+
+        return session
+
+    await Conductor(schedule=("A", "A", "B", "B")).run(
+        {"A": go_off(a_ctx, 0), "B": go_off(b_ctx, 1)}
+    )
+
+    async with a_ctx.tx_ctx.scope(scope):
+        covered = await a_ctx.document.query(ONCALL_SPEC).count(
+            {"$values": {"rota": rota, "on_call": True}}
+        )
+
+    return Detection.DETECTED if covered == 0 else Detection.CLEAN
+
+
+# ....................... #
+# D2 — the release placement race: the holder lets go of the lease inside the critical section
+# (mutant) or after the write (control); a spinning waiter probes the lock at every checkpoint.
+
+
+async def _run_release_race(backend: ConformanceBackend, *, early: bool) -> Detection:
+    sessions = backend.contexts(2)
+    a_ctx, b_ctx = sessions[0], sessions[1]
+    scope = backend.scope_name
+    resource = next(_resource_seq)
+    balance_id = UUID(int=100000 + resource)
+    lock_id = UUID(int=200000 + resource)
+
+    async with a_ctx.tx_ctx.scope(scope):
+        await a_ctx.document.command(BALANCE_SPEC).create(
+            BalanceCreate(resource=resource, value=0), id=balance_id
+        )
+
+    async def write_transfer(ctx: ExecutionContext) -> None:
+        async with ctx.tx_ctx.scope(scope):
+            balance = await ctx.document.query(BALANCE_SPEC).get(balance_id)
+        async with ctx.tx_ctx.scope(scope):
+            await ctx.document.command(BALANCE_SPEC).update_matching(
+                {"$values": {"id": {"$eq": balance_id}}},
+                BalanceUpdate(value=balance.value + 1),
+                return_new=False,
+            )
+            await ctx.document.command(TRANSFER_SPEC).create(TransferRowCreate(resource=resource))
+
+    async def holder(gate: Gate) -> None:
+        await gate.checkpoint()  # start gate — the schedule fully orders both sessions
+        async with a_ctx.tx_ctx.scope(scope):
+            lease = await a_ctx.document.command(LOCK_SPEC).create(
+                LockRowCreate(resource=resource), id=lock_id
+            )
+        async with a_ctx.tx_ctx.scope(scope):
+            balance = await a_ctx.document.query(BALANCE_SPEC).get(balance_id)
+        await gate.checkpoint()  # inside the critical section
+        if early:
+            # MUTANT (D2): the lease is dropped before the write lands.
+            async with a_ctx.tx_ctx.scope(scope):
+                await a_ctx.document.command(LOCK_SPEC).kill(lease.id)
+        await gate.checkpoint()  # the (mutant's) window is open
+        async with a_ctx.tx_ctx.scope(scope):
+            await a_ctx.document.command(BALANCE_SPEC).update_matching(
+                {"$values": {"id": {"$eq": balance_id}}},
+                BalanceUpdate(value=balance.value + 1),
+                return_new=False,
+            )
+            await a_ctx.document.command(TRANSFER_SPEC).create(
+                TransferRowCreate(resource=resource)
+            )
+        if not early:
+            async with a_ctx.tx_ctx.scope(scope):
+                await a_ctx.document.command(LOCK_SPEC).kill(lease.id)
+
+    async def waiter(gate: Gate) -> None:
+        await gate.checkpoint()  # start gate
+        for _attempt in range(3):
+            try:
+                async with b_ctx.tx_ctx.scope(scope):
+                    await b_ctx.document.command(LOCK_SPEC).create(
+                        LockRowCreate(resource=resource), id=lock_id
+                    )
+                break
+            except CoreException as error:
+                _swallow_conflict(error)
+                await gate.checkpoint()  # the lease is held — spin
+        else:
+            return  # never acquired — back off
+        await write_transfer(b_ctx)
+
+    # Mutant: the waiter's 2nd turn acquires inside the window and runs to completion (2 B
+    # slots); control: the lease only frees after A's 3rd turn, so the waiter needs a 3rd slot.
+    schedule = ("A", "B", "A", "B", "A") if early else ("A", "B", "A", "B", "A", "B")
+    await Conductor(schedule=schedule).run({"A": holder, "B": waiter})
+
+    async with a_ctx.tx_ctx.scope(scope):
+        value = (await a_ctx.document.query(BALANCE_SPEC).get(balance_id)).value
+        transfers = await a_ctx.document.query(TRANSFER_SPEC).count(
+            {"$values": {"resource": resource}}
+        )
+
+    return Detection.DETECTED if value != transfers else Detection.CLEAN
+
+
 async def _t1(backend: ConformanceBackend) -> Detection:
     return await _run_payment_race(backend, guarded=False, row_first=False, tx=True)
 
@@ -606,6 +804,30 @@ async def _t5(backend: ConformanceBackend) -> Detection:
 
 async def _i1(backend: ConformanceBackend) -> Detection:
     return await _run_command_retry(backend, keyed=False)
+
+
+async def _i2(backend: ConformanceBackend) -> Detection:
+    return await _run_naive_retry(backend, keyed=False)
+
+
+async def _ctrl_idempotent_retry(backend: ConformanceBackend) -> Detection:
+    return await _run_naive_retry(backend, keyed=True)
+
+
+async def _t4(backend: ConformanceBackend) -> Detection:
+    return await _run_weakened_oncall(backend, serializable=False)
+
+
+async def _ctrl_serializable_oncall(backend: ConformanceBackend) -> Detection:
+    return await _run_weakened_oncall(backend, serializable=True)
+
+
+async def _d2(backend: ConformanceBackend) -> Detection:
+    return await _run_release_race(backend, early=True)
+
+
+async def _ctrl_release_after_write(backend: ConformanceBackend) -> Detection:
+    return await _run_release_race(backend, early=False)
 
 
 async def _m2(backend: ConformanceBackend) -> Detection:
@@ -645,7 +867,10 @@ SCRIPTS: tuple[TransferScript, ...] = (
     TransferScript(mutant_id="T3-payment-outside-tx", expect_detected=True, run=_t3),
     TransferScript(mutant_id="T3-torn-activation", expect_detected=True, run=_t3_torn),
     TransferScript(mutant_id="T5-unchecked-reservation", expect_detected=True, run=_t5),
+    TransferScript(mutant_id="T4-weakened-oncall", expect_detected=True, run=_t4),
     TransferScript(mutant_id="I1-retry-without-key", expect_detected=True, run=_i1),
+    TransferScript(mutant_id="I2-naive-retry-loop", expect_detected=True, run=_i2),
+    TransferScript(mutant_id="D2-early-lease-release", expect_detected=True, run=_d2),
     TransferScript(mutant_id="M2-consumer-without-inbox", expect_detected=True, run=_m2),
     TransferScript(mutant_id="M1-dual-write-shipment", expect_detected=True, run=_m1),
     TransferScript(mutant_id="I3-ack-before-processing", expect_detected=True, run=_i3),
@@ -666,6 +891,15 @@ SCRIPTS: tuple[TransferScript, ...] = (
         mutant_id="ctrl-atomic-provision", expect_detected=False, run=_ctrl_atomic_provision
     ),
     TransferScript(mutant_id="ctrl-retry-with-key", expect_detected=False, run=_ctrl_retry_with_key),
+    TransferScript(
+        mutant_id="ctrl-idempotent-retry", expect_detected=False, run=_ctrl_idempotent_retry
+    ),
+    TransferScript(
+        mutant_id="ctrl-serializable-oncall", expect_detected=False, run=_ctrl_serializable_oncall
+    ),
+    TransferScript(
+        mutant_id="ctrl-release-after-write", expect_detected=False, run=_ctrl_release_after_write
+    ),
     TransferScript(mutant_id="ctrl-inbox-consumer", expect_detected=False, run=_ctrl_inbox_consumer),
     TransferScript(mutant_id="ctrl-outbox-in-tx", expect_detected=False, run=_ctrl_outbox_in_tx),
     TransferScript(
@@ -683,4 +917,4 @@ SCRIPTS: tuple[TransferScript, ...] = (
         run=_ctrl_cache_invalidate_in_tx,
     ),
 )
-"""Every transferable P1 corpus instance (5 mutants + 5 controls); T2 is `NOT_TRANSFERABLE`."""
+"""Every transferable corpus instance (all mutants + all controls); T2 is `NOT_TRANSFERABLE`."""

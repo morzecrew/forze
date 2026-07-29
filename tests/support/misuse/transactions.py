@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.execution import Handler
+from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.planning import OperationPlan
@@ -27,6 +28,7 @@ from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions.model import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_dst import ModelState, Rule, Scenario, Simulation
+from forze_dst.conformance.harness import is_serialization_conflict
 from forze_dst.invariants import expect, no_duplicate_effect
 from forze_dst.markers import record_event
 from forze_dst.misuse import MisuseCase
@@ -368,6 +370,159 @@ def ctrl_row_before_guard_in_tx() -> MisuseCase:
 
 def ctrl_unique_reservation() -> MisuseCase:
     return _reserve_case(lambda ctx: _ReserveUniqueKey(ctx=ctx))
+
+
+# ....................... #
+# T4 — weaken_isolation: the on-call rota (Fekete et al.'s write-skew shape). The rule "at least
+# one doctor stays on call per rota" reads BOTH slots and writes only your own — a disjoint-write
+# constraint that snapshot isolation cannot see. The mutant declares SNAPSHOT (it "looks safe":
+# consistent reads, first-committer-wins on your own row); the correct twin declares SERIALIZABLE
+# and backs off on the serialization abort. The handlers are otherwise identical — the seeded
+# misuse is the declared level alone.
+
+
+class OnCallSlot(Document):
+    rota: int
+    doctor: int
+    on_call: bool
+
+
+class OnCallSlotCreate(CreateDocumentCmd):
+    rota: int
+    doctor: int
+    on_call: bool
+
+
+class OnCallSlotUpdate(BaseDTO):
+    on_call: bool | None = None
+
+
+class OnCallSlotRead(ReadDocument):
+    rota: int
+    doctor: int
+    on_call: bool
+
+
+ONCALL_SPEC = DocumentSpec(
+    name="oncall",
+    read=OnCallSlotRead,
+    write=DocumentWriteTypes(
+        domain=OnCallSlot, create_cmd=OnCallSlotCreate, update_cmd=OnCallSlotUpdate
+    ),
+)
+
+_ROTA_POOL = (0,)
+_ROTA_CAMPAIGN_POOL = tuple(range(400, 416))
+
+
+def _slot_id(rota: int, doctor: int) -> UUID:
+    return UUID(int=50000 + rota * 2 + doctor)
+
+
+class GoOffCallCmd(BaseModel):
+    rota: int
+    doctor: int
+
+
+@attrs.define(slots=True, kw_only=True)
+class _GoOffCall(Handler[GoOffCallCmd, None]):
+    """``level=SNAPSHOT`` is the MUTANT (T4 weaken_isolation); ``SERIALIZABLE`` the correct twin."""
+
+    ctx: ExecutionContext
+    level: IsolationLevel
+
+    async def __call__(self, args: GoOffCallCmd) -> None:
+        try:
+            # MUTANT (T4 weaken_isolation): `self.level` is SNAPSHOT — the read-both/write-own
+            # constraint needs SERIALIZABLE, and nothing but the declared level differs.
+            async with self.ctx.tx_ctx.scope("mock", isolation=self.level):
+                query = self.ctx.document.query(ONCALL_SPEC)
+                mine = await query.get(_slot_id(args.rota, args.doctor))
+                other = await query.get(_slot_id(args.rota, 1 - args.doctor))
+
+                if mine.on_call and other.on_call:  # "safe" to go off — the other one covers
+                    await self.ctx.document.command(ONCALL_SPEC).update(
+                        mine.id, mine.rev, OnCallSlotUpdate(on_call=False)
+                    )
+        except CoreException as error:
+            if not is_serialization_conflict(error):
+                raise  # a conflict abort means the other writer won — back off, stay on call
+
+
+def _oncall_scenario(pool: tuple[int, ...]) -> Scenario:
+    return Scenario(
+        state=ModelState,
+        act=(
+            Rule(
+                op="go_off_call",
+                arg=lambda _state, rng: GoOffCallCmd(
+                    rota=rng.choice(pool), doctor=rng.choice((0, 1))
+                ),
+            ),
+        ),
+    )
+
+
+def _oncall_case(*, level: IsolationLevel, pooled: bool = False) -> MisuseCase:
+    registry = OperationRegistry(
+        handlers={"go_off_call": lambda ctx: _GoOffCall(ctx=ctx, level=level)},
+        descriptors={
+            "go_off_call": OperationDescriptor(
+                input_type=GoOffCallCmd,
+                output_type=None,
+                description="Take a doctor off call if the rota stays covered.",
+            )
+        },
+    ).freeze()
+
+    pool = _ROTA_CAMPAIGN_POOL if pooled else _ROTA_POOL
+
+    async def setup(ctx: ExecutionContext) -> None:
+        async with ctx.tx_ctx.scope("mock"):
+            command = ctx.document.command(ONCALL_SPEC)
+            for rota in pool:
+                for doctor in (0, 1):
+                    await command.create(
+                        OnCallSlotCreate(rota=rota, doctor=doctor, on_call=True),
+                        id=_slot_id(rota, doctor),
+                    )
+
+    async def observe(ctx: ExecutionContext) -> None:
+        async with ctx.tx_ctx.scope("mock"):
+            for rota in pool:
+                covered = await ctx.document.query(ONCALL_SPEC).count(
+                    {"$values": {"rota": rota, "on_call": True}}
+                )
+                record_event("rota_cover", rota=rota, covered=covered)
+
+    return MisuseCase(
+        simulation=Simulation(
+            operations=registry,
+            deps=lambda: MockDepsModule(),
+            setup=setup,
+            observe=observe,
+            invariants=[
+                expect(
+                    "rota_cover",
+                    lambda e: e.fields["covered"] >= 1,
+                    message="write skew at the weakened level left a rota with nobody on call",
+                )
+            ],
+        ),
+        scenario=_oncall_scenario(pool),
+    )
+
+
+def t4_weakened_oncall() -> MisuseCase:
+    return _oncall_case(level=IsolationLevel.SNAPSHOT)
+
+
+def t4_weakened_oncall_campaign() -> MisuseCase:
+    return _oncall_case(level=IsolationLevel.SNAPSHOT, pooled=True)
+
+
+def ctrl_serializable_oncall() -> MisuseCase:
+    return _oncall_case(level=IsolationLevel.SERIALIZABLE)
 
 
 # ....................... #

@@ -44,6 +44,10 @@ def main(argv: list[str]) -> int:
         if mutant_id == "N1-drop-tenant-predicate":
             return None  # workload-order lottery (put-before-browse), not instrumented
         explore = mutant.campaign_explore or mutant.killing.explore or {}
+        if mutant_id == "T4-weakened-oncall":
+            # The skew needs a same-rota AND distinct-doctor concurrent pair.
+            pool = int(cast("int", explore["pool"]))
+            return 1.0 / (2.0 * pool), f"1/(2·pool) (pool={pool}, doctors must differ)"
         if "pool" in explore:
             return 1.0 / float(int(explore["pool"])), f"1/pool (pool={explore['pool']})"
         if mutant_id == "T3-torn-activation":

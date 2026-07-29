@@ -19,6 +19,8 @@ run stays load-bearing).
 | `T3-payment-outside-tx` | `dirty_read` (G1a) | ✓ agree | ✓ agree | the outside-tx payment persists although its guard transaction aborts — the world observes an aborted transaction's effect (G1a shape) |
 | `T3-torn-activation` | `intermediate_read` (G1b) | ✓ agree | ✓ agree | the torn state is a persisted intermediate of a logically-atomic activation (G1b shape) |
 | `T5-unchecked-reservation` | `predicate_write_skew` (G2) | ✓ agree | ✓ agree | both sessions evaluate the no-reservation predicate, then both insert (G2 shape) |
+| `T4-weakened-oncall` | `write_skew` (G2-item) | ✓ agree | ✓ agree | the read-both/write-own rota constraint at SNAPSHOT is the write-skew shape verbatim (G2-item) |
+| `D2-early-lease-release` | `lost_update` (G-single) | ✓ agree | ✓ agree | with the lease dropped mid-section, the waiter's read-modify-blind-write overlaps the holder's — a lost update on the document plane |
 | `D1-skip-lock` | `lost_update` (G-single) | ✓ agree | ✓ agree | without the lock both workers read-modify-write the balance — a lost update on the document plane |
 | `D3-nonatomic-acquire` | `write_skew` (G2-item) | ✓ agree | ✓ agree | check-then-act on the lock row — each session's check reads the row the other writes (G2-item shape) |
 
@@ -26,7 +28,7 @@ run stays load-bearing).
 
 | | transferred | diverged |
 |---|---|---|
-| battery-clean cell | 6 | 0 |
+| battery-clean cell | 8 | 0 |
 | battery-divergent cell | 0 | 0 |
 
 Fisher exact (two-sided): **p = 1**.
@@ -43,7 +45,7 @@ so the proxy's predictive power is **untested, not confirmed**. Per the
 pre-registered commitment, the conservative conclusion stands: **the corpus-on-real
 run stays load-bearing**; the battery is not certified as its substitute.
 
-## Outside the proxy's domain — 6/12 transferable mutants
+## Outside the proxy's domain — 7/15 transferable mutants
 
 These defects do not manifest through any isolation phenomenon, so anomaly conformance
 could never predict their transfer **even in principle** — for this part of the corpus
@@ -53,6 +55,7 @@ proxy's domain is itself a finding of the analysis.
 | mutant | why no battery cell applies |
 |---|---|
 | `I1-retry-without-key` | idempotency-plane defect — a duplicate re-invocation, no isolation phenomenon involved |
+| `I2-naive-retry-loop` | retry-plane defect — the duplicate comes from re-running a non-idempotent block; the conflict that triggers the retry is correct behavior, not an anomaly |
 | `M1-dual-write-shipment` | crash-atomicity across two planes (state + outbox); fault-triggered, not an interleaving |
 | `I3-ack-before-processing` | crash/redelivery defect on the messaging plane |
 | `M2-consumer-without-inbox` | duplicate-delivery semantics, not an isolation phenomenon |

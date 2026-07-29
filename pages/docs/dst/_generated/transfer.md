@@ -13,19 +13,22 @@ catalog on this plane — any divergence is a finding.
 
 ## mock ↔ postgres
 
-Instances: **12** mutants + **11** controls · mock artifacts (▲): **0** · mock blind spots (△): **0**
+Instances: **15** mutants + **14** controls · mock artifacts (▲): **0** · mock blind spots (△): **0**
 
 | mutant | family | tier | mock | real | verdict |
 |---|---|---|---|---|---|
 | `T1-blind-write-payment` | transactions | conductor | detected | detected | ✓ agree |
 | `T3-payment-outside-tx` | transactions | conductor | detected | detected | ✓ agree |
 | `T3-torn-activation` | transactions | conductor | detected | detected | ✓ agree |
+| `T4-weakened-oncall` | transactions | conductor | detected | detected | ✓ agree |
 | `T5-unchecked-reservation` | transactions | conductor | detected | detected | ✓ agree |
 | `I1-retry-without-key` | idempotency | conductor | detected | detected | ✓ agree |
+| `I2-naive-retry-loop` | idempotency | conductor | detected | detected | ✓ agree |
 | `M1-dual-write-shipment` | messaging | fault-analog | detected | detected | ✓ agree |
 | `I3-ack-before-processing` | idempotency | fault-analog | detected | detected | ✓ agree |
 | `M2-consumer-without-inbox` | messaging | conductor | detected | detected | ✓ agree |
 | `D1-skip-lock` | distributed | conductor | detected | detected | ✓ agree |
+| `D2-early-lease-release` | distributed | conductor | detected | detected | ✓ agree |
 | `D3-nonatomic-acquire` | distributed | conductor | detected | detected | ✓ agree |
 | `N1-drop-tenant-predicate` | data | conductor | detected | detected | ✓ agree |
 | `N2-stale-cache` | data | conductor | detected | detected | ✓ agree |
@@ -39,6 +42,9 @@ Instances: **12** mutants + **11** controls · mock artifacts (▲): **0** · mo
 | `ctrl-atomic-provision` | clean | clean | ✓ agree |
 | `ctrl-unique-reservation` | clean | clean | ✓ agree |
 | `ctrl-retry-with-key` | clean | clean | ✓ agree |
+| `ctrl-idempotent-retry` | clean | clean | ✓ agree |
+| `ctrl-serializable-oncall` | clean | clean | ✓ agree |
+| `ctrl-release-after-write` | clean | clean | ✓ agree |
 | `ctrl-outbox-in-tx` | clean | clean | ✓ agree |
 | `ctrl-process-then-ack` | clean | clean | ✓ agree |
 | `ctrl-lock-protocol` | clean | clean | ✓ agree |
@@ -46,7 +52,7 @@ Instances: **12** mutants + **11** controls · mock artifacts (▲): **0** · mo
 | `ctrl-cache-invalidate-in-tx` | clean | clean | ✓ agree |
 | `ctrl-inbox-consumer` | clean | clean | ✓ agree |
 
-### Not transferable — 1/13 mutants
+### Not transferable — 1/16 mutants
 
 Defects whose trigger or observable needs simulation-only machinery; their
 `ground_truth` stays undetermined by design, and the fraction is stated so a capped

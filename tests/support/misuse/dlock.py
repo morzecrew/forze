@@ -2,10 +2,12 @@
 
 The lock is a lease row in a lock table (a real production pattern: DB-backed locks), acquired
 by an atomic unique-id create committed in its own transaction; the critical section is a
-read-modify-**blind**-write over a balance, so only the lock protects it. The correct twin holds
-the lease for the run (no in-run release — a lease without expiry inside the horizon), so a
-loser backs off and the balance always equals the transfer log. D1 skips the lock; D3 acquires
-it check-then-set (count-then-create with a fresh id), so two acquirers can both "win".
+read-modify-**blind**-write over a balance, so only the lock protects it. The D1/D3 correct twin
+holds the lease for the run (a loser backs off), so the balance always equals the transfer log.
+D1 skips the lock; D3 acquires it check-then-set (count-then-create with a fresh id), so two
+acquirers can both "win". D2 releases the lease *inside* the critical section (after the read,
+before the write) — its twin runs the identical spin-acquire protocol but releases only after
+the write commits, so mutual exclusion covers the whole read-modify-write.
 """
 
 from __future__ import annotations
@@ -110,13 +112,16 @@ class TransferCmd(BaseModel):
 
 @attrs.define(slots=True, kw_only=True)
 class _Transfer(Handler[TransferCmd, None]):
-    """``mode``: ``"locked"`` = correct; ``"skip"`` = MUTANT D1; ``"nonatomic"`` = MUTANT D3."""
+    """``mode``: ``"locked"`` = correct; ``"skip"`` = MUTANT D1; ``"nonatomic"`` = MUTANT D3;
+    ``"early_release"`` = MUTANT D2 (spin-acquire, release *inside* the critical section);
+    ``"release_after"`` = D2's correct twin (same spin, release after the write commits)."""
 
     ctx: ExecutionContext
     mode: str
 
     async def __call__(self, args: TransferCmd) -> None:
         resource = args.resource
+        lease = None
 
         if self.mode == "locked":
             try:
@@ -128,6 +133,21 @@ class _Transfer(Handler[TransferCmd, None]):
                 if error.kind is ExceptionKind.CONFLICT:
                     return  # the lease is held — back off
                 raise
+        elif self.mode in ("early_release", "release_after"):
+            # Releasing modes spin: a waiter re-tries the acquire, so it can enter exactly when
+            # the holder lets go — which is what makes D2's in-section release exploitable.
+            for _attempt in range(3):
+                try:
+                    async with self.ctx.tx_ctx.scope("mock"):
+                        lease = await self.ctx.document.command(LOCK_SPEC).create(
+                            LockRowCreate(resource=resource), id=_lock_id(resource)
+                        )
+                    break
+                except CoreException as error:
+                    if error.kind is not ExceptionKind.CONFLICT:
+                        raise
+            else:
+                return  # never acquired — back off
         elif self.mode == "nonatomic":
             # MUTANT (D3 nonatomic_acquire): check-then-set — two acquirers both see "free"
             # and both create their own (fresh-id) lease row.
@@ -143,6 +163,13 @@ class _Transfer(Handler[TransferCmd, None]):
 
         async with self.ctx.tx_ctx.scope("mock"):
             balance = await self.ctx.document.query(BALANCE_SPEC).get(_balance_id(resource))
+
+        if self.mode == "early_release" and lease is not None:
+            # MUTANT (D2 early_lock_release): the lease is dropped *inside* the critical
+            # section — a spinning waiter acquires and reads the balance before our write lands.
+            async with self.ctx.tx_ctx.scope("mock"):
+                await self.ctx.document.command(LOCK_SPEC).kill(lease.id)
+
         async with self.ctx.tx_ctx.scope("mock"):
             await self.ctx.document.command(BALANCE_SPEC).update_matching(
                 {"$values": {"id": {"$eq": _balance_id(resource)}}},
@@ -152,6 +179,10 @@ class _Transfer(Handler[TransferCmd, None]):
             await self.ctx.document.command(TRANSFER_SPEC).create(
                 TransferRowCreate(resource=resource)
             )
+
+        if self.mode == "release_after" and lease is not None:
+            async with self.ctx.tx_ctx.scope("mock"):
+                await self.ctx.document.command(LOCK_SPEC).kill(lease.id)
 
 
 # ....................... #
@@ -208,9 +239,17 @@ def d1_skip_lock() -> MisuseCase:
     return _case("skip")
 
 
+def d2_early_lock_release() -> MisuseCase:
+    return _case("early_release")
+
+
 def d3_nonatomic_acquire() -> MisuseCase:
     return _case("nonatomic")
 
 
 def ctrl_lock_protocol() -> MisuseCase:
     return _case("locked")
+
+
+def ctrl_release_after_write() -> MisuseCase:
+    return _case("release_after")

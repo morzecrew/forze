@@ -15,7 +15,7 @@ Status: `P1` = instance shipped in this slice; `P2+` = planned, operator locked.
 | T1 | `drop_rev_guard` | replace the rev-guarded update with a blind write | conservation / at-most-once effect | lost update (Berenson P4; Jepsen analyses passim) | **P1** (`T1-blind-write-payment`) |
 | T2 | `effect_before_guard` | fire a non-transactional external effect before the guarded write | `no_duplicate_effect` | premature side effect; double-charge postmortems | **P1** (`T2-charge-before-guard`) |
 | T3 | `write_outside_tx` | hoist a write out of the transaction boundary | conservation over rows | partial-write torn state; dual-write family | **P1** (`T3-payment-outside-tx`); **P2 deep instance** (`T3-torn-activation`, d=2 — the torn window needs an overtake, not mere overlap) |
-| T4 | `weaken_isolation` | declare a weaker `IsolationLevel` than the logic needs | `serializable` / write-skew oracle | write skew at SI (Fekete et al. 2004) | P2+ |
+| T4 | `weaken_isolation` | declare a weaker `IsolationLevel` than the logic needs | `serializable` / write-skew oracle | write skew at SI (Fekete et al. 2004) | **P2** (`T4-weakened-oncall`, the on-call rota at SNAPSHOT) |
 | T5 | `check_then_act` | unguarded read-check-write over an aggregate | cardinality invariant | TOCTOU / phantom check (Hermitage) | **P1** (`T5-unchecked-reservation`) |
 
 ## I — idempotency & retries
@@ -23,7 +23,7 @@ Status: `P1` = instance shipped in this slice; `P2+` = planned, operator locked.
 | id | operator | misuse | expected oracle | bug class / source | status |
 |---|---|---|---|---|---|
 | I1 | `drop_idempotency_key` | process a retried command without its key | at-most-once effect per command | duplicate charge on retry (Stripe/adyen-class postmortems) | **P1** (`I1-retry-without-key`) |
-| I2 | `retry_without_idempotency` | wrap a non-idempotent effect in a naive retry loop | same | same, self-inflicted | P2+ |
+| I2 | `retry_without_idempotency` | wrap a non-idempotent effect in a naive retry loop | same | same, self-inflicted | **P2** (`I2-naive-retry-loop`, effect committed before the conflicting ack) |
 | I3 | `ack_before_processing` | ack the delivery before the handler runs | acked ⇒ effect exists, under crash | at-most-once where at-least-once required | **P2** (`I3-ack-before-processing`, crash-restart engine) |
 
 ## M — messaging
@@ -40,7 +40,7 @@ Status: `P1` = instance shipped in this slice; `P2+` = planned, operator locked.
 | id | operator | misuse | expected oracle | bug class / source | status |
 |---|---|---|---|---|---|
 | D1 | `skip_lock` | bypass the distributed lock | ledger conservation under the lease | split-brain critical section | **P2** (`D1-skip-lock`, lease-row lock) |
-| D2 | `early_lock_release` | release inside the critical section | same | same | P2+ |
+| D2 | `early_lock_release` | release inside the critical section | same | same | **P2** (`D2-early-lease-release`, spin-acquire waiter enters the release→write hole) |
 | D3 | `nonatomic_acquire` | check-then-set acquisition | same | same | **P2** (`D3-nonatomic-acquire`) |
 | D4 | `ignore_remote_hlc` | drop the remote timestamp on HLC merge | HLC monotonicity (flagship) | causality violation | P2+ |
 | D5 | `nonmonotonic_clock` | wall clock where ordering matters | same | same | P2+ |

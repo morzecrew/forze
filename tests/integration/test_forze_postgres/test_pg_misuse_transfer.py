@@ -56,6 +56,9 @@ _TABLES = {
     "rw_log": "written integer NOT NULL,\n                seen integer NOT NULL",
     "effects": "message integer NOT NULL",
     "serve_log": "profile uuid NOT NULL,\n                state text NOT NULL",
+    "receipts": "command integer NOT NULL",
+    "submissions": "booking integer NOT NULL",
+    "oncall": "rota integer NOT NULL,\n                doctor integer NOT NULL,\n                on_call boolean NOT NULL",
 }
 
 

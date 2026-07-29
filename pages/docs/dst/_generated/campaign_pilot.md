@@ -10,12 +10,18 @@ detection times are heavy-tailed and censored.
 | `D1-skip-lock` | pct-d2 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
 | `D1-skip-lock` | pct-d3 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
 | `D1-skip-lock` | random | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
+| `D2-early-lease-release` | pct-d2 | 100 | 100 | 1 | [1, 1] | 0.952 [0.892, 0.984] |
+| `D2-early-lease-release` | pct-d3 | 100 | 100 | 1 | [1, 1] | 0.917 [0.849, 0.962] |
+| `D2-early-lease-release` | random | 100 | 100 | 1 | [1, 2] | 0.741 [0.658, 0.812] |
 | `D3-nonatomic-acquire` | pct-d2 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
 | `D3-nonatomic-acquire` | pct-d3 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
 | `D3-nonatomic-acquire` | random | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
 | `I1-retry-without-key` | pct-d2 | 100 | 100 | 11 | [6, 21] | 0.063 [0.052, 0.076] |
 | `I1-retry-without-key` | pct-d3 | 100 | 100 | 12 | [6, 21] | 0.069 [0.056, 0.083] |
 | `I1-retry-without-key` | random | 100 | 100 | 11 | [6, 24] | 0.062 [0.050, 0.074] |
+| `I2-naive-retry-loop` | pct-d2 | 100 | 100 | 14 | [7, 23] | 0.061 [0.050, 0.074] |
+| `I2-naive-retry-loop` | pct-d3 | 100 | 100 | 11 | [5, 23] | 0.057 [0.046, 0.069] |
+| `I2-naive-retry-loop` | random | 100 | 100 | 11 | [5, 22] | 0.063 [0.052, 0.076] |
 | `I3-ack-before-processing` | pct-d2 | 100 | 100 | 2 | [1, 4] | 0.345 [0.290, 0.403] |
 | `I3-ack-before-processing` | pct-d3 | 100 | 100 | 2 | [1, 3] | 0.385 [0.325, 0.447] |
 | `I3-ack-before-processing` | random | 100 | 100 | 2 | [1, 4] | 0.358 [0.302, 0.418] |
@@ -43,6 +49,9 @@ detection times are heavy-tailed and censored.
 | `T3-torn-activation` | pct-d2 | 100 | 100 | 3 | [2, 5] | 0.258 [0.215, 0.304] |
 | `T3-torn-activation` | pct-d3 | 100 | 100 | 3 | [2, 5] | 0.251 [0.209, 0.297] |
 | `T3-torn-activation` | random | 100 | 100 | 3 | [2, 5] | 0.272 [0.227, 0.320] |
+| `T4-weakened-oncall` | pct-d2 | 100 | 100 | 24 | [11, 38] | 0.033 [0.027, 0.040] |
+| `T4-weakened-oncall` | pct-d3 | 100 | 100 | 20 | [10, 45] | 0.032 [0.026, 0.038] |
+| `T4-weakened-oncall` | random | 100 | 100 | 25 | [12, 46] | 0.029 [0.023, 0.035] |
 | `T5-unchecked-reservation` | pct-d2 | 100 | 100 | 12 | [5, 26] | 0.054 [0.044, 0.065] |
 | `T5-unchecked-reservation` | pct-d3 | 100 | 100 | 10 | [5, 20] | 0.058 [0.048, 0.070] |
 | `T5-unchecked-reservation` | random | 100 | 100 | 13 | [5, 23] | 0.064 [0.053, 0.078] |
@@ -70,6 +79,15 @@ zero.
 | `ctrl-retry-with-key` | random | 400 | 0 | 0.0092 |
 | `ctrl-retry-with-key` | pct-d2 | 400 | 0 | 0.0092 |
 | `ctrl-retry-with-key` | pct-d3 | 400 | 0 | 0.0092 |
+| `ctrl-idempotent-retry` | random | 400 | 0 | 0.0092 |
+| `ctrl-idempotent-retry` | pct-d2 | 400 | 0 | 0.0092 |
+| `ctrl-idempotent-retry` | pct-d3 | 400 | 0 | 0.0092 |
+| `ctrl-serializable-oncall` | random | 400 | 0 | 0.0092 |
+| `ctrl-serializable-oncall` | pct-d2 | 400 | 0 | 0.0092 |
+| `ctrl-serializable-oncall` | pct-d3 | 400 | 0 | 0.0092 |
+| `ctrl-release-after-write` | random | 400 | 0 | 0.0092 |
+| `ctrl-release-after-write` | pct-d2 | 400 | 0 | 0.0092 |
+| `ctrl-release-after-write` | pct-d3 | 400 | 0 | 0.0092 |
 | `ctrl-outbox-in-tx` | random | 400 | 0 | 0.0092 |
 | `ctrl-outbox-in-tx` | pct-d2 | 400 | 0 | 0.0092 |
 | `ctrl-outbox-in-tx` | pct-d3 | 400 | 0 | 0.0092 |

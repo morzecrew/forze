@@ -32,7 +32,31 @@
     "classification": "agree"
   },
   {
+    "mutant_id": "T4-weakened-oncall",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
     "mutant_id": "I1-retry-without-key",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "I2-naive-retry-loop",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "D2-early-lease-release",
     "engine": "postgres",
     "expect_detected": true,
     "mock": "detected",
@@ -129,6 +153,30 @@
   },
   {
     "mutant_id": "ctrl-retry-with-key",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-idempotent-retry",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-serializable-oncall",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-release-after-write",
     "engine": "postgres",
     "expect_detected": false,
     "mock": "clean",
