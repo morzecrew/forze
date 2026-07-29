@@ -13,13 +13,14 @@ catalog on this plane — any divergence is a finding.
 
 ## mock ↔ postgres
 
-Instances: **15** mutants + **14** controls · mock artifacts (▲): **0** · mock blind spots (△): **0**
+Instances: **16** mutants + **15** controls · mock artifacts (▲): **0** · mock blind spots (△): **0**
 
 | mutant | family | tier | mock | real | verdict |
 |---|---|---|---|---|---|
 | `T1-blind-write-payment` | transactions | conductor | detected | detected | ✓ agree |
 | `T3-payment-outside-tx` | transactions | conductor | detected | detected | ✓ agree |
 | `T3-torn-activation` | transactions | conductor | detected | detected | ✓ agree |
+| `T3-double-torn` | transactions | conductor | detected | detected | ✓ agree |
 | `T4-weakened-oncall` | transactions | conductor | detected | detected | ✓ agree |
 | `T5-unchecked-reservation` | transactions | conductor | detected | detected | ✓ agree |
 | `I1-retry-without-key` | idempotency | conductor | detected | detected | ✓ agree |
@@ -42,6 +43,7 @@ Instances: **15** mutants + **14** controls · mock artifacts (▲): **0** · mo
 | `ctrl-atomic-provision` | clean | clean | ✓ agree |
 | `ctrl-unique-reservation` | clean | clean | ✓ agree |
 | `ctrl-retry-with-key` | clean | clean | ✓ agree |
+| `ctrl-atomic-pair` | clean | clean | ✓ agree |
 | `ctrl-idempotent-retry` | clean | clean | ✓ agree |
 | `ctrl-serializable-oncall` | clean | clean | ✓ agree |
 | `ctrl-release-after-write` | clean | clean | ✓ agree |
@@ -52,7 +54,7 @@ Instances: **15** mutants + **14** controls · mock artifacts (▲): **0** · mo
 | `ctrl-cache-invalidate-in-tx` | clean | clean | ✓ agree |
 | `ctrl-inbox-consumer` | clean | clean | ✓ agree |
 
-### Not transferable — 1/16 mutants
+### Not transferable — 1/17 mutants
 
 Defects whose trigger or observable needs simulation-only machinery; their
 `ground_truth` stays undetermined by design, and the fraction is stated so a capped

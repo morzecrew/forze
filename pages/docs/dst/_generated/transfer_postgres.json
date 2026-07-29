@@ -24,6 +24,14 @@
     "classification": "agree"
   },
   {
+    "mutant_id": "T3-double-torn",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
     "mutant_id": "T5-unchecked-reservation",
     "engine": "postgres",
     "expect_detected": true,
@@ -145,6 +153,14 @@
   },
   {
     "mutant_id": "ctrl-atomic-provision",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-atomic-pair",
     "engine": "postgres",
     "expect_detected": false,
     "mock": "clean",

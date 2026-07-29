@@ -50,7 +50,7 @@ def main(argv: list[str]) -> int:
             return 1.0 / (2.0 * pool), f"1/(2·pool) (pool={pool}, doctors must differ)"
         if "pool" in explore:
             return 1.0 / float(int(explore["pool"])), f"1/pool (pool={explore['pool']})"
-        if mutant_id == "T3-torn-activation":
+        if mutant_id in ("T3-torn-activation", "T3-double-torn"):
             return 0.5, "P(one provision + one serve in 2 draws) = 0.5"
         return 1.0, "trigger certain (deterministic / every-run opportunity)"
 

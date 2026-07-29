@@ -185,6 +185,38 @@ CORPUS: tuple[MisuseMutant, ...] = (
         "not just concurrent overlap.",
     ),
     MisuseMutant(
+        mutant_id="T3-double-torn",
+        operator="T3 write_outside_tx",
+        family=MisuseFamily.TRANSACTIONS,
+        base="tests.support.misuse.activation:t3_double_torn",
+        summary="Provision creates and activates TWO profile halves in four separate "
+        "transactions; the serve degrades gracefully on one torn half but blacks out when its "
+        "two reads land in BOTH torn windows — which needs the writer stalled twice.",
+        expected_invariants=("expect",),
+        killing=RegressionEntry(
+            seed=1, schedule_seed=None,
+            target="tests.support.misuse.activation:t3_double_torn",
+            registry_fingerprint="sha256:633fa9cc04c0ea63da16c1e8db5f6deb8096dfdc9d699910714debd135bf4eeb",
+            invariants=("expect",), found_at="2026-07-29",
+            explore={"strategy": "scenario", "act_count": 2, "concurrency": 2},
+        ),
+        depth=3,
+        depth_evidence="mechanical (extract_depth): d = 1 + 2 non-FIFO choices in the 1-minimal "
+        "schedule (1, 0, 0, 0, 1) (act_count=2, concurrency=2, workload seed 1) — and stronger "
+        "than 1-minimality: every single-nonzero-choice vector over the tick space was "
+        "exhaustively refuted, so no depth-2 schedule kills. CAVEAT (measured): the mechanical "
+        "(tick-promotion) and PCT (priority-stall) depth models diverge here — this bug needs "
+        "four PCT priority segments, so pct-d3 does NOT recover the detection rate its "
+        "parameter suggests (random ≈ 0.12 > pct-d4 ≈ 0.03 > pct-d3 ≈ 0.007 per seed); the "
+        "PCT-bound comparison stays valid because the d=3 floor is far below all of them.",
+        port_observable=True,
+        transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
+        notes="The d-axis anchor above d=2: two separated stalls of one writer, phase-aligned "
+        "so FIFO is clean and one promotion reaches at most one window (PAIR_SERVE_PADDING=2, "
+        "adjacent reads).",
+    ),
+    MisuseMutant(
         mutant_id="T4-weakened-oncall",
         operator="T4 weaken_isolation",
         family=MisuseFamily.TRANSACTIONS,
@@ -530,6 +562,14 @@ CONTROLS: tuple[MisuseControl, ...] = (
         base="tests.support.misuse.idempotency:ctrl_retry_with_key",
         summary="Retry SHAPED but correct: the same duplicated workload, deduplicated by the "
         "command-id-derived row key.",
+        adversarial=True,
+        clean_band=(0, 32),
+    ),
+    MisuseControl(
+        control_id="ctrl-atomic-pair",
+        base="tests.support.misuse.activation:ctrl_atomic_pair",
+        summary="Each half's create+activate commits atomically — no torn window exists, so the "
+        "double-read serve can observe at worst an absent half (graceful partial).",
         adversarial=True,
         clean_band=(0, 32),
     ),

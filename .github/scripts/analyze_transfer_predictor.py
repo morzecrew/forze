@@ -44,6 +44,11 @@ MAPPING: dict[str, tuple[str, str] | tuple[None, str]] = {
         "intermediate_read",
         "the torn state is a persisted intermediate of a logically-atomic activation (G1b shape)",
     ),
+    "T3-double-torn": (
+        "intermediate_read",
+        "two persisted intermediates of logically-atomic activations, observed together (G1b "
+        "shape, doubled)",
+    ),
     "T5-unchecked-reservation": (
         "predicate_write_skew",
         "both sessions evaluate the no-reservation predicate, then both insert (G2 shape)",

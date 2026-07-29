@@ -4,10 +4,19 @@ The corpus's depth labels are the axis the seed-statistics experiments plot over
 *derived*, not asserted: find a violating interleaving of a fixed workload with the systematic
 (DPOR-family) explorer, then greedily zero its scheduling choices while the violation still
 reproduces. The surviving non-FIFO choices are the ordering constraints the bug genuinely needs;
-their count plus one is ``d`` — operationally identical to the ``depth`` parameter of
-:class:`~forze_dst.scheduler.PCTReorderer` (``d-1`` priority-change points), which is what makes
-a measured-p̂-versus-PCT-bound comparison legitimate. The evidence (the minimized vector and the
-workload seed it reproduces under) travels with the label so a reviewer can re-derive it.
+their count plus one is ``d``. The evidence (the minimized vector and the workload seed it
+reproduces under) travels with the label so a reviewer can re-derive it.
+
+**Scope of the PCT correspondence.** This ``d`` counts deviations from the *cooperative
+round-robin* baseline (one promoted ready-callback per non-FIFO tick); the ``depth`` parameter
+of :class:`~forze_dst.scheduler.PCTReorderer` counts priority-change points against a
+*run-to-priority* baseline. The two coincide at ``d <= 2`` (one promotion ↔ one change point)
+but can diverge beyond it in either direction — a bug needing two separated stalls of one task
+is two promotions here yet three change points for PCT, and a single long stall is one change
+point yet many promotions. Measured-p̂-versus-PCT-bound comparisons for ``d >= 3`` labels remain
+valid in the conservative direction (the floor shrinks as ``k^(d-1)``), but a label should be
+accompanied by a per-strategy detection-density probe before it is read as "what PCT-d
+buys" — the correspondence is an empirical question there, not a definition.
 """
 
 from __future__ import annotations

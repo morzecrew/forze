@@ -445,6 +445,77 @@ async def _ctrl_cache_invalidate_in_tx(backend: ConformanceBackend) -> Detection
 _profile_seq = itertools.count(5000)
 
 
+async def _run_double_torn(backend: ConformanceBackend, *, atomic: bool) -> Detection:
+    """The depth-3 double window forced at port level: the reader lands in BOTH torn windows.
+
+    Depth is a *scheduler* fact; at port level the killing interleaving is just a five-turn
+    weave — c_A · read_A · (a_A, c_B) · read_B · a_B — which is what keeps the instance
+    ``CONDUCTOR``-transferable despite being the corpus's deepest bug.
+    """
+
+    sessions = backend.contexts(2)
+    p_ctx, r_ctx = sessions[0], sessions[1]
+    scope = backend.scope_name
+    a_id = UUID(int=next(_profile_seq))
+    b_id = UUID(int=next(_profile_seq))
+
+    async def provision(gate: Gate) -> None:
+        await gate.checkpoint()  # start gate — the schedule fully orders both sessions
+        for pid in (a_id, b_id):
+            if atomic:
+                async with p_ctx.tx_ctx.scope(scope):
+                    await p_ctx.document.command(PROFILE_SPEC).create(
+                        ProfileCreate(ready=False), id=pid
+                    )
+                    profile = await p_ctx.document.query(PROFILE_SPEC).get(pid)
+                    await p_ctx.document.command(PROFILE_SPEC).update(
+                        pid, profile.rev, ProfileUpdate(ready=True)
+                    )
+                await gate.checkpoint()  # half committed whole — no window existed
+            else:
+                async with p_ctx.tx_ctx.scope(scope):
+                    await p_ctx.document.command(PROFILE_SPEC).create(
+                        ProfileCreate(ready=False), id=pid
+                    )
+                await gate.checkpoint()  # this half's torn window is open
+                async with p_ctx.tx_ctx.scope(scope):
+                    profile = await p_ctx.document.query(PROFILE_SPEC).get(pid)
+                    await p_ctx.document.command(PROFILE_SPEC).update(
+                        pid, profile.rev, ProfileUpdate(ready=True)
+                    )
+
+    async def serve(gate: Gate) -> None:
+        await gate.checkpoint()  # start gate
+
+        async def state_of(pid: UUID) -> str:
+            try:
+                profile = await r_ctx.document.query(PROFILE_SPEC).get(pid)
+                return "ready" if profile.ready else "torn"
+            except CoreException as error:
+                if error.kind is not ExceptionKind.NOT_FOUND:
+                    raise
+                return "absent"
+
+        async with r_ctx.tx_ctx.scope(scope):
+            state_a = await state_of(a_id)
+        await gate.checkpoint()  # released between the reads — the writer advances a window
+        async with r_ctx.tx_ctx.scope(scope):
+            state_b = await state_of(b_id)
+            state = "blackout" if state_a == "torn" and state_b == "torn" else "partial"
+            await r_ctx.document.command(SERVE_SPEC).create(
+                ServeLogCreate(profile=a_id, state=state)
+            )
+
+    await Conductor(schedule=("P", "R", "P", "R", "P")).run({"P": provision, "R": serve})
+
+    async with p_ctx.tx_ctx.scope(scope):
+        blackouts = await p_ctx.document.query(SERVE_SPEC).count(
+            {"$values": {"profile": a_id, "state": "blackout"}}
+        )
+
+    return Detection.DETECTED if blackouts > 0 else Detection.CLEAN
+
+
 async def _run_torn_activation(backend: ConformanceBackend, *, atomic: bool) -> Detection:
     sessions = backend.contexts(2)
     provisioner, reader = sessions[0], sessions[1]
@@ -838,6 +909,14 @@ async def _t3_torn(backend: ConformanceBackend) -> Detection:
     return await _run_torn_activation(backend, atomic=False)
 
 
+async def _t3_double_torn(backend: ConformanceBackend) -> Detection:
+    return await _run_double_torn(backend, atomic=False)
+
+
+async def _ctrl_atomic_pair(backend: ConformanceBackend) -> Detection:
+    return await _run_double_torn(backend, atomic=True)
+
+
 async def _ctrl_atomic_provision(backend: ConformanceBackend) -> Detection:
     return await _run_torn_activation(backend, atomic=True)
 
@@ -866,6 +945,7 @@ SCRIPTS: tuple[TransferScript, ...] = (
     TransferScript(mutant_id="T1-blind-write-payment", expect_detected=True, run=_t1),
     TransferScript(mutant_id="T3-payment-outside-tx", expect_detected=True, run=_t3),
     TransferScript(mutant_id="T3-torn-activation", expect_detected=True, run=_t3_torn),
+    TransferScript(mutant_id="T3-double-torn", expect_detected=True, run=_t3_double_torn),
     TransferScript(mutant_id="T5-unchecked-reservation", expect_detected=True, run=_t5),
     TransferScript(mutant_id="T4-weakened-oncall", expect_detected=True, run=_t4),
     TransferScript(mutant_id="I1-retry-without-key", expect_detected=True, run=_i1),
@@ -890,6 +970,7 @@ SCRIPTS: tuple[TransferScript, ...] = (
     TransferScript(
         mutant_id="ctrl-atomic-provision", expect_detected=False, run=_ctrl_atomic_provision
     ),
+    TransferScript(mutant_id="ctrl-atomic-pair", expect_detected=False, run=_ctrl_atomic_pair),
     TransferScript(mutant_id="ctrl-retry-with-key", expect_detected=False, run=_ctrl_retry_with_key),
     TransferScript(
         mutant_id="ctrl-idempotent-retry", expect_detected=False, run=_ctrl_idempotent_retry

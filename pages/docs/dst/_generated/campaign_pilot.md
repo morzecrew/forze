@@ -43,6 +43,9 @@ detection times are heavy-tailed and censored.
 | `T2-charge-before-guard` | pct-d2 | 100 | 100 | 10 | [5, 20] | 0.068 [0.056, 0.082] |
 | `T2-charge-before-guard` | pct-d3 | 100 | 100 | 13 | [5, 25] | 0.059 [0.049, 0.072] |
 | `T2-charge-before-guard` | random | 100 | 100 | 12 | [6, 23] | 0.061 [0.050, 0.074] |
+| `T3-double-torn` | pct-d2 | 100 | 100 | 110 | [55, 240] | 0.006 [0.005, 0.007] |
+| `T3-double-torn` | pct-d3 | 100 | 100 | 66 | [28, 142] | 0.010 [0.008, 0.012] |
+| `T3-double-torn` | random | 100 | 100 | 7 | [3, 11] | 0.118 [0.097, 0.141] |
 | `T3-payment-outside-tx` | pct-d2 | 100 | 100 | 11 | [5, 22] | 0.064 [0.053, 0.078] |
 | `T3-payment-outside-tx` | pct-d3 | 100 | 100 | 12 | [4, 23] | 0.061 [0.050, 0.073] |
 | `T3-payment-outside-tx` | random | 100 | 100 | 12 | [5, 22] | 0.059 [0.048, 0.072] |
@@ -79,6 +82,9 @@ zero.
 | `ctrl-retry-with-key` | random | 400 | 0 | 0.0092 |
 | `ctrl-retry-with-key` | pct-d2 | 400 | 0 | 0.0092 |
 | `ctrl-retry-with-key` | pct-d3 | 400 | 0 | 0.0092 |
+| `ctrl-atomic-pair` | random | 400 | 0 | 0.0092 |
+| `ctrl-atomic-pair` | pct-d2 | 400 | 0 | 0.0092 |
+| `ctrl-atomic-pair` | pct-d3 | 400 | 0 | 0.0092 |
 | `ctrl-idempotent-retry` | random | 400 | 0 | 0.0092 |
 | `ctrl-idempotent-retry` | pct-d2 | 400 | 0 | 0.0092 |
 | `ctrl-idempotent-retry` | pct-d3 | 400 | 0 | 0.0092 |
