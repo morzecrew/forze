@@ -56,3 +56,57 @@ per-run schedule profiles (measured task counts and ordering-choice ticks) decom
 conservatism honestly: at depth 3 the formal floor is ~100× below the measurement, but restated
 at the *measured* schedule length it is only 2× below — most of the slack is the draw-range
 parameter, not the theorem.
+
+## The method
+
+Every number above comes from one measurement protocol, built so its own errors would surface:
+
+- **Ground truth by construction.** The corpus is 20 hand-authored mutants — each a correct
+  Forze workload with exactly one seeded contract misuse — beside 18 known-correct controls,
+  several of them *adversarial*: shaped like the misuse, differing only in the one line that
+  makes it correct. A detection is right or wrong by construction, never by judgment; whether
+  the mock's verdicts hold on a real engine is the [fidelity page's](fidelity.md) claim, and
+  every transferable mutant here carries that verification.
+- **Detection time is survival analysis.** A campaign runs independent seeds until the first
+  detection or a 2000-seed censoring ceiling. A campaign that hits the ceiling is *censored* —
+  it stays in the estimate as "survived 2000 seeds", never discarded — and the results are
+  Kaplan–Meier quantiles, **never means**: detection times are heavy-tailed and censored, and a
+  mean over such data is not a statistic, it is an artifact of the ceiling.
+- **Exact intervals everywhere.** Rates carry exact Clopper–Pearson intervals, so zero observed
+  events still reports a bound, never a bare zero. The kernel is ~300 lines of stdlib
+  implementing exactly the statistics cited here, pinned to published worked examples (the
+  Gehan 6-MP survival data; the textbook Clopper–Pearson intervals) rather than to itself.
+- **One integer reproduces everything.** Every trial seed derives from one master seed via a
+  keyed hash, so the full 18,054-record dataset — and any single campaign in it — replays
+  bit-identically.
+- **Depth labels are derived, not asserted.** Each mutant's depth is extracted mechanically: a
+  violating interleaving found by systematic search, minimized to the schedule choices the bug
+  genuinely needs, with the minimal vector recorded so a reviewer can re-derive it.
+- **The bound comparison conditions on the trigger.** PCT's guarantee `p ≥ 1/(n·k^(d−1))`
+  speaks about *schedules*, but a measured per-seed rate is a product — p(the workload carries
+  the trigger) × p(the schedule realizes it) — so the comparison divides out the recorded
+  workload structure first; the first, unconditioned draft of this analysis produced false
+  "violations", and keeping that correction visible is part of the method. `n` and `k` are
+  measured per run (distinct contending tasks; real ordering-choice ticks), and mutants whose
+  trigger is a crash lottery or an uninstrumented workload-order lottery are excluded by name,
+  never silently.
+
+## What these numbers license — and what they don't
+
+- A detection rate is scoped to its **workload regime × strategy × oracle set**. The collision
+  pools prove the point deliberately: the same bug moves from p̂ ≈ 1 to p̂ ≈ 1/16 when the
+  workload changes, so a rate quoted without its regime is meaningless.
+- The false-positive **zero is a bound, not an absolute**: at 400 runs per cell it licenses "the
+  per-seed false-positive rate is below ~0.9% per cell (95%, exact)" — for these controls,
+  these strategies, and nothing stronger.
+- **There is no best strategy, and this data refuses to name one.** Random beats PCT by ~20× on
+  the depth-3 bug; PCT beats random on the lease-release race; they tie on depth-1 exactly as
+  theory predicts. Which scheduler finds *your* bug faster is a property of the bug's shape.
+- **Depth is model-relative above d=2.** The mechanical labels count deviations from the
+  cooperative round-robin baseline; PCT's parameter counts priority stalls. The two provably
+  coincide up to d=2 and measurably diverge at d=3 — bound comparisons stay valid in the
+  conservative direction, but "what PCT-d buys" on a deep bug is an empirical, per-shape
+  question, not a corollary of the label.
+- The corpus bounds every claim: five misuse families, depths 1–3, document-plane workloads.
+  These numbers say nothing about defect classes outside it — and growing the corpus, not
+  extrapolating from it, is the only honest way to widen them.
