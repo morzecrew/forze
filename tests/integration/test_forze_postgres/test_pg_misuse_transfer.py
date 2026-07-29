@@ -41,6 +41,8 @@ _TABLES = {
     "charges": "command integer NOT NULL",
     "consumer_inbox": "message integer NOT NULL",
     "handled": "message integer NOT NULL",
+    "profiles": "ready boolean NOT NULL",
+    "serve_log": "profile uuid NOT NULL,\n                state text NOT NULL",
 }
 
 

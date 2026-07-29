@@ -14,7 +14,7 @@ Status: `P1` = instance shipped in this slice; `P2+` = planned, operator locked.
 |---|---|---|---|---|---|
 | T1 | `drop_rev_guard` | replace the rev-guarded update with a blind write | conservation / at-most-once effect | lost update (Berenson P4; Jepsen analyses passim) | **P1** (`T1-blind-write-payment`) |
 | T2 | `effect_before_guard` | fire a non-transactional external effect before the guarded write | `no_duplicate_effect` | premature side effect; double-charge postmortems | **P1** (`T2-charge-before-guard`) |
-| T3 | `write_outside_tx` | hoist a write out of the transaction boundary | conservation over rows | partial-write torn state; dual-write family | **P1** (`T3-payment-outside-tx`) |
+| T3 | `write_outside_tx` | hoist a write out of the transaction boundary | conservation over rows | partial-write torn state; dual-write family | **P1** (`T3-payment-outside-tx`); **P2 deep instance** (`T3-torn-activation`, d=2 — the torn window needs an overtake, not mere overlap) |
 | T4 | `weaken_isolation` | declare a weaker `IsolationLevel` than the logic needs | `serializable` / write-skew oracle | write skew at SI (Fekete et al. 2004) | P2+ |
 | T5 | `check_then_act` | unguarded read-check-write over an aggregate | cardinality invariant | TOCTOU / phantom check (Hermitage) | **P1** (`T5-unchecked-reservation`) |
 

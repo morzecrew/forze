@@ -23,6 +23,13 @@ from forze.testing import Conductor, Gate
 from forze_dst.conformance import ConformanceBackend, is_serialization_conflict
 from forze_dst.conformance.transfer import Detection, TransferScript
 
+from .activation import (
+    PROFILE_SPEC,
+    SERVE_SPEC,
+    ProfileCreate,
+    ProfileUpdate,
+    ServeLogCreate,
+)
 from .idempotency import CHARGE_SPEC, ChargeRowCreate
 from .messaging import HANDLED_SPEC, INBOX_SPEC, HandledRowCreate, InboxRowCreate
 from .transactions import (
@@ -233,6 +240,62 @@ async def _run_redelivery(backend: ConformanceBackend, *, inbox: bool) -> Detect
 
 
 # ....................... #
+# T3 deep instance — torn activation: the reader is forced between the two provision commits.
+
+_profile_seq = itertools.count(5000)
+
+
+async def _run_torn_activation(backend: ConformanceBackend, *, atomic: bool) -> Detection:
+    sessions = backend.contexts(2)
+    provisioner, reader = sessions[0], sessions[1]
+    scope = backend.scope_name
+    profile_id = UUID(int=next(_profile_seq))
+
+    async def provision(gate: Gate) -> None:
+        if atomic:
+            await gate.checkpoint()  # park at start so the schedule fully orders both sessions
+            async with provisioner.tx_ctx.scope(scope):
+                await provisioner.document.command(PROFILE_SPEC).create(
+                    ProfileCreate(ready=False), id=profile_id
+                )
+                profile = await provisioner.document.query(PROFILE_SPEC).get(profile_id)
+                await provisioner.document.command(PROFILE_SPEC).update(
+                    profile_id, profile.rev, ProfileUpdate(ready=True)
+                )
+            return
+
+        # MUTANT (T3, deep): create commits alone; park inside the torn window; activate after.
+        async with provisioner.tx_ctx.scope(scope):
+            await provisioner.document.command(PROFILE_SPEC).create(
+                ProfileCreate(ready=False), id=profile_id
+            )
+        await gate.checkpoint()  # the torn window is open — created, not yet ready
+        async with provisioner.tx_ctx.scope(scope):
+            profile = await provisioner.document.query(PROFILE_SPEC).get(profile_id)
+            await provisioner.document.command(PROFILE_SPEC).update(
+                profile_id, profile.rev, ProfileUpdate(ready=True)
+            )
+
+    async def serve(gate: Gate) -> None:
+        await gate.checkpoint()  # released inside the window (mutant) / after commit (control)
+        async with reader.tx_ctx.scope(scope):
+            profile = await reader.document.query(PROFILE_SPEC).get(profile_id)
+            await reader.document.command(SERVE_SPEC).create(
+                ServeLogCreate(profile=profile_id, state="ready" if profile.ready else "torn")
+            )
+
+    schedule = ("provision", "reader") if atomic else ("reader", "provision")
+    await Conductor(schedule=schedule).run({"provision": provision, "reader": serve})
+
+    async with provisioner.tx_ctx.scope(scope):
+        torn = await provisioner.document.query(SERVE_SPEC).count(
+            {"$values": {"profile": profile_id, "state": "torn"}}
+        )
+
+    return Detection.DETECTED if torn > 0 else Detection.CLEAN
+
+
+# ....................... #
 
 
 async def _t1(backend: ConformanceBackend) -> Detection:
@@ -253,6 +316,14 @@ async def _i1(backend: ConformanceBackend) -> Detection:
 
 async def _m2(backend: ConformanceBackend) -> Detection:
     return await _run_redelivery(backend, inbox=False)
+
+
+async def _t3_torn(backend: ConformanceBackend) -> Detection:
+    return await _run_torn_activation(backend, atomic=False)
+
+
+async def _ctrl_atomic_provision(backend: ConformanceBackend) -> Detection:
+    return await _run_torn_activation(backend, atomic=True)
 
 
 async def _ctrl_row_after_guard(backend: ConformanceBackend) -> Detection:
@@ -278,6 +349,7 @@ async def _ctrl_inbox_consumer(backend: ConformanceBackend) -> Detection:
 SCRIPTS: tuple[TransferScript, ...] = (
     TransferScript(mutant_id="T1-blind-write-payment", expect_detected=True, run=_t1),
     TransferScript(mutant_id="T3-payment-outside-tx", expect_detected=True, run=_t3),
+    TransferScript(mutant_id="T3-torn-activation", expect_detected=True, run=_t3_torn),
     TransferScript(mutant_id="T5-unchecked-reservation", expect_detected=True, run=_t5),
     TransferScript(mutant_id="I1-retry-without-key", expect_detected=True, run=_i1),
     TransferScript(mutant_id="M2-consumer-without-inbox", expect_detected=True, run=_m2),
@@ -289,6 +361,9 @@ SCRIPTS: tuple[TransferScript, ...] = (
     ),
     TransferScript(
         mutant_id="ctrl-unique-reservation", expect_detected=False, run=_ctrl_unique_reservation
+    ),
+    TransferScript(
+        mutant_id="ctrl-atomic-provision", expect_detected=False, run=_ctrl_atomic_provision
     ),
     TransferScript(mutant_id="ctrl-retry-with-key", expect_detected=False, run=_ctrl_retry_with_key),
     TransferScript(mutant_id="ctrl-inbox-consumer", expect_detected=False, run=_ctrl_inbox_consumer),

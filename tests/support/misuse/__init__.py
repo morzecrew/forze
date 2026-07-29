@@ -137,6 +137,39 @@ CORPUS: tuple[MisuseMutant, ...] = (
         ground_truth=GroundTruth.REAL,
     ),
     MisuseMutant(
+        mutant_id="T3-torn-activation",
+        operator="T3 write_outside_tx",
+        family=MisuseFamily.TRANSACTIONS,
+        base="tests.support.misuse.activation:t3_torn_activation",
+        summary="Create and activate a profile in separate transactions; a phase-padded reader "
+        "can observe the torn created-but-not-ready window.",
+        expected_invariants=("expect",),
+        killing=RegressionEntry(
+            seed=1,
+            schedule_seed=None,
+            target="tests.support.misuse.activation:t3_torn_activation",
+            registry_fingerprint="sha256:633fa9cc04c0ea63da16c1e8db5f6deb8096dfdc9d699910714debd135bf4eeb",
+            invariants=("expect",),
+            found_at=_FOUND_AT,
+            explore={"strategy": "scenario", "act_count": 2, "concurrency": 2},
+        ),
+        depth=2,
+        depth_evidence=(
+            "mechanical (extract_depth): d = 1 + 1 non-FIFO choice in the 1-minimal schedule "
+            "(0, 0, 0, 1) (act_count=2, concurrency=2, workload seed 1) — plain FIFO is clean in "
+            "both spawn orders (SERVE_PADDING=2 phase alignment); padding 0-1 degenerates to d=1, "
+            "padding >=3 makes the window unreachable within 40k systematic runs. The corpus's "
+            "first genuinely depth-2 instance; p-hat ~= 0.26 under the random scheduler, so the "
+            "base regime is naturally de-saturated (no campaign pool needed)."
+        ),
+        port_observable=True,
+        transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
+        notes="Second instance of the T3 operator: the same misuse (a write outside the "
+        "transaction boundary), instantiated deep — the observable needs a specific overtake, "
+        "not just concurrent overlap.",
+    ),
+    MisuseMutant(
         mutant_id="T5-unchecked-reservation",
         operator="T5 check_then_act",
         family=MisuseFamily.TRANSACTIONS,
@@ -224,6 +257,14 @@ CONTROLS: tuple[MisuseControl, ...] = (
         summary="Effect-before-guard SHAPED but correct: the charge row lands first, and the "
         "transaction rolls it back with the loser's failed transition.",
         adversarial=True,
+        clean_band=(0, 32),
+    ),
+    MisuseControl(
+        control_id="ctrl-atomic-provision",
+        base="tests.support.misuse.activation:ctrl_atomic_provision",
+        summary="The atomic provision: create and activate in one transaction — no schedule at "
+        "any depth can expose a torn state.",
+        adversarial=False,
         clean_band=(0, 32),
     ),
     MisuseControl(
