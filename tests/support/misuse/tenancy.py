@@ -316,3 +316,135 @@ def n2_stale_cache() -> MisuseCase:
 
 def ctrl_cache_invalidate_in_tx() -> MisuseCase:
     return _cache_case(invalidate=True)
+
+
+# ....................... #
+# N3 — cursor_unbound_tenant: the paged walk. Page 1 filters by the viewer's tenant and takes a
+# cursor; the continuation trusts the cursor as a self-contained query handle and drops the
+# tenant predicate — so the keyset resume walks straight into the other tenant's rows. The
+# correct twin re-applies the predicate with the same cursor. Items interleave across tenants in
+# the sort order, so an unbound resume leaks deterministically.
+
+
+class CatalogRow(Document):
+    tenant: int
+    item: int
+
+
+class CatalogRowCreate(CreateDocumentCmd):
+    tenant: int
+    item: int
+
+
+class CatalogRowRead(ReadDocument):
+    tenant: int
+    item: int
+
+
+CATALOG_SPEC = DocumentSpec(
+    name="catalog_rows",
+    read=CatalogRowRead,
+    write=DocumentWriteTypes(domain=CatalogRow, create_cmd=CatalogRowCreate),
+)
+
+
+class WalkCmd(BaseModel):
+    viewer: int
+
+
+@attrs.define(slots=True, kw_only=True)
+class _WalkPages(Handler[WalkCmd, None]):
+    """``bound=False`` is the MUTANT (N3 cursor_unbound_tenant): the continuation query keeps
+    the cursor but drops the tenant predicate."""
+
+    ctx: ExecutionContext
+    bound: bool
+
+    async def __call__(self, args: WalkCmd) -> None:
+        async with self.ctx.tx_ctx.scope("mock"):
+            query = self.ctx.document.query(CATALOG_SPEC)
+            first = await query.find_cursor(
+                {"$values": {"tenant": args.viewer}},
+                cursor={"limit": 2},
+                sorts={"item": "asc"},
+            )
+            if first.next_cursor is None:
+                return
+
+            if self.bound:
+                resumed = await query.find_cursor(
+                    {"$values": {"tenant": args.viewer}},
+                    cursor={"limit": 4, "after": first.next_cursor},
+                    sorts={"item": "asc"},
+                )
+            else:
+                # MUTANT (N3 cursor_unbound_tenant): the cursor is treated as a
+                # self-contained handle — the resume walks every tenant's rows.
+                resumed = await query.find_cursor(
+                    cursor={"limit": 4, "after": first.next_cursor},
+                    sorts={"item": "asc"},
+                )
+
+            foreign = sum(1 for row in resumed.hits if row.tenant != args.viewer)
+            await self.ctx.document.command(BROWSE_SPEC).create(
+                BrowseLogCreate(viewer=args.viewer, seen=foreign)
+            )
+
+
+_WALK_SCENARIO = Scenario(
+    state=ModelState,
+    act=(Rule(op="walk", arg=lambda _state, _rng: WalkCmd(viewer=OWNER)),),
+)
+
+
+def _walk_case(*, bound: bool) -> MisuseCase:
+    registry = OperationRegistry(
+        handlers={"walk": lambda ctx: _WalkPages(ctx=ctx, bound=bound)},
+        descriptors={
+            "walk": OperationDescriptor(
+                input_type=WalkCmd, output_type=None, description="Walk own catalog pages."
+            )
+        },
+    ).freeze()
+
+    async def setup(ctx: ExecutionContext) -> None:
+        # Interleaved sort order: the viewer's items are even, the other tenant's odd.
+        async with ctx.tx_ctx.scope("mock"):
+            command = ctx.document.command(CATALOG_SPEC)
+            for item in range(8):
+                await command.create(
+                    CatalogRowCreate(tenant=item % 2, item=item), id=UUID(int=60000 + item)
+                )
+
+    async def observe(ctx: ExecutionContext) -> None:
+        async with ctx.tx_ctx.scope("mock"):
+            leaks = await ctx.document.query(BROWSE_SPEC).count(
+                {"$values": {"viewer": OWNER, "seen": {"$gt": 0}}}
+            )
+        record_event("cursor_leaks", total=leaks)
+
+    return MisuseCase(
+        simulation=Simulation(
+            operations=registry,
+            deps=lambda: MockDepsModule(),
+            setup=setup,
+            observe=observe,
+            invariants=[
+                expect(
+                    "cursor_leaks",
+                    lambda e: e.fields["total"] == 0,
+                    message="a cursor resume walked another tenant's rows (token not bound "
+                    "to the tenant predicate)",
+                )
+            ],
+        ),
+        scenario=_WALK_SCENARIO,
+    )
+
+
+def n3_unbound_cursor_walk() -> MisuseCase:
+    return _walk_case(bound=False)
+
+
+def ctrl_bound_cursor_walk() -> MisuseCase:
+    return _walk_case(bound=True)

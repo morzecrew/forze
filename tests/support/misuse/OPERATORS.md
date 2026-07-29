@@ -42,8 +42,8 @@ Status: `P1` = instance shipped in this slice; `P2+` = planned, operator locked.
 | D1 | `skip_lock` | bypass the distributed lock | ledger conservation under the lease | split-brain critical section | **P2** (`D1-skip-lock`, lease-row lock) |
 | D2 | `early_lock_release` | release inside the critical section | same | same | **P2** (`D2-early-lease-release`, spin-acquire waiter enters the release→write hole) |
 | D3 | `nonatomic_acquire` | check-then-set acquisition | same | same | **P2** (`D3-nonatomic-acquire`) |
-| D4 | `ignore_remote_hlc` | drop the remote timestamp on HLC merge | HLC monotonicity (flagship) | causality violation | P2+ |
-| D5 | `nonmonotonic_clock` | wall clock where ordering matters | same | same | P2+ |
+| D4 | `ignore_remote_hlc` | drop the remote timestamp on HLC merge | derived stamp exceeds its cause | causality violation | **P2** (`D4-unmerged-remote-hlc`, skew-as-data clock seam) |
+| D5 | `nonmonotonic_clock` | wall clock where ordering matters | stream stamps monotone | same | **P2** (`D5-wall-clock-ordering`, fast-then-slow append) |
 
 ## N — data & multitenancy
 
@@ -51,7 +51,7 @@ Status: `P1` = instance shipped in this slice; `P2+` = planned, operator locked.
 |---|---|---|---|---|---|
 | N1 | `drop_tenant_predicate` | remove the tenant filter from a query | viewer sees only own rows | cross-tenant leak | **P2** (`N1-drop-tenant-predicate`) |
 | N2 | `stale_cache` | read-through cache, write-path invalidation removed | writer's read-your-writes through the cache | stale read after write | **P2** (`N2-stale-cache`) |
-| N3 | `cursor_unbound_tenant` | cursor token not bound to tenant context | tenancy invariant on paged reads | cross-tenant page walk | P2+ |
+| N3 | `cursor_unbound_tenant` | cursor token not bound to tenant context | tenancy invariant on paged reads | cross-tenant page walk | **P2** (`N3-unbound-cursor-walk`, predicate dropped on the resume) |
 
 ## Notes
 

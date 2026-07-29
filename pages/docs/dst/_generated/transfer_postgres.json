@@ -112,6 +112,30 @@
     "classification": "agree"
   },
   {
+    "mutant_id": "D4-unmerged-remote-hlc",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "D5-wall-clock-ordering",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "N3-unbound-cursor-walk",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
     "mutant_id": "N1-drop-tenant-predicate",
     "engine": "postgres",
     "expect_detected": true,
@@ -225,6 +249,30 @@
   },
   {
     "mutant_id": "ctrl-lock-protocol",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-merged-relay",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-floored-append",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-bound-cursor-walk",
     "engine": "postgres",
     "expect_detected": false,
     "mock": "clean",

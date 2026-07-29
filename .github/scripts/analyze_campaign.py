@@ -43,6 +43,8 @@ def main(argv: list[str]) -> int:
             return None  # fault lottery: the trigger is the crash stream, not the schedule
         if mutant_id == "N1-drop-tenant-predicate":
             return None  # workload-order lottery (put-before-browse), not instrumented
+        if mutant_id == "D4-unmerged-remote-hlc":
+            return None  # workload-order lottery (emit-before-relay), not instrumented
         explore = mutant.campaign_explore or mutant.killing.explore or {}
         if mutant_id == "T4-weakened-oncall":
             # The skew needs a same-rota AND distinct-doctor concurrent pair.

@@ -13,7 +13,7 @@ catalog on this plane — any divergence is a finding.
 
 ## mock ↔ postgres
 
-Instances: **16** mutants + **15** controls · mock artifacts (▲): **0** · mock blind spots (△): **0**
+Instances: **19** mutants + **18** controls · mock artifacts (▲): **0** · mock blind spots (△): **0**
 
 | mutant | family | tier | mock | real | verdict |
 |---|---|---|---|---|---|
@@ -31,7 +31,10 @@ Instances: **16** mutants + **15** controls · mock artifacts (▲): **0** · mo
 | `D1-skip-lock` | distributed | conductor | detected | detected | ✓ agree |
 | `D2-early-lease-release` | distributed | conductor | detected | detected | ✓ agree |
 | `D3-nonatomic-acquire` | distributed | conductor | detected | detected | ✓ agree |
+| `D4-unmerged-remote-hlc` | distributed | conductor | detected | detected | ✓ agree |
+| `D5-wall-clock-ordering` | distributed | conductor | detected | detected | ✓ agree |
 | `N1-drop-tenant-predicate` | data | conductor | detected | detected | ✓ agree |
+| `N3-unbound-cursor-walk` | data | conductor | detected | detected | ✓ agree |
 | `N2-stale-cache` | data | conductor | detected | detected | ✓ agree |
 
 ### Controls (expected clean on both backends)
@@ -46,6 +49,9 @@ Instances: **16** mutants + **15** controls · mock artifacts (▲): **0** · mo
 | `ctrl-atomic-pair` | clean | clean | ✓ agree |
 | `ctrl-idempotent-retry` | clean | clean | ✓ agree |
 | `ctrl-serializable-oncall` | clean | clean | ✓ agree |
+| `ctrl-merged-relay` | clean | clean | ✓ agree |
+| `ctrl-floored-append` | clean | clean | ✓ agree |
+| `ctrl-bound-cursor-walk` | clean | clean | ✓ agree |
 | `ctrl-release-after-write` | clean | clean | ✓ agree |
 | `ctrl-outbox-in-tx` | clean | clean | ✓ agree |
 | `ctrl-process-then-ack` | clean | clean | ✓ agree |
@@ -54,7 +60,7 @@ Instances: **16** mutants + **15** controls · mock artifacts (▲): **0** · mo
 | `ctrl-cache-invalidate-in-tx` | clean | clean | ✓ agree |
 | `ctrl-inbox-consumer` | clean | clean | ✓ agree |
 
-### Not transferable — 1/17 mutants
+### Not transferable — 1/20 mutants
 
 Defects whose trigger or observable needs simulation-only machinery; their
 `ground_truth` stays undetermined by design, and the fraction is stated so a capped

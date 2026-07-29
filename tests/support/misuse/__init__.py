@@ -474,6 +474,57 @@ CORPUS: tuple[MisuseMutant, ...] = (
         "unique-id create; the mutant re-derives T5's check-then-act at the lock layer.",
     ),
     MisuseMutant(
+        mutant_id="D4-unmerged-remote-hlc",
+        operator="D4 ignore_remote_hlc",
+        family=MisuseFamily.DISTRIBUTED,
+        base="tests.support.misuse.clock:d4_unmerged_remote_hlc",
+        summary="The relay stamps its derived event from the local wall reading without merging "
+        "the received timestamp — with the producer's clock ahead, the causal successor sorts "
+        "below its cause.",
+        expected_invariants=("expect",),
+        killing=RegressionEntry(
+            seed=1, schedule_seed=None,
+            target="tests.support.misuse.clock:d4_unmerged_remote_hlc",
+            registry_fingerprint="sha256:5c8d525c99675b4ec951784dc22a2f41213187a493a4adb28b143fb8bd3adf40",
+            invariants=("expect",), found_at="2026-07-29",
+            explore=_SEQUENTIAL,
+        ),
+        depth=1,
+        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal "
+        "schedule () (act_count=4, concurrency=1, workload seed 1) — an emit followed by a relay "
+        "suffices; no interleaving is involved.",
+        port_observable=True,
+        transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
+        notes="Clock skew is workload data (the fast node stamps wall + 1h), not a time-source "
+        "hack, so the identical provocation runs on a real backend. " + _DETERMINISTIC_NOTE,
+    ),
+    MisuseMutant(
+        mutant_id="D5-wall-clock-ordering",
+        operator="D5 nonmonotonic_clock",
+        family=MisuseFamily.DISTRIBUTED,
+        base="tests.support.misuse.clock:d5_wall_clock_ordering",
+        summary="An ordering-critical stream stamped from raw wall readings — a fast-node "
+        "append followed by a true-clock append runs the stream backwards.",
+        expected_invariants=("expect",),
+        killing=_kill(
+            "tests.support.misuse.clock:d5_wall_clock_ordering",
+            fingerprint="sha256:8f98dda1c9af85493481f81dbe744fe1c93b2b2882b2d637f6ab95e380475412",
+            invariants=("expect",),
+            explore=_SEQUENTIAL,
+        ),
+        depth=1,
+        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal "
+        "schedule () (act_count=4, concurrency=1, workload seed 0) — a fast append before a "
+        "slow one suffices; no interleaving is involved.",
+        port_observable=True,
+        transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
+        notes="Both twins guard the append with a seq-derived unique id — without it the "
+        "CONTROL's read-max-write raced under concurrency, which its clean band caught during "
+        "authoring; the seeded difference is the stamp discipline alone. " + _DETERMINISTIC_NOTE,
+    ),
+    MisuseMutant(
         mutant_id="N1-drop-tenant-predicate",
         operator="N1 drop_tenant_predicate",
         family=MisuseFamily.DATA,
@@ -491,6 +542,30 @@ CORPUS: tuple[MisuseMutant, ...] = (
         depth=1,
         depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal schedule () "
         "(act_count=3, concurrency=1, workload seed 1).",
+        port_observable=True,
+        transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
+        notes=_DETERMINISTIC_NOTE,
+    ),
+    MisuseMutant(
+        mutant_id="N3-unbound-cursor-walk",
+        operator="N3 cursor_unbound_tenant",
+        family=MisuseFamily.DATA,
+        base="tests.support.misuse.tenancy:n3_unbound_cursor_walk",
+        summary="Page 1 filters by the viewer's tenant; the continuation trusts the cursor as a "
+        "self-contained handle and drops the predicate — the keyset resume walks the other "
+        "tenant's interleaved rows.",
+        expected_invariants=("expect",),
+        killing=_kill(
+            "tests.support.misuse.tenancy:n3_unbound_cursor_walk",
+            fingerprint="sha256:74076d3af6ae6842bff5b5525b4cde21de2162b629be5b4f2744f5d871633628",
+            invariants=("expect",),
+            explore={"strategy": "scenario", "act_count": 2, "concurrency": 1},
+        ),
+        depth=1,
+        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal "
+        "schedule () (act_count=2, concurrency=1, workload seed 0) — a single paged walk "
+        "suffices; no interleaving is involved.",
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
@@ -586,6 +661,30 @@ CONTROLS: tuple[MisuseControl, ...] = (
         base="tests.support.misuse.transactions:ctrl_serializable_oncall",
         summary="The identical on-call handler declared at SERIALIZABLE — the serialization "
         "abort is caught and the doctor stays on call.",
+        adversarial=True,
+        clean_band=(0, 32),
+    ),
+    MisuseControl(
+        control_id="ctrl-merged-relay",
+        base="tests.support.misuse.clock:ctrl_merged_relay",
+        summary="The identical relay with the HLC merge rule — the derived stamp is lifted "
+        "above the received timestamp, so causality survives any skew.",
+        adversarial=True,
+        clean_band=(0, 32),
+    ),
+    MisuseControl(
+        control_id="ctrl-floored-append",
+        base="tests.support.misuse.clock:ctrl_floored_append",
+        summary="The identical skewed-node append lifted above the stream's persisted "
+        "high-water mark — monotone under any node mix.",
+        adversarial=True,
+        clean_band=(0, 32),
+    ),
+    MisuseControl(
+        control_id="ctrl-bound-cursor-walk",
+        base="tests.support.misuse.tenancy:ctrl_bound_cursor_walk",
+        summary="The same paged walk re-applying the tenant predicate with the same cursor — "
+        "the resume stays inside the viewer's rows.",
         adversarial=True,
         clean_band=(0, 32),
     ),

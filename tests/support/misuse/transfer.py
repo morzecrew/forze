@@ -31,6 +31,13 @@ from .activation import (
     ProfileUpdate,
     ServeLogCreate,
 )
+from .clock import (
+    EVENT_SPEC,
+    FAST_SKEW_MS,
+    EventRowCreate,
+    pack_physical,
+    wall_ms,
+)
 from .dlock import (
     BALANCE_SPEC,
     LOCK_SPEC,
@@ -64,11 +71,13 @@ from .messaging import (
 )
 from .tenancy import (
     CACHE_SPEC,
+    CATALOG_SPEC,
     RW_LOG_SPEC,
     SOURCE_SPEC,
     TENANT_ROW_SPEC,
     CacheRowCreate,
     CacheRowUpdate,
+    CatalogRowCreate,
     SourceCreate,
     SourceUpdate,
     TenantRowCreate,
@@ -861,6 +870,115 @@ async def _run_release_race(backend: ConformanceBackend, *, early: bool) -> Dete
     return Detection.DETECTED if value != transfers else Detection.CLEAN
 
 
+# ....................... #
+# D4 / D5 — the clock seam: sequential provocations (skew is data; no interleaving involved).
+
+_stream_seq = itertools.count(25000)
+
+
+async def _run_relay_stamp(backend: ConformanceBackend, *, merge: bool) -> Detection:
+    ctx = backend.contexts(1)[0]
+    scope = backend.scope_name
+    stream = next(_stream_seq)
+
+    async with ctx.tx_ctx.scope(scope):
+        cause = pack_physical(wall_ms() + FAST_SKEW_MS)
+        await ctx.document.command(EVENT_SPEC).create(
+            EventRowCreate(stream=stream, seq=1, stamp=cause, cause=0)
+        )
+
+    async with ctx.tx_ctx.scope(scope):
+        local = pack_physical(wall_ms())
+        # MUTANT (D4): merge=False stamps from the local reading only.
+        stamp = max(local, cause + 1) if merge else local
+        await ctx.document.command(EVENT_SPEC).create(
+            EventRowCreate(stream=stream, seq=2, stamp=stamp, cause=cause)
+        )
+
+    async with ctx.tx_ctx.scope(scope):
+        rows = await ctx.document.query(EVENT_SPEC).find_many(
+            {"$values": {"stream": stream, "cause": {"$gt": 0}}}
+        )
+
+    inverted = any(row.stamp <= row.cause for row in rows.hits)
+    return Detection.DETECTED if inverted else Detection.CLEAN
+
+
+async def _run_append_stamps(backend: ConformanceBackend, *, floored: bool) -> Detection:
+    ctx = backend.contexts(1)[0]
+    scope = backend.scope_name
+    stream = next(_stream_seq)
+
+    stamps: list[int] = []
+    for fast in (True, False):  # the fast node appends first — the inversion trigger
+        async with ctx.tx_ctx.scope(scope):
+            wall = pack_physical(wall_ms() + (FAST_SKEW_MS if fast else 0))
+            # MUTANT (D5): floored=False stamps from the raw wall reading.
+            stamp = max(wall, stamps[-1] + 1) if floored and stamps else wall
+            stamps.append(stamp)
+            await ctx.document.command(EVENT_SPEC).create(
+                EventRowCreate(stream=stream, seq=len(stamps), stamp=stamp, cause=0)
+            )
+
+    async with ctx.tx_ctx.scope(scope):
+        rows = await ctx.document.query(EVENT_SPEC).find_many(
+            {"$values": {"stream": stream}}
+        )
+
+    ordered = sorted(rows.hits, key=lambda row: row.seq)
+    inverted = any(
+        later.stamp <= earlier.stamp
+        for earlier, later in zip(ordered, ordered[1:], strict=False)
+    )
+    return Detection.DETECTED if inverted else Detection.CLEAN
+
+
+# ....................... #
+# N3 — the unbound cursor resume: page 1 is filtered, the continuation trusts the token.
+
+_catalog_seq = itertools.count(26000)
+
+
+async def _run_cursor_walk(backend: ConformanceBackend, *, bound: bool) -> Detection:
+    ctx = backend.contexts(1)[0]
+    scope = backend.scope_name
+    pair = next(_catalog_seq)
+    viewer, other = pair * 2, pair * 2 + 1
+    item_base = pair * 100
+
+    async with ctx.tx_ctx.scope(scope):
+        command = ctx.document.command(CATALOG_SPEC)
+        for offset in range(8):  # interleaved sort order: viewer even, other odd
+            await command.create(
+                CatalogRowCreate(
+                    tenant=viewer if offset % 2 == 0 else other, item=item_base + offset
+                )
+            )
+
+    async with ctx.tx_ctx.scope(scope):
+        query = ctx.document.query(CATALOG_SPEC)
+        first = await query.find_cursor(
+            {"$values": {"tenant": viewer}}, cursor={"limit": 2}, sorts={"item": "asc"}
+        )
+        if first.next_cursor is None:
+            raise RuntimeError("cursor walk needs a second page")
+
+        if bound:
+            resumed = await query.find_cursor(
+                {"$values": {"tenant": viewer}},
+                cursor={"limit": 4, "after": first.next_cursor},
+                sorts={"item": "asc"},
+            )
+        else:
+            # MUTANT (N3): the resume drops the tenant predicate.
+            resumed = await query.find_cursor(
+                cursor={"limit": 4, "after": first.next_cursor}, sorts={"item": "asc"}
+            )
+
+    foreign = sum(1 for row in resumed.hits if row.tenant != viewer)
+    return Detection.DETECTED if foreign > 0 else Detection.CLEAN
+
+
 async def _t1(backend: ConformanceBackend) -> Detection:
     return await _run_payment_race(backend, guarded=False, row_first=False, tx=True)
 
@@ -895,6 +1013,30 @@ async def _ctrl_serializable_oncall(backend: ConformanceBackend) -> Detection:
 
 async def _d2(backend: ConformanceBackend) -> Detection:
     return await _run_release_race(backend, early=True)
+
+
+async def _d4(backend: ConformanceBackend) -> Detection:
+    return await _run_relay_stamp(backend, merge=False)
+
+
+async def _ctrl_merged_relay(backend: ConformanceBackend) -> Detection:
+    return await _run_relay_stamp(backend, merge=True)
+
+
+async def _d5(backend: ConformanceBackend) -> Detection:
+    return await _run_append_stamps(backend, floored=False)
+
+
+async def _ctrl_floored_append(backend: ConformanceBackend) -> Detection:
+    return await _run_append_stamps(backend, floored=True)
+
+
+async def _n3(backend: ConformanceBackend) -> Detection:
+    return await _run_cursor_walk(backend, bound=False)
+
+
+async def _ctrl_bound_cursor_walk(backend: ConformanceBackend) -> Detection:
+    return await _run_cursor_walk(backend, bound=True)
 
 
 async def _ctrl_release_after_write(backend: ConformanceBackend) -> Detection:
@@ -956,6 +1098,9 @@ SCRIPTS: tuple[TransferScript, ...] = (
     TransferScript(mutant_id="I3-ack-before-processing", expect_detected=True, run=_i3),
     TransferScript(mutant_id="D1-skip-lock", expect_detected=True, run=_d1),
     TransferScript(mutant_id="D3-nonatomic-acquire", expect_detected=True, run=_d3),
+    TransferScript(mutant_id="D4-unmerged-remote-hlc", expect_detected=True, run=_d4),
+    TransferScript(mutant_id="D5-wall-clock-ordering", expect_detected=True, run=_d5),
+    TransferScript(mutant_id="N3-unbound-cursor-walk", expect_detected=True, run=_n3),
     TransferScript(mutant_id="N1-drop-tenant-predicate", expect_detected=True, run=_n1),
     TransferScript(mutant_id="N2-stale-cache", expect_detected=True, run=_n2),
     TransferScript(mutant_id="ctrl-row-after-guard", expect_detected=False, run=_ctrl_row_after_guard),
@@ -987,6 +1132,13 @@ SCRIPTS: tuple[TransferScript, ...] = (
         mutant_id="ctrl-process-then-ack", expect_detected=False, run=_ctrl_process_then_ack
     ),
     TransferScript(mutant_id="ctrl-lock-protocol", expect_detected=False, run=_ctrl_lock_protocol),
+    TransferScript(mutant_id="ctrl-merged-relay", expect_detected=False, run=_ctrl_merged_relay),
+    TransferScript(
+        mutant_id="ctrl-floored-append", expect_detected=False, run=_ctrl_floored_append
+    ),
+    TransferScript(
+        mutant_id="ctrl-bound-cursor-walk", expect_detected=False, run=_ctrl_bound_cursor_walk
+    ),
     TransferScript(
         mutant_id="ctrl-tenant-filtered-browse",
         expect_detected=False,

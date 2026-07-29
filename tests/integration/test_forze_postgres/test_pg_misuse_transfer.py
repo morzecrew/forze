@@ -59,6 +59,9 @@ _TABLES = {
     "receipts": "command integer NOT NULL",
     "submissions": "booking integer NOT NULL",
     "oncall": "rota integer NOT NULL,\n                doctor integer NOT NULL,\n                on_call boolean NOT NULL",
+    # Packed HLC stamps are ms<<16 (~2^57) — bigint, never integer.
+    "event_log": "stream integer NOT NULL,\n                seq integer NOT NULL,\n                stamp bigint NOT NULL,\n                cause bigint NOT NULL",
+    "catalog_rows": "tenant integer NOT NULL,\n                item integer NOT NULL",
 }
 
 

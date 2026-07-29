@@ -94,9 +94,23 @@ MAPPING: dict[str, tuple[str, str] | tuple[None, str]] = {
         "check-then-act on the lock row — each session's check reads the row the other writes "
         "(G2-item shape)",
     ),
+    "D4-unmerged-remote-hlc": (
+        None,
+        "clock-discipline defect — the inversion comes from skewed stamping, not from any "
+        "interleaving anomaly",
+    ),
+    "D5-wall-clock-ordering": (
+        None,
+        "clock-discipline defect — raw wall stamps under skew, no isolation phenomenon involved",
+    ),
     "N1-drop-tenant-predicate": (
         None,
         "query-predicate/tenancy defect, no concurrency involved",
+    ),
+    "N3-unbound-cursor-walk": (
+        None,
+        "pagination-plane predicate defect (the resume drops the tenant filter), no "
+        "concurrency involved",
     ),
     "N2-stale-cache": (
         None,

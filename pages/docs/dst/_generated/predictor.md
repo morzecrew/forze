@@ -46,7 +46,7 @@ so the proxy's predictive power is **untested, not confirmed**. Per the
 pre-registered commitment, the conservative conclusion stands: **the corpus-on-real
 run stays load-bearing**; the battery is not certified as its substitute.
 
-## Outside the proxy's domain — 7/16 transferable mutants
+## Outside the proxy's domain — 10/19 transferable mutants
 
 These defects do not manifest through any isolation phenomenon, so anomaly conformance
 could never predict their transfer **even in principle** — for this part of the corpus
@@ -60,7 +60,10 @@ proxy's domain is itself a finding of the analysis.
 | `M1-dual-write-shipment` | crash-atomicity across two planes (state + outbox); fault-triggered, not an interleaving |
 | `I3-ack-before-processing` | crash/redelivery defect on the messaging plane |
 | `M2-consumer-without-inbox` | duplicate-delivery semantics, not an isolation phenomenon |
+| `D4-unmerged-remote-hlc` | clock-discipline defect — the inversion comes from skewed stamping, not from any interleaving anomaly |
+| `D5-wall-clock-ordering` | clock-discipline defect — raw wall stamps under skew, no isolation phenomenon involved |
 | `N1-drop-tenant-predicate` | query-predicate/tenancy defect, no concurrency involved |
+| `N3-unbound-cursor-walk` | pagination-plane predicate defect (the resume drops the tenant filter), no concurrency involved |
 | `N2-stale-cache` | cache-plane invalidation ordering, outside the document isolation family |
 
 With a corpus this size the test is underpowered for subtle effects; the association

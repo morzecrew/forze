@@ -16,6 +16,12 @@ detection times are heavy-tailed and censored.
 | `D3-nonatomic-acquire` | pct-d2 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
 | `D3-nonatomic-acquire` | pct-d3 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
 | `D3-nonatomic-acquire` | random | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
+| `D4-unmerged-remote-hlc` | pct-d2 | 100 | 100 | 1 | [1, 2] | 0.752 [0.670, 0.823] |
+| `D4-unmerged-remote-hlc` | pct-d3 | 100 | 100 | 1 | [1, 2] | 0.680 [0.598, 0.755] |
+| `D4-unmerged-remote-hlc` | random | 100 | 100 | 1 | [1, 2] | 0.629 [0.549, 0.704] |
+| `D5-wall-clock-ordering` | pct-d2 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
+| `D5-wall-clock-ordering` | pct-d3 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
+| `D5-wall-clock-ordering` | random | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
 | `I1-retry-without-key` | pct-d2 | 100 | 100 | 11 | [6, 21] | 0.063 [0.052, 0.076] |
 | `I1-retry-without-key` | pct-d3 | 100 | 100 | 12 | [6, 21] | 0.069 [0.056, 0.083] |
 | `I1-retry-without-key` | random | 100 | 100 | 11 | [6, 24] | 0.062 [0.050, 0.074] |
@@ -37,6 +43,9 @@ detection times are heavy-tailed and censored.
 | `N2-stale-cache` | pct-d2 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
 | `N2-stale-cache` | pct-d3 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
 | `N2-stale-cache` | random | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
+| `N3-unbound-cursor-walk` | pct-d2 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
+| `N3-unbound-cursor-walk` | pct-d3 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
+| `N3-unbound-cursor-walk` | random | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
 | `T1-blind-write-payment` | pct-d2 | 100 | 100 | 12 | [5, 18] | 0.067 [0.055, 0.081] |
 | `T1-blind-write-payment` | pct-d3 | 100 | 100 | 11 | [5, 18] | 0.071 [0.058, 0.085] |
 | `T1-blind-write-payment` | random | 100 | 100 | 17 | [6, 29] | 0.052 [0.042, 0.062] |
@@ -91,6 +100,15 @@ zero.
 | `ctrl-serializable-oncall` | random | 400 | 0 | 0.0092 |
 | `ctrl-serializable-oncall` | pct-d2 | 400 | 0 | 0.0092 |
 | `ctrl-serializable-oncall` | pct-d3 | 400 | 0 | 0.0092 |
+| `ctrl-merged-relay` | random | 400 | 0 | 0.0092 |
+| `ctrl-merged-relay` | pct-d2 | 400 | 0 | 0.0092 |
+| `ctrl-merged-relay` | pct-d3 | 400 | 0 | 0.0092 |
+| `ctrl-floored-append` | random | 400 | 0 | 0.0092 |
+| `ctrl-floored-append` | pct-d2 | 400 | 0 | 0.0092 |
+| `ctrl-floored-append` | pct-d3 | 400 | 0 | 0.0092 |
+| `ctrl-bound-cursor-walk` | random | 400 | 0 | 0.0092 |
+| `ctrl-bound-cursor-walk` | pct-d2 | 400 | 0 | 0.0092 |
+| `ctrl-bound-cursor-walk` | pct-d3 | 400 | 0 | 0.0092 |
 | `ctrl-release-after-write` | random | 400 | 0 | 0.0092 |
 | `ctrl-release-after-write` | pct-d2 | 400 | 0 | 0.0092 |
 | `ctrl-release-after-write` | pct-d3 | 400 | 0 | 0.0092 |
