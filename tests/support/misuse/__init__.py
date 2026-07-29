@@ -58,6 +58,13 @@ _FAULT_EVIDENCE = (
     "stream and reproduces from the run seed."
 )
 
+_DETERMINISTIC_NOTE = (
+    "Deterministic manifestation: detection is not seed-dependent (the defect fires on "
+    "essentially every workload that exercises it), so campaign statistics legitimately "
+    "degenerate to p ~= 1 — this instance contributes corpus breadth and transfer ground "
+    "truth, not detection-time discrimination."
+)
+
 _PAY_FINGERPRINT = "sha256:7265dbffb577ac90c9a619bf2eb522d26a3067129409cf425ee30dc6f43cb0f9"
 
 
@@ -308,6 +315,98 @@ CORPUS: tuple[MisuseMutant, ...] = (
         ground_truth=GroundTruth.REAL,
         notes="Transfer is a plain re-delivery — no forced interleaving needed.",
     ),
+    MisuseMutant(
+        mutant_id="D1-skip-lock",
+        operator="D1 skip_lock",
+        family=MisuseFamily.DISTRIBUTED,
+        base="tests.support.misuse.dlock:d1_skip_lock",
+        summary="The critical section (read-modify-blind-write over a balance) runs without "
+        "acquiring the lease — concurrent transfers lose updates.",
+        expected_invariants=("expect",),
+        killing=RegressionEntry(
+            seed=0, schedule_seed=None,
+            target="tests.support.misuse.dlock:d1_skip_lock",
+            registry_fingerprint="sha256:4fd3491e5da74cf76363e0b3a3ee610f61f0a574a293d93ca5b790df4f606f44",
+            invariants=("expect",), found_at=_FOUND_AT,
+            explore={"strategy": "scenario", "act_count": 3, "concurrency": 2},
+        ),
+        depth=1,
+        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal schedule () "
+        "(act_count=3, concurrency=2, workload seed 0).",
+        port_observable=True,
+        transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
+    ),
+    MisuseMutant(
+        mutant_id="D3-nonatomic-acquire",
+        operator="D3 nonatomic_acquire",
+        family=MisuseFamily.DISTRIBUTED,
+        base="tests.support.misuse.dlock:d3_nonatomic_acquire",
+        summary="The lease is acquired check-then-set (count, then create a fresh-id row) — two "
+        "acquirers both see it free and both enter the critical section.",
+        expected_invariants=("expect",),
+        killing=RegressionEntry(
+            seed=0, schedule_seed=None,
+            target="tests.support.misuse.dlock:d3_nonatomic_acquire",
+            registry_fingerprint="sha256:4fd3491e5da74cf76363e0b3a3ee610f61f0a574a293d93ca5b790df4f606f44",
+            invariants=("expect",), found_at=_FOUND_AT,
+            explore={"strategy": "scenario", "act_count": 3, "concurrency": 2},
+        ),
+        depth=1,
+        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal schedule () "
+        "(act_count=3, concurrency=2, workload seed 0).",
+        port_observable=True,
+        transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
+        notes="The lock table is a lease row (DB-backed lock) — the atomic acquire is a "
+        "unique-id create; the mutant re-derives T5's check-then-act at the lock layer.",
+    ),
+    MisuseMutant(
+        mutant_id="N1-drop-tenant-predicate",
+        operator="N1 drop_tenant_predicate",
+        family=MisuseFamily.DATA,
+        base="tests.support.misuse.tenancy:n1_drop_tenant_predicate",
+        summary="The browse query drops the tenant filter — a viewer counts (sees) another "
+        "tenant's rows: the cross-tenant leak.",
+        expected_invariants=("expect",),
+        killing=RegressionEntry(
+            seed=1, schedule_seed=None,
+            target="tests.support.misuse.tenancy:n1_drop_tenant_predicate",
+            registry_fingerprint="sha256:43ba065ca51fa222f5c0328d512271e4506bd50bb4b26c5f45118f78acc6b5dc",
+            invariants=("expect",), found_at=_FOUND_AT,
+            explore={"strategy": "scenario", "act_count": 3, "concurrency": 1},
+        ),
+        depth=1,
+        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal schedule () "
+        "(act_count=3, concurrency=1, workload seed 1).",
+        port_observable=True,
+        transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
+        notes=_DETERMINISTIC_NOTE,
+    ),
+    MisuseMutant(
+        mutant_id="N2-stale-cache",
+        operator="N2 stale_cache",
+        family=MisuseFamily.DATA,
+        base="tests.support.misuse.tenancy:n2_stale_cache",
+        summary="The write path never invalidates the read-through cache — even the writer's "
+        "own read-through sees the stale version (read-your-writes broken).",
+        expected_invariants=("expect",),
+        killing=RegressionEntry(
+            seed=0, schedule_seed=None,
+            target="tests.support.misuse.tenancy:n2_stale_cache",
+            registry_fingerprint="sha256:f130e35d8c549d3f7de588ecb16f9d59d9f6879ce546c5c1840e71ebeb07bbf1",
+            invariants=("expect",), found_at=_FOUND_AT,
+            explore={"strategy": "scenario", "act_count": 2, "concurrency": 1},
+        ),
+        depth=1,
+        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal schedule () "
+        "(act_count=2, concurrency=1, workload seed 0).",
+        port_observable=True,
+        transfer_tier=TransferTier.CONDUCTOR,
+        ground_truth=GroundTruth.REAL,
+        notes=_DETERMINISTIC_NOTE,
+    ),
 )
 
 
@@ -367,6 +466,30 @@ CONTROLS: tuple[MisuseControl, ...] = (
         base="tests.support.misuse.idempotency:ctrl_process_then_ack",
         summary="Effect and ack in one transaction — a crash rolls both back and the "
         "redelivery completes the work.",
+        adversarial=False,
+        clean_band=(0, 32),
+    ),
+    MisuseControl(
+        control_id="ctrl-lock-protocol",
+        base="tests.support.misuse.dlock:ctrl_lock_protocol",
+        summary="The lease protocol: atomic unique-id acquire; a loser backs off, so blind "
+        "critical-section writes never race.",
+        adversarial=False,
+        clean_band=(0, 32),
+    ),
+    MisuseControl(
+        control_id="ctrl-tenant-filtered-browse",
+        base="tests.support.misuse.tenancy:ctrl_tenant_filtered_browse",
+        summary="The browse filters by the viewer's tenant — a tenant with no rows always sees "
+        "zero.",
+        adversarial=False,
+        clean_band=(0, 32),
+    ),
+    MisuseControl(
+        control_id="ctrl-cache-invalidate-in-tx",
+        base="tests.support.misuse.tenancy:ctrl_cache_invalidate_in_tx",
+        summary="Source bump and cache update in one transaction — the writer's read-through "
+        "always sees its own version.",
         adversarial=False,
         clean_band=(0, 32),
     ),

@@ -7,6 +7,12 @@ detection times are heavy-tailed and censored.
 
 | mutant | strategy | campaigns | detected | median | [q25, q75] | p̂ per seed [95% CI] |
 |---|---|---|---|---|---|---|
+| `D1-skip-lock` | pct-d2 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
+| `D1-skip-lock` | pct-d3 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
+| `D1-skip-lock` | random | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
+| `D3-nonatomic-acquire` | pct-d2 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
+| `D3-nonatomic-acquire` | pct-d3 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
+| `D3-nonatomic-acquire` | random | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
 | `I1-retry-without-key` | pct-d2 | 100 | 100 | 11 | [6, 21] | 0.063 [0.052, 0.076] |
 | `I1-retry-without-key` | pct-d3 | 100 | 100 | 12 | [6, 21] | 0.069 [0.056, 0.083] |
 | `I1-retry-without-key` | random | 100 | 100 | 11 | [6, 24] | 0.062 [0.050, 0.074] |
@@ -19,6 +25,12 @@ detection times are heavy-tailed and censored.
 | `M2-consumer-without-inbox` | pct-d2 | 100 | 100 | 12 | [5, 22] | 0.064 [0.053, 0.078] |
 | `M2-consumer-without-inbox` | pct-d3 | 100 | 100 | 11 | [5, 22] | 0.061 [0.050, 0.073] |
 | `M2-consumer-without-inbox` | random | 100 | 100 | 12 | [6, 22] | 0.060 [0.049, 0.073] |
+| `N1-drop-tenant-predicate` | pct-d2 | 100 | 100 | 1 | [1, 2] | 0.529 [0.455, 0.602] |
+| `N1-drop-tenant-predicate` | pct-d3 | 100 | 100 | 2 | [1, 3] | 0.422 [0.358, 0.488] |
+| `N1-drop-tenant-predicate` | random | 100 | 100 | 1 | [1, 2] | 0.538 [0.463, 0.611] |
+| `N2-stale-cache` | pct-d2 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
+| `N2-stale-cache` | pct-d3 | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
+| `N2-stale-cache` | random | 100 | 100 | 1 | [1, 1] | 1.000 [0.964, 1.000] |
 | `T1-blind-write-payment` | pct-d2 | 100 | 100 | 12 | [5, 18] | 0.067 [0.055, 0.081] |
 | `T1-blind-write-payment` | pct-d3 | 100 | 100 | 11 | [5, 18] | 0.071 [0.058, 0.085] |
 | `T1-blind-write-payment` | random | 100 | 100 | 17 | [6, 29] | 0.052 [0.042, 0.062] |
@@ -64,6 +76,15 @@ zero.
 | `ctrl-process-then-ack` | random | 400 | 0 | 0.0092 |
 | `ctrl-process-then-ack` | pct-d2 | 400 | 0 | 0.0092 |
 | `ctrl-process-then-ack` | pct-d3 | 400 | 0 | 0.0092 |
+| `ctrl-lock-protocol` | random | 400 | 0 | 0.0092 |
+| `ctrl-lock-protocol` | pct-d2 | 400 | 0 | 0.0092 |
+| `ctrl-lock-protocol` | pct-d3 | 400 | 0 | 0.0092 |
+| `ctrl-tenant-filtered-browse` | random | 400 | 0 | 0.0092 |
+| `ctrl-tenant-filtered-browse` | pct-d2 | 400 | 0 | 0.0092 |
+| `ctrl-tenant-filtered-browse` | pct-d3 | 400 | 0 | 0.0092 |
+| `ctrl-cache-invalidate-in-tx` | random | 400 | 0 | 0.0092 |
+| `ctrl-cache-invalidate-in-tx` | pct-d2 | 400 | 0 | 0.0092 |
+| `ctrl-cache-invalidate-in-tx` | pct-d3 | 400 | 0 | 0.0092 |
 | `ctrl-inbox-consumer` | random | 400 | 0 | 0.0092 |
 | `ctrl-inbox-consumer` | pct-d2 | 400 | 0 | 0.0092 |
 | `ctrl-inbox-consumer` | pct-d3 | 400 | 0 | 0.0092 |

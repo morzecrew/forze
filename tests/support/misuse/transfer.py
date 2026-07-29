@@ -30,6 +30,15 @@ from .activation import (
     ProfileUpdate,
     ServeLogCreate,
 )
+from .dlock import (
+    BALANCE_SPEC,
+    LOCK_SPEC,
+    TRANSFER_SPEC,
+    BalanceCreate,
+    BalanceUpdate,
+    LockRowCreate,
+    TransferRowCreate,
+)
 from .idempotency import (
     ACK_SPEC,
     CHARGE_SPEC,
@@ -47,6 +56,17 @@ from .messaging import (
     InboxRowCreate,
     OutboxEventCreate,
     ShipmentCreate,
+)
+from .tenancy import (
+    CACHE_SPEC,
+    RW_LOG_SPEC,
+    SOURCE_SPEC,
+    TENANT_ROW_SPEC,
+    CacheRowCreate,
+    CacheRowUpdate,
+    SourceCreate,
+    SourceUpdate,
+    TenantRowCreate,
 )
 from .transactions import (
     ORDER_SPEC,
@@ -68,6 +88,9 @@ _command_seq = itertools.count(3000)
 _message_seq = itertools.count(4000)
 _shipment_seq = itertools.count(6000)
 _ack_seq = itertools.count(7000)
+_resource_seq = itertools.count(8000)
+_tenant_seq = itertools.count(9000)
+_cache_seq = itertools.count(20000)
 
 
 def _swallow_conflict(error: CoreException) -> None:
@@ -255,6 +278,157 @@ async def _run_redelivery(backend: ConformanceBackend, *, inbox: bool) -> Detect
         total = await ctx.document.query(HANDLED_SPEC).count({"$values": {"message": message}})
 
     return Detection.DETECTED if total > 1 else Detection.CLEAN
+
+
+# ....................... #
+# D family — the lease-row lock protocol; both critical sections forced to read before either
+# writes (the same two-checkpoint weave the corpus workload explores).
+
+
+async def _run_lock_race(backend: ConformanceBackend, *, mode: str) -> Detection:
+    sessions = backend.contexts(2)
+    a_ctx, b_ctx = sessions[0], sessions[1]
+    scope = backend.scope_name
+    resource = next(_resource_seq)
+    balance_id = UUID(int=100000 + resource)
+    lock_id = UUID(int=200000 + resource)
+
+    async with a_ctx.tx_ctx.scope(scope):
+        await a_ctx.document.command(BALANCE_SPEC).create(
+            BalanceCreate(resource=resource, value=0), id=balance_id
+        )
+
+    def transfer(ctx: ExecutionContext):  # type: ignore[no-untyped-def]
+        async def session(gate: Gate) -> None:
+            await gate.checkpoint()  # start gate — the schedule fully orders both sessions
+            if mode == "locked":
+                try:
+                    async with ctx.tx_ctx.scope(scope):
+                        await ctx.document.command(LOCK_SPEC).create(
+                            LockRowCreate(resource=resource), id=lock_id
+                        )
+                except CoreException as error:
+                    _swallow_conflict(error)
+                    return  # the lease is held — back off
+            elif mode == "nonatomic":
+                # MUTANT (D3): check-then-set — both see it free before either creates.
+                async with ctx.tx_ctx.scope(scope):
+                    held = await ctx.document.query(LOCK_SPEC).count(
+                        {"$values": {"resource": resource}}
+                    )
+                await gate.checkpoint()  # both checked before either creates
+                if held:
+                    return
+                async with ctx.tx_ctx.scope(scope):
+                    await ctx.document.command(LOCK_SPEC).create(LockRowCreate(resource=resource))
+            # MUTANT (D1): mode == "skip" — straight into the critical section.
+
+            async with ctx.tx_ctx.scope(scope):
+                balance = await ctx.document.query(BALANCE_SPEC).get(balance_id)
+            await gate.checkpoint()  # both read before either writes
+            async with ctx.tx_ctx.scope(scope):
+                await ctx.document.command(BALANCE_SPEC).update_matching(
+                    {"$values": {"id": {"$eq": balance_id}}},
+                    BalanceUpdate(value=balance.value + 1),
+                    return_new=False,
+                )
+                await ctx.document.command(TRANSFER_SPEC).create(
+                    TransferRowCreate(resource=resource)
+                )
+
+        return session
+
+    schedule = ("A", "B") * (3 if mode == "nonatomic" else 2)
+    await Conductor(schedule=schedule).run({"A": transfer(a_ctx), "B": transfer(b_ctx)})
+
+    async with a_ctx.tx_ctx.scope(scope):
+        value = (await a_ctx.document.query(BALANCE_SPEC).get(balance_id)).value
+        transfers = await a_ctx.document.query(TRANSFER_SPEC).count(
+            {"$values": {"resource": resource}}
+        )
+
+    return Detection.DETECTED if value != transfers else Detection.CLEAN
+
+
+# ....................... #
+# N family — sequential provocations: the leak and the stale read-through need no interleaving.
+
+
+async def _run_tenant_browse(backend: ConformanceBackend, *, filtered: bool) -> Detection:
+    ctx = backend.contexts(1)[0]
+    scope = backend.scope_name
+    owner, viewer = next(_tenant_seq), next(_tenant_seq)
+
+    async with ctx.tx_ctx.scope(scope):
+        await ctx.document.command(TENANT_ROW_SPEC).create(TenantRowCreate(tenant=owner))
+
+    async with ctx.tx_ctx.scope(scope):
+        if filtered:
+            seen = await ctx.document.query(TENANT_ROW_SPEC).count(
+                {"$values": {"tenant": viewer}}
+            )
+        else:
+            # MUTANT (N1): the tenant predicate is gone — every tenant's rows are visible.
+            seen = await ctx.document.query(TENANT_ROW_SPEC).count()
+
+    return Detection.DETECTED if seen > 0 else Detection.CLEAN
+
+
+async def _run_stale_cache(backend: ConformanceBackend, *, invalidate: bool) -> Detection:
+    ctx = backend.contexts(1)[0]
+    scope = backend.scope_name
+    source_id = UUID(int=next(_cache_seq))
+    cache_id = UUID(int=next(_cache_seq))
+
+    async with ctx.tx_ctx.scope(scope):
+        await ctx.document.command(SOURCE_SPEC).create(SourceCreate(version=0), id=source_id)
+        await ctx.document.command(CACHE_SPEC).create(CacheRowCreate(version=0), id=cache_id)
+
+    async with ctx.tx_ctx.scope(scope):
+        source = await ctx.document.query(SOURCE_SPEC).get(source_id)
+        written = source.version + 1
+        await ctx.document.command(SOURCE_SPEC).update(
+            source_id, source.rev, SourceUpdate(version=written)
+        )
+        if invalidate:
+            cache = await ctx.document.query(CACHE_SPEC).get(cache_id)
+            await ctx.document.command(CACHE_SPEC).update(
+                cache_id, cache.rev, CacheRowUpdate(version=written)
+            )
+        # MUTANT (N2): the write path never touches the cache.
+
+    async with ctx.tx_ctx.scope(scope):
+        cached = await ctx.document.query(CACHE_SPEC).get(cache_id)
+
+    return Detection.DETECTED if cached.version < written else Detection.CLEAN
+
+
+async def _d1(backend: ConformanceBackend) -> Detection:
+    return await _run_lock_race(backend, mode="skip")
+
+
+async def _d3(backend: ConformanceBackend) -> Detection:
+    return await _run_lock_race(backend, mode="nonatomic")
+
+
+async def _ctrl_lock_protocol(backend: ConformanceBackend) -> Detection:
+    return await _run_lock_race(backend, mode="locked")
+
+
+async def _n1(backend: ConformanceBackend) -> Detection:
+    return await _run_tenant_browse(backend, filtered=False)
+
+
+async def _ctrl_tenant_filtered_browse(backend: ConformanceBackend) -> Detection:
+    return await _run_tenant_browse(backend, filtered=True)
+
+
+async def _n2(backend: ConformanceBackend) -> Detection:
+    return await _run_stale_cache(backend, invalidate=False)
+
+
+async def _ctrl_cache_invalidate_in_tx(backend: ConformanceBackend) -> Detection:
+    return await _run_stale_cache(backend, invalidate=True)
 
 
 # ....................... #
@@ -475,6 +649,10 @@ SCRIPTS: tuple[TransferScript, ...] = (
     TransferScript(mutant_id="M2-consumer-without-inbox", expect_detected=True, run=_m2),
     TransferScript(mutant_id="M1-dual-write-shipment", expect_detected=True, run=_m1),
     TransferScript(mutant_id="I3-ack-before-processing", expect_detected=True, run=_i3),
+    TransferScript(mutant_id="D1-skip-lock", expect_detected=True, run=_d1),
+    TransferScript(mutant_id="D3-nonatomic-acquire", expect_detected=True, run=_d3),
+    TransferScript(mutant_id="N1-drop-tenant-predicate", expect_detected=True, run=_n1),
+    TransferScript(mutant_id="N2-stale-cache", expect_detected=True, run=_n2),
     TransferScript(mutant_id="ctrl-row-after-guard", expect_detected=False, run=_ctrl_row_after_guard),
     TransferScript(
         mutant_id="ctrl-row-before-guard-in-tx",
@@ -492,6 +670,17 @@ SCRIPTS: tuple[TransferScript, ...] = (
     TransferScript(mutant_id="ctrl-outbox-in-tx", expect_detected=False, run=_ctrl_outbox_in_tx),
     TransferScript(
         mutant_id="ctrl-process-then-ack", expect_detected=False, run=_ctrl_process_then_ack
+    ),
+    TransferScript(mutant_id="ctrl-lock-protocol", expect_detected=False, run=_ctrl_lock_protocol),
+    TransferScript(
+        mutant_id="ctrl-tenant-filtered-browse",
+        expect_detected=False,
+        run=_ctrl_tenant_filtered_browse,
+    ),
+    TransferScript(
+        mutant_id="ctrl-cache-invalidate-in-tx",
+        expect_detected=False,
+        run=_ctrl_cache_invalidate_in_tx,
     ),
 )
 """Every transferable P1 corpus instance (5 mutants + 5 controls); T2 is `NOT_TRANSFERABLE`."""

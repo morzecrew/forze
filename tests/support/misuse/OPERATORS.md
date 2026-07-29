@@ -39,9 +39,9 @@ Status: `P1` = instance shipped in this slice; `P2+` = planned, operator locked.
 
 | id | operator | misuse | expected oracle | bug class / source | status |
 |---|---|---|---|---|---|
-| D1 | `skip_lock` | bypass the distributed lock | `mutual_exclusion` | split-brain critical section | P2+ (flagship dlock scenario is the base) |
+| D1 | `skip_lock` | bypass the distributed lock | ledger conservation under the lease | split-brain critical section | **P2** (`D1-skip-lock`, lease-row lock) |
 | D2 | `early_lock_release` | release inside the critical section | same | same | P2+ |
-| D3 | `nonatomic_acquire` | check-then-set acquisition | same | same | P2+ |
+| D3 | `nonatomic_acquire` | check-then-set acquisition | same | same | **P2** (`D3-nonatomic-acquire`) |
 | D4 | `ignore_remote_hlc` | drop the remote timestamp on HLC merge | HLC monotonicity (flagship) | causality violation | P2+ |
 | D5 | `nonmonotonic_clock` | wall clock where ordering matters | same | same | P2+ |
 
@@ -49,8 +49,8 @@ Status: `P1` = instance shipped in this slice; `P2+` = planned, operator locked.
 
 | id | operator | misuse | expected oracle | bug class / source | status |
 |---|---|---|---|---|---|
-| N1 | `drop_tenant_predicate` | remove the tenant filter from a query | tenancy-isolation invariant | cross-tenant leak | P2+ |
-| N2 | `stale_cache` | read-through cache, write-path invalidation removed | staleness / read-your-writes | stale read after write | P2+ |
+| N1 | `drop_tenant_predicate` | remove the tenant filter from a query | viewer sees only own rows | cross-tenant leak | **P2** (`N1-drop-tenant-predicate`) |
+| N2 | `stale_cache` | read-through cache, write-path invalidation removed | writer's read-your-writes through the cache | stale read after write | **P2** (`N2-stale-cache`) |
 | N3 | `cursor_unbound_tenant` | cursor token not bound to tenant context | tenancy invariant on paged reads | cross-tenant page walk | P2+ |
 
 ## Notes
