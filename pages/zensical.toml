@@ -87,13 +87,20 @@ nav = [
             "testing/overview.md",
             "testing/concurrency.md",
         ] },
-        { "Deterministic simulation" = [
-            "dst/overview.md",
+    ] },
+    { "Simulation" = [
+        "dst/overview.md",
+        { "Using DST" = [
             "dst/invariants.md",
             "dst/environment.md",
             "dst/crashes-and-clusters.md",
             "dst/exploration.md",
             "dst/the-loop.md",
+        ] },
+        { "Evidence" = [
+            "dst/detection-statistics.md",
+            "dst/fidelity.md",
+            "dst/campaign-results.md",
         ] },
     ] },
     { "Integrations" = [

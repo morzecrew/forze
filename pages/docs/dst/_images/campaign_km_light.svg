@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="420" viewBox="0 0 760 420" role="img" aria-label="Kaplan-Meier detection curves for the depth-2 mutant">
+<rect width="760" height="420" fill="#fcfcfb" rx="8"/>
+<text x="64" y="26" font-family="Roboto, system-ui, sans-serif" font-size="15" font-weight="600" fill="#0b0b0b">Seeds to first detection — T3-torn-activation (d=2, N=300 per strategy)</text>
+<text x="64" y="44" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#52514e">P(still undetected) after t trials; every campaign detected before the ceiling</text>
+<line x1="64" y1="372.0" x2="610" y2="372.0" stroke="#e7e6e2" stroke-width="1"/>
+<text x="56" y="376.0" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="end">0.00</text>
+<line x1="64" y1="293.0" x2="610" y2="293.0" stroke="#e7e6e2" stroke-width="1"/>
+<text x="56" y="297.0" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="end">0.25</text>
+<line x1="64" y1="214.0" x2="610" y2="214.0" stroke="#e7e6e2" stroke-width="1"/>
+<text x="56" y="218.0" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="end">0.50</text>
+<line x1="64" y1="135.0" x2="610" y2="135.0" stroke="#e7e6e2" stroke-width="1"/>
+<text x="56" y="139.0" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="end">0.75</text>
+<line x1="64" y1="56.0" x2="610" y2="56.0" stroke="#e7e6e2" stroke-width="1"/>
+<text x="56" y="60.0" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="end">1.00</text>
+<text x="64.0" y="390" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="middle">0</text>
+<text x="173.2" y="390" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="middle">5</text>
+<text x="282.4" y="390" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="middle">10</text>
+<text x="391.6" y="390" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="middle">15</text>
+<text x="500.8" y="390" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="middle">20</text>
+<text x="610.0" y="390" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="middle">25</text>
+<text x="337" y="410" font-family="Roboto, system-ui, sans-serif" font-size="11" fill="#52514e" text-anchor="middle">trials (seeds run)</text>
+<path d="M 64.0 56.0 H 85.8 V 139.2 H 107.7 V 185.6 H 129.5 V 240.3 H 151.4 V 273.0 H 173.2 V 295.1 H 195.0 V 315.1 H 216.9 V 338.3 H 238.7 V 348.8 H 260.6 V 355.1 H 282.4 V 359.4 H 304.2 V 364.6 H 326.1 V 365.7 H 347.9 V 369.9 H 369.8 V 370.9 H 435.3 V 372.0 H 610.0" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round"><title>random: median 3 trials</title></path>
+<text x="620" y="72" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b"><tspan fill="#2a78d6">●</tspan> random (median 3)</text>
+<path d="M 64.0 56.0 H 85.8 V 122.4 H 107.7 V 189.8 H 129.5 V 247.7 H 151.4 V 276.1 H 173.2 V 294.1 H 195.0 V 316.2 H 216.9 V 328.8 H 238.7 V 338.3 H 260.6 V 345.7 H 282.4 V 349.9 H 304.2 V 355.1 H 326.1 V 358.3 H 347.9 V 360.4 H 369.8 V 364.6 H 413.4 V 367.8 H 457.1 V 369.9 H 479.0 V 370.9 H 500.8 V 372.0 H 610.0" fill="none" stroke="#eb6834" stroke-width="2" stroke-linejoin="round"><title>pct-d2: median 3 trials</title></path>
+<text x="620" y="92" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b"><tspan fill="#eb6834">●</tspan> pct-d2 (median 3)</text>
+<path d="M 64.0 56.0 H 85.8 V 123.4 H 107.7 V 192.9 H 129.5 V 233.0 H 151.4 V 271.9 H 173.2 V 299.3 H 195.0 V 317.2 H 216.9 V 338.3 H 238.7 V 349.9 H 260.6 V 356.2 H 282.4 V 361.5 H 304.2 V 362.5 H 326.1 V 367.8 H 347.9 V 368.8 H 413.4 V 369.9 H 479.0 V 370.9 H 500.8 V 372.0 H 610.0" fill="none" stroke="#1baf7a" stroke-width="2" stroke-linejoin="round"><title>pct-d3: median 3 trials</title></path>
+<text x="620" y="112" font-family="Roboto, system-ui, sans-serif" font-size="12" fill="#0b0b0b"><tspan fill="#1baf7a">●</tspan> pct-d3 (median 3)</text>
+</svg>
