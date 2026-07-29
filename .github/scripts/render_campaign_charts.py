@@ -23,7 +23,7 @@ from forze_dst.stats import SurvivalCurve, geometric_p_hat
 from tests.support.misuse import CORPUS
 
 STRATEGIES = ("random", "pct-d2", "pct-d3")
-KM_MUTANT = "T3-torn-activation"
+KM_MUTANT = "T3-double-torn"
 
 THEMES = {
     "light": {
@@ -65,7 +65,7 @@ def km_chart(
     width, height = 760, 420
     left, right, top, bottom = 64, 150, 56, 48
     plot_w, plot_h = width - left - right, height - top - bottom
-    t_max = 25
+    t_max = 250
     series_color: dict[str, str] = theme["series"]  # type: ignore[assignment]
 
     def sx(t: float) -> float:
@@ -77,10 +77,10 @@ def km_chart(
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
         f'viewBox="0 0 {width} {height}" role="img" '
-        'aria-label="Kaplan-Meier detection curves for the depth-2 mutant">',
+        'aria-label="Kaplan-Meier detection curves for the depth-3 mutant">',
         f'<rect width="{width}" height="{height}" fill="{theme["surface"]}" rx="8"/>',
         f'<text x="{left}" y="26" {FONT} font-size="15" font-weight="600" fill="{theme["text"]}">'
-        f"Seeds to first detection — {KM_MUTANT} (d=2, N=300 per strategy)</text>",
+        f"Seeds to first detection — {KM_MUTANT} (d=3, N=300 per strategy)</text>",
         f'<text x="{left}" y="44" {FONT} font-size="12" fill="{theme["muted"]}">'
         "P(still undetected) after t trials; every campaign detected before the ceiling</text>",
     ]
@@ -95,7 +95,7 @@ def km_chart(
             f'<text x="{left - 8}" y="{y + 4:.1f}" {FONT} font-size="11" '
             f'fill="{theme["muted"]}" text-anchor="end">{s:.2f}</text>'
         )
-    for t in (0, 5, 10, 15, 20, 25):
+    for t in (0, 50, 100, 150, 200, 250):
         x = sx(t)
         parts.append(
             f'<text x="{x:.1f}" y="{top + plot_h + 18}" {FONT} font-size="11" '
