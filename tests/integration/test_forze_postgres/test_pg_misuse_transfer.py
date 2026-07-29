@@ -1,7 +1,8 @@
 """The misuse-corpus transfer differential — do the mock's bug verdicts hold on real Postgres?
 
-Every transferable P1 corpus instance (5 mutants + 5 controls) runs its transfer script on the
-mock and on a real Postgres over testcontainers. The gates: the mock leg reproduces the corpus
+Every transferable corpus instance (all mutants outside the declared ``NOT_TRANSFERABLE``
+fraction, plus every control) runs its transfer script on the mock and on a real Postgres over
+testcontainers. The gates: the mock leg reproduces the corpus
 verdict (parity — a mutant detects, a control stays clean), and mock ≡ real on every instance —
 a divergence in either direction is a finding (a mock artifact, or a real bug DST would
 green-light), never data to park. A green run is what licenses the registry's

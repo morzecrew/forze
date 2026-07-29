@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from forze_dst.conformance import run_transfer, write_transfer
+from forze_dst.conformance import render_transfer_markdown, run_transfer, write_transfer
 from forze_dst.conformance.transfer import (
     Detection,
     TransferClassification,
@@ -20,6 +20,7 @@ from forze_dst.conformance.transfer import (
     divergences,
 )
 from tests.support.isolation_conformance import MockConformanceBackend
+from tests.support.misuse import CONTROLS, CORPUS
 from tests.support.misuse.transfer import SCRIPTS
 
 # ----------------------- #
@@ -105,3 +106,49 @@ class TestArtifact:
     def test_write_transfer_refuses_empty(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         with pytest.raises(ValueError, match="no transfer records"):
             write_transfer([], tmp_path)
+
+
+class TestRenderer:
+    async def _payload(self, tmp_path) -> list[dict[str, object]]:  # type: ignore[no-untyped-def]
+        # End-to-end through the artifact: run -> write_transfer -> parsed JSON -> renderer.
+        records = await run_transfer(
+            SCRIPTS,
+            mock_backend=MockConformanceBackend(),
+            real_backend=MockConformanceBackend(),
+        )
+        path = write_transfer(records, tmp_path)
+        return json.loads(path.read_text())  # type: ignore[no-any-return]
+
+    async def test_renders_registry_join_and_not_transferable_fraction(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        payload = await self._payload(tmp_path)
+
+        document = render_transfer_markdown(payload, corpus=CORPUS, controls=CONTROLS)
+
+        assert "## mock ↔ mock" in document
+        assert "mock artifacts (▲): **0** · mock blind spots (△): **0**" in document
+        for script in SCRIPTS:
+            assert f"`{script.mutant_id}`" in document
+        # The declared not-transferable fraction, with its stated reason — never dropped.
+        assert f"### Not transferable — 1/{len(CORPUS)} mutants" in document
+        assert "`T2-charge-before-guard`" in document
+        assert "trace-level marker" in document
+
+    def test_record_without_registry_entry_is_an_error(self) -> None:
+        ghost = {
+            "mutant_id": "ghost",
+            "engine": "postgres",
+            "expect_detected": True,
+            "mock": "detected",
+            "real": "detected",
+            "classification": "agree",
+        }
+
+        with pytest.raises(ValueError, match="no corpus/control entry"):
+            render_transfer_markdown([ghost], corpus=CORPUS, controls=CONTROLS)
+
+    async def test_missing_transferable_record_is_an_error(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        payload = await self._payload(tmp_path)
+        partial = [record for record in payload if record["mutant_id"] != SCRIPTS[0].mutant_id]
+
+        with pytest.raises(ValueError, match="missing transfer records"):
+            render_transfer_markdown(partial, corpus=CORPUS, controls=CONTROLS)

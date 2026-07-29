@@ -11,9 +11,11 @@ always *"and does the mock behave like the real engine?"*. This page is the meas
 two layers: the **anomaly matrix** (does the mock agree with real Postgres and Mongo on classic
 isolation phenomena, per level?) and the **bug transfer** (do the mock's verdicts on known bugs
 hold on the real engine?). Both are regenerated artifacts, never prose claims — `just
-dst-fidelity` re-runs the differentials and rewrites the tables below.
+dst-fidelity` and `just dst-transfer` re-run the differentials and rewrite the tables below.
 
 --8<-- "dst/_generated/fidelity.md"
+
+--8<-- "dst/_generated/transfer.md"
 
 ## Bugs the harness found in Forze itself
 

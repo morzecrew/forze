@@ -72,6 +72,7 @@ from .transfer import (
     TransferRecord,
     TransferScript,
     divergences,
+    render_transfer_markdown,
     run_transfer,
     write_transfer,
 )
@@ -94,6 +95,7 @@ __all__ = [
     "TransferRecord",
     "TransferScript",
     "divergences",
+    "render_transfer_markdown",
     "run_transfer",
     "write_transfer",
     "ConformanceBackend",

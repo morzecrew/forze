@@ -132,6 +132,18 @@ dst-fidelity:
         --out pages/docs/dst/_generated/fidelity.md
 
 
+# Regenerate the corpus bug-transfer artifact (needs Docker; writes pages/docs/dst/_generated/)
+dst-transfer:
+    {{ _uv_sync }}
+
+    FORZE_FIDELITY_OUT=pages/docs/dst/_generated uv run pytest \
+        "tests/integration/test_forze_postgres/test_pg_misuse_transfer.py" \
+        -q
+    PYTHONPATH=. uv run python .github/scripts/render_transfer.py \
+        pages/docs/dst/_generated/transfer_postgres.json \
+        --out pages/docs/dst/_generated/transfer.md
+
+
 # Run all quality checks
 [arg("strict", long, short="s", value="true", help="Enable strict mode (fail on error in any check)")]
 quality strict="false":
