@@ -17,6 +17,8 @@ dst-fidelity` and `just dst-transfer` re-run the differentials and rewrite the t
 
 --8<-- "dst/_generated/transfer.md"
 
+--8<-- "dst/_generated/predictor.md"
+
 ## Bugs the harness found in Forze itself
 
 The strongest evidence is provenance. A git-history audit found three confirmed harness-found
@@ -44,6 +46,9 @@ what the tables above are for. Claiming more would be the overreach this page ex
   — the isolation family on Postgres and Mongo. It says nothing about untested planes.
 - The transfer table is the *direct* evidence, at found-bug granularity — and its N is what it
   is: every transferable corpus instance, currently against Postgres.
+- The pre-registered predictor analysis is currently uninformative by construction (zero
+  divergence on either plane), so the battery is **not** certified as a substitute for the
+  transfer run — and for the corpus's non-isolation half it could never be one.
 - Logic **below the port** — triggers, generated columns, database views — is outside every
   oracle here. An invariant maintained by a trigger must be covered by an integration test, not
   by simulation.

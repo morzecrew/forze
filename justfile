@@ -142,6 +142,10 @@ dst-transfer:
     PYTHONPATH=. uv run python .github/scripts/render_transfer.py \
         pages/docs/dst/_generated/transfer_postgres.json \
         --out pages/docs/dst/_generated/transfer.md
+    PYTHONPATH=. uv run python .github/scripts/analyze_transfer_predictor.py \
+        --fidelity pages/docs/dst/_generated/fidelity_postgres.json \
+        --transfer pages/docs/dst/_generated/transfer_postgres.json \
+        --out pages/docs/dst/_generated/predictor.md
 
 
 # Run all quality checks

@@ -21,6 +21,7 @@ from forze_dst.stats import (
     SurvivalCurve,
     binomial_ci,
     detection_upper_bound,
+    fisher_exact,
     format_clean_verdict,
     geometric_p_hat,
     log_rank,
@@ -241,6 +242,42 @@ class TestGeometricPHat:
     def test_validation(self) -> None:
         with pytest.raises(ValueError, match="at least one observation"):
             geometric_p_hat([], [])
+
+
+# ....................... #
+
+
+class TestFisherExact:
+    def test_lady_tasting_tea(self) -> None:
+        # Fisher's own worked example: margins 4/4, C(8,4)=70; the two-sided sum-of-small-p
+        # value for the 3-correct table is (1 + 16 + 16 + 1) / 70.
+        assert fisher_exact(((3, 1), (1, 3))) == pytest.approx(34 / 70)
+
+    def test_perfect_separation(self) -> None:
+        # Only the observed table and its mirror are as improbable: 2 / C(20, 10).
+        assert fisher_exact(((10, 0), (0, 10))) == pytest.approx(2 / 184756)
+
+    def test_transpose_and_swap_invariance(self) -> None:
+        p = fisher_exact(((1, 9), (11, 3)))
+
+        assert fisher_exact(((1, 11), (9, 3))) == pytest.approx(p)  # transpose
+        assert fisher_exact(((11, 3), (1, 9))) == pytest.approx(p)  # row swap
+        assert p < 0.005  # strongly associated table
+
+    def test_empty_margin_carries_no_evidence(self) -> None:
+        # The predictor analysis's degenerate branches: no divergent cells, or no divergent
+        # outcomes — either empty margin must report 1.0, never a spurious signal.
+        assert fisher_exact(((12, 0), (0, 0))) == 1.0
+        assert fisher_exact(((7, 5), (0, 0))) == 1.0
+        assert fisher_exact(((7, 0), (5, 0))) == 1.0
+        assert fisher_exact(((0, 0), (0, 0))) == 1.0
+
+    def test_independent_table_is_near_one(self) -> None:
+        assert fisher_exact(((5, 5), (5, 5))) == 1.0
+
+    def test_validation(self) -> None:
+        with pytest.raises(ValueError, match="must be >= 0"):
+            fisher_exact(((1, -1), (2, 3)))
 
 
 # ....................... #

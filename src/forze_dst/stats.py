@@ -21,7 +21,8 @@ them), :func:`log_rank` (the two-sample strategy comparison; χ²(1 df) tail via
 :func:`detection_upper_bound` is its one-sided zero-event special case), and
 :func:`geometric_p_hat` (the per-seed detection probability under the geometric model — the
 bridge to per-run theoretical bounds; only meaningful for iid-seed strategies, never adaptive
-ones).
+ones), and :func:`fisher_exact` (the two-sided 2×2 exact test, for pre-registered contingency
+questions like "does anomaly-level divergence predict bug-level divergence?").
 """
 
 from __future__ import annotations
@@ -474,4 +475,44 @@ def geometric_p_hat(
         ci=binomial_ci(detections, seeds, confidence=confidence),
         detections=detections,
         seeds=seeds,
+    )
+
+
+# ----------------------- #
+
+
+def fisher_exact(table: tuple[tuple[int, int], tuple[int, int]]) -> float:
+    """Two-sided Fisher exact test on a 2×2 contingency table; returns the p-value.
+
+    The conditional exact test: with all margins fixed, the top-left count is hypergeometric,
+    and the two-sided p-value sums the probabilities of every table at most as probable as the
+    observed one (the standard "sum of small p" convention). Enumerated directly with
+    ``math.comb`` — exact at the small counts this kernel exists for, no χ² approximation. A
+    table with an empty margin carries no evidence either way and returns ``1.0``.
+    """
+
+    (a, b), (c, d) = table
+    if min(a, b, c, d) < 0:
+        raise ValueError(f"cell counts must be >= 0, got {table}")
+
+    row1, col1, total = a + b, a + c, a + b + c + d
+    if row1 in (0, total) or col1 in (0, total):
+        return 1.0
+
+    def probability(k: int) -> float:
+        return math.comb(col1, k) * math.comb(total - col1, row1 - k) / math.comb(total, row1)
+
+    observed = probability(a)
+    lowest = max(0, row1 + col1 - total)
+    highest = min(row1, col1)
+
+    # Sum every table at most as probable as the observed one; the epsilon absorbs float
+    # round-off so the observed table always counts itself.
+    return min(
+        1.0,
+        sum(
+            p
+            for k in range(lowest, highest + 1)
+            if (p := probability(k)) <= observed * (1.0 + 1e-9)
+        ),
     )
