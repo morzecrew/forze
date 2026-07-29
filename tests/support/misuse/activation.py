@@ -92,6 +92,49 @@ class Nothing(BaseModel):
 # ....................... #
 
 
+async def provision_profile(
+    ctx: ExecutionContext, pid: UUID, *, atomic: bool, scope: str = "mock"
+) -> None:
+    """Create + activate one profile: one transaction when *atomic*, two when not.
+
+    The non-atomic split is the seeded misuse (T3 write_outside_tx): the create commits alone,
+    so the torn created-but-not-ready window is the gap between the two commits.
+    """
+
+    if atomic:
+        async with ctx.tx_ctx.scope(scope):
+            await ctx.document.command(PROFILE_SPEC).create(ProfileCreate(ready=False), id=pid)
+            profile = await ctx.document.query(PROFILE_SPEC).get(pid)
+            await ctx.document.command(PROFILE_SPEC).update(
+                pid, profile.rev, ProfileUpdate(ready=True)
+            )
+        return
+
+    async with ctx.tx_ctx.scope(scope):
+        await ctx.document.command(PROFILE_SPEC).create(ProfileCreate(ready=False), id=pid)
+    async with ctx.tx_ctx.scope(scope):
+        profile = await ctx.document.query(PROFILE_SPEC).get(pid)
+        await ctx.document.command(PROFILE_SPEC).update(
+            pid, profile.rev, ProfileUpdate(ready=True)
+        )
+
+
+async def profile_state(ctx: ExecutionContext, pid: UUID) -> str:
+    """What a reader observes: ``ready`` / ``torn`` (created, not activated) / ``absent``.
+
+    Queries only — runs inside whatever transaction scope the caller holds.
+    """
+
+    try:
+        profile = await ctx.document.query(PROFILE_SPEC).get(pid)
+    except CoreException as error:
+        if error.kind is not ExceptionKind.NOT_FOUND:
+            raise
+        return "absent"
+
+    return "ready" if profile.ready else "torn"
+
+
 @attrs.define(slots=True, kw_only=True)
 class _Provision(Handler[Nothing, None]):
     """``atomic=False`` is the MUTANT (T3 write_outside_tx, deep instance): the activation lives
@@ -101,28 +144,7 @@ class _Provision(Handler[Nothing, None]):
     atomic: bool
 
     async def __call__(self, _args: Nothing) -> None:
-        if self.atomic:
-            async with self.ctx.tx_ctx.scope("mock"):
-                await self.ctx.document.command(PROFILE_SPEC).create(
-                    ProfileCreate(ready=False), id=PROFILE_ID
-                )
-                profile = await self.ctx.document.query(PROFILE_SPEC).get(PROFILE_ID)
-                await self.ctx.document.command(PROFILE_SPEC).update(
-                    PROFILE_ID, profile.rev, ProfileUpdate(ready=True)
-                )
-            return
-
-        # MUTANT (T3 write_outside_tx): create commits alone; the activation is a second
-        # transaction — the torn window is the gap between the two commits.
-        async with self.ctx.tx_ctx.scope("mock"):
-            await self.ctx.document.command(PROFILE_SPEC).create(
-                ProfileCreate(ready=False), id=PROFILE_ID
-            )
-        async with self.ctx.tx_ctx.scope("mock"):
-            profile = await self.ctx.document.query(PROFILE_SPEC).get(PROFILE_ID)
-            await self.ctx.document.command(PROFILE_SPEC).update(
-                PROFILE_ID, profile.rev, ProfileUpdate(ready=True)
-            )
+        await provision_profile(self.ctx, PROFILE_ID, atomic=self.atomic)
 
 
 @attrs.define(slots=True, kw_only=True)
@@ -134,14 +156,7 @@ class _Serve(Handler[Nothing, None]):
             for _ in range(SERVE_PADDING):
                 await self.ctx.document.query(SERVE_SPEC).count()  # benign phase padding
 
-            try:
-                profile = await self.ctx.document.query(PROFILE_SPEC).get(PROFILE_ID)
-                state = "ready" if profile.ready else "torn"
-            except CoreException as error:
-                if error.kind is not ExceptionKind.NOT_FOUND:
-                    raise
-                state = "absent"
-
+            state = await profile_state(self.ctx, PROFILE_ID)
             await self.ctx.document.command(SERVE_SPEC).create(
                 ServeLogCreate(profile=PROFILE_ID, state=state)
             )
@@ -233,28 +248,7 @@ class _ProvisionPair(Handler[Nothing, None]):
 
     async def __call__(self, _args: Nothing) -> None:
         for pid in (PAIR_A_ID, PAIR_B_ID):
-            if self.atomic:
-                async with self.ctx.tx_ctx.scope("mock"):
-                    await self.ctx.document.command(PROFILE_SPEC).create(
-                        ProfileCreate(ready=False), id=pid
-                    )
-                    profile = await self.ctx.document.query(PROFILE_SPEC).get(pid)
-                    await self.ctx.document.command(PROFILE_SPEC).update(
-                        pid, profile.rev, ProfileUpdate(ready=True)
-                    )
-                continue
-
-            # MUTANT (T3 write_outside_tx): create commits alone; the activation is a second
-            # transaction — one torn window per half, two per provision.
-            async with self.ctx.tx_ctx.scope("mock"):
-                await self.ctx.document.command(PROFILE_SPEC).create(
-                    ProfileCreate(ready=False), id=pid
-                )
-            async with self.ctx.tx_ctx.scope("mock"):
-                profile = await self.ctx.document.query(PROFILE_SPEC).get(pid)
-                await self.ctx.document.command(PROFILE_SPEC).update(
-                    pid, profile.rev, ProfileUpdate(ready=True)
-                )
+            await provision_profile(self.ctx, pid, atomic=self.atomic)
 
 
 @attrs.define(slots=True, kw_only=True)
@@ -266,17 +260,8 @@ class _ServeBoth(Handler[Nothing, None]):
             for _ in range(PAIR_SERVE_PADDING):
                 await self.ctx.document.query(SERVE_SPEC).count()  # benign phase padding
 
-            async def state_of(pid: UUID) -> str:
-                try:
-                    profile = await self.ctx.document.query(PROFILE_SPEC).get(pid)
-                    return "ready" if profile.ready else "torn"
-                except CoreException as error:
-                    if error.kind is not ExceptionKind.NOT_FOUND:
-                        raise
-                    return "absent"
-
-            state_a = await state_of(PAIR_A_ID)
-            state_b = await state_of(PAIR_B_ID)
+            state_a = await profile_state(self.ctx, PAIR_A_ID)
+            state_b = await profile_state(self.ctx, PAIR_B_ID)
 
             # One torn half degrades gracefully; BOTH torn is the served blackout.
             state = "blackout" if state_a == "torn" and state_b == "torn" else "partial"

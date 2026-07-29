@@ -1,4 +1,4 @@
-"""The contract-misuse corpus — ground-truth defect instances, P1 slice.
+"""The contract-misuse corpus — ground-truth defect instances across all five families.
 
 Hand-authored broken twins of correct Forze workloads (one seeded contract misuse each) plus
 known-correct negative controls, registered against the :mod:`forze_dst.misuse` schema. The
@@ -6,11 +6,11 @@ operator taxonomy and per-operator citations live in ``OPERATORS.md`` next to th
 per-build smoke tier (``tests/unit/test_forze_dst/test_misuse_corpus.py``) replays every mutant's
 killing seed and every control's clean band.
 
-Mining provenance (2026-07-29): killing entries and depth evidence produced by a sweep over
-``seeds=range(400)`` per mutant under the recorded explore knobs; depth labels verified
-empirically — every d=2 mutant is clean at ``concurrency=1`` over seeds 0..199 (an adverse
-interleaving is required), every d=1 mutant kills there (the duplicated workload alone
-suffices). Mechanical depth extraction (1-minimal choice vectors) lands with the P2 tooling.
+Mining provenance (2026-07-29): killing entries produced by a sweep over ``seeds=range(400)``
+per mutant under the recorded explore knobs; every depth label is mechanically derived by
+:func:`forze_dst.depth.extract_depth` (1-minimal choice vectors, the evidence string recording
+the vector and the workload it reproduces under) or, for crash-fault instances, argued by
+construction (``fault:`` evidence — systematic extraction runs faultless by design).
 """
 
 from __future__ import annotations
@@ -38,6 +38,21 @@ _SEQ_CAMPAIGN = {"strategy": "scenario", "act_count": 2, "concurrency": 1, "pool
 SMOKE_CONTROL_EXPLORE = _CONCURRENT
 """The corpus-wide explore knobs every control's clean band runs under (mutants replay their own)."""
 
+def _mechanical(
+    vector: tuple[int, ...], *, act_count: int, concurrency: int, seed: int, detail: str = ""
+) -> str:
+    """The registry-ready evidence line for a mechanically extracted depth label."""
+
+    nonzero = sum(1 for choice in vector if choice)
+    plural = "choice" if nonzero == 1 else "choices"
+    text = (
+        f"mechanical (extract_depth): d = 1 + {nonzero} non-FIFO {plural} in the 1-minimal "
+        f"schedule {vector!r} (act_count={act_count}, concurrency={concurrency}, "
+        f"workload seed {seed})"
+    )
+    return f"{text} — {detail}" if detail else f"{text}."
+
+
 _T_MECHANICAL = (
     "mechanical (extract_depth): d = 1 + 0 non-FIFO choices — the 1-minimal schedule is EMPTY: "
     "plain FIFO at the recorded knobs (act_count=4, concurrency=3, workload seed 0) already "
@@ -45,9 +60,8 @@ _T_MECHANICAL = (
     "(two in-flight ops ARE required — clean at concurrency=1 over seeds 0..199) with scheduler "
     "ordering constraints: under the locked PCT-aligned definition the scheduler needs zero."
 )
-_D1_MECHANICAL = (
-    "mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal schedule () "
-    "(act_count=4, concurrency=1, workload seed 0) — the duplicated delivery alone suffices."
+_D1_MECHANICAL = _mechanical(
+    (), act_count=4, concurrency=1, seed=0, detail="the duplicated delivery alone suffices."
 )
 
 _FAULT_EVIDENCE = (
@@ -169,13 +183,14 @@ CORPUS: tuple[MisuseMutant, ...] = (
             explore={"strategy": "scenario", "act_count": 2, "concurrency": 2},
         ),
         depth=2,
-        depth_evidence=(
-            "mechanical (extract_depth): d = 1 + 1 non-FIFO choice in the 1-minimal schedule "
-            "(0, 0, 0, 1) (act_count=2, concurrency=2, workload seed 1) — plain FIFO is clean in "
-            "both spawn orders (SERVE_PADDING=2 phase alignment); padding 0-1 degenerates to d=1, "
-            "padding >=3 makes the window unreachable within 40k systematic runs. The corpus's "
-            "first genuinely depth-2 instance; p-hat ~= 0.26 under the random scheduler, so the "
-            "base regime is naturally de-saturated (no campaign pool needed)."
+        depth_evidence=_mechanical(
+            (0, 0, 0, 1),
+            act_count=2, concurrency=2, seed=1,
+            detail="plain FIFO is clean in both spawn orders (SERVE_PADDING=2 phase alignment); "
+            "padding 0-1 degenerates to d=1, padding >=3 makes the window unreachable within "
+            "40k systematic runs. The corpus's first genuinely depth-2 instance; p-hat ~= 0.26 "
+            "under the random scheduler, so the base regime is naturally de-saturated (no "
+            "campaign pool needed).",
         ),
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
@@ -201,14 +216,17 @@ CORPUS: tuple[MisuseMutant, ...] = (
             explore={"strategy": "scenario", "act_count": 2, "concurrency": 2},
         ),
         depth=3,
-        depth_evidence="mechanical (extract_depth): d = 1 + 2 non-FIFO choices in the 1-minimal "
-        "schedule (1, 0, 0, 0, 1) (act_count=2, concurrency=2, workload seed 1) — and stronger "
-        "than 1-minimality: every single-nonzero-choice vector over the tick space was "
-        "exhaustively refuted, so no depth-2 schedule kills. CAVEAT (measured): the mechanical "
-        "(tick-promotion) and PCT (priority-stall) depth models diverge here — this bug needs "
-        "four PCT priority segments, so pct-d3 does NOT recover the detection rate its "
-        "parameter suggests (random ≈ 0.12 > pct-d4 ≈ 0.03 > pct-d3 ≈ 0.007 per seed); the "
-        "PCT-bound comparison stays valid because the d=3 floor is far below all of them.",
+        depth_evidence=_mechanical(
+            (1, 0, 0, 0, 1),
+            act_count=2, concurrency=2, seed=1,
+            detail="and stronger than 1-minimality: every single-nonzero-choice vector over "
+            "the tick space was exhaustively refuted, so no depth-2 schedule kills. CAVEAT "
+            "(measured): the mechanical (tick-promotion) and PCT (priority-stall) depth models "
+            "diverge here — this bug needs four PCT priority segments, so pct-d3 does NOT "
+            "recover the detection rate its parameter suggests (random ≈ 0.12 > pct-d4 ≈ 0.03 "
+            "> pct-d3 ≈ 0.007 per seed); the PCT-bound comparison stays valid because the d=3 "
+            "floor is far below all of them.",
+        ),
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
@@ -233,9 +251,11 @@ CORPUS: tuple[MisuseMutant, ...] = (
             explore=_CONCURRENT,
         ),
         depth=1,
-        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal "
-        "schedule () (act_count=2, concurrency=2, workload seed 2) — overlap alone suffices: "
-        "FIFO lockstep already lands both reads before either commit, the write-skew shape.",
+        depth_evidence=_mechanical(
+            (), act_count=2, concurrency=2, seed=2,
+            detail="overlap alone suffices: FIFO lockstep already lands both reads before "
+            "either commit, the write-skew shape.",
+        ),
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
@@ -306,9 +326,11 @@ CORPUS: tuple[MisuseMutant, ...] = (
             explore=_SEQUENTIAL,
         ),
         depth=1,
-        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal "
-        "schedule () (act_count=4, concurrency=1, workload seed 0) — the duplicate submission "
-        "alone suffices; the loser's ack conflict fires sequentially too.",
+        depth_evidence=_mechanical(
+            (), act_count=4, concurrency=1, seed=0,
+            detail="the duplicate submission alone suffices; the loser's ack conflict fires "
+            "sequentially too.",
+        ),
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
@@ -417,8 +439,7 @@ CORPUS: tuple[MisuseMutant, ...] = (
             explore={"strategy": "scenario", "act_count": 3, "concurrency": 2},
         ),
         depth=1,
-        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal schedule () "
-        "(act_count=3, concurrency=2, workload seed 0).",
+        depth_evidence=_mechanical((), act_count=3, concurrency=2, seed=0),
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
@@ -440,9 +461,11 @@ CORPUS: tuple[MisuseMutant, ...] = (
             explore=_CONCURRENT,
         ),
         depth=1,
-        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal "
-        "schedule () (act_count=2, concurrency=2, workload seed 0) — FIFO lockstep itself walks "
-        "the waiter's spin into the release→write hole before the ex-holder's write lands.",
+        depth_evidence=_mechanical(
+            (), act_count=2, concurrency=2, seed=0,
+            detail="FIFO lockstep itself walks the waiter's spin into the release→write hole "
+            "before the ex-holder's write lands.",
+        ),
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
@@ -465,8 +488,7 @@ CORPUS: tuple[MisuseMutant, ...] = (
             explore={"strategy": "scenario", "act_count": 3, "concurrency": 2},
         ),
         depth=1,
-        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal schedule () "
-        "(act_count=3, concurrency=2, workload seed 0).",
+        depth_evidence=_mechanical((), act_count=3, concurrency=2, seed=0),
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
@@ -490,9 +512,10 @@ CORPUS: tuple[MisuseMutant, ...] = (
             explore=_SEQUENTIAL,
         ),
         depth=1,
-        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal "
-        "schedule () (act_count=4, concurrency=1, workload seed 1) — an emit followed by a relay "
-        "suffices; no interleaving is involved.",
+        depth_evidence=_mechanical(
+            (), act_count=4, concurrency=1, seed=1,
+            detail="an emit followed by a relay suffices; no interleaving is involved.",
+        ),
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
@@ -514,9 +537,10 @@ CORPUS: tuple[MisuseMutant, ...] = (
             explore=_SEQUENTIAL,
         ),
         depth=1,
-        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal "
-        "schedule () (act_count=4, concurrency=1, workload seed 0) — a fast append before a "
-        "slow one suffices; no interleaving is involved.",
+        depth_evidence=_mechanical(
+            (), act_count=4, concurrency=1, seed=0,
+            detail="a fast append before a slow one suffices; no interleaving is involved.",
+        ),
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
@@ -540,8 +564,7 @@ CORPUS: tuple[MisuseMutant, ...] = (
             explore={"strategy": "scenario", "act_count": 3, "concurrency": 1},
         ),
         depth=1,
-        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal schedule () "
-        "(act_count=3, concurrency=1, workload seed 1).",
+        depth_evidence=_mechanical((), act_count=3, concurrency=1, seed=1),
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
@@ -563,9 +586,10 @@ CORPUS: tuple[MisuseMutant, ...] = (
             explore={"strategy": "scenario", "act_count": 2, "concurrency": 1},
         ),
         depth=1,
-        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal "
-        "schedule () (act_count=2, concurrency=1, workload seed 0) — a single paged walk "
-        "suffices; no interleaving is involved.",
+        depth_evidence=_mechanical(
+            (), act_count=2, concurrency=1, seed=0,
+            detail="a single paged walk suffices; no interleaving is involved.",
+        ),
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,
@@ -587,8 +611,7 @@ CORPUS: tuple[MisuseMutant, ...] = (
             explore={"strategy": "scenario", "act_count": 2, "concurrency": 1},
         ),
         depth=1,
-        depth_evidence="mechanical (extract_depth): d = 1 + 0 non-FIFO choices in the 1-minimal schedule () "
-        "(act_count=2, concurrency=1, workload seed 0).",
+        depth_evidence=_mechanical((), act_count=2, concurrency=1, seed=0),
         port_observable=True,
         transfer_tier=TransferTier.CONDUCTOR,
         ground_truth=GroundTruth.REAL,

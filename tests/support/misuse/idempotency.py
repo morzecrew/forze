@@ -1,10 +1,11 @@
-"""I family — idempotency & retry misuse mutants: the same command delivered more than once.
+"""I family — idempotency & retry misuse: duplicated commands, naive retries, early acks.
 
-The workload models at-least-once delivery by drawing command ids from a two-element pool, so
-duplicates arrive naturally (sequentially or concurrently). The correct twin derives the charge
-row's id from the command id — a redelivery conflicts and is swallowed as already-done; the
-mutant appends a fresh row per delivery. The oracle reads port state (rows per command), never
-markers — see the T-family module docstring for why.
+I1 models at-least-once delivery by drawing command ids from a small pool, so duplicates arrive
+naturally; the correct twin derives the charge row's id from the command id, the mutant appends
+a fresh row per delivery. I2 is the self-inflicted variant: an in-handler retry loop whose
+non-idempotent effect commits before the ack that detects the duplicate. I3 acks the delivery
+before applying the effect, so a crash in the window loses it permanently. Every oracle reads
+port state (rows per command), never markers — see the T-family module docstring for why.
 """
 
 from __future__ import annotations

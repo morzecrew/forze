@@ -6,7 +6,7 @@ instantiates. The corpus (`tests/support/misuse/`) hand-authors instances as bro
 their correct controls; ground truth is by construction. **The instrument is not the contribution
 — the corpus exists to be measured against** (strategy statistics, mock-fidelity transfer).
 
-Status: `P1` = instance shipped in this slice; `P2+` = planned, operator locked.
+Status: **bold** = instance shipped (the id and its authoring note follow); `P2+`/`P3` = planned, operator locked.
 
 ## T — concurrency & transactions
 

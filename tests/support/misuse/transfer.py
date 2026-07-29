@@ -1,4 +1,4 @@
-"""Transfer scripts — the P1 corpus re-expressed as backend-agnostic provocations.
+"""Transfer scripts — the corpus re-expressed as backend-agnostic provocations.
 
 Each :class:`~forze_dst.conformance.transfer.TransferScript` provokes the same seeded misuse its
 corpus twin carries (the killing interleaving as a forced `Conductor` schedule, or a plain
@@ -30,6 +30,7 @@ from .activation import (
     ProfileCreate,
     ProfileUpdate,
     ServeLogCreate,
+    profile_state,
 )
 from .clock import (
     EVENT_SPEC,
@@ -495,21 +496,11 @@ async def _run_double_torn(backend: ConformanceBackend, *, atomic: bool) -> Dete
 
     async def serve(gate: Gate) -> None:
         await gate.checkpoint()  # start gate
-
-        async def state_of(pid: UUID) -> str:
-            try:
-                profile = await r_ctx.document.query(PROFILE_SPEC).get(pid)
-                return "ready" if profile.ready else "torn"
-            except CoreException as error:
-                if error.kind is not ExceptionKind.NOT_FOUND:
-                    raise
-                return "absent"
-
         async with r_ctx.tx_ctx.scope(scope):
-            state_a = await state_of(a_id)
+            state_a = await profile_state(r_ctx, a_id)
         await gate.checkpoint()  # released between the reads — the writer advances a window
         async with r_ctx.tx_ctx.scope(scope):
-            state_b = await state_of(b_id)
+            state_b = await profile_state(r_ctx, b_id)
             state = "blackout" if state_a == "torn" and state_b == "torn" else "partial"
             await r_ctx.document.command(SERVE_SPEC).create(
                 ServeLogCreate(profile=a_id, state=state)

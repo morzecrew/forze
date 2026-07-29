@@ -7,6 +7,8 @@ the common case needs no driver script — point at your registry-backed simulat
 
 from __future__ import annotations
 
+import importlib
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -21,8 +23,17 @@ from forze_dst.artifacts import (
     entry_from_report,
     load_regressions,
 )
+from forze_dst.campaign import (
+    CampaignRecord,
+    FalsePositiveRecord,
+    run_control_band,
+    run_mutant_campaigns,
+    summarize,
+    write_records,
+)
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.latency import Constant, LatencyProfile, LatencyRule
+from forze_dst.misuse import MisuseControl, MisuseMutant
 from forze_dst.stats import format_clean_verdict
 
 # ----------------------- #
@@ -339,19 +350,6 @@ def campaign(
     summary: str = typer.Option("", metavar="FILE", help="Write the markdown summary to FILE."),
 ) -> None:
     """Detection-time campaigns over a misuse corpus; print the survival/FP summary."""
-
-    import importlib
-    from pathlib import Path
-
-    from forze_dst.campaign import (
-        CampaignRecord,
-        FalsePositiveRecord,
-        run_control_band,
-        run_mutant_campaigns,
-        summarize,
-        write_records,
-    )
-    from forze_dst.misuse import MisuseControl, MisuseMutant
 
     def _registry(target: str) -> Any:
         module_name, _, attr = target.partition(":")

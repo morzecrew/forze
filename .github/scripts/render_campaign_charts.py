@@ -68,6 +68,22 @@ def km_chart(
     t_max = 250
     series_color: dict[str, str] = theme["series"]  # type: ignore[assignment]
 
+    # Derived, never hardcoded: the exemplar's registry depth, the per-strategy campaign
+    # count, and whether any campaign was censored at the ceiling.
+    depth = next(m.depth for m in CORPUS if m.mutant_id == KM_MUTANT)
+    campaigns = len(groups[(KM_MUTANT, STRATEGIES[0])])
+    censored_total = sum(
+        1
+        for strategy in STRATEGIES
+        for record in groups[(KM_MUTANT, strategy)]
+        if record["detection_trial"] is None
+    )
+    ceiling_note = (
+        "every campaign detected before the ceiling"
+        if censored_total == 0
+        else f"{censored_total} campaigns censored at the ceiling remain as survivors"
+    )
+
     def sx(t: float) -> float:
         return left + plot_w * min(t, t_max) / t_max
 
@@ -77,12 +93,12 @@ def km_chart(
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
         f'viewBox="0 0 {width} {height}" role="img" '
-        'aria-label="Kaplan-Meier detection curves for the depth-3 mutant">',
+        f'aria-label="Kaplan-Meier detection curves for the depth-{depth} mutant">',
         f'<rect width="{width}" height="{height}" fill="{theme["surface"]}" rx="8"/>',
         f'<text x="{left}" y="26" {FONT} font-size="15" font-weight="600" fill="{theme["text"]}">'
-        f"Seeds to first detection — {KM_MUTANT} (d=3, N=300 per strategy)</text>",
+        f"Seeds to first detection — {KM_MUTANT} (d={depth}, N={campaigns} per strategy)</text>",
         f'<text x="{left}" y="44" {FONT} font-size="12" fill="{theme["muted"]}">'
-        "P(still undetected) after t trials; every campaign detected before the ceiling</text>",
+        f"P(still undetected) after t trials; {ceiling_note}</text>",
     ]
 
     for s in (0.0, 0.25, 0.5, 0.75, 1.0):
@@ -212,8 +228,8 @@ def main(argv: list[str]) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
 
     for mode, theme in THEMES.items():
-        (args.out / f"campaign_km_{mode}.svg").write_text(km_chart(groups, theme))
-        (args.out / f"campaign_forest_{mode}.svg").write_text(forest_chart(groups, theme))
+        (args.out / f"campaign_km_{mode}.svg").write_text(km_chart(groups, theme) + "\n")
+        (args.out / f"campaign_forest_{mode}.svg").write_text(forest_chart(groups, theme) + "\n")
 
     print(f"wrote 4 charts to {args.out}")
     return 0

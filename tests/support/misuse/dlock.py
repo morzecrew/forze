@@ -121,45 +121,10 @@ class _Transfer(Handler[TransferCmd, None]):
 
     async def __call__(self, args: TransferCmd) -> None:
         resource = args.resource
-        lease = None
 
-        if self.mode == "locked":
-            try:
-                async with self.ctx.tx_ctx.scope("mock"):
-                    await self.ctx.document.command(LOCK_SPEC).create(
-                        LockRowCreate(resource=resource), id=_lock_id(resource)
-                    )
-            except CoreException as error:
-                if error.kind is ExceptionKind.CONFLICT:
-                    return  # the lease is held — back off
-                raise
-        elif self.mode in ("early_release", "release_after"):
-            # Releasing modes spin: a waiter re-tries the acquire, so it can enter exactly when
-            # the holder lets go — which is what makes D2's in-section release exploitable.
-            for _attempt in range(3):
-                try:
-                    async with self.ctx.tx_ctx.scope("mock"):
-                        lease = await self.ctx.document.command(LOCK_SPEC).create(
-                            LockRowCreate(resource=resource), id=_lock_id(resource)
-                        )
-                    break
-                except CoreException as error:
-                    if error.kind is not ExceptionKind.CONFLICT:
-                        raise
-            else:
-                return  # never acquired — back off
-        elif self.mode == "nonatomic":
-            # MUTANT (D3 nonatomic_acquire): check-then-set — two acquirers both see "free"
-            # and both create their own (fresh-id) lease row.
-            async with self.ctx.tx_ctx.scope("mock"):
-                held = await self.ctx.document.query(LOCK_SPEC).count(
-                    {"$values": {"resource": resource}}
-                )
-            if held:
-                return
-            async with self.ctx.tx_ctx.scope("mock"):
-                await self.ctx.document.command(LOCK_SPEC).create(LockRowCreate(resource=resource))
-        # MUTANT (D1 skip_lock): mode == "skip" — straight into the critical section.
+        entered, lease = await self._acquire(resource)
+        if not entered:
+            return  # back off — the lease is held (or was never won)
 
         async with self.ctx.tx_ctx.scope("mock"):
             balance = await self.ctx.document.query(BALANCE_SPEC).get(_balance_id(resource))
@@ -167,8 +132,7 @@ class _Transfer(Handler[TransferCmd, None]):
         if self.mode == "early_release" and lease is not None:
             # MUTANT (D2 early_lock_release): the lease is dropped *inside* the critical
             # section — a spinning waiter acquires and reads the balance before our write lands.
-            async with self.ctx.tx_ctx.scope("mock"):
-                await self.ctx.document.command(LOCK_SPEC).kill(lease.id)
+            await self._release(lease)
 
         async with self.ctx.tx_ctx.scope("mock"):
             await self.ctx.document.command(BALANCE_SPEC).update_matching(
@@ -181,8 +145,61 @@ class _Transfer(Handler[TransferCmd, None]):
             )
 
         if self.mode == "release_after" and lease is not None:
+            await self._release(lease)
+
+    # ....................... #
+
+    async def _acquire(self, resource: int) -> tuple[bool, LockRowRead | None]:
+        """Run the mode's acquisition protocol: ``(entered, lease-if-releasable)``."""
+
+        if self.mode == "locked":
+            try:
+                async with self.ctx.tx_ctx.scope("mock"):
+                    await self.ctx.document.command(LOCK_SPEC).create(
+                        LockRowCreate(resource=resource), id=_lock_id(resource)
+                    )
+            except CoreException as error:
+                if error.kind is ExceptionKind.CONFLICT:
+                    return False, None  # the lease is held — back off
+                raise
+            return True, None  # held for the run — no release protocol in this mode
+
+        if self.mode in ("early_release", "release_after"):
+            # Releasing modes spin: a waiter re-tries the acquire, so it can enter exactly when
+            # the holder lets go — which is what makes D2's in-section release exploitable.
+            for _attempt in range(3):
+                try:
+                    async with self.ctx.tx_ctx.scope("mock"):
+                        lease = await self.ctx.document.command(LOCK_SPEC).create(
+                            LockRowCreate(resource=resource), id=_lock_id(resource)
+                        )
+                    return True, lease
+                except CoreException as error:
+                    if error.kind is not ExceptionKind.CONFLICT:
+                        raise
+            return False, None  # never acquired — back off
+
+        if self.mode == "nonatomic":
+            # MUTANT (D3 nonatomic_acquire): check-then-set — two acquirers both see "free"
+            # and both create their own (fresh-id) lease row.
             async with self.ctx.tx_ctx.scope("mock"):
-                await self.ctx.document.command(LOCK_SPEC).kill(lease.id)
+                held = await self.ctx.document.query(LOCK_SPEC).count(
+                    {"$values": {"resource": resource}}
+                )
+            if held:
+                return False, None
+            async with self.ctx.tx_ctx.scope("mock"):
+                await self.ctx.document.command(LOCK_SPEC).create(LockRowCreate(resource=resource))
+            return True, None
+
+        # MUTANT (D1 skip_lock): mode == "skip" — straight into the critical section.
+        return True, None
+
+    # ....................... #
+
+    async def _release(self, lease: LockRowRead) -> None:
+        async with self.ctx.tx_ctx.scope("mock"):
+            await self.ctx.document.command(LOCK_SPEC).kill(lease.id)
 
 
 # ....................... #

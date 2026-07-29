@@ -33,28 +33,24 @@ def main(argv: list[str]) -> int:
 
     mutants = {m.mutant_id: m for m in CORPUS}
 
-    def trigger_probability(mutant_id: str) -> tuple[float, str] | None:
+    def trigger_probability(mutant_id: str) -> float | None:
         """P(the workload carries the triggering opportunity), or None = bound not applicable."""
 
-        mutant = mutants[mutant_id]
-        if mutant.crash is not None if hasattr(mutant, "crash") else False:
-            return None
         if mutant_id in ("M1-dual-write-shipment", "I3-ack-before-processing"):
             return None  # fault lottery: the trigger is the crash stream, not the schedule
-        if mutant_id == "N1-drop-tenant-predicate":
-            return None  # workload-order lottery (put-before-browse), not instrumented
-        if mutant_id == "D4-unmerged-remote-hlc":
-            return None  # workload-order lottery (emit-before-relay), not instrumented
+        if mutant_id in ("N1-drop-tenant-predicate", "D4-unmerged-remote-hlc"):
+            return None  # workload-order lottery (put-before-browse / emit-before-relay)
+
+        mutant = mutants[mutant_id]
         explore = mutant.campaign_explore or mutant.killing.explore or {}
         if mutant_id == "T4-weakened-oncall":
-            # The skew needs a same-rota AND distinct-doctor concurrent pair.
-            pool = int(cast("int", explore["pool"]))
-            return 1.0 / (2.0 * pool), f"1/(2·pool) (pool={pool}, doctors must differ)"
+            # The skew needs a same-rota AND distinct-doctor concurrent pair: 1/(2·pool).
+            return 1.0 / (2.0 * int(cast("int", explore["pool"])))
         if "pool" in explore:
-            return 1.0 / float(int(explore["pool"])), f"1/pool (pool={explore['pool']})"
+            return 1.0 / float(int(explore["pool"]))
         if mutant_id in ("T3-torn-activation", "T3-double-torn"):
-            return 0.5, "P(one provision + one serve in 2 draws) = 0.5"
-        return 1.0, "trigger certain (deterministic / every-run opportunity)"
+            return 0.5  # P(one provision + one serve in 2 draws)
+        return 1.0  # trigger certain: deterministic / every-run opportunity
 
     groups: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
     for line in args.records.read_text().splitlines():
@@ -98,12 +94,11 @@ def main(argv: list[str]) -> int:
         if int(strategy.rsplit("d", 1)[-1]) < mutant.depth:
             continue  # the guarantee only speaks for parameter >= depth
 
-        trigger = trigger_probability(mutant_id)
-        if trigger is None:
+        p_trigger = trigger_probability(mutant_id)
+        if p_trigger is None:
             if mutant_id not in excluded:
                 excluded.append(mutant_id)
             continue
-        p_trigger, trigger_note = trigger
 
         measured = all(r.get("max_tasks") is not None for r in records)
         if measured:

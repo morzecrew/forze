@@ -118,6 +118,23 @@ dst-campaign:
         --summary pages/docs/dst/_generated/campaign_pilot.md
 
 
+# Run the full DST detection-time protocol: N=300 campaigns + W3 analysis + charts (~10 min)
+dst-campaign-full:
+    {{ _uv_sync }}
+
+    PYTHONPATH=. uv run forze dst campaign tests.support.misuse:CORPUS \
+        --controls tests.support.misuse:CONTROLS \
+        --campaigns 300 --ceiling 2000 --fp-runs 400 --master-seed 0 \
+        --out dst-campaigns-full.jsonl \
+        --summary pages/docs/dst/_generated/campaign_full.md
+    PYTHONPATH=. uv run python .github/scripts/analyze_campaign.py \
+        dst-campaigns-full.jsonl \
+        --summary pages/docs/dst/_generated/campaign_full.md
+    PYTHONPATH=. uv run python .github/scripts/render_campaign_charts.py \
+        dst-campaigns-full.jsonl \
+        --out pages/docs/dst/_images
+
+
 # Regenerate the DST fidelity matrix artifact (needs Docker; writes pages/docs/dst/_generated/)
 dst-fidelity:
     {{ _uv_sync }}
