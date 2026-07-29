@@ -23,6 +23,7 @@ from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions.model import CoreException, ExceptionKind
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_dst import ModelState, Rule, Scenario, Simulation
+from forze_dst.faults import CrashPolicy
 from forze_dst.invariants import expect
 from forze_dst.markers import record_event
 from forze_dst.misuse import MisuseCase
@@ -136,6 +137,150 @@ def _case(handler_factory, *, pooled: bool = False) -> MisuseCase:  # type: igno
         ),
         scenario=_CAMPAIGN_SCENARIO if pooled else _RETRY_SCENARIO,
     )
+
+
+# ....................... #
+# I3 — ack before processing: the delivery is marked done in its own transaction before the
+# effect is applied. A crash between the commits loses the effect FOREVER: the redelivery sees
+# the ack and skips (at-most-once where at-least-once was required).
+
+
+class AckRow(Document):
+    message: int
+
+
+class AckRowCreate(CreateDocumentCmd):
+    message: int
+
+
+class AckRowRead(ReadDocument):
+    message: int
+
+
+class EffectRow(Document):
+    message: int
+
+
+class EffectRowCreate(CreateDocumentCmd):
+    message: int
+
+
+class EffectRowRead(ReadDocument):
+    message: int
+
+
+ACK_SPEC = DocumentSpec(
+    name="acks",
+    read=AckRowRead,
+    write=DocumentWriteTypes(domain=AckRow, create_cmd=AckRowCreate),
+)
+EFFECT_SPEC = DocumentSpec(
+    name="effects",
+    read=EffectRowRead,
+    write=DocumentWriteTypes(domain=EffectRow, create_cmd=EffectRowCreate),
+)
+
+
+class ProcessCmd(BaseModel):
+    message: int
+
+
+@attrs.define(slots=True, kw_only=True)
+class _Process(Handler[ProcessCmd, None]):
+    """``ack_first=True`` is the MUTANT (I3 ack_before_processing): the ack commits alone before
+    the effect; the correct twin applies effect and ack in one transaction."""
+
+    ctx: ExecutionContext
+    ack_first: bool
+
+    async def __call__(self, args: ProcessCmd) -> None:
+        if not self.ack_first:
+            try:
+                async with self.ctx.tx_ctx.scope("mock"):
+                    await self.ctx.document.command(ACK_SPEC).create(
+                        AckRowCreate(message=args.message), id=UUID(int=args.message + 1)
+                    )
+                    await self.ctx.document.command(EFFECT_SPEC).create(
+                        EffectRowCreate(message=args.message)
+                    )
+            except CoreException as error:
+                if error.kind is not ExceptionKind.CONFLICT:
+                    raise  # already processed — the redelivery is a no-op
+            return
+
+        # MUTANT (I3 ack_before_processing): ack commits first, in its own transaction.
+        try:
+            async with self.ctx.tx_ctx.scope("mock"):
+                await self.ctx.document.command(ACK_SPEC).create(
+                    AckRowCreate(message=args.message), id=UUID(int=args.message + 1)
+                )
+        except CoreException as error:
+            if error.kind is ExceptionKind.CONFLICT:
+                return  # "already done" — after a crash in the window, the loss is permanent
+            raise
+
+        async with self.ctx.tx_ctx.scope("mock"):
+            await self.ctx.document.command(EFFECT_SPEC).create(
+                EffectRowCreate(message=args.message)
+            )
+
+
+_PROCESS_SCENARIO = Scenario(
+    state=ModelState,
+    act=(Rule(op="process", arg=lambda _state, rng: ProcessCmd(message=rng.choice(_POOL))),),
+)
+
+_CRASH = CrashPolicy(surface="document_command", probability=0.25)
+
+
+def _process_case(*, ack_first: bool) -> MisuseCase:
+    registry = OperationRegistry(
+        handlers={"process": lambda ctx: _Process(ctx=ctx, ack_first=ack_first)},
+        descriptors={
+            "process": OperationDescriptor(
+                input_type=ProcessCmd, output_type=None, description="Process a delivery."
+            )
+        },
+    ).freeze()
+
+    async def observe(ctx: ExecutionContext) -> None:
+        async with ctx.tx_ctx.scope("mock"):
+            for message in _POOL:
+                acked = await ctx.document.query(ACK_SPEC).count(
+                    {"$values": {"message": message}}
+                )
+                effects = await ctx.document.query(EFFECT_SPEC).count(
+                    {"$values": {"message": message}}
+                )
+                record_event("ack_effect", message=message, acked=acked, effects=effects)
+
+    return MisuseCase(
+        simulation=Simulation(
+            operations=registry,
+            deps=lambda: MockDepsModule(),
+            observe=observe,
+            invariants=[
+                expect(
+                    "ack_effect",
+                    lambda e: e.fields["acked"] == 0 or e.fields["effects"] >= 1,
+                    message="a message was acked but its effect was never applied (lost)",
+                )
+            ],
+        ),
+        scenario=_PROCESS_SCENARIO,
+        crash=_CRASH,
+    )
+
+
+def i3_ack_before_processing() -> MisuseCase:
+    return _process_case(ack_first=True)
+
+
+def ctrl_process_then_ack() -> MisuseCase:
+    return _process_case(ack_first=False)
+
+
+# ....................... #
 
 
 def i1_retry_without_key() -> MisuseCase:

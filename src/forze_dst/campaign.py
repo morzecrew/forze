@@ -191,6 +191,7 @@ def run_mutant_campaigns(
                         act_count=act_count,
                         concurrency=concurrency,
                         scheduler=strategy.scheduler,
+                        crash=case.crash,
                     ),
                     scenario=case.scenario,
                 )
@@ -243,6 +244,7 @@ def run_control_band(
                     act_count=act_count,
                     concurrency=concurrency,
                     scheduler=strategy.scheduler,
+                    crash=case.crash,
                 ),
                 scenario=case.scenario,
             )

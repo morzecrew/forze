@@ -28,11 +28,12 @@ def _resolve(base: str) -> MisuseCase:
     return case
 
 
-def _config(explore: dict, seeds) -> SimulationConfig:  # type: ignore[no-untyped-def, type-arg]
+def _config(explore: dict, seeds, case: MisuseCase) -> SimulationConfig:  # type: ignore[no-untyped-def, type-arg]
     return SimulationConfig(
         seeds=seeds,
         act_count=int(explore["act_count"]),
         concurrency=int(explore["concurrency"]),
+        crash=case.crash,  # crash-fault instances run the crash → restart → recovery scenario
     )
 
 
@@ -77,7 +78,7 @@ class TestRegistryCompleteness:
 
     def test_depth_labels_are_mechanical(self) -> None:
         for mutant in CORPUS:
-            assert mutant.depth_evidence.startswith("mechanical"), mutant.mutant_id
+            assert mutant.depth_evidence.startswith(("mechanical", "fault")), mutant.mutant_id
 
 
 # ....................... #
@@ -97,7 +98,7 @@ class TestMutantsStillKill:
 
         assert mutant.killing.explore is not None
         report = case.simulation.run(
-            _config(mutant.killing.explore, [mutant.killing.seed]), scenario=case.scenario
+            _config(mutant.killing.explore, [mutant.killing.seed], case), scenario=case.scenario
         )
 
         assert report is not None, f"{mutant.mutant_id}: the killing seed no longer kills"
@@ -116,7 +117,7 @@ class TestControlsStayClean:
         case = _resolve(control.base)
 
         report = case.simulation.run(
-            _config(SMOKE_CONTROL_EXPLORE, range(*control.clean_band)), scenario=case.scenario
+            _config(SMOKE_CONTROL_EXPLORE, range(*control.clean_band), case), scenario=case.scenario
         )
 
         assert report is None, (

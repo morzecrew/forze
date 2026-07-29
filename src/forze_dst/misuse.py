@@ -24,6 +24,7 @@ import attrs
 from forze_dst.artifacts.corpus import RegressionEntry
 
 if TYPE_CHECKING:
+    from forze_dst.faults import CrashPolicy
     from forze_dst.harness import Simulation
     from forze_dst.scenario import Scenario
 
@@ -95,6 +96,12 @@ class MisuseCase:
 
     simulation: Simulation
     scenario: Scenario | None = None
+
+    crash: CrashPolicy | None = None
+    """Set for crash-fault instances: the run becomes the crash → restart → recovery scenario
+    (the defect is lost after-commit work / a partial non-transactional write). Runners thread
+    this into ``SimulationConfig.crash`` for the mutant AND its controls — a control is only a
+    control if it stays clean under the same crashes."""
 
 
 # ....................... #

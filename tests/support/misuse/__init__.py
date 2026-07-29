@@ -50,6 +50,14 @@ _D1_MECHANICAL = (
     "(act_count=4, concurrency=1, workload seed 0) — the duplicated delivery alone suffices."
 )
 
+_FAULT_EVIDENCE = (
+    "fault: d=1 by construction — the defect is triggered by the crash fault (the process dies "
+    "between the two commits), not by an ordering constraint; it manifests under FIFO at "
+    "concurrency=1 with the case's CrashPolicy. Systematic choice-vector extraction runs "
+    "faultless by design, so it does not apply; the crash point is part of the seeded fault "
+    "stream and reproduces from the run seed."
+)
+
 _PAY_FINGERPRINT = "sha256:7265dbffb577ac90c9a619bf2eb522d26a3067129409cf425ee30dc6f43cb0f9"
 
 
@@ -215,6 +223,69 @@ CORPUS: tuple[MisuseMutant, ...] = (
         notes="Transfer is a plain re-invocation — no forced interleaving needed.",
     ),
     MisuseMutant(
+        mutant_id="M1-dual-write-shipment",
+        operator="M1 outbox_outside_tx",
+        family=MisuseFamily.MESSAGING,
+        base="tests.support.misuse.messaging:m1_dual_write_shipment",
+        summary="State and its outbox event commit in separate transactions; a crash between "
+        "the commits strands state whose event never leaves.",
+        expected_invariants=("expect",),
+        killing=RegressionEntry(
+            seed=0,
+            schedule_seed=None,
+            target="tests.support.misuse.messaging:m1_dual_write_shipment",
+            registry_fingerprint="sha256:3bec22f2dc54ffeb7e902f8c35bd0fe39e07aa3499c2349c723ea17336b08bed",
+            invariants=("expect",),
+            found_at=_FOUND_AT,
+            explore={
+                "strategy": "scenario",
+                "act_count": 3,
+                "concurrency": 1,
+                "crash_surface": "document_command",
+                "crash_probability": 0.25,
+            },
+        ),
+        depth=1,
+        depth_evidence=_FAULT_EVIDENCE,
+        port_observable=True,
+        transfer_tier=TransferTier.FAULT_ANALOG,
+        ground_truth=GroundTruth.REAL,
+        notes="The canonical event-driven dual write. Runs under the crash-restart engine "
+        "(the case carries its CrashPolicy); transfer analog: the crash is the session "
+        "abandoning after the first commit.",
+    ),
+    MisuseMutant(
+        mutant_id="I3-ack-before-processing",
+        operator="I3 ack_before_processing",
+        family=MisuseFamily.IDEMPOTENCY,
+        base="tests.support.misuse.idempotency:i3_ack_before_processing",
+        summary="The ack commits before the effect; a crash in the window loses the effect "
+        "forever — the redelivery sees the ack and skips.",
+        expected_invariants=("expect",),
+        killing=RegressionEntry(
+            seed=0,
+            schedule_seed=None,
+            target="tests.support.misuse.idempotency:i3_ack_before_processing",
+            registry_fingerprint="sha256:20cdd1da203432f33b41399333101e06df19d2bf5aab8cf06382dc0d937a01a6",
+            invariants=("expect",),
+            found_at=_FOUND_AT,
+            explore={
+                "strategy": "scenario",
+                "act_count": 3,
+                "concurrency": 1,
+                "crash_surface": "document_command",
+                "crash_probability": 0.25,
+            },
+        ),
+        depth=1,
+        depth_evidence=_FAULT_EVIDENCE,
+        port_observable=True,
+        transfer_tier=TransferTier.FAULT_ANALOG,
+        ground_truth=GroundTruth.REAL,
+        notes="At-most-once where at-least-once was required. Runs under the crash-restart "
+        "engine; transfer analog: abandonment after the ack commit, then a redelivery.",
+    ),
+    MisuseMutant(
         mutant_id="M2-consumer-without-inbox",
         operator="M2 drop_inbox_dedup",
         family=MisuseFamily.MESSAGING,
@@ -281,6 +352,22 @@ CONTROLS: tuple[MisuseControl, ...] = (
         summary="Retry SHAPED but correct: the same duplicated workload, deduplicated by the "
         "command-id-derived row key.",
         adversarial=True,
+        clean_band=(0, 32),
+    ),
+    MisuseControl(
+        control_id="ctrl-outbox-in-tx",
+        base="tests.support.misuse.messaging:ctrl_outbox_in_tx",
+        summary="The outbox pattern: state and its event in one transaction — a crash leaves "
+        "both or neither, never state without its event.",
+        adversarial=False,
+        clean_band=(0, 32),
+    ),
+    MisuseControl(
+        control_id="ctrl-process-then-ack",
+        base="tests.support.misuse.idempotency:ctrl_process_then_ack",
+        summary="Effect and ack in one transaction — a crash rolls both back and the "
+        "redelivery completes the work.",
+        adversarial=False,
         clean_band=(0, 32),
     ),
     MisuseControl(

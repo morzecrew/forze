@@ -10,6 +10,12 @@ detection times are heavy-tailed and censored.
 | `I1-retry-without-key` | pct-d2 | 100 | 100 | 11 | [6, 21] | 0.063 [0.052, 0.076] |
 | `I1-retry-without-key` | pct-d3 | 100 | 100 | 12 | [6, 21] | 0.069 [0.056, 0.083] |
 | `I1-retry-without-key` | random | 100 | 100 | 11 | [6, 24] | 0.062 [0.050, 0.074] |
+| `I3-ack-before-processing` | pct-d2 | 100 | 100 | 2 | [1, 4] | 0.345 [0.290, 0.403] |
+| `I3-ack-before-processing` | pct-d3 | 100 | 100 | 2 | [1, 3] | 0.385 [0.325, 0.447] |
+| `I3-ack-before-processing` | random | 100 | 100 | 2 | [1, 4] | 0.358 [0.302, 0.418] |
+| `M1-dual-write-shipment` | pct-d2 | 100 | 100 | 1 | [1, 3] | 0.474 [0.405, 0.544] |
+| `M1-dual-write-shipment` | pct-d3 | 100 | 100 | 2 | [1, 3] | 0.408 [0.346, 0.473] |
+| `M1-dual-write-shipment` | random | 100 | 100 | 1 | [1, 2] | 0.529 [0.455, 0.602] |
 | `M2-consumer-without-inbox` | pct-d2 | 100 | 100 | 12 | [5, 22] | 0.064 [0.053, 0.078] |
 | `M2-consumer-without-inbox` | pct-d3 | 100 | 100 | 11 | [5, 22] | 0.061 [0.050, 0.073] |
 | `M2-consumer-without-inbox` | random | 100 | 100 | 12 | [6, 22] | 0.060 [0.049, 0.073] |
@@ -52,6 +58,12 @@ zero.
 | `ctrl-retry-with-key` | random | 400 | 0 | 0.0092 |
 | `ctrl-retry-with-key` | pct-d2 | 400 | 0 | 0.0092 |
 | `ctrl-retry-with-key` | pct-d3 | 400 | 0 | 0.0092 |
+| `ctrl-outbox-in-tx` | random | 400 | 0 | 0.0092 |
+| `ctrl-outbox-in-tx` | pct-d2 | 400 | 0 | 0.0092 |
+| `ctrl-outbox-in-tx` | pct-d3 | 400 | 0 | 0.0092 |
+| `ctrl-process-then-ack` | random | 400 | 0 | 0.0092 |
+| `ctrl-process-then-ack` | pct-d2 | 400 | 0 | 0.0092 |
+| `ctrl-process-then-ack` | pct-d3 | 400 | 0 | 0.0092 |
 | `ctrl-inbox-consumer` | random | 400 | 0 | 0.0092 |
 | `ctrl-inbox-consumer` | pct-d2 | 400 | 0 | 0.0092 |
 | `ctrl-inbox-consumer` | pct-d3 | 400 | 0 | 0.0092 |

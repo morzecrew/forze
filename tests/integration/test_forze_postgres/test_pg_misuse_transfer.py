@@ -42,6 +42,10 @@ _TABLES = {
     "consumer_inbox": "message integer NOT NULL",
     "handled": "message integer NOT NULL",
     "profiles": "ready boolean NOT NULL",
+    "shipments": "ref integer NOT NULL",
+    "outbox_events": "ref integer NOT NULL",
+    "acks": "message integer NOT NULL",
+    "effects": "message integer NOT NULL",
     "serve_log": "profile uuid NOT NULL,\n                state text NOT NULL",
 }
 
@@ -123,14 +127,18 @@ class TestPostgresMisuseTransfer:
 
     def test_registry_transferability_and_ground_truth_are_consistent(self) -> None:
         script_ids = {script.mutant_id for script in SCRIPTS}
-        conductor = {m.mutant_id for m in CORPUS if m.transfer_tier is TransferTier.CONDUCTOR}
+        transferable = {
+            m.mutant_id
+            for m in CORPUS
+            if m.transfer_tier in (TransferTier.CONDUCTOR, TransferTier.FAULT_ANALOG)
+        }
         untransferable = {
             m.mutant_id for m in CORPUS if m.transfer_tier is TransferTier.NOT_TRANSFERABLE
         }
 
         # Every transferable mutant has a script; every control transfers too; the
         # not-transferable fraction is exactly the declared one — no silent caps.
-        assert conductor | {c.control_id for c in CONTROLS} == script_ids
+        assert transferable | {c.control_id for c in CONTROLS} == script_ids
         assert untransferable == {"T2-charge-before-guard"}
 
         # Ground truth: REAL exactly for the transferred mutants (licensed by the green
@@ -138,7 +146,7 @@ class TestPostgresMisuseTransfer:
         for mutant in CORPUS:
             expected = (
                 GroundTruth.REAL
-                if mutant.transfer_tier is TransferTier.CONDUCTOR
+                if mutant.mutant_id in transferable
                 else GroundTruth.UNDETERMINED
             )
             assert mutant.ground_truth is expected, mutant.mutant_id

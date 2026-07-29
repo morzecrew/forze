@@ -24,13 +24,13 @@ Status: `P1` = instance shipped in this slice; `P2+` = planned, operator locked.
 |---|---|---|---|---|---|
 | I1 | `drop_idempotency_key` | process a retried command without its key | at-most-once effect per command | duplicate charge on retry (Stripe/adyen-class postmortems) | **P1** (`I1-retry-without-key`) |
 | I2 | `retry_without_idempotency` | wrap a non-idempotent effect in a naive retry loop | same | same, self-inflicted | P2+ |
-| I3 | `ack_before_processing` | ack the delivery before the handler runs | delivery invariant under crash | at-most-once where at-least-once required | P2+ (needs crash fault) |
+| I3 | `ack_before_processing` | ack the delivery before the handler runs | acked ⇒ effect exists, under crash | at-most-once where at-least-once required | **P2** (`I3-ack-before-processing`, crash-restart engine) |
 
 ## M — messaging
 
 | id | operator | misuse | expected oracle | bug class / source | status |
 |---|---|---|---|---|---|
-| M1 | `outbox_outside_tx` | publish to the outbox outside the state transaction | outbox↔state consistency under crash | dual write — the canonical event-driven production bug | P2+ (needs crash fault; highest-value remaining) |
+| M1 | `outbox_outside_tx` | publish to the outbox outside the state transaction | state ⇒ event exists, under crash | dual write — the canonical event-driven production bug | **P2** (`M1-dual-write-shipment`, crash-restart engine) |
 | M2 | `drop_inbox_dedup` | apply the effect on every delivery, no inbox table | at-most-once effect per message | duplicate consumption (at-least-once brokers) | **P1** (`M2-consumer-without-inbox`) |
 | M3 | `missing_compensation` | delete a saga compensation step | saga end-state invariant | stuck/inconsistent saga | P2+ |
 | M4 | `nonidempotent_compensation` | compensation double-applies on replay | same | same | P2+ |

@@ -30,8 +30,24 @@ from .activation import (
     ProfileUpdate,
     ServeLogCreate,
 )
-from .idempotency import CHARGE_SPEC, ChargeRowCreate
-from .messaging import HANDLED_SPEC, INBOX_SPEC, HandledRowCreate, InboxRowCreate
+from .idempotency import (
+    ACK_SPEC,
+    CHARGE_SPEC,
+    EFFECT_SPEC,
+    AckRowCreate,
+    ChargeRowCreate,
+    EffectRowCreate,
+)
+from .messaging import (
+    HANDLED_SPEC,
+    INBOX_SPEC,
+    OUTBOX_EVENT_SPEC,
+    SHIPMENT_SPEC,
+    HandledRowCreate,
+    InboxRowCreate,
+    OutboxEventCreate,
+    ShipmentCreate,
+)
 from .transactions import (
     ORDER_SPEC,
     PAYMENT_SPEC,
@@ -50,6 +66,8 @@ _order_seq = itertools.count(1000)
 _guest_seq = itertools.count(2000)
 _command_seq = itertools.count(3000)
 _message_seq = itertools.count(4000)
+_shipment_seq = itertools.count(6000)
+_ack_seq = itertools.count(7000)
 
 
 def _swallow_conflict(error: CoreException) -> None:
@@ -296,6 +314,108 @@ async def _run_torn_activation(backend: ConformanceBackend, *, atomic: bool) -> 
 
 
 # ....................... #
+# Crash-fault analogs (FAULT_ANALOG tier): the simulated crash between two commits maps onto a
+# real backend as the session ABANDONING after the first commit (a died process holds no further
+# writes); the atomic control's "crash" analog is an abort raised inside the single transaction.
+
+
+class _SimulatedDeath(Exception):
+    """The analog crash point — raised inside the atomic control's transaction to abort it."""
+
+
+async def _run_dual_write_crash(backend: ConformanceBackend, *, atomic: bool) -> Detection:
+    ctx = backend.contexts(1)[0]
+    scope = backend.scope_name
+    ref = next(_shipment_seq)
+
+    if atomic:
+        # Control analog: the crash lands inside the single transaction — both writes abort.
+        try:
+            async with ctx.tx_ctx.scope(scope):
+                await ctx.document.command(SHIPMENT_SPEC).create(ShipmentCreate(ref=ref))
+                await ctx.document.command(OUTBOX_EVENT_SPEC).create(OutboxEventCreate(ref=ref))
+                raise _SimulatedDeath()
+        except _SimulatedDeath:
+            pass
+    else:
+        # MUTANT analog (M1): the process dies after the state commit — the event never leaves.
+        async with ctx.tx_ctx.scope(scope):
+            await ctx.document.command(SHIPMENT_SPEC).create(ShipmentCreate(ref=ref))
+        # (death: the second transaction never runs)
+
+    async with ctx.tx_ctx.scope(scope):
+        shipments = await ctx.document.query(SHIPMENT_SPEC).count({"$values": {"ref": ref}})
+        events = await ctx.document.query(OUTBOX_EVENT_SPEC).count({"$values": {"ref": ref}})
+
+    return Detection.DETECTED if shipments != events else Detection.CLEAN
+
+
+async def _run_ack_crash(backend: ConformanceBackend, *, ack_first: bool) -> Detection:
+    ctx = backend.contexts(1)[0]
+    scope = backend.scope_name
+    message = next(_ack_seq)
+
+    if ack_first:
+        # MUTANT analog (I3): ack commits, the process dies, the redelivery sees the ack and skips.
+        async with ctx.tx_ctx.scope(scope):
+            await ctx.document.command(ACK_SPEC).create(
+                AckRowCreate(message=message), id=UUID(int=message)
+            )
+        # (death; then the redelivery:)
+        try:
+            async with ctx.tx_ctx.scope(scope):
+                await ctx.document.command(ACK_SPEC).create(
+                    AckRowCreate(message=message), id=UUID(int=message)
+                )
+                await ctx.document.command(EFFECT_SPEC).create(EffectRowCreate(message=message))
+        except CoreException as error:
+            _swallow_conflict(error)  # "already done" — the loss is now permanent
+    else:
+        # Control analog: effect+ack in one transaction; the crash aborts both; the redelivery
+        # completes the work.
+        try:
+            async with ctx.tx_ctx.scope(scope):
+                await ctx.document.command(ACK_SPEC).create(
+                    AckRowCreate(message=message), id=UUID(int=message)
+                )
+                await ctx.document.command(EFFECT_SPEC).create(EffectRowCreate(message=message))
+                raise _SimulatedDeath()
+        except _SimulatedDeath:
+            pass
+        try:
+            async with ctx.tx_ctx.scope(scope):
+                await ctx.document.command(ACK_SPEC).create(
+                    AckRowCreate(message=message), id=UUID(int=message)
+                )
+                await ctx.document.command(EFFECT_SPEC).create(EffectRowCreate(message=message))
+        except CoreException as error:
+            _swallow_conflict(error)
+
+    async with ctx.tx_ctx.scope(scope):
+        acked = await ctx.document.query(ACK_SPEC).count({"$values": {"message": message}})
+        effects = await ctx.document.query(EFFECT_SPEC).count({"$values": {"message": message}})
+
+    return Detection.DETECTED if acked > 0 and effects == 0 else Detection.CLEAN
+
+
+async def _m1(backend: ConformanceBackend) -> Detection:
+    return await _run_dual_write_crash(backend, atomic=False)
+
+
+async def _ctrl_outbox_in_tx(backend: ConformanceBackend) -> Detection:
+    return await _run_dual_write_crash(backend, atomic=True)
+
+
+async def _i3(backend: ConformanceBackend) -> Detection:
+    return await _run_ack_crash(backend, ack_first=True)
+
+
+async def _ctrl_process_then_ack(backend: ConformanceBackend) -> Detection:
+    return await _run_ack_crash(backend, ack_first=False)
+
+
+
+# ....................... #
 
 
 async def _t1(backend: ConformanceBackend) -> Detection:
@@ -353,6 +473,8 @@ SCRIPTS: tuple[TransferScript, ...] = (
     TransferScript(mutant_id="T5-unchecked-reservation", expect_detected=True, run=_t5),
     TransferScript(mutant_id="I1-retry-without-key", expect_detected=True, run=_i1),
     TransferScript(mutant_id="M2-consumer-without-inbox", expect_detected=True, run=_m2),
+    TransferScript(mutant_id="M1-dual-write-shipment", expect_detected=True, run=_m1),
+    TransferScript(mutant_id="I3-ack-before-processing", expect_detected=True, run=_i3),
     TransferScript(mutant_id="ctrl-row-after-guard", expect_detected=False, run=_ctrl_row_after_guard),
     TransferScript(
         mutant_id="ctrl-row-before-guard-in-tx",
@@ -367,5 +489,9 @@ SCRIPTS: tuple[TransferScript, ...] = (
     ),
     TransferScript(mutant_id="ctrl-retry-with-key", expect_detected=False, run=_ctrl_retry_with_key),
     TransferScript(mutant_id="ctrl-inbox-consumer", expect_detected=False, run=_ctrl_inbox_consumer),
+    TransferScript(mutant_id="ctrl-outbox-in-tx", expect_detected=False, run=_ctrl_outbox_in_tx),
+    TransferScript(
+        mutant_id="ctrl-process-then-ack", expect_detected=False, run=_ctrl_process_then_ack
+    ),
 )
 """Every transferable P1 corpus instance (5 mutants + 5 controls); T2 is `NOT_TRANSFERABLE`."""
