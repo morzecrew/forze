@@ -2,9 +2,10 @@
 
 Reads the raw campaign JSONL and the corpus registry, groups measured per-seed detection
 probabilities by the mutants' mechanically-derived depth labels, and compares each PCT strategy's
-p̂ against the PCT guarantee ``p >= 1/(n * k^(d-1))``. Until per-run tick instrumentation lands,
-``n`` is the structural task estimate (the regime's workload concurrency) and ``k`` is bounded by
-the PCT ``steps`` parameter (50) — both stated in the output, never silent.
+p̂ against the PCT guarantee ``p >= 1/(n * k^(d-1))``. ``n`` and ``k`` come from the records'
+per-run schedule profiles (distinct contending tasks; realized ordering-choice ticks), folded per
+cell as maxima; records that predate the instrumentation fall back to the structural estimates
+(workload concurrency; the ``steps`` draw range) with the fallback stated, never silent.
 
 Usage: ``python analyze_campaign.py <campaign.jsonl> --summary <campaign_full.md>``
 """
@@ -16,6 +17,7 @@ import json
 import sys
 from collections import defaultdict
 from pathlib import Path
+from typing import cast
 
 from forze_dst.stats import geometric_p_hat
 from tests.support.misuse import CORPUS
@@ -64,12 +66,20 @@ def main(argv: list[str]) -> int:
         "against the conditional `p̂_sched = p̂ / p_trigger`, with `p_trigger` taken from the",
         "recorded regime structure (the collision pool; the two-rule workload mix). Mutants whose",
         "trigger is a *fault* lottery (crash stream) or an uninstrumented workload-order lottery",
-        "are excluded — the theorem does not speak about them. Until per-run tick",
-        f"instrumentation lands, `n` = the regime's workload concurrency and `k` ≤ {K_ESTIMATE}",
-        "(the PCT steps parameter); both estimates are stated, not silent.",
+        "are excluded — the theorem does not speak about them.",
         "",
-        "| mutant | d | strategy | p̂ per seed | p_trigger | p̂_sched | bound (est.) | respected | looseness |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "`n` and `k` are **measured per run** (distinct contending tasks; realized",
+        "ordering-choice ticks), folded per cell as maxima — the largest observed contention",
+        "gives the lowest, most conservative floor. The formal bound uses the PCT draw range",
+        f"`steps={K_ESTIMATE}` for `k` (the guarantee is over the range the change points are",
+        "*drawn* from, not the schedule that happened); the **k-tuned floor** column restates",
+        "the same guarantee had `steps` been set to the measured schedule length — the honest",
+        "decomposition of any looseness into draw-range slack versus residual conservatism.",
+        "A cell whose records predate the instrumentation falls back to the structural",
+        "estimates (workload concurrency; the draw range) and says so.",
+        "",
+        "| mutant | d | strategy | n | k | p̂ per seed | p_trigger | p̂_sched | bound | respected | k-tuned floor |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
 
     excluded: list[str] = []
@@ -89,13 +99,25 @@ def main(argv: list[str]) -> int:
             continue
         p_trigger, trigger_note = trigger
 
-        explore = mutant.campaign_explore or mutant.killing.explore or {}
-        n = max(1, int(explore["concurrency"]))
+        measured = all(r.get("max_tasks") is not None for r in records)
+        if measured:
+            n = max(1, *(int(cast("int", r["max_tasks"])) for r in records))
+            k = max(1, *(int(cast("int", r["max_choice_steps"])) for r in records))
+            n_cell, k_cell = str(n), str(k)
+        else:
+            explore = mutant.campaign_explore or mutant.killing.explore or {}
+            n = max(1, int(cast("int", explore["concurrency"])))
+            k = K_ESTIMATE
+            n_cell, k_cell = f"{n} (est.)", f"≤{K_ESTIMATE} (est.)"
+
         events = [r["detection_trial"] for r in records if r["detection_trial"] is not None]
         censored = [r["trials_run"] for r in records if r["detection_trial"] is None]
         estimate = geometric_p_hat(events, censored)  # type: ignore[arg-type]
 
+        # The formal guarantee draws change points over `steps`; the tuned floor is the same
+        # theorem had `steps` matched the measured schedule length.
         bound = 1.0 / (n * (K_ESTIMATE ** (mutant.depth - 1)))
+        tuned = 1.0 / (n * (k ** (mutant.depth - 1)))
         p_sched = min(1.0, estimate.p_hat / p_trigger)
         p_sched_upper = min(1.0, estimate.ci.upper / p_trigger)
         respected = p_sched_upper >= bound
@@ -103,9 +125,9 @@ def main(argv: list[str]) -> int:
             violations += 1
 
         lines.append(
-            f"| `{mutant_id}` | {mutant.depth} | {strategy} | {estimate.p_hat:.3f} "
-            f"| {p_trigger:.3f} | {p_sched:.2f} | {bound:.4f} "
-            f"| {'yes' if respected else '**NO**'} | {p_sched / bound:.0f}× |"
+            f"| `{mutant_id}` | {mutant.depth} | {strategy} | {n_cell} | {k_cell} "
+            f"| {estimate.p_hat:.3f} | {p_trigger:.3f} | {p_sched:.2f} | {bound:.4f} "
+            f"| {'yes' if respected else '**NO**'} | {tuned:.4f} ({p_sched / tuned:.0f}× loose) |"
         )
 
     lines += [
@@ -117,13 +139,15 @@ def main(argv: list[str]) -> int:
         "",
         "Reading: for every depth-1 cell the conditional schedule probability sits at ≈ 1 — once",
         "the workload carries the trigger, essentially any schedule realizes it, consistent with",
-        "d=1 meaning zero ordering constraints. The depth-2 cell (`T3-torn-activation`) is where",
-        "the bound does real work: p̂_sched ≈ 0.5 against an estimated floor of 0.01 — respected",
-        "and loose by ~50×, consistent with PCT's deliberately conservative guarantee. A",
-        "violation anywhere would have meant a wrong depth label or wrong n/k accounting — the",
-        "first (unconditioned) pass of this analysis produced exactly such false violations and",
-        "was corrected to the conditional form above; the residual gap is measured per-run n and",
-        "k, recorded as the remaining P3 instrumentation task.",
+        "d=1 meaning zero ordering constraints (for d=1 the bound is `1/n` and `k` drops out).",
+        "The depth-2 cells are where the bound does real work, and the measured `k` decomposes",
+        "their looseness: the formal floor divides by the draw range",
+        f"(`steps={K_ESTIMATE}`), but the realized schedules are far shorter — the k-tuned",
+        "floor shows how much of the gap is draw-range slack (recoverable by setting `steps`",
+        "to the measured schedule length) versus PCT's residual conservatism. A violation",
+        "anywhere would have meant a wrong depth label or wrong n/k accounting — the first",
+        "(unconditioned) pass of this analysis produced exactly such false violations and was",
+        "corrected to the conditional form above.",
         "",
     ]
 

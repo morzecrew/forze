@@ -8,8 +8,13 @@ milliseconds however much virtual time the scenario spans.
 """
 
 import random
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
+from typing import final
+
+import attrs
 
 from forze.application.execution.interception import (
     CooperativeInterceptor,
@@ -24,11 +29,60 @@ from forze.base.primitives import (
 )
 
 from .cpu import CpuCostModel, SimulationCpuExecutor
-from .loop import RealIOForbidden, SimulationDeadlock, SimulationEventLoop
+from .loop import RealIOForbidden, ScheduleProfile, SimulationDeadlock, SimulationEventLoop
 from .scheduler import Reorderer
 from .time_source import DEFAULT_EPOCH, SimulationTimeSource
 
 # ----------------------- #
+
+
+@final
+@attrs.define(kw_only=True)
+class ScheduleProfiler:
+    """Accumulates measured schedule profiles across runs — the maxima the PCT bound needs.
+
+    The bound ``p ≥ 1/(n · k^(d-1))`` holds per run; folding a campaign's runs with the maxima
+    keeps the comparison conservative (the largest observed contention gives the lowest floor).
+    A "run" here is one event loop's lifetime — a crash → restart trial contributes one profile
+    per segment, which the max-fold absorbs.
+    """
+
+    max_tasks: int = 0
+    max_choice_steps: int = 0
+    runs: int = 0
+
+    # ....................... #
+
+    def observe(self, profile: ScheduleProfile) -> None:
+        self.max_tasks = max(self.max_tasks, profile.tasks)
+        self.max_choice_steps = max(self.max_choice_steps, profile.choice_steps)
+        self.runs += 1
+
+
+# ....................... #
+
+_schedule_profiler: ContextVar[ScheduleProfiler | None] = ContextVar(
+    "forze_dst_schedule_profiler", default=None
+)
+
+
+@contextmanager
+def profile_schedules(profiler: ScheduleProfiler | None = None) -> Iterator[ScheduleProfiler]:
+    """Collect every :func:`run_simulation` schedule profile in scope into *profiler*.
+
+    Profiling is off unless a collector is in scope, so the loop's per-tick bookkeeping costs
+    nothing by default.
+    """
+
+    collector = profiler if profiler is not None else ScheduleProfiler()
+    token = _schedule_profiler.set(collector)
+    try:
+        yield collector
+    finally:
+        _schedule_profiler.reset(token)
+
+
+# ....................... #
 
 
 def run_simulation[T](
@@ -76,7 +130,10 @@ def run_simulation[T](
     schedule_rng = (
         None if schedule_seed is None else random.Random(schedule_seed)  # nosec B311 - deterministic sim schedule, not crypto
     )
-    loop = SimulationEventLoop(schedule_rng=schedule_rng, scheduler=scheduler)
+    profiler = _schedule_profiler.get()
+    loop = SimulationEventLoop(
+        schedule_rng=schedule_rng, scheduler=scheduler, profile_schedule=profiler is not None
+    )
     time_source = SimulationTimeSource(loop=loop, epoch=epoch)
     entropy = SeededEntropySource(seed=seed)
 
@@ -98,6 +155,10 @@ def run_simulation[T](
             return loop.run_until_complete(scenario())
 
     finally:
+        # Observed in the finally so violating and crashing runs are profiled too — the
+        # killing run's measured n / k are exactly the ones the bound comparison needs.
+        if profiler is not None:
+            profiler.observe(loop.schedule_profile())
         loop.close()
 
 
@@ -107,6 +168,9 @@ def run_simulation[T](
 # loop, its leak/deadlock guards, and the virtual-time clock seam, re-exported together.
 __all__ = [
     "run_simulation",
+    "ScheduleProfile",
+    "ScheduleProfiler",
+    "profile_schedules",
     "SimulationEventLoop",
     "RealIOForbidden",
     "SimulationDeadlock",

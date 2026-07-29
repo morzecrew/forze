@@ -29,6 +29,7 @@ import attrs
 from forze.base.primitives import derive_seed
 from forze_dst.config import SimulationConfig
 from forze_dst.misuse import MisuseCase, MisuseControl, MisuseMutant
+from forze_dst.runtime import ScheduleProfiler, profile_schedules
 from forze_dst.scheduler import PCTScheduler, RandomScheduler, SchedulerSpec
 from forze_dst.stats import BinomialCi, SurvivalCurve, binomial_ci, geometric_p_hat
 
@@ -70,6 +71,14 @@ class CampaignRecord:
     trials_run: int
     wall_seconds: float
 
+    max_tasks: int | None = None
+    """Largest number of distinct contending tasks any of this campaign's runs observed — the
+    measured ``n`` of the PCT bound (``None`` on records written before instrumentation)."""
+
+    max_choice_steps: int | None = None
+    """Largest number of real ordering-choice ticks any run observed — the measured schedule
+    length the PCT ``steps`` draw range is compared against."""
+
     # ....................... #
 
     def to_json(self) -> str:
@@ -82,6 +91,8 @@ class CampaignRecord:
                 "detection_trial": self.detection_trial,
                 "trials_run": self.trials_run,
                 "wall_seconds": round(self.wall_seconds, 6),
+                "max_tasks": self.max_tasks,
+                "max_choice_steps": self.max_choice_steps,
             }
         )
 
@@ -182,22 +193,26 @@ def run_mutant_campaigns(
             started = time.perf_counter()
             detection: int | None = None
             trials = 0
+            profiler = ScheduleProfiler()
 
-            for trial in range(ceiling):
-                trials += 1
-                report = case.simulation.run(
-                    SimulationConfig(
-                        seeds=[derive_seed(campaign_seed, f"trial-{trial}")],
-                        act_count=act_count,
-                        concurrency=concurrency,
-                        scheduler=strategy.scheduler,
-                        crash=case.crash,
-                    ),
-                    scenario=case.scenario,
-                )
-                if report is not None:
-                    detection = trial + 1
-                    break
+            # Profile every trial's schedule so the record carries the measured n / k the
+            # PCT-bound analysis needs, instead of structural estimates.
+            with profile_schedules(profiler):
+                for trial in range(ceiling):
+                    trials += 1
+                    report = case.simulation.run(
+                        SimulationConfig(
+                            seeds=[derive_seed(campaign_seed, f"trial-{trial}")],
+                            act_count=act_count,
+                            concurrency=concurrency,
+                            scheduler=strategy.scheduler,
+                            crash=case.crash,
+                        ),
+                        scenario=case.scenario,
+                    )
+                    if report is not None:
+                        detection = trial + 1
+                        break
 
             records.append(
                 CampaignRecord(
@@ -207,6 +222,8 @@ def run_mutant_campaigns(
                     detection_trial=detection,
                     trials_run=trials,
                     wall_seconds=time.perf_counter() - started,
+                    max_tasks=profiler.max_tasks,
+                    max_choice_steps=profiler.max_choice_steps,
                 )
             )
 

@@ -42,6 +42,10 @@ class TestMutantCampaigns:
                 assert record.trials_run == 6  # censored = ran the full ceiling clean
             else:
                 assert 1 <= record.detection_trial == record.trials_run <= 6
+            # The measured schedule profile rides on every record — the bound analysis
+            # consumes these instead of structural estimates.
+            assert record.max_tasks is not None and record.max_tasks >= 1
+            assert record.max_choice_steps is not None and record.max_choice_steps >= 1
         # The d=1 mutant detects fast — the small band must produce at least one detection.
         assert any(record.detection_trial is not None for record in records)
 
@@ -95,6 +99,8 @@ class TestArtifactsAndSummary:
         assert lines[0]["master_seed"] == 0
         assert [line["kind"] for line in lines[1:]] == ["campaign", "campaign"]
         assert lines[1]["mutant_id"] == _I1.mutant_id
+        assert lines[1]["max_tasks"] >= 1
+        assert lines[1]["max_choice_steps"] >= 1
 
     def test_summary_has_quantiles_and_intervals_never_means(self) -> None:
         records = run_mutant_campaigns(

@@ -67,7 +67,7 @@ class RandomReorderer(Reorderer):
 # ....................... #
 
 
-def _task_of(handle: Any) -> asyncio.Task[Any] | None:
+def task_of(handle: Any) -> asyncio.Task[Any] | None:
     """The asyncio Task a ready callback belongs to, or ``None`` (a plain ``call_soon``)."""
 
     owner = getattr(getattr(handle, "_callback", None), "__self__", None)
@@ -122,7 +122,7 @@ class PCTReorderer(Reorderer):
     # ....................... #
 
     def reorder(self, ready: list[Any], step: int) -> list[Any]:
-        tagged = [(_task_of(handle), handle) for handle in ready]
+        tagged = [(task_of(handle), handle) for handle in ready]
 
         change_to = self._change_points.get(step)
         if change_to is not None:
