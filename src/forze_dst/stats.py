@@ -134,7 +134,9 @@ def _betacf(a: float, b: float, x: float) -> float:
         if abs(delta - 1.0) < eps:
             return h
 
-    raise ArithmeticError(f"incomplete beta did not converge for a={a}, b={b}, x={x}")
+    raise ArithmeticError(  # pragma: no cover - defensive; Lentz converges on the CI domain
+        f"incomplete beta did not converge for a={a}, b={b}, x={x}"
+    )
 
 
 def _betainc(a: float, b: float, x: float) -> float:
@@ -411,7 +413,7 @@ def log_rank(
         at_risk = at_risk_a + at_risk_b
         detected = times_a.get(time, 0) + times_b.get(time, 0)
 
-        if at_risk == 0:
+        if at_risk == 0:  # pragma: no cover - defensive; an event time implies a subject at risk
             continue
 
         expected_a = detected * at_risk_a / at_risk

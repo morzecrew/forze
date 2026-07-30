@@ -135,3 +135,23 @@ class TestControlsStayClean:
             f"{control.control_id}: control violated at seed {report.seed} — "
             "a harness false positive (or a corpus authoring bug), fix before any external claim"
         )
+
+
+# ....................... #
+
+
+class TestSchemaValidation:
+    """The registry schema refuses malformed entries loudly — evolved from real instances so
+    every other field stays valid and the one violation under test is what fires."""
+
+    def test_depth_must_be_positive(self) -> None:
+        with pytest.raises(ValueError, match="depth must be >= 1"):
+            attrs.evolve(CORPUS[0], depth=0)
+
+    def test_at_least_one_expected_invariant(self) -> None:
+        with pytest.raises(ValueError, match="at least one expected invariant"):
+            attrs.evolve(CORPUS[0], expected_invariants=())
+
+    def test_clean_band_must_be_non_empty(self) -> None:
+        with pytest.raises(ValueError, match="non-empty"):
+            attrs.evolve(CONTROLS[0], clean_band=(5, 5))

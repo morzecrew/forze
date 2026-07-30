@@ -464,3 +464,131 @@ def test_pretty_exceptions_never_render_locals() -> None:
 
     assert app.pretty_exceptions_show_locals is False
     assert dst_app.pretty_exceptions_show_locals is False
+
+
+# ....................... #
+# `dst campaign` — the detection-time protocol entrypoint over a misuse-corpus registry.
+
+from tests.support.misuse import CONTROLS, CORPUS  # noqa: E402
+
+MINI_CORPUS = tuple(m for m in CORPUS if m.mutant_id == "I1-retry-without-key")
+MINI_CONTROLS = tuple(c for c in CONTROLS if c.control_id == "ctrl-retry-with-key")
+EMPTY_CORPUS: tuple = ()
+NO_KNOBS_CORPUS = (
+    attrs.evolve(MINI_CORPUS[0], killing=attrs.evolve(MINI_CORPUS[0].killing, explore=None)),
+)
+
+
+class TestDstCampaignCommand:
+    def test_writes_jsonl_and_summary_file(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        out = tmp_path / "records.jsonl"
+        summary = tmp_path / "summary.md"
+
+        result = runner.invoke(
+            app,
+            [
+                "dst", "campaign", _ref("MINI_CORPUS"),
+                "--controls", _ref("MINI_CONTROLS"),
+                "--campaigns", "2", "--ceiling", "4", "--fp-runs", "2",
+                "--out", str(out), "--summary", str(summary),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "I1-retry-without-key" in result.output
+        assert "ctrl-retry-with-key" in result.output
+        lines = out.read_text().splitlines()
+        assert '"kind": "meta"' in lines[0]
+        assert any('"kind": "campaign"' in line for line in lines)
+        assert any('"kind": "false_positive"' in line for line in lines)
+        assert "Detection-time campaigns" in summary.read_text()
+
+    def test_without_summary_echoes_the_tables(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        result = runner.invoke(
+            app,
+            [
+                "dst", "campaign", _ref("MINI_CORPUS"),
+                "--campaigns", "1", "--ceiling", "3",
+                "--out", str(tmp_path / "records.jsonl"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Detection-time campaigns" in result.output  # echoed, no controls section
+
+    def test_controls_with_an_empty_corpus_fail_friendly(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        result = runner.invoke(
+            app,
+            [
+                "dst", "campaign", _ref("EMPTY_CORPUS"),
+                "--controls", _ref("MINI_CONTROLS"),
+                "--out", str(tmp_path / "records.jsonl"),
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert "non-empty corpus" in result.output
+
+    def test_controls_without_recorded_knobs_fail_friendly(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        result = runner.invoke(
+            app,
+            [
+                "dst", "campaign", _ref("NO_KNOBS_CORPUS"),
+                "--controls", _ref("MINI_CONTROLS"),
+                "--campaigns", "1", "--ceiling", "2",
+                "--out", str(tmp_path / "records.jsonl"),
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert "no explore knobs" in result.output
+
+
+class TestRunSideOutputs:
+    def test_fault_and_latency_knobs_build_their_policies(self) -> None:
+        # Non-zero knobs exercise the policy builders (the zero default returns None).
+        result = runner.invoke(
+            app,
+            [
+                "dst", "run", _ref("CLEAN"),
+                "--act-count", "2", "--concurrency", "2", "--seeds", "0-2",
+                "--fault-error", "0.2", "--latency", "0.01",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+
+    def test_violation_writes_html_viewer_and_regression_seed(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        html = tmp_path / "viewer.html"
+        corpus = tmp_path / "regressions.jsonl"
+
+        result = runner.invoke(
+            app,
+            [
+                "dst", "run", _ref("RACY"),
+                "--act-count", "3", "--concurrency", "3",
+                "--html", str(html),
+                "--save-regression", "--regression-file", str(corpus),
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "time-travel viewer" in result.stdout
+        assert html.exists() and html.stat().st_size > 0
+        assert "saved seed" in result.stdout
+        assert '"seed"' in corpus.read_text()
+
+    def test_no_confidence_clean_run_still_prints_the_exact_bound(self) -> None:
+        # With the confidence report opted out, a clean scenario sweep must still quantify
+        # itself — the locked verdict line, never a bare "no violation found".
+        result = runner.invoke(
+            app,
+            [
+                "dst", "run", _ref("CLEAN"),
+                "--act-count", "2", "--concurrency", "2", "--seeds", "0-4",
+                "--no-confidence",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "per-seed detection probability" in result.stdout

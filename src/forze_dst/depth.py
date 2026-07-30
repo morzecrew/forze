@@ -21,7 +21,7 @@ buys" — the correspondence is an empirical question there, not a definition.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import final
 
 import attrs
@@ -71,6 +71,35 @@ class DepthEvidence:
             f"1-minimal schedule {self.choices!r} (workload seed {self.seed}, "
             f"act_count={self.act_count}, concurrency={self.concurrency})"
         )
+
+
+# ....................... #
+
+
+def _one_minimal(found: Sequence[int], still_fails: Callable[[Sequence[int]], bool]) -> list[int]:
+    """Greedily zero *found*'s choices to fixpoint (1-minimal), then trim trailing FIFO zeros.
+
+    1-minimal: no single remaining non-zero choice can be zeroed without the violation
+    (as judged by *still_fails*) vanishing.
+    """
+
+    choices = list(found)
+    changed = True
+    while changed:
+        changed = False
+        for index, value in enumerate(choices):
+            if value == 0:
+                continue
+            candidate = list(choices)
+            candidate[index] = 0
+            if still_fails(candidate):
+                choices = candidate
+                changed = True
+
+    while choices and choices[-1] == 0:
+        choices.pop()
+
+    return choices
 
 
 # ....................... #
@@ -145,22 +174,7 @@ def extract_depth(
         )
         return bool(check(history, simulation.invariants))
 
-    # Greedy zeroing to fixpoint: 1-minimal (no single remaining choice can be dropped).
-    choices = list(found_choices)
-    changed = True
-    while changed:
-        changed = False
-        for index, value in enumerate(choices):
-            if value == 0:
-                continue
-            candidate = list(choices)
-            candidate[index] = 0
-            if still_fails(candidate):
-                choices = candidate
-                changed = True
-
-    while choices and choices[-1] == 0:
-        choices.pop()
+    choices = _one_minimal(found_choices, still_fails)
 
     return DepthEvidence(
         depth=1 + sum(1 for value in choices if value),

@@ -167,3 +167,35 @@ class TestRenderer:
 
         with pytest.raises(ValueError, match="missing transfer records"):
             render_transfer_markdown(partial, corpus=CORPUS, controls=CONTROLS)
+
+
+class TestDivergentClassifications:
+    async def test_both_directions_classify_and_surface(self) -> None:
+        # Backends that disagree by name: the mock-only detection is the false-alarm
+        # direction (MOCK_STRICT), the real-only detection the dangerous one (MOCK_WEAK).
+        async def mock_only(backend) -> Detection:  # type: ignore[no-untyped-def]
+            return Detection.DETECTED if backend.scope_name == "mock" else Detection.CLEAN
+
+        async def real_only(backend) -> Detection:  # type: ignore[no-untyped-def]
+            return Detection.CLEAN if backend.scope_name == "mock" else Detection.DETECTED
+
+        class _Named:
+            def __init__(self, name: str) -> None:
+                self.scope_name = name
+
+            def contexts(self, n: int):  # type: ignore[no-untyped-def]
+                raise AssertionError("unused")
+
+        records = await run_transfer(
+            (
+                TransferScript(mutant_id="artifact", expect_detected=True, run=mock_only),
+                TransferScript(mutant_id="blind-spot", expect_detected=True, run=real_only),
+            ),
+            mock_backend=_Named("mock"),
+            real_backend=_Named("postgres"),
+        )
+
+        strict, weak = records
+        assert strict.classification is TransferClassification.MOCK_STRICT
+        assert weak.classification is TransferClassification.MOCK_WEAK
+        assert divergences(records) == records

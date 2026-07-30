@@ -64,3 +64,39 @@ class TestExtractDepth:
                 act_count=2,
                 concurrency=1,
             )
+
+
+class TestExtractDepthEdges:
+    def test_minimizes_a_found_vector_to_the_d2_witness(self) -> None:
+        # The d=2 instance: the explorer's first find carries incidental choices; greedy
+        # zeroing must strip them down to the single load-bearing non-FIFO choice.
+        from tests.support.misuse.activation import t3_torn_activation
+
+        evidence = extract_depth(
+            t3_torn_activation(), act_count=2, concurrency=2, max_runs=15000
+        )
+
+        assert evidence.depth == 2
+        assert sum(1 for choice in evidence.choices if choice) == 1
+        assert "mechanical" in evidence.note()
+
+    def test_a_clean_case_exhausts_the_budget_loudly(self) -> None:
+        from tests.support.misuse.activation import ctrl_atomic_provision
+
+        with pytest.raises(RuntimeError, match="no violating interleaving"):
+            extract_depth(
+                ctrl_atomic_provision(), act_count=2, concurrency=2,
+                seeds=range(1), max_runs=40,
+            )
+
+
+class TestOneMinimal:
+    def test_zeroes_incidental_choices_and_trims_trailing_fifo(self) -> None:
+        from forze_dst.depth import _one_minimal
+
+        def needs_second(vector) -> bool:  # type: ignore[no-untyped-def]
+            return len(vector) > 1 and vector[1] != 0
+
+        # Indices 0, 2, 3 are incidental (zeroable); index 1 is load-bearing; the zeroed
+        # trailing positions are trimmed so the vector is canonical.
+        assert _one_minimal((2, 1, 3, 1), needs_second) == [0, 1]

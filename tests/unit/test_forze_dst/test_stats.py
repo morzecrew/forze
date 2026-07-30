@@ -385,3 +385,51 @@ class TestConfidenceReportVerdictLine:
         assert "per-seed detection probability" in clean.format()
         assert dirty.violations_seen == 1
         assert "per-seed detection probability" not in dirty.format()
+
+
+# ....................... #
+
+
+class TestValidationBranches:
+    """The refuse-loudly edges: every public entrypoint rejects malformed statistics inputs."""
+
+    def test_binomial_ci_rejects_bad_confidence(self) -> None:
+        with pytest.raises(ValueError, match="confidence"):
+            binomial_ci(1, 10, confidence=1.0)
+
+    def test_fit_rejects_bad_confidence(self) -> None:
+        with pytest.raises(ValueError, match="confidence"):
+            SurvivalCurve.fit([1], [], confidence=0.0)
+
+    def test_quantile_rejects_out_of_range(self) -> None:
+        curve = SurvivalCurve.fit([1, 2, 3], [])
+
+        with pytest.raises(ValueError, match="q must be"):
+            curve.quantile(1.0)
+
+    def test_geometric_rejects_sub_one_times(self) -> None:
+        with pytest.raises(ValueError, match=">= 1"):
+            geometric_p_hat([0], [])
+
+
+class TestKernelEdges:
+    def test_betainc_saturates_at_the_support_edges(self) -> None:
+        from forze_dst.stats import _betainc
+
+        assert _betainc(2.0, 3.0, 0.0) == 0.0
+        assert _betainc(2.0, 3.0, 1.0) == 1.0
+
+    def test_fit_reaches_zero_survival_when_the_last_at_risk_all_detect(self) -> None:
+        # Final step: at_risk == detected — survival hits 0 and the Greenwood increment is
+        # skipped (its denominator would vanish); the band collapses with the curve.
+        curve = SurvivalCurve.fit([1, 1], [])
+
+        assert curve.steps[-1].survival == 0.0
+
+    def test_log_rank_degenerates_to_no_evidence_on_zero_variance(self) -> None:
+        # B leaves the risk set before A's only event: the sole event time has one subject at
+        # risk, contributing no variance — the statistic is 0 and p is 1 by convention.
+        result = log_rank([2], [], [], [1])
+
+        assert result.statistic == 0.0
+        assert result.p_value == 1.0

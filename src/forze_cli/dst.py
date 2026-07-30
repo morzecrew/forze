@@ -101,7 +101,9 @@ def _parse_seed_int(value: str, *, kind: str, non_negative: bool = False) -> int
     except ValueError as e:
         raise typer.BadParameter(f"invalid {kind} {value!r}") from e
 
-    if non_negative and n < 0:
+    if (
+        non_negative and n < 0
+    ):  # pragma: no cover - defensive; a leading "-" routes to range parsing first
         raise typer.BadParameter(f"{kind} must be non-negative: {value!r}")
 
     return n

@@ -120,3 +120,69 @@ class TestArtifactsAndSummary:
         assert "p̂ per seed [95% CI]" in out
         assert "rate upper bound (95%)" in out
         assert "| mean" not in out  # no mean column exists — quantiles and intervals only
+
+
+class TestValidationAndEdges:
+    def test_campaign_counts_must_be_positive(self) -> None:
+        with pytest.raises(ValueError, match=">= 1"):
+            run_mutant_campaigns(_I1, strategies=_RANDOM_ONLY, campaigns=0, ceiling=5)
+
+    def test_control_runs_must_be_positive(self) -> None:
+        with pytest.raises(ValueError, match=">= 1"):
+            run_control_band(
+                _CONTROL, explore=dict(SMOKE_CONTROL_EXPLORE), strategies=_RANDOM_ONLY, runs=0
+            )
+
+    def test_base_must_produce_a_misuse_case(self) -> None:
+        broken = attrs.evolve(
+            _I1, base="builtins:dict", campaign_base=None, campaign_explore=None,
+            killing=attrs.evolve(_I1.killing, target="builtins:dict"),
+        )
+
+        with pytest.raises(TypeError, match="did not produce a MisuseCase"):
+            run_mutant_campaigns(broken, strategies=_RANDOM_ONLY, campaigns=1, ceiling=1)
+
+    def test_missing_explore_knobs_fail_loud(self) -> None:
+        knobless = attrs.evolve(
+            _I1, campaign_base=None, campaign_explore=None,
+            killing=attrs.evolve(_I1.killing, explore=None),
+        )
+
+        with pytest.raises(ValueError, match="no explore knobs"):
+            run_mutant_campaigns(knobless, strategies=_RANDOM_ONLY, campaigns=1, ceiling=1)
+
+    def test_a_violating_control_is_counted_not_hidden(self) -> None:
+        # Point a "control" at the mutant factory: the band must report the violations —
+        # this is the false-positive metric doing its job, never a silent zero.
+        framed = attrs.evolve(_CONTROL, base=_I1.base)
+
+        (record,) = run_control_band(
+            framed, explore=dict(SMOKE_CONTROL_EXPLORE), strategies=_RANDOM_ONLY, runs=6
+        )
+
+        assert record.violations > 0
+        assert record.ci.upper > record.ci.lower > 0.0
+
+    def test_summary_renders_the_false_positive_section(self) -> None:
+        campaigns = run_mutant_campaigns(
+            _I1, strategies=_RANDOM_ONLY, campaigns=2, ceiling=3, master_seed=0
+        )
+        fps = run_control_band(
+            _CONTROL, explore=dict(SMOKE_CONTROL_EXPLORE), strategies=_RANDOM_ONLY, runs=3
+        )
+
+        rendered = summarize(campaigns, fps, ceiling=3)
+
+        assert "## False positives (negative controls)" in rendered
+        assert "`ctrl-retry-with-key`" in rendered
+
+    def test_false_positive_records_round_trip_the_jsonl(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        fps = run_control_band(
+            _CONTROL, explore=dict(SMOKE_CONTROL_EXPLORE), strategies=_RANDOM_ONLY, runs=2
+        )
+
+        path = write_records(tmp_path / "records.jsonl", campaigns=(), false_positives=fps)
+
+        lines = [json.loads(line) for line in path.read_text().splitlines()]
+        assert [line["kind"] for line in lines[1:]] == ["false_positive"]
+        assert lines[1]["violations"] == 0
