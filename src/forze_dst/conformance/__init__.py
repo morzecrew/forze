@@ -66,6 +66,16 @@ from .report import (
     render_markdown,
     write_matrix,
 )
+from .transfer import (
+    Detection,
+    TransferClassification,
+    TransferRecord,
+    TransferScript,
+    divergences,
+    render_transfer_markdown,
+    run_transfer,
+    write_transfer,
+)
 
 # ----------------------- #
 
@@ -80,6 +90,14 @@ __all__ = [
     "collect_verdicts",
     "render_markdown",
     "write_matrix",
+    "Detection",
+    "TransferClassification",
+    "TransferRecord",
+    "TransferScript",
+    "divergences",
+    "render_transfer_markdown",
+    "run_transfer",
+    "write_transfer",
     "ConformanceBackend",
     "Verdict",
     "is_serialization_conflict",

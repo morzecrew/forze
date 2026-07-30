@@ -7,6 +7,8 @@ the common case needs no driver script — point at your registry-backed simulat
 
 from __future__ import annotations
 
+import importlib
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -21,8 +23,17 @@ from forze_dst.artifacts import (
     entry_from_report,
     load_regressions,
 )
+from forze_dst.campaign import (
+    CampaignRecord,
+    FalsePositiveRecord,
+    run_control_band,
+    run_mutant_campaigns,
+    summarize,
+    write_records,
+)
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.latency import Constant, LatencyProfile, LatencyRule
+from forze_dst.misuse import MisuseControl, MisuseMutant
 from forze_dst.stats import format_clean_verdict
 
 # ----------------------- #
@@ -90,7 +101,9 @@ def _parse_seed_int(value: str, *, kind: str, non_negative: bool = False) -> int
     except ValueError as e:
         raise typer.BadParameter(f"invalid {kind} {value!r}") from e
 
-    if non_negative and n < 0:
+    if (
+        non_negative and n < 0
+    ):  # pragma: no cover - defensive; a leading "-" routes to range parsing first
         raise typer.BadParameter(f"{kind} must be non-negative: {value!r}")
 
     return n
@@ -318,6 +331,88 @@ def run(
         typer.echo(f"\n↳ saved seed {report.seed} to {regression_file}")
 
     raise typer.Exit(code=1)
+
+
+# ....................... #
+
+
+@dst_app.command()
+def campaign(
+    corpus: str = typer.Argument(
+        ..., help="Import string 'module:attr' of a Sequence[MisuseMutant] registry."
+    ),
+    controls: str = typer.Option(
+        "", help="Import string 'module:attr' of a Sequence[MisuseControl] registry."
+    ),
+    campaigns: int = typer.Option(100, help="Independent campaigns per (mutant, strategy)."),
+    ceiling: int = typer.Option(2000, help="Censoring ceiling: trials per campaign."),
+    fp_runs: int = typer.Option(400, help="Seeds per (control, strategy) for the FP rate."),
+    master_seed: int = typer.Option(0, help="One integer reproduces the whole dataset."),
+    out: str = typer.Option("dst-campaigns.jsonl", help="Raw JSONL output path."),
+    summary: str = typer.Option("", metavar="FILE", help="Write the markdown summary to FILE."),
+) -> None:
+    """Detection-time campaigns over a misuse corpus; print the survival/FP summary."""
+
+    def _registry(target: str) -> Any:
+        module_name, _, attr = target.partition(":")
+        return getattr(importlib.import_module(module_name), attr)
+
+    mutants: list[MisuseMutant] = list(_registry(corpus))
+    campaign_records: list[CampaignRecord] = []
+    for mutant in mutants:
+        typer.echo(f"· {mutant.mutant_id} ({campaigns} campaigns × strategies)")
+        campaign_records.extend(
+            run_mutant_campaigns(
+                mutant, campaigns=campaigns, ceiling=ceiling, master_seed=master_seed
+            )
+        )
+
+    fp_records: list[FalsePositiveRecord] = []
+    if controls:
+        if not mutants:
+            raise typer.BadParameter(
+                "controls need a non-empty corpus — the corpus-wide control config comes "
+                "from the first mutant's recorded knobs"
+            )
+        # Controls run under a corpus-wide config: the first mutant's recorded knobs.
+        explore = mutants[0].killing.explore
+        if explore is None:
+            raise typer.BadParameter("the corpus's first mutant carries no explore knobs")
+        control_registry: list[MisuseControl] = list(_registry(controls))
+        for control in control_registry:
+            typer.echo(f"· {control.control_id} ({fp_runs} runs × strategies)")
+            fp_records.extend(
+                run_control_band(
+                    control,
+                    explore=explore,
+                    runs=fp_runs,
+                    master_seed=master_seed,
+                )
+            )
+
+    path = write_records(
+        out,
+        campaigns=campaign_records,
+        false_positives=fp_records,
+        meta={
+            "master_seed": master_seed,
+            "campaigns": campaigns,
+            "ceiling": ceiling,
+            "fp_runs": fp_runs,
+            "corpus": corpus,
+            "created": utcnow().isoformat(),
+        },
+    )
+    typer.echo(f"↳ wrote {len(campaign_records) + len(fp_records)} records to {path}")
+
+    rendered = summarize(campaign_records, fp_records, ceiling=ceiling)
+    if summary:
+        Path(summary).parent.mkdir(parents=True, exist_ok=True)
+        Path(summary).write_text(rendered)
+        typer.echo(f"↳ wrote summary to {summary}")
+    else:
+        typer.echo("")
+        typer.echo(rendered)
 
 
 # ....................... #

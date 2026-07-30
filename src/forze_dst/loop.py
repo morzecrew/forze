@@ -22,12 +22,33 @@ from __future__ import annotations
 import asyncio
 import random
 import selectors
+import weakref
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import Any, cast, final
 
-from forze_dst.scheduler import Reorderer
+import attrs
+
+from forze_dst.scheduler import Reorderer, task_of
 
 # ----------------------- #
+
+
+@final
+@attrs.frozen(kw_only=True)
+class ScheduleProfile:
+    """What one run's schedule actually looked like — the measured ``n`` / ``k`` of PCT theory.
+
+    *tasks* is the number of distinct tasks that ever contended (appeared in a ready set of
+    size ≥ 2); *choice_steps* is the number of ticks where the loop had a real ordering choice.
+    Both are per-run facts the PCT bound ``p ≥ 1/(n · k^(d-1))`` is usually fed estimates for —
+    recording them turns the bound comparison from a structural guess into a measurement.
+    """
+
+    tasks: int
+    choice_steps: int
+
+
+# ....................... #
 
 
 class RealIOForbidden(RuntimeError):
@@ -135,6 +156,7 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
         *,
         schedule_rng: random.Random | None = None,
         scheduler: Reorderer | None = None,
+        profile_schedule: bool = False,
     ) -> None:
         super().__init__()
         self._sim_clock: float = 0.0
@@ -142,6 +164,22 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
         self._scheduler = scheduler
         self._step = 0
         self._selector: _NullSelector = _NullSelector(self)
+        # Schedule profiling is opt-in so the per-tick bookkeeping costs nothing by default.
+        self._profile_schedule = profile_schedule
+        self._choice_steps = 0
+        # Distinct-contender counting without owning the tasks: membership lives in a WeakSet
+        # (a completed task is not retained), the count in an int bumped on first sight (so a
+        # GC'd task stays counted). Raw ``id()`` bookkeeping would be wrong here — a recycled
+        # id collides distinct contenders — and a bare WeakSet alone would undercount.
+        self._contending_seen: weakref.WeakSet[asyncio.Task[Any]] = weakref.WeakSet()
+        self._contending_count = 0
+
+    # ....................... #
+
+    def schedule_profile(self) -> ScheduleProfile:
+        """The run's measured contention profile (zeros unless ``profile_schedule`` was set)."""
+
+        return ScheduleProfile(tasks=self._contending_count, choice_steps=self._choice_steps)
 
     # ....................... #
 
@@ -149,6 +187,14 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
         # Reorder only the callbacks already ready at the start of the tick. BaseEventLoop
         # then runs them (and any timers due this tick) in this order.
         ready = cast("Any", self)._ready  # CPython internal, absent from typeshed
+
+        if self._profile_schedule and len(ready) > 1:
+            self._choice_steps += 1
+            for handle in ready:
+                task = task_of(handle)
+                if task is not None and task not in self._contending_seen:
+                    self._contending_seen.add(task)
+                    self._contending_count += 1
 
         if self._scheduler is not None:
             if len(ready) > 1:
@@ -196,6 +242,7 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
         raise _forbidden("scheduling a callback from another thread (call_soon_threadsafe)")
 
     def close(self) -> None:
+        self._contending_seen.clear()  # profiling bookkeeping ends with the loop
         self._selector.close()
         super().close()
 

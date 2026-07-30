@@ -224,3 +224,6 @@ entities.json
 
 rfcs/
 .claude/projects/
+
+# DST run artifacts (raw JSONL; the committed artifact is the generated summary in pages/)
+dst-*.jsonl

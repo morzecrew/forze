@@ -1,9 +1,12 @@
-"""The quantitative clean-run verdict — exact zero-event bound + the one locked sentence.
+"""The detection-statistics kernel — exact bounds, survival curves, and the locked verdict.
 
-A clean sweep must state what it excludes (per-seed detection probability bounded at a stated
-confidence), never a bare "passed" — and a violating run must never print the bound at all.
+Statistical code with wrong constants is worse than none, so the kernel is pinned against
+closed forms and published worked examples: the Gehan 6-MP leukemia data for Kaplan–Meier and
+the log-rank test, classic Clopper–Pearson intervals, and the exactness property itself (the
+binomial tail at the bound equals α/2).
 """
 
+import math
 from types import MappingProxyType
 
 import pytest
@@ -14,7 +17,21 @@ from forze_dst.oracle.coverage import CoverageStats
 from forze_dst.oracle.invariants import Violation
 from forze_dst.oracle.recorder import History
 from forze_dst.oracle.replay import ViolationReport
-from forze_dst.stats import detection_upper_bound, format_clean_verdict
+from forze_dst.stats import (
+    SurvivalCurve,
+    binomial_ci,
+    detection_upper_bound,
+    fisher_exact,
+    format_clean_verdict,
+    geometric_p_hat,
+    log_rank,
+)
+
+# The Gehan (1965) 6-MP leukemia trial — the canonical Kaplan–Meier worked example. Remission
+# lengths in weeks; the treated arm is right-censored, the placebo arm has no censoring.
+_SIX_MP_EVENTS = (6, 6, 6, 7, 10, 13, 16, 22, 23)
+_SIX_MP_CENSORED = (6, 9, 10, 11, 17, 19, 20, 25, 32, 32, 34, 35)
+_PLACEBO_EVENTS = (1, 1, 2, 2, 3, 4, 4, 5, 5, 8, 8, 8, 8, 11, 11, 12, 12, 15, 17, 22, 23)
 
 # ----------------------- #
 
@@ -81,6 +98,186 @@ class TestFormatCleanVerdict:
 
         assert "0.00%" not in out
         assert "e-07" in out
+
+
+# ....................... #
+
+
+class TestBinomialCi:
+    def test_classic_one_of_ten(self) -> None:
+        # The textbook Clopper–Pearson interval for 1 success in 10 trials at 95%.
+        ci = binomial_ci(1, 10)
+
+        assert ci.lower == pytest.approx(0.00253, abs=5e-5)
+        assert ci.upper == pytest.approx(0.44502, abs=5e-5)
+
+    def test_zero_event_edges_are_closed_form(self) -> None:
+        ci = binomial_ci(0, 50)
+
+        assert ci.lower == 0.0
+        assert ci.upper == pytest.approx(1.0 - 0.025 ** (1 / 50))
+
+    def test_all_events_mirror_zero_events(self) -> None:
+        zero, full = binomial_ci(0, 50), binomial_ci(50, 50)
+
+        assert full.upper == 1.0
+        assert full.lower == pytest.approx(1.0 - zero.upper)
+
+    def test_detection_upper_bound_is_the_one_sided_special_case(self) -> None:
+        # A two-sided 90% interval's upper limit IS the one-sided 95% bound.
+        assert binomial_ci(0, 200, confidence=0.90).upper == pytest.approx(
+            detection_upper_bound(200, confidence=0.95)
+        )
+
+    def test_exactness_the_binomial_tail_at_the_bound_equals_alpha_halves(self) -> None:
+        # The defining property of Clopper–Pearson: at p = lower, P(X >= k) = α/2.
+        k, n = 3, 20
+        ci = binomial_ci(k, n)
+
+        tail = sum(
+            math.comb(n, i) * ci.lower**i * (1.0 - ci.lower) ** (n - i) for i in range(k, n + 1)
+        )
+        assert tail == pytest.approx(0.025, abs=1e-6)
+
+    def test_validation(self) -> None:
+        with pytest.raises(ValueError, match="trials"):
+            binomial_ci(0, 0)
+        with pytest.raises(ValueError, match="successes"):
+            binomial_ci(5, 4)
+
+
+# ....................... #
+
+
+class TestSurvivalCurve:
+    def test_six_mp_reproduces_the_published_steps(self) -> None:
+        curve = SurvivalCurve.fit(_SIX_MP_EVENTS, _SIX_MP_CENSORED)
+
+        published = {6: 0.857, 7: 0.807, 10: 0.753, 13: 0.690, 16: 0.627, 22: 0.538, 23: 0.448}
+        assert {step.time for step in curve.steps} == set(published)
+        for step in curve.steps:
+            assert step.survival == pytest.approx(published[step.time], abs=5e-4), step.time
+        assert curve.n_runs == 21
+        assert curve.n_censored == 12
+
+    def test_six_mp_median_is_the_published_twenty_three(self) -> None:
+        assert SurvivalCurve.fit(_SIX_MP_EVENTS, _SIX_MP_CENSORED).median == 23
+
+    def test_heavy_censoring_yields_an_honest_none(self) -> None:
+        curve = SurvivalCurve.fit([1], [10] * 9)
+
+        assert curve.survival_at(1) == pytest.approx(0.9)
+        assert curve.median is None  # the curve never reaches 0.5 — no median claim
+
+    def test_greenwood_band_matches_hand_computation(self) -> None:
+        # One detection among four runs: S = 0.75, se = 0.75·√(1/12), z = 1.95996….
+        curve = SurvivalCurve.fit([1], [2, 2, 2])
+
+        (step,) = curve.steps
+        se = 0.75 * math.sqrt(1.0 / 12.0)
+        assert step.survival == pytest.approx(0.75)
+        assert step.lower == pytest.approx(0.75 - 1.959964 * se, abs=1e-5)
+        assert step.upper == 1.0  # capped
+
+    def test_survival_at_steps_between_event_times(self) -> None:
+        curve = SurvivalCurve.fit([2, 4], [5, 5])
+
+        assert curve.survival_at(1) == 1.0
+        assert curve.survival_at(3) == pytest.approx(0.75)
+        assert curve.survival_at(10) == pytest.approx(0.5)
+
+    def test_format_shows_quantiles_never_a_mean(self) -> None:
+        out = SurvivalCurve.fit(_SIX_MP_EVENTS, _SIX_MP_CENSORED).format()
+
+        assert "median:   23" in out
+        assert "censored" in out
+        assert "mean" not in out
+
+    def test_validation(self) -> None:
+        with pytest.raises(ValueError, match="at least one observation"):
+            SurvivalCurve.fit([], [])
+        with pytest.raises(ValueError, match=">= 1"):
+            SurvivalCurve.fit([0])
+
+
+# ....................... #
+
+
+class TestLogRank:
+    def test_six_mp_versus_placebo_reproduces_the_published_statistic(self) -> None:
+        result = log_rank(_SIX_MP_EVENTS, _SIX_MP_CENSORED, _PLACEBO_EVENTS, ())
+
+        assert result.statistic == pytest.approx(16.79, rel=0.01)
+        assert result.p_value < 1e-4
+
+    def test_identical_groups_show_no_difference(self) -> None:
+        result = log_rank([3, 5, 8], [10], [3, 5, 8], [10])
+
+        assert result.statistic == pytest.approx(0.0, abs=1e-12)
+        assert result.p_value == pytest.approx(1.0)
+
+    def test_validation(self) -> None:
+        with pytest.raises(ValueError, match="at least one detection"):
+            log_rank([], [5], [], [5])
+
+
+# ....................... #
+
+
+class TestGeometricPHat:
+    def test_mle_is_detections_over_total_seeds(self) -> None:
+        estimate = geometric_p_hat([1, 2, 3], [10])
+
+        assert estimate.p_hat == pytest.approx(3 / 16)
+        assert estimate.detections == 3
+        assert estimate.seeds == 16
+        assert estimate.ci.lower < estimate.p_hat < estimate.ci.upper
+
+    def test_zero_detections_bound_matches_the_clean_run_verdict(self) -> None:
+        estimate = geometric_p_hat([], [100] * 10, confidence=0.90)
+
+        assert estimate.p_hat == 0.0
+        assert estimate.ci.upper == pytest.approx(detection_upper_bound(1000, confidence=0.95))
+
+    def test_validation(self) -> None:
+        with pytest.raises(ValueError, match="at least one observation"):
+            geometric_p_hat([], [])
+
+
+# ....................... #
+
+
+class TestFisherExact:
+    def test_lady_tasting_tea(self) -> None:
+        # Fisher's own worked example: margins 4/4, C(8,4)=70; the two-sided sum-of-small-p
+        # value for the 3-correct table is (1 + 16 + 16 + 1) / 70.
+        assert fisher_exact(((3, 1), (1, 3))) == pytest.approx(34 / 70)
+
+    def test_perfect_separation(self) -> None:
+        # Only the observed table and its mirror are as improbable: 2 / C(20, 10).
+        assert fisher_exact(((10, 0), (0, 10))) == pytest.approx(2 / 184756)
+
+    def test_transpose_and_swap_invariance(self) -> None:
+        p = fisher_exact(((1, 9), (11, 3)))
+
+        assert fisher_exact(((1, 11), (9, 3))) == pytest.approx(p)  # transpose
+        assert fisher_exact(((11, 3), (1, 9))) == pytest.approx(p)  # row swap
+        assert p < 0.005  # strongly associated table
+
+    def test_empty_margin_carries_no_evidence(self) -> None:
+        # The predictor analysis's degenerate branches: no divergent cells, or no divergent
+        # outcomes — either empty margin must report 1.0, never a spurious signal.
+        assert fisher_exact(((12, 0), (0, 0))) == 1.0
+        assert fisher_exact(((7, 5), (0, 0))) == 1.0
+        assert fisher_exact(((7, 0), (5, 0))) == 1.0
+        assert fisher_exact(((0, 0), (0, 0))) == 1.0
+
+    def test_independent_table_is_near_one(self) -> None:
+        assert fisher_exact(((5, 5), (5, 5))) == 1.0
+
+    def test_validation(self) -> None:
+        with pytest.raises(ValueError, match="must be >= 0"):
+            fisher_exact(((1, -1), (2, 3)))
 
 
 # ....................... #
@@ -188,3 +385,51 @@ class TestConfidenceReportVerdictLine:
         assert "per-seed detection probability" in clean.format()
         assert dirty.violations_seen == 1
         assert "per-seed detection probability" not in dirty.format()
+
+
+# ....................... #
+
+
+class TestValidationBranches:
+    """The refuse-loudly edges: every public entrypoint rejects malformed statistics inputs."""
+
+    def test_binomial_ci_rejects_bad_confidence(self) -> None:
+        with pytest.raises(ValueError, match="confidence"):
+            binomial_ci(1, 10, confidence=1.0)
+
+    def test_fit_rejects_bad_confidence(self) -> None:
+        with pytest.raises(ValueError, match="confidence"):
+            SurvivalCurve.fit([1], [], confidence=0.0)
+
+    def test_quantile_rejects_out_of_range(self) -> None:
+        curve = SurvivalCurve.fit([1, 2, 3], [])
+
+        with pytest.raises(ValueError, match="q must be"):
+            curve.quantile(1.0)
+
+    def test_geometric_rejects_sub_one_times(self) -> None:
+        with pytest.raises(ValueError, match=">= 1"):
+            geometric_p_hat([0], [])
+
+
+class TestKernelEdges:
+    def test_betainc_saturates_at_the_support_edges(self) -> None:
+        from forze_dst.stats import _betainc
+
+        assert _betainc(2.0, 3.0, 0.0) == 0.0
+        assert _betainc(2.0, 3.0, 1.0) == 1.0
+
+    def test_fit_reaches_zero_survival_when_the_last_at_risk_all_detect(self) -> None:
+        # Final step: at_risk == detected — survival hits 0 and the Greenwood increment is
+        # skipped (its denominator would vanish); the band collapses with the curve.
+        curve = SurvivalCurve.fit([1, 1], [])
+
+        assert curve.steps[-1].survival == 0.0
+
+    def test_log_rank_degenerates_to_no_evidence_on_zero_variance(self) -> None:
+        # B leaves the risk set before A's only event: the sole event time has one subject at
+        # risk, contributing no variance — the statistic is 0 and p is 1 by convention.
+        result = log_rank([2], [], [], [1])
+
+        assert result.statistic == 0.0
+        assert result.p_value == 1.0

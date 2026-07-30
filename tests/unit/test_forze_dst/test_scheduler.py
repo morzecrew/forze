@@ -34,7 +34,7 @@ from forze_dst.invariants import Violation, expect, no_duplicate_effect
 from forze_dst.markers import record_event
 from forze_dst.oracle.invariants import check
 from forze_dst.oracle.recorder import History
-from forze_dst.runtime import run_simulation
+from forze_dst.runtime import profile_schedules, run_simulation
 from forze_dst.scheduler import PCTReorderer, RandomReorderer, SystematicReorderer
 from forze_mock import MockDepsModule
 
@@ -62,6 +62,51 @@ def _run_with_pct(seed: int) -> list[int]:
 
 
 # ....................... #
+
+
+async def _contender() -> None:
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+class TestScheduleProfiling:
+    def test_contending_runs_are_profiled_in_scope(self) -> None:
+        async def scenario() -> None:
+            await asyncio.gather(_contender(), _contender(), _contender())
+
+        with profile_schedules() as profiler:
+            run_simulation(scenario, seed=1, schedule_seed=2)
+
+        assert profiler.runs == 1
+        # Three tasks repeatedly ready together: all contend, over several choice ticks.
+        assert profiler.max_tasks >= 3
+        assert profiler.max_choice_steps >= 1
+
+    def test_profiles_fold_as_maxima_across_runs(self) -> None:
+        def scenario_of(width: int) -> Any:
+            async def scenario() -> None:
+                await asyncio.gather(*(_contender() for _ in range(width)))
+
+            return scenario
+
+        with profile_schedules() as profiler:
+            run_simulation(scenario_of(2), seed=1)
+            run_simulation(scenario_of(4), seed=1)
+
+        assert profiler.runs == 2
+        assert profiler.max_tasks >= 4  # the wider run wins the fold
+
+    def test_runs_outside_the_scope_are_not_observed(self) -> None:
+        async def scenario() -> None:
+            await asyncio.gather(_contender(), _contender())
+
+        run_simulation(scenario, seed=1)  # no collector in scope — profiling off
+
+        with profile_schedules() as profiler:
+            pass
+
+        assert profiler.runs == 0
+        assert profiler.max_tasks == 0
 
 
 class TestRandomReorderer:

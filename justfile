@@ -107,6 +107,34 @@ fuzz *args='tests/unit/test_forze_dst':
     uv run pytest -m fuzz {{ args }}
 
 
+# Run the DST detection-time pilot campaign (writes pages/docs/dst/_generated/campaign_pilot.md)
+dst-campaign:
+    {{ _uv_sync }}
+
+    PYTHONPATH=. uv run forze dst campaign tests.support.misuse:CORPUS \
+        --controls tests.support.misuse:CONTROLS \
+        --campaigns 100 --ceiling 2000 --fp-runs 400 --master-seed 0 \
+        --out dst-campaigns.jsonl \
+        --summary pages/docs/dst/_generated/campaign_pilot.md
+
+
+# Run the full DST detection-time protocol: N=300 campaigns + W3 analysis + charts (~10 min)
+dst-campaign-full:
+    {{ _uv_sync }}
+
+    PYTHONPATH=. uv run forze dst campaign tests.support.misuse:CORPUS \
+        --controls tests.support.misuse:CONTROLS \
+        --campaigns 300 --ceiling 2000 --fp-runs 400 --master-seed 0 \
+        --out dst-campaigns-full.jsonl \
+        --summary pages/docs/dst/_generated/campaign_full.md
+    PYTHONPATH=. uv run python .github/scripts/analyze_campaign.py \
+        dst-campaigns-full.jsonl \
+        --summary pages/docs/dst/_generated/campaign_full.md
+    PYTHONPATH=. uv run python .github/scripts/render_campaign_charts.py \
+        dst-campaigns-full.jsonl \
+        --out pages/docs/dst/_images
+
+
 # Regenerate the DST fidelity matrix artifact (needs Docker; writes pages/docs/dst/_generated/)
 dst-fidelity:
     {{ _uv_sync }}
@@ -119,6 +147,22 @@ dst-fidelity:
         pages/docs/dst/_generated/fidelity_postgres.json \
         pages/docs/dst/_generated/fidelity_mongo.json \
         --out pages/docs/dst/_generated/fidelity.md
+
+
+# Regenerate the corpus bug-transfer artifact (needs Docker; writes pages/docs/dst/_generated/)
+dst-transfer:
+    {{ _uv_sync }}
+
+    FORZE_FIDELITY_OUT=pages/docs/dst/_generated uv run pytest \
+        "tests/integration/test_forze_postgres/test_pg_misuse_transfer.py" \
+        -q
+    PYTHONPATH=. uv run python .github/scripts/render_transfer.py \
+        pages/docs/dst/_generated/transfer_postgres.json \
+        --out pages/docs/dst/_generated/transfer.md
+    PYTHONPATH=. uv run python .github/scripts/analyze_transfer_predictor.py \
+        --fidelity pages/docs/dst/_generated/fidelity_postgres.json \
+        --transfer pages/docs/dst/_generated/transfer_postgres.json \
+        --out pages/docs/dst/_generated/predictor.md
 
 
 # Run all quality checks
