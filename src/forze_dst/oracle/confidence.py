@@ -21,12 +21,17 @@ from typing import TYPE_CHECKING, Any, final
 
 import attrs
 
+from forze_dst.oracle.horizon import HorizonAnalysis, HorizonProbe
 from forze_dst.oracle.recorder import History
 from forze_dst.oracle.report import CausalGraph
 from forze_dst.stats import format_clean_verdict
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from forze_dst.faults import FaultPolicy
+    from forze_dst.oracle.invariants import Invariant
+    from forze_dst.oracle.witness import InvariantAccounting
 
 # ----------------------- #
 
@@ -75,6 +80,19 @@ class ConfidenceReport:
     """How many violating seeds the sweep hit (``0`` = clean). The quantitative clean-run bound
     prints only when the sweep was actually clean — this field is how the report knows."""
 
+    vacuous_invariants: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    """``(invariant, read kinds)`` pairs the horizon analysis flagged vacuous: no run ever
+    recorded any kind the invariant reads, so it was never at risk — its green is a constant."""
+
+    marker_blind_invariants: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    """``(invariant, kinds)`` pairs folding handler-emitted markers recorded while a transaction
+    that later rolled back was in flight — the rollback blind spot (a marker survives rollback;
+    the port effects it claims to witness do not)."""
+
+    accounting: InvariantAccounting | None = None
+    """Per-invariant witness accounting, when the simulation opted in (declared witnesses or
+    horizon declarations). Makes the verdict's oracle-set clause countable."""
+
     # ....................... #
 
     @cached_property
@@ -113,6 +131,22 @@ class ConfidenceReport:
                 "— that failure path was never exercised"
             )
 
+        out.extend(
+            f"vacuous invariant: {name} reads {', '.join(kinds)} but no run ever recorded "
+            "those kinds — it was never at risk; fix the scenario or drop the invariant"
+            for name, kinds in self.vacuous_invariants
+        )
+
+        out.extend(
+            f"marker-blind invariant: {name} folds handler-emitted marker(s) "
+            f"{', '.join(kinds)} recorded while a transaction that rolled back was in "
+            "flight — prefer a port-state oracle (read the store in observe)"
+            for name, kinds in self.marker_blind_invariants
+        )
+
+        if self.accounting is not None:
+            out.extend(self.accounting.problems)
+
         return tuple(out)
 
     # ....................... #
@@ -122,6 +156,27 @@ class ConfidenceReport:
         """Whether every operation raced and every declared fault fired — no untested gap."""
 
         return not self.warnings
+
+    # ....................... #
+
+    def verdict(self, runs: int | None = None) -> str:
+        """The locked clean-run verdict for this sweep, accounting-scoped when available.
+
+        The single place the countable clause is threaded, so every surface that prints the
+        verdict (this report, the coverage report, the CLI) states the identical claim.
+        """
+
+        accounting = self.accounting
+
+        if accounting is None:
+            return format_clean_verdict(self.seeds_run if runs is None else runs)
+
+        return format_clean_verdict(
+            self.seeds_run if runs is None else runs,
+            witnessed=len(accounting.witnessed),
+            declared=accounting.declared,
+            unaccounted=accounting.unaccounted,
+        )
 
     # ....................... #
 
@@ -139,6 +194,13 @@ class ConfidenceReport:
                 f"  faults fired: {len(self.faults_fired)}/{len(self.faults_declared)} declared rules"
             )
 
+        if self.accounting is not None:
+            lines.append(
+                f"  invariants:   {len(self.accounting.witnessed)} witnessed / "
+                f"{len(self.accounting.declared)} declared out-of-horizon / "
+                f"{len(self.accounting.unaccounted)} unaccounted"
+            )
+
         if self.warnings:
             lines.append("  ⚠ confidence gaps:")
             lines.extend(f"      • {warning}" for warning in self.warnings)
@@ -148,7 +210,7 @@ class ConfidenceReport:
         # The quantitative verdict sits adjacent to the gaps so the bound is never read as
         # stronger than the coverage supports.
         if self.violations_seen == 0 and self.seeds_run > 0:
-            lines.append(f"  ✓ {format_clean_verdict(self.seeds_run)}")
+            lines.append(f"  ✓ {self.verdict()}")
 
         return "\n".join(lines)
 
@@ -167,6 +229,7 @@ class ConfidenceProbe:
     _ran: set[str] = attrs.field(factory=set)
     _raced: set[str] = attrs.field(factory=set)
     _fired_calls: set[tuple[Any, Any, str]] = attrs.field(factory=set)
+    _horizon: HorizonProbe = attrs.field(factory=HorizonProbe)
     _seeds: int = 0
 
     # ....................... #
@@ -175,6 +238,7 @@ class ConfidenceProbe:
         """Fold one recorded run into the accumulators."""
 
         self._seeds += 1
+        self._horizon.observe(history)
         graph = CausalGraph.from_history(history)
 
         for span in graph.spans:
@@ -196,11 +260,21 @@ class ConfidenceProbe:
 
     # ....................... #
 
-    def report(self, *, faults: FaultPolicy | None = None, violations: int = 0) -> ConfidenceReport:
+    def report(
+        self,
+        *,
+        faults: FaultPolicy | None = None,
+        violations: int = 0,
+        invariants: Sequence[Invariant] = (),
+        accounting: InvariantAccounting | None = None,
+    ) -> ConfidenceReport:
         """Build the report; *faults* is the declared policy whose rules are checked for firing.
 
         *violations* is how many violating seeds the sweep hit — the probe itself only sees
         histories, so the caller supplies it; it gates the clean-run bound in the report.
+        *invariants* enables the horizon analysis (vacuity / marker-blindness flags over the
+        folded histories); *accounting* is the simulation's witness accounting, threaded so the
+        verdict's oracle-set clause is countable.
         """
 
         declared: list[str] = []
@@ -216,6 +290,8 @@ class ConfidenceProbe:
                 ):
                     fired.append(label)
 
+        horizon = self._horizon.analyze(invariants) if invariants else HorizonAnalysis()
+
         return ConfidenceReport(
             seeds_run=self._seeds,
             ran_ops=tuple(sorted(self._ran)),
@@ -223,6 +299,9 @@ class ConfidenceProbe:
             faults_declared=tuple(declared),
             faults_fired=tuple(fired),
             violations_seen=violations,
+            vacuous_invariants=horizon.vacuous,
+            marker_blind_invariants=horizon.marker_blind,
+            accounting=accounting,
         )
 
 
@@ -230,7 +309,12 @@ class ConfidenceProbe:
 
 
 def assess_confidence(
-    histories: Iterable[History], *, faults: FaultPolicy | None = None, violations: int = 0
+    histories: Iterable[History],
+    *,
+    faults: FaultPolicy | None = None,
+    violations: int = 0,
+    invariants: Sequence[Invariant] = (),
+    accounting: InvariantAccounting | None = None,
 ) -> ConfidenceReport:
     """Read a sweep's recorded *histories* into a :class:`ConfidenceReport`.
 
@@ -238,10 +322,14 @@ def assess_confidence(
     report can name the rules that were declared but never triggered. *violations* is how many
     of those runs violated (histories alone can't tell — it gates the clean-run bound). Folds
     the histories in one pass, so an iterator/generator works without materializing every run.
+    *invariants* / *accounting* enable the horizon analysis and the countable verdict clause
+    (see :meth:`ConfidenceProbe.report`).
     """
 
     probe = ConfidenceProbe()
     for history in histories:
         probe.observe(history)
 
-    return probe.report(faults=faults, violations=violations)
+    return probe.report(
+        faults=faults, violations=violations, invariants=invariants, accounting=accounting
+    )

@@ -103,6 +103,7 @@ def run_scenario(
             )
 
             if sim.observe is not None:
+                context.record_observe_boundary()
                 await sim.observe(ctx)
 
             projection.fold_runtime_trace(ctx)

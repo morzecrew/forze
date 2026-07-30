@@ -43,6 +43,17 @@ class CleanSweep:
     runs: int
     """How many seeds the clean sweep ran."""
 
+    witnessed: int | None = None
+    """How many invariants carried a live falsifiability witness, when the simulation opted
+    into invariant accounting (``None`` = not opted in → the locked default scope clause).
+    Plain counts/names here, not the accounting object — this module stays import-light."""
+
+    declared: tuple[str, ...] = ()
+    """Invariants declared out-of-horizon (named in the verdict's countable clause)."""
+
+    unaccounted: tuple[str, ...] = ()
+    """Invariants neither witnessed nor declared — surfaced, never silently absorbed."""
+
 
 # ....................... #
 

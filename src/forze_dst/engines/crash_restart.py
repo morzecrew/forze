@@ -124,6 +124,7 @@ def run_crash_restart(
                 await sim.recover(rctx)
 
             if sim.observe is not None:
+                context.record_observe_boundary()
                 await sim.observe(rctx)
 
             projection.fold_runtime_trace(rctx)  # the post-restart trace

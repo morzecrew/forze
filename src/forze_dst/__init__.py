@@ -46,7 +46,12 @@ from .cluster import Cluster
 from .config import SimulationConfig, Strategy
 from .engines.cases import OperationCase
 from .harness import Simulation
-from .oracle import ViolationReport
+from .oracle import (
+    HorizonClass,
+    HorizonDeclaration,
+    InvariantWitness,
+    ViolationReport,
+)
 from .scenario import ModelState, Rule, Scenario
 from .scheduler import FIFOScheduler, PCTScheduler, RandomScheduler
 
@@ -66,6 +71,9 @@ __all__ = [
     "ModelState",
     "Cluster",
     "ViolationReport",
+    "InvariantWitness",
+    "HorizonDeclaration",
+    "HorizonClass",
     # Namespaces
     "campaign",
     "invariants",

@@ -143,6 +143,7 @@ def _non_default_values(cls: type) -> dict[str, Any]:
             "delay": 0.16,
             "max_delay": timedelta(seconds=9),
             "stream_faults": True,
+            "at_call": 3,
         },
         FaultPolicy: lambda: {"rules": (_instance(FaultRule),)},
         LatencyRule: lambda: {

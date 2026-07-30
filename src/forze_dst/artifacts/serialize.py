@@ -122,6 +122,7 @@ def _fault_rule_to_dict(rule: FaultRule) -> dict[str, Any]:
         "delay": rule.delay,
         "max_delay": rule.max_delay.total_seconds(),
         "stream_faults": rule.stream_faults,
+        "at_call": rule.at_call,
     }
 
 
@@ -141,6 +142,7 @@ def _fault_rule_from_dict(data: dict[str, Any]) -> FaultRule:
         delay=data.get("delay", 0.0),
         max_delay=timedelta(seconds=data.get("max_delay", 5.0)),
         stream_faults=data.get("stream_faults", False),
+        at_call=data.get("at_call"),
     )
 
 

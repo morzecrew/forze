@@ -36,6 +36,11 @@ def run_coverage(
 
     sc = scenario if scenario is not None else sim.derive_scenario()
 
+    # Accounting is static (names + registries + fingerprint), so resolve it before any seed
+    # runs: a malformed registry (duplicate invariant names) fails fast instead of after the
+    # whole sweep, and the report gets the same value it would have gotten later.
+    accounting = sim.invariant_accounting()
+
     # Honor the requested interleaving scheduler (PCT when selected), like run().
     factory = config.scheduler.factory()
 
@@ -115,5 +120,10 @@ def run_coverage(
         plateaued=plateaued,
         violation=violation,
         reachability=reachability,
-        confidence=probe.report(faults=config.faults, violations=0 if violation is None else 1),
+        confidence=probe.report(
+            faults=config.faults,
+            violations=0 if violation is None else 1,
+            invariants=sim.invariants,
+            accounting=accounting,
+        ),
     )

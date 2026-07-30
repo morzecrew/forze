@@ -200,6 +200,13 @@ class CoverageStats:
             names = ", ".join(sorted({v.invariant for v in self.violation.violations}))
             lines.append(f"  ✗ violation at seed {self.violation.seed}: {names}")
         elif self.seeds_run > 0:
-            lines.append(f"  ✓ {format_clean_verdict(self.seeds_run)}")
+            # Route through the confidence report when present, so an accounting-scoped sweep
+            # prints the countable oracle-set clause here too (one claim, every surface).
+            verdict = (
+                self.confidence.verdict(self.seeds_run)
+                if self.confidence is not None
+                else format_clean_verdict(self.seeds_run)
+            )
+            lines.append(f"  ✓ {verdict}")
 
         return "\n".join(lines)

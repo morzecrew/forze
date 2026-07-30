@@ -259,6 +259,17 @@ class FaultRule(PortSelector):
     stream of runs that leave it off. Each item rolls the same rates, so a long stream is more
     fault-exposed (each item is one delivery opportunity)."""
 
+    at_call: int | None = None
+    """Deterministic **positional** targeting: fire this rule at exactly the *n*-th matching
+    port call (1-based) instead of rolling per call. Every other matched call passes clean and
+    no probability roll is ever drawn for this rule, so the placement is exact and composes
+    with seed replay — the witness-mining "crash after the write" primitive
+    (``FaultRule(op="update", crash=1.0, at_call=2)`` = die at the second update). With it set,
+    each configured kind (any rate above zero) fires with certainty at that call — the rates
+    become kind *selectors* (a positioned ``delay`` still draws its seeded duration). Counting
+    is per rule over its matched calls; a stream call counts once at open (mid-stream rolls
+    keep their own ``stream_faults`` gate)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -266,6 +277,9 @@ class FaultRule(PortSelector):
             value: float = getattr(self, name)
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} probability must be in [0, 1], got {value}")
+
+        if self.at_call is not None and self.at_call < 1:
+            raise ValueError(f"at_call must be >= 1 (1-based call index), got {self.at_call}")
 
 
 # ....................... #
@@ -298,13 +312,45 @@ class _FaultPolicyInterceptor:
     rules: tuple[FaultRule, ...]
     rng: random.Random
 
+    _at_call_seen: dict[int, int] = attrs.field(factory=dict)
+    """Per-rule (by index) count of matched calls, for ``at_call`` positional targeting. The
+    interceptor is compiled fresh per run, so counts never bleed across runs."""
+
     # ....................... #
 
-    def _match(self, call: PortCall) -> FaultRule | None:
+    def _match(self, call: PortCall) -> tuple[int, FaultRule] | None:
         return next(
-            (rule for rule in self.rules if rule.matches(call)),
+            ((index, rule) for index, rule in enumerate(self.rules) if rule.matches(call)),
             None,
         )
+
+    # ....................... #
+
+    def _positioned(self, index: int, rule: FaultRule) -> bool | None:
+        """The ``at_call`` gate for one matched call: ``None`` = positional targeting is off
+        (roll probabilities as usual); ``False`` = not the targeted call, pass clean; ``True``
+        = the targeted call — every configured kind fires with certainty."""
+
+        if rule.at_call is None:
+            return None
+
+        seen = self._at_call_seen.get(index, 0) + 1
+        self._at_call_seen[index] = seen
+        return seen == rule.at_call
+
+    # ....................... #
+
+    def _fires(self, rule: FaultRule, kind: str, *, certain: bool) -> bool:
+        """One fault decision: a configured kind fires certainly under ``at_call`` targeting,
+        else by its seeded probability roll (rate check first, then a single RNG draw — the
+        draw order the reproducible fault stream depends on)."""
+
+        rate: float = getattr(rule, kind)
+
+        if rate <= 0.0:
+            return False
+
+        return True if certain else self.rng.random() < rate
 
     # ....................... #
 
@@ -325,11 +371,18 @@ class _FaultPolicyInterceptor:
     # ....................... #
 
     async def around(self, call: PortCall, nxt: PortNext) -> Any:
-        rule = self._match(call)
+        matched = self._match(call)
 
-        if rule is None:
+        if matched is None:
             return await nxt(call)
 
+        index, rule = matched
+        positioned = self._positioned(index, rule)
+
+        if positioned is False:
+            return await nxt(call)  # positional targeting: not the targeted call
+
+        certain = positioned is True
         where = f"{call.surface}[{call.route}].{call.op}"
         transport = call.op in _TRANSPORT_OPS
 
@@ -337,17 +390,17 @@ class _FaultPolicyInterceptor:
         # still interleaves with concurrent operations at the port boundary — on a short-circuit
         # the inner cooperative interceptor never runs, so without this the failure path would be
         # atomic and hide exactly the interleavings DST explores.
-        if rule.crash > 0.0 and self.rng.random() < rule.crash:
+        if self._fires(rule, "crash", certain=certain):
             await asyncio.sleep(0)
             _record_fault("crash", call)
             raise SimulatedCrash(f"simulated crash at {where}")
 
-        if rule.error > 0.0 and self.rng.random() < rule.error:
+        if self._fires(rule, "error", certain=certain):
             await asyncio.sleep(0)
             _record_fault("error", call)
             raise exc.infrastructure(f"injected fault at {where}", code="dst.injected_port_fault")
 
-        if rule.timeout > 0.0 and self.rng.random() < rule.timeout:
+        if self._fires(rule, "timeout", certain=certain):
             await asyncio.sleep(0)
             _record_fault("timeout", call)
             raise exc.timeout(f"injected timeout at {where}", code="dst.injected_timeout")
@@ -355,19 +408,19 @@ class _FaultPolicyInterceptor:
         # Transport behaviours (only on broker-delivery ops). Drop skips the real call; delay
         # advances virtual time before it (never rewriting the call's args); duplicate re-runs
         # it (a redelivery).
-        if transport and rule.drop > 0.0 and self.rng.random() < rule.drop:
+        if transport and self._fires(rule, "drop", certain=certain):
             await asyncio.sleep(0)
             _record_fault("drop", call)
             return self._dropped(call)
 
-        if rule.delay > 0.0 and self.rng.random() < rule.delay:
+        if self._fires(rule, "delay", certain=certain):
             seconds = self.rng.uniform(0.0, rule.max_delay.total_seconds())
             _record_fault("delay", call, seconds=seconds)
             await asyncio.sleep(seconds)
 
         result = await nxt(call)
 
-        if transport and rule.duplicate > 0.0 and self.rng.random() < rule.duplicate:
+        if transport and self._fires(rule, "duplicate", certain=certain):
             _record_fault("duplicate", call)
             await nxt(call)
 
@@ -408,9 +461,9 @@ class _FaultPolicyInterceptor:
         after any item, modeling a downstream that dies partway through delivery. Transport
         drop/duplicate never apply — no async-generator op is a transport op."""
 
-        rule = self._match(call)
+        matched = self._match(call)
 
-        if rule is None:
+        if matched is None:
             # ``aclosing`` guarantees the inner stream is closed (backend cursor/connection
             # released) even when the consumer stops iterating early. Seam streams are async
             # generators (they have ``aclose``); the annotated ``AsyncIterator`` is narrowed.
@@ -419,25 +472,36 @@ class _FaultPolicyInterceptor:
                     yield item
             return
 
+        index, rule = matched
+        positioned = self._positioned(index, rule)
+
+        if positioned is False:
+            # Positional targeting: not the targeted call — iterate clean (still ``aclosing``).
+            async with aclosing(cast("AsyncGenerator[Any]", nxt(call))) as stream:
+                async for item in stream:
+                    yield item
+            return
+
+        certain = positioned is True
         where = f"{call.surface}[{call.route}].{call.op}"
 
         # Pre-open raise-faults (fail before the stream opens) — identical rolls to ``around``.
-        if rule.crash > 0.0 and self.rng.random() < rule.crash:
+        if self._fires(rule, "crash", certain=certain):
             await asyncio.sleep(0)
             _record_fault("crash", call)
             raise SimulatedCrash(f"simulated crash at {where}")
 
-        if rule.error > 0.0 and self.rng.random() < rule.error:
+        if self._fires(rule, "error", certain=certain):
             await asyncio.sleep(0)
             _record_fault("error", call)
             raise exc.infrastructure(f"injected fault at {where}", code="dst.injected_port_fault")
 
-        if rule.timeout > 0.0 and self.rng.random() < rule.timeout:
+        if self._fires(rule, "timeout", certain=certain):
             await asyncio.sleep(0)
             _record_fault("timeout", call)
             raise exc.timeout(f"injected timeout at {where}", code="dst.injected_timeout")
 
-        if rule.delay > 0.0 and self.rng.random() < rule.delay:
+        if self._fires(rule, "delay", certain=certain):
             seconds = self.rng.uniform(0.0, rule.max_delay.total_seconds())
             _record_fault("delay", call, seconds=seconds)
             await asyncio.sleep(seconds)

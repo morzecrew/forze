@@ -33,6 +33,37 @@ Invariant = Callable[[History], list[Violation]]
 """A check from a history to the violations it found (empty == satisfied)."""
 
 
+def named(name: str, invariant: Invariant) -> Invariant:
+    """Give *invariant* a stable declared name — the key per-invariant accounting works over.
+
+    The returned invariant carries *name* as its ``invariant_name`` **and** stamps it onto every
+    violation it emits, so what the accounting declares and what a violation reports are the same
+    string (a witness mined under one name always matches the declaration it certifies). Wrap any
+    invariant that appears more than once per simulation (two ``expect`` checks) or whose factory
+    lives outside this module, so :func:`name_of` never falls back to an ambiguous closure name.
+    """
+
+    def _renamed(history: History) -> list[Violation]:
+        return [attrs.evolve(violation, invariant=name) for violation in invariant(history)]
+
+    _renamed.invariant_name = name  # type: ignore[attr-defined]
+    return _renamed
+
+
+def name_of(invariant: Invariant) -> str:
+    """The declared name of *invariant* — its ``invariant_name`` if set, else its callable name.
+
+    The fallback (a closure's ``__name__``, often ``_check`` or ``<lambda>``) is ambiguous across
+    instances; accounting rejects duplicate names, steering authors to :func:`named`.
+    """
+
+    name = getattr(invariant, "invariant_name", None)
+    if name:
+        return str(name)
+
+    return getattr(invariant, "__name__", None) or type(invariant).__name__
+
+
 _DEADLOCK_KIND = "deadlock"
 
 
@@ -137,7 +168,7 @@ def no_resource_leak(
 
         return violations
 
-    return _check
+    return named("no_resource_leak", _check)
 
 
 def no_unclosed_transaction() -> Invariant:
@@ -150,7 +181,10 @@ def no_unclosed_transaction() -> Invariant:
     a transaction.
     """
 
-    return no_resource_leak(domain="tx", open_op="enter", close_op="exit", by="route")
+    return named(
+        "no_unclosed_transaction",
+        no_resource_leak(domain="tx", open_op="enter", close_op="exit", by="route"),
+    )
 
 
 def no_duplicate_effect(kind: str, *, by: str) -> Invariant:
@@ -179,7 +213,7 @@ def no_duplicate_effect(kind: str, *, by: str) -> Invariant:
 
         return violations
 
-    return _check
+    return named("no_duplicate_effect", _check)
 
 
 def no_duplicate_trace_effect(
@@ -233,7 +267,7 @@ def no_duplicate_trace_effect(
 
         return violations
 
-    return _check
+    return named(invariant_name, _check)
 
 
 def monotonic_per(kind: str, value: str, *, actor: str) -> Invariant:
@@ -266,7 +300,7 @@ def monotonic_per(kind: str, value: str, *, actor: str) -> Invariant:
 
         return violations
 
-    return _check
+    return named("monotonic_per", _check)
 
 
 def mutual_exclusion(
@@ -310,7 +344,7 @@ def mutual_exclusion(
 
         return violations
 
-    return _check
+    return named("mutual_exclusion", _check)
 
 
 def no_unexpected_error() -> Invariant:
@@ -340,7 +374,7 @@ def no_unexpected_error() -> Invariant:
             if event.fields.get("outcome") == "error"
         ]
 
-    return _check
+    return named("no_unexpected_error", _check)
 
 
 def operation_succeeds(*ops: str) -> Invariant:
@@ -369,7 +403,7 @@ def operation_succeeds(*ops: str) -> Invariant:
             and event.fields.get("outcome") != "ok"
         ]
 
-    return _check
+    return named("operation_succeeds", _check)
 
 
 def completes_within(op: str, seconds: float) -> Invariant:
@@ -403,7 +437,7 @@ def completes_within(op: str, seconds: float) -> Invariant:
 
         return violations
 
-    return _check
+    return named("completes_within", _check)
 
 
 def single_key_per_operation(op: str, *, surface: str = "document_command") -> Invariant:
@@ -459,7 +493,7 @@ def single_key_per_operation(op: str, *, surface: str = "document_command") -> I
             if len(keys_by_span[event.seq]) > 1
         ]
 
-    return _check
+    return named("single_key_per_operation", _check)
 
 
 def expect(
@@ -477,7 +511,7 @@ def expect(
             if not predicate(event)
         ]
 
-    return _check
+    return named("expect", _check)
 
 
 # ....................... #
@@ -538,7 +572,7 @@ def read_your_writes(
 
         return violations
 
-    return _check
+    return named("read_your_writes", _check)
 
 
 def expect_value(

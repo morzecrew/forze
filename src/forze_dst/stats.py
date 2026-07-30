@@ -75,20 +75,44 @@ def _render_confidence(confidence: float) -> str:
 # ....................... #
 
 
-def format_clean_verdict(runs: int, *, confidence: float = 0.95) -> str:
+def format_clean_verdict(
+    runs: int,
+    *,
+    confidence: float = 0.95,
+    witnessed: int | None = None,
+    declared: Sequence[str] = (),
+    unaccounted: Sequence[str] = (),
+) -> str:
     """The locked one-line verdict a clean run prints instead of a bare "passed".
 
     One shared sentence — bound plus scope clause — so every surface (sweep, confidence report,
-    coverage report, CLI) states exactly the same claim and never a stronger one.
+    coverage report, CLI, pytest summary) states exactly the same claim and never a stronger one.
+    With invariant accounting (*witnessed* is set), the oracle-set clause becomes **countable**:
+    it names how many invariants the sweep actually speaks about (those with a live
+    falsifiability witness), which are declared out-of-horizon, and — should the gate ever be
+    bypassed — which are unaccounted, so the claim can never silently cover an invariant the
+    harness was never shown able to catch.
     """
 
     bound = detection_upper_bound(runs, confidence=confidence)
     plural = "seeds" if runs != 1 else "seed"
 
+    if witnessed is None:
+        scope = "for this scenario × strategy × oracle set"
+    else:
+        scope = (
+            f"for this scenario × strategy × the {witnessed} witnessed "
+            f"{'invariant' if witnessed == 1 else 'invariants'}"
+        )
+        if declared:
+            scope += f" ({len(declared)} declared out-of-horizon: {', '.join(declared)})"
+        if unaccounted:
+            scope += f" (⚠ {len(unaccounted)} UNACCOUNTED: {', '.join(unaccounted)})"
+
     return (
         f"0 violations in {runs} {plural} → per-seed detection probability "
         f"< {_render_probability(bound)} ({_render_confidence(confidence)}, exact) "
-        "for this scenario × strategy × oracle set (independent seeds)"
+        f"{scope} (independent seeds)"
     )
 
 

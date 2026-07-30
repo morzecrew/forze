@@ -19,6 +19,8 @@ from .oracle.invariants import (
     expect_value,
     monotonic_per,
     mutual_exclusion,
+    name_of,
+    named,
     no_duplicate_effect,
     no_duplicate_trace_effect,
     no_resource_leak,
@@ -67,6 +69,8 @@ __all__ = [
     "Invariant",
     "Violation",
     "check",
+    "named",
+    "name_of",
     # always-properties
     "no_duplicate_effect",
     "no_duplicate_trace_effect",
