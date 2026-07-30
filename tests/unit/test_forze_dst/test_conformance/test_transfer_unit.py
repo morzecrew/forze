@@ -78,6 +78,21 @@ class TestClassification:
         assert killed.mock_parity
         assert not missed.mock_parity  # agreement alone is not enough — the mutant must detect
 
+    def test_parity_loss_is_a_divergence_finding_even_when_backends_agree(self) -> None:
+        # A mutant BOTH backends cleared: classification AGREE, yet the corpus expectation was
+        # never reproduced — folding it into a green differential would evidence nothing.
+        missed = TransferRecord(
+            mutant_id="x",
+            engine="postgres",
+            expect_detected=True,
+            mock=Detection.CLEAN,
+            real=Detection.CLEAN,
+            classification=TransferClassification.AGREE,
+        )
+
+        assert divergences([missed]) == (missed,)
+        assert divergences([_record(Detection.DETECTED, Detection.DETECTED)]) == ()
+
 
 class TestMockAgainstItself:
     async def test_every_script_agrees_with_itself_on_the_mock(self) -> None:

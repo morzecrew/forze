@@ -10,12 +10,20 @@ from __future__ import annotations
 
 import pytest
 
-from forze_dst.depth import extract_depth
+from forze_dst.depth import DepthEvidence, extract_depth
 from forze_dst.misuse import MisuseCase
 from tests.support.misuse import CORPUS
 from tests.support.misuse.idempotency import i1_retry_without_key
 
 # ----------------------- #
+
+
+class TestDepthEvidence:
+    def test_depth_must_match_the_vector(self) -> None:
+        DepthEvidence(depth=2, choices=(0, 1), seed=0, act_count=2, concurrency=2)
+
+        with pytest.raises(ValueError, match="does not match"):
+            DepthEvidence(depth=3, choices=(0, 1), seed=0, act_count=2, concurrency=2)
 
 
 class TestExtractDepth:

@@ -202,7 +202,8 @@ def binomial_ci(successes: int, trials: int, *, confidence: float = 0.95) -> Bin
     Beta-quantile form: lower = ``BetaInv(α/2; k, n-k+1)``, upper = ``BetaInv(1-α/2; k+1, n-k)``,
     with the closed-form edges at ``k = 0`` / ``k = n``. Conservative by construction (coverage
     at least the nominal level). :func:`detection_upper_bound` is the one-sided zero-event
-    special case: ``binomial_ci(0, n, confidence=0.90).upper == detection_upper_bound(n, 0.95)``.
+    special case:
+    ``binomial_ci(0, n, confidence=0.90).upper == detection_upper_bound(n, confidence=0.95)``.
     """
 
     if trials < 1:

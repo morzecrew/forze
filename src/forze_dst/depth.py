@@ -53,6 +53,16 @@ class DepthEvidence:
 
     # ....................... #
 
+    def __attrs_post_init__(self) -> None:
+        nonzero = sum(1 for choice in self.choices if choice)
+        if self.depth != 1 + nonzero:
+            raise ValueError(
+                f"depth {self.depth} does not match 1 + {nonzero} non-FIFO choice(s) "
+                f"in {self.choices!r}"
+            )
+
+    # ....................... #
+
     def note(self) -> str:
         """The registry-ready evidence string."""
 

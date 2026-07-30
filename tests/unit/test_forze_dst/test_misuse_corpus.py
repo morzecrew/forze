@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import importlib
 
+import attrs
 import pytest
 
 from forze_dst import SimulationConfig
-from forze_dst.misuse import MisuseCase, MisuseControl, MisuseMutant
+from forze_dst.misuse import MisuseCase, MisuseControl, MisuseMutant, TransferTier
 from tests.support.misuse import CONTROLS, CORPUS, SMOKE_CONTROL_EXPLORE
 
 # ----------------------- #
@@ -75,6 +76,16 @@ class TestRegistryCompleteness:
             if mutant.campaign_base is not None:
                 case = _resolve(mutant.campaign_base)
                 assert case.simulation.fingerprint() == mutant.killing.registry_fingerprint
+
+    def test_not_transferable_requires_a_stated_reason(self) -> None:
+        # The declared fraction travels with its reasons; a bare NOT_TRANSFERABLE would render
+        # as an unexplained exclusion — the schema refuses it.
+        undocumented = next(
+            m for m in CORPUS if m.transfer_tier is TransferTier.NOT_TRANSFERABLE
+        )
+
+        with pytest.raises(ValueError, match="requires notes"):
+            attrs.evolve(undocumented, notes="")
 
     def test_depth_labels_are_mechanical(self) -> None:
         for mutant in CORPUS:

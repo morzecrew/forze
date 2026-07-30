@@ -367,6 +367,11 @@ def campaign(
 
     fp_records: list[FalsePositiveRecord] = []
     if controls:
+        if not mutants:
+            raise typer.BadParameter(
+                "controls need a non-empty corpus — the corpus-wide control config comes "
+                "from the first mutant's recorded knobs"
+            )
         # Controls run under a corpus-wide config: the first mutant's recorded knobs.
         explore = mutants[0].killing.explore
         if explore is None:

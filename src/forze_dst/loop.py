@@ -166,7 +166,9 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
         # Schedule profiling is opt-in so the per-tick bookkeeping costs nothing by default.
         self._profile_schedule = profile_schedule
         self._choice_steps = 0
-        self._contending_tasks: set[int] = set()
+        # Task objects, not ids: a GC'd task's id can be recycled within the run, which would
+        # collide distinct contenders and undercount the measured ``n``.
+        self._contending_tasks: set[asyncio.Task[Any]] = set()
 
     # ....................... #
 
@@ -187,7 +189,7 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
             for handle in ready:
                 task = task_of(handle)
                 if task is not None:
-                    self._contending_tasks.add(id(task))
+                    self._contending_tasks.add(task)
 
         if self._scheduler is not None:
             if len(ready) > 1:

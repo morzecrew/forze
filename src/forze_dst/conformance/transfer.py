@@ -148,10 +148,17 @@ async def run_transfer(
 
 
 def divergences(records: Sequence[TransferRecord]) -> tuple[TransferRecord, ...]:
-    """Every record whose verdicts disagree — all of them findings, in either direction."""
+    """Every finding: a mock↔real disagreement in either direction, or a lost mock parity.
+
+    Parity loss is a finding even when the backends agree — a mutant both backends cleared is
+    an ``AGREE`` record that evidences nothing (the corpus expectation was never reproduced),
+    and must never fold into a green differential.
+    """
 
     return tuple(
-        record for record in records if record.classification is not TransferClassification.AGREE
+        record
+        for record in records
+        if record.classification is not TransferClassification.AGREE or not record.mock_parity
     )
 
 
