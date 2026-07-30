@@ -174,7 +174,7 @@ class MisuseMutant:
         if not self.expected_invariants:
             raise ValueError(f"{self.mutant_id}: at least one expected invariant is required")
 
-        if self.transfer_tier is TransferTier.NOT_TRANSFERABLE and not self.notes:
+        if self.transfer_tier is TransferTier.NOT_TRANSFERABLE and not self.notes.strip():
             # The declared fraction travels with its reasons — a bare NOT_TRANSFERABLE would
             # render as an unexplained exclusion.
             raise ValueError(

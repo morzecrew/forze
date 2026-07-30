@@ -86,6 +86,8 @@ class TestRegistryCompleteness:
 
         with pytest.raises(ValueError, match="requires notes"):
             attrs.evolve(undocumented, notes="")
+        with pytest.raises(ValueError, match="requires notes"):
+            attrs.evolve(undocumented, notes="   ")  # whitespace is not a reason
 
     def test_depth_labels_are_mechanical(self) -> None:
         for mutant in CORPUS:

@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import random
 import selectors
+import weakref
 from collections.abc import Mapping
 from typing import Any, cast, final
 
@@ -166,16 +167,19 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
         # Schedule profiling is opt-in so the per-tick bookkeeping costs nothing by default.
         self._profile_schedule = profile_schedule
         self._choice_steps = 0
-        # Task objects, not ids: a GC'd task's id can be recycled within the run, which would
-        # collide distinct contenders and undercount the measured ``n``.
-        self._contending_tasks: set[asyncio.Task[Any]] = set()
+        # Distinct-contender counting without owning the tasks: membership lives in a WeakSet
+        # (a completed task is not retained), the count in an int bumped on first sight (so a
+        # GC'd task stays counted). Raw ``id()`` bookkeeping would be wrong here — a recycled
+        # id collides distinct contenders — and a bare WeakSet alone would undercount.
+        self._contending_seen: weakref.WeakSet[asyncio.Task[Any]] = weakref.WeakSet()
+        self._contending_count = 0
 
     # ....................... #
 
     def schedule_profile(self) -> ScheduleProfile:
         """The run's measured contention profile (zeros unless ``profile_schedule`` was set)."""
 
-        return ScheduleProfile(tasks=len(self._contending_tasks), choice_steps=self._choice_steps)
+        return ScheduleProfile(tasks=self._contending_count, choice_steps=self._choice_steps)
 
     # ....................... #
 
@@ -188,8 +192,9 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
             self._choice_steps += 1
             for handle in ready:
                 task = task_of(handle)
-                if task is not None:
-                    self._contending_tasks.add(task)
+                if task is not None and task not in self._contending_seen:
+                    self._contending_seen.add(task)
+                    self._contending_count += 1
 
         if self._scheduler is not None:
             if len(ready) > 1:
@@ -237,6 +242,7 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
         raise _forbidden("scheduling a callback from another thread (call_soon_threadsafe)")
 
     def close(self) -> None:
+        self._contending_seen.clear()  # profiling bookkeeping ends with the loop
         self._selector.close()
         super().close()
 
