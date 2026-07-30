@@ -2435,6 +2435,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#what-a-green-run-doesnt-say" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a green run doesn't say
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5965,6 +5976,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#what-a-green-run-doesnt-say" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a green run doesn't say
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6155,6 +6177,35 @@ is masked to <code>&lt;redacted&gt;</code> even when captured.</p>
 <span class="k">assert</span> <span class="n">report</span><span class="o">.</span><span class="n">satisfied</span><span class="p">,</span> <span class="n">report</span><span class="o">.</span><span class="n">format</span><span class="p">()</span>   <span class="c1"># a target no seed reached is a failure</span>
 </code></pre></div>
 <p>A declared target that <em>no</em> seed ever reaches is a reachability failure — the safety result was never tested against that case. <code>SimulationConfig(reachability_targets=...)</code> folds the same check into a <code>coverage()</code> sweep (the outcome rides on <code>CoverageStats.reachability</code>), and <code>sometimes(histories, predicate)</code> is the general per-sweep form over an arbitrary predicate.</p>
+<h2 id="what-a-green-run-doesnt-say">What a green run doesn't say<a class="headerlink" href="#what-a-green-run-doesnt-say" title="Permanent link">&para;</a></h2>
+<p>A clean sweep only speaks about invariants that were <em>at risk</em>. Three ways an invariant slips out of that set without anyone noticing — and the machinery that catches each:</p>
+<ul>
+<li>
+<p><strong>It was vacuous.</strong> The invariant reads event kinds no run ever recorded (an <code>expect("payment_settled", …)</code> in a scenario that never settles a payment). Its green is a constant, not a result. The confidence report flags this automatically: each invariant's read footprint is measured by running it once against a tracing probe, and a footprint that never intersects what the sweep recorded is a named warning.</p>
+</li>
+<li>
+<p><strong>It was marker-blind.</strong> An oracle folding markers that <em>handler</em> code emitted inherits the rollback blind spot: <code>record_event</code> inside a transaction survives the rollback that erased the port effects it claims to witness. The corpus authoring rule — oracles read port state in <code>observe</code>, never handler markers — exists for exactly this; the confidence report flags handler-emitted marker kinds recorded while a rolled-back transaction was in flight.</p>
+</li>
+<li>
+<p><strong>It was never shown falsifiable.</strong> The strongest guarantee is a <em>witness</em>: a recorded, replayable perturbed run in which the invariant actually fired — proof the harness <em>could</em> have caught it failing. Mine witnesses offline with <code>mine_witnesses</code> (adverse schedules, transient faults, crash placement — plus <code>FaultRule(…, at_call=n)</code> for exact "die at the <em>n</em>-th call" placement), commit them to <code>Simulation(witnesses=…)</code>, and replay them each build with <code>replay_witnesses</code>. A fingerprint drift fails loud, exactly like a regression corpus's killing seed.</p>
+</li>
+</ul>
+<p>Invariants genuinely outside the simulation's horizon — truth maintained <strong>below the port</strong> (a trigger, a unique index), effects that leave the process, wall-clock properties, cross-run properties — are excluded by an audited declaration that must name what covers them instead:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst</span><span class="w"> </span><span class="kn">import</span> <span class="n">HorizonClass</span><span class="p">,</span> <span class="n">HorizonDeclaration</span><span class="p">,</span> <span class="n">Simulation</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst.oracle</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_witnesses</span>
+
+<span class="n">sim</span> <span class="o">=</span> <span class="n">Simulation</span><span class="p">(</span>
+    <span class="n">operations</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span> <span class="n">deps</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">MockDepsModule</span><span class="p">(),</span>
+    <span class="n">invariants</span><span class="o">=</span><span class="p">[</span><span class="n">settled_once</span><span class="p">,</span> <span class="n">external_charge_once</span><span class="p">],</span>
+    <span class="n">witnesses</span><span class="o">=</span><span class="n">load_witnesses</span><span class="p">(</span><span class="s2">&quot;dst/witnesses.jsonl&quot;</span><span class="p">),</span>   <span class="c1"># settled_once: mined + replayed</span>
+    <span class="n">horizon</span><span class="o">=</span><span class="p">[</span><span class="n">HorizonDeclaration</span><span class="p">(</span>                        <span class="c1"># external_charge_once: out of horizon</span>
+        <span class="n">invariant</span><span class="o">=</span><span class="s2">&quot;external_charge_once&quot;</span><span class="p">,</span>
+        <span class="n">horizon</span><span class="o">=</span><span class="n">HorizonClass</span><span class="o">.</span><span class="n">EXTERNAL_EFFECT</span><span class="p">,</span>
+        <span class="n">covered_by</span><span class="o">=</span><span class="s2">&quot;tests/integration/test_billing.py::test_charge_idempotent&quot;</span><span class="p">,</span>
+    <span class="p">)],</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Declaring either registry opts the simulation into <strong>per-invariant accounting</strong>: <code>audit()</code> then fails on any invariant that is neither witnessed nor declared (and on drifted witnesses), <code>run()</code> warns, and the clean verdict's oracle-set clause becomes countable on every surface — <em>"… for the 5 witnessed invariants (1 declared out-of-horizon: external_charge_once)"</em> — instead of silently covering invariants the harness was never shown able to catch. Declarations are audited in reverse: the miner probes declared invariants too, and one it <em>can</em> witness is a wrong declaration and fails. Give each invariant a stable name with <code>named("settled_once", expect(…))</code> when a factory appears more than once — accounting refuses ambiguous names.</p>
 <p>Invariants decide <em>whether</em> a run is a bug; the next step is making bugs likely — <a href="../environment/">inject the environment</a> a production system actually runs in.</p>
 
 

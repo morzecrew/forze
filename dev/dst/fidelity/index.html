@@ -6750,7 +6750,10 @@ what the tables above are for. Claiming more would be the overreach this page ex
   transfer run — and for the corpus's non-isolation half it could never be one.</li>
 <li>Logic <strong>below the port</strong> — triggers, generated columns, database views — is outside every
   oracle here. An invariant maintained by a trigger must be covered by an integration test, not
-  by simulation.</li>
+  by simulation — and that exclusion is now <em>checkable</em>, not just prose: declare it with a
+  <code>HorizonDeclaration</code> naming the covering test, and per-invariant accounting keeps the clean
+  verdict scoped to invariants the harness has been shown able to catch (see
+  <a href="../invariants/#what-a-green-run-doesnt-say">what a green run doesn't say</a>).</li>
 <li>A divergence is admissible only through the reviewed catalogs above; an unexplained one fails
   the build. There is deliberately no single "fidelity score" anywhere on this page — the two
   divergence directions have opposite costs, and averaging them would hide exactly the one that
