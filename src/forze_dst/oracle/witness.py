@@ -387,6 +387,39 @@ class WitnessMining:
 # ....................... #
 
 
+def _probe_witnesses(
+    sim: Simulation,
+    probe: Perturbation,
+    *,
+    scenario: Scenario | None,
+    names: tuple[str, ...],
+) -> tuple[InvariantWitness, ...]:
+    """Run one perturbation probe; a witness for each targeted invariant it fired (clean = none).
+
+    Every returned witness shares the probe's entry — the seed, the fired-invariant set, and the
+    full perturbed config embedded via the failure-bundle serializer (what makes replay exact).
+    """
+
+    from forze_dst.artifacts.corpus import entry_from_report
+    from forze_dst.artifacts.serialize import config_to_dict
+
+    report = sim.run(probe.config, scenario=scenario)
+
+    if report is None:
+        return ()
+
+    entry = entry_from_report(
+        report,
+        explore={"perturbation": probe.label, "config": config_to_dict(probe.config)},
+    )
+
+    return tuple(
+        InvariantWitness(invariant=fired, entry=entry)
+        for fired in sorted({violation.invariant for violation in report.violations})
+        if fired in names
+    )
+
+
 def mine_witnesses(
     sim: Simulation,
     base: SimulationConfig,
@@ -405,9 +438,6 @@ def mine_witnesses(
     :func:`replay_witnesses` reproduces the exact environment, not the current defaults.
     """
 
-    from forze_dst.artifacts.corpus import entry_from_report
-    from forze_dst.artifacts.serialize import config_to_dict
-
     names = tuple(targets) if targets is not None else tuple(name_of(i) for i in sim.invariants)
     probes = tuple(repertoire) if repertoire is not None else default_repertoire(base)
     declared = {declaration.invariant for declaration in sim.horizon}
@@ -419,20 +449,9 @@ def mine_witnesses(
         if all(name in found for name in names):
             break
 
-        report = sim.run(probe.config, scenario=scenario)
         probes_run += 1
-
-        if report is None:
-            continue
-
-        entry = entry_from_report(
-            report,
-            explore={"perturbation": probe.label, "config": config_to_dict(probe.config)},
-        )
-
-        for fired in sorted({violation.invariant for violation in report.violations}):
-            if fired in names and fired not in found:
-                found[fired] = InvariantWitness(invariant=fired, entry=entry)
+        for witness in _probe_witnesses(sim, probe, scenario=scenario, names=names):
+            found.setdefault(witness.invariant, witness)
 
     return WitnessMining(
         witnesses=tuple(found.values()),
@@ -453,42 +472,54 @@ def replay_witnesses(sim: Simulation, *, scenario: Scenario | None = None) -> No
     drifted catalog or a weakened oracle, both loud. Cost is one run per witness.
     """
 
-    from forze_dst.artifacts.serialize import config_from_dict
-
     fingerprint = sim.fingerprint()
-    failures: list[str] = []
-
-    for witness in sim.witnesses:
-        entry = witness.entry
-
-        if entry.registry_fingerprint != fingerprint:
-            failures.append(
-                f"{witness.invariant}: witness fingerprint drifted — re-mine the witness"
-            )
-            continue
-
-        snapshot = (entry.explore or {}).get("config")
-        if snapshot is None:
-            failures.append(
-                f"{witness.invariant}: witness carries no config snapshot — re-mine it with "
-                "mine_witnesses (the snapshot is what makes the replay exact)"
-            )
-            continue
-
-        config = attrs.evolve(config_from_dict(dict(snapshot)), seeds=[entry.seed])
-        report = sim.run(config, scenario=scenario)
-        fired = set[str]() if report is None else {v.invariant for v in report.violations}
-
-        if witness.invariant not in fired:
-            failures.append(
-                f"{witness.invariant}: witness seed {entry.seed} no longer fires the invariant "
-                "— a weakened oracle or changed behavior; re-mine before trusting green"
-            )
+    failures = [
+        failure
+        for witness in sim.witnesses
+        if (failure := _replay_one(sim, witness, fingerprint=fingerprint, scenario=scenario))
+        is not None
+    ]
 
     if failures:
         raise InvariantAccountingError(
             "witness replay failed:\n" + "\n".join(f"  • {f}" for f in failures)
         )
+
+
+def _replay_one(
+    sim: Simulation,
+    witness: InvariantWitness,
+    *,
+    fingerprint: str,
+    scenario: Scenario | None,
+) -> str | None:
+    """Replay one witness; the failure message when it no longer proves anything, else ``None``."""
+
+    from forze_dst.artifacts.serialize import config_from_dict
+
+    entry = witness.entry
+
+    if entry.registry_fingerprint != fingerprint:
+        return f"{witness.invariant}: witness fingerprint drifted — re-mine the witness"
+
+    snapshot = (entry.explore or {}).get("config")
+    if snapshot is None:
+        return (
+            f"{witness.invariant}: witness carries no config snapshot — re-mine it with "
+            "mine_witnesses (the snapshot is what makes the replay exact)"
+        )
+
+    config = attrs.evolve(config_from_dict(dict(snapshot)), seeds=[entry.seed])
+    report = sim.run(config, scenario=scenario)
+    fired = set[str]() if report is None else {v.invariant for v in report.violations}
+
+    if witness.invariant not in fired:
+        return (
+            f"{witness.invariant}: witness seed {entry.seed} no longer fires the invariant "
+            "— a weakened oracle or changed behavior; re-mine before trusting green"
+        )
+
+    return None
 
 
 # ....................... #

@@ -40,6 +40,20 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 
+def record_observe_boundary() -> None:
+    """Mark the workload → observe phase boundary in the recorded history.
+
+    Every engine records this immediately before running the ``observe`` hook: events after it
+    are observe-emitted, not handler-emitted — the horizon analysis's marker-blindness classifier
+    keys off it (an observe marker reads settled state, so it carries no rollback hazard).
+    """
+
+    record_event("phase", phase="observe")
+
+
+# ....................... #
+
+
 def run_recording(recorder: Recorder, run: Callable[[], None]) -> None:
     """Run *run* under *recorder*, turning a deadlock into a recorded ``deadlock`` event.
 

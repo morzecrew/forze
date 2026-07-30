@@ -124,9 +124,7 @@ def run_crash_restart(
                 await sim.recover(rctx)
 
             if sim.observe is not None:
-                # Phase boundary: events after this are observe-emitted, not handler-emitted —
-                # the horizon analysis's marker-blindness classifier keys off it.
-                record_event("phase", phase="observe")
+                context.record_observe_boundary()
                 await sim.observe(rctx)
 
             projection.fold_runtime_trace(rctx)  # the post-restart trace

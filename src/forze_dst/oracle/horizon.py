@@ -86,6 +86,12 @@ def read_kinds(invariant: Invariant) -> frozenset[str] | None:
 
     Unknowable = it iterates ``history.events`` directly, or it read nothing before returning
     or raising — either way vacuity cannot be decided, so the caller must not flag it.
+
+    One more scope limit: the probe's ``of_kind`` always returns an empty list, so a predicate
+    that early-returns on an empty first read never reaches its *later* ``of_kind`` calls — the
+    footprint then omits those gated kinds. That direction is safe (a smaller footprint can only
+    make the vacuity/marker flags *more* conservative, never a false positive), but the reported
+    kinds are the empty-history read path, not every kind the invariant could ever touch.
     """
 
     probe = _FootprintProbe()
@@ -120,6 +126,44 @@ class HorizonAnalysis:
 # ....................... #
 
 
+def _observe_boundary(history: History) -> int | None:
+    """The seq of the run's ``observe`` phase boundary, or ``None`` when no observe hook ran."""
+
+    return next(
+        (
+            event.seq
+            for event in history.events
+            if event.kind == "phase" and event.fields.get("phase") == "observe"
+        ),
+        None,
+    )
+
+
+def _rolled_back_windows(history: History) -> list[tuple[float, float]]:
+    """The ``[enter, exit]`` virtual-time windows of every transaction that rolled back."""
+
+    windows: list[tuple[float, float]] = []
+    entered: dict[object, float] = {}
+
+    for event in history.of_kind("trace"):
+        fields = event.fields
+        if fields.get("trace_domain") != "tx":
+            continue
+
+        tx_id = fields.get("tx_id")
+        if fields.get("op") == "enter" and tx_id is not None:
+            entered[tx_id] = event.at
+        elif (
+            fields.get("op") == "exit" and fields.get("outcome") == "rollback" and tx_id in entered
+        ):
+            windows.append((entered[tx_id], event.at))
+
+    return windows
+
+
+# ....................... #
+
+
 @attrs.define
 class HorizonProbe:
     """Folds per-run histories into the horizon signals, one history at a time (incremental,
@@ -140,32 +184,8 @@ class HorizonProbe:
         so a hit is a hazard to review, not a proven blind oracle.
         """
 
-        boundary = next(
-            (
-                event.seq
-                for event in history.events
-                if event.kind == "phase" and event.fields.get("phase") == "observe"
-            ),
-            None,
-        )
-
-        rolled_back: list[tuple[float, float]] = []
-        entered: dict[object, float] = {}
-
-        for event in history.of_kind("trace"):
-            fields = event.fields
-            if fields.get("trace_domain") != "tx":
-                continue
-
-            tx_id = fields.get("tx_id")
-            if fields.get("op") == "enter" and tx_id is not None:
-                entered[tx_id] = event.at
-            elif (
-                fields.get("op") == "exit"
-                and fields.get("outcome") == "rollback"
-                and tx_id in entered
-            ):
-                rolled_back.append((entered[tx_id], event.at))
+        boundary = _observe_boundary(history)
+        rolled_back = _rolled_back_windows(history)
 
         for event in history.events:
             self._present.add(event.kind)
