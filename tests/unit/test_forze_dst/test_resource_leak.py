@@ -50,7 +50,8 @@ class TestDetectionLogic:
             ),
         )
         violations = check(history, [no_unclosed_transaction()])
-        assert [v.invariant for v in violations] == ["no_resource_leak"]
+        # Attribution carries the factory the author actually called, not the inner primitive.
+        assert [v.invariant for v in violations] == ["no_unclosed_transaction"]
         assert "route='mock'" in violations[0].message
 
     def test_routes_are_paired_independently(self) -> None:

@@ -123,5 +123,7 @@ class TestViaCLI:
     def test_ad_hoc_registry_gets_the_builtin_safety_net(self) -> None:
         built = load_simulation(_REGISTRY)
         assert built.operations is registry
-        names = {getattr(inv, "__qualname__", "") for inv in built.invariants}
-        assert any("no_unexpected_error" in n for n in names)
+
+        from forze_dst.invariants import name_of
+
+        assert "no_unexpected_error" in {name_of(inv) for inv in built.invariants}

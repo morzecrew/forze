@@ -121,4 +121,34 @@ assert report.satisfied, report.format()   # a target no seed reached is a failu
 
 A declared target that *no* seed ever reaches is a reachability failure — the safety result was never tested against that case. `SimulationConfig(reachability_targets=...)` folds the same check into a `coverage()` sweep (the outcome rides on `CoverageStats.reachability`), and `sometimes(histories, predicate)` is the general per-sweep form over an arbitrary predicate.
 
+## What a green run doesn't say
+
+A clean sweep only speaks about invariants that were *at risk*. Three ways an invariant slips out of that set without anyone noticing — and the machinery that catches each:
+
+-   **It was vacuous.** The invariant reads event kinds no run ever recorded (an `expect("payment_settled", …)` in a scenario that never settles a payment). Its green is a constant, not a result. The confidence report flags this automatically: each invariant's read footprint is measured by running it once against a tracing probe, and a footprint that never intersects what the sweep recorded is a named warning.
+
+-   **It was marker-blind.** An oracle folding markers that *handler* code emitted inherits the rollback blind spot: `record_event` inside a transaction survives the rollback that erased the port effects it claims to witness. The corpus authoring rule — oracles read port state in `observe`, never handler markers — exists for exactly this; the confidence report flags handler-emitted marker kinds recorded while a rolled-back transaction was in flight.
+
+-   **It was never shown falsifiable.** The strongest guarantee is a *witness*: a recorded, replayable perturbed run in which the invariant actually fired — proof the harness *could* have caught it failing. Mine witnesses offline with `mine_witnesses` (adverse schedules, transient faults, crash placement — plus `FaultRule(…, at_call=n)` for exact "die at the *n*-th call" placement), commit them to `Simulation(witnesses=…)`, and replay them each build with `replay_witnesses`. A fingerprint drift fails loud, exactly like a regression corpus's killing seed.
+
+Invariants genuinely outside the simulation's horizon — truth maintained **below the port** (a trigger, a unique index), effects that leave the process, wall-clock properties, cross-run properties — are excluded by an audited declaration that must name what covers them instead:
+
+```python
+from forze_dst import HorizonClass, HorizonDeclaration, Simulation
+from forze_dst.oracle import load_witnesses
+
+sim = Simulation(
+    operations=registry, deps=lambda: MockDepsModule(),
+    invariants=[settled_once, external_charge_once],
+    witnesses=load_witnesses("dst/witnesses.jsonl"),   # settled_once: mined + replayed
+    horizon=[HorizonDeclaration(                        # external_charge_once: out of horizon
+        invariant="external_charge_once",
+        horizon=HorizonClass.EXTERNAL_EFFECT,
+        covered_by="tests/integration/test_billing.py::test_charge_idempotent",
+    )],
+)
+```
+
+Declaring either registry opts the simulation into **per-invariant accounting**: `audit()` then fails on any invariant that is neither witnessed nor declared (and on drifted witnesses), `run()` warns, and the clean verdict's oracle-set clause becomes countable on every surface — *"… for the 5 witnessed invariants (1 declared out-of-horizon: external_charge_once)"* — instead of silently covering invariants the harness was never shown able to catch. Declarations are audited in reverse: the miner probes declared invariants too, and one it *can* witness is a wrong declaration and fails. Give each invariant a stable name with `named("settled_once", expect(…))` when a factory appears more than once — accounting refuses ambiguous names.
+
 Invariants decide *whether* a run is a bug; the next step is making bugs likely — [inject the environment](environment.md) a production system actually runs in.

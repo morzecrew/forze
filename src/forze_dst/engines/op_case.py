@@ -17,7 +17,7 @@ from forze.base.primitives import derive_seed
 from forze_dst.engines import base, context, projection
 from forze_dst.engines.cases import Call, OperationCase
 from forze_dst.oracle import ViolationReport
-from forze_dst.oracle.recorder import History, Recorder
+from forze_dst.oracle.recorder import History, Recorder, record_event
 from forze_dst.runtime import run_simulation
 from forze_dst.scheduler import Reorderer
 from forze_dst.time_source import DEFAULT_EPOCH
@@ -56,6 +56,9 @@ def run_workload(
             )
 
             if sim.observe is not None:
+                # Phase boundary: events after this are observe-emitted, not handler-emitted —
+                # the horizon analysis's marker-blindness classifier keys off it.
+                record_event("phase", phase="observe")
                 await sim.observe(ctx)
 
             projection.fold_runtime_trace(ctx)

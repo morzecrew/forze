@@ -115,5 +115,10 @@ def run_coverage(
         plateaued=plateaued,
         violation=violation,
         reachability=reachability,
-        confidence=probe.report(faults=config.faults, violations=0 if violation is None else 1),
+        confidence=probe.report(
+            faults=config.faults,
+            violations=0 if violation is None else 1,
+            invariants=sim.invariants,
+            accounting=sim.invariant_accounting(),
+        ),
     )

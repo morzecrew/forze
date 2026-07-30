@@ -18,6 +18,11 @@ from forze_dst.oracle.coverage import (
     behavioral_coverage,
     behavioral_fingerprint,
 )
+from forze_dst.oracle.horizon import (
+    HorizonAnalysis,
+    HorizonProbe,
+    read_kinds,
+)
 from forze_dst.oracle.invariants import (
     Invariant,
     Violation,
@@ -27,6 +32,8 @@ from forze_dst.oracle.invariants import (
     expect_value,
     monotonic_per,
     mutual_exclusion,
+    name_of,
+    named,
     no_duplicate_effect,
     no_duplicate_trace_effect,
     no_resource_leak,
@@ -95,6 +102,23 @@ from forze_dst.oracle.system_invariants import (
     compile_oracle,
 )
 from forze_dst.oracle.viewer import render_html
+from forze_dst.oracle.witness import (
+    HorizonClass,
+    HorizonDeclaration,
+    InvariantAccounting,
+    InvariantAccountingError,
+    InvariantStatus,
+    InvariantWitness,
+    Perturbation,
+    WitnessMining,
+    account_invariants,
+    default_repertoire,
+    load_witnesses,
+    mine_witnesses,
+    replay_witnesses,
+    save_witnesses,
+    witnesses_from_mutants,
+)
 
 __all__ = [
     # recorder substrate
@@ -121,6 +145,8 @@ __all__ = [
     "read_your_writes",
     "expect_value",
     "expect",
+    "named",
+    "name_of",
     # linearizability + weaker consistency models
     "linearizable",
     "is_linearizable",
@@ -162,6 +188,25 @@ __all__ = [
     # confidence
     "ConfidenceReport",
     "assess_confidence",
+    # horizon analysis + falsifiability witnesses
+    "HorizonAnalysis",
+    "HorizonProbe",
+    "read_kinds",
+    "HorizonClass",
+    "HorizonDeclaration",
+    "InvariantAccounting",
+    "InvariantAccountingError",
+    "InvariantStatus",
+    "InvariantWitness",
+    "Perturbation",
+    "WitnessMining",
+    "account_invariants",
+    "default_repertoire",
+    "load_witnesses",
+    "mine_witnesses",
+    "replay_witnesses",
+    "save_witnesses",
+    "witnesses_from_mutants",
     # report + timeline
     "format_report",
     "build_timeline",

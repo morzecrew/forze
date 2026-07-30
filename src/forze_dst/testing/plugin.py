@@ -101,7 +101,13 @@ def pytest_terminal_summary(terminalreporter: Any) -> None:
 
     terminalreporter.write_sep("-", "DST clean-run verdicts")
     for record in records:
-        terminalreporter.write_line(f"{record.label}: {format_clean_verdict(record.runs)}")
+        verdict = format_clean_verdict(
+            record.runs,
+            witnessed=record.witnessed,
+            declared=record.declared,
+            unaccounted=record.unaccounted,
+        )
+        terminalreporter.write_line(f"{record.label}: {verdict}")
 
 
 # ....................... #

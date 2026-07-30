@@ -14,6 +14,8 @@ package stays free of any adapter dependency — the app supplies the mock modul
 
 from __future__ import annotations
 
+import warnings
+from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 
@@ -32,7 +34,14 @@ from forze_dst.engines.cases import OperationCase
 from forze_dst.explore_guided import GuidedStats
 from forze_dst.oracle import ViolationReport
 from forze_dst.oracle.coverage import CoverageStats
-from forze_dst.oracle.invariants import Invariant
+from forze_dst.oracle.invariants import Invariant, name_of
+from forze_dst.oracle.witness import (
+    HorizonDeclaration,
+    InvariantAccounting,
+    InvariantAccountingError,
+    InvariantWitness,
+    account_invariants,
+)
 from forze_dst.reactive import ReactiveMap
 from forze_dst.scenario import Scenario
 from forze_dst.time_source import DEFAULT_EPOCH
@@ -59,6 +68,20 @@ class Simulation:
 
     invariants: Sequence[Invariant] = attrs.field(factory=tuple)
     """The invariants to check after the workload."""
+
+    witnesses: Sequence[InvariantWitness] = attrs.field(factory=tuple)
+    """The falsifiability-witness registry: per invariant, a replayable perturbed run in which
+    it fired — the demonstration that a green sweep *could* have caught it failing. Declaring
+    any witness (or any :attr:`horizon` entry) opts the simulation into per-invariant
+    accounting: :meth:`audit` then fails on unaccounted invariants and the verdict's oracle-set
+    clause becomes countable. Mine with :func:`~forze_dst.oracle.witness.mine_witnesses`;
+    replay per build with :func:`~forze_dst.oracle.witness.replay_witnesses`."""
+
+    horizon: Sequence[HorizonDeclaration] = attrs.field(factory=tuple)
+    """Audited out-of-horizon declarations: invariants the simulation genuinely cannot falsify
+    (below-the-port machinery, external effects, wall-clock, cross-run), each naming what covers
+    it instead. Verified in reverse by the witness miner — a declared invariant it *can* witness
+    is a wrong declaration."""
 
     setup: Hook | None = None
     """Optional - seed initial state before the workload (e.g. create baseline rows)."""
@@ -115,6 +138,49 @@ class Simulation:
 
     # ....................... #
 
+    def invariant_accounting(self) -> InvariantAccounting | None:
+        """Per-invariant witness accounting, or ``None`` when the simulation has not opted in.
+
+        Opting in = declaring any :attr:`witnesses` or :attr:`horizon` entry; every declared
+        invariant is then WITNESSED (a live witness exists), DECLARED (out-of-horizon, with a
+        covering check named), or UNACCOUNTED. Entirely static — names, registries, and the
+        current catalog fingerprint — so it is checkable before a single seed runs. Duplicate
+        invariant names fail loud (statuses would be ambiguous): wrap repeated instances in
+        :func:`~forze_dst.oracle.invariants.named`.
+        """
+
+        if not self.witnesses and not self.horizon:
+            return None
+
+        names = [name_of(invariant) for invariant in self.invariants]
+        duplicated = sorted(name for name, count in Counter(names).items() if count > 1)
+
+        if duplicated:
+            raise InvariantAccountingError(
+                f"duplicate invariant name(s): {', '.join(duplicated)} — accounting needs one "
+                "status per invariant; wrap repeated instances in named(...)"
+            )
+
+        return account_invariants(
+            names,
+            witnesses=tuple(self.witnesses),
+            declarations=tuple(self.horizon),
+            fingerprint=self.fingerprint(),
+        )
+
+    # ....................... #
+
+    def _warn_unaccounted(self) -> None:
+        """Surface accounting problems on ``run()`` as warnings (``audit()`` fails on them)."""
+
+        accounting = self.invariant_accounting()
+
+        if accounting is not None:
+            for problem in accounting.problems:
+                warnings.warn(f"DST invariant accounting: {problem}", stacklevel=3)
+
+    # ....................... #
+
     def run(
         self,
         config: SimulationConfig,
@@ -130,6 +196,10 @@ class Simulation:
         strategies *scenario* is used, or auto-derived from the operation catalog if omitted.
         Returns the first violating seed's minimized, reproducible counterexample, or ``None``.
         """
+
+        # Accounting problems warn here and *fail* on audit() — matching the existing
+        # plateau/completeness split between the two entrypoints.
+        self._warn_unaccounted()
 
         # Run-scoped: the per-run substrate compiles this config's seeded faults/latency.
         self.active_config = config
@@ -186,7 +256,16 @@ class Simulation:
         confidence report names the gaps a clean sweep still left — operations that ran but never
         raced another, declared faults that never fired. A violation, if any, still rides on
         :attr:`~forze_dst.oracle.coverage.CoverageStats.violation` (minimized and reproducible).
+
+        When the simulation opts into invariant accounting (:attr:`witnesses` / :attr:`horizon`),
+        this is the gate: it **fails** (before spending any compute) on unaccounted invariants,
+        drifted witnesses, or wrong declarations — a clean verdict may only cover invariants the
+        harness has been shown able to catch failing.
         """
+
+        accounting = self.invariant_accounting()
+        if accounting is not None:
+            accounting.require_accounted()
 
         return self.coverage(attrs.evolve(config, coverage_plateau=0), scenario=scenario)
 

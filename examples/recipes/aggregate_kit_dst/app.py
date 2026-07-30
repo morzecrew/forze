@@ -53,9 +53,7 @@ class TicketRead(ReadDocument):
 TICKET_SPEC = DocumentSpec(
     name="tickets",
     read=TicketRead,
-    write=DocumentWriteTypes(
-        domain=Ticket, create_cmd=TicketCreate, update_cmd=TicketUpdate
-    ),
+    write=DocumentWriteTypes(domain=Ticket, create_cmd=TicketCreate, update_cmd=TicketUpdate),
 )
 
 # The cross-record law: a sprint's committed points stay within capacity.
