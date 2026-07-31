@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 # ----------------------- #
 
@@ -23,4 +23,4 @@ class SQSRoutingCredentials(BaseModel):
     endpoint: str = Field(..., min_length=1)
     region_name: str = Field(..., min_length=1)
     access_key_id: str = Field(..., min_length=1)
-    secret_access_key: str = Field(..., min_length=1)
+    secret_access_key: SecretStr = Field(..., min_length=1)
