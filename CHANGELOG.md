@@ -129,6 +129,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With no `allowed_origins` configured, a browser upgrade carrying cookies must be same-host; a cross-origin frontend lists itself (the `CookieCsrf` posture).
 - A connection without device/session identity keys its ack cursor by the stable `ws:{principal}` (SSE parity) — previously a per-connection key reset the cursor every reconnect.
 
+**The spec inventory closes the routeless-provider blind spot** (**behaviour change**) — declaring a `spec_registry` now also installs a resolve-time guard (new `inventory_route_guard`): resolving an uncatalogued route on an inventoried plane is refused at first use, whatever the provider's shape (previously a plain provider could serve a spec an export then silently omitted). `allow_unregistered=True` downgrades it to one warning per route.
+
 **Socket.IO gateway hardening** (**behaviour change**):
 
 - An unset `require_tenant` now follows `bind_tenant_from_headers`: a tenancy-binding gateway drops untenanted signals instead of emitting them to the global room; pass `require_tenant=False` to keep untenanted delivery.
