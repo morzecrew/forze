@@ -123,6 +123,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **DST `audit()` no longer claims a detection bound for invariants the sweep could not falsify** (**behaviour change**) — a witness mined under perturbations the citing config does not enable (crash/fault/schedule/cluster) is new `InvariantStatus.UNEXERCISABLE`: `audit()` fails naming the missing capability, `run()` warns, clean verdicts count it out of the bound. New `forze_dst.oracle.config_capabilities`; `invariant_accounting`/`account_invariants` accept `config=`.
 
+**Realtime WebSocket hardening** (**behaviour change**):
+
+- The fail-loud closes (credential expiry, oversized frame, binary frame) are bounded — a client that stops reading can no longer block them indefinitely.
+- With no `allowed_origins` configured, a browser upgrade carrying cookies must be same-host; a cross-origin frontend lists itself (the `CookieCsrf` posture).
+- A connection without device/session identity keys its ack cursor by the stable `ws:{principal}` (SSE parity) — previously a per-connection key reset the cursor every reconnect.
+
 **Commit-stream dead-lettering is exactly-once for any producer** — a DLQ copy of a message without a `forze_event_id` header now carries a deterministically minted dedup id (previously a re-produced raw-producer copy could process twice); the header is only added when absent, so sealed envelopes stay byte-identical.
 
 **A routed SQS consumer survives credential rotation** — `evict_tenant` now moves an in-flight `RoutedSQSClient.consume` stream onto fresh credentials at the next poll instead of tearing it down, and `guarded=True` is fully supported across the facade (previously it raised on first use). A non-retryable resolution failure (no tenant bound, missing secret, invalid credentials) still raises out of the stream rather than being retried. `SQSRoutingCredentials.secret_access_key` is now `SecretStr` (matching S3) — read it via `get_secret_value()`.

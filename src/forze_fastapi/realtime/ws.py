@@ -78,6 +78,7 @@ from forze.base.scrubbing import sanitize_pydantic_errors
 
 from .._logging import ForzeFastAPILogger
 from ..middlewares.raw_websocket import GOVERNED_WEBSOCKET_ATTR
+from ..security.value_objects import _authority  # pyright: ignore[reportPrivateUsage]
 from .hub import RealtimeSseHub, SseSubscription, presence_rooms
 from .sse import (
     TopicAuthorizer,
@@ -116,6 +117,11 @@ WS_UNSUPPORTED_DATA_CLOSE = 1003
 _EXPIRY_CHECK_CEILING_SECONDS = 30.0
 """Upper bound between credential-expiry checks, so a reauth that *shortens*
 ``expires_at`` is enforced within this window even mid-sleep."""
+
+_CLOSE_LOCK_TIMEOUT_SECONDS = 5.0
+"""Bound on waiting for the send lock (and on the close itself) in a fail-loud
+close: a non-reading client parks the sender inside ``send_text`` holding the
+lock, and an unbounded wait would let it defeat every close aimed at it."""
 
 FRAME_ACK = "realtime.ack"
 FRAME_REAUTH = "realtime.reauth"
@@ -247,27 +253,48 @@ def _log_server_error(core: CoreException | None, error: BaseException) -> None:
 
 
 def _require_allowed_origin(websocket: WebSocket, allowed: frozenset[str] | None) -> None:
-    """Refuse a browser upgrade whose ``Origin`` is not on the allowlist.
+    """Refuse a browser upgrade whose ``Origin`` is not allowed.
 
     The browser is the one client that attaches ambient credentials (cookies) to a
     cross-site WebSocket upgrade and enforces **nothing** itself — no CORS preflight
     guards a WS handshake — so the server-side Origin check is the whole cross-site
     perimeter. A request with no ``Origin`` header is a non-browser client (curl, a
     mobile SDK, a service): it carries no ambient credentials to launder, so it passes —
-    the allowlist gates browsers, authentication gates everyone.
-    """
+    the origin check gates browsers, authentication gates everyone.
 
-    if allowed is None:
-        return
+    With an *allowed* list, the origin must be on it. **Without one, the check still
+    fails closed for the dangerous case**: an upgrade carrying both a ``Cookie``
+    header and an ``Origin`` — ambient credentials on a browser handshake — must be
+    same-host (hostname and port of ``Origin`` vs ``Host``, the cookie CSRF gate's
+    comparison; the scheme is unknowable behind a TLS-terminating proxy). A
+    cross-origin frontend that legitimately sends cookies lists itself in
+    ``allowed_origins`` — the same posture as ``CookieCsrf.allowed_origins``.
+    """
 
     origin = websocket.headers.get("origin")
 
     if origin is None:
         return
 
-    if origin.strip().rstrip("/").lower() not in allowed:
+    if allowed is not None:
+        if origin.strip().rstrip("/").lower() not in allowed:
+            raise exc.authorization(
+                "Origin not allowed for the realtime WebSocket",
+                code="realtime_origin_forbidden",
+            )
+
+        return
+
+    if websocket.headers.get("cookie") is None:
+        return  # no ambient credential riding the handshake — nothing to launder
+
+    host = websocket.headers.get("host")
+    source_authority = _authority(origin)
+
+    if host is None or source_authority is None or source_authority != _authority(f"//{host}"):
         raise exc.authorization(
-            "Origin not allowed for the realtime WebSocket",
+            "Cross-origin WebSocket upgrade with cookies requires an allowed_origins "
+            "allowlist on the realtime route",
             code="realtime_origin_forbidden",
         )
 
@@ -341,8 +368,10 @@ def attach_realtime_ws_route(
     header is not in the list is refused (policy close) — the WS handshake has no CORS
     preflight, so this check is the only cross-site defense the transport gets. Pass
     your app origins (e.g. ``["https://app.example.com"]``); requests without an
-    ``Origin`` header (non-browser clients) pass. ``None`` disables the check — safe
-    only when the resolver never honors cookie/ambient credentials.
+    ``Origin`` header (non-browser clients) pass. ``None`` (the default) still fails
+    closed for ambient credentials: a browser upgrade carrying cookies must be
+    same-host (see :func:`_require_allowed_origin`) — a cross-origin frontend that
+    sends cookies must list itself here.
 
     Credential expiry is enforced continuously from
     :attr:`WsConnection.expires_at`: the socket is closed once past it (a
@@ -444,8 +473,12 @@ def attach_realtime_ws_route(
         def _client_key() -> str:
             # From the LIVE session identity, not a connect-time closure: a reauth may
             # rotate the client's session id, and the ack cursor must follow the
-            # refreshed identity (Socket.IO recomputes per ack the same way).
-            return session.connection.client_key(member_key)
+            # refreshed identity (Socket.IO recomputes per ack the same way). The
+            # fallback is the stable ``ws:{principal}`` — the SSE twin's contract —
+            # never the per-connection member key: a random fallback would mint a
+            # fresh cursor every reconnect, so acks would not survive reconnection
+            # and every connect would replay the full mailbox.
+            return session.connection.client_key(f"ws:{session.connection.principal}")
 
         # ....................... #
 
@@ -457,6 +490,42 @@ def attach_realtime_ws_route(
             # interleave frames or race the close state.
             async with send_lock:
                 await websocket.send_text(payload)
+
+        async def _close_socket(code: int, reason: str) -> None:
+            """A fail-loud close that cannot be defeated by a non-reading client.
+
+            The close is a socket write, so it serializes with the sender — but only
+            for a *bounded* wait: a client that stops reading parks the sender inside
+            ``send_text`` on TCP backpressure with the lock held, and an unbounded
+            acquire here would deadlock every close that exists to end exactly that
+            connection. On timeout the close proceeds unserialized (the racing
+            sender's send-after-close ``RuntimeError`` is normal teardown), and the
+            close itself is bounded too — its close frame goes into the same stuffed
+            buffer; the task-group unwind and the server's transport teardown finish
+            the job when the wire never drains.
+            """
+
+            acquired = False
+
+            try:
+                await asyncio.wait_for(send_lock.acquire(), timeout=_CLOSE_LOCK_TIMEOUT_SECONDS)
+                acquired = True
+
+            except TimeoutError:
+                pass
+
+            try:
+                await asyncio.wait_for(
+                    websocket.close(code=code, reason=reason),
+                    timeout=_CLOSE_LOCK_TIMEOUT_SECONDS,
+                )
+
+            except TimeoutError:
+                pass
+
+            finally:
+                if acquired:
+                    send_lock.release()
 
         async def _send_json(
             payload: dict[str, Any],
@@ -688,18 +757,16 @@ def attach_realtime_ws_route(
                 now = utcnow()
 
                 if expires_at is not None and now >= expires_at:
-                    async with send_lock:
-                        # Re-read under the lock: a reauth that swapped in a fresh
-                        # credential while this task waited for the lock must win —
-                        # closing on the stale deadline would disconnect the client
-                        # right after its successful reauth ack.
-                        refreshed = session.connection.expires_at
+                    # Re-read right before closing: a reauth that swapped in a fresh
+                    # credential while this task slept must win — closing on the
+                    # stale deadline would disconnect the client right after its
+                    # successful reauth ack.
+                    refreshed = session.connection.expires_at
 
-                        if refreshed is None or utcnow() < refreshed:
-                            continue
+                    if refreshed is None or utcnow() < refreshed:
+                        continue
 
-                        await websocket.close(code=WS_POLICY_CLOSE, reason="credential expired")
-
+                    await _close_socket(WS_POLICY_CLOSE, "credential expired")
                     raise WebSocketDisconnect(WS_POLICY_CLOSE)
 
                 remaining = (
@@ -744,18 +811,11 @@ def attach_realtime_ws_route(
                 raw = message.get("text")
 
                 if raw is None:
-                    async with send_lock:
-                        await websocket.close(
-                            code=WS_UNSUPPORTED_DATA_CLOSE, reason="text frames only"
-                        )
-
+                    await _close_socket(WS_UNSUPPORTED_DATA_CLOSE, "text frames only")
                     raise WebSocketDisconnect(WS_UNSUPPORTED_DATA_CLOSE)
 
                 if len(raw.encode()) > max_frame_bytes:
-                    # the close is a socket write too — serialize it with the sender
-                    async with send_lock:
-                        await websocket.close(code=WS_TOO_BIG_CLOSE, reason="frame too large")
-
+                    await _close_socket(WS_TOO_BIG_CLOSE, "frame too large")
                     raise WebSocketDisconnect(WS_TOO_BIG_CLOSE)
 
                 try:

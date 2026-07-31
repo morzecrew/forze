@@ -159,12 +159,12 @@ def _build(
     ctx = context_from_deps(MockDepsModule(state=MockState())())
     mailbox = mailbox if mailbox is not None else InMemoryRealtimeMailbox()
     router = APIRouter()
+    attach_kwargs.setdefault("cursors_factory", lambda _ctx: InMemoryMailboxCursors())
     attach_realtime_ws_route(
         router,
         ctx_dep=lambda: ctx,
         resolve=_resolver,
         mailbox_factory=lambda _ctx: mailbox,
-        cursors_factory=lambda _ctx: InMemoryMailboxCursors(),
         hub=hub,
         presence=presence,
         authorize_topics=_allow_all,
@@ -261,6 +261,36 @@ class TestReplayAndAck:
 
         # the ack advanced d1's cursor: a reconnect replays only the tail
         with client.websocket_connect("/realtime/ws?device_id=d1") as ws:
+            assert ws.receive_json()["id"] == ids[2]
+
+    def test_deviceless_ack_cursor_is_stable_across_reconnects(self) -> None:
+        # SSE parity: a client with no device/session identity keys its cursor by
+        # the stable ``ws:{principal}`` fallback — never the random per-connection
+        # member key, which would mint a fresh cursor (and a full replay) every
+        # reconnect.
+        import asyncio
+
+        from forze.application.integrations.realtime import InMemoryMailboxCursors
+
+        mailbox = InMemoryRealtimeMailbox()
+        cursors = InMemoryMailboxCursors()
+        client, _ = _build(mailbox=mailbox, cursors_factory=lambda _ctx: cursors)
+
+        ids = asyncio.run(_seed(mailbox))
+
+        with client.websocket_connect("/realtime/ws") as ws:  # no device_id
+            frames = [ws.receive_json() for _ in range(3)]
+            assert [f["id"] for f in frames] == ids
+            ws.send_json({"type": "realtime.ack", "up_to": ids[1]})
+
+        stable_key = f"ws:{_PRINCIPAL}"
+        assert (
+            str(_PRINCIPAL),
+            stable_key,
+        ) in cursors._cursors  # pyright: ignore[reportPrivateUsage]
+
+        # A reconnect resumes from the persisted cursor instead of replaying all.
+        with client.websocket_connect("/realtime/ws") as ws:
             assert ws.receive_json()["id"] == ids[2]
 
     def test_malformed_acks_error_instead_of_silently_dropping(self) -> None:
@@ -757,11 +787,114 @@ class TestOriginAllowlist:
             _build(allowed_origins=[])
 
 
+class TestOriginFailClosedDefault:
+    """No allowlist configured: ambient credentials still get a perimeter.
+
+    A browser cross-site upgrade is the one handshake that launders cookies, so a
+    ``Cookie`` + cross-host ``Origin`` combination is refused even when the route
+    was attached without ``allowed_origins`` — same-host upgrades (the ordinary
+    same-origin app) and cookie-less or non-browser clients are untouched.
+    """
+
+    def test_cookie_with_cross_origin_is_refused_without_an_allowlist(self) -> None:
+        client, _ = _build()  # allowed_origins=None — the default
+
+        with (
+            client.websocket_connect(
+                "/realtime/ws",
+                headers={"Origin": "https://evil.example", "Cookie": "sid=x"},
+            ) as ws,
+            pytest.raises(WebSocketDisconnect) as caught,
+        ):
+            # The probe makes a regression fail fast: a wrongly-live socket answers
+            # it with an error *frame* (receive returns, the raises-block fails)
+            # instead of this receive blocking forever on a silent connection.
+            ws.send_text(json.dumps({"type": "nope"}))
+            ws.receive_json()
+
+        assert caught.value.code == 1008
+        assert "allowed_origins" in str(caught.value.reason)
+
+    def test_cookie_with_same_host_origin_connects_without_an_allowlist(self) -> None:
+        client, _ = _build()
+
+        # The TestClient's Host is ``testserver``; a same-host Origin passes.
+        with client.websocket_connect(
+            "/realtime/ws",
+            headers={"Origin": "http://testserver", "Cookie": "sid=x"},
+        ) as ws:
+            ws.send_text(json.dumps({"type": "nope"}))
+            frame = ws.receive_json()
+
+        assert frame["type"] == "error"  # a live socket answered
+
+    def test_cookieless_cross_origin_still_passes_without_an_allowlist(self) -> None:
+        # No ambient credential on the handshake — nothing to launder; the
+        # resolver's own authentication is the gate, as before.
+        client, _ = _build()
+
+        with client.websocket_connect(
+            "/realtime/ws", headers={"Origin": "https://elsewhere.example"}
+        ) as ws:
+            ws.send_text(json.dumps({"type": "nope"}))
+            frame = ws.receive_json()
+
+        assert frame["type"] == "error"
+
+    def test_cookie_with_cross_origin_passes_when_allowlisted(self) -> None:
+        client, _ = _build(allowed_origins=["https://spa.example.com"])
+
+        with client.websocket_connect(
+            "/realtime/ws",
+            headers={"Origin": "https://spa.example.com", "Cookie": "sid=x"},
+        ) as ws:
+            ws.send_text(json.dumps({"type": "nope"}))
+            frame = ws.receive_json()
+
+        assert frame["type"] == "error"
+
+
 class TestCredentialExpiry:
     def test_expired_credential_closes_the_socket(self) -> None:
         client, _ = _build()
 
         with client.websocket_connect("/realtime/ws?token=expired") as ws:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                ws.receive_json()
+
+        assert caught.value.code == 1008
+        assert "credential expired" in str(caught.value.reason)
+
+    def test_expiry_close_is_not_defeated_by_a_non_reading_client(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A client that stops reading parks the sender inside ``send_text`` on TCP
+        backpressure — holding the send lock. The expiry close waits for the lock
+        only a bounded time and then closes anyway; unbounded, the stalled sender
+        would defeat every fail-loud close aimed at exactly that client."""
+
+        import asyncio
+
+        from starlette.websockets import WebSocket as _StarletteWebSocket
+
+        from forze_fastapi.realtime import ws as ws_module
+
+        # Shrink the bound so the test discriminates in ~a second.
+        monkeypatch.setattr(ws_module, "_CLOSE_LOCK_TIMEOUT_SECONDS", 0.3)
+
+        async def stuck_send_text(self: Any, data: str) -> None:
+            # Simulated TCP backpressure: the send never completes, so the send
+            # lock is held for the socket's whole remaining lifetime.
+            del data
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(_StarletteWebSocket, "send_text", stuck_send_text)
+
+        mailbox = InMemoryRealtimeMailbox()
+        client, _ = _build(mailbox=mailbox)
+        asyncio.run(_seed(mailbox, count=1))  # one frame parks the sender mid-send
+
+        with client.websocket_connect("/realtime/ws?token=expiring-soon") as ws:
             with pytest.raises(WebSocketDisconnect) as caught:
                 ws.receive_json()
 
