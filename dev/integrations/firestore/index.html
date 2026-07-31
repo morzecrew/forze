@@ -6151,6 +6151,12 @@ environment variable).</p>
   one write per second per document — a hot counter contends and retries. Allocate
   blocks with <code>incr_batch</code> to amortize the ceiling, or route high-rate counters to
   a Redis-backed adapter.</li>
+<li><strong><code>Decimal</code> fields are stored as doubles</strong> — Firestore has no decimal type, so a
+  <code>Decimal</code> is written as a <code>double</code> (numeric ordering in range filters, at the cost
+  of binary-float precision). A non-finite value (<code>NaN</code>/<code>±Infinity</code>) or a <code>Decimal</code>
+  outside the double range is refused with <code>precondition</code> instead of being written —
+  a stored non-finite double could never be matched by a filter. Keep exact-precision
+  decimals on Postgres or Mongo.</li>
 <li>No graph support — Firestore is documents only.</li>
 <li>No aggregations in the MVP adapter — an <code>aggregate_*</code> query (grouped or aggregate
   rows) is rejected up front with a clean <code>precondition</code> naming the backend, not a
