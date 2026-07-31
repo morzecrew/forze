@@ -110,3 +110,39 @@ async def test_uuid_and_decimal_fields_survive_create_update_and_filter(
 
     reread = await query.get(doc_id)
     assert reread.amount == Decimal("25.50")
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_decimal_beyond_decimal128_exactness_is_refused(
+    mongo_client: MongoClient,
+) -> None:
+    """A Decimal decimal128 cannot hold exactly (>34 significant digits) is refused with
+    ``precondition`` naming the bound — previously ``bson`` raised a bare
+    ``decimal.Inexact`` that escaped the gateway as an opaque internal error."""
+
+    from forze.base.exceptions import CoreException, ExceptionKind
+
+    db_name = (await mongo_client.db()).name
+    ctx = _ctx(mongo_client, db_name, f"priced_{uuid4().hex[:8]}")
+    command = ctx.document.command(_SPEC)
+
+    too_precise = Decimal("1." + "1" * 34)  # 35 significant digits
+
+    with pytest.raises(CoreException) as ei:
+        await command.ensure(
+            uuid4(), _PricedCreate(ref=uuid4(), amount=too_precise, label="x")
+        )
+    assert ei.value.kind is ExceptionKind.PRECONDITION
+    assert "decimal128" in str(ei.value)
+
+    # The guard does not narrow decimal128: the 34-digit corner still round-trips exactly.
+    corner = Decimal("1." + "2" * 33)
+    doc_id = uuid4()
+    created = await command.ensure(
+        doc_id, _PricedCreate(ref=uuid4(), amount=corner, label="y")
+    )
+    assert created.amount == corner
+    assert (await ctx.document.query(_SPEC).get(doc_id)).amount == corner

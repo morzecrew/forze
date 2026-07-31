@@ -114,9 +114,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Postgres `update_many`/`touch_many` could attach one document's returned diff to another** when the server reordered `RETURNING` rows; diffs are now keyed by document id.
 
-**Firestore writes refuse non-finite and double-overflowing numerics** (**behaviour change**) — a `NaN`/`±Infinity` `Decimal`/`float`, or a `Decimal` outside the double range, now raises `precondition` instead of persisting `inf`/`nan`; in-range precision loss is unchanged.
+**Numeric exactness fails closed on every backend** (**behaviour change**) — a value a backend cannot hold exactly raises `precondition` instead of being silently degraded:
 
-**BigQuery `Decimal` parameters pick `NUMERIC` vs `BIGNUMERIC` by value** — a scale beyond 9 or magnitude beyond 29 integer digits goes out as `BIGNUMERIC` instead of being rounded server-side (arrays widen to their neediest element); non-finite values and values even `BIGNUMERIC` cannot hold exactly raise `precondition`.
+- **Firestore** refuses non-finite and double-overflowing numerics on writes (previously persisted as `inf`/`nan`); in-range precision loss is unchanged.
+- **BigQuery** `Decimal` parameters pick `NUMERIC` vs `BIGNUMERIC` by value — scale beyond 9 or magnitude beyond 29 integer digits goes out as `BIGNUMERIC` (arrays widen to their neediest element); non-finite and beyond-`BIGNUMERIC` values are refused.
+- **Mongo** refuses a `Decimal` beyond BSON decimal128 exactness (34 significant digits; previously a bare `decimal.Inexact` escaped as an internal error).
+- **DuckDB** refuses non-finite values and values beyond `DECIMAL(38)` (previously silently rebound as a rounded `DOUBLE`).
 
 **DST `audit()` no longer claims a detection bound for invariants the sweep could not falsify** (**behaviour change**) — a witness mined under perturbations the citing config does not enable (crash/fault/schedule/cluster) is new `InvariantStatus.UNEXERCISABLE`: `audit()` fails naming the missing capability, `run()` warns, clean verdicts count it out of the bound. New `forze_dst.oracle.config_capabilities`; `invariant_accounting`/`account_invariants` accept `config=`.
 

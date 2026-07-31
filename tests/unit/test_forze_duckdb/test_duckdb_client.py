@@ -163,3 +163,68 @@ async def test_single_worker_executor_still_correct() -> None:
         assert sorted(r.rows[0]["v"] for r in results) == [0, 1, 2]
     finally:
         await c.close()
+
+
+# ....................... #
+
+
+class TestDecimalParamExactness:
+    """A Decimal param binds exactly or not at all.
+
+    DuckDB's driver does not fail on a Decimal wider than ``DECIMAL(38)`` — it
+    silently rebinds it as a rounded ``DOUBLE`` (and a non-finite Decimal as a
+    float ``nan``). The param seam refuses those with ``precondition`` instead.
+    """
+
+    @pytest.mark.asyncio
+    async def test_in_range_decimal_binds_exactly(self, client: DuckDbClient) -> None:
+        from decimal import Decimal
+
+        class _D(BaseModel):
+            amount: Decimal
+
+        fine = Decimal("0.12345678901234567890")
+        result = await client.run_query("SELECT $amount AS a", _D(amount=fine))
+        assert result.rows[0]["a"] == fine
+
+        # The 38-digit corner still binds exactly — the guard does not narrow DECIMAL.
+        corner = Decimal("9" * 19 + "." + "9" * 19)
+        result = await client.run_query("SELECT $amount AS a", _D(amount=corner))
+        assert result.rows[0]["a"] == corner
+
+    @pytest.mark.asyncio
+    async def test_wide_decimal_is_refused_not_rounded(self, client: DuckDbClient) -> None:
+        from decimal import Decimal
+
+        class _D(BaseModel):
+            amount: Decimal
+
+        for bad in (Decimal("1e40"), Decimal("1e-40")):
+            with pytest.raises(CoreException) as ei:
+                await client.run_query("SELECT $amount AS a", _D(amount=bad))
+            assert ei.value.kind is ExceptionKind.PRECONDITION
+
+    @pytest.mark.asyncio
+    async def test_non_finite_decimal_is_refused(self, client: DuckDbClient) -> None:
+        # Raw-dict path: pydantic already refuses non-finite on typed model fields.
+        from decimal import Decimal
+
+        for bad in (Decimal("NaN"), Decimal("Infinity")):
+            with pytest.raises(CoreException) as ei:
+                await client.run_query("SELECT $v AS a", {"v": bad})
+            assert ei.value.kind is ExceptionKind.PRECONDITION
+
+    @pytest.mark.asyncio
+    async def test_nested_decimal_params_are_guarded(self, client: DuckDbClient) -> None:
+        from decimal import Decimal
+
+        with pytest.raises(CoreException) as ei:
+            await client.run_query("SELECT 1 AS a", {"vals": [Decimal("1e40")]})
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+
+    @pytest.mark.asyncio
+    async def test_zero_with_wide_exponent_spelling_is_fine(self, client: DuckDbClient) -> None:
+        from decimal import Decimal
+
+        result = await client.run_query("SELECT $v AS a", {"v": Decimal("0E-100")})
+        assert result.rows[0]["a"] == 0
