@@ -1050,8 +1050,10 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             for (_, batch), updated in zip(work, batch_results, strict=True):
                 updated_models.update({m.id: m for m in updated})
 
-                for m, d in zip(updated, batch, strict=True):
-                    update_diffs[m.id] = d[-1]
+                # RETURNING rows carry no order guarantee, so key each diff by
+                # its own record id instead of pairing positionally
+                for cid, _, diff in batch:
+                    update_diffs[cid] = diff
 
             res = [updated_models.get(c.id, c) for c in currents]
             res_diffs = [update_diffs.get(c.id, {}) for c in res]

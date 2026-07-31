@@ -109,6 +109,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**Postgres `update_many`/`touch_many` could attach one document's returned diff to another** when the server reordered `RETURNING` rows; diffs are now keyed by document id.
+
 **`Decimal` is a first-class filter and sort value across the query DSL** — the scalar union omitted it, and every backend showed it differently.
 
 - Postgres compared nested JSON leaves as text and round-tripped numerics through `float`; Mongo matched nothing; Firestore could not write the field at all; the mock refused Decimal aggregates; Meilisearch indexed lexically.
