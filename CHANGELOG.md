@@ -110,6 +110,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**Log scrubbing masks pluralized, numbered, and compound-`authorization` names** — `tokens=…`, `"api_key2": "…"`, `authorization=…`, `authorization_value: …` are now masked in message strings and serialized bodies (previously only the singular, unnumbered forms were); the email and userinfo-DSN rules are length-bounded to RFC sizes, removing a quadratic-cost path on adversarial log text.
+
 **Postgres `update_many`/`touch_many` could attach one document's returned diff to another** when the server reordered `RETURNING` rows; diffs are now keyed by document id.
 
 **Firestore writes refuse non-finite and double-overflowing numerics** (**behaviour change**) — a `NaN`/`±Infinity` `Decimal`/`float`, or a `Decimal` outside the double range, now raises `precondition` instead of persisting `inf`/`nan`; in-range precision loss is unchanged.

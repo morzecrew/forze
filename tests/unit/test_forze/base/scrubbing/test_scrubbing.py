@@ -25,7 +25,7 @@ from forze.base.scrubbing import (
     sanitize_pydantic_errors,
 )
 from forze.base.scrubbing import policy as _scrub_policy
-from forze.base.scrubbing.policy import scrub_log_string
+from forze.base.scrubbing.policy import is_sensitive_key, scrub_log_string
 from tests.support.hypothesis_strategies import integration_hypothesis_settings
 
 # ----------------------- #
@@ -302,6 +302,35 @@ class TestScrubCompoundSuffixLinearTime:
         assert elapsed < 1.0
 
 
+class TestScrubExtrasLinearTime:
+    """The email and userinfo-DSN extras must not go quadratic on hostile text.
+
+    Their prefilter literals (``@``, ``://``) are one attacker character away, and an
+    unbounded character run before a required literal cost O(run) at *every* start
+    position the sub scan tried — quadratic overall, ~5 s of CPU at 30 KB. The RFC
+    length bounds + possessive quantifiers cap per-position work; these pins keep the
+    cost flat (~40 ms at 40 KB post-fix vs ~10 s pre-fix, so the 2 s bound
+    discriminates even on slow CI). Matching semantics are pinned by the value tests
+    above (``alice@example.com``, ``clickhouse://user:pass@…``).
+    """
+
+    @pytest.mark.parametrize(
+        "attack",
+        [
+            "a" * 40_000 + "@",  # long local-part run, the @ never completes an email
+            "a" * 40_000 + "://",  # long run before ://, never a valid scheme match
+            "x://u:" + "a" * 40_000,  # userinfo password run with no terminating @
+        ],
+    )
+    def test_adversarial_runs_complete_fast(self, attack: str) -> None:
+        started = time.perf_counter()
+        result = scrub_log_string(attack)
+        elapsed = time.perf_counter() - started
+
+        assert result == attack  # nothing to mask in any of these
+        assert elapsed < 2.0
+
+
 class TestCredentialFragmentCoverage:
     """Credential terms must be caught on every scrub path (keys, messages, exceptions)."""
 
@@ -454,115 +483,147 @@ class TestScrubSerializedBodyLeak:
         assert scrub_log_string(text) == text
 
 
-class TestFragmentListParity:
-    """Drift guard: the key-heuristic and value-form term lists must stay reconciled.
+def _vocabulary_seeds() -> frozenset[str]:
+    """Bare term seeds derived from the *key* vocabulary fragments.
 
-    The sensitive-key heuristic (``is_sensitive_key``) and the value-form
-    assignment rule (``foo=secret`` in message strings) are two projections of
-    one credential vocabulary. A term added to only one of them silently leaks
-    on the other path, so this test fails when the lists diverge beyond the
-    explicit exception sets below.
+    Regex noise (anchors, lookaheads, optional separators) is stripped via the
+    policy's own constants, so widening ``_SEG`` cannot desync this derivation.
+    A compound term contributes both its flattened and snake_case spelling
+    (``apikey`` and ``api_key``). Deriving from the policy — not a hand copy —
+    is what makes the property total: a newly added term is property-checked the
+    moment it lands.
     """
 
-    # Key-heuristic terms with no *assignment* value-form counterpart, with the
-    # reason the value form is handled elsewhere (or inapplicable).
-    _KEY_ONLY_TERMS = frozenset(
+    from forze.base.scrubbing import policy
+
+    seeds: set[str] = set()
+
+    for fragment in (*policy._LOGFIRE_SENSITIVE_FRAGMENTS, *policy._FORZE_KEY_EXTRAS):
+        term = fragment.lower()
+
+        for regex_noise in (policy._SEG.lower(), r"(?:\b|_)", r"(?!ors?\b)"):
+            term = term.replace(regex_noise, "")
+
+        assert term.replace(r"[._ -]?", "").replace("_", "").isalnum(), (
+            f"fragment {fragment!r} uses a regex construct _vocabulary_seeds does not"
+            f" normalize; teach it the construct so the property stays total"
+        )
+
+        seeds.add(term.replace(r"[._ -]?", ""))
+        seeds.add(term.replace(r"[._ -]?", "_"))
+
+    return frozenset(seeds)
+
+
+def _key_shapes(term: str) -> frozenset[str]:
+    """Every naming shape a codebase spells *term* in: compounds under snake_case
+    and camelCase, plural, digit-suffixed, and separator-dropped."""
+
+    camel = term[0].upper() + term[1:]
+
+    return frozenset(
         {
-            # The bare value form is owned by the dedicated full-line
-            # ``authorization\s*:\s*[^\r\n]+`` extras pattern: an assignment-term
-            # match would stop at the first token (the scheme word, e.g. ``Basic``)
-            # and leak the credential that follows it. Its quoted-key form *is*
-            # in the vocabulary (a quoted value is bounded), see below.
-            "authorization",
+            term,
+            f"db_{term}",  # snake compound, term-final
+            f"{term}_value",  # snake compound, term-initial
+            f"db{camel}",  # camelCase compound (hump-led)
+            f"{term}Value",
+            f"{term}s",  # plural
+            f"{term}s_value",
+            f"{term}2",  # digit-suffixed
+            f"{term}_2",
+            f"db{term}",  # flattened compound (mid-token for anchored short terms)
         }
     )
 
-    # Value-form terms with no key-heuristic counterpart.
-    _VALUE_ONLY_TERMS: frozenset[str] = frozenset()
 
-    @staticmethod
-    def _canonical_term(fragment: str) -> str:
-        """Collapse a regex fragment to a comparable bare term."""
+class TestVocabularyBehavioralProperty:
+    """THE property the term lists exist to uphold, checked behaviorally.
 
-        from forze.base.scrubbing import policy
+    For every vocabulary term × generated key shape: whenever the key heuristic
+    treats the shape as sensitive (``is_sensitive_key``), the value forms — an
+    assignment in a message string and a quoted key in a serialized body — must
+    mask its value too. One credential vocabulary, two projections; this retires
+    the textual list-parity test, which could only catch a term missing from a
+    list, not a shape the value rules fail to cover (pluralized names leaked for
+    exactly that reason).
 
-        term = fragment.lower()
+    The implication is one-way by design: the key heuristic deliberately
+    over-matches (``secretary`` is a masked *key*), while the value rules must
+    not corrupt ordinary text — a free lowercase continuation is not a generated
+    shape, so the deliberate divergence stays out of scope.
+    """
 
-        # ``_SEG`` (the short-term segment anchor) is stripped via the constant rather
-        # than a copy of its expansion, so widening it — as the camelCase boundary did —
-        # cannot silently desync this normalizer from the patterns it reads.
-        for regex_noise in (policy._SEG.lower(), r"(?:\b|_)", r"(?!ors?\b)", r"[._ -]?"):
-            term = term.replace(regex_noise, "")
+    def test_sensitive_key_shapes_mask_in_every_value_form(self) -> None:
+        secret = "S3KRIT-VALUE"
+        leaks: list[str] = []
 
-        term = term.replace("_", "")
+        for term in sorted(_vocabulary_seeds()):
+            for shape in sorted(_key_shapes(term)):
+                if not is_sensitive_key(shape):
+                    continue  # the implication's guard, not a failure
 
-        assert term.isalnum(), (
-            f"fragment {fragment!r} uses a regex construct _canonical_term does not"
-            f" normalize; teach it the construct so parity stays checkable"
+                for text in (
+                    f"call failed {shape}={secret} retrying",
+                    f"call failed {shape}: {secret} retrying",
+                    f'{{"{shape}": "{secret}"}}',
+                ):
+                    if secret in scrub_log_string(text):
+                        leaks.append(text)
+
+        assert not leaks, (
+            "key-sensitive shapes whose value form leaks — extend the assignment/"
+            f"quoted-key rules or the full-line extras: {leaks}"
         )
-        return term
 
-    def test_key_and_value_term_lists_are_reconciled(self) -> None:
+    def test_every_shape_generator_produces_sensitive_hits(self) -> None:
+        # Guard against the property going vacuous: every generated *shape slot*
+        # (compound, camel, plural, digit, flattened) must be exercised by at
+        # least one term the key heuristic accepts.
+        seeds = _vocabulary_seeds()
+
+        for shape_of in (
+            lambda t: t,
+            lambda t: f"db_{t}",
+            lambda t: f"{t}_value",
+            lambda t: f"db{t[0].upper()}{t[1:]}",
+            lambda t: f"{t}Value",
+            lambda t: f"{t}s",
+            lambda t: f"{t}2",
+            lambda t: f"db{t}",
+        ):
+            assert any(is_sensitive_key(shape_of(term)) for term in seeds)
+
+    def test_value_vocabulary_terms_are_sensitive_keys(self) -> None:
+        # The mirror direction, behaviorally: a term the value rules mask must
+        # also be masked when it appears as an event-dict key — otherwise the
+        # vocabularies have drifted in the other direction.
         from forze.base.scrubbing import policy
 
-        key_terms = {
-            self._canonical_term(fragment)
-            for fragment in (
-                *policy._LOGFIRE_SENSITIVE_FRAGMENTS,
-                *policy._FORZE_KEY_EXTRAS,
+        for fragment in policy._LOG_QUOTED_KEY_TERM_FRAGMENTS:
+            term = fragment.lower()
+            for regex_noise in (policy._SEG.lower(), r"(?:\b|_)", r"(?!ors?\b)"):
+                term = term.replace(regex_noise, "")
+            term = term.replace(r"[._ -]?", "_")
+
+            assert is_sensitive_key(term), (
+                f"value-form term {term!r} is not a sensitive key — add its key"
+                " heuristic or drop it from the value vocabulary"
             )
-        }
-        value_terms = {
-            self._canonical_term(fragment) for fragment in policy._LOG_ASSIGNMENT_TERM_FRAGMENTS
-        }
 
-        missing_from_value = key_terms - value_terms
-        missing_from_key = value_terms - key_terms
-
-        assert missing_from_value == self._KEY_ONLY_TERMS, (
-            "key-heuristic terms missing a value-form assignment counterpart;"
-            " add them to _LOG_ASSIGNMENT_TERM_FRAGMENTS or document the"
-            f" exception here: {sorted(missing_from_value - self._KEY_ONLY_TERMS)}"
-        )
-        assert missing_from_key == self._VALUE_ONLY_TERMS, (
-            "value-form terms missing a key-heuristic counterpart; add them to"
-            " _FORZE_KEY_EXTRAS or document the exception here:"
-            f" {sorted(missing_from_key - self._VALUE_ONLY_TERMS)}"
-        )
-
-    def test_quoted_key_terms_cover_every_key_term(self) -> None:
-        # The quoted-key (serialized-body) rule has no exceptions: a term the key
-        # heuristic masks in an event dict must also be masked inside a logged body.
-        from forze.base.scrubbing import policy
-
-        key_terms = {
-            self._canonical_term(fragment)
-            for fragment in (
-                *policy._LOGFIRE_SENSITIVE_FRAGMENTS,
-                *policy._FORZE_KEY_EXTRAS,
-            )
-        }
-        quoted_terms = {
-            self._canonical_term(fragment) for fragment in policy._LOG_QUOTED_KEY_TERM_FRAGMENTS
-        }
-
-        assert not key_terms - quoted_terms, (
-            "key-heuristic terms missing from the quoted-key (serialized-body) rule —"
-            " a logged JSON body would leak them:"
-            f" {sorted(key_terms - quoted_terms)}"
-        )
-
-    def test_key_only_exception_still_masks_its_value_form(self) -> None:
-        # The documented exception is only valid while the full-line pattern
-        # actually owns the bare authorization value form...
-        result = scrub_log_string("Authorization: Basic dXNlcjpwYXNz")
-        assert "dXNlcjpwYXNz" not in result
-        assert "Basic" not in result
-
-        # ...and the quoted-key rule owns it inside a serialized body.
-        body = scrub_log_string('{"authorization": "Basic dXNlcjpwYXNz"}')
-        assert "dXNlcjpwYXNz" not in body
-        assert "Basic" not in body
+    def test_authorization_value_forms_masked_whole(self) -> None:
+        # ``authorization`` is assignment-vocabulary-exempt (a term match would
+        # stop at the scheme word and leak the credential after it); the
+        # full-line rule owns both separators, and the quoted-key rule the body
+        # form. This is the behavioral pin that keeps that exemption honest.
+        for text in (
+            "Authorization: Basic dXNlcjpwYXNz",
+            "authorization=Basic dXNlcjpwYXNz",
+            '{"authorization": "Basic dXNlcjpwYXNz"}',
+        ):
+            result = scrub_log_string(text)
+            assert "dXNlcjpwYXNz" not in result
+            assert "Basic" not in result
 
 
 class TestSanitizeNonStrKey:
@@ -814,14 +875,23 @@ _FRAGMENT_SAMPLES: dict[str, str] = {
     # guard, so one representative sample each suffices here.
     _scrub_policy._LOG_ASSIGNMENT_FRAGMENTS[0]: "retry with api key=abc123",
     _scrub_policy._LOG_ASSIGNMENT_FRAGMENTS[1]: 'body {"api_key": "abc123"}',
-    r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}": "mail sent to alice@example.com today",
+    r"[a-zA-Z0-9._%+-]{1,64}+@(?:[a-zA-Z0-9-]{1,63}+\.){1,8}+[a-zA-Z]{2,63}": (
+        "mail sent to alice@example.com today"
+    ),
     r"Bearer\s+\S+": "header was Bearer eyJhbGci.x.y",
-    r"authorization\s*:\s*[^\r\n]+": "Authorization: Basic dXNlcjpwYXNz",
+    (
+        "authorization"
+        + _scrub_policy._TERM_AFFIX
+        + _scrub_policy._COMPOUND_SUFFIX
+        + r"\s*[=:]\s*[^\r\n]+"
+    ): "Authorization: Basic dXNlcjpwYXNz",
     r"postgresql(?:\+[a-z]+)?://\S+": "dsn postgresql+asyncpg://u:p@db:5432/app",
     r"mysql(?:\+[a-z]+)?://\S+": "dsn mysql://u:p@db:3306/app",
     r"redis(?:\+[a-z]+)?://\S+": "cache at redis://cache:6379/0",
     r"amqps?://\S+": "broker amqps://guest:guest@mq:5671/",
-    r"\w[\w+.-]*://[^\s/@:]+:[^\s@]+@": "olap clickhouse://user:pass@ch:9000/db",
+    r"\w[\w+.-]{0,31}+://[^\s/@:]{1,128}+:[^\s@]{1,1024}+@": (
+        "olap clickhouse://user:pass@ch:9000/db"
+    ),
 }
 
 
