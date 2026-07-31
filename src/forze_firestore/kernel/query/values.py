@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import math
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
+
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -17,13 +20,29 @@ def coerce_firestore_value(value: Any) -> Any:
     no decimal type, and a stringified decimal would compare lexically in range filters;
     ``double`` keeps numeric ordering at the cost of binary-float precision. Writes and
     filter values go through the same coercion so stored and compared values match.
+
+    Non-finite numerics (``NaN``/``±Infinity``, native or produced by a ``Decimal``
+    overflowing the double range) are refused: a stored non-finite double can never be
+    matched by a filter — every filter seam already refuses non-finite operands — so
+    persisting one would corrupt the system of record with an unqueryable value.
     """
 
     if isinstance(value, UUID):
         return str(value)
 
     if isinstance(value, Decimal):
-        return float(value)
+        if not value.is_finite():
+            raise exc.precondition(f"Non-finite numeric not allowed: {value!r}")
+
+        result = float(value)
+
+        if not math.isfinite(result):
+            raise exc.precondition(f"Numeric exceeds the Firestore double range: {value!r}")
+
+        return result
+
+    if isinstance(value, float) and not math.isfinite(value):
+        raise exc.precondition(f"Non-finite float not allowed: {value!r}")
 
     if isinstance(value, list):
         return [

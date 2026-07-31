@@ -398,6 +398,65 @@ async def test_postgres_write_gateway_update_many_empty_diff_skips_batch_update(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_postgres_write_gateway_update_many_diffs_keyed_by_id_not_row_order(
+    pg_client: PostgresClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each returned diff stays attached to its own document even when the server
+    returns ``UPDATE … RETURNING`` rows in a different order than the input batch
+    (Postgres never promises a ``RETURNING`` order). Simulated by reversing the
+    decoded rows, which the pairing logic must tolerate."""
+    table = f"pg_gw_dk_{uuid4().hex[:8]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE public.{table} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL
+        );
+        """
+    )
+
+    ctx = context_from_deps(Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    write = doc_write_gw(
+        ctx,
+        write_types=_write_types(),
+        write_relation=("public", table),
+        bookkeeping_strategy="application",
+        tenant_aware=False,
+    )
+
+    docs = [await write.create(PgGwCreate(name=f"doc-{i}")) for i in range(3)]
+
+    original_decode = type(write)._decode_rows
+
+    def reversed_decode(self: object, rows: object, **kwargs: object) -> object:
+        return list(reversed(original_decode(self, rows, **kwargs)))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(type(write), "_decode_rows", reversed_decode)
+
+    res, diffs = await write.update_many(
+        [d.id for d in docs],
+        [PgGwUpdate(name=f"renamed-{i}") for i in range(3)],
+        batch_size=10,
+    )
+
+    assert [d.id for d in res] == [d.id for d in docs]
+    for i, (doc, diff) in enumerate(zip(res, diffs, strict=True)):
+        assert doc.name == f"renamed-{i}"
+        assert diff["name"] == f"renamed-{i}"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_postgres_write_gateway_touch_many(
     pg_client: PostgresClient,
 ) -> None:

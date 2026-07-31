@@ -17,6 +17,7 @@ from forze.application.contracts.interception import PortCall
 from forze.base.exceptions import CoreException
 from forze_dst import SimulationConfig
 from forze_dst.faults import (
+    CrashPolicy,
     FaultPolicy,
     FaultRule,
     SimulatedCrash,
@@ -244,6 +245,271 @@ class TestAccounting:
 
 
 # ....................... #
+# Config-scoped accounting: WITNESSED is a claim about the *citing* sweep, so a witness mined
+# under a perturbation the sweep's config does not enable must not license its clean verdict.
+
+
+def _mined_witness(
+    name: str, *, config: SimulationConfig, fingerprint: str = "fp", seed: int = 1
+) -> InvariantWitness:
+    """A miner-shaped witness: the entry embeds the find config (what makes replay exact)."""
+
+    from forze_dst.artifacts.corpus import RegressionEntry
+    from forze_dst.artifacts.serialize import config_to_dict
+
+    return InvariantWitness(
+        invariant=name,
+        entry=RegressionEntry(
+            seed=seed,
+            registry_fingerprint=fingerprint,
+            explore={"config": config_to_dict(config)},
+        ),
+    )
+
+
+class TestSweepScopedAccounting:
+    def test_crash_mined_witness_is_unexercisable_without_a_crash_policy(self) -> None:
+        crash_config = SimulationConfig(crash=CrashPolicy(probability=0.25))
+
+        accounting = account_invariants(
+            ["a"],
+            witnesses=[_mined_witness("a", config=crash_config)],
+            declarations=[],
+            fingerprint="fp",
+            config=SimulationConfig(seeds=range(1000)),  # the issue's exact citing config
+        )
+
+        assert dict(accounting.statuses) == {"a": InvariantStatus.UNEXERCISABLE}
+        assert accounting.witnessed == ()  # the detection bound must not cover it
+        assert accounting.unexercisable == ("a",)
+        assert accounting.missing_capabilities == (("a", ("crash",)),)
+
+        with pytest.raises(InvariantAccountingError, match=r"unexercisable.*needs crash"):
+            accounting.require_accounted()
+
+    def test_the_same_witness_is_witnessed_once_the_config_enables_crash(self) -> None:
+        crash_config = SimulationConfig(crash=CrashPolicy(probability=0.25))
+
+        accounting = account_invariants(
+            ["a"],
+            witnesses=[_mined_witness("a", config=crash_config)],
+            declarations=[],
+            fingerprint="fp",
+            config=SimulationConfig(seeds=range(4), crash=CrashPolicy(probability=0.05)),
+        )
+
+        assert accounting.witnessed == ("a",)
+        assert accounting.problems == ()
+        accounting.require_accounted()  # does not raise
+
+    def test_fault_kinds_match_individually(self) -> None:
+        timeout_config = SimulationConfig(faults=FaultPolicy(rules=(FaultRule(timeout=0.1),)))
+        witness = _mined_witness("a", config=timeout_config)
+
+        error_only = SimulationConfig(faults=FaultPolicy(rules=(FaultRule(error=0.1),)))
+        scoped = account_invariants(
+            ["a"], witnesses=[witness], declarations=[], fingerprint="fp", config=error_only
+        )
+        assert scoped.unexercisable == ("a",)
+        assert scoped.missing_capabilities == (("a", ("fault:timeout",)),)
+
+        timeout_too = SimulationConfig(faults=FaultPolicy(rules=(FaultRule(timeout=0.05),)))
+        assert (
+            account_invariants(
+                ["a"], witnesses=[witness], declarations=[], fingerprint="fp", config=timeout_too
+            ).witnessed
+            == ("a",)
+        )
+
+    def test_any_exercisable_witness_licenses_the_invariant(self) -> None:
+        crash_mined = _mined_witness("a", config=SimulationConfig(crash=CrashPolicy()))
+        schedule_mined = _mined_witness("a", config=SimulationConfig(), seed=2)
+
+        accounting = account_invariants(
+            ["a"],
+            witnesses=[crash_mined, schedule_mined],
+            declarations=[],
+            fingerprint="fp",
+            config=SimulationConfig(),  # default perturbing scheduler, no crash
+        )
+
+        assert accounting.witnessed == ("a",)
+        assert accounting.problems == ()
+
+    def test_registry_only_accounting_stays_unscoped(self) -> None:
+        crash_config = SimulationConfig(crash=CrashPolicy(probability=0.25))
+
+        accounting = account_invariants(
+            ["a"],
+            witnesses=[_mined_witness("a", config=crash_config)],
+            declarations=[],
+            fingerprint="fp",
+        )
+
+        assert accounting.witnessed == ("a",)
+        assert accounting.missing_capabilities == ()
+
+    def test_bare_crash_knobs_still_carry_the_requirement(self) -> None:
+        # Corpus-style killing entry: bare knobs, no config snapshot.
+        from forze_dst.artifacts.corpus import RegressionEntry
+
+        witness = InvariantWitness(
+            invariant="a",
+            entry=RegressionEntry(
+                seed=0,
+                registry_fingerprint="fp",
+                explore={"crash_surface": "document_command", "crash_probability": 0.25},
+            ),
+        )
+
+        scoped = account_invariants(
+            ["a"],
+            witnesses=[witness],
+            declarations=[],
+            fingerprint="fp",
+            config=SimulationConfig(),
+        )
+        assert scoped.unexercisable == ("a",)
+
+        # The bare knob's surface is preserved: a crash policy on a different surface still
+        # cannot exercise it; a broad one can.
+        wrong_surface = SimulationConfig(crash=CrashPolicy(surface="mailbox"))
+        assert (
+            account_invariants(
+                ["a"], witnesses=[witness], declarations=[], fingerprint="fp", config=wrong_surface
+            ).unexercisable
+            == ("a",)
+        )
+        broad = SimulationConfig(crash=CrashPolicy())
+        assert (
+            account_invariants(
+                ["a"], witnesses=[witness], declarations=[], fingerprint="fp", config=broad
+            ).witnessed
+            == ("a",)
+        )
+
+    def test_config_capabilities_enumeration(self) -> None:
+        from forze_dst.config import ClusterConfig
+        from forze_dst.oracle.witness import PerturbationCapability, config_capabilities
+        from forze_dst.scheduler import FIFOScheduler
+
+        schedule = PerturbationCapability(kind="schedule")
+        assert config_capabilities(SimulationConfig()) == {schedule}
+        assert config_capabilities(SimulationConfig(scheduler=FIFOScheduler())) == frozenset()
+        assert config_capabilities(SimulationConfig(crash=CrashPolicy(surface="mailbox"))) == {
+            schedule,
+            PerturbationCapability(kind="crash", surface="mailbox"),
+        }
+        assert config_capabilities(
+            SimulationConfig(
+                scheduler=FIFOScheduler(),
+                faults=FaultPolicy(rules=(FaultRule(error=0.1, crash=0.01, op="update"),)),
+            )
+        ) == {
+            PerturbationCapability(kind="crash", op="update"),
+            PerturbationCapability(kind="fault:error", op="update"),
+        }
+        assert config_capabilities(
+            SimulationConfig(scheduler=FIFOScheduler(), cluster=ClusterConfig(nodes=2))
+        ) == {PerturbationCapability(kind="cluster")}
+
+    def test_bare_knobs_without_crash_keys_require_nothing(self) -> None:
+        # Hand-authored knobs the extractor does not recognize must never fail the gate.
+        from forze_dst.artifacts.corpus import RegressionEntry
+
+        witness = InvariantWitness(
+            invariant="a",
+            entry=RegressionEntry(
+                seed=0,
+                registry_fingerprint="fp",
+                explore={"strategy": "scenario", "act_count": 4, "concurrency": 3},
+            ),
+        )
+
+        scoped = account_invariants(
+            ["a"],
+            witnesses=[witness],
+            declarations=[],
+            fingerprint="fp",
+            config=SimulationConfig(),
+        )
+        assert scoped.witnessed == ("a",)
+        assert scoped.problems == ()
+
+    def test_crash_selector_mismatch_is_unexercisable(self) -> None:
+        # Both configs "have crash", but on disjoint surfaces — the sweep's crash policy can
+        # never select the calls the witness's did, so kind-level matching would over-claim.
+        witness = _mined_witness(
+            "a",
+            config=SimulationConfig(
+                crash=CrashPolicy(probability=0.25, surface="document_command")
+            ),
+        )
+
+        scoped = account_invariants(
+            ["a"],
+            witnesses=[witness],
+            declarations=[],
+            fingerprint="fp",
+            config=SimulationConfig(crash=CrashPolicy(probability=0.25, surface="mailbox")),
+        )
+
+        assert scoped.unexercisable == ("a",)
+        assert scoped.missing_capabilities == (("a", ("crash[surface=document_command]",)),)
+
+    def test_broad_and_pinned_selectors_overlap_both_ways(self) -> None:
+        pinned = _mined_witness(
+            "a", config=SimulationConfig(crash=CrashPolicy(surface="document_command"))
+        )
+        broad = _mined_witness("a", config=SimulationConfig(crash=CrashPolicy()))
+
+        # A sweep-wide crash policy covers a surface-pinned witness…
+        assert (
+            account_invariants(
+                ["a"],
+                witnesses=[pinned],
+                declarations=[],
+                fingerprint="fp",
+                config=SimulationConfig(crash=CrashPolicy()),
+            ).witnessed
+            == ("a",)
+        )
+
+        # …and a pinned sweep overlaps a global witness (both can crash at that surface).
+        assert (
+            account_invariants(
+                ["a"],
+                witnesses=[broad],
+                declarations=[],
+                fingerprint="fp",
+                config=SimulationConfig(crash=CrashPolicy(surface="mailbox")),
+            ).witnessed
+            == ("a",)
+        )
+
+    def test_fault_rule_selector_mismatch_is_unexercisable(self) -> None:
+        witness = _mined_witness(
+            "a",
+            config=SimulationConfig(faults=FaultPolicy(rules=(FaultRule(error=0.1, op="update"),))),
+        )
+
+        wrong_op = SimulationConfig(faults=FaultPolicy(rules=(FaultRule(error=0.1, op="get"),)))
+        scoped = account_invariants(
+            ["a"], witnesses=[witness], declarations=[], fingerprint="fp", config=wrong_op
+        )
+        assert scoped.unexercisable == ("a",)
+        assert scoped.missing_capabilities == (("a", ("fault:error[op=update]",)),)
+
+        same_op = SimulationConfig(faults=FaultPolicy(rules=(FaultRule(error=0.05, op="update"),)))
+        assert (
+            account_invariants(
+                ["a"], witnesses=[witness], declarations=[], fingerprint="fp", config=same_op
+            ).witnessed
+            == ("a",)
+        )
+
+
+# ....................... #
 
 
 class TestWitnessRegistryIO:
@@ -344,6 +610,11 @@ class TestCountableVerdict:
         verdict = format_clean_verdict(10, witnessed=1, unaccounted=("mystery",))
         assert "1 UNACCOUNTED: mystery" in verdict
 
+    def test_unexercisable_never_hides(self) -> None:
+        verdict = format_clean_verdict(10, witnessed=1, unexercisable=("lost_effect",))
+        assert "the 1 witnessed invariant" in verdict  # the bound's K excludes it
+        assert "1 witnessed but UNEXERCISABLE under this config: lost_effect" in verdict
+
 
 # ....................... #
 
@@ -376,8 +647,31 @@ class TestConfidenceIntegration:
 
         rendered = report.format()
         assert "invariants:   1 witnessed / 1 declared out-of-horizon / 0 unaccounted" in rendered
+        assert "unexercisable" not in rendered  # the clause only appears when non-empty
         assert "the 1 witnessed invariant" in report.verdict()
         assert "1 declared out-of-horizon: b" in report.verdict()
+
+    def test_unexercisable_accounting_threads_into_format_and_verdict(self) -> None:
+        accounting = account_invariants(
+            ["a"],
+            witnesses=[
+                _mined_witness("a", config=SimulationConfig(crash=CrashPolicy(probability=0.25)))
+            ],
+            declarations=[],
+            fingerprint="fp",
+            config=SimulationConfig(),  # no crash → the witness is unexercisable here
+        )
+
+        probe = ConfidenceProbe()
+        probe.observe(_history(("payments", 0.0, {"total": 1})))
+        report = probe.report(accounting=accounting)
+
+        rendered = report.format()
+        assert (
+            "invariants:   0 witnessed / 0 declared out-of-horizon / 0 unaccounted / "
+            "1 unexercisable under this config" in rendered
+        )
+        assert "1 witnessed but UNEXERCISABLE under this config: a" in report.verdict()
 
 
 # ....................... #
@@ -438,6 +732,31 @@ class TestFullWitnessLoop:
 
         with pytest.raises(InvariantAccountingError, match="re-mine"):
             sim.audit(SimulationConfig(seeds=range(4)))
+
+    def test_audit_gates_on_a_witness_this_config_could_not_exercise(self) -> None:
+        # The issue scenario: the witness was mined under a crash policy, the citing audit runs
+        # no crash — its clean sweep structurally could not catch the invariant, so the gate
+        # fails instead of printing a detection bound scoped to it.
+        case, _ = _t1()
+        sim = case.simulation
+        sim.witnesses = (
+            _mined_witness(
+                "expect",
+                config=SimulationConfig(crash=CrashPolicy(probability=0.25)),
+                fingerprint=sim.fingerprint(),
+            ),
+        )
+
+        with pytest.raises(InvariantAccountingError, match="unexercisable"):
+            sim.audit(SimulationConfig(seeds=range(1000)))
+
+        # A crash-capable citing config passes the same gate (checked without the sweep).
+        accounting = sim.invariant_accounting(
+            SimulationConfig(seeds=range(4), crash=CrashPolicy(probability=0.05))
+        )
+        assert accounting is not None
+        accounting.require_accounted()
+        assert accounting.witnessed == ("expect",)
 
     def test_run_warns_but_does_not_fail(self) -> None:
         case, mutant = _t1()

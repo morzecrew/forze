@@ -39,7 +39,7 @@ def run_coverage(
     # Accounting is static (names + registries + fingerprint), so resolve it before any seed
     # runs: a malformed registry (duplicate invariant names) fails fast instead of after the
     # whole sweep, and the report gets the same value it would have gotten later.
-    accounting = sim.invariant_accounting()
+    accounting = sim.invariant_accounting(config)
 
     # Honor the requested interleaving scheduler (PCT when selected), like run().
     factory = config.scheduler.factory()

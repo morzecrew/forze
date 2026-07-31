@@ -175,6 +175,7 @@ class ConfidenceReport:
             self.seeds_run if runs is None else runs,
             witnessed=len(accounting.witnessed),
             declared=accounting.declared,
+            unexercisable=accounting.unexercisable,
             unaccounted=accounting.unaccounted,
         )
 
@@ -195,11 +196,14 @@ class ConfidenceReport:
             )
 
         if self.accounting is not None:
-            lines.append(
+            line = (
                 f"  invariants:   {len(self.accounting.witnessed)} witnessed / "
                 f"{len(self.accounting.declared)} declared out-of-horizon / "
                 f"{len(self.accounting.unaccounted)} unaccounted"
             )
+            if self.accounting.unexercisable:
+                line += f" / {len(self.accounting.unexercisable)} unexercisable under this config"
+            lines.append(line)
 
         if self.warnings:
             lines.append("  ⚠ confidence gaps:")

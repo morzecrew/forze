@@ -64,6 +64,12 @@ lifecycle = LifecyclePlan.from_steps(
   one write per second per document — a hot counter contends and retries. Allocate
   blocks with `incr_batch` to amortize the ceiling, or route high-rate counters to
   a Redis-backed adapter.
+- **`Decimal` fields are stored as doubles** — Firestore has no decimal type, so a
+  `Decimal` is written as a `double` (numeric ordering in range filters, at the cost
+  of binary-float precision). A non-finite value (`NaN`/`±Infinity`) or a `Decimal`
+  outside the double range is refused with `precondition` instead of being written —
+  a stored non-finite double could never be matched by a filter. Keep exact-precision
+  decimals on Postgres or Mongo.
 - No graph support — Firestore is documents only.
 - No aggregations in the MVP adapter — an `aggregate_*` query (grouped or aggregate
   rows) is rejected up front with a clean `precondition` naming the backend, not a

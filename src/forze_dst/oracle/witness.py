@@ -8,11 +8,17 @@ horizon — enforced below the port, effecting outside the process, wall-clock-b
 runs — are excluded by an audited :class:`HorizonDeclaration` naming what covers them instead.
 Everything else is **unaccounted**, and the accounting says so out loud.
 
-Per-invariant status is therefore three-valued (:class:`InvariantStatus`), the verdict line's
-oracle-set clause becomes *countable* ("… for the K witnessed invariants, M declared
-out-of-horizon"), and declarations are audited in reverse: :func:`mine_witnesses` probes declared
-invariants too, and one it *can* witness is a wrong declaration — self-report is verified, never
-trusted.
+Per-invariant status (:class:`InvariantStatus`) makes the verdict line's oracle-set clause
+*countable* ("… for the K witnessed invariants, M declared out-of-horizon"), and declarations are
+audited in reverse: :func:`mine_witnesses` probes declared invariants too, and one it *can*
+witness is a wrong declaration — self-report is verified, never trusted.
+
+A witness is also scoped to the sweep that cites it: WITNESSED is a claim about *this* run, so
+config-scoped accounting (:func:`account_invariants` with ``config=``) checks that the citing
+sweep's config enables the perturbation capabilities the witness was mined under
+(:func:`config_capabilities`). A witness mined under a crash policy does not license a crash-less
+sweep's clean verdict — that invariant is UNEXERCISABLE there, counted out of the detection
+bound, and the audit gate fails on it.
 """
 
 from __future__ import annotations
@@ -48,11 +54,18 @@ class InvariantStatus(Enum):
 
     WITNESSED = "witnessed"
     """The registry holds a live witness: a replayable perturbed run where the invariant fired,
-    minted against the current operation-catalog fingerprint."""
+    minted against the current operation-catalog fingerprint — and, when the accounting is
+    scoped to a sweep config, one this sweep's config could actually have triggered."""
 
     DECLARED = "declared"
     """An audited :class:`HorizonDeclaration` places it outside the simulation's horizon and
     names what covers it instead. Verified in reverse by the miner — never taken on trust."""
+
+    UNEXERCISABLE = "unexercisable"
+    """A live witness exists, but every one was mined under perturbation capabilities (a crash
+    policy, fault injection, an adverse scheduler) the citing sweep's config does not enable —
+    this sweep structurally could not have caught the invariant failing, so its clean result
+    does not cover it. Only produced by config-scoped accounting."""
 
     UNACCOUNTED = "unaccounted"
     """Neither. A clean sweep says nothing about this invariant, and the gate fails on it."""
@@ -210,6 +223,11 @@ class InvariantAccounting:
     """Invariants both declared out-of-horizon **and** live-witnessed — the reverse audit's
     verdict that the declaration is wrong (the harness demonstrably can catch it)."""
 
+    missing_capabilities: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    """``(invariant, capabilities)`` per UNEXERCISABLE invariant: the smallest capability set
+    any of its live witnesses still needs from the citing sweep's config. Empty unless the
+    accounting was scoped to a config."""
+
     # ....................... #
 
     @property
@@ -219,6 +237,12 @@ class InvariantAccounting:
     @property
     def declared(self) -> tuple[str, ...]:
         return tuple(name for name, status in self.statuses if status is InvariantStatus.DECLARED)
+
+    @property
+    def unexercisable(self) -> tuple[str, ...]:
+        return tuple(
+            name for name, status in self.statuses if status is InvariantStatus.UNEXERCISABLE
+        )
 
     @property
     def unaccounted(self) -> tuple[str, ...]:
@@ -239,6 +263,19 @@ class InvariantAccounting:
                 f"unaccounted invariant(s): {', '.join(self.unaccounted)} — no witness "
                 "demonstrates the harness could catch them failing, and no horizon declaration "
                 "excludes them (mine a witness or declare, with a covering check)"
+            )
+
+        if self.missing_capabilities:
+            details = "; ".join(
+                f"{name} (needs {', '.join(capabilities)})"
+                for name, capabilities in self.missing_capabilities
+            )
+            out.append(
+                f"unexercisable witness(es): {details} — a live witness exists, but this "
+                "sweep's config does not enable the perturbation(s) it was mined under, so "
+                "this sweep could not have caught the invariant failing; enable the "
+                "capability in the config (e.g. a crash/fault policy) or declare the "
+                "invariant out-of-horizon"
             )
 
         if self.drifted:
@@ -269,12 +306,159 @@ class InvariantAccounting:
 # ....................... #
 
 
+@final
+@attrs.frozen(kw_only=True)
+class PerturbationCapability:
+    """One perturbation a config can produce: its kind, and the port selectors it is bound to.
+
+    *kind* is ``"schedule"``, ``"crash"``, ``"fault:<kind>"``, or ``"cluster"``; *surface* /
+    *route* / *op* carry a crash policy's / fault rule's selectors verbatim (``None`` =
+    matches any, the :class:`~forze.application.contracts.interception.PortSelector`
+    convention). Selectors matter: a crash policy scoped to one surface cannot reproduce a
+    witness whose crash was placed on a different one, even though both are "crash".
+    """
+
+    kind: str
+    surface: str | None = None
+    route: str | None = None
+    op: str | None = None
+
+    # ....................... #
+
+    def satisfies(self, requirement: PerturbationCapability) -> bool:
+        """Whether this (sweep-side) capability can produce the *requirement*'s perturbations.
+
+        Kinds must match exactly; each selector dimension is wildcard-aware — compatible
+        unless both sides pin a different value (disjoint match sets: the sweep's rule and
+        the witness's rule can never select the same call, a structural exclusion)."""
+
+        if self.kind != requirement.kind:
+            return False
+
+        return all(
+            mine is None or theirs is None or mine == theirs
+            for mine, theirs in (
+                (self.surface, requirement.surface),
+                (self.route, requirement.route),
+                (self.op, requirement.op),
+            )
+        )
+
+    # ....................... #
+
+    def render(self) -> str:
+        """``kind`` plus any pinned selectors — the form the gate's message names."""
+
+        pinned = [
+            f"{dimension}={value}"
+            for dimension, value in (
+                ("surface", self.surface),
+                ("route", self.route),
+                ("op", self.op),
+            )
+            if value is not None
+        ]
+        return self.kind + (f"[{', '.join(pinned)}]" if pinned else "")
+
+
+# ....................... #
+
+
+def config_capabilities(config: SimulationConfig) -> frozenset[PerturbationCapability]:
+    """The perturbation capabilities *config* enables — what a sweep under it could trigger.
+
+    ``"schedule"`` (a perturbing scheduler, or DPOR's own reorderer), ``"crash"`` (a crash
+    policy or a fault rule with a crash rate), ``"fault:<kind>"`` per non-zero
+    :class:`~forze_dst.faults.FaultRule` rate, and ``"cluster"`` (a multi-node topology) —
+    each carrying its policy's/rule's port selectors. Config-scoped accounting matches a
+    witness's find-environment capabilities against these
+    (:meth:`PerturbationCapability.satisfies`): a requirement no sweep-side capability can
+    produce means the sweep structurally could not reproduce the witness's perturbation class.
+    """
+
+    from forze_dst.config import Strategy
+
+    capabilities: set[PerturbationCapability] = set()
+
+    if config.perturb or config.strategy is Strategy.DPOR:
+        capabilities.add(PerturbationCapability(kind="schedule"))
+
+    if config.crash is not None and config.crash.probability > 0:
+        capabilities.add(
+            PerturbationCapability(
+                kind="crash",
+                surface=config.crash.surface,
+                route=config.crash.route,
+                op=config.crash.op,
+            )
+        )
+
+    if config.faults is not None:
+        for rule in config.faults.rules:
+            kinds = ["crash"] if rule.crash > 0 else []
+            kinds.extend(
+                f"fault:{kind}"
+                for kind in ("error", "timeout", "drop", "duplicate", "delay")
+                if getattr(rule, kind) > 0
+            )
+            capabilities.update(
+                PerturbationCapability(
+                    kind=kind, surface=rule.surface, route=rule.route, op=rule.op
+                )
+                for kind in kinds
+            )
+
+    if config.cluster is not None:
+        capabilities.add(PerturbationCapability(kind="cluster"))
+
+    return frozenset(capabilities)
+
+
+# ....................... #
+
+
+def _witness_requirements(witness: InvariantWitness) -> frozenset[PerturbationCapability]:
+    """The capabilities *witness*'s find environment enabled — what a citing sweep must enable.
+
+    Exact when the entry embeds the miner's full config snapshot (``explore["config"]``);
+    best-effort over the known bare knobs otherwise (a corpus killing entry records e.g.
+    ``crash_probability`` / ``crash_surface``). An entry recording nothing recognizable
+    requires nothing — the status quo for hand-authored knobs, never a false gate failure.
+    """
+
+    explore = witness.entry.explore or {}
+    snapshot = explore.get("config")
+
+    if snapshot is not None:
+        from forze_dst.artifacts.serialize import config_from_dict
+
+        return config_capabilities(config_from_dict(dict(snapshot)))
+
+    requirements: set[PerturbationCapability] = set()
+
+    if float(explore.get("crash_probability") or 0.0) > 0 or "crash_surface" in explore:
+        requirements.add(
+            PerturbationCapability(
+                kind="crash",
+                surface=explore.get("crash_surface"),
+                route=explore.get("crash_route"),
+                op=explore.get("crash_op"),
+            )
+        )
+
+    return frozenset(requirements)
+
+
+# ....................... #
+
+
 def account_invariants(
     names: Sequence[str],
     *,
     witnesses: Sequence[InvariantWitness],
     declarations: Sequence[HorizonDeclaration],
     fingerprint: str,
+    config: SimulationConfig | None = None,
 ) -> InvariantAccounting:
     """Compute per-invariant statuses for the declared invariant *names*.
 
@@ -282,25 +466,57 @@ def account_invariants(
     stale one lands the invariant in :attr:`InvariantAccounting.drifted` (and, unless declared,
     UNACCOUNTED). An invariant both live-witnessed and declared is a conflict — the declaration
     said "cannot be witnessed" and the registry proves otherwise.
+
+    With *config* (the citing sweep's config) the accounting is **sweep-scoped**: a live witness
+    licenses WITNESSED only if the config enables every capability its find environment used
+    (:func:`config_capabilities`). Otherwise the invariant is UNEXERCISABLE — this sweep
+    structurally could not have caught it failing, and a clean verdict must not count it.
+    Without *config* the accounting stays static (registry + fingerprint only).
     """
 
-    live: set[str] = set()
+    live: dict[str, list[InvariantWitness]] = {}
     stale: set[str] = set()
 
     for witness in witnesses:
         if witness.entry.registry_fingerprint == fingerprint:
-            live.add(witness.invariant)
+            live.setdefault(witness.invariant, []).append(witness)
         else:
             stale.add(witness.invariant)
+
+    if config is None:
+        exercisable = set(live)
+        missing: dict[str, tuple[str, ...]] = {}
+    else:
+        capabilities = config_capabilities(config)
+        exercisable = set[str]()
+        missing = {}
+        for name, name_witnesses in live.items():
+            shortfalls: list[tuple[str, ...]] = [
+                tuple(
+                    sorted(
+                        requirement.render()
+                        for requirement in _witness_requirements(w)
+                        if not any(c.satisfies(requirement) for c in capabilities)
+                    )
+                )
+                for w in name_witnesses
+            ]
+            if any(not shortfall for shortfall in shortfalls):
+                exercisable.add(name)
+            else:
+                # The smallest shortfall (ties broken lexically) — the least the config lacks.
+                missing[name] = min((len(s), s) for s in shortfalls)[1]
 
     declared = {declaration.invariant for declaration in declarations}
 
     statuses: list[tuple[str, InvariantStatus]] = []
     for name in names:
-        if name in live:
+        if name in exercisable:
             statuses.append((name, InvariantStatus.WITNESSED))
         elif name in declared:
             statuses.append((name, InvariantStatus.DECLARED))
+        elif name in live:
+            statuses.append((name, InvariantStatus.UNEXERCISABLE))
         else:
             statuses.append((name, InvariantStatus.UNACCOUNTED))
 
@@ -308,8 +524,14 @@ def account_invariants(
         statuses=tuple(statuses),
         declarations=tuple(declarations),
         # Only a *lost* capability drifts: a stale witness with no live replacement.
-        drifted=tuple(sorted((stale - live) & set(names))),
-        conflicts=tuple(sorted(live & declared & set(names))),
+        drifted=tuple(sorted((stale - set(live)) & set(names))),
+        # A live witness disproves a declaration regardless of what *this* sweep can trigger.
+        conflicts=tuple(sorted(set(live) & declared & set(names))),
+        missing_capabilities=tuple(
+            (name, missing[name])
+            for name, status in statuses
+            if status is InvariantStatus.UNEXERCISABLE and name in missing
+        ),
     )
 
 

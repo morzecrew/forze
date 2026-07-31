@@ -51,6 +51,10 @@ class CleanSweep:
     declared: tuple[str, ...] = ()
     """Invariants declared out-of-horizon (named in the verdict's countable clause)."""
 
+    unexercisable: tuple[str, ...] = ()
+    """Invariants whose only live witnesses need perturbations this sweep's config did not
+    enable — the sweep could not have caught them, so the bound must not cover them."""
+
     unaccounted: tuple[str, ...] = ()
     """Invariants neither witnessed nor declared — surfaced, never silently absorbed."""
 
