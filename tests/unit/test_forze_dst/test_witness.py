@@ -389,6 +389,7 @@ class TestSweepScopedAccounting:
         )
 
     def test_config_capabilities_enumeration(self) -> None:
+        from forze_dst.config import ClusterConfig
         from forze_dst.oracle.witness import PerturbationCapability, config_capabilities
         from forze_dst.scheduler import FIFOScheduler
 
@@ -408,6 +409,32 @@ class TestSweepScopedAccounting:
             PerturbationCapability(kind="crash", op="update"),
             PerturbationCapability(kind="fault:error", op="update"),
         }
+        assert config_capabilities(
+            SimulationConfig(scheduler=FIFOScheduler(), cluster=ClusterConfig(nodes=2))
+        ) == {PerturbationCapability(kind="cluster")}
+
+    def test_bare_knobs_without_crash_keys_require_nothing(self) -> None:
+        # Hand-authored knobs the extractor does not recognize must never fail the gate.
+        from forze_dst.artifacts.corpus import RegressionEntry
+
+        witness = InvariantWitness(
+            invariant="a",
+            entry=RegressionEntry(
+                seed=0,
+                registry_fingerprint="fp",
+                explore={"strategy": "scenario", "act_count": 4, "concurrency": 3},
+            ),
+        )
+
+        scoped = account_invariants(
+            ["a"],
+            witnesses=[witness],
+            declarations=[],
+            fingerprint="fp",
+            config=SimulationConfig(),
+        )
+        assert scoped.witnessed == ("a",)
+        assert scoped.problems == ()
 
     def test_crash_selector_mismatch_is_unexercisable(self) -> None:
         # Both configs "have crash", but on disjoint surfaces — the sweep's crash policy can
@@ -620,8 +647,31 @@ class TestConfidenceIntegration:
 
         rendered = report.format()
         assert "invariants:   1 witnessed / 1 declared out-of-horizon / 0 unaccounted" in rendered
+        assert "unexercisable" not in rendered  # the clause only appears when non-empty
         assert "the 1 witnessed invariant" in report.verdict()
         assert "1 declared out-of-horizon: b" in report.verdict()
+
+    def test_unexercisable_accounting_threads_into_format_and_verdict(self) -> None:
+        accounting = account_invariants(
+            ["a"],
+            witnesses=[
+                _mined_witness("a", config=SimulationConfig(crash=CrashPolicy(probability=0.25)))
+            ],
+            declarations=[],
+            fingerprint="fp",
+            config=SimulationConfig(),  # no crash → the witness is unexercisable here
+        )
+
+        probe = ConfidenceProbe()
+        probe.observe(_history(("payments", 0.0, {"total": 1})))
+        report = probe.report(accounting=accounting)
+
+        rendered = report.format()
+        assert (
+            "invariants:   0 witnessed / 0 declared out-of-horizon / 0 unaccounted / "
+            "1 unexercisable under this config" in rendered
+        )
+        assert "1 witnessed but UNEXERCISABLE under this config: a" in report.verdict()
 
 
 # ....................... #
