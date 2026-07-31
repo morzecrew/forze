@@ -185,7 +185,12 @@ class TestCookieCsrfPolicy:
             assert refusal is not None and "malformed" in refusal
 
     def test_malformed_allowlist_entry_fails_at_construction(self) -> None:
-        for bad in ("app.example.com", "https://spa.example.com:abc", "null"):
+        for bad in (
+            "app.example.com",  # no scheme, parses as a path — no hostname
+            "//spa.example.com",  # authority without a scheme
+            "https://spa.example.com:abc",  # malformed port
+            "null",
+        ):
             with pytest.raises(CoreException, match="allowed_origins"):
                 CookieCsrf(allowed_origins={bad})
 
