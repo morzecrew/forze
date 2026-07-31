@@ -231,6 +231,62 @@ async def test_dead_letter_forwards_sealed_envelope_round_trip() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dead_letter_copy_dedups_exactly_once_without_event_id_header() -> None:
+    """Copy-then-delete exactly-once independent of ``forze_event_id``: a raw
+    (non-relay) message carries no event-id header, so the DLQ copy's dedup id is
+    minted deterministically from the source coordinates. A crash between the copy
+    and the offset commit re-produces the copy on redelivery — both copies carry
+    the *same* minted id, and a consumer over the DLQ processes exactly one."""
+
+    ctx, producer, admin, _query, state = _harness()
+    await admin.ensure_group("g", [_TOPIC], start=OffsetReset.EARLIEST)
+    await _seed(producer, 1)  # raw append: no forze_event_id header
+
+    [source] = state.streams[_TOPIC][_TOPIC]
+    assert HEADER_EVENT_ID not in source.headers  # the scenario's precondition
+
+    async def poison(_msg: StreamMessage[_Payload]) -> None:
+        raise ValueError("boom")
+
+    first = await _consumer(poison, dlq_stream="orders.dlq").run(ctx, timeout=_IDLE)
+    assert first.dead_lettered == 1
+
+    # A crash between the DLQ append and the offset commit means the source message
+    # is redelivered: the handler fails again and the copy is produced again.
+    await admin.reset_offsets("g", _TOPIC, to=OffsetReset.EARLIEST)
+    second = await _consumer(poison, dlq_stream="orders.dlq").run(ctx, timeout=_IDLE)
+    assert second.dead_lettered == 1
+
+    copies = state.streams[_TOPIC]["orders.dlq"]
+    assert len(copies) == 2
+    minted = {copy.headers[HEADER_EVENT_ID] for copy in copies}
+    assert len(minted) == 1  # deterministic: both copies carry the same dedup id
+
+    # The end-to-end proof: a consumer over the DLQ dedups the re-produced copy.
+    await admin.ensure_group("dlq-g", ["orders.dlq"], start=OffsetReset.EARLIEST)
+
+    calls = 0
+
+    async def dlq_handler(_msg: StreamMessage[_Payload]) -> None:
+        nonlocal calls
+        calls += 1
+
+    dlq_result = await CommitStreamGroupConsumer(
+        topics=["orders.dlq"],
+        group="dlq-g",
+        consumer="c",
+        stream_spec=_STREAM_SPEC,
+        handler=dlq_handler,
+        inbox_spec=InboxSpec(name="dlq-events"),
+        tx_route="default",
+    ).run(ctx, timeout=_IDLE)
+
+    assert dlq_result.processed == 1
+    assert dlq_result.duplicates == 1
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_poison_without_dlq_pauses_and_alerts() -> None:
     ctx, producer, admin, query, _state = _harness()
     await admin.ensure_group("g", [_TOPIC], start=OffsetReset.EARLIEST)

@@ -26,7 +26,7 @@ from forze.application.execution.context import ExecutionContext
 from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
 from forze.application.integrations.outbox import decrypt_consumed_payload
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, uuid4
 
 from .._logger import logger
 from ..inbox import process_with_inbox
@@ -217,7 +217,11 @@ class CommitStreamGroupConsumer[M]:
     exhausts ``max_attempts`` is produced here as received (via ``stream_spec``'s
     command port; a sealed envelope stays sealed with its original headers) and the
     offset is committed past it; when ``None``, it **pauses and alerts** instead.
-    Decrypt/decode poison always pauses (nothing to re-produce)."""
+    Decrypt/decode poison always pauses (nothing to re-produce). The copy always
+    carries a dedup id: a missing ``forze_event_id`` header is minted
+    deterministically from the source coordinates, so a crash between the copy and
+    the offset commit re-produces a copy that dedups downstream — exactly-once for
+    any producer, not only relay traffic (see :meth:`_dead_letter`)."""
 
     batch_limit: int | None = None
     """Max messages per ``read`` (``None`` = the whole uncommitted tail)."""
@@ -581,10 +585,37 @@ class CommitStreamGroupConsumer[M]:
         headers unchanged keeps an end-to-end-sealed envelope decryptable (the AAD
         the headers carry still matches the ciphertext) and preserves the original
         event id for correlation and dedup on the dead-letter stream.
+
+        **Copy-then-delete exactly-once, for any producer.** The dead-letter append
+        and the offset commit are two steps, so a crash between them re-produces the
+        copy on redelivery. Relay traffic carries ``forze_event_id`` — both copies
+        dedup to the same id downstream. A message *without* the header would fall
+        back to each copy's own partition-offset — different per copy, so both would
+        process. So the header is minted **deterministically from the source
+        coordinates** (group + source stream + source id) when absent: every copy of
+        one dead-lettering carries the same dedup id. Only ever added when missing —
+        a sealed envelope always carries the header its AAD is bound to, so sealed
+        headers stay byte-identical.
         """
 
         if dlq_producer is None or self.dlq_stream is None:
             return False
+
+        headers = dict(message.headers)
+
+        if not headers.get(HEADER_EVENT_ID):
+            if not message.id:
+                # Deterministic derivation needs a stable source identity; the
+                # offset-log id is canonical and never empty in practice. Fail
+                # closed rather than minting a random id that would defeat the
+                # dedup the copy exists to enable.
+                raise exc.precondition(
+                    "Cannot dead-letter exactly-once: message has neither a "
+                    "forze_event_id header nor a broker message id",
+                    details={"stream": message.stream, "type": message.type},
+                )
+
+            headers[HEADER_EVENT_ID] = str(uuid4(f"dlq:{self.group}:{message.stream}:{message.id}"))
 
         logger.warning(
             "Commit-stream consumer dead-lettering %s on %s to %s (%s poison)",
@@ -598,7 +629,7 @@ class CommitStreamGroupConsumer[M]:
             message.payload,
             type=message.type,
             key=message.key,
-            headers=message.headers,
+            headers=headers,
         )
         return True
 
