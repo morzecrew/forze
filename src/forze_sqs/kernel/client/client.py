@@ -103,6 +103,24 @@ _RE_MULTI_UNDERSCORE: Pattern[str] = re.compile(r"_+")
 # ....................... #
 
 
+class ConsumeAborted(Exception):
+    """Raised by a consume receive callback to end the stream instead of retrying.
+
+    :func:`consume_poll_loop` retries every receive failure with backoff — right for
+    transient backend errors, wrong for a terminal one (a misconfigured tenant or
+    credential resolution in the routed client would otherwise spin a warn-forever
+    loop). A callback wraps such an error in this type; the loop re-raises the
+    wrapped error to the consumer.
+    """
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
+# ....................... #
+
+
 async def consume_poll_loop(
     receive: Callable[[timedelta], Awaitable[list[SQSQueueMessage]]],
     *,
@@ -149,6 +167,13 @@ async def consume_poll_loop(
         try:
             # The long-poll await is the natural cancellation point.
             messages = await receive(timedelta(seconds=wait_seconds))
+
+        except ConsumeAborted as aborted:
+            # The callback deemed the failure terminal (see ConsumeAborted):
+            # surface it to the consumer instead of retrying a misconfiguration.
+            # The wrapper is plumbing — the original error (already chained by the
+            # callback's ``raise … from``) is what the consumer should see.
+            raise aborted.error from None
 
         except Exception as e:
             # Log so a persistently failing receive is observable rather than a silent retry

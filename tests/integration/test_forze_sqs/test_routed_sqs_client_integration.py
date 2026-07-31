@@ -423,6 +423,89 @@ async def test_routed_sqs_guarded_registry_full_facade(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_routed_sqs_consume_retries_transient_receive_failures(
+    floci_container: FlociContainer,
+) -> None:
+    """A CoreException from the *receive* phase keeps the plain client's semantics —
+    retried with backoff, never terminal — and the stream still delivers."""
+
+    endpoint = floci_container.get_url()
+    t1 = uuid4()
+    secrets = _MemSecretsTenantJson({t1: _payload(endpoint)})
+    tenant_get, tenant_set = _tenant_holder()
+
+    routed = RoutedSQSClient(
+        secrets=secrets,
+        secret_ref_for_tenant=_ref,
+        tenant_provider=tenant_get,
+        max_cached_tenants=4,
+    )
+    tenant_set(t1)
+    await routed.startup()
+
+    real_receive = SQSClient.receive
+    failures: list[int] = []
+
+    async def flaky_receive(self: SQSClient, queue: str, **kwargs: object) -> object:
+        if not failures:
+            failures.append(1)
+            raise exc.infrastructure("transient SQS hiccup")
+        return await real_receive(self, queue, **kwargs)  # type: ignore[arg-type]
+
+    try:
+        url = await routed.create_queue(f"forze-routed-flaky-{uuid4().hex[:12]}")
+        await routed.enqueue(url, b"survives")
+
+        with patch.object(SQSClient, "receive", flaky_receive):
+            gen = routed.consume(url)
+            async with aclosing(gen):
+                first = await asyncio.wait_for(anext(gen), timeout=30)
+                assert first.body == b"survives"
+                assert failures  # the transient failure actually happened and was retried
+    finally:
+        await routed.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_routed_sqs_consume_raises_terminal_resolution_errors() -> None:
+    """A non-retryable resolution failure (no tenant bound, missing secret) raises out
+    of ``consume`` instead of spinning the backoff-retry loop on a misconfiguration —
+    the pre-rotation-fix contract, where resolution happened before the loop."""
+
+    t_known, t_missing = uuid4(), uuid4()
+    secrets = _MemSecretsTenantJson(
+        {t_known: _payload("http://sqs.invalid:1")}, missing_tenant=t_missing
+    )
+    tenant_get, tenant_set = _tenant_holder()
+
+    routed = RoutedSQSClient(
+        secrets=secrets,
+        secret_ref_for_tenant=_ref,
+        tenant_provider=tenant_get,
+        max_cached_tenants=4,
+    )
+    await routed.startup()
+    try:
+        # No tenant bound: authentication-kind, terminal.
+        tenant_set(None)
+        gen = routed.consume("some-queue")
+        async with aclosing(gen):
+            with pytest.raises(CoreException, match="Tenant ID"):
+                await asyncio.wait_for(anext(gen), timeout=10)
+
+        # Tenant bound but its secret is absent: not_found, terminal.
+        tenant_set(t_missing)
+        gen = routed.consume("some-queue")
+        async with aclosing(gen):
+            with pytest.raises(CoreException, match="No secret"):
+                await asyncio.wait_for(anext(gen), timeout=10)
+    finally:
+        await routed.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_routed_sqs_lru_and_evict(
     floci_container: FlociContainer,
 ) -> None:

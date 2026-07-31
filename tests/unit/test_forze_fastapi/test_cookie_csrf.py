@@ -286,6 +286,17 @@ class TestCookieIngressCsrfGate:
         assert authn is not None
 
     @pytest.mark.asyncio
+    async def test_required_ingress_still_401s_on_missing_cookie(self) -> None:
+        # The gate never runs without the cookie: a required ingress keeps its
+        # authentication-kind refusal (401, downgradable on anonymous_paths).
+        ingress = CookieTokenAuthn(authn_spec=_TOKEN_SPEC, cookie_name="sid", required=True)
+
+        with pytest.raises(CoreException) as ei:
+            await resolve_authn_ingress(ingress, request=_request(cookie=None), ctx=_ctx())
+
+        assert ei.value.kind is ExceptionKind.AUTHENTICATION
+
+    @pytest.mark.asyncio
     async def test_declared_opt_out_disables_the_gate(self) -> None:
         authn = await resolve_authn_ingress(
             _ingress(csrf=None),

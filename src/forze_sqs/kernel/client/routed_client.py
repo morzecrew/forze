@@ -19,9 +19,10 @@ from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.application.contracts.tenancy.routed_client_base import (
     StructuredSecretRoutedTenantClientBase,
 )
+from forze.base.exceptions import CoreException, exception_egress_policy
 from forze.base.primitives.fingerprint import build_routing_fingerprint
 
-from .client import SQSClient, consume_poll_loop
+from .client import ConsumeAborted, SQSClient, consume_poll_loop
 from .constants import SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES
 from .port import SQSClientPort
 from .routing_credentials import SQSRoutingCredentials
@@ -202,11 +203,26 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
         unguarded, at worst the one in-flight poll fails when the old client is disposed
         under it and the loop's backoff-retry re-acquires the rebuilt client — the
         consumer never crashes on rotation.
+
+        Backend receive failures retry with backoff (the plain client's semantics).
+        Resolution failures do not get that blanket: a **non-retryable** kind raised
+        while acquiring the tenant's client (no tenant bound, secret missing, invalid
+        credentials) is a misconfiguration, and the stream raises it instead of
+        spinning a warn-forever retry loop on it.
         """
 
         async def _receive_one(wait: timedelta) -> list[SQSQueueMessage]:
-            async with self.client_scope() as inner, inner.client():
-                return await inner.receive(queue, limit=1, timeout=wait)
+            resolving = True
+            try:
+                async with self.client_scope() as inner, inner.client():
+                    resolving = False
+                    return await inner.receive(queue, limit=1, timeout=wait)
+
+            except CoreException as error:
+                if resolving and not exception_egress_policy(error.kind).retryable:
+                    raise ConsumeAborted(error) from error
+
+                raise
 
         async for message in consume_poll_loop(_receive_one, queue=queue, timeout=timeout):
             yield message
