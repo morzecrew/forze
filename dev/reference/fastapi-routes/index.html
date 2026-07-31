@@ -6549,9 +6549,16 @@ idempotently.</p>
 <code>access_cookie</code>, and list the login and refresh paths in the security
 middleware's <a href="../../integrations/fastapi/#bind-request-context"><code>anonymous_paths</code></a> —
 otherwise a stale access cookie 401s the very route that would replace it.
-Cookies are always <code>HttpOnly</code> and <code>Secure</code> by default; <code>samesite="lax"</code> (the
-default) is the shipped CSRF defense, and <code>samesite="none"</code> deployments must add
-their own CSRF layer.</p>
+Cookies are always <code>HttpOnly</code> and <code>Secure</code> by default, with <code>samesite="lax"</code> as
+the outbound browser-side default. Inbound, <code>CookieTokenAuthn</code> ships a
+server-side CSRF gate <strong>on by default</strong> (<code>CookieCsrf</code>): a request using the
+cookie on an unsafe method must prove a same-host origin via <code>Origin</code> (or
+<code>Referer</code>), so the defense holds even when a proxy strips <code>SameSite</code> or a
+<code>samesite="none"</code> deployment relies on it. A cross-origin frontend (a SPA on
+another host) lists itself in <code>CookieCsrf(allowed_origins={...})</code>; non-browser
+cookie clients that send neither header opt in with <code>allow_missing_origin=True</code>
+or authenticate via a header ingress. <code>csrf=None</code> disables the gate — a declared
+decision to bring your own CSRF layer.</p>
 <h3 id="api-key-management">API-key management<a class="headerlink" href="#api-key-management" title="Permanent link">&para;</a></h3>
 <p><code>attach_authn_routes</code> also generates <strong>self-service API-key management</strong> as a
 resource collection (all <code>AuthnRequired</code>): <code>POST /api-keys</code> issues a key for the
