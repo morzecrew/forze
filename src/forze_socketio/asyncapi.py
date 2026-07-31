@@ -35,7 +35,9 @@ from forze.application.contracts.realtime import (
     RealtimeEventCatalog,
 )
 from forze.application.integrations.realtime import (
+    REALTIME_ACK_EVENT,
     REALTIME_PROTOCOL_VERSION,
+    REALTIME_REAUTH_EVENT,
     RealtimeAck,
     RealtimeCommandRoute,
 )
@@ -50,8 +52,11 @@ __all__ = [
     "asyncapi_document",
 ]
 
-ACK_EVENT = "realtime.ack"
-"""The cumulative-ack event every replay-enabled connection layer registers."""
+ACK_EVENT = REALTIME_ACK_EVENT
+"""The cumulative-ack event every replay-enabled connection layer registers — the
+kernel's canonical wire name (kept as a re-export for existing imports); the
+registration in :func:`~forze_socketio.connection.attach_realtime_connection` uses
+the same constant, so this document cannot drift from the dispatched contract."""
 
 
 def _payload_schema(payload_type: Any, schemas: dict[str, Any]) -> dict[str, Any]:
@@ -193,6 +198,33 @@ def asyncapi_document(
         "action": "receive",
         "channel": {"$ref": f"#/channels/{ACK_EVENT}"},
         "summary": "Advance this device's replay cursor (cumulative ack)",
+    }
+
+    # ingress: the built-in in-place credential refresh — always registered by the
+    # connection layer, so it belongs in the contract (its absence here was drift by
+    # omission). The auth material's shape is the app resolver's to define, so the
+    # payload is honestly an open object rather than a fabricated schema.
+    _add_channel(
+        REALTIME_REAUTH_EVENT,
+        {
+            "name": REALTIME_REAUTH_EVENT,
+            "title": REALTIME_REAUTH_EVENT,
+            "contentType": "application/json",
+            "payload": {
+                "type": "object",
+                "description": (
+                    "Fresh credential material, as the deployment's connection "
+                    'resolver accepts it (e.g. {"token": …}). Must resolve the '
+                    "same principal and tenant as the live connection."
+                ),
+            },
+        },
+        extras={},
+    )
+    operations[f"receive.{REALTIME_REAUTH_EVENT}"] = {
+        "action": "receive",
+        "channel": {"$ref": f"#/channels/{REALTIME_REAUTH_EVENT}"},
+        "summary": "Re-verify a rotating credential in place (same principal and tenant)",
     }
 
     inbound = (*(router.commands if router is not None else ()), *(commands or ()))

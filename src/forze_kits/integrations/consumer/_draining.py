@@ -6,29 +6,17 @@ That is a shutdown artifact, never poison — but the consequence lives in each 
 own ladder (the queue runner requeues without counting, the offset-log runner stops
 without committing past), and when the classification was inline per runner, only the
 runner it was written in had it: the commit-stream twin dead-lettered a healthy message
-on graceful shutdown. One predicate here, imported by both, so the ladders cannot
-drift on *what counts as draining* again.
+on graceful shutdown.
+
+The predicate now lives in the execution plane
+(:mod:`forze.application.execution.context.drain`), right next to the gate whose code
+it classifies — one definition for the kits runners *and* transport gateways (the
+Socket.IO bridge), so the ladders cannot drift on *what counts as draining* again.
+This module re-exports it for the runners' existing imports.
 """
 
-from typing import Final
-
-from forze.base.exceptions import CoreException
+from forze.application.execution import is_draining_refusal
 
 # ----------------------- #
 
-_DRAINING_CODE: Final[str] = "draining"
-"""Drain-gate refusal code (``THROTTLED``/``code="draining"``): the runtime is
-quiescing, not a handler defect. Kept in sync with ``DrainGate.admit`` in the
-execution plane."""
-
-
-def is_draining_refusal(error: BaseException) -> bool:
-    """Whether *error* is the drain gate refusing admission (a shutdown signal).
-
-    Every runner must branch on this **before** its retry/poison ladder: a draining
-    refusal is not a delivery attempt, must never count toward ``max_attempts``, and
-    must never dead-letter — the loop stops and the message is redelivered by the
-    next process.
-    """
-
-    return isinstance(error, CoreException) and error.code == _DRAINING_CODE
+__all__ = ["is_draining_refusal"]

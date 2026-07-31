@@ -53,6 +53,8 @@ from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import FrozenOperationRegistry, run_operation
 from forze.application.integrations.realtime import (
     FRAME_UNSERIALIZABLE_CODE,
+    REALTIME_ACK_EVENT,
+    REALTIME_REAUTH_EVENT,
     BacklogDrain,
     MailboxCursors,
     RealtimeCommandRoute,
@@ -123,8 +125,10 @@ _CLOSE_LOCK_TIMEOUT_SECONDS = 5.0
 close: a non-reading client parks the sender inside ``send_text`` holding the
 lock, and an unbounded wait would let it defeat every close aimed at it."""
 
-FRAME_ACK = "realtime.ack"
-FRAME_REAUTH = "realtime.reauth"
+# The kernel's canonical wire names — shared with the Socket.IO registration and the
+# AsyncAPI export, so the dispatched frames and the documented contract cannot drift.
+FRAME_ACK = REALTIME_ACK_EVENT
+FRAME_REAUTH = REALTIME_REAUTH_EVENT
 FRAME_CMD = "cmd"
 
 

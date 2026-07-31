@@ -77,9 +77,11 @@ class TestParity:
         router = _router()
         document = asyncapi_document(_CATALOG, router)
 
+        from forze.application.integrations.realtime import REALTIME_REAUTH_EVENT
+
         declared = (
             {event.name for event in _CATALOG}
-            | {ACK_EVENT}
+            | {ACK_EVENT, REALTIME_REAUTH_EVENT}  # both always-registered ingress frames
             | {route.event for route in router.commands}
         )
         assert set(document["channels"]) == declared

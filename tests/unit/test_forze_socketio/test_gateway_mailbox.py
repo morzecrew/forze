@@ -301,6 +301,49 @@ async def test_require_tenant_passes_tenanted_signal_to_the_scoped_room() -> Non
     assert sio.emits[0]["room"] == f"t:{_TENANT}:principal:u1"  # tenant-prefixed, never global
 
 
+async def test_tenancy_binding_defaults_the_requirement_on() -> None:
+    # require_tenant unset follows bind_tenant_from_headers: a gateway that binds
+    # per-signal tenancy IS a tenanted deployment, so an untenanted signal is dropped
+    # by default — landing in the global room now takes an explicit require_tenant=False.
+    sio, mailbox = _StubSio(), InMemoryRealtimeMailbox()
+    stats = RealtimeGatewayStats()
+    gw = _gateway(sio, bind_tenant_from_headers=True, stats=stats)
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await gw._handle(ctx, mailbox, _principal_signal(), None, "evt-1", _HLC)
+
+    assert sio.emits == []  # nothing reaches the global room
+    assert stats.untenanted_dropped == 1
+
+
+async def test_explicit_opt_out_keeps_untenanted_delivery() -> None:
+    # The declared posture survives: an explicit False still allows global delivery.
+    sio, mailbox = _StubSio(), InMemoryRealtimeMailbox()
+    gw = _gateway(sio, bind_tenant_from_headers=True, require_tenant=False)
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await gw._handle(ctx, mailbox, _principal_signal(), None, "evt-1", _HLC)
+
+    assert sio.emits and sio.emits[0]["room"] == "principal:u1"
+
+
+async def test_untenanted_gateway_default_is_unchanged() -> None:
+    # No tenancy declaration at all → the requirement stays off (untenanted apps).
+    sio, mailbox = _StubSio(), InMemoryRealtimeMailbox()
+    gw = _gateway(sio)
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await gw._handle(ctx, mailbox, _principal_signal(), None, "evt-1", _HLC)
+
+    assert sio.emits and sio.emits[0]["room"] == "principal:u1"
+
+
 async def test_require_tenant_drop_needs_no_stats_wired() -> None:
     # the drop path must not assume observability wiring — stats are optional
     sio, mailbox = _StubSio(), InMemoryRealtimeMailbox()

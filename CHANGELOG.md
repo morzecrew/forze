@@ -129,6 +129,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With no `allowed_origins` configured, a browser upgrade carrying cookies must be same-host; a cross-origin frontend lists itself (the `CookieCsrf` posture).
 - A connection without device/session identity keys its ack cursor by the stable `ws:{principal}` (SSE parity) — previously a per-connection key reset the cursor every reconnect.
 
+**Socket.IO gateway hardening** (**behaviour change**):
+
+- An unset `require_tenant` now follows `bind_tenant_from_headers`: a tenancy-binding gateway drops untenanted signals instead of emitting them to the global room; pass `require_tenant=False` to keep untenanted delivery.
+- The gateway inherits the consumer draining discipline: a drain-gate refusal mid-bridge stops the loop without acking, counting, or poisoning the signal — it redelivers to the next process. New `forze.application.execution.is_draining_refusal` is the shared predicate.
+- The AsyncAPI document and the dispatch surfaces share one set of wire-event constants (new `REALTIME_ACK_EVENT`/`REALTIME_REAUTH_EVENT`), and the always-registered `realtime.reauth` frame is now in the document.
+
 **Commit-stream dead-lettering is exactly-once for any producer** — a DLQ copy of a message without a `forze_event_id` header now carries a deterministically minted dedup id (previously a re-produced raw-producer copy could process twice); the header is only added when absent, so sealed envelopes stay byte-identical.
 
 **A routed SQS consumer survives credential rotation** — `evict_tenant` now moves an in-flight `RoutedSQSClient.consume` stream onto fresh credentials at the next poll instead of tearing it down, and `guarded=True` is fully supported across the facade (previously it raised on first use). A non-retryable resolution failure (no tenant bound, missing secret, invalid credentials) still raises out of the stream rather than being retried. `SQSRoutingCredentials.secret_access_key` is now `SecretStr` (matching S3) — read it via `get_secret_value()`.
