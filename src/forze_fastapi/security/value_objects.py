@@ -2,6 +2,7 @@
 
 import re
 from typing import Any, final
+from urllib.parse import urlsplit
 
 import attrs
 
@@ -9,6 +10,9 @@ from forze.application.contracts.authn import AuthnSpec
 from forze.base.exceptions import exc
 
 # ----------------------- #
+
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+"""RFC 9110 safe methods — no server state change, so no cross-site forgery target."""
 
 OpenApiSecurityScheme = tuple[str, dict[str, Any]]
 """A named OpenAPI ``securityScheme``: ``(scheme name, scheme object)``."""
@@ -38,6 +42,100 @@ def _with_description(scheme: dict[str, Any], description: str | None) -> dict[s
 
 
 @final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class CookieCsrf:
+    """Server-side CSRF gate for a cookie ingress: origin proof on unsafe methods.
+
+    The outbound carrier's ``SameSite`` is a browser default, not a server guarantee —
+    a ``SameSite=None`` deployment, a proxy that strips the attribute, or a
+    state-changing route on a nominally safe method reopens the cross-site path. This
+    gate runs **before the cookie is read**: on an unsafe method the request must
+    prove its origin via the ``Origin`` header (falling back to ``Referer`` for the
+    browsers that omit ``Origin`` on same-origin form posts), and that origin must be
+    the request's own host or an allowlisted one. Non-browser clients that send
+    neither header should authenticate via a header ingress instead — or the
+    deployment opts them in with :attr:`allow_missing_origin`.
+
+    Safe methods (GET/HEAD/OPTIONS/TRACE) pass without proof by default: browsers do
+    not send ``Origin`` on top-level same-origin navigation, so gating them would
+    break every page load that carries the cookie. A route that mutates state on a
+    safe method has no browser-compatible CSRF defense — fix the method.
+    """
+
+    allowed_origins: frozenset[str] = attrs.field(default=frozenset(), converter=frozenset)
+    """Cross-origin callers allowed to use the cookie, as exact ``scheme://host[:port]``
+    origins (e.g. a SPA on ``https://app.example.com`` calling this API's host). The
+    request's own host is always allowed and need not be listed."""
+
+    allow_missing_origin: bool = False
+    """Accept an unsafe request that carries neither ``Origin`` nor ``Referer``.
+
+    Off (default) rejects it: a browser that can be CSRF'd sends at least one of the
+    two, so the only callers this refuses are non-browser clients using the cookie —
+    which a forged cross-site request cannot distinguish itself from."""
+
+    # ....................... #
+
+    def rejection(
+        self,
+        *,
+        method: str,
+        host: str | None,
+        origin: str | None,
+        referer: str | None,
+    ) -> str | None:
+        """Why the request fails the gate, or ``None`` when it passes.
+
+        Pure (headers in, verdict out) so the policy is testable without a request.
+        *host* is the request's own host header value (``host[:port]``).
+        """
+
+        if method.upper() in _SAFE_METHODS:
+            return None
+
+        source = origin if origin is not None else referer
+
+        if source is None or not source.strip():
+            if self.allow_missing_origin:
+                return None
+
+            return "the request carries neither an Origin nor a Referer header"
+
+        # A present-but-opaque origin ("null": sandboxed iframe, data: URL redirect)
+        # is exactly the attacker-adjacent case — never treated as missing.
+        source_hostname = urlsplit(source.strip()).hostname
+
+        if source_hostname is None:
+            return f"the request origin {source.strip()!r} is opaque"
+
+        own_hostname = urlsplit(f"//{host}").hostname if host else None
+
+        if own_hostname is not None and source_hostname == own_hostname:
+            return None
+
+        normalized = _normalize_origin(source)
+
+        if normalized in {_normalize_origin(allowed) for allowed in self.allowed_origins}:
+            return None
+
+        return f"the request origin {source.strip()!r} is not this host or an allowed origin"
+
+
+def _normalize_origin(value: str) -> str:
+    """``scheme://host[:port]`` with the scheme/host lowercased and any path dropped
+    (a ``Referer`` carries a full URL; comparing origins must ignore its path)."""
+
+    parts = urlsplit(value.strip())
+    host = parts.hostname or ""
+    port = f":{parts.port}" if parts.port is not None else ""
+
+    return f"{parts.scheme.lower()}://{host}{port}"
+
+
+# ....................... #
+
+
+@final
 @attrs.define(slots=True, kw_only=True, frozen=True, repr=False)
 class CookieTokenAuthn:
     """Authentication ingress method for cookie-based token authentication."""
@@ -53,6 +151,12 @@ class CookieTokenAuthn:
 
     required: bool = False
     """Whether a missing cookie should raise :class:`AuthenticationError`."""
+
+    csrf: CookieCsrf | None = attrs.field(factory=CookieCsrf)
+    """Server-side CSRF gate, **on by default** (see :class:`CookieCsrf`): an unsafe
+    method must prove a same-host or allowlisted origin before the cookie is read.
+    ``None`` disables it — a declared decision that the deployment brings its own
+    CSRF defense (a double-submit token), not just the carrier's ``SameSite``."""
 
     description: str | None = None
     """Human-readable description of the ingress method (informational only)."""

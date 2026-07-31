@@ -43,13 +43,16 @@ class AuthnCookieCarrier:
     token response's own lifetimes (``access_expires_in`` / ``refresh_expires_in``);
     a token without a known lifetime becomes a session cookie.
 
-    **CSRF posture.** The cookie-mode endpoints are all ``POST``, so the default
+    **CSRF posture.** Two independent layers. Outbound, the default
     ``samesite="lax"`` (or ``"strict"``) keeps browsers from attaching these
-    cookies to cross-site requests — that is the shipped CSRF defense.
-    ``samesite="none"`` deployments must add their own CSRF layer (double-submit
-    or synchronizer token) in front of state-changing routes; the carrier
-    deliberately ships none, because a token needs an issuance surface (a page or
-    bootstrap route) that the authn routes do not own.
+    cookies to cross-site requests. Inbound, :class:`CookieTokenAuthn`'s
+    :class:`~forze_fastapi.security.CookieCsrf` gate (on by default) requires an
+    unsafe request using the cookie to prove a same-host or allowlisted origin —
+    the server-side check that still holds when a proxy strips ``SameSite`` or a
+    ``samesite="none"`` deployment relies on it; list your cross-origin frontends
+    in its ``allowed_origins``. The carrier still ships no double-submit token: a
+    token needs an issuance surface (a page or bootstrap route) that the authn
+    routes do not own.
     """
 
     access_cookie: str = "forze_access"

@@ -78,6 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Identity & authn ergonomics**
 
 - **Cookie-mode authn routes** — `AuthnCookieCarrier` via `attach_authn_routes(cookies=…)`: login/refresh set and rotate HttpOnly cookies and strip token strings from bodies; logout expires both idempotently.
+- **Server-side CSRF gate on cookie ingress, on by default** — `CookieTokenAuthn.csrf` (`CookieCsrf`): an unsafe-method request using the cookie must prove a same-host or `allowed_origins` origin via `Origin`/`Referer`, refused as 403 `csrf_rejected`; `allow_missing_origin=True` admits header-less non-browser cookie clients, `csrf=None` opts out.
 - **`SecurityContextMiddleware(anonymous_paths=…)`** — exact paths where an authentication-kind failure binds no identity instead of 401ing; other failure kinds still return the error response.
 - **`AuthnDepsModule(eligibility="allow_all")`** — declared opt-out of the policy-principal gate for token-only deployments; unknown values are refused at wiring.
 - **Self-hosted durable→registry bridge** — `operation_durable_handler` / `register_operation_functions` auto-bridge `DurableFunctionSpec.operation` like the Inngest tier (`durable_input_invalid`, `durable_output_invalid`).

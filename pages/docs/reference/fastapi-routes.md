@@ -269,9 +269,16 @@ Point the inbound `CookieTokenAuthn`'s `cookie_name` at the same
 `access_cookie`, and list the login and refresh paths in the security
 middleware's [`anonymous_paths`](../integrations/fastapi.md#bind-request-context) —
 otherwise a stale access cookie 401s the very route that would replace it.
-Cookies are always `HttpOnly` and `Secure` by default; `samesite="lax"` (the
-default) is the shipped CSRF defense, and `samesite="none"` deployments must add
-their own CSRF layer.
+Cookies are always `HttpOnly` and `Secure` by default, with `samesite="lax"` as
+the outbound browser-side default. Inbound, `CookieTokenAuthn` ships a
+server-side CSRF gate **on by default** (`CookieCsrf`): a request using the
+cookie on an unsafe method must prove a same-host origin via `Origin` (or
+`Referer`), so the defense holds even when a proxy strips `SameSite` or a
+`samesite="none"` deployment relies on it. A cross-origin frontend (a SPA on
+another host) lists itself in `CookieCsrf(allowed_origins={...})`; non-browser
+cookie clients that send neither header opt in with `allow_missing_origin=True`
+or authenticate via a header ingress. `csrf=None` disables the gate — a declared
+decision to bring your own CSRF layer.
 
 ### API-key management
 
