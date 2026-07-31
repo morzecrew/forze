@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
+from contextlib import aclosing
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 from uuid import UUID, uuid4
@@ -284,6 +286,140 @@ async def test_routed_sqs_invalid_json_raises_core_error(
 
     finally:
         await routed.close()
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_routed_sqs_consume_survives_rotation_eviction(
+    floci_container: FlociContainer,
+) -> None:
+    """A long-lived consumer follows a rotation eviction onto the rebuilt client instead
+    of crashing: ``consume`` re-acquires the tenant's pooled client per long poll, so
+    ``evict_tenant`` (the rotation signal) swaps the stream onto fresh credentials."""
+
+    endpoint = floci_container.get_url()
+    t1 = uuid4()
+    secrets = _MemSecretsTenantJson({t1: _payload(endpoint)})
+    tenant_get, tenant_set = _tenant_holder()
+
+    routed = RoutedSQSClient(
+        secrets=secrets,
+        secret_ref_for_tenant=_ref,
+        tenant_provider=tenant_get,
+        max_cached_tenants=4,
+    )
+    tenant_set(t1)
+    await routed.startup()
+
+    # Keeping the closed instances referenced also keeps their id()s from being
+    # reused by freshly built clients (the receiver-identity assertions below).
+    closed: list[SQSClient] = []
+    real_close = SQSClient.close
+
+    async def counting_close(self: SQSClient) -> None:
+        closed.append(self)
+        await real_close(self)
+
+    # Record which pooled client instance serves each poll: the rotation contract is
+    # that the stream *switches* to the rebuilt client, not that the old one limps on
+    # with stale credentials (the emulator cannot revoke them, so bodies alone pass).
+    receivers: list[int] = []
+    real_receive = SQSClient.receive
+
+    async def recording_receive(self: SQSClient, queue: str, **kwargs: object) -> object:
+        receivers.append(id(self))
+        return await real_receive(self, queue, **kwargs)  # type: ignore[arg-type]
+
+    try:
+        url = await routed.create_queue(f"forze-routed-rot-{uuid4().hex[:12]}")
+        await routed.enqueue(url, b"m1")
+
+        with (
+            patch.object(SQSClient, "close", counting_close),
+            patch.object(SQSClient, "receive", recording_receive),
+        ):
+            gen = routed.consume(url)
+            async with aclosing(gen):
+                first = await asyncio.wait_for(anext(gen), timeout=30)
+                assert first.body == b"m1"
+                first_receiver = receivers[-1]
+                await routed.ack(url, [first.id])  # else eviction re-queues it
+
+                # Rotation between polls: the old client is disposed immediately
+                # (unguarded default) while the stream is suspended…
+                await routed.evict_tenant(t1)
+                assert len(closed) == 1  # the stale client was actually torn down
+
+                await routed.enqueue(url, b"m2")  # next access rebuilds
+                second = await asyncio.wait_for(anext(gen), timeout=30)
+                assert second.body == b"m2"
+                assert receivers[-1] != first_receiver  # served by the rebuilt client
+                second_receiver = receivers[-1]
+                await routed.ack(url, [second.id])
+
+                # …and mid-poll: evict while the consumer is long-polling an empty
+                # queue; the poll on the disposed client fails or drains, and the
+                # loop retries on the rebuilt client without the stream dying.
+                pending = asyncio.ensure_future(anext(gen))
+                await asyncio.sleep(0.3)  # let the long poll start on the old client
+                await routed.evict_tenant(t1)
+                await routed.enqueue(url, b"m3")
+                third = await asyncio.wait_for(pending, timeout=40)
+                assert third.body == b"m3"
+                assert receivers[-1] != second_receiver
+    finally:
+        await routed.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_routed_sqs_guarded_registry_full_facade(
+    floci_container: FlociContainer,
+) -> None:
+    """``guarded=True`` works across the whole facade — every operation runs under a
+    pool lease — and a rotation eviction mid-stream drains the old client only after
+    its in-flight scope exits while the consumer reconnects."""
+
+    endpoint = floci_container.get_url()
+    t1 = uuid4()
+    secrets = _MemSecretsTenantJson({t1: _payload(endpoint)})
+    tenant_get, tenant_set = _tenant_holder()
+
+    routed = RoutedSQSClient(
+        secrets=secrets,
+        secret_ref_for_tenant=_ref,
+        tenant_provider=tenant_get,
+        max_cached_tenants=4,
+        guarded=True,
+    )
+    tenant_set(t1)
+    await routed.startup()
+    try:
+        assert (await routed.health())[1] is True
+
+        url = await routed.create_queue(f"forze-routed-grd-{uuid4().hex[:12]}")
+        assert url == await routed.queue_url(url.rsplit("/", 1)[-1])
+
+        await routed.enqueue(url, b"one")
+        await routed.enqueue_many(url, [b"two"])
+
+        msgs = await _receive_until(routed, url)
+        assert await routed.ack(url, [msgs[0].id]) == 1
+        rest = await _receive_until(routed, url)
+        assert await routed.nack(url, [rest[0].id], requeue=True) == 1
+
+        gen = routed.consume(url)
+        async with aclosing(gen):
+            first = await asyncio.wait_for(anext(gen), timeout=30)
+            assert first.body == b"two"
+            await routed.ack(url, [first.id])  # else eviction re-queues it
+
+            await routed.evict_tenant(t1)  # drains after in-flight leases exit
+            await routed.enqueue(url, b"three")
+            second = await asyncio.wait_for(anext(gen), timeout=30)
+            assert second.body == b"three"
+    finally:
+        await routed.close()
+
 
 @pytest.mark.integration
 @pytest.mark.asyncio

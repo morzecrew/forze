@@ -115,6 +115,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **DST `audit()` no longer claims a detection bound for invariants the sweep could not falsify** (**behaviour change**) — a witness mined under perturbations the citing config does not enable (crash/fault/schedule/cluster) is new `InvariantStatus.UNEXERCISABLE`: `audit()` fails naming the missing capability, `run()` warns, clean verdicts count it out of the bound. New `forze_dst.oracle.config_capabilities`; `invariant_accounting`/`account_invariants` accept `config=`.
 
+**A routed SQS consumer survives credential rotation** — `evict_tenant` now moves an in-flight `RoutedSQSClient.consume` stream onto fresh credentials at the next poll instead of tearing it down, and `guarded=True` is fully supported across the facade (previously it raised on first use).
+
 **`Decimal` is a first-class filter and sort value across the query DSL** — the scalar union omitted it, and every backend showed it differently.
 
 - Postgres compared nested JSON leaves as text and round-tripped numerics through `float`; Mongo matched nothing; Firestore could not write the field at all; the mock refused Decimal aggregates; Meilisearch indexed lexically.

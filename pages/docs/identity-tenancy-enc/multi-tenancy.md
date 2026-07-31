@@ -115,6 +115,12 @@ poll. That model fits credentials that change rarely. A provider that mints
 callback per connection or request — feeding the token into the fingerprint would
 read every mint as a rotation and tear down a healthy pool.
 
+Eviction affects work *in flight* on the old client too: unguarded (the default)
+it is disposed immediately, failing whatever is mid-call; `guarded=True` drains it
+only after in-flight operations finish. Long-lived streams re-acquire the pooled
+client per poll (the routed SQS `consume` does), so a rotation moves the consumer
+onto fresh credentials at the next poll instead of tearing it down.
+
 !!! note "Postgres routed clients"
 
     Set `introspector_cache_partition_key` on the deps module so the schema
