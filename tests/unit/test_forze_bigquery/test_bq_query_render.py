@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
+import pytest
 from pydantic import BaseModel
 
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_bigquery.kernel.client.query import (
     build_count_sql,
     build_sync_query_request,
@@ -133,6 +137,83 @@ def test_params_supports_common_scalar_types() -> None:
     )
     types = {p["parameterType"]["type"] for p in qps}
     assert types >= {"BOOL", "INT64", "FLOAT64", "NUMERIC", "TIMESTAMP", "DATE", "STRING", "ARRAY"}
+
+
+class TestDecimalParameterType:
+    """NUMERIC vs BIGNUMERIC is picked from the Decimal's own exponent/digits.
+
+    NUMERIC holds 9 fractional and 29 integer digits; a finer or wider value sent as
+    NUMERIC would be rounded server-side — a silently changed money value. The choice
+    is by numeric value (normalized), non-finite values are refused at the seam like
+    every other backend, and a value even BIGNUMERIC cannot hold exactly is refused
+    rather than rounded.
+    """
+
+    @staticmethod
+    def _one(value: Decimal) -> dict:  # type: ignore[type-arg]
+        class _P(BaseModel):
+            amount: Decimal
+
+        (qp,) = params_to_query_parameters(_P(amount=value))
+        return qp
+
+    def test_in_range_decimal_stays_numeric(self) -> None:
+        qp = self._one(Decimal("123.45"))
+        assert qp["parameterType"] == {"type": "NUMERIC"}
+
+        # 29 integer digits and scale 9 — the NUMERIC corner, still NUMERIC.
+        corner = Decimal("9" * 29 + "." + "9" * 9)
+        assert self._one(corner)["parameterType"] == {"type": "NUMERIC"}
+
+    def test_fine_scale_picks_bignumeric(self) -> None:
+        qp = self._one(Decimal("0.1234567890123"))  # scale 13 > 9
+        assert qp["parameterType"] == {"type": "BIGNUMERIC"}
+        assert qp["parameterValue"] == {"value": "0.1234567890123"}
+
+    def test_wide_magnitude_picks_bignumeric(self) -> None:
+        qp = self._one(Decimal("1e30"))  # 31 integer digits > 29
+        assert qp["parameterType"] == {"type": "BIGNUMERIC"}
+
+    def test_choice_is_by_value_not_spelling(self) -> None:
+        # Twelve trailing zeros are still the value 1 — scale 0, NUMERIC.
+        assert self._one(Decimal("1.000000000000"))["parameterType"] == {"type": "NUMERIC"}
+
+    def test_non_finite_decimal_refused(self) -> None:
+        # Reachable through the raw-dict path only — pydantic already refuses a
+        # non-finite Decimal on a typed model field; the dict form has no such
+        # guard, so the seam must hold the property itself.
+        for bad in (Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")):
+            with pytest.raises(CoreException) as ei:
+                params_to_query_parameters({"amount": bad})
+            assert ei.value.kind is ExceptionKind.PRECONDITION
+
+    def test_beyond_bignumeric_refused_not_rounded(self) -> None:
+        for bad in (Decimal("1e40"), Decimal("1e-40")):
+            with pytest.raises(CoreException) as ei:
+                self._one(bad)
+            assert ei.value.kind is ExceptionKind.PRECONDITION
+
+    def test_array_widens_to_the_neediest_element(self) -> None:
+        class _P(BaseModel):
+            amounts: list[Decimal]
+
+        # First element fits NUMERIC; the second needs BIGNUMERIC — the array
+        # type must hold every element, whether inferred from the annotation
+        # or from the first sample.
+        (qp,) = params_to_query_parameters(
+            _P(amounts=[Decimal("1.5"), Decimal("0.1234567890123")])
+        )
+        assert qp["parameterType"] == {
+            "type": "ARRAY",
+            "arrayType": {"type": "BIGNUMERIC"},
+        }
+
+    def test_empty_decimal_array_keeps_annotation_numeric(self) -> None:
+        class _P(BaseModel):
+            amounts: list[Decimal] = []
+
+        (qp,) = params_to_query_parameters(_P())
+        assert qp["parameterType"] == {"type": "ARRAY", "arrayType": {"type": "NUMERIC"}}
 
 
 def test_build_sync_query_request_pagination_fields() -> None:

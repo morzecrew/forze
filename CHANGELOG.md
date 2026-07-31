@@ -116,6 +116,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Firestore writes refuse non-finite and double-overflowing numerics** (**behaviour change**) — a `NaN`/`±Infinity` `Decimal`/`float`, or a `Decimal` outside the double range, now raises `precondition` instead of persisting `inf`/`nan`; in-range precision loss is unchanged.
 
+**BigQuery `Decimal` parameters pick `NUMERIC` vs `BIGNUMERIC` by value** — a scale beyond 9 or magnitude beyond 29 integer digits goes out as `BIGNUMERIC` instead of being rounded server-side (arrays widen to their neediest element); non-finite values and values even `BIGNUMERIC` cannot hold exactly raise `precondition`.
+
 **DST `audit()` no longer claims a detection bound for invariants the sweep could not falsify** (**behaviour change**) — a witness mined under perturbations the citing config does not enable (crash/fault/schedule/cluster) is new `InvariantStatus.UNEXERCISABLE`: `audit()` fails naming the missing capability, `run()` warns, clean verdicts count it out of the bound. New `forze_dst.oracle.config_capabilities`; `invariant_accounting`/`account_invariants` accept `config=`.
 
 **A routed SQS consumer survives credential rotation** — `evict_tenant` now moves an in-flight `RoutedSQSClient.consume` stream onto fresh credentials at the next poll instead of tearing it down, and `guarded=True` is fully supported across the facade (previously it raised on first use). A non-retryable resolution failure (no tenant bound, missing secret, invalid credentials) still raises out of the stream rather than being retried. `SQSRoutingCredentials.secret_access_key` is now `SecretStr` (matching S3) — read it via `get_secret_value()`.
