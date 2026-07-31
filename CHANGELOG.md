@@ -78,6 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Identity & authn ergonomics**
 
 - **Cookie-mode authn routes** — `AuthnCookieCarrier` via `attach_authn_routes(cookies=…)`: login/refresh set and rotate HttpOnly cookies and strip token strings from bodies; logout expires both idempotently.
+- **Server-side CSRF gate on cookie ingress, on by default** — `CookieTokenAuthn.csrf` (`CookieCsrf`): an unsafe-method request using the cookie must prove a same-host or `allowed_origins` origin via `Origin`/`Referer`, refused as 403 `csrf_rejected`; `allow_missing_origin=True` admits header-less non-browser cookie clients, `csrf=None` opts out.
 - **`SecurityContextMiddleware(anonymous_paths=…)`** — exact paths where an authentication-kind failure binds no identity instead of 401ing; other failure kinds still return the error response.
 - **`AuthnDepsModule(eligibility="allow_all")`** — declared opt-out of the policy-principal gate for token-only deployments; unknown values are refused at wiring.
 - **Self-hosted durable→registry bridge** — `operation_durable_handler` / `register_operation_functions` auto-bridge `DurableFunctionSpec.operation` like the Inngest tier (`durable_input_invalid`, `durable_output_invalid`).
@@ -85,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Keys, crypto & mock conformance**
 
-- **Self-hosted KMS backend** — `forze_kms.local.LocalKeyManagement` wraps data keys under operator-provided 32-byte master keys, no cloud or extra needed; the multi-key map carries the rotation overlap, a rotated-away key id fails closed, and a one-way `fingerprint` spots fleet drift.
+- **Self-hosted KMS backend** — `forze_kms.local.LocalKeyManagement` wraps data keys under operator-provided 32-byte master keys, no cloud or extra needed; the multi-key map carries the rotation overlap, a rotated-away key id fails closed, and a one-way `fingerprint` spots fleet drift. No volume-driven rotation cadence — the GCM ~2^32 wrap-count ceiling never accrues against a master key; envelopes sealed by earlier builds stay readable.
 - **Every mock field plane seals** — document, graph, search (hub/federated, snapshots), analytics and procedures resolve the same fail-closed encrypting codecs as real backends, via an opt-in synchronous key seam for computation-only backends. **Behavior change** for mock suites asserting raw stored values; text queries no longer match sealed content.
 - **OpenBao compatibility** — `forze_vault` works with OpenBao (verified 2.6.1); the integration suite runs against any compatible engine via `FORZE_VAULT_IMAGE`.
 
@@ -114,6 +115,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Firestore writes refuse non-finite and double-overflowing numerics** (**behaviour change**) — a `NaN`/`±Infinity` `Decimal`/`float`, or a `Decimal` outside the double range, now raises `precondition` instead of persisting `inf`/`nan`; in-range precision loss is unchanged.
 
 **DST `audit()` no longer claims a detection bound for invariants the sweep could not falsify** (**behaviour change**) — a witness mined under perturbations the citing config does not enable (crash/fault/schedule/cluster) is new `InvariantStatus.UNEXERCISABLE`: `audit()` fails naming the missing capability, `run()` warns, clean verdicts count it out of the bound. New `forze_dst.oracle.config_capabilities`; `invariant_accounting`/`account_invariants` accept `config=`.
+
+**A routed SQS consumer survives credential rotation** — `evict_tenant` now moves an in-flight `RoutedSQSClient.consume` stream onto fresh credentials at the next poll instead of tearing it down, and `guarded=True` is fully supported across the facade (previously it raised on first use). A non-retryable resolution failure (no tenant bound, missing secret, invalid credentials) still raises out of the stream rather than being retried.
 
 **`Decimal` is a first-class filter and sort value across the query DSL** — the scalar union omitted it, and every backend showed it differently.
 

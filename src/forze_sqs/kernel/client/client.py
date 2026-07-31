@@ -11,7 +11,7 @@ import base64
 import json
 import math
 import re
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
@@ -99,6 +99,110 @@ _CONSUME_ERROR_BACKOFF_MAX: Final[float] = 5.0
 
 _RE_UNSUPPORTED_CHARS: Pattern[str] = re.compile(r"[^A-Za-z0-9_-]")
 _RE_MULTI_UNDERSCORE: Pattern[str] = re.compile(r"_+")
+
+# ....................... #
+
+
+class ConsumeAborted(Exception):
+    """Raised by a consume receive callback to end the stream instead of retrying.
+
+    :func:`consume_poll_loop` retries every receive failure with backoff — right for
+    transient backend errors, wrong for a terminal one (a misconfigured tenant or
+    credential resolution in the routed client would otherwise spin a warn-forever
+    loop). A callback wraps such an error in this type; the loop re-raises the
+    wrapped error to the consumer.
+    """
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
+# ....................... #
+
+
+async def consume_poll_loop(
+    receive: Callable[[timedelta], Awaitable[list[SQSQueueMessage]]],
+    *,
+    queue: str,
+    timeout: timedelta | None,
+) -> AsyncGenerator[SQSQueueMessage]:
+    """The shared consume loop: long-poll via *receive*, idle-stop, retry with backoff.
+
+    *receive* runs one long poll with the given wait and returns at most one message.
+    Extracted so :class:`SQSClient` and the routed client drive the identical idle/backoff
+    semantics while differing in how each poll gets its client — the routed client
+    re-acquires the tenant's pooled client per poll, which is what lets a credential
+    rotation swap clients between polls instead of tearing the stream down.
+
+    ``timeout`` is an **idle** timeout: ``None`` (or a non-positive value) consumes
+    forever, long-polling with :data:`_CONSUME_LONG_POLL_WAIT` per receive so empty
+    queues do not busy-loop; a finite value stops the generator cleanly (no error) once
+    no message has arrived for that duration. Each message resets the idle window.
+    """
+
+    idle_seconds = (
+        timeout.total_seconds() if timeout is not None and timeout.total_seconds() > 0 else None
+    )
+    long_poll_seconds = _CONSUME_LONG_POLL_WAIT.total_seconds()
+    backoff = _CONSUME_ERROR_BACKOFF_INITIAL
+    loop = asyncio.get_running_loop()
+    idle_deadline = loop.time() + idle_seconds if idle_seconds is not None else None
+
+    while True:
+        if idle_deadline is not None:
+            remaining = idle_deadline - loop.time()
+
+            if remaining <= 0:
+                return
+
+            # Ceil to a whole second (SQS wait granularity) so a small
+            # remainder still long-polls instead of short-poll spinning;
+            # the idle stop may overshoot by less than a second.
+            wait_seconds = min(long_poll_seconds, float(math.ceil(remaining)))
+
+        else:
+            wait_seconds = long_poll_seconds
+
+        try:
+            # The long-poll await is the natural cancellation point.
+            messages = await receive(timedelta(seconds=wait_seconds))
+
+        except ConsumeAborted as aborted:
+            # The callback deemed the failure terminal (see ConsumeAborted):
+            # surface it to the consumer instead of retrying a misconfiguration.
+            # The wrapper is plumbing — the original error (already chained by the
+            # callback's ``raise … from``) is what the consumer should see.
+            raise aborted.error from None
+
+        except Exception as e:
+            # Log so a persistently failing receive is observable rather than a silent retry
+            # loop, then back off; the idle deadline (when set) still terminates.
+            logger.warning(
+                "SQS consume receive failed on queue %s; backing off %.1fs: %s",
+                queue,
+                backoff,
+                e,
+            )
+            await asyncio.sleep(backoff)
+
+            backoff = min(backoff * 2, _CONSUME_ERROR_BACKOFF_MAX)
+
+            continue
+
+        backoff = _CONSUME_ERROR_BACKOFF_INITIAL
+
+        if not messages:
+            continue
+
+        yield messages[0]
+
+        # Reset the idle window when the caller resumes, so message
+        # processing time does not count against the idle timeout
+        # (mirrors the per-wait idle semantics of the RabbitMQ backend).
+        if idle_seconds is not None:
+            idle_deadline = loop.time() + idle_seconds
+
 
 # ....................... #
 
@@ -1405,64 +1509,11 @@ class SQSClient(SQSClientPort):
         the idle window. Failed receives retry with exponential backoff.
         """
 
-        idle_seconds = (
-            timeout.total_seconds() if timeout is not None and timeout.total_seconds() > 0 else None
-        )
-        long_poll_seconds = _CONSUME_LONG_POLL_WAIT.total_seconds()
-        backoff = _CONSUME_ERROR_BACKOFF_INITIAL
-        loop = asyncio.get_running_loop()
-        idle_deadline = loop.time() + idle_seconds if idle_seconds is not None else None
+        async def _receive_one(wait: timedelta) -> list[SQSQueueMessage]:
+            return await self.receive(queue, limit=1, timeout=wait)
 
-        while True:
-            if idle_deadline is not None:
-                remaining = idle_deadline - loop.time()
-
-                if remaining <= 0:
-                    return
-
-                # Ceil to a whole second (SQS wait granularity) so a small
-                # remainder still long-polls instead of short-poll spinning;
-                # the idle stop may overshoot by less than a second.
-                wait_seconds = min(long_poll_seconds, float(math.ceil(remaining)))
-
-            else:
-                wait_seconds = long_poll_seconds
-
-            try:
-                # The long-poll await is the natural cancellation point.
-                messages = await self.receive(
-                    queue,
-                    limit=1,
-                    timeout=timedelta(seconds=wait_seconds),
-                )
-
-            except Exception as e:
-                # Log so a persistently failing receive is observable rather than a silent retry
-                # loop, then back off; the idle deadline (when set) still terminates.
-                logger.warning(
-                    "SQS consume receive failed on queue %s; backing off %.1fs: %s",
-                    queue,
-                    backoff,
-                    e,
-                )
-                await asyncio.sleep(backoff)
-
-                backoff = min(backoff * 2, _CONSUME_ERROR_BACKOFF_MAX)
-
-                continue
-
-            backoff = _CONSUME_ERROR_BACKOFF_INITIAL
-
-            if not messages:
-                continue
-
-            yield messages[0]
-
-            # Reset the idle window when the caller resumes, so message
-            # processing time does not count against the idle timeout
-            # (mirrors the per-wait idle semantics of the RabbitMQ backend).
-            if idle_seconds is not None:
-                idle_deadline = loop.time() + idle_seconds
+        async for message in consume_poll_loop(_receive_one, queue=queue, timeout=timeout):
+            yield message
 
     # ....................... #
 

@@ -42,6 +42,21 @@ drops from both places::
         ),
     )
 
+**Wrap-count bound (why each wrap derives its own key):** AES-GCM with random
+96-bit nonces is only safe for ~2^32 encryptions *under one key* (NIST SP
+800-38D) — and DEKs are minted per stream, per TTL expiry, per tenant, and on
+cache eviction, so a busy fleet under a single long-lived master key could
+plausibly approach that ceiling, where a nonce collision is catastrophic.
+Every wrap therefore seals under a one-shot subkey — HKDF-SHA256 of the master
+key with a fresh random 256-bit salt stored in the envelope
+(``0x02 || salt || nonce || ciphertext``) — so no key ever performs a second
+GCM encryption and the ceiling never accrues against the master key. There is
+consequently **no volume-driven rotation cadence**: rotate master keys on
+policy and on suspicion of compromise (the multi-key overlap below), not on a
+wrap counter. Envelopes sealed by earlier builds (``nonce || ciphertext``
+directly under the master key) are still opened; new wraps always use the
+salted form.
+
 The wrap is pure in-process computation, so the adapter also implements
 :class:`~forze.application.contracts.crypto.SyncKeyManagementPort` — the
 documented legitimate case for that opt-in: a keyring over this backend fills
@@ -59,6 +74,8 @@ from types import MappingProxyType
 from typing import final
 
 import attrs
+from cryptography.hazmat.primitives.hashes import SHA256
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from forze.application.contracts.crypto import AesGcmAead, DataKey, KeyRef
 from forze.base.exceptions import exc
@@ -74,10 +91,26 @@ logger = get_logger("forze_kms.local")
 _NONCE_SIZE = 12
 _DEK_SIZE = 32
 _MASTER_KEY_SIZE = 32
+_TAG_SIZE = 16
 _AAD_PREFIX = "forze-local-kms"
 
 _FINGERPRINT_DOMAIN = b"forze-local-kms-fingerprint-v1"
 _KEY_DIGEST_DOMAIN = b"forze-local-kms-key-digest-v1|"
+
+# Per-wrap subkey derivation (the v2 envelope): each wrap seals under
+# HKDF-SHA256(master, salt) with a fresh random 256-bit salt, so the master key
+# itself never performs two GCM encryptions — the NIST ~2^32 random-nonce wrap
+# bound applies per *derived* key (which seals exactly once), not per master key.
+_WRAP_VERSION_V2 = 0x02
+_WRAP_SALT_SIZE = 32
+_WRAP_SUBKEY_INFO = b"forze-local-kms-wrap-subkey-v2"
+
+_WRAPPED_SIZE_V1 = _NONCE_SIZE + _DEK_SIZE + _TAG_SIZE
+"""The pre-salt envelope: ``nonce || ciphertext`` sealed directly under the master key.
+Still opened (read-only) so envelopes sealed by earlier builds stay readable."""
+
+_WRAPPED_SIZE_V2 = 1 + _WRAP_SALT_SIZE + _NONCE_SIZE + _DEK_SIZE + _TAG_SIZE
+"""The current envelope: ``0x02 || salt || nonce || ciphertext``."""
 
 
 # ....................... #
@@ -185,17 +218,37 @@ class LocalKeyManagement:
 
     # ....................... #
 
+    @staticmethod
+    def _wrap_subkey(master: bytes, salt: bytes) -> bytes:
+        """The per-wrap AES key: HKDF-SHA256 of the master key under a fresh salt.
+
+        Each envelope's salt is CSPRNG-random and stored alongside it, so every
+        wrap encrypts under a distinct derived key. That removes the master key's
+        GCM random-nonce wrap-count ceiling: a nonce collision only matters under
+        the *same* key, and a derived key seals exactly one envelope.
+        """
+
+        return HKDF(
+            algorithm=SHA256(),
+            length=_MASTER_KEY_SIZE,
+            salt=salt,
+            info=_WRAP_SUBKEY_INFO,
+        ).derive(master)
+
+    # ....................... #
+
     def generate_data_key_sync(self, key_ref: KeyRef) -> DataKey:
         plaintext = secure_random_bytes(_DEK_SIZE)
+        salt = secure_random_bytes(_WRAP_SALT_SIZE)
         nonce, ciphertext = self._aead.seal(
-            key=self._master_key(key_ref),
+            key=self._wrap_subkey(self._master_key(key_ref), salt),
             plaintext=plaintext,
             aad=self._aad(key_ref),
         )
 
         return DataKey(
             plaintext=plaintext,
-            wrapped=nonce + ciphertext,
+            wrapped=bytes([_WRAP_VERSION_V2]) + salt + nonce + ciphertext,
             key_id=key_ref.key_id,
             key_version=key_ref.version or "v1",
         )
@@ -203,17 +256,32 @@ class LocalKeyManagement:
     # ....................... #
 
     def unwrap_data_key_sync(self, *, wrapped: bytes, key_ref: KeyRef) -> bytes:
-        if len(wrapped) <= _NONCE_SIZE:
+        # The one legacy shape: ``nonce || ciphertext`` sealed directly under the
+        # master key, always exactly 60 bytes (12 + 32 + 16) — disjoint from the
+        # 93-byte v2 envelope, so the dispatch is unambiguous.
+        if len(wrapped) == _WRAPPED_SIZE_V1:
+            return self._aead.open(
+                key=self._master_key(key_ref),
+                nonce=wrapped[:_NONCE_SIZE],
+                ciphertext=wrapped[_NONCE_SIZE:],
+                aad=self._aad(key_ref),
+            )
+
+        if len(wrapped) != _WRAPPED_SIZE_V2 or wrapped[0] != _WRAP_VERSION_V2:
             raise exc.validation(
-                "Wrapped data key is too short to contain a nonce and ciphertext",
+                "Wrapped data key is not a recognized local KMS envelope",
                 code="core.crypto.wrapped_key_invalid",
                 details={"length": len(wrapped)},
             )
 
+        salt = wrapped[1 : 1 + _WRAP_SALT_SIZE]
+        nonce = wrapped[1 + _WRAP_SALT_SIZE : 1 + _WRAP_SALT_SIZE + _NONCE_SIZE]
+        ciphertext = wrapped[1 + _WRAP_SALT_SIZE + _NONCE_SIZE :]
+
         return self._aead.open(
-            key=self._master_key(key_ref),
-            nonce=wrapped[:_NONCE_SIZE],
-            ciphertext=wrapped[_NONCE_SIZE:],
+            key=self._wrap_subkey(self._master_key(key_ref), salt),
+            nonce=nonce,
+            ciphertext=ciphertext,
             aad=self._aad(key_ref),
         )
 

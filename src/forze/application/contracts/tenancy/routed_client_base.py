@@ -49,6 +49,14 @@ class RoutedTenantClientBase(Generic[C]):
     (seconds) to periodically re-resolve credentials and rebuild only when the
     fingerprint actually changed.
 
+    "Next access rebuilds" cuts both ways for anything still *using* the evicted
+    client: unguarded (the default), eviction disposes it immediately, failing whatever
+    is in flight on it; ``guarded=True`` drains it only after in-flight scopes exit.
+    Long-lived streaming facades (a queue consumer) must therefore not pin one pooled
+    client for the stream's lifetime — re-acquire per poll so a rotation swaps the
+    stream onto fresh credentials at a poll boundary (see ``RoutedSQSClient.consume``)
+    instead of tearing the consumer down.
+
     **Auto-rotating / short-lived credentials.** A fingerprint change is a *rebuild*
     trigger, so the fingerprint must cover exactly the fields the client captures at
     build time. A provider that mints short-lived tokens (an STS-style token

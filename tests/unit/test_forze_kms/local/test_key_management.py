@@ -45,12 +45,66 @@ def test_wrap_unwrap_roundtrip() -> None:
     dek = kms.generate_data_key_sync(KEY_REF)
 
     assert len(dek.plaintext) == 32
-    # 12-byte nonce + 32-byte DEK ciphertext + 16-byte GCM tag.
-    assert len(dek.wrapped) == 12 + 32 + 16
+    # Version byte + 32-byte salt + 12-byte nonce + 32-byte DEK ciphertext + 16-byte GCM tag.
+    assert len(dek.wrapped) == 1 + 32 + 12 + 32 + 16
+    assert dek.wrapped[0] == 0x02
     assert dek.wrapped != dek.plaintext
     assert dek.key_id == "local-v1"
     assert dek.key_version == "v1"
     assert kms.unwrap_data_key_sync(wrapped=dek.wrapped, key_ref=KEY_REF) == dek.plaintext
+
+
+def test_every_wrap_derives_a_fresh_subkey_salt() -> None:
+    # The wrap-count mitigation: each envelope carries its own random 256-bit
+    # HKDF salt, so the master key never performs two GCM encryptions and the
+    # NIST ~2^32 random-nonce ceiling does not accrue against it.
+    kms = LocalKeyManagement({"local-v1": MASTER})
+
+    salts = {bytes(kms.generate_data_key_sync(KEY_REF).wrapped[1:33]) for _ in range(64)}
+
+    assert len(salts) == 64
+
+
+def test_legacy_saltless_envelope_still_unwraps() -> None:
+    # Envelopes sealed by earlier builds: ``nonce || ciphertext`` directly under
+    # the master key (always exactly 60 bytes). Read-compat, never written anew.
+    kms = LocalKeyManagement({"local-v1": MASTER})
+    plaintext = bytes(range(200, 232))
+    nonce, ciphertext = AesGcmAead.seal(
+        key=MASTER,
+        plaintext=plaintext,
+        aad=b"forze-local-kms|local-v1|v1",
+    )
+    legacy = nonce + ciphertext
+
+    assert len(legacy) == 60
+    assert kms.unwrap_data_key_sync(wrapped=legacy, key_ref=KEY_REF) == plaintext
+
+
+def test_tampered_salt_fails_authentication() -> None:
+    # The salt is key-derivation input: flipping one bit derives a different
+    # subkey and the GCM tag check must refuse the envelope.
+    kms = LocalKeyManagement({"local-v1": MASTER})
+    dek = kms.generate_data_key_sync(KEY_REF)
+    tampered = bytes([dek.wrapped[0]]) + bytes([dek.wrapped[1] ^ 0x01]) + dek.wrapped[2:]
+
+    with pytest.raises(CoreException, match="authentication failed"):
+        kms.unwrap_data_key_sync(wrapped=tampered, key_ref=KEY_REF)
+
+
+def test_unrecognized_envelope_shapes_are_rejected() -> None:
+    kms = LocalKeyManagement({"local-v1": MASTER})
+    dek = kms.generate_data_key_sync(KEY_REF)
+
+    # Wrong length: neither the 60-byte legacy shape nor the 93-byte v2 shape.
+    with pytest.raises(CoreException) as truncated:
+        kms.unwrap_data_key_sync(wrapped=dek.wrapped[:-1], key_ref=KEY_REF)
+    assert truncated.value.code == "core.crypto.wrapped_key_invalid"
+
+    # Right length, wrong version byte.
+    with pytest.raises(CoreException) as bad_version:
+        kms.unwrap_data_key_sync(wrapped=b"\x03" + dek.wrapped[1:], key_ref=KEY_REF)
+    assert bad_version.value.code == "core.crypto.wrapped_key_invalid"
 
 
 async def test_async_twins_match_sync() -> None:

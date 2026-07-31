@@ -19,9 +19,10 @@ from forze.application.contracts.secrets import SecretRef, SecretsPort
 from forze.application.contracts.tenancy.routed_client_base import (
     StructuredSecretRoutedTenantClientBase,
 )
+from forze.base.exceptions import CoreException, exception_egress_policy
 from forze.base.primitives.fingerprint import build_routing_fingerprint
 
-from .client import SQSClient
+from .client import ConsumeAborted, SQSClient, consume_poll_loop
 from .constants import SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES
 from .port import SQSClientPort
 from .routing_credentials import SQSRoutingCredentials
@@ -38,6 +39,12 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
 
     Credentials are JSON secrets (see :class:`SQSRoutingCredentials`) resolved via
     :func:`~forze.application.contracts.secrets.resolve_structured`.
+
+    Every operation runs inside a pool scope (``client_scope``), so ``guarded=True`` is
+    fully supported: a rotation eviction drains a client only after in-flight operations
+    finish. :meth:`consume` additionally re-acquires the pooled client per long poll, so a
+    long-lived consumer follows a rotation onto fresh credentials instead of being torn
+    down with the evicted client.
 
     Register this instance under :data:`~forze_sqs.execution.deps.SQSClientDepKey` and
     use :func:`~forze_sqs.execution.lifecycle.routed_sqs_lifecycle_step` for startup/shutdown.
@@ -91,17 +98,13 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
 
     @asynccontextmanager
     async def client(self) -> AsyncGenerator[AsyncSQSClient]:
-        inner = await self._get_client()
-
-        async with inner.client() as c:
+        async with self.client_scope() as inner, inner.client() as c:
             yield c
 
     # ....................... #
 
     async def health(self) -> tuple[str, bool]:
-        inner = await self._get_client()
-
-        async with inner.client():
+        async with self.client_scope() as inner, inner.client():
             return await inner.health()
 
     async def create_queue(
@@ -110,15 +113,11 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
         *,
         attributes: dict[str, str] | None = None,
     ) -> str:
-        inner = await self._get_client()
-
-        async with inner.client():
+        async with self.client_scope() as inner, inner.client():
             return await inner.create_queue(queue, attributes=attributes)
 
     async def queue_url(self, queue: str) -> str:
-        inner = await self._get_client()
-
-        async with inner.client():
+        async with self.client_scope() as inner, inner.client():
             return await inner.queue_url(queue)
 
     async def enqueue(
@@ -134,9 +133,7 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
         not_before: datetime | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> str:
-        inner = await self._get_client()
-
-        async with inner.client():
+        async with self.client_scope() as inner, inner.client():
             return await inner.enqueue(
                 queue,
                 body,
@@ -164,9 +161,7 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
         message_headers: Sequence[Mapping[str, str]] | None = None,
         max_batch_payload_bytes: int = SQS_DEFAULT_MAX_BATCH_PAYLOAD_BYTES,
     ) -> list[str]:
-        inner = await self._get_client()
-
-        async with inner.client():
+        async with self.client_scope() as inner, inner.client():
             return await inner.enqueue_many(
                 queue,
                 bodies,
@@ -188,9 +183,7 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
         limit: int | None = None,
         timeout: timedelta | None = None,
     ) -> list[SQSQueueMessage]:
-        inner = await self._get_client()
-
-        async with inner.client():
+        async with self.client_scope() as inner, inner.client():
             return await inner.receive(queue, limit=limit, timeout=timeout)
 
     async def consume(
@@ -199,16 +192,43 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
         *,
         timeout: timedelta | None = None,
     ) -> AsyncGenerator[SQSQueueMessage]:
-        inner = await self._get_client()
+        """Yield queue messages continuously, reconnecting across credential rotation.
 
-        async with inner.client():
-            async for msg in inner.consume(queue, timeout=timeout):
-                yield msg
+        Same idle-timeout / long-poll / backoff semantics as :meth:`SQSClient.consume`,
+        but each long poll acquires the tenant's *current* pooled client instead of
+        pinning one for the stream's lifetime. A rotation signal
+        (:meth:`~forze.application.contracts.tenancy.routed_client_base.RoutedTenantClientBase.evict_tenant`)
+        therefore swaps the stream onto fresh credentials at the next poll: with
+        ``guarded=True`` the old client drains after the in-flight poll's lease exits;
+        unguarded, at worst the one in-flight poll fails when the old client is disposed
+        under it and the loop's backoff-retry re-acquires the rebuilt client — the
+        consumer never crashes on rotation.
+
+        Backend receive failures retry with backoff (the plain client's semantics).
+        Resolution failures do not get that blanket: a **non-retryable** kind raised
+        while acquiring the tenant's client (no tenant bound, secret missing, invalid
+        credentials) is a misconfiguration, and the stream raises it instead of
+        spinning a warn-forever retry loop on it.
+        """
+
+        async def _receive_one(wait: timedelta) -> list[SQSQueueMessage]:
+            resolving = True
+            try:
+                async with self.client_scope() as inner, inner.client():
+                    resolving = False
+                    return await inner.receive(queue, limit=1, timeout=wait)
+
+            except CoreException as error:
+                if resolving and not exception_egress_policy(error.kind).retryable:
+                    raise ConsumeAborted(error) from error
+
+                raise
+
+        async for message in consume_poll_loop(_receive_one, queue=queue, timeout=timeout):
+            yield message
 
     async def ack(self, queue: str, ids: Sequence[str]) -> int:
-        inner = await self._get_client()
-
-        async with inner.client():
+        async with self.client_scope() as inner, inner.client():
             return await inner.ack(queue, ids)
 
     async def nack(
@@ -219,7 +239,5 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
         requeue: bool = True,
         count: bool = True,
     ) -> int:
-        inner = await self._get_client()
-
-        async with inner.client():
+        async with self.client_scope() as inner, inner.client():
             return await inner.nack(queue, ids, requeue=requeue, count=count)

@@ -67,6 +67,29 @@ async def _resolve_cookie_token_authn(
 
         return None
 
+    if ingress.csrf is not None:
+        # Before the ambient credential authenticates anything: a cross-site request
+        # must not ride the browser's cookie into a state change. The gate is origin
+        # proof, independent of the outbound carrier's SameSite (which a proxy or a
+        # SameSite=None deployment can void), and fires only when the cookie is
+        # present — a cookie-less request has no ambient credential to forge, so
+        # header-authenticated non-browser clients pass untouched. Authorization
+        # kind, not authentication: the credential may be perfectly valid — it is
+        # the request's *provenance* that is refused, and a 401 would invite
+        # clients to retry with the same cookie.
+        refusal = ingress.csrf.rejection(
+            method=request.method,
+            host=request.headers.get("host"),
+            origin=request.headers.get("origin"),
+            referer=request.headers.get("referer"),
+        )
+
+        if refusal is not None:
+            raise exc.authorization(
+                f"Cookie authentication refused cross-site: {refusal}",
+                code="csrf_rejected",
+            )
+
     creds = AccessTokenCredentials(
         token=token,
         scheme=ingress.scheme,
