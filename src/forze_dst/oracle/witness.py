@@ -306,37 +306,110 @@ class InvariantAccounting:
 # ....................... #
 
 
-def config_capabilities(config: SimulationConfig) -> frozenset[str]:
+@final
+@attrs.frozen(kw_only=True)
+class PerturbationCapability:
+    """One perturbation a config can produce: its kind, and the port selectors it is bound to.
+
+    *kind* is ``"schedule"``, ``"crash"``, ``"fault:<kind>"``, or ``"cluster"``; *surface* /
+    *route* / *op* carry a crash policy's / fault rule's selectors verbatim (``None`` =
+    matches any, the :class:`~forze.application.contracts.interception.PortSelector`
+    convention). Selectors matter: a crash policy scoped to one surface cannot reproduce a
+    witness whose crash was placed on a different one, even though both are "crash".
+    """
+
+    kind: str
+    surface: str | None = None
+    route: str | None = None
+    op: str | None = None
+
+    # ....................... #
+
+    def satisfies(self, requirement: PerturbationCapability) -> bool:
+        """Whether this (sweep-side) capability can produce the *requirement*'s perturbations.
+
+        Kinds must match exactly; each selector dimension is wildcard-aware — compatible
+        unless both sides pin a different value (disjoint match sets: the sweep's rule and
+        the witness's rule can never select the same call, a structural exclusion)."""
+
+        if self.kind != requirement.kind:
+            return False
+
+        return all(
+            mine is None or theirs is None or mine == theirs
+            for mine, theirs in (
+                (self.surface, requirement.surface),
+                (self.route, requirement.route),
+                (self.op, requirement.op),
+            )
+        )
+
+    # ....................... #
+
+    def render(self) -> str:
+        """``kind`` plus any pinned selectors — the form the gate's message names."""
+
+        pinned = [
+            f"{dimension}={value}"
+            for dimension, value in (
+                ("surface", self.surface),
+                ("route", self.route),
+                ("op", self.op),
+            )
+            if value is not None
+        ]
+        return self.kind + (f"[{', '.join(pinned)}]" if pinned else "")
+
+
+# ....................... #
+
+
+def config_capabilities(config: SimulationConfig) -> frozenset[PerturbationCapability]:
     """The perturbation capabilities *config* enables — what a sweep under it could trigger.
 
     ``"schedule"`` (a perturbing scheduler, or DPOR's own reorderer), ``"crash"`` (a crash
     policy or a fault rule with a crash rate), ``"fault:<kind>"`` per non-zero
-    :class:`~forze_dst.faults.FaultRule` rate, and ``"cluster"`` (a multi-node topology).
-    Config-scoped accounting compares a witness's find-environment capabilities against these:
-    a capability the citing sweep lacks means the sweep structurally could not reproduce the
-    witness's perturbation class.
+    :class:`~forze_dst.faults.FaultRule` rate, and ``"cluster"`` (a multi-node topology) —
+    each carrying its policy's/rule's port selectors. Config-scoped accounting matches a
+    witness's find-environment capabilities against these
+    (:meth:`PerturbationCapability.satisfies`): a requirement no sweep-side capability can
+    produce means the sweep structurally could not reproduce the witness's perturbation class.
     """
 
     from forze_dst.config import Strategy
 
-    capabilities: set[str] = set()
+    capabilities: set[PerturbationCapability] = set()
 
     if config.perturb or config.strategy is Strategy.DPOR:
-        capabilities.add("schedule")
+        capabilities.add(PerturbationCapability(kind="schedule"))
 
     if config.crash is not None and config.crash.probability > 0:
-        capabilities.add("crash")
+        capabilities.add(
+            PerturbationCapability(
+                kind="crash",
+                surface=config.crash.surface,
+                route=config.crash.route,
+                op=config.crash.op,
+            )
+        )
 
     if config.faults is not None:
         for rule in config.faults.rules:
-            if rule.crash > 0:
-                capabilities.add("crash")
-            for kind in ("error", "timeout", "drop", "duplicate", "delay"):
-                if getattr(rule, kind) > 0:
-                    capabilities.add(f"fault:{kind}")
+            kinds = ["crash"] if rule.crash > 0 else []
+            kinds.extend(
+                f"fault:{kind}"
+                for kind in ("error", "timeout", "drop", "duplicate", "delay")
+                if getattr(rule, kind) > 0
+            )
+            capabilities.update(
+                PerturbationCapability(
+                    kind=kind, surface=rule.surface, route=rule.route, op=rule.op
+                )
+                for kind in kinds
+            )
 
     if config.cluster is not None:
-        capabilities.add("cluster")
+        capabilities.add(PerturbationCapability(kind="cluster"))
 
     return frozenset(capabilities)
 
@@ -344,13 +417,13 @@ def config_capabilities(config: SimulationConfig) -> frozenset[str]:
 # ....................... #
 
 
-def _witness_requirements(witness: InvariantWitness) -> frozenset[str]:
+def _witness_requirements(witness: InvariantWitness) -> frozenset[PerturbationCapability]:
     """The capabilities *witness*'s find environment enabled — what a citing sweep must enable.
 
     Exact when the entry embeds the miner's full config snapshot (``explore["config"]``);
     best-effort over the known bare knobs otherwise (a corpus killing entry records e.g.
-    ``crash_probability``). An entry recording nothing recognizable requires nothing — the
-    status quo for hand-authored knobs, never a false gate failure.
+    ``crash_probability`` / ``crash_surface``). An entry recording nothing recognizable
+    requires nothing — the status quo for hand-authored knobs, never a false gate failure.
     """
 
     explore = witness.entry.explore or {}
@@ -361,10 +434,17 @@ def _witness_requirements(witness: InvariantWitness) -> frozenset[str]:
 
         return config_capabilities(config_from_dict(dict(snapshot)))
 
-    requirements: set[str] = set()
+    requirements: set[PerturbationCapability] = set()
 
     if float(explore.get("crash_probability") or 0.0) > 0 or "crash_surface" in explore:
-        requirements.add("crash")
+        requirements.add(
+            PerturbationCapability(
+                kind="crash",
+                surface=explore.get("crash_surface"),
+                route=explore.get("crash_route"),
+                op=explore.get("crash_op"),
+            )
+        )
 
     return frozenset(requirements)
 
@@ -411,14 +491,21 @@ def account_invariants(
         exercisable = set[str]()
         missing = {}
         for name, name_witnesses in live.items():
-            shortfalls: list[frozenset[str]] = [
-                _witness_requirements(w) - capabilities for w in name_witnesses
+            shortfalls: list[tuple[str, ...]] = [
+                tuple(
+                    sorted(
+                        requirement.render()
+                        for requirement in _witness_requirements(w)
+                        if not any(c.satisfies(requirement) for c in capabilities)
+                    )
+                )
+                for w in name_witnesses
             ]
             if any(not shortfall for shortfall in shortfalls):
                 exercisable.add(name)
             else:
                 # The smallest shortfall (ties broken lexically) — the least the config lacks.
-                missing[name] = min((len(s), tuple(sorted(s))) for s in shortfalls)[1]
+                missing[name] = min((len(s), s) for s in shortfalls)[1]
 
     declared = {declaration.invariant for declaration in declarations}
 

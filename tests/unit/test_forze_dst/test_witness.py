@@ -371,19 +371,115 @@ class TestSweepScopedAccounting:
         )
         assert scoped.unexercisable == ("a",)
 
+        # The bare knob's surface is preserved: a crash policy on a different surface still
+        # cannot exercise it; a broad one can.
+        wrong_surface = SimulationConfig(crash=CrashPolicy(surface="mailbox"))
+        assert (
+            account_invariants(
+                ["a"], witnesses=[witness], declarations=[], fingerprint="fp", config=wrong_surface
+            ).unexercisable
+            == ("a",)
+        )
+        broad = SimulationConfig(crash=CrashPolicy())
+        assert (
+            account_invariants(
+                ["a"], witnesses=[witness], declarations=[], fingerprint="fp", config=broad
+            ).witnessed
+            == ("a",)
+        )
+
     def test_config_capabilities_enumeration(self) -> None:
-        from forze_dst.oracle.witness import config_capabilities
+        from forze_dst.oracle.witness import PerturbationCapability, config_capabilities
         from forze_dst.scheduler import FIFOScheduler
 
-        assert config_capabilities(SimulationConfig()) == {"schedule"}
+        schedule = PerturbationCapability(kind="schedule")
+        assert config_capabilities(SimulationConfig()) == {schedule}
         assert config_capabilities(SimulationConfig(scheduler=FIFOScheduler())) == frozenset()
-        assert config_capabilities(SimulationConfig(crash=CrashPolicy())) == {"schedule", "crash"}
+        assert config_capabilities(SimulationConfig(crash=CrashPolicy(surface="mailbox"))) == {
+            schedule,
+            PerturbationCapability(kind="crash", surface="mailbox"),
+        }
         assert config_capabilities(
             SimulationConfig(
                 scheduler=FIFOScheduler(),
-                faults=FaultPolicy(rules=(FaultRule(error=0.1, crash=0.01),)),
+                faults=FaultPolicy(rules=(FaultRule(error=0.1, crash=0.01, op="update"),)),
             )
-        ) == {"crash", "fault:error"}
+        ) == {
+            PerturbationCapability(kind="crash", op="update"),
+            PerturbationCapability(kind="fault:error", op="update"),
+        }
+
+    def test_crash_selector_mismatch_is_unexercisable(self) -> None:
+        # Both configs "have crash", but on disjoint surfaces — the sweep's crash policy can
+        # never select the calls the witness's did, so kind-level matching would over-claim.
+        witness = _mined_witness(
+            "a",
+            config=SimulationConfig(
+                crash=CrashPolicy(probability=0.25, surface="document_command")
+            ),
+        )
+
+        scoped = account_invariants(
+            ["a"],
+            witnesses=[witness],
+            declarations=[],
+            fingerprint="fp",
+            config=SimulationConfig(crash=CrashPolicy(probability=0.25, surface="mailbox")),
+        )
+
+        assert scoped.unexercisable == ("a",)
+        assert scoped.missing_capabilities == (("a", ("crash[surface=document_command]",)),)
+
+    def test_broad_and_pinned_selectors_overlap_both_ways(self) -> None:
+        pinned = _mined_witness(
+            "a", config=SimulationConfig(crash=CrashPolicy(surface="document_command"))
+        )
+        broad = _mined_witness("a", config=SimulationConfig(crash=CrashPolicy()))
+
+        # A sweep-wide crash policy covers a surface-pinned witness…
+        assert (
+            account_invariants(
+                ["a"],
+                witnesses=[pinned],
+                declarations=[],
+                fingerprint="fp",
+                config=SimulationConfig(crash=CrashPolicy()),
+            ).witnessed
+            == ("a",)
+        )
+
+        # …and a pinned sweep overlaps a global witness (both can crash at that surface).
+        assert (
+            account_invariants(
+                ["a"],
+                witnesses=[broad],
+                declarations=[],
+                fingerprint="fp",
+                config=SimulationConfig(crash=CrashPolicy(surface="mailbox")),
+            ).witnessed
+            == ("a",)
+        )
+
+    def test_fault_rule_selector_mismatch_is_unexercisable(self) -> None:
+        witness = _mined_witness(
+            "a",
+            config=SimulationConfig(faults=FaultPolicy(rules=(FaultRule(error=0.1, op="update"),))),
+        )
+
+        wrong_op = SimulationConfig(faults=FaultPolicy(rules=(FaultRule(error=0.1, op="get"),)))
+        scoped = account_invariants(
+            ["a"], witnesses=[witness], declarations=[], fingerprint="fp", config=wrong_op
+        )
+        assert scoped.unexercisable == ("a",)
+        assert scoped.missing_capabilities == (("a", ("fault:error[op=update]",)),)
+
+        same_op = SimulationConfig(faults=FaultPolicy(rules=(FaultRule(error=0.05, op="update"),)))
+        assert (
+            account_invariants(
+                ["a"], witnesses=[witness], declarations=[], fingerprint="fp", config=same_op
+            ).witnessed
+            == ("a",)
+        )
 
 
 # ....................... #
