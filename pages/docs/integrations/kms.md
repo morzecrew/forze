@@ -191,6 +191,14 @@ service, use one of the cloud backends or Vault above. How the raw bytes get to
 the process (env var, file mount, secret manager) is your application's choice,
 same as `deterministic_root`.
 
+**No wrap-count rotation cadence.** AES-GCM with random nonces is only safe for
+about 2^32 encryptions under one key, and DEKs are minted per stream, TTL, and
+tenant — so a busy fleet could plausibly approach that ceiling under one
+long-lived master key. Each wrap therefore seals under a one-shot HKDF subkey
+(a fresh random salt stored in the envelope), so the ceiling never accrues
+against the master key: rotate on policy and on suspicion of compromise, not on
+volume. Envelopes sealed by earlier builds remain readable.
+
 **Replacing a key** uses the standard
 [previous-key overlap](../identity-tenancy-enc/encryption.md#replacing-a-key),
 with one extra rule: the outgoing key stays **in the map** until the sweep is

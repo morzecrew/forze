@@ -86,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Keys, crypto & mock conformance**
 
-- **Self-hosted KMS backend** — `forze_kms.local.LocalKeyManagement` wraps data keys under operator-provided 32-byte master keys, no cloud or extra needed; the multi-key map carries the rotation overlap, a rotated-away key id fails closed, and a one-way `fingerprint` spots fleet drift.
+- **Self-hosted KMS backend** — `forze_kms.local.LocalKeyManagement` wraps data keys under operator-provided 32-byte master keys, no cloud or extra needed; the multi-key map carries the rotation overlap, a rotated-away key id fails closed, and a one-way `fingerprint` spots fleet drift. No volume-driven rotation cadence — the GCM ~2^32 wrap-count ceiling never accrues against a master key; envelopes sealed by earlier builds stay readable.
 - **Every mock field plane seals** — document, graph, search (hub/federated, snapshots), analytics and procedures resolve the same fail-closed encrypting codecs as real backends, via an opt-in synchronous key seam for computation-only backends. **Behavior change** for mock suites asserting raw stored values; text queries no longer match sealed content.
 - **OpenBao compatibility** — `forze_vault` works with OpenBao (verified 2.6.1); the integration suite runs against any compatible engine via `FORZE_VAULT_IMAGE`.
 
