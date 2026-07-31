@@ -895,6 +895,24 @@ _FRAGMENT_SAMPLES: dict[str, str] = {
 }
 
 
+class TestPrefilterExtractorNodes:
+    """The parse-tree walker understands the constructs the built-in patterns use.
+
+    The hardened email/userinfo fragments introduced possessive repeats, and the
+    compound suffix an atomic group — the extractor must keep deriving required
+    literals through both, or one such fragment with no top-level literal would
+    silently disable the whole prefilter.
+    """
+
+    def test_atomic_group_contributes_its_literals(self) -> None:
+        assert _scrub_policy._fragment_required_literals(r"(?>abc)") == frozenset({"abc"})
+
+    def test_possessive_repeat_contributes_when_required(self) -> None:
+        assert _scrub_policy._fragment_required_literals(r"(?:abc){1,3}+") == frozenset({"abc"})
+        # min=0: nothing is required — no literal may be claimed.
+        assert _scrub_policy._fragment_required_literals(r"(?:abc){0,3}+x") == frozenset({"x"})
+
+
 class TestPrefilterSupersetness:
     """The literal prefilter must never skip a string the combined regex scrubs."""
 

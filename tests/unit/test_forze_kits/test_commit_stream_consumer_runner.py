@@ -231,6 +231,22 @@ async def test_dead_letter_forwards_sealed_envelope_round_trip() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dead_letter_without_any_source_identity_fails_closed() -> None:
+    """A message with neither a ``forze_event_id`` header nor a broker id cannot be
+    dead-lettered exactly-once — minting a random id would defeat the dedup the copy
+    exists for, so the guard refuses instead (never reachable off a real offset log,
+    whose ids are canonical)."""
+
+    consumer = _consumer(lambda _m: None, dlq_stream="orders.dlq")  # type: ignore[arg-type, return-value]
+    message = StreamMessage(
+        stream=_TOPIC, id="", key="k", type="t", payload=_Payload(value="x"), headers={}
+    )
+
+    with pytest.raises(CoreException, match="neither a forze_event_id"):
+        await consumer._dead_letter(message, object(), reason="handler")  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+
+
+@pytest.mark.asyncio
 async def test_dead_letter_copy_dedups_exactly_once_without_event_id_header() -> None:
     """Copy-then-delete exactly-once independent of ``forze_event_id``: a raw
     (non-relay) message carries no event-id header, so the DLQ copy's dedup id is

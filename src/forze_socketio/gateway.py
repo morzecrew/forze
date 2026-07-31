@@ -751,6 +751,13 @@ class PubSubSignalSource(RealtimeSignalSource):
                         )
 
                 except CoreException as error:
+                    if is_draining_refusal(error):
+                        # Shutdown artifact, not a bridge failure: re-raise so the run
+                        # loop stops cleanly instead of counting/logging a churn
+                        # against the one-way gate (pub/sub is fire-and-forget, so
+                        # there is nothing to redeliver either way).
+                        raise
+
                     if error.kind is ExceptionKind.CONFIGURATION:
                         raise
 

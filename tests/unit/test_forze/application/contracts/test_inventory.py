@@ -600,6 +600,7 @@ def test_allow_unregistered_downgrades_the_resolve_guard_to_a_warning() -> None:
         async with runtime.scope():
             ctx = runtime.get_context()
             ctx.document.query(_document("ghost"))  # warned, not refused
+            ctx.document.query(_document("ghost"))  # repeat: warned once, never re-logged
 
     asyncio.run(_use())
 
