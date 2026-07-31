@@ -113,6 +113,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Firestore writes refuse non-finite and double-overflowing numerics** (**behaviour change**) — a `NaN`/`±Infinity` `Decimal`/`float`, or a `Decimal` outside the double range, now raises `precondition` instead of persisting `inf`/`nan`; in-range precision loss is unchanged.
 
+**DST `audit()` no longer claims a detection bound for invariants the sweep could not falsify** (**behaviour change**) — a witness mined under perturbations the citing config does not enable (crash/fault/schedule/cluster) is new `InvariantStatus.UNEXERCISABLE`: `audit()` fails naming the missing capability, `run()` warns, clean verdicts count it out of the bound. New `forze_dst.oracle.config_capabilities`; `invariant_accounting`/`account_invariants` accept `config=`.
+
 **`Decimal` is a first-class filter and sort value across the query DSL** — the scalar union omitted it, and every backend showed it differently.
 
 - Postgres compared nested JSON leaves as text and round-tripped numerics through `float`; Mongo matched nothing; Firestore could not write the field at all; the mock refused Decimal aggregates; Meilisearch indexed lexically.

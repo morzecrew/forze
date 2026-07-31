@@ -17,6 +17,7 @@ from forze.application.contracts.interception import PortCall
 from forze.base.exceptions import CoreException
 from forze_dst import SimulationConfig
 from forze_dst.faults import (
+    CrashPolicy,
     FaultPolicy,
     FaultRule,
     SimulatedCrash,
@@ -244,6 +245,148 @@ class TestAccounting:
 
 
 # ....................... #
+# Config-scoped accounting: WITNESSED is a claim about the *citing* sweep, so a witness mined
+# under a perturbation the sweep's config does not enable must not license its clean verdict.
+
+
+def _mined_witness(
+    name: str, *, config: SimulationConfig, fingerprint: str = "fp", seed: int = 1
+) -> InvariantWitness:
+    """A miner-shaped witness: the entry embeds the find config (what makes replay exact)."""
+
+    from forze_dst.artifacts.corpus import RegressionEntry
+    from forze_dst.artifacts.serialize import config_to_dict
+
+    return InvariantWitness(
+        invariant=name,
+        entry=RegressionEntry(
+            seed=seed,
+            registry_fingerprint=fingerprint,
+            explore={"config": config_to_dict(config)},
+        ),
+    )
+
+
+class TestSweepScopedAccounting:
+    def test_crash_mined_witness_is_unexercisable_without_a_crash_policy(self) -> None:
+        crash_config = SimulationConfig(crash=CrashPolicy(probability=0.25))
+
+        accounting = account_invariants(
+            ["a"],
+            witnesses=[_mined_witness("a", config=crash_config)],
+            declarations=[],
+            fingerprint="fp",
+            config=SimulationConfig(seeds=range(1000)),  # the issue's exact citing config
+        )
+
+        assert dict(accounting.statuses) == {"a": InvariantStatus.UNEXERCISABLE}
+        assert accounting.witnessed == ()  # the detection bound must not cover it
+        assert accounting.unexercisable == ("a",)
+        assert accounting.missing_capabilities == (("a", ("crash",)),)
+
+        with pytest.raises(InvariantAccountingError, match=r"unexercisable.*needs crash"):
+            accounting.require_accounted()
+
+    def test_the_same_witness_is_witnessed_once_the_config_enables_crash(self) -> None:
+        crash_config = SimulationConfig(crash=CrashPolicy(probability=0.25))
+
+        accounting = account_invariants(
+            ["a"],
+            witnesses=[_mined_witness("a", config=crash_config)],
+            declarations=[],
+            fingerprint="fp",
+            config=SimulationConfig(seeds=range(4), crash=CrashPolicy(probability=0.05)),
+        )
+
+        assert accounting.witnessed == ("a",)
+        assert accounting.problems == ()
+        accounting.require_accounted()  # does not raise
+
+    def test_fault_kinds_match_individually(self) -> None:
+        timeout_config = SimulationConfig(faults=FaultPolicy(rules=(FaultRule(timeout=0.1),)))
+        witness = _mined_witness("a", config=timeout_config)
+
+        error_only = SimulationConfig(faults=FaultPolicy(rules=(FaultRule(error=0.1),)))
+        scoped = account_invariants(
+            ["a"], witnesses=[witness], declarations=[], fingerprint="fp", config=error_only
+        )
+        assert scoped.unexercisable == ("a",)
+        assert scoped.missing_capabilities == (("a", ("fault:timeout",)),)
+
+        timeout_too = SimulationConfig(faults=FaultPolicy(rules=(FaultRule(timeout=0.05),)))
+        assert (
+            account_invariants(
+                ["a"], witnesses=[witness], declarations=[], fingerprint="fp", config=timeout_too
+            ).witnessed
+            == ("a",)
+        )
+
+    def test_any_exercisable_witness_licenses_the_invariant(self) -> None:
+        crash_mined = _mined_witness("a", config=SimulationConfig(crash=CrashPolicy()))
+        schedule_mined = _mined_witness("a", config=SimulationConfig(), seed=2)
+
+        accounting = account_invariants(
+            ["a"],
+            witnesses=[crash_mined, schedule_mined],
+            declarations=[],
+            fingerprint="fp",
+            config=SimulationConfig(),  # default perturbing scheduler, no crash
+        )
+
+        assert accounting.witnessed == ("a",)
+        assert accounting.problems == ()
+
+    def test_registry_only_accounting_stays_unscoped(self) -> None:
+        crash_config = SimulationConfig(crash=CrashPolicy(probability=0.25))
+
+        accounting = account_invariants(
+            ["a"],
+            witnesses=[_mined_witness("a", config=crash_config)],
+            declarations=[],
+            fingerprint="fp",
+        )
+
+        assert accounting.witnessed == ("a",)
+        assert accounting.missing_capabilities == ()
+
+    def test_bare_crash_knobs_still_carry_the_requirement(self) -> None:
+        # Corpus-style killing entry: bare knobs, no config snapshot.
+        from forze_dst.artifacts.corpus import RegressionEntry
+
+        witness = InvariantWitness(
+            invariant="a",
+            entry=RegressionEntry(
+                seed=0,
+                registry_fingerprint="fp",
+                explore={"crash_surface": "document_command", "crash_probability": 0.25},
+            ),
+        )
+
+        scoped = account_invariants(
+            ["a"],
+            witnesses=[witness],
+            declarations=[],
+            fingerprint="fp",
+            config=SimulationConfig(),
+        )
+        assert scoped.unexercisable == ("a",)
+
+    def test_config_capabilities_enumeration(self) -> None:
+        from forze_dst.oracle.witness import config_capabilities
+        from forze_dst.scheduler import FIFOScheduler
+
+        assert config_capabilities(SimulationConfig()) == {"schedule"}
+        assert config_capabilities(SimulationConfig(scheduler=FIFOScheduler())) == frozenset()
+        assert config_capabilities(SimulationConfig(crash=CrashPolicy())) == {"schedule", "crash"}
+        assert config_capabilities(
+            SimulationConfig(
+                scheduler=FIFOScheduler(),
+                faults=FaultPolicy(rules=(FaultRule(error=0.1, crash=0.01),)),
+            )
+        ) == {"crash", "fault:error"}
+
+
+# ....................... #
 
 
 class TestWitnessRegistryIO:
@@ -344,6 +487,11 @@ class TestCountableVerdict:
         verdict = format_clean_verdict(10, witnessed=1, unaccounted=("mystery",))
         assert "1 UNACCOUNTED: mystery" in verdict
 
+    def test_unexercisable_never_hides(self) -> None:
+        verdict = format_clean_verdict(10, witnessed=1, unexercisable=("lost_effect",))
+        assert "the 1 witnessed invariant" in verdict  # the bound's K excludes it
+        assert "1 witnessed but UNEXERCISABLE under this config: lost_effect" in verdict
+
 
 # ....................... #
 
@@ -438,6 +586,31 @@ class TestFullWitnessLoop:
 
         with pytest.raises(InvariantAccountingError, match="re-mine"):
             sim.audit(SimulationConfig(seeds=range(4)))
+
+    def test_audit_gates_on_a_witness_this_config_could_not_exercise(self) -> None:
+        # The issue scenario: the witness was mined under a crash policy, the citing audit runs
+        # no crash — its clean sweep structurally could not catch the invariant, so the gate
+        # fails instead of printing a detection bound scoped to it.
+        case, _ = _t1()
+        sim = case.simulation
+        sim.witnesses = (
+            _mined_witness(
+                "expect",
+                config=SimulationConfig(crash=CrashPolicy(probability=0.25)),
+                fingerprint=sim.fingerprint(),
+            ),
+        )
+
+        with pytest.raises(InvariantAccountingError, match="unexercisable"):
+            sim.audit(SimulationConfig(seeds=range(1000)))
+
+        # A crash-capable citing config passes the same gate (checked without the sweep).
+        accounting = sim.invariant_accounting(
+            SimulationConfig(seeds=range(4), crash=CrashPolicy(probability=0.05))
+        )
+        assert accounting is not None
+        accounting.require_accounted()
+        assert accounting.witnessed == ("expect",)
 
     def test_run_warns_but_does_not_fail(self) -> None:
         case, mutant = _t1()

@@ -105,6 +105,7 @@ def pytest_terminal_summary(terminalreporter: Any) -> None:
             record.runs,
             witnessed=record.witnessed,
             declared=record.declared,
+            unexercisable=record.unexercisable,
             unaccounted=record.unaccounted,
         )
         terminalreporter.write_line(f"{record.label}: {verdict}")

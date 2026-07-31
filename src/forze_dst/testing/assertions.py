@@ -73,13 +73,14 @@ def assert_no_violation(
     # exclusion bound would be dishonest there (same rule as the CLI clean path). Zero seeds
     # (e.g. ``--dst-seeds=0``) establish nothing and would make the bound undefined — not recorded.
     if options is not None and cfg.strategy is Strategy.SCENARIO and len(cfg.seeds) > 0:
-        accounting = sim.invariant_accounting()
+        accounting = sim.invariant_accounting(cfg)
         record_clean_sweep(
             CleanSweep(
                 label=_current_test_label(),
                 runs=len(cfg.seeds),
                 witnessed=len(accounting.witnessed) if accounting is not None else None,
                 declared=accounting.declared if accounting is not None else (),
+                unexercisable=accounting.unexercisable if accounting is not None else (),
                 unaccounted=accounting.unaccounted if accounting is not None else (),
             )
         )

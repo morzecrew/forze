@@ -138,14 +138,19 @@ class Simulation:
 
     # ....................... #
 
-    def invariant_accounting(self) -> InvariantAccounting | None:
+    def invariant_accounting(
+        self, config: SimulationConfig | None = None
+    ) -> InvariantAccounting | None:
         """Per-invariant witness accounting, or ``None`` when the simulation has not opted in.
 
         Opting in = declaring any :attr:`witnesses` or :attr:`horizon` entry; every declared
-        invariant is then WITNESSED (a live witness exists), DECLARED (out-of-horizon, with a
-        covering check named), or UNACCOUNTED. Entirely static — names, registries, and the
-        current catalog fingerprint — so it is checkable before a single seed runs. Duplicate
-        invariant names fail loud (statuses would be ambiguous): wrap repeated instances in
+        invariant is then WITNESSED (a live witness this sweep could trigger), DECLARED
+        (out-of-horizon, with a covering check named), UNEXERCISABLE (live-witnessed, but only
+        under perturbations *config* does not enable), or UNACCOUNTED. Entirely static — names,
+        registries, the catalog fingerprint, and the given *config* — so it is checkable before
+        a single seed runs. Pass the sweep's *config* to scope WITNESSED to what that sweep can
+        actually falsify; without it the accounting is registry-only. Duplicate invariant names
+        fail loud (statuses would be ambiguous): wrap repeated instances in
         :func:`~forze_dst.oracle.invariants.named`.
         """
 
@@ -166,14 +171,15 @@ class Simulation:
             witnesses=tuple(self.witnesses),
             declarations=tuple(self.horizon),
             fingerprint=self.fingerprint(),
+            config=config,
         )
 
     # ....................... #
 
-    def _warn_unaccounted(self) -> None:
+    def _warn_unaccounted(self, config: SimulationConfig | None = None) -> None:
         """Surface accounting problems on ``run()`` as warnings (``audit()`` fails on them)."""
 
-        accounting = self.invariant_accounting()
+        accounting = self.invariant_accounting(config)
 
         if accounting is not None:
             for problem in accounting.problems:
@@ -199,7 +205,7 @@ class Simulation:
 
         # Accounting problems warn here and *fail* on audit() — matching the existing
         # plateau/completeness split between the two entrypoints.
-        self._warn_unaccounted()
+        self._warn_unaccounted(config)
 
         # Run-scoped: the per-run substrate compiles this config's seeded faults/latency.
         self.active_config = config
@@ -259,11 +265,12 @@ class Simulation:
 
         When the simulation opts into invariant accounting (:attr:`witnesses` / :attr:`horizon`),
         this is the gate: it **fails** (before spending any compute) on unaccounted invariants,
-        drifted witnesses, or wrong declarations — a clean verdict may only cover invariants the
-        harness has been shown able to catch failing.
+        drifted witnesses, wrong declarations, or witnesses *this* config could not exercise
+        (mined under a crash/fault/schedule perturbation the config does not enable) — a clean
+        verdict may only cover invariants **this sweep** has been shown able to catch failing.
         """
 
-        accounting = self.invariant_accounting()
+        accounting = self.invariant_accounting(config)
         if accounting is not None:
             accounting.require_accounted()
 

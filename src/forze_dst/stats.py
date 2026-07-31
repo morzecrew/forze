@@ -81,6 +81,7 @@ def format_clean_verdict(
     confidence: float = 0.95,
     witnessed: int | None = None,
     declared: Sequence[str] = (),
+    unexercisable: Sequence[str] = (),
     unaccounted: Sequence[str] = (),
 ) -> str:
     """The locked one-line verdict a clean run prints instead of a bare "passed".
@@ -89,9 +90,11 @@ def format_clean_verdict(
     coverage report, CLI, pytest summary) states exactly the same claim and never a stronger one.
     With invariant accounting (*witnessed* is set), the oracle-set clause becomes **countable**:
     it names how many invariants the sweep actually speaks about (those with a live
-    falsifiability witness), which are declared out-of-horizon, and — should the gate ever be
-    bypassed — which are unaccounted, so the claim can never silently cover an invariant the
-    harness was never shown able to catch.
+    falsifiability witness **this sweep's config could trigger**), which are declared
+    out-of-horizon, which are witnessed only under perturbations the config did not enable
+    (*unexercisable* — the bound does not cover them), and — should the gate ever be bypassed —
+    which are unaccounted, so the claim can never silently cover an invariant the harness was
+    never shown able to catch.
     """
 
     bound = detection_upper_bound(runs, confidence=confidence)
@@ -106,6 +109,11 @@ def format_clean_verdict(
         )
         if declared:
             scope += f" ({len(declared)} declared out-of-horizon: {', '.join(declared)})"
+        if unexercisable:
+            scope += (
+                f" (⚠ {len(unexercisable)} witnessed but UNEXERCISABLE under this config: "
+                f"{', '.join(unexercisable)})"
+            )
         if unaccounted:
             scope += f" (⚠ {len(unaccounted)} UNACCOUNTED: {', '.join(unaccounted)})"
 
