@@ -468,6 +468,39 @@ async def test_routed_sqs_consume_retries_transient_receive_failures(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_routed_sqs_consume_retries_retryable_resolution_failures() -> None:
+    """A *retryable* resolution failure (a transient secret-store outage raising
+    infrastructure-kind) is retried with backoff like any transient receive failure —
+    with an idle timeout the stream ends cleanly instead of raising terminal."""
+
+    class _DownSecrets:
+        async def resolve_str(self, ref: SecretRef) -> str:
+            raise exc.infrastructure("secret store unavailable")
+
+        async def exists(self, ref: SecretRef) -> bool:
+            return False
+
+    tenant_get, tenant_set = _tenant_holder()
+    routed = RoutedSQSClient(
+        secrets=_DownSecrets(),
+        secret_ref_for_tenant=_ref,
+        tenant_provider=tenant_get,
+        max_cached_tenants=4,
+    )
+    tenant_set(uuid4())
+    await routed.startup()
+    try:
+        received = [
+            message
+            async for message in routed.consume("some-queue", timeout=timedelta(seconds=1.5))
+        ]
+        assert received == []  # backed off through the idle window, never raised
+    finally:
+        await routed.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_routed_sqs_consume_raises_terminal_resolution_errors() -> None:
     """A non-retryable resolution failure (no tenant bound, missing secret) raises out
     of ``consume`` instead of spinning the backoff-retry loop on a misconfiguration —

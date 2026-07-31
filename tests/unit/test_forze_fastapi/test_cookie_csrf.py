@@ -123,16 +123,40 @@ class TestCookieCsrfPolicy:
             )
             is None
         )
-        # Host may carry a port and the scheme may differ behind a TLS-terminating
-        # proxy — the same-host comparison is by hostname.
+        # A same-origin request serializes host AND port identically in Origin and
+        # Host; the scheme is not compared (unknowable behind a TLS-terminating proxy).
         assert (
             policy.rejection(
                 method="DELETE",
                 host="app.example.com:8443",
-                origin="http://app.example.com",
+                origin="https://app.example.com:8443",
                 referer=None,
             )
             is None
+        )
+
+    def test_same_hostname_different_port_is_not_same_origin(self) -> None:
+        # An attacker page on another port of the same hostname must not ride the
+        # cookie: the same-host comparison is (hostname, port), not hostname alone.
+        policy = CookieCsrf()
+
+        assert (
+            policy.rejection(
+                method="POST",
+                host="app.example.com",
+                origin="https://app.example.com:8080",
+                referer=None,
+            )
+            is not None
+        )
+        assert (
+            policy.rejection(
+                method="POST",
+                host="app.example.com:8443",
+                origin="https://app.example.com",
+                referer=None,
+            )
+            is not None
         )
 
     def test_subdomain_is_not_same_host(self) -> None:
@@ -145,6 +169,25 @@ class TestCookieCsrfPolicy:
             )
             is not None
         )
+
+    def test_malformed_origin_port_is_refused_not_a_server_error(self) -> None:
+        # ``urlsplit(...).port`` raises ValueError on these — a forged header must
+        # come back as a 403 refusal, never propagate as a 500.
+        policy = CookieCsrf(allow_missing_origin=True)
+
+        for source in (
+            "https://app.example.com:abc",
+            "https://app.example.com:99999999",
+        ):
+            refusal = policy.rejection(
+                method="POST", host="app.example.com", origin=source, referer=None
+            )
+            assert refusal is not None and "malformed" in refusal
+
+    def test_malformed_allowlist_entry_fails_at_construction(self) -> None:
+        for bad in ("app.example.com", "https://spa.example.com:abc", "null"):
+            with pytest.raises(CoreException, match="allowed_origins"):
+                CookieCsrf(allowed_origins={bad})
 
     def test_referer_falls_back_when_origin_absent(self) -> None:
         policy = CookieCsrf()

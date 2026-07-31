@@ -65,7 +65,8 @@ class CookieCsrf:
     allowed_origins: frozenset[str] = attrs.field(default=frozenset(), converter=frozenset)
     """Cross-origin callers allowed to use the cookie, as exact ``scheme://host[:port]``
     origins (e.g. a SPA on ``https://app.example.com`` calling this API's host). The
-    request's own host is always allowed and need not be listed."""
+    request's own host is always allowed and need not be listed. Entries are validated
+    at construction — a malformed origin here would otherwise silently never match."""
 
     allow_missing_origin: bool = False
     """Accept an unsafe request that carries neither ``Origin`` nor ``Referer``.
@@ -73,6 +74,15 @@ class CookieCsrf:
     Off (default) rejects it: a browser that can be CSRF'd sends at least one of the
     two, so the only callers this refuses are non-browser clients using the cookie —
     which a forged cross-site request cannot distinguish itself from."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        for allowed in self.allowed_origins:
+            if _normalize_origin(allowed) is None or not urlsplit(allowed.strip()).scheme:
+                raise exc.configuration(
+                    f"allowed_origins entry {allowed!r} is not a valid scheme://host[:port] origin",
+                )
 
     # ....................... #
 
@@ -88,6 +98,12 @@ class CookieCsrf:
 
         Pure (headers in, verdict out) so the policy is testable without a request.
         *host* is the request's own host header value (``host[:port]``).
+
+        The same-host comparison is by hostname **and port** (a same-origin browser
+        request serializes both identically in ``Origin`` and ``Host``); the scheme is
+        deliberately not compared — the ``Host`` header carries none, and the transport
+        scheme is unreliable behind a TLS-terminating proxy. A deployment that must
+        pin schemes lists exact origins in :attr:`allowed_origins`.
         """
 
         if method.upper() in _SAFE_METHODS:
@@ -101,35 +117,59 @@ class CookieCsrf:
 
             return "the request carries neither an Origin nor a Referer header"
 
-        # A present-but-opaque origin ("null": sandboxed iframe, data: URL redirect)
-        # is exactly the attacker-adjacent case — never treated as missing.
-        source_hostname = urlsplit(source.strip()).hostname
+        # A present-but-opaque or malformed origin ("null" from a sandboxed iframe,
+        # a nonsense port) is attacker-adjacent input — never treated as missing,
+        # never allowed to error out of the gate.
+        source_authority = _authority(source)
 
-        if source_hostname is None:
-            return f"the request origin {source.strip()!r} is opaque"
+        if source_authority is None:
+            return f"the request origin {source.strip()!r} is opaque or malformed"
 
-        own_hostname = urlsplit(f"//{host}").hostname if host else None
-
-        if own_hostname is not None and source_hostname == own_hostname:
+        if host is not None and source_authority == _authority(f"//{host}"):
             return None
 
-        normalized = _normalize_origin(source)
-
-        if normalized in {_normalize_origin(allowed) for allowed in self.allowed_origins}:
+        if _normalize_origin(source) in {
+            _normalize_origin(allowed) for allowed in self.allowed_origins
+        }:
             return None
 
         return f"the request origin {source.strip()!r} is not this host or an allowed origin"
 
 
-def _normalize_origin(value: str) -> str:
-    """``scheme://host[:port]`` with the scheme/host lowercased and any path dropped
-    (a ``Referer`` carries a full URL; comparing origins must ignore its path)."""
+def _authority(value: str) -> tuple[str, int | None] | None:
+    """``(hostname, port)`` of an origin/URL/authority string, lowercased — or ``None``
+    when there is no hostname or the port is malformed/out-of-range (``urlsplit``'s
+    ``port`` raises ``ValueError`` there; a forged header must read as non-matching,
+    never as a server error)."""
 
     parts = urlsplit(value.strip())
-    host = parts.hostname or ""
-    port = f":{parts.port}" if parts.port is not None else ""
 
-    return f"{parts.scheme.lower()}://{host}{port}"
+    try:
+        hostname, port = parts.hostname, parts.port
+    except ValueError:
+        return None
+
+    if hostname is None:
+        return None
+
+    return hostname, port
+
+
+def _normalize_origin(value: str) -> str | None:
+    """``scheme://host[:port]`` with the scheme/host lowercased and any path dropped
+    (a ``Referer`` carries a full URL; comparing origins must ignore its path), or
+    ``None`` for an unparseable value — which then matches nothing."""
+
+    authority = _authority(value)
+
+    if authority is None:
+        return None
+
+    hostname, port = authority
+
+    return f"{urlsplit(value.strip()).scheme.lower()}://{hostname}" + (
+        f":{port}" if port is not None else ""
+    )
 
 
 # ....................... #
