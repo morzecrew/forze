@@ -138,7 +138,8 @@ class CookieCsrf:
 
 def origin_authority(value: str) -> tuple[str, int | None] | None:
     """``(hostname, port)`` of an origin/URL/authority string, lowercased — or ``None``
-    when there is no hostname or the port is malformed/out-of-range (``urlsplit``'s
+    when the string does not parse (unmatched ``[`` brackets fail ``urlsplit`` itself),
+    there is no hostname, or the port is malformed/out-of-range (``urlsplit``'s
     ``port`` raises ``ValueError`` there; a forged header must read as non-matching,
     never as a server error).
 
@@ -146,9 +147,8 @@ def origin_authority(value: str) -> tuple[str, int | None] | None:
     WebSocket origin check both compare authorities through this one function, so
     their notions of "same host" cannot drift."""
 
-    parts = urlsplit(value.strip())
-
     try:
+        parts = urlsplit(value.strip())
         hostname, port = parts.hostname, parts.port
     except ValueError:
         return None

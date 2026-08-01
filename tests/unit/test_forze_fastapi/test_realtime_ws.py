@@ -815,6 +815,25 @@ class TestOriginFailClosedDefault:
         assert caught.value.code == 1008
         assert "allowed_origins" in str(caught.value.reason)
 
+    def test_cookie_with_unparseable_origin_is_refused_as_policy_not_server_error(self) -> None:
+        # An unmatched bracket fails ``urlsplit`` itself (not just ``.port``) — the
+        # forged header must land as the same deliberate origin refusal, not be
+        # laundered through the generic internal-error close by ``guard_frame``.
+        client, _ = _build()
+
+        with (
+            client.websocket_connect(
+                "/realtime/ws",
+                headers={"Origin": "https://[::1", "Cookie": "sid=x"},
+            ) as ws,
+            pytest.raises(WebSocketDisconnect) as caught,
+        ):
+            ws.send_text(json.dumps({"type": "nope"}))
+            ws.receive_json()
+
+        assert caught.value.code == 1008
+        assert "allowed_origins" in str(caught.value.reason)
+
     def test_cookie_with_same_host_origin_connects_without_an_allowlist(self) -> None:
         client, _ = _build()
 

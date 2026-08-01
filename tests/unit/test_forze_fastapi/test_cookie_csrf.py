@@ -171,13 +171,16 @@ class TestCookieCsrfPolicy:
         )
 
     def test_malformed_origin_port_is_refused_not_a_server_error(self) -> None:
-        # ``urlsplit(...).port`` raises ValueError on these — a forged header must
-        # come back as a 403 refusal, never propagate as a 500.
+        # ``urlsplit(...).port`` raises ValueError on the port forms, and
+        # ``urlsplit`` itself raises on an unmatched bracket — a forged header
+        # must come back as a 403 refusal either way, never propagate as a 500.
         policy = CookieCsrf(allow_missing_origin=True)
 
         for source in (
             "https://app.example.com:abc",
             "https://app.example.com:99999999",
+            "https://[::1",  # unmatched bracket fails urlsplit itself
+            "https://[evil",
         ):
             refusal = policy.rejection(
                 method="POST", host="app.example.com", origin=source, referer=None
@@ -189,6 +192,7 @@ class TestCookieCsrfPolicy:
             "app.example.com",  # no scheme, parses as a path — no hostname
             "//spa.example.com",  # authority without a scheme
             "https://spa.example.com:abc",  # malformed port
+            "https://[::1",  # unmatched bracket — urlsplit itself raises
             "null",
         ):
             with pytest.raises(CoreException, match="allowed_origins"):
