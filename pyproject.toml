@@ -401,7 +401,7 @@ dep_keys = ["idempotency"]
 engines = ["mock", "postgres", "redis"]
 
 [tool.conformance_manifest.planes.inference]
-scenario = "tests.support.inference_conformance:INFERENCE_BATTERY"
+scenario = "forze_dst.conformance.inference:run_capability_gates"
 dep_keys = ["inference_query"]
 engines = ["mock", "local", "kserve_v2", "mlflow"]
 

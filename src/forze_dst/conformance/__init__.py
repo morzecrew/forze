@@ -65,6 +65,11 @@ from .harness import (
     is_serialization_conflict,
     record_outcome,
 )
+from .inference import (
+    CapabilityGateOutcome,
+    GateVerdict,
+    run_capability_gates,
+)
 from .realtime import (
     REALTIME_DELIVERY_GROUP,
     REALTIME_DELIVERY_PRINCIPAL,
@@ -113,6 +118,9 @@ __all__ = [
     "run_counter_allocation",
     "run_counter_ceiling",
     "run_counter_partitions",
+    "CapabilityGateOutcome",
+    "GateVerdict",
+    "run_capability_gates",
     "CellVerdict",
     "Classification",
     "FidelityMatrix",

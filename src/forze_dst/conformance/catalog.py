@@ -367,6 +367,44 @@ INFERENCE_DIVERGENCES: tuple[PlaneDivergence, ...] = (
     ),
     PlaneDivergence(
         plane="inference",
+        name="oracle-advertises-the-full-capability-surface",
+        observed=(
+            EngineBehaviour(
+                engine="mock",
+                behaviour=(
+                    "a route registered without capabilities= advertises "
+                    "FULL_INFERENCE_CAPABILITIES: unbounded batches, streaming, async jobs, "
+                    "deterministic — so every capability gate passes"
+                ),
+            ),
+            EngineBehaviour(
+                engine="kserve_v2",
+                behaviour="declares the wiring's max_batch_size and refuses a batch past it",
+            ),
+            EngineBehaviour(
+                engine="mlflow",
+                behaviour="declares the wiring's max_batch_size and refuses a batch past it",
+            ),
+        ),
+        resolution=DivergenceResolution.DECLARED,
+        reason=(
+            "Not a defect in the oracle — it genuinely serves all of it — but it "
+            "out-capables every backend it stands in for, so a gate that passes against it "
+            "can still refuse in production. The registration seam is the fix "
+            "(MockInferenceRegistry.on(..., capabilities=…)) and it cannot be made the "
+            "default: the mock is also used where no backend is being mirrored at all, and "
+            "defaulting to the narrowest surface would refuse features it really does "
+            "serve. So the residual is a wiring obligation, and the differential is what "
+            "makes forgetting it fail at authoring time: the probe asserts an untold oracle "
+            "ACCEPTS the oversized batch a capped backend REFUSES."
+        ),
+        probe=(
+            "tests/unit/test_forze_mock/test_mock_inference_conformance.py::"
+            "test_inference_battery[check_an_unmirrored_oracle_diverges_from_a_capped_backend]"
+        ),
+    ),
+    PlaneDivergence(
+        plane="inference",
         name="bare-scalar-prediction",
         observed=(
             EngineBehaviour(engine="mlflow", behaviour="accepted a bare scalar output"),

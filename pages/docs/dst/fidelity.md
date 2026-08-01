@@ -84,6 +84,18 @@ prose. Each row records what each engine did, what was done about it (unified, n
 declared), and a `probe` naming the test that asserts it — a link the checker resolves against
 real pytest collection, so a catalog entry cannot outlive the test behind it.
 
+One divergence there is worth reading as a pattern rather than an entry. The inference port is
+**declarative**: each adapter publishes an `InferenceCapabilities` and the shared validators gate
+requests against it, so "does this call get through?" is a property of the declaration, not of the
+model behind it. A mock told nothing advertises the full surface — unbounded batches, streaming,
+async jobs — which is true of the mock and truer than any backend it stands in for, so a
+capability gate that passes against the oracle can still refuse in production. The fix is a
+wiring obligation (`MockInferenceRegistry.on(..., capabilities=…)`) and it cannot be defaulted
+away, because the mock is also used where no backend is being mirrored at all. So the differential
+carries it instead: the battery compares a backend's gates against a mock built from that
+backend's own declaration, and asserts that an *untold* oracle disagrees — which is what makes
+forgetting the wiring fail at authoring time rather than in production.
+
 ## What these numbers license — and what they don't
 
 - A green matrix licenses trusting the mock **for the phenomena, levels, and backends tested**
