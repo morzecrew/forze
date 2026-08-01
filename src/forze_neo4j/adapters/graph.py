@@ -474,10 +474,19 @@ class Neo4jGraphAdapter(TenancyMixin):
             edge_types=edge_kinds,
             tenant_field=self._tenant_field,
             interior=self._interior_scope,
+            filter_to_kinds=to_vertex_kinds is not None,
         )
+        # The kind filter has to reach the query, or LIMIT truncates before it and the
+        # caller silently receives fewer matches than exist. The Python pass below stays
+        # as the mapping guard it always was (a label that is not a known kind).
+        extra: dict[str, Any] = {"key": origin.key, "limit": limit}
+
+        if to_vertex_kinds is not None:
+            extra["to_kinds"] = sorted(to_vertex_kinds)
+
         rows = await self.client.run(
             query,
-            self._params(key=origin.key, limit=limit),
+            self._params(**extra),
             database=await self._resolved_database(),
         )
 

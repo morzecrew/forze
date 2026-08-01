@@ -512,22 +512,19 @@ event-driven runner). Step idempotency, replay determinism and JSON-only step re
 exactly the guarantees a differential should pin, and none of them are compared today.\
 """
 
-[tool.conformance_manifest.gaps.field_encryption]
+[tool.conformance_manifest.planes.field_encryption]
+scenario = "tests.support.field_encryption_conformance:FIELD_ENCRYPTION_BATTERY"
 dep_keys = [
     "crypto.keyring",
     "crypto.deterministic",
     "crypto.aead",
     "crypto.key_directory",
 ]
-engines = []
-reason = """
-The seventh designed leg, not yet built. Note the engine list is empty and that is not the \
-blast radius: these keys are CONSUMED by every field-encrypting adapter rather than \
-registered by a backend, so the provider census cannot see them and this entry cannot \
-ratchet. The leg must assert the envelope round-trip, AAD binding and the three refusals \
-across the planes that field-encrypt, and it is the one place in this table where the \
-checker is trusting prose.\
-"""
+# Declared, not derived, and this is the one plane where that is a real limitation rather
+# than a formality: these keys are CONSUMED by every field-encrypting adapter rather than
+# registered by a backend, so the provider census cannot see them and cannot ratchet a new
+# one. Adding a document backend means adding its leg here by hand.
+engines = ["postgres", "mongo", "firestore"]
 
 [tool.conformance_manifest.gaps.kms]
 dep_keys = ["crypto.kms"]

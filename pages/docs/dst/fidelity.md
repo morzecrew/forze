@@ -73,11 +73,15 @@ Uncovered planes are declared rather than omitted, which is the part worth readi
 | `analytics` | BigQuery, ClickHouse, DuckDB, Postgres | four engines answer the same ports |
 | `durable_function` | Postgres, Inngest | replay determinism and step idempotency uncompared |
 | `kms` | Vault (plus the AWS/GCP/Yandex/local backends) | wrap/unwrap/rotate under one AAD |
-| `field_encryption` | — | consumed by every field-encrypting adapter, so the census cannot see them |
 
 Read that table as the honest complement to the green matrices above: those planes are tested,
-they are simply not *compared*. `field_encryption` is the weakest row and says so — its ports are
-resolved by adapters rather than registered by a backend, so nothing automatic can ratchet it.
+they are simply not *compared*.
+
+One plane carries that caveat even though it now has legs. Field encryption is compared across
+Postgres, Mongo and Firestore, but its ports are *resolved* by adapters rather than registered by
+a backend, so the provider census cannot see them: adding a document store means adding its leg by
+hand, and nothing will fail if you forget. It is the one plane in the manifest where the engine
+list is a promise rather than a derived fact.
 
 Known differences that are real and expected live in `forze_dst.conformance.catalog` as data, not
 prose. Each row records what each engine did, what was done about it (unified, normalized, or

@@ -39,6 +39,7 @@ from uuid import uuid4
 import attrs
 import pytest
 
+from forze.application.contracts.querying import UNSUPPORTED_QUERY_FEATURE_CODE
 from forze.application.contracts.search import (
     SearchCommandPort,
     SearchManagementPort,
@@ -290,7 +291,49 @@ async def check_phrase_combine_is_honored(h: SearchHarness) -> None:
     assert sorted(_titles(conjunction)) == list(NOTES_TITLES), h.backend
 
 
+async def check_the_stream_gate_matches_the_declaration(h: SearchHarness) -> None:
+    """A backend serves ``search_stream`` if and only if it declares ``supports_stream``.
+
+    Templated on the inference capability gate, but the shape it found is different and
+    worth stating: the search oracle does **not** advertise a superset. It declares the same
+    narrow surface Postgres and Mongo do, so there is no untold-mock divergence to mirror
+    away — which is why this check asserts self-consistency per backend instead.
+
+    That is the property with teeth here anyway. The capability's own contract says an
+    offset-only backend must *refuse* the stream rather than emulate it via deep offset,
+    "which would silently truncate" — a backend quietly serving a stream it declared it
+    could not is how a bounded-memory export comes back short with no error at all. Both
+    directions are checked, because a backend that refuses everything satisfies half of
+    this just as well as a correct one does.
+    """
+
+    declared = h.query.search_capabilities.supports_stream
+
+    if declared:
+        # The stream yields CHUNKS, not hits — the bounded-memory unit is the page.
+        streamed = [
+            hit.title
+            async for chunk in h.query.search_stream(PROBE_TERM, None, None)
+            for hit in chunk
+        ]
+
+        assert sorted(streamed) == sorted(await _all_titles(h)), (
+            f"{h.backend}: declares supports_stream but the stream and the page disagree"
+        )
+
+        return
+
+    with pytest.raises(CoreException) as refused:
+        async for _chunk in h.query.search_stream(PROBE_TERM, None, None):
+            pass
+
+    assert refused.value.code == UNSUPPORTED_QUERY_FEATURE_CODE, (
+        f"{h.backend}: refused the undeclared stream, but not as a capability gate"
+    )
+
+
 SEARCH_BATTERY: tuple[Check, ...] = (
+    check_the_stream_gate_matches_the_declaration,
     check_a_zero_match_query_is_an_empty_page,
     check_page_count_matches_the_hits_it_returns,
     check_limit_offset_windows_partition_the_result_set,
