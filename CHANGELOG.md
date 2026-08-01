@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Search:** `delete_all()` on an unprovisioned index is a no-op; a Meilisearch `invalid_request` raises `precondition` with the engine's message.
 - **Graph:** new `normalize_property_filter` and `MockGraphManagementAdapter`; `UUID`/`datetime`/`Decimal` property filters match everywhere; a `None` filter value matches nothing; duplicate vertex keys raise `graph_vertex_conflict` (Neo4j needs `ensure_schema()`).
 - **Idempotency:** key reuse with a different payload raises `conflict` on the Redis store too.
+- **Realtime cursors:** new `forze_kits.integrations.realtime.conformance.run_capped_replay_boundary` (`CursorReplayOutcome`) pins that a capped replay interleaved with a live cumulative ack deletes no undelivered entry, and that two tenants sharing a principal and device key keep separate cursors. Runs against mock, Postgres and Mongo (the mailbox had no Mongo leg).
 
 **Secrets lifecycle plane** — versions, change feed, hot reload, durable rotation, leases; `SecretsPort` unchanged:
 

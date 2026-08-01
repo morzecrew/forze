@@ -459,6 +459,15 @@ messages, so the gateway's store-then-forward crash windows do not map onto it. 
 the commit_stream gap, which names it explicitly.\
 """
 
+[tool.conformance_manifest.planes.realtime_cursor]
+scenario = "forze_kits.integrations.realtime.conformance:run_capped_replay_boundary"
+# No dep_keys of its own: the offline mailbox is kit code over the document ports, which
+# the isolation plane already claims. What this plane gates is the kit's own invariant —
+# a capped replay interleaved with a live cumulative ack — across the document stores
+# behind it, so its engines are declared rather than derived.
+dep_keys = []
+engines = ["mock", "postgres", "mongo"]
+
 [tool.conformance_manifest.planes.misuse_transfer]
 scenario = "forze_dst.conformance.transfer:run_transfer"
 dep_keys = []

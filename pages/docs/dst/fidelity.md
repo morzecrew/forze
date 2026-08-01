@@ -95,6 +95,16 @@ exercising anything. Closing it meant giving the mock the concept first — read
 provision, the documented write paths do — and the sweep's own test then had to say which
 state it meant, having asserted "empty" while exercising "absent".
 
+A third row records the one interaction none of this page's other machinery can reach. The
+offline mailbox bounds a reconnect replay by a retention cap, and clients ack **cumulatively**
+— "I have everything up to this id". Each is fine alone; together, a replay that delivered an
+incomplete window plus an ack on a live frame lets the cursor jump the gap, and the trim floor
+then deletes signals that were never sent. Nothing raises. Simulation cannot find it either,
+because the race lives in document-port code rather than stream code, so no schedule the
+explorer drives will interleave it. The leg drives that interleaving directly against the mock,
+Postgres and Mongo, and its controls reconstruct the fault by truncating the replay — so the
+check is known to fail when the guarantee does, rather than merely passing today.
+
 One divergence there is worth reading as a pattern rather than an entry. The inference port is
 **declarative**: each adapter publishes an `InferenceCapabilities` and the shared validators gate
 requests against it, so "does this call get through?" is a property of the declaration, not of the

@@ -640,6 +640,86 @@ GRAPH_MANAGEMENT_DIVERGENCES: tuple[PlaneDivergence, ...] = (
 # ....................... #
 
 
+REALTIME_CURSOR_DIVERGENCES: tuple[PlaneDivergence, ...] = (
+    PlaneDivergence(
+        plane="realtime_cursor",
+        name="capped-replay-interleaved-with-a-live-ack",
+        observed=(
+            EngineBehaviour(
+                engine="mock",
+                behaviour=(
+                    "delivers a complete newest-cap suffix; the cumulative ack lands on a "
+                    "live frame and the trim floor deletes nothing undelivered"
+                ),
+            ),
+            EngineBehaviour(
+                engine="postgres",
+                behaviour="the same, through a composite (hlc, id) keyset window in real SQL",
+            ),
+            EngineBehaviour(
+                engine="mongo",
+                behaviour="the same — a store the mailbox had no coverage against at all before",
+            ),
+        ),
+        resolution=DivergenceResolution.UNIFIED,
+        reason=(
+            "The three stores agree, which is the point of pinning it: they agree about an "
+            "interaction that no simulation schedule reaches, because the race lives in "
+            "document-port code rather than in stream code. A cumulative ack is only true "
+            "if the delivered prefix was complete, so a replay truncated by the retention "
+            "cap plus a live frame acked mid-stream lets the cursor jump the gap and the "
+            "trim floor delete what was never sent — silently, with no error anywhere. The "
+            "defence is that the cap moves the window START rather than truncating the "
+            "read; entries below the floor are a declared, counted retention loss. The "
+            "controls reconstruct the fault by truncating the replay and assert the outcome "
+            "names it, so the leg cannot pass by checking nothing."
+        ),
+        probe=(
+            "tests/unit/test_forze_kits/integrations/test_realtime_cursor_conformance.py::"
+            "test_cursor_replay_battery[check_a_capped_replay_survives_a_live_ack]"
+        ),
+    ),
+    PlaneDivergence(
+        plane="realtime_cursor",
+        name="tenant-in-the-derived-cursor-id",
+        observed=(
+            EngineBehaviour(
+                engine="postgres",
+                behaviour=(
+                    "one physical table holds both tenants' cursor rows, so a tenant-blind "
+                    "derived id collides on the primary key: the lookup misses while the "
+                    "insert hits the other tenant's row"
+                ),
+            ),
+            EngineBehaviour(
+                engine="mongo",
+                behaviour="the same shape on a shared collection keyed by _id",
+            ),
+            EngineBehaviour(
+                engine="mock",
+                behaviour="partitions per tenant, so the collision is not reachable there",
+            ),
+        ),
+        resolution=DivergenceResolution.UNIFIED,
+        reason=(
+            "The cursor id is derived deterministically (uuid5) so concurrent first-acks for "
+            "one device converge on a single row instead of racing two inserts — and that "
+            "derivation has to include the tenant, or the org-switcher flow (one principal "
+            "present in two tenants) makes two tenants share a read position. Worth its own "
+            "row because the oracle cannot demonstrate it: the mock hard-partitions per "
+            "tenant, so the collision is unrepresentable there and only the real stores can "
+            "show the guarantee holding. The failure mode is also indirect — the advance "
+            "loop exhausts its retry budget rather than returning wrong data — so the probe "
+            "catches that code specifically instead of waiting for a bad value."
+        ),
+        probe=(
+            "tests/integration/test_forze_postgres/test_pg_realtime_cursor_conformance.py::"
+            "test_cursor_replay_battery[check_a_capped_replay_survives_a_live_ack]"
+        ),
+    ),
+)
+
+
 DELIVERY_DIVERGENCES: tuple[PlaneDivergence, ...] = (
     PlaneDivergence(
         plane="delivery",
@@ -687,5 +767,6 @@ PLANE_DIVERGENCES: dict[str, tuple[PlaneDivergence, ...]] = {
     "search_write": SEARCH_WRITE_DIVERGENCES,
     "graph_management": GRAPH_MANAGEMENT_DIVERGENCES,
     "delivery": DELIVERY_DIVERGENCES,
+    "realtime_cursor": REALTIME_CURSOR_DIVERGENCES,
 }
 """Every catalogued divergence, by plane. The isolation family lives in ``divergence.py``."""
