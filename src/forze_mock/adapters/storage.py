@@ -71,12 +71,76 @@ class MockStorageAdapter(
     def _bucket(self) -> str:
         return partition_namespace(self.require_tenant_if_aware(), self.bucket)
 
+    def _bucket_exists(self) -> bool:
+        """Whether this route's container has been provisioned.
+
+        A real store distinguishes an **absent** bucket from an **empty** one, and callers
+        depend on it: ``list(missing_ok=False)`` raises on the first and returns nothing on
+        the second, which is how the re-encryption sweep tells "the bucket vanished" from
+        "there is nothing left to re-encrypt". The mock had no such concept — every
+        accessor reached the container through ``setdefault``, so the container existed the
+        moment anything asked about it and ``missing_ok`` was a documented no-op. Every
+        mock-backed test of that contract was vacuously green.
+        """
+
+        return self._bucket() in self.state.storage_buckets
+
+    # ....................... #
+
+    def _require_bucket(self) -> None:
+        """Raise the way a real store does when a read targets an absent container.
+
+        Only the *listing* read needs this. On both S3 servers and on GCS a ``head`` of an
+        absent key returns the same not-found whether or not the bucket exists — the
+        distinction is not expressible at that verb — so the mock must not invent one.
+
+        The *kind* mirrors the real backends rather than improving on them: MinIO, floci
+        and GCS all surface a missing bucket as ``infrastructure``. That is arguably the
+        wrong class for a permanent, configuration-caused condition — the egress policy
+        reads ``infrastructure`` as retryable — but an oracle that classified it better
+        than production would hide the problem instead of exposing it.
+        """
+
+        if not self._bucket_exists():
+            raise exc.infrastructure(f"Mock storage bucket {self._bucket()!r} does not exist.")
+
+    # ....................... #
+
+    def _provision(self) -> None:
+        """Create the container on demand — what the write paths do, and only they."""
+
+        self.state.storage_buckets.add(self._bucket())
+
+    # ....................... #
+
     def _objects(self) -> dict[str, StoredObject]:
+        """The stored objects, **without** conjuring the container into existence.
+
+        Returning a detached empty mapping for an absent bucket is deliberate: a read of a
+        missing key then answers not-found (which is what the real backends do) while a
+        delete stays a no-op, and neither accidentally provisions. Writers must go through
+        :meth:`_writable_objects`, which does provision.
+        """
+
+        return self.state.storage.get(self._bucket(), {})
+
+    # ....................... #
+
+    def _writable_objects(self) -> dict[str, StoredObject]:
+        self._provision()
+
         return self.state.storage.setdefault(self._bucket(), {})
 
     # ....................... #
 
     def _payloads(self) -> dict[str, bytes]:
+        return self.state.storage_bytes.get(self._bucket(), {})
+
+    # ....................... #
+
+    def _writable_payloads(self) -> dict[str, bytes]:
+        self._provision()
+
         return self.state.storage_bytes.setdefault(self._bucket(), {})
 
     # ....................... #
@@ -116,8 +180,8 @@ class MockStorageAdapter(
             tags=dict(obj.tags) if obj.tags else None,
         )
         with self.state.lock:
-            self._objects()[key] = stored
-            self._payloads()[key] = bytes(data)
+            self._writable_objects()[key] = stored
+            self._writable_payloads()[key] = bytes(data)
             self._record_sse(key)
         return stored
 
@@ -163,8 +227,8 @@ class MockStorageAdapter(
         )
 
         with self.state.lock:
-            self._objects()[key] = stored
-            self._payloads()[key] = data
+            self._writable_objects()[key] = stored
+            self._writable_payloads()[key] = data
             self._record_sse(key)
 
         return stored
@@ -243,8 +307,8 @@ class MockStorageAdapter(
                     tags=dict(tags) if tags else existing.tags,
                 )
 
-            self._objects()[key] = stored
-            self._payloads()[key] = data
+            self._writable_objects()[key] = stored
+            self._writable_payloads()[key] = data
             self._record_sse(key)
 
         return stored
@@ -464,6 +528,11 @@ class MockStorageAdapter(
         URL fully deterministic.
         """
 
+        # A presigned PUT is a write path: the object it authorises will land in this
+        # container, so the container comes into existence here as it does on the real
+        # backends. presign_download is a read and deliberately does not.
+        self._provision()
+
         return self.__presign(
             key,
             expires_in=expires_in,
@@ -592,8 +661,8 @@ class MockStorageAdapter(
                 tags=dict(src.tags) if src.tags else None,
             )
 
-            self._objects()[dst_key] = dst
-            self._payloads()[dst_key] = payload
+            self._writable_objects()[dst_key] = dst
+            self._writable_payloads()[dst_key] = payload
             self._record_sse(dst_key)
 
             # No self-move guard needed: both callers validate distinct keys first.
@@ -625,7 +694,7 @@ class MockStorageAdapter(
                 raise exc.not_found(f"Object not found: {key}")
 
             obj = self._objects()[key]
-            self._objects()[key] = attrs.evolve(
+            self._writable_objects()[key] = attrs.evolve(
                 obj,
                 tags=dict(tags) if tags else None,
             )
@@ -646,13 +715,19 @@ class MockStorageAdapter(
         ``include_tags`` is accepted for port compatibility but adds nothing
         here: the mock stores tags in-memory and always includes them, so
         the guarantee is already satisfied (no extra work either way).
-        ``missing_ok`` is likewise accepted for compatibility and is a no-op:
-        the mock has no bucket-provisioning concept, so a list is always over
-        an existing (possibly empty) container.
+
+        ``missing_ok`` is honored, and used to be the one place where it was not. A list
+        over a never-provisioned bucket raises like a real store, and passing
+        ``missing_ok=True`` turns that into an empty listing — the distinction the
+        re-encryption sweep relies on to tell a *vanished* bucket from an *emptied* one. It
+        was previously documented as a deliberate no-op ("the mock has no bucket concept"),
+        which made every mock-backed test of the contract pass without exercising anything.
         """
 
         _ = include_tags  # tags are always included for free in the mock
-        _ = missing_ok  # the mock has no bucket concept; a list is never "missing"
+
+        if not missing_ok:
+            self._require_bucket()
 
         with self.state.lock:
             rows = list(self._objects().values())
@@ -685,6 +760,8 @@ class MockStorageAdapter(
         bucket = self._bucket()
 
         with self.state.lock:
+            # A write path, so it creates the container on demand like the real backends.
+            self._provision()
             self._sessions()[upload_id] = {}
 
         return UploadSession(
@@ -864,8 +941,8 @@ class MockStorageAdapter(
                 tags=None,
             )
 
-            self._objects()[session.key] = stored
-            self._payloads()[session.key] = payload
+            self._writable_objects()[session.key] = stored
+            self._writable_payloads()[session.key] = payload
             self._record_sse(session.key)
             del sessions[session.upload_id]
 

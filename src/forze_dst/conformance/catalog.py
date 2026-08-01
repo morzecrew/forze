@@ -240,6 +240,106 @@ COUNTER_DIVERGENCES: tuple[PlaneDivergence, ...] = (
 STORAGE_DIVERGENCES: tuple[PlaneDivergence, ...] = (
     PlaneDivergence(
         plane="storage",
+        name="absent-container-vs-empty-container",
+        observed=(
+            EngineBehaviour(
+                engine="mock",
+                behaviour=(
+                    "had no container concept at all: every accessor reached its bucket "
+                    "through setdefault, so the bucket existed the moment anything asked "
+                    "and list(missing_ok=False) could not raise — the parameter was "
+                    "documented as a no-op"
+                ),
+            ),
+            EngineBehaviour(
+                engine="s3",
+                behaviour=(
+                    "MinIO and floci both raise infrastructure 'bucket not found' on a "
+                    "listing of an absent bucket, and return an empty page for an existing "
+                    "empty one"
+                ),
+            ),
+            EngineBehaviour(
+                engine="gcs",
+                behaviour="same: infrastructure on absent, empty page on existing-and-empty",
+            ),
+        ),
+        resolution=DivergenceResolution.UNIFIED,
+        reason=(
+            "Sharper than the usual mock-vs-real gap, and worth reading as its own class: "
+            "the contract was not merely untested against the oracle, it was structurally "
+            "*inexpressible* there. No test written against that mock could have failed, so "
+            "every mock-backed test of missing_ok was vacuously green — including the one "
+            "belonging to the re-encryption sweep, whose whole guard is telling a vanished "
+            "bucket from an emptied one. Fixing it meant giving the oracle the concept it "
+            "lacked (MockState.storage_buckets) before there was anything to compare: reads "
+            "never provision, the four documented write paths do, exactly as the real "
+            "adapters draw the line. The sweep's own test then had to say which state it "
+            "meant, having asserted 'empty' while exercising 'absent'."
+        ),
+        probe=(
+            "tests/unit/test_forze_mock/test_mock_storage_conformance.py::"
+            "test_storage_battery[check_an_absent_container_is_not_an_empty_one]"
+        ),
+    ),
+    PlaneDivergence(
+        plane="storage",
+        name="head-cannot-see-the-container",
+        observed=(
+            EngineBehaviour(engine="s3", behaviour="head of a missing key: not_found either way"),
+            EngineBehaviour(engine="gcs", behaviour="head of a missing key: not_found either way"),
+            EngineBehaviour(
+                engine="mock",
+                behaviour="not_found either way — the oracle must not invent the distinction",
+            ),
+        ),
+        resolution=DivergenceResolution.DECLARED,
+        reason=(
+            "Measured rather than assumed, and it corrected the design of this leg. A head "
+            "of an absent key returns the same not-found whether or not the bucket exists, "
+            "on both S3 servers and on GCS, because HeadObject cannot distinguish them — "
+            "so the absent/empty distinction lives at `list` and nowhere else. The download "
+            "verb does see it, and disagrees across vendors; that is its own row below."
+        ),
+        probe=(
+            "tests/unit/test_forze_dst/test_conformance/test_storage_containers.py::"
+            "test_reads_never_provision_a_container"
+        ),
+    ),
+    PlaneDivergence(
+        plane="storage",
+        name="download-from-an-absent-container",
+        observed=(
+            EngineBehaviour(
+                engine="s3",
+                behaviour=(
+                    "raises infrastructure 'bucket not found' — GetObject reports the "
+                    "missing container, not the missing key"
+                ),
+            ),
+            EngineBehaviour(
+                engine="gcs",
+                behaviour="raises a plain not_found, the same answer it gives for a missing key",
+            ),
+        ),
+        resolution=DivergenceResolution.DECLARED,
+        reason=(
+            "Two correct-looking answers to one call, so a caller cannot branch on the kind "
+            "here portably. Neither is obviously wrong: an absent bucket is a configuration "
+            "fault the caller should not retry, while an absent object is precisely what was "
+            "asked for — and note the same two backends agree on not-found at `head`, so the "
+            "asymmetry is between the read verbs as much as between the vendors. Normalizing "
+            "would mean choosing which fact a download reports, which is a contract decision "
+            "rather than an adapter bug, so it is declared and both sides are pinned: the day "
+            "one is changed the other fails and the choice has to be made deliberately."
+        ),
+        probe=(
+            "tests/integration/test_forze_s3/test_s3_storage_new_ops.py::"
+            "test_download_from_an_absent_bucket_reports_the_container"
+        ),
+    ),
+    PlaneDivergence(
+        plane="storage",
         name="delete-of-a-missing-key",
         observed=(
             EngineBehaviour(engine="s3", behaviour="returns 204 — deleting nothing is a success"),

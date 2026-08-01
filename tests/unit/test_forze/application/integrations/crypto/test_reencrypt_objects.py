@@ -86,10 +86,36 @@ class TestReencryptObjects:
         assert report.rewritten == 1
         assert (await adapter.download(kept.key)).data == b"in"
 
-    async def test_empty_route_is_a_no_op(self) -> None:
-        report = await reencrypt_objects(_adapter(), _adapter())
+    async def test_an_emptied_route_is_a_no_op(self) -> None:
+        """Nothing left to re-encrypt is success, not a fault.
+
+        The route has to be *emptied* rather than merely never used: this test used to
+        build a fresh adapter and rely on the oracle conjuring the bucket into existence,
+        so it read as "empty" while actually exercising "absent" — the one distinction
+        the sweep's guard below is built on. The two are now different states, and this
+        test has to say which one it means.
+        """
+
+        adapter = _adapter()
+        key = await _upload(adapter, "a.txt", b"alpha")
+        await adapter.delete(key)
+
+        report = await reencrypt_objects(adapter, adapter)
 
         assert report == ReencryptReport(rewritten=0, skipped_missing=0)
+
+    async def test_a_route_whose_bucket_is_gone_raises(self) -> None:
+        """The guard the sweep leaves ``missing_ok`` off for.
+
+        An emptied route means "no work"; a *vanished* one means the store is not in the
+        state the caller thinks it is, and re-encrypting nothing would report success over
+        blobs that are no longer there to re-encrypt.
+        """
+
+        with pytest.raises(CoreException) as vanished:
+            await reencrypt_objects(_adapter(), _adapter())
+
+        assert vanished.value.kind == ExceptionKind.INFRASTRUCTURE
 
     async def test_a_rewrite_that_reorders_the_listing_skips_nothing(self) -> None:
         """The storage contract promises no particular `list` order.

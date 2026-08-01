@@ -114,6 +114,16 @@ class MockState:
     """Records the ``read_only`` flag of each mock transaction (test observability)."""
     storage: dict[str, dict[str, Any]] = attrs.field(factory=dict)
     storage_bytes: dict[str, dict[str, bytes]] = attrs.field(factory=dict)
+    storage_buckets: set[str] = attrs.field(factory=set)
+    """Buckets that have been provisioned — an **absent** container, not an empty one.
+
+    A real object store tells the two apart and callers depend on it: ``list`` raises on a
+    missing bucket unless the caller passes ``missing_ok``, which is how the re-encryption
+    sweep distinguishes "the bucket vanished" from "nothing left to re-encrypt". Without
+    this set the mock reached every container through ``setdefault``, so a bucket existed
+    the moment anything asked about it, ``missing_ok`` was a documented no-op, and every
+    mock-backed test of that contract passed vacuously. Write paths add to it (object
+    stores create on demand); reads never do."""
     storage_multipart: dict[str, dict[str, dict[int, bytes]]] = attrs.field(factory=dict)
     """In-progress multipart upload sessions: bucket → upload_id → {part_number: bytes}.
 

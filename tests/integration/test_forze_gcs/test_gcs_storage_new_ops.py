@@ -6,10 +6,12 @@ emulator supports and skip with an explicit reason when a feature is unimplement
 there — the full HTTP semantics are unit-covered against the client directly.
 """
 
+from uuid import uuid4
+
 import pytest
 
 from forze.application.contracts.storage import StorageSpec, UploadedObject
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_gcs.execution.deps.configs import GCSStorageConfig
 from forze_gcs.execution.deps.module import GCSDepsModule
 from forze_gcs.kernel.client.client import GCSClient
@@ -34,9 +36,7 @@ async def test_head_after_upload(gcs_client: GCSClient, gcs_bucket: str) -> None
     c = ctx.storage.command(spec)
 
     body = b"gcs-head-me"
-    stored = await c.upload(
-        UploadedObject(filename="h.txt", data=body, prefix="heads")
-    )
+    stored = await c.upload(UploadedObject(filename="h.txt", data=body, prefix="heads"))
 
     head = await q.head(stored.key)
     assert head.size == len(body)
@@ -50,9 +50,7 @@ async def test_copy(gcs_client: GCSClient, gcs_bucket: str) -> None:
     c = ctx.storage.command(spec)
 
     body = b"gcs-copy-me"
-    stored = await c.upload(
-        UploadedObject(filename="c.txt", data=body, prefix="src")
-    )
+    stored = await c.upload(UploadedObject(filename="c.txt", data=body, prefix="src"))
 
     try:
         await c.copy(stored.key, "dst/copied.txt")
@@ -71,9 +69,7 @@ async def test_move_deletes_source(gcs_client: GCSClient, gcs_bucket: str) -> No
     c = ctx.storage.command(spec)
 
     body = b"gcs-move-me"
-    stored = await c.upload(
-        UploadedObject(filename="m.txt", data=body, prefix="src")
-    )
+    stored = await c.upload(UploadedObject(filename="m.txt", data=body, prefix="src"))
 
     try:
         await c.move(stored.key, "dst/moved.txt")
@@ -94,9 +90,7 @@ async def test_download_range(gcs_client: GCSClient, gcs_bucket: str) -> None:
     c = ctx.storage.command(spec)
 
     body = b"0123456789"
-    stored = await c.upload(
-        UploadedObject(filename="r.bin", data=body, prefix="ranges")
-    )
+    stored = await c.upload(UploadedObject(filename="r.bin", data=body, prefix="ranges"))
 
     ranged = await q.download_range(stored.key, start=2, end=5)
 
@@ -110,17 +104,13 @@ async def test_download_range(gcs_client: GCSClient, gcs_bucket: str) -> None:
     assert ranged.total_size == 10
 
 
-async def test_put_object_tags_then_head(
-    gcs_client: GCSClient, gcs_bucket: str
-) -> None:
+async def test_put_object_tags_then_head(gcs_client: GCSClient, gcs_bucket: str) -> None:
     ctx = _ctx(gcs_client, gcs_bucket)
     spec = StorageSpec(name=gcs_bucket)
     q = ctx.storage.query(spec)
     c = ctx.storage.command(spec)
 
-    stored = await c.upload(
-        UploadedObject(filename="t.txt", data=b"tagme", prefix="tags")
-    )
+    stored = await c.upload(UploadedObject(filename="t.txt", data=b"tagme", prefix="tags"))
 
     try:
         await c.put_object_tags(stored.key, {"env": "prod"})
@@ -133,3 +123,25 @@ async def test_put_object_tags_then_head(
         pytest.skip("fake-gcs did not round-trip namespaced tag metadata")
 
     assert head.tags == {"env": "prod"}
+
+
+async def test_download_from_an_absent_bucket_reports_the_object(
+    gcs_client: GCSClient,
+) -> None:
+    """GCS answers a missing *container* with the same not-found as a missing *object*.
+
+    The S3 sibling
+    (``test_forze_s3/test_s3_storage_new_ops.py::test_download_from_an_absent_bucket_reports_the_container``)
+    asserts ``infrastructure`` for the identical call. Neither is obviously wrong — an
+    absent bucket is a configuration fault, and an absent object is what the caller asked
+    for — which is exactly why it is declared rather than quietly normalized to whichever
+    backend happened to be wired first.
+    """
+
+    absent = f"forze-never-created-{uuid4().hex[:12]}"
+    query = _ctx(gcs_client, absent).storage.query(StorageSpec(name=absent))
+
+    with pytest.raises(CoreException) as refused:
+        await query.download("nope")
+
+    assert refused.value.kind == ExceptionKind.NOT_FOUND

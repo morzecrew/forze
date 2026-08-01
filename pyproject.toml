@@ -376,7 +376,7 @@ dep_keys = ["counter", "counter_admin"]
 engines = ["mock", "postgres", "redis", "mongo", "firestore"]
 
 [tool.conformance_manifest.planes.storage]
-scenario = "tests.support.storage_conformance:STORAGE_BATTERY"
+scenario = "forze_dst.conformance.storage:run_container_probes"
 dep_keys = ["storage_command", "storage_query", "storage_uploads"]
 engines = ["mock", "s3", "gcs"]
 

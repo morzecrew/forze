@@ -88,6 +88,12 @@ from .report import (
     render_markdown,
     write_matrix,
 )
+from .storage import (
+    EXPECTED_CONTAINER_OUTCOME,
+    ContainerOutcome,
+    ContainerVerdict,
+    run_container_probes,
+)
 from .transfer import (
     Detection,
     TransferClassification,
@@ -121,6 +127,10 @@ __all__ = [
     "CapabilityGateOutcome",
     "GateVerdict",
     "run_capability_gates",
+    "ContainerOutcome",
+    "ContainerVerdict",
+    "EXPECTED_CONTAINER_OUTCOME",
+    "run_container_probes",
     "CellVerdict",
     "Classification",
     "FidelityMatrix",

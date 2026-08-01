@@ -5,9 +5,12 @@ put_object_tags end-to-end through the public storage ports against a real
 S3-compatible backend.
 """
 
+from uuid import uuid4
+
 import pytest
 
 from forze.application.contracts.storage import StorageSpec, UploadedObject
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_s3.execution.deps.configs import S3StorageConfig
 from forze_s3.execution.deps.module import S3DepsModule
 from forze_s3.kernel.client import S3Client
@@ -31,9 +34,7 @@ async def test_head_after_upload(s3_client: S3Client, s3_bucket: str) -> None:
     c = ctx.storage.command(spec)
 
     body = b"head-me-please"
-    stored = await c.upload(
-        UploadedObject(filename="h.txt", data=body, prefix="heads")
-    )
+    stored = await c.upload(UploadedObject(filename="h.txt", data=body, prefix="heads"))
 
     head = await q.head(stored.key)
     assert head.size == len(body)
@@ -49,9 +50,7 @@ async def test_copy_and_move(s3_client: S3Client, s3_bucket: str) -> None:
     c = ctx.storage.command(spec)
 
     body = b"copy-me"
-    stored = await c.upload(
-        UploadedObject(filename="c.txt", data=body, prefix="src")
-    )
+    stored = await c.upload(UploadedObject(filename="c.txt", data=body, prefix="src"))
 
     # copy: both keys exist, same bytes.
     copy_head = await c.copy(stored.key, "dst/copied.txt")
@@ -80,9 +79,7 @@ async def test_download_range(s3_client: S3Client, s3_bucket: str) -> None:
     c = ctx.storage.command(spec)
 
     body = b"0123456789"
-    stored = await c.upload(
-        UploadedObject(filename="r.bin", data=body, prefix="ranges")
-    )
+    stored = await c.upload(UploadedObject(filename="r.bin", data=body, prefix="ranges"))
 
     ranged = await q.download_range(stored.key, start=2, end=5)
     assert ranged.data == b"2345"
@@ -94,17 +91,13 @@ async def test_download_range(s3_client: S3Client, s3_bucket: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_download_range_unsatisfiable(
-    s3_client: S3Client, s3_bucket: str
-) -> None:
+async def test_download_range_unsatisfiable(s3_client: S3Client, s3_bucket: str) -> None:
     ctx = _ctx(s3_client, s3_bucket)
     spec = StorageSpec(name=s3_bucket)
     q = ctx.storage.query(spec)
     c = ctx.storage.command(spec)
 
-    stored = await c.upload(
-        UploadedObject(filename="small.bin", data=b"abc", prefix="ranges")
-    )
+    stored = await c.upload(UploadedObject(filename="small.bin", data=b"abc", prefix="ranges"))
 
     from forze.base.exceptions import CoreException
 
@@ -122,9 +115,7 @@ async def test_download_if_changed(s3_client: S3Client, s3_bucket: str) -> None:
     c = ctx.storage.command(spec)
 
     body = b"conditional-body"
-    stored = await c.upload(
-        UploadedObject(filename="cond.txt", data=body, prefix="cond")
-    )
+    stored = await c.upload(UploadedObject(filename="cond.txt", data=body, prefix="cond"))
 
     head = await q.head(stored.key)
 
@@ -139,19 +130,41 @@ async def test_download_if_changed(s3_client: S3Client, s3_bucket: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_put_object_tags_then_head(
-    s3_client: S3Client, s3_bucket: str
-) -> None:
+async def test_put_object_tags_then_head(s3_client: S3Client, s3_bucket: str) -> None:
     ctx = _ctx(s3_client, s3_bucket)
     spec = StorageSpec(name=s3_bucket)
     q = ctx.storage.query(spec)
     c = ctx.storage.command(spec)
 
-    stored = await c.upload(
-        UploadedObject(filename="t.txt", data=b"tagme", prefix="tags")
-    )
+    stored = await c.upload(UploadedObject(filename="t.txt", data=b"tagme", prefix="tags"))
 
     await c.put_object_tags(stored.key, {"env": "prod", "team": "core"})
 
     head = await q.head(stored.key, include_tags=True)
     assert head.tags == {"env": "prod", "team": "core"}
+
+
+@pytest.mark.asyncio
+async def test_download_from_an_absent_bucket_reports_the_container(
+    s3_client: S3Client,
+) -> None:
+    """S3 tells a missing *container* apart from a missing *object* on download.
+
+    Its GCS sibling
+    (``test_forze_gcs/test_gcs_storage_new_ops.py::test_download_from_an_absent_bucket_reports_the_object``)
+    asserts the opposite answer for the same call, which is why this pair is a declared
+    divergence rather than a shared battery check: a caller cannot branch on the kind here
+    portably. Both are pinned so neither drifts unnoticed, and so the day one of them is
+    normalized the other fails and forces the decision to be made deliberately.
+
+    Note ``head`` does *not* make this distinction on either backend — ``HeadObject``
+    cannot — so the asymmetry is between the two read verbs, not just the two vendors.
+    """
+
+    absent = f"forze-never-created-{uuid4().hex[:12]}"
+    query = _ctx(s3_client, absent).storage.query(StorageSpec(name=absent))
+
+    with pytest.raises(CoreException) as refused:
+        await query.download("nope")
+
+    assert refused.value.kind == ExceptionKind.INFRASTRUCTURE

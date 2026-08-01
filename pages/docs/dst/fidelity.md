@@ -84,6 +84,17 @@ prose. Each row records what each engine did, what was done about it (unified, n
 declared), and a `probe` naming the test that asserts it — a link the checker resolves against
 real pytest collection, so a catalog entry cannot outlive the test behind it.
 
+One row is worth reading for a different reason: it records a case where the oracle could not
+be *wrong*, because it could not model the outcome at all. The storage port lets a caller ask
+`list(missing_ok=False)` so a **vanished** bucket can be told from an **emptied** one — the
+distinction the re-encryption sweep is built on. The mock reached its bucket through
+`setdefault`, so the bucket existed the instant anything looked at it and the parameter was
+documented as a no-op. That is a stronger failure than "untested": no test written against
+that oracle could have failed, so every mock-backed test of the contract was green without
+exercising anything. Closing it meant giving the mock the concept first — reads never
+provision, the documented write paths do — and the sweep's own test then had to say which
+state it meant, having asserted "empty" while exercising "absent".
+
 One divergence there is worth reading as a pattern rather than an entry. The inference port is
 **declarative**: each adapter publishes an `InferenceCapabilities` and the shared validators gate
 requests against it, so "does this call get through?" is a property of the declaration, not of the
