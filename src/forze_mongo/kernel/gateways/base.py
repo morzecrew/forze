@@ -252,13 +252,14 @@ class MongoGateway[M: BaseModel](
 
         if isinstance(value, Decimal):
             # BSON decimal128 holds 34 significant digits (exponent −6176..6111);
-            # ``bson`` signals anything wider with a bare ``decimal`` exception.
-            # Refuse with the bound named instead of letting the stdlib signal
+            # ``bson`` signals anything wider with a bare ``decimal`` exception —
+            # and a payloaded NaN (``Decimal("NaN123")``) with a bare ``ValueError``.
+            # Refuse with the bound named instead of letting either stdlib signal
             # escape as an internal error — decimal128 cannot hold the value
             # exactly, and silently rounding a money value would be worse.
             try:
                 return Decimal128(value)
-            except DecimalException as error:
+            except (DecimalException, ValueError) as error:
                 raise exc.precondition(
                     "Decimal exceeds BSON decimal128 exactness (34 significant "
                     f"digits, exponent -6176..6111): {value!r}"

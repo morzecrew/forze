@@ -146,3 +146,69 @@ async def test_decimal_beyond_decimal128_exactness_is_refused(
     )
     assert created.amount == corner
     assert (await ctx.document.query(_SPEC).get(doc_id)).amount == corner
+
+
+# ....................... #
+
+
+class _Tagged(Document):
+    label: str
+    meta: dict[str, object] = {}
+
+
+class _TaggedRead(ReadDocument):
+    label: str
+    meta: dict[str, object] = {}
+
+
+class _TaggedCreate(BaseDTO):
+    label: str
+    meta: dict[str, object] = {}
+
+
+_TAGGED_SPEC: DocumentSpec[_TaggedRead, _Tagged, _TaggedCreate, BaseDTO] = DocumentSpec(
+    name="tagged",
+    read=_TaggedRead,
+    write=DocumentWriteTypes(domain=_Tagged, create_cmd=_TaggedCreate, update_cmd=BaseDTO),
+)
+
+
+@pytest.mark.asyncio
+async def test_payloaded_nan_decimal_is_refused_like_any_unrepresentable(
+    mongo_client: MongoClient,
+) -> None:
+    """``Decimal("NaN123")`` makes ``bson`` raise a bare ``ValueError`` (not a decimal
+    signal) — it must surface as the same ``precondition`` as an over-precise value,
+    never an internal error. Reachable only via an untyped dict field: pydantic
+    refuses non-finite Decimals on typed fields."""
+
+    from forze.base.exceptions import CoreException, ExceptionKind
+
+    db_name = (await mongo_client.db()).name
+    collection = f"tagged_{uuid4().hex[:8]}"
+    configurable = ConfigurableMongoDocument(
+        config=MongoDocumentConfig(read=(db_name, collection), write=(db_name, collection))
+    )
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MongoClientDepKey: mongo_client,
+                DocumentQueryDepKey: configurable,
+                DocumentCommandDepKey: configurable,
+            }
+        )
+    )
+    command = ctx.document.command(_TAGGED_SPEC)
+
+    with pytest.raises(CoreException) as ei:
+        await command.ensure(
+            uuid4(), _TaggedCreate(label="x", meta={"score": Decimal("NaN123")})
+        )
+    assert ei.value.kind is ExceptionKind.PRECONDITION
+    assert "decimal128" in str(ei.value)
+
+    # A plain (payloadless) NaN is representable in decimal128 and stays storable.
+    created = await command.ensure(
+        uuid4(), _TaggedCreate(label="y", meta={"score": Decimal("NaN")})
+    )
+    assert created.label == "y"

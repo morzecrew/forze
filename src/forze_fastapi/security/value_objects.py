@@ -120,12 +120,12 @@ class CookieCsrf:
         # A present-but-opaque or malformed origin ("null" from a sandboxed iframe,
         # a nonsense port) is attacker-adjacent input — never treated as missing,
         # never allowed to error out of the gate.
-        source_authority = _authority(source)
+        source_authority = origin_authority(source)
 
         if source_authority is None:
             return f"the request origin {source.strip()!r} is opaque or malformed"
 
-        if host is not None and source_authority == _authority(f"//{host}"):
+        if host is not None and source_authority == origin_authority(f"//{host}"):
             return None
 
         if _normalize_origin(source) in {
@@ -136,11 +136,15 @@ class CookieCsrf:
         return f"the request origin {source.strip()!r} is not this host or an allowed origin"
 
 
-def _authority(value: str) -> tuple[str, int | None] | None:
+def origin_authority(value: str) -> tuple[str, int | None] | None:
     """``(hostname, port)`` of an origin/URL/authority string, lowercased — or ``None``
     when there is no hostname or the port is malformed/out-of-range (``urlsplit``'s
     ``port`` raises ``ValueError`` there; a forged header must read as non-matching,
-    never as a server error)."""
+    never as a server error).
+
+    The shared same-host comparison contract: the cookie CSRF gate and the realtime
+    WebSocket origin check both compare authorities through this one function, so
+    their notions of "same host" cannot drift."""
 
     parts = urlsplit(value.strip())
 
@@ -160,7 +164,7 @@ def _normalize_origin(value: str) -> str | None:
     (a ``Referer`` carries a full URL; comparing origins must ignore its path), or
     ``None`` for an unparseable value — which then matches nothing."""
 
-    authority = _authority(value)
+    authority = origin_authority(value)
 
     if authority is None:
         return None

@@ -174,6 +174,35 @@ class TestDecimalParameterType:
         qp = self._one(Decimal("1e30"))  # 31 integer digits > 29
         assert qp["parameterType"] == {"type": "BIGNUMERIC"}
 
+    def test_bignumeric_bound_is_the_exact_maximum_not_a_digit_count(self) -> None:
+        # The largest BIGNUMERIC values have 39 integer digits (leading 5.78…): a
+        # digit-count cap would wrongly refuse them. The exact maximum is accepted;
+        # one smallest step above it is refused.
+        from forze_bigquery.kernel.client.query import _BIGNUMERIC_MAX_ABS
+
+        assert self._one(Decimal("4e38"))["parameterType"] == {"type": "BIGNUMERIC"}
+        assert self._one(_BIGNUMERIC_MAX_ABS)["parameterType"] == {"type": "BIGNUMERIC"}
+        assert self._one(-_BIGNUMERIC_MAX_ABS)["parameterType"] == {"type": "BIGNUMERIC"}
+
+        # One smallest representable step above the maximum — computed under a wide
+        # local context, because default-context arithmetic (prec=28) would round the
+        # 77-digit sum straight back below the bound (the same context trap the
+        # implementation avoids by never using ``normalize()``).
+        from decimal import localcontext
+
+        with localcontext() as decimal_ctx:
+            decimal_ctx.prec = 100
+            above_max = _BIGNUMERIC_MAX_ABS + Decimal("1E-38")
+
+        with pytest.raises(CoreException) as ei:
+            self._one(above_max)
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+
+    def test_decimal_value_serializes_fixed_point_never_scientific(self) -> None:
+        qp = self._one(Decimal("5E+3"))
+        assert qp["parameterValue"] == {"value": "5000"}
+        assert self._one(Decimal("0.00100"))["parameterValue"] == {"value": "0.00100"}
+
     def test_choice_is_by_value_not_spelling(self) -> None:
         # Twelve trailing zeros are still the value 1 — scale 0, NUMERIC.
         assert self._one(Decimal("1.000000000000"))["parameterType"] == {"type": "NUMERIC"}

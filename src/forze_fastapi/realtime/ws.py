@@ -80,7 +80,7 @@ from forze.base.scrubbing import sanitize_pydantic_errors
 
 from .._logging import ForzeFastAPILogger
 from ..middlewares.raw_websocket import GOVERNED_WEBSOCKET_ATTR
-from ..security.value_objects import _authority  # pyright: ignore[reportPrivateUsage]
+from ..security.value_objects import origin_authority
 from .hub import RealtimeSseHub, SseSubscription, presence_rooms
 from .sse import (
     TopicAuthorizer,
@@ -293,9 +293,13 @@ def _require_allowed_origin(websocket: WebSocket, allowed: frozenset[str] | None
         return  # no ambient credential riding the handshake — nothing to launder
 
     host = websocket.headers.get("host")
-    source_authority = _authority(origin)
+    source_authority = origin_authority(origin)
 
-    if host is None or source_authority is None or source_authority != _authority(f"//{host}"):
+    if (
+        host is None
+        or source_authority is None
+        or source_authority != origin_authority(f"//{host}")
+    ):
         raise exc.authorization(
             "Cross-origin WebSocket upgrade with cookies requires an allowed_origins "
             "allowlist on the realtime route",

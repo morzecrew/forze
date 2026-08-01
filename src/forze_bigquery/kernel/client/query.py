@@ -36,7 +36,9 @@ _SCALAR_BQ_TYPE: dict[type, str] = {
 
 # ....................... #
 
-# BigQuery NUMERIC holds 9 fractional and 29 integer digits; BIGNUMERIC 38 and 38.
+# BigQuery NUMERIC holds 9 fractional and 29 integer digits; BIGNUMERIC holds 38
+# fractional digits up to an exact magnitude bound (its values are k/10^38 for
+# |k| <= 2^255 - 1, so the largest starts with a 39th integer digit of 5).
 # NUMERIC is preferred where it is exact (narrower, and implicitly coercible
 # wherever the wider type is accepted); a Decimal needing more scale or magnitude
 # goes out as BIGNUMERIC, and one exceeding even that is refused — BigQuery would
@@ -44,7 +46,9 @@ _SCALAR_BQ_TYPE: dict[type, str] = {
 _NUMERIC_MAX_SCALE = 9
 _NUMERIC_MAX_INTEGER_DIGITS = 29
 _BIGNUMERIC_MAX_SCALE = 38
-_BIGNUMERIC_MAX_INTEGER_DIGITS = 38
+_BIGNUMERIC_MAX_ABS = Decimal(
+    "5.7896044618658097711785492504343953926634992332820282019728792003956564819967E+38"
+)
 
 
 def _decimal_parameter_type(value: Decimal) -> str:
@@ -77,13 +81,16 @@ def _decimal_parameter_type(value: Decimal) -> str:
     if scale <= _NUMERIC_MAX_SCALE and integer_digits <= _NUMERIC_MAX_INTEGER_DIGITS:
         return "NUMERIC"
 
-    if scale <= _BIGNUMERIC_MAX_SCALE and integer_digits <= _BIGNUMERIC_MAX_INTEGER_DIGITS:
+    # Magnitude compares against BIGNUMERIC's exact maximum, not a digit count — the
+    # largest values have 39 integer digits (leading 5.78…), and a digit-count cap
+    # would wrongly refuse them. ``copy_abs()``, not ``abs()``: the builtin is context
+    # *arithmetic* and would round a 77-digit value before the (exact) comparison.
+    if scale <= _BIGNUMERIC_MAX_SCALE and value.copy_abs() <= _BIGNUMERIC_MAX_ABS:
         return "BIGNUMERIC"
 
     raise exc.precondition(
-        f"Decimal exceeds BigQuery BIGNUMERIC exactness ({integer_digits} integer "
-        f"digits, scale {scale}; max {_BIGNUMERIC_MAX_INTEGER_DIGITS}/"
-        f"{_BIGNUMERIC_MAX_SCALE}): {value!r}"
+        f"Decimal exceeds BigQuery BIGNUMERIC exactness (scale {scale}, max scale "
+        f"{_BIGNUMERIC_MAX_SCALE}; |value| must be <= {_BIGNUMERIC_MAX_ABS:.4E}): {value!r}"
     )
 
 
@@ -188,7 +195,10 @@ def _infer_parameter(value: Any, annotation: Any = None) -> tuple[JsonDict, Json
         return {"type": "FLOAT64"}, {"value": value}
 
     if isinstance(value, Decimal):
-        return {"type": _decimal_parameter_type(value)}, {"value": str(value)}
+        # Fixed-point, never scientific: ``str(Decimal("5E+3"))`` is ``"5E+3"``, and
+        # the parameter wire format wants a plain decimal string. ``format(…, "f")``
+        # is exact for any finite Decimal (non-finite is refused above).
+        return {"type": _decimal_parameter_type(value)}, {"value": format(value, "f")}
 
     if isinstance(value, datetime):
         return {"type": "TIMESTAMP"}, {"value": value.isoformat()}

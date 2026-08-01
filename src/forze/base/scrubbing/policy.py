@@ -239,7 +239,13 @@ _LOG_STRING_EXTRAS: tuple[str, ...] = (
     r"amqps?://\S+",
     # Scheme-agnostic ``scheme://user:pass@`` userinfo, so clickhouse://, mongodb://,
     # https://user:pass@ … DSNs are masked, not only the four schemes enumerated above.
-    r"\w[\w+.-]{0,31}+://[^\s/@:]{1,128}+:[^\s@]{1,1024}+@",
+    # The user/password bounds are deliberately generous (512/4096 — far past any real
+    # token-as-password), because an oversized field does not degrade to a partial
+    # mask here: the scheme anchor cannot re-slide into the userinfo run, so a field
+    # past its bound would leak the credential WHOLE. The bounds exist only for the
+    # per-anchor DoS cap (see the block comment above); values beyond them are
+    # pathological and accepted as the residual.
+    r"\w[\w+.-]{0,31}+://[^\s/@:]{1,512}+:[^\s@]{1,4096}+@",
 )
 
 _SCRUB_FLAGS = re.IGNORECASE | re.DOTALL

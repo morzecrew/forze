@@ -247,6 +247,23 @@ class TestScrubAssignmentSuffixLeak:
         assert secret not in result
         assert SECRET_PLACEHOLDER in result
 
+    def test_oversized_userinfo_still_masks_whole(self) -> None:
+        # An oversized field cannot fall back to a partial mask (the scheme anchor
+        # never re-slides into the userinfo run), so the bounds must comfortably
+        # cover real credentials: a long SRV username and a multi-KB token-as-password
+        # both mask completely.
+        long_user = "u" * 300
+        long_pass = "p" * 2000
+
+        for text, secret in (
+            (f"dsn clickhouse://{long_user}:pw@ch:9000/db", "pw"),
+            (f"dsn mongodb://svc:{long_pass}@mongo/app", long_pass),
+        ):
+            result = scrub_log_string(text)
+            assert secret not in result
+            assert long_user not in result
+            assert SECRET_PLACEHOLDER in result
+
     @pytest.mark.parametrize(
         "text",
         [
@@ -889,7 +906,7 @@ _FRAGMENT_SAMPLES: dict[str, str] = {
     r"mysql(?:\+[a-z]+)?://\S+": "dsn mysql://u:p@db:3306/app",
     r"redis(?:\+[a-z]+)?://\S+": "cache at redis://cache:6379/0",
     r"amqps?://\S+": "broker amqps://guest:guest@mq:5671/",
-    r"\w[\w+.-]{0,31}+://[^\s/@:]{1,128}+:[^\s@]{1,1024}+@": (
+    r"\w[\w+.-]{0,31}+://[^\s/@:]{1,512}+:[^\s@]{1,4096}+@": (
         "olap clickhouse://user:pass@ch:9000/db"
     ),
 }

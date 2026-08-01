@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Postgres `update_many`/`touch_many` could attach one document's returned diff to another** when the server reordered `RETURNING` rows; diffs are now keyed by document id.
 
-**Log scrubbing masks pluralized, numbered, and compound-`authorization` names** — `tokens=…`, `"api_key2": "…"`, `authorization_value: …` previously leaked; the email and userinfo-DSN rules are length-bounded to RFC sizes, removing a quadratic-cost path on adversarial log text.
+**Log scrubbing masks pluralized, numbered, and compound-`authorization` names** — `tokens=…`, `"api_key2": "…"`, `authorization_value: …` previously leaked; the email and userinfo-DSN rules are length-bounded (RFC sizes for emails, generous caps for DSN userinfo), removing a quadratic-cost path on adversarial log text.
 
 **DST `audit()` no longer claims a detection bound for invariants the sweep could not falsify** (**behaviour change**) — such witnesses are new `InvariantStatus.UNEXERCISABLE` and `audit()` fails naming the missing capability. New `forze_dst.oracle.config_capabilities`; `invariant_accounting`/`account_invariants` accept `config=`.
 
