@@ -9,6 +9,7 @@ same battery here is worth doing: it checks the declaration is honest.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
@@ -51,6 +52,7 @@ class _Row(BaseModel):
     title: str
     content: str
     category: str = ""
+    price: Decimal = Decimal(0)
 
 
 @pytest_asyncio.fixture

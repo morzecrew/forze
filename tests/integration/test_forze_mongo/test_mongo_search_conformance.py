@@ -6,10 +6,12 @@ collection the adapter reads, behind a compound text index.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from bson.decimal128 import Decimal128
 from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
@@ -35,6 +37,7 @@ class _Row(BaseModel):
     title: str
     content: str
     category: str = ""
+    price: Decimal = Decimal(0)
 
 
 @pytest_asyncio.fixture
@@ -44,8 +47,13 @@ async def harness(mongo_client: MongoClient) -> SearchHarness:
     coll = await mongo_client.collection(collection, db_name=db_name)
 
     await coll.create_index([("title", "text"), ("content", "text")])
+    # BSON has no native Decimal, so a raw driver insert has to carry Decimal128 —
+    # what the document adapter would write for us if this corpus went through it.
     await coll.insert_many(
-        [{"_id": row["id"], **row} for row in corpus_rows(lambda: str(uuid4()))]
+        [
+            {"_id": row["id"], **row, "price": Decimal128(row["price"])}
+            for row in corpus_rows(lambda: str(uuid4()))
+        ]
     )
 
     ctx = context_from_deps(

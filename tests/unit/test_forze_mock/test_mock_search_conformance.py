@@ -6,6 +6,7 @@ adapter — the same shape as Postgres and Mongo searching their system of recor
 
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
@@ -39,24 +40,28 @@ class _Row(BaseModel):
     title: str
     content: str
     category: str = ""
+    price: Decimal = Decimal(0)
 
 
 class _Domain(Document):
     title: str
     content: str
     category: str = ""
+    price: Decimal = Decimal(0)
 
 
 class _Read(ReadDocument):
     title: str
     content: str
     category: str = ""
+    price: Decimal = Decimal(0)
 
 
 class _Create(CreateDocumentCmd):
     title: str
     content: str
     category: str = ""
+    price: Decimal = Decimal(0)
 
 
 class _Update(BaseDTO):
@@ -82,8 +87,10 @@ async def harness() -> SearchHarness:
         domain_model=_Domain,
     )
 
-    for title, content, category in CORPUS:
-        await documents.create(_Create(title=title, content=content, category=category))
+    for title, content, category, price in CORPUS:
+        await documents.create(
+            _Create(title=title, content=content, category=category, price=price)
+        )
 
     return SearchHarness(
         query=MockSearchAdapter(
