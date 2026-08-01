@@ -9,40 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**Cross-backend conformance** — shared batteries across the counter, graph, storage, inference, search and idempotency planes, so every port with more than one implementation has one. Each behaviour change below now holds on *all* backends of that plane.
+**Cross-backend conformance** — shared batteries for the counter, graph, storage, inference, search and idempotency planes; each behaviour change below now holds on every backend of its plane:
 
-- **Counters** are signed 64-bit: new `COUNTER_MIN_VALUE`/`COUNTER_MAX_VALUE`, `COUNTER_VALUE_OUT_OF_RANGE_CODE` and `validate_counter_value` in `contracts.counter`. **Behaviour change:** `reset` outside the range raises `counter_value_out_of_range` (Redis previously accepted it and failed the *next* allocation).
-- **Storage. Behaviour change:** `delete` and `abort_upload` are idempotent; `copy` **and `move`** onto the same key are refused with new `SELF_COPY_CODE` (`core.storage.self_copy`) via new `validate_distinct_copy_keys` — a self-`move` was previously a silent no-op; mock `list` is lexicographic by key (was insertion order); S3 maps `NoSuchUpload` to `not_found`, not `infrastructure`.
-- **Inference. Behaviour change:** a `max_batch_size` cap sub-batches an oversized `predict_stream` chunk instead of refusing it (`predict_many` still refuses whole); a spent budget raises new `inference_budget_exhausted` before the backend is called, replacing `cpu_offload_deadline` for the in-process pre-flight case; scalar predictions wrap into a single-field output model on every adapter via new `scalar_output_field`.
-- **Search. Behaviour change:** `SearchManagementPort.delete_all()` on an index that was never provisioned is a no-op, so the documented wipe-then-rebuild works on a fresh deployment; a Meilisearch task rejected as `invalid_request` raises `precondition` (was `infrastructure`) and carries the engine's message.
-- **Graph:** new `normalize_property_filter` in `contracts.graph`, and new `MockGraphManagementAdapter` so `ctx.graph.management(spec)` resolves on the mock. **Behaviour change:** `UUID`/`datetime`/`Decimal` `property_filter` values now match (previously no rows on the mock, an error on Neo4j); a `None` filter value now matches nothing everywhere (the mock matched every vertex); a duplicate vertex key raises `graph_vertex_conflict` from both `create_vertex` and `create_vertices` on Neo4j, which requires `ensure_schema()`.
-- **Idempotency. Behaviour change:** reusing a key with a different payload raises `conflict` on the Redis store (was `precondition` — 409 vs 400 for one client error); `IdempotencyPort.begin` documents the kind as contract.
+- **Counters** are signed 64-bit: new `COUNTER_MIN_VALUE`/`COUNTER_MAX_VALUE` and `validate_counter_value`; an out-of-range `reset` raises `counter_value_out_of_range`.
+- **Storage:** `delete`/`abort_upload` are idempotent; a same-key `copy`/`move` is refused with new `SELF_COPY_CODE`; mock `list` is lexicographic; S3 maps `NoSuchUpload` to `not_found`.
+- **Inference:** a `max_batch_size` cap sub-batches `predict_stream`; a spent budget raises new `inference_budget_exhausted` pre-flight; scalar outputs wrap via new `scalar_output_field`.
+- **Search:** `delete_all()` on an unprovisioned index is a no-op; a Meilisearch `invalid_request` raises `precondition` with the engine's message.
+- **Graph:** new `normalize_property_filter` and `MockGraphManagementAdapter`; `UUID`/`datetime`/`Decimal` property filters match everywhere; a `None` filter value matches nothing; duplicate vertex keys raise `graph_vertex_conflict` (Neo4j needs `ensure_schema()`).
+- **Idempotency:** key reuse with a different payload raises `conflict` on the Redis store too.
 
-**Secrets lifecycle plane** — versions, change feed, hot reload, durable rotator, leases; `SecretsPort` unchanged.
+**Secrets lifecycle plane** — versions, change feed, hot reload, durable rotation, leases; `SecretsPort` unchanged:
 
-- **Versioned reads + admin writes** — `resolve_versioned`/`current_version` (opaque equality-only `SecretVersion`) on every backend, `SecretsAdminPort.put` under a new `secrets_admin` dep key; per-backend `SecretsCapabilities` fail closed (`secrets_feature_unsupported`).
-- **Change feed + hot reload** — `SecretChanged`/`SecretsChangeSource` contract, `SecretsPollWatcher` (30s default), Kubernetes-aware `DirectorySecretsChangeSource` with an optional OS-native event accelerator (`native_events_lifecycle_step`; needs app-installed `watchfiles`, fails closed without it), and `SecretsHotReloadBinder`; the `fingerprint_ttl` floor stays on.
-- **Rotation notifications** — `SecretRotated` (refs/versions only) via outbox → broadcast pub/sub; `PubSubSecretsChangeSource` consumes it through the same binder seam.
-- **Durable rotator** — `SecretRotator`: create→set→test→finish per `(ref, tenant)` with `<path>.pending` staging and fenced promotion (verify-before-promote, CAS via `SecretsAdminPort.put(expected_version=…)`, delayed reconfirmation via `reconfirm_after`); triggers `rotate_now`/`enqueue_tenants`/`ensure_cron`; `forze_postgres.PostgresRotationTarget` defaults to dual-user alternation, single-role behind `single_role_degraded=True`.
-- **Leases** — `DynamicSecretsPort`/`LeasedSecret`, `forze_vault.VaultDynamicSecrets`, and `SecretsLeaseManager` (renew at ~⅔ TTL, reissue before `max_ttl`); a leased backend needs no rotator.
-- **Proactive refresh for idle grants** — providers expire refresh tokens from non-use, so an idle tenant's grant died silently. New `RotatingCredentialsAdminPort.due_for_refresh` (`rotating_credentials_admin` key; `DueCredential` carries ref/version/`last_exchanged_at`/burn state, never a token) and `forze_kits` `CredentialSweeper` (durable cron sweep, one refresh run per grant, converging with live traffic; burnt grants reported as `needs_reauthorization`). **Migration:** the documented DDL gains `CREATE INDEX ON <relation> (tenant_id, updated_at)`.
-- **Behaviour change:** the mock registers the rotating-credential store per scope with the ambient tenant threaded (it was a tenant-blind singleton, so per-tenant code passed against the oracle and scoped only on Postgres); `routes={"rotating_credentials": MockRouteConfig(tenant_aware=True)}` now mirrors the Postgres config's fail-closed tenancy. Resolve it with `deps.resolve_simple(ctx, …)` — the only form that ever worked against the Postgres wiring.
-- **Counterparty-rotated credentials** — `RotatingCredentialStorePort` (`rotating_credentials` key) for single-use OAuth refresh tokens: `get`/`refresh(observed=…)`/`put`/`burn` over an app-supplied `CredentialExchangerPort` (`INVALID_GRANT_CODE` = permanent, anything else transient). New codes `credential_burnt` (terminal; cleared by `put`), `credential_exchange_timeout`, `credential_persist_lost`. Stores: `forze_postgres.PostgresRotatingCredentialStore` (app-provided table, DDL on the class) and `MockDepsModule(rotating_credentials=…)`.
-- **Credentials sealed at rest by default** — `PostgresRotatingCredentialsConfig.encrypt` defaults to `True` (unlike other stores' opt-in flags), AAD-bound to `(tenant, ref)`. Plaintext requires `acknowledge_plaintext=True`; encryption without a wired keyring fails closed at resolve. Existing plaintext rows read through and seal on next write — no migration. Only `payload` is sealed; `expires_at` stays queryable.
-- **`forze_mongo.MongoRotationTarget`** — `apply_max_time` must be at least 1ms (it is sent as an integer `maxTimeMS`, where 0 means *unlimited*); dual-user rotation over `updateUser` (`user_pair=…`, single-user behind `single_user_degraded=True`), bounded server-side by `maxTimeMS` and declaring `apply_latency_bound`. New `MongoClientPort.command_dispatch_bound`, which the target validates `dispatch_allowance` against; URI credential swapping via `forze_mongo.kernel.uri` preserves hosts, options and `mongodb+srv://`.
-- New `forze.base.primitives.StripedAsyncLocks` — keyed in-process serialization over a bounded lock set.
-- Full mock parity (`MockSecretsChangeSource`, `MockDynamicSecretsPort`), new `RoutedTenantClientBase.cached_tenant_ids()`, runnable walkthrough in `examples/recipes/secrets_rotation/`.
-**DST evidence** — quantitative verdicts, Adya-complete battery, and the mock↔real fidelity matrix.
+- `resolve_versioned`/`current_version` and `SecretsAdminPort.put` (new `secrets_admin` dep key); per-backend `SecretsCapabilities` fail closed.
+- Change feed and hot reload: `SecretChanged`/`SecretsChangeSource`, `SecretsPollWatcher`, Kubernetes-aware `DirectorySecretsChangeSource` (optional `watchfiles` accelerator), `SecretsHotReloadBinder`; `SecretRotated` notifications ride outbox → pub/sub.
+- Durable rotation: `SecretRotator` (staged, fenced, CAS promotion) with `forze_postgres.PostgresRotationTarget` and `forze_mongo.MongoRotationTarget` (dual-user by default; degraded single-user/role modes are explicit opt-ins). Leases: `DynamicSecretsPort`, `forze_vault.VaultDynamicSecrets`, `SecretsLeaseManager`.
+- Counterparty-rotated credentials: `RotatingCredentialStorePort` (`rotating_credentials` key; new codes `credential_burnt`/`credential_exchange_timeout`/`credential_persist_lost`), `forze_postgres.PostgresRotatingCredentialStore` sealed at rest by default (plaintext needs `acknowledge_plaintext=True`), and `forze_kits` `CredentialSweeper` + `RotatingCredentialsAdminPort.due_for_refresh` keeping idle grants alive. **Migration:** the documented DDL gains `CREATE INDEX ON <relation> (tenant_id, updated_at)`. **Behaviour change:** the mock's store is tenant-aware per scope — resolve with `deps.resolve_simple(ctx, …)`.
+- New `forze.base.primitives.StripedAsyncLocks` and `RoutedTenantClientBase.cached_tenant_ids()`; full mock parity; walkthrough in `examples/recipes/secrets_rotation/`.
 
-- **Quantitative clean-run verdict** — new `forze_dst.stats` (`detection_upper_bound`, `format_clean_verdict`): clean sweeps print the exact exclusion bound on per-seed detection probability instead of a bare pass — in `SweepResult`/`CoverageStats`/`ConfidenceReport` `format()` (new `ConfidenceReport.violations_seen`; `assess_confidence`/`ConfidenceProbe.report` accept `violations=`), the `forze dst run`/`coverage` clean paths, and the pytest plugin's terminal summary (one per-test line for each clean `assert_no_violation` scenario sweep).
-- **Isolation battery: Adya labels + low-end completion** — every `AnomalyCase` carries new `adya` and `berenson` fields; two new cases, `dirty_write` (G0) and `intermediate_read` (G1b), prevented at every level on all conformance backends.
-- **Fidelity matrix** — new `forze_dst.conformance` report surface (`CellVerdict`, `collect_verdicts`, `FidelityMatrix.pair`, `Classification`, `write_matrix`, `render_markdown`): mock↔real verdict agreement as a durable artifact split by divergence direction; unexplained divergence fails the differential. `just dst-fidelity` regenerates `pages/docs/dst/_generated/fidelity.{json,md}`.
-- **Contract-misuse corpus schema** — new `forze_dst.misuse` (`MisuseMutant`, `MisuseControl`, `MisuseCase`, `MisuseFamily`, `TransferTier`, `GroundTruth`): known-bug twins with replayable killing seeds and depth labels, plus known-correct negative controls, as reviewed registry data. The shipped corpus spans all five families and depths d=1..3: 20 mutants / 18 controls.
-- **Corpus transfer seam** — new `forze_dst.conformance.transfer` (`TransferScript`, `run_transfer`, `TransferRecord`, `Detection`, `TransferClassification`, `divergences`, `write_transfer`, `render_transfer_markdown`): run a corpus instance on the mock and a real backend and compare bug verdicts, divergences split by direction; `just dst-transfer` regenerates the docs Fidelity page's verdict table and pre-registered predictor analysis from a full-corpus run against real Postgres.
-- **Survival-analysis kernel** — `forze_dst.stats` grows `SurvivalCurve.fit` (Kaplan–Meier with right censoring + Greenwood bands; `median`/`quantile` return `None` under heavy censoring), `log_rank`, `binomial_ci` (exact Clopper–Pearson), `geometric_p_hat`, and `fisher_exact` (two-sided 2×2) — stdlib-only, no scipy.
-- **Detection-time campaigns** — new `forze_dst.campaign` (`run_mutant_campaigns`, `run_control_band`, `CampaignStrategy`/`DEFAULT_STRATEGIES`, `write_records`, `summarize`) and `forze dst campaign`: censored seeds-to-detection per (mutant, strategy) reproducible from one master seed, plus the false-positive rate on negative controls with exact bounds. Campaign records carry measured per-run schedule profiles (`max_tasks`/`max_choice_steps` via new `forze_dst.runtime.profile_schedules`), so the PCT-bound analysis uses measured n/k instead of structural estimates.
-- **Mechanical bug-depth extraction + campaign regimes** — new `forze_dst.depth` (`extract_depth`, `DepthEvidence`): depth labels derived from a 1-minimal reproducing schedule (PCT-aligned at d≤2; the correspondence is scoped in the module docs); `MisuseMutant` grows `campaign_base`/`campaign_explore` (de-saturated campaign workload) and `MisuseCase` grows `crash` (`CrashPolicy` — corpus runners execute crash-fault instances under crash → restart → recovery).
-- **Falsifiability witnesses + horizon accounting** — new `forze_dst.oracle.witness` (`InvariantWitness`, `HorizonDeclaration`, `mine_witnesses`/`replay_witnesses`, `account_invariants`) and `.horizon` (vacuity/marker-blindness flags in the confidence report); `Simulation` grows `witnesses=`/`horizon=` (opted in, `audit()` fails on unaccounted invariants and the clean verdict names the witnessed set); new `named`/`name_of` in `forze_dst.invariants`; `FaultRule` grows `at_call`. **Behaviour change:** `no_unclosed_transaction()` violations now report `no_unclosed_transaction`, not `no_resource_leak`.
+**DST evidence** — quantitative verdicts, Adya-complete isolation battery, mock↔real fidelity:
+
+- `forze_dst.stats`: exact Clopper–Pearson detection bounds in every clean verdict, plus a stdlib-only survival kernel (Kaplan–Meier, log-rank, Fisher exact); new `dirty_write`/`intermediate_read` anomaly cases with Adya labels.
+- `forze_dst.conformance` fidelity matrix and corpus transfer against real Postgres (`just dst-fidelity`/`dst-transfer`); `forze_dst.misuse` corpus (20 mutants / 18 controls); detection-time campaigns (`forze dst campaign`) with measured schedule profiles; mechanical depth extraction (`forze_dst.depth`).
+- Falsifiability witnesses and horizon accounting: `Simulation(witnesses=…, horizon=…)`, `mine_witnesses`/`replay_witnesses`/`account_invariants`, `named`/`name_of`, `FaultRule.at_call`. **Behaviour change:** `no_unclosed_transaction()` violations report their own name.
+
+**Server-side CSRF gate on cookie ingress, on by default** — `CookieTokenAuthn.csrf` (new `CookieCsrf`): an unsafe-method request using the cookie must prove a same-host or `allowed_origins` origin via `Origin`/`Referer`, refused as 403 `csrf_rejected`; `allow_missing_origin=True` admits header-less non-browser cookie clients, `csrf=None` opts out.
+
+### Fixed
+
+**Numeric exactness fails closed on every backend** (**behaviour change**) — a value a backend cannot hold exactly raises `precondition` instead of being silently degraded: Firestore refuses non-finite and double-overflowing numerics on writes (previously persisted as `inf`/`nan`); BigQuery `Decimal` parameters pick `NUMERIC` vs `BIGNUMERIC` by value (arrays widen to their neediest element; non-finite and beyond-`BIGNUMERIC` refused); Mongo refuses a `Decimal` beyond BSON decimal128 exactness (was a bare `decimal.Inexact` internal error); DuckDB refuses non-finite and beyond-`DECIMAL(38)` values (previously silently rebound as a rounded `DOUBLE`).
+
+**Postgres `update_many`/`touch_many` could attach one document's returned diff to another** when the server reordered `RETURNING` rows; diffs are now keyed by document id.
+
+**Log scrubbing masks pluralized, numbered, and compound-`authorization` names** — `tokens=…`, `"api_key2": "…"`, `authorization_value: …` previously leaked; the email and userinfo-DSN rules are length-bounded to RFC sizes, removing a quadratic-cost path on adversarial log text.
+
+**DST `audit()` no longer claims a detection bound for invariants the sweep could not falsify** (**behaviour change**) — such witnesses are new `InvariantStatus.UNEXERCISABLE` and `audit()` fails naming the missing capability. New `forze_dst.oracle.config_capabilities`; `invariant_accounting`/`account_invariants` accept `config=`.
+
+**Realtime WebSocket hardening** (**behaviour change**) — the fail-loud closes are bounded (a non-reading client can no longer block them); with no `allowed_origins`, a browser upgrade carrying cookies must be same-host (the `CookieCsrf` posture); a connection without device identity keys its ack cursor by the stable `ws:{principal}` (previously a per-connection key forced a full replay every reconnect).
+
+**Socket.IO gateway hardening** (**behaviour change**) — an unset `require_tenant` follows `bind_tenant_from_headers`, dropping untenanted signals instead of emitting them to the global room; a drain-gate refusal mid-bridge stops the loop without acking, counting or poisoning (new shared `forze.application.execution.is_draining_refusal`); the AsyncAPI document and the dispatch surfaces share one set of wire constants (new `REALTIME_ACK_EVENT`/`REALTIME_REAUTH_EVENT`) and the document gains the `realtime.reauth` operation.
+
+**The spec inventory closes the routeless-provider blind spot** (**behaviour change**) — declaring a `spec_registry` installs a resolve-time guard (new `inventory_route_guard`): an uncatalogued route on an inventoried plane is refused at first use, whatever the provider's shape; `allow_unregistered=True` downgrades to one warning per route.
+
+**Commit-stream dead-lettering is exactly-once for any producer** — a DLQ copy of a message without a `forze_event_id` header now carries a deterministically minted dedup id (a re-produced copy could previously process twice); sealed envelopes stay byte-identical.
+
+**A routed SQS consumer survives credential rotation** — `evict_tenant` moves an in-flight `RoutedSQSClient.consume` stream onto fresh credentials at the next poll instead of tearing it down; `guarded=True` is fully supported across the facade (previously it raised on first use); non-retryable resolution failures still raise out of the stream. `SQSRoutingCredentials.secret_access_key` is now `SecretStr` (matching S3) — read it via `get_secret_value()`.
+
+**Local KMS has no wrap-count rotation cadence** — each wrap seals under a one-shot HKDF subkey, so the AES-GCM ~2^32 ceiling never accrues against a master key; envelopes sealed by earlier builds stay readable.
 
 ## [0.5.1] - 2026-07-25
 
@@ -78,7 +90,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Identity & authn ergonomics**
 
 - **Cookie-mode authn routes** — `AuthnCookieCarrier` via `attach_authn_routes(cookies=…)`: login/refresh set and rotate HttpOnly cookies and strip token strings from bodies; logout expires both idempotently.
-- **Server-side CSRF gate on cookie ingress, on by default** — `CookieTokenAuthn.csrf` (`CookieCsrf`): an unsafe-method request using the cookie must prove a same-host or `allowed_origins` origin via `Origin`/`Referer`, refused as 403 `csrf_rejected`; `allow_missing_origin=True` admits header-less non-browser cookie clients, `csrf=None` opts out.
 - **`SecurityContextMiddleware(anonymous_paths=…)`** — exact paths where an authentication-kind failure binds no identity instead of 401ing; other failure kinds still return the error response.
 - **`AuthnDepsModule(eligibility="allow_all")`** — declared opt-out of the policy-principal gate for token-only deployments; unknown values are refused at wiring.
 - **Self-hosted durable→registry bridge** — `operation_durable_handler` / `register_operation_functions` auto-bridge `DurableFunctionSpec.operation` like the Inngest tier (`durable_input_invalid`, `durable_output_invalid`).
@@ -86,7 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Keys, crypto & mock conformance**
 
-- **Self-hosted KMS backend** — `forze_kms.local.LocalKeyManagement` wraps data keys under operator-provided 32-byte master keys, no cloud or extra needed; the multi-key map carries the rotation overlap, a rotated-away key id fails closed, and a one-way `fingerprint` spots fleet drift. No volume-driven rotation cadence — the GCM ~2^32 wrap-count ceiling never accrues against a master key; envelopes sealed by earlier builds stay readable.
+- **Self-hosted KMS backend** — `forze_kms.local.LocalKeyManagement` wraps data keys under operator-provided 32-byte master keys, no cloud or extra needed; the multi-key map carries the rotation overlap, a rotated-away key id fails closed, and a one-way `fingerprint` spots fleet drift.
 - **Every mock field plane seals** — document, graph, search (hub/federated, snapshots), analytics and procedures resolve the same fail-closed encrypting codecs as real backends, via an opt-in synchronous key seam for computation-only backends. **Behavior change** for mock suites asserting raw stored values; text queries no longer match sealed content.
 - **OpenBao compatibility** — `forze_vault` works with OpenBao (verified 2.6.1); the integration suite runs against any compatible engine via `FORZE_VAULT_IMAGE`.
 
@@ -109,37 +120,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`python-socketio` capped below 6** — the gateway and server builder depend on 5.x constructor surfaces.
 
 ### Fixed
-
-**Log scrubbing masks pluralized, numbered, and compound-`authorization` names** — `tokens=…`, `"api_key2": "…"`, `authorization=…`, `authorization_value: …` are now masked in message strings and serialized bodies (previously only the singular, unnumbered forms were); the email and userinfo-DSN rules are length-bounded to RFC sizes, removing a quadratic-cost path on adversarial log text.
-
-**Postgres `update_many`/`touch_many` could attach one document's returned diff to another** when the server reordered `RETURNING` rows; diffs are now keyed by document id.
-
-**Numeric exactness fails closed on every backend** (**behaviour change**) — a value a backend cannot hold exactly raises `precondition` instead of being silently degraded:
-
-- **Firestore** refuses non-finite and double-overflowing numerics on writes (previously persisted as `inf`/`nan`); in-range precision loss is unchanged.
-- **BigQuery** `Decimal` parameters pick `NUMERIC` vs `BIGNUMERIC` by value — scale beyond 9 or magnitude beyond 29 integer digits goes out as `BIGNUMERIC` (arrays widen to their neediest element); non-finite and beyond-`BIGNUMERIC` values are refused.
-- **Mongo** refuses a `Decimal` beyond BSON decimal128 exactness (34 significant digits; previously a bare `decimal.Inexact` escaped as an internal error).
-- **DuckDB** refuses non-finite values and values beyond `DECIMAL(38)` (previously silently rebound as a rounded `DOUBLE`).
-
-**DST `audit()` no longer claims a detection bound for invariants the sweep could not falsify** (**behaviour change**) — a witness mined under perturbations the citing config does not enable (crash/fault/schedule/cluster) is new `InvariantStatus.UNEXERCISABLE`: `audit()` fails naming the missing capability, `run()` warns, clean verdicts count it out of the bound. New `forze_dst.oracle.config_capabilities`; `invariant_accounting`/`account_invariants` accept `config=`.
-
-**Realtime WebSocket hardening** (**behaviour change**):
-
-- The fail-loud closes (credential expiry, oversized frame, binary frame) are bounded — a client that stops reading can no longer block them indefinitely.
-- With no `allowed_origins` configured, a browser upgrade carrying cookies must be same-host; a cross-origin frontend lists itself (the `CookieCsrf` posture).
-- A connection without device/session identity keys its ack cursor by the stable `ws:{principal}` (SSE parity) — previously a per-connection key reset the cursor every reconnect.
-
-**The spec inventory closes the routeless-provider blind spot** (**behaviour change**) — declaring a `spec_registry` now also installs a resolve-time guard (new `inventory_route_guard`): resolving an uncatalogued route on an inventoried plane is refused at first use, whatever the provider's shape (previously a plain provider could serve a spec an export then silently omitted). `allow_unregistered=True` downgrades it to one warning per route.
-
-**Socket.IO gateway hardening** (**behaviour change**):
-
-- An unset `require_tenant` now follows `bind_tenant_from_headers`: a tenancy-binding gateway drops untenanted signals instead of emitting them to the global room; pass `require_tenant=False` to keep untenanted delivery.
-- The gateway inherits the consumer draining discipline: a drain-gate refusal mid-bridge stops the loop without acking, counting, or poisoning the signal — it redelivers to the next process. New `forze.application.execution.is_draining_refusal` is the shared predicate.
-- The AsyncAPI document and the dispatch surfaces share one set of wire-event constants (new `REALTIME_ACK_EVENT`/`REALTIME_REAUTH_EVENT`), and the always-registered `realtime.reauth` frame is now in the document.
-
-**Commit-stream dead-lettering is exactly-once for any producer** — a DLQ copy of a message without a `forze_event_id` header now carries a deterministically minted dedup id (previously a re-produced raw-producer copy could process twice); the header is only added when absent, so sealed envelopes stay byte-identical.
-
-**A routed SQS consumer survives credential rotation** — `evict_tenant` now moves an in-flight `RoutedSQSClient.consume` stream onto fresh credentials at the next poll instead of tearing it down, and `guarded=True` is fully supported across the facade (previously it raised on first use). A non-retryable resolution failure (no tenant bound, missing secret, invalid credentials) still raises out of the stream rather than being retried. `SQSRoutingCredentials.secret_access_key` is now `SecretStr` (matching S3) — read it via `get_secret_value()`.
 
 **`Decimal` is a first-class filter and sort value across the query DSL** — the scalar union omitted it, and every backend showed it differently.
 
