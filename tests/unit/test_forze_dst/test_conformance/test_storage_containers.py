@@ -166,3 +166,27 @@ async def test_every_documented_write_path_provisions(write: str) -> None:
     listed, _total = await port.list(10, 0)
 
     assert isinstance(listed, list), "the container must now exist and be listable"
+
+
+async def test_a_head_that_succeeds_is_not_reported_as_missing() -> None:
+    """The verdict must distinguish "the object is there" from the two absences.
+
+    The scenario only ever heads a key it knows is missing, so this branch is unreachable
+    from it — and a helper whose success path nothing exercises can invert without anything
+    noticing, which would turn every absence check into a tautology.
+    """
+
+    state = _store()
+    port = await _emptied(state, "present")
+    stored = await port.upload(UploadedObject(filename="here.txt", data=b"x"))
+
+    outcome = await run_container_probes(
+        absent=_port(state, "never-made"),
+        emptied=port,
+        missing_key=stored.key,
+    )
+
+    assert outcome.head_absent_object is ContainerVerdict.NON_EMPTY
+    assert outcome.head_absent_container is ContainerVerdict.MISSING_OBJECT, (
+        "the same key in a container that does not exist is still just not-found"
+    )

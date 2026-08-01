@@ -30,6 +30,7 @@ from forze.application.contracts.crypto import (
     StaticKeyDirectory,
 )
 from forze.application.contracts.document import DocumentSpec
+from forze.application.execution import CryptoDepsModule, Deps
 from forze.application.integrations.crypto import (
     DeterministicFieldCipher,
     Keyring,
@@ -99,6 +100,22 @@ def spec(*, encrypted: bool = True) -> DocumentSpec[PersonRead, Person, PersonCr
             else None
         ),
     )
+
+
+def crypto_deps() -> Deps:
+    """The keyring wiring every leg needs, identical on all of them.
+
+    It has to be identical — the whole comparison rests on the real plane and the oracle
+    holding the same key under the same deterministic root — so it is built once here
+    rather than restated per leg, where a drifting key id would look like a behavioural
+    divergence.
+    """
+
+    return CryptoDepsModule(
+        kms=MockKeyManagement(),
+        directory=StaticKeyDirectory(KeyRef(key_id=KEY_ID)),
+        deterministic_root=DETERMINISTIC_ROOT,
+    )()
 
 
 def mock_adapter(state: MockState) -> MockDocumentAdapter[Any, Any, Any, Any]:

@@ -21,26 +21,31 @@ import pytest
 import pytest_asyncio
 
 from forze.application.contracts.realtime import MailboxEntry
-from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionRuntime
-from forze_kits.integrations.realtime import (
-    build_realtime_cursors,
-    build_realtime_mailbox,
-    realtime_cursor_spec,
-    realtime_mailbox_spec,
-)
+from forze.base.exceptions import CoreException, exc
+from forze_kits.integrations.realtime import realtime_cursor_spec, realtime_mailbox_spec
 from forze_kits.integrations.realtime.conformance import (
+    CURSOR_STALLED_CODE,
     EXPECTED_CURSOR_REPLAY,
     REPLAY_CAP,
     MailboxScope,
     Scoped,
+    _is_complete_suffix,
+    _overflowed,
+    _tenant_cursors_independent,
     run_capped_replay_boundary,
 )
 from forze_mock.execution import MockDepsModule, MockRouteConfig
+from tests.support.realtime_cursor_conformance import tenant_scoped
 
 # ----------------------- #
 
-UNCAPPED = 10**6
+
+@attrs.frozen
+class _Entry:
+    """The one field :func:`_is_complete_suffix` reads."""
+
+    event_id: str
 
 
 @attrs.define(slots=True)
@@ -101,24 +106,14 @@ async def scoped_factory() -> AsyncIterator[Any]:
         ctx = runtime.get_context()
 
         def _make(truncate_to: int | None) -> Scoped:
-            @contextmanager
-            def _scoped(tenant: UUID) -> Iterator[MailboxScope]:
-                with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
-                    mailbox = build_realtime_mailbox(
-                        ctx, cap=REPLAY_CAP, replay_page_size=2
-                    )
-
-                    yield MailboxScope(
-                        mailbox=(
-                            mailbox
-                            if truncate_to is None
-                            else _TruncatingMailbox(inner=mailbox, keep=truncate_to)
-                        ),
-                        cursors=build_realtime_cursors(ctx),
-                        observer=build_realtime_mailbox(ctx, cap=UNCAPPED),
-                    )
-
-            return _scoped
+            return tenant_scoped(
+                ctx,
+                wrap_mailbox=(
+                    None
+                    if truncate_to is None
+                    else lambda mailbox: _TruncatingMailbox(inner=mailbox, keep=truncate_to)
+                ),
+            )
 
         yield _make
 
@@ -186,3 +181,200 @@ async def test_any_truncation_is_caught(scoped_factory: Any, keep: int) -> None:
     outcome = await run_capped_replay_boundary(scoped_factory(keep))
 
     assert outcome.undelivered_deleted == REPLAY_CAP - keep
+
+
+# ....................... #
+# The tenant probe's own failure branches — the paths that fire only when isolation breaks.
+
+
+@attrs.define(slots=True)
+class _SharedCursors:
+    """Cursors that ignore the tenant — one row per (principal, client_key), globally.
+
+    Exactly what a tenant-blind derived id produces on a shared table: the second tenant
+    sees the first's read position, and its later ack drags the first tenant forward.
+    """
+
+    _positions: dict[tuple[str, str], Any] = attrs.field(factory=dict)
+
+    async def get(self, *, principal: str, client_key: str) -> Any:
+        return self._positions.get((principal, client_key))
+
+    async def advance(self, *, principal: str, client_key: str, up_to: Any) -> None:
+        current = self._positions.get((principal, client_key))
+
+        if current is None or up_to > current:
+            self._positions[(principal, client_key)] = up_to
+
+    async def min_cursor(self, *, principal: str) -> Any:
+        return min(self._positions.values(), default=None)
+
+
+@attrs.define(slots=True)
+class _ScriptedCursors:
+    """Answers the probe's fixed call sequence, failing at one chosen step.
+
+    The probe makes the same five calls every time — A.advance, A.get, B.get, B.advance,
+    A.get — so a double can be precise about *which* tenant it is answering without seeing
+    the ambient tenant at all. Being precise matters: an earlier double that simply failed
+    every advance made the stall test pass through the setup-check branch instead of the
+    stall branch, so it was covering the wrong thing while looking correct.
+
+    The default script is a healthy, isolated store: the first tenant's ack lands, the
+    second sees nothing of it, and the second's ack does not disturb the first.
+    """
+
+    on_second_advance: Any = None
+
+    _advances: int = 0
+    _gets: int = 0
+    _position: Any = None
+
+    async def get(self, *, principal: str, client_key: str) -> Any:
+        self._gets += 1
+
+        # The second get is tenant B's: an isolated store shows it nothing.
+        return None if self._gets == 2 else self._position
+
+    async def advance(self, *, principal: str, client_key: str, up_to: Any) -> None:
+        self._advances += 1
+
+        if self._advances == 1:
+            self._position = up_to
+
+            return
+
+        if self.on_second_advance is not None:
+            self.on_second_advance()
+
+    async def min_cursor(self, *, principal: str) -> Any:
+        return self._position
+
+
+def _stalls() -> None:
+    """How a colliding derived id presents: the retry budget runs out, no wrong value."""
+
+    raise exc.internal("did not converge", code=CURSOR_STALLED_CODE)
+
+
+def _falls_over() -> None:
+    raise exc.infrastructure("the cursor store is down")
+
+
+def _scope_with(cursors: Any, inner: Scoped) -> Scoped:
+    """The real mailbox scope, with its cursors swapped for a broken pair."""
+
+    @contextmanager
+    def _scoped(tenant: UUID) -> Iterator[MailboxScope]:
+        with inner(tenant) as scope:
+            yield attrs.evolve(scope, cursors=cursors)
+
+    return _scoped
+
+
+async def test_a_tenant_blind_cursor_store_is_reported_as_not_independent(
+    scoped_factory: Any,
+) -> None:
+    """The headline failure: one row shared by two tenants."""
+
+    scoped = _scope_with(_SharedCursors(), scoped_factory(None))
+
+    assert await _tenant_cursors_independent(scoped) is False
+
+
+async def test_the_scripted_double_reports_a_healthy_store_as_independent(
+    scoped_factory: Any,
+) -> None:
+    """The positive control for the doubles below — otherwise every one could pass by luck."""
+
+    scoped = _scope_with(_ScriptedCursors(), scoped_factory(None))
+
+    assert await _tenant_cursors_independent(scoped) is True
+
+
+async def test_a_stalled_advance_is_reported_as_not_independent(scoped_factory: Any) -> None:
+    """The indirect failure: the advance loop exhausts its budget instead of returning wrong data."""
+
+    scoped = _scope_with(_ScriptedCursors(on_second_advance=_stalls), scoped_factory(None))
+
+    assert await _tenant_cursors_independent(scoped) is False
+
+
+async def test_an_unrelated_failure_from_the_cursor_store_propagates(
+    scoped_factory: Any,
+) -> None:
+    """Only the stall code is a verdict; any other fault must not be read as a clean "False".
+
+    A cursor store failing for an unrelated reason would otherwise be reported as a tenancy
+    finding — a wrong diagnosis pointing at code that is not broken.
+    """
+
+    scoped = _scope_with(_ScriptedCursors(on_second_advance=_falls_over), scoped_factory(None))
+
+    with pytest.raises(CoreException) as propagated:
+        await _tenant_cursors_independent(scoped)
+
+    assert propagated.value.code != CURSOR_STALLED_CODE
+
+
+async def test_a_setup_that_does_not_take_is_not_read_as_independence(
+    scoped_factory: Any,
+) -> None:
+    """A probe whose own setup silently failed must not report a pass.
+
+    This is the bug the probe shipped with: it shared the replay's device, whose cursor the
+    mid-replay ack had already pushed past the probe's position, so the monotonic guard made
+    the setup a no-op. Reading that as a result is worse than failing.
+    """
+
+    @attrs.define(slots=True)
+    class _IgnoresEveryAdvance(_ScriptedCursors):
+        async def advance(self, *, principal: str, client_key: str, up_to: Any) -> None:
+            return None
+
+    scoped = _scope_with(_IgnoresEveryAdvance(), scoped_factory(None))
+
+    assert await _tenant_cursors_independent(scoped) is False
+
+
+async def test_a_mailbox_without_counters_reports_no_overflows(scoped_factory: Any) -> None:
+    """``stats()`` is optional: a store that keeps no counters still runs the scenario."""
+
+    @attrs.define(slots=True)
+    class _Countless:
+        inner: Any
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.inner, name)
+
+    assert _overflowed(_Countless(inner=object())) == 0
+
+
+@pytest.mark.parametrize(
+    ("replayed", "stored", "expected", "why"),
+    [
+        ((), (), True, "an empty store has nothing to deliver, so nothing IS the suffix"),
+        ((), ("a", "b"), False, "delivering nothing from a full store is not a complete suffix"),
+        (("b",), ("a", "b"), True, "the tail of one"),
+        (("a",), ("a", "b"), False, "a prefix is not a suffix"),
+        (("a", "b"), ("a", "b"), True, "the whole store"),
+    ],
+)
+def test_the_suffix_test_refuses_the_degenerate_empty_case(
+    replayed: tuple[str, ...],
+    stored: tuple[str, ...],
+    expected: bool,
+    why: str,
+) -> None:
+    """The empty list is a tail of every sequence — which is the trap.
+
+    Taking "the last zero entries" and comparing would call a replay that delivered nothing
+    a complete suffix, and that is precisely the state a badly truncating store lands in.
+    Covered directly because the scenario always seeds a backlog, so it can never produce
+    the empty-store case itself.
+    """
+
+    entries = [_Entry(event_id=e) for e in replayed]
+    corpus = [_Entry(event_id=e) for e in stored]
+
+    assert _is_complete_suffix(entries, corpus) is expected, why

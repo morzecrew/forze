@@ -13,24 +13,21 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 
-from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
-from forze.application.execution import CryptoDepsModule, Deps, ExecutionContext
+from forze.application.execution import Deps, ExecutionContext
 from forze_firestore.execution.deps import ConfigurableFirestoreDocument
 from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.client import FirestoreClient
-from forze_mock import MockKeyManagement
 from tests.support.execution_context import context_from_deps
 from tests.support.field_encryption_conformance import (
-    DETERMINISTIC_ROOT,
     FIELD_ENCRYPTION_BATTERY,
-    KEY_ID,
     Check,
     FieldEncryptionHarness,
+    crypto_deps,
     spec,
 )
 
@@ -47,11 +44,7 @@ def _ctx(client: FirestoreClient, collection: str) -> ExecutionContext:
 
     return context_from_deps(
         Deps.merge(
-            CryptoDepsModule(
-                kms=MockKeyManagement(),
-                directory=StaticKeyDirectory(KeyRef(key_id=KEY_ID)),
-                deterministic_root=DETERMINISTIC_ROOT,
-            )(),
+            crypto_deps(),
             Deps.plain(
                 {
                     FirestoreClientDepKey: client,

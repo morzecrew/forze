@@ -8,9 +8,7 @@ index, and a tenant-scoped derived primary key on a shared table.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
-from contextlib import contextmanager
-from uuid import UUID
+from collections.abc import AsyncIterator
 
 import pytest
 import pytest_asyncio
@@ -21,15 +19,8 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
-from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext
-from forze_kits.integrations.realtime import (
-    build_realtime_cursors,
-    build_realtime_mailbox,
-    realtime_cursor_spec,
-    realtime_mailbox_spec,
-)
-from forze_kits.integrations.realtime.conformance import REPLAY_CAP, MailboxScope
+from forze_kits.integrations.realtime import realtime_cursor_spec, realtime_mailbox_spec
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import (
@@ -43,11 +34,10 @@ from tests.support.realtime_cursor_conformance import (
     CURSOR_REPLAY_BATTERY,
     Check,
     CursorReplayHarness,
+    tenant_scoped,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
-
-UNCAPPED = 10**6
 
 # tenant_id is the adapter-managed scoping column; the rest mirrors the kit's models.
 _MAILBOX_DDL = """
@@ -127,16 +117,7 @@ def harness(pg_client: PostgresClient) -> CursorReplayHarness:
         )
     )
 
-    @contextmanager
-    def _scoped(tenant: UUID) -> Iterator[MailboxScope]:
-        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
-            yield MailboxScope(
-                mailbox=build_realtime_mailbox(ctx, cap=REPLAY_CAP, replay_page_size=2),
-                cursors=build_realtime_cursors(ctx),
-                observer=build_realtime_mailbox(ctx, cap=UNCAPPED),
-            )
-
-    return CursorReplayHarness(scoped=_scoped, backend="postgres")
+    return CursorReplayHarness(scoped=tenant_scoped(ctx), backend="postgres")
 
 
 @pytest.mark.conformance(plane="realtime_cursor", engine="postgres")

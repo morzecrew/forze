@@ -259,12 +259,21 @@ def _overflowed(mailbox: RealtimeMailbox) -> int:
 
 
 def _is_complete_suffix(replayed: Sequence[MailboxEntry], stored: Sequence[MailboxEntry]) -> bool:
-    """Whether *replayed* is exactly the tail of *stored*, in order and with no gaps."""
+    """Whether *replayed* is exactly the tail of *stored*, in order and with no gaps.
+
+    A replay that delivered **nothing** is not a complete suffix of a store that holds
+    something — the empty list is trivially a tail of every sequence, so taking the last
+    ``0`` entries and comparing would call the worst possible replay correct. That is the
+    degenerate case a badly truncating store lands in, so it is exactly the one this must
+    not wave through.
+    """
 
     delivered = [entry.event_id for entry in replayed]
-    newest = [entry.event_id for entry in stored][-len(delivered) :] if delivered else []
 
-    return delivered == newest
+    if not delivered:
+        return not stored
+
+    return delivered == [entry.event_id for entry in stored][-len(delivered) :]
 
 
 # ....................... #

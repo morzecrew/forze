@@ -11,18 +11,63 @@ over several failures.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from typing import final
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
+from typing import Any, final
+from uuid import UUID
 
 import attrs
 
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.execution import ExecutionContext
+from forze_kits.integrations.realtime import build_realtime_cursors, build_realtime_mailbox
 from forze_kits.integrations.realtime.conformance import (
     EXPECTED_CURSOR_REPLAY,
+    REPLAY_CAP,
+    MailboxScope,
     Scoped,
     run_capped_replay_boundary,
 )
 
 # ----------------------- #
+
+UNCAPPED = 10**6
+"""The observer's cap: high enough that its window is always the whole store."""
+
+REPLAY_PAGE_SIZE = 2
+"""Small enough that the replay pages several times, so a page boundary is always crossed."""
+
+
+def tenant_scoped(
+    ctx: ExecutionContext,
+    *,
+    wrap_mailbox: Callable[[Any], Any] | None = None,
+) -> Scoped:
+    """The ``Scoped`` factory every leg needs, built once.
+
+    Each leg differs only in how it wires *ctx* — a Postgres table, a Mongo collection, the
+    mock store — while the scope itself is the same three builds every time: the capped
+    mailbox under test, its cursors, and an uncapped observer over the same rows. Repeating
+    that per leg meant four copies of a cap constant that has to agree with the scenario's.
+
+    *wrap_mailbox* decorates the mailbox under test (never the observer), which is how the
+    controls inject a deliberately broken replay without restating the wiring.
+    """
+
+    @contextmanager
+    def _scoped(tenant: UUID) -> Iterator[MailboxScope]:
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+            mailbox = build_realtime_mailbox(
+                ctx, cap=REPLAY_CAP, replay_page_size=REPLAY_PAGE_SIZE
+            )
+
+            yield MailboxScope(
+                mailbox=mailbox if wrap_mailbox is None else wrap_mailbox(mailbox),
+                cursors=build_realtime_cursors(ctx),
+                observer=build_realtime_mailbox(ctx, cap=UNCAPPED),
+            )
+
+    return _scoped
 
 
 @final

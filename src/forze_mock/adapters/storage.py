@@ -528,11 +528,6 @@ class MockStorageAdapter(
         URL fully deterministic.
         """
 
-        # A presigned PUT is a write path: the object it authorises will land in this
-        # container, so the container comes into existence here as it does on the real
-        # backends. presign_download is a read and deliberately does not.
-        self._provision()
-
         return self.__presign(
             key,
             expires_in=expires_in,
@@ -585,6 +580,12 @@ class MockStorageAdapter(
             if method == "PUT":
                 record["sse"] = sse_record
                 self._record_sse(key)
+                # A presigned PUT is a write path: the object it authorises lands in this
+                # container, so the container comes into existence here as it does on the
+                # real backends. Done under the lock with every other state mutation, and
+                # here rather than in the caller so the "PUT means write" rule has one home
+                # — presign_download is a read and deliberately provisions nothing.
+                self._provision()
 
             self.state.storage_presigns.append(record)
 
@@ -726,10 +727,12 @@ class MockStorageAdapter(
 
         _ = include_tags  # tags are always included for free in the mock
 
-        if not missing_ok:
-            self._require_bucket()
-
         with self.state.lock:
+            # Inside the lock with the read it guards: checking existence outside it would
+            # test one snapshot of the state and then list another.
+            if not missing_ok:
+                self._require_bucket()
+
             rows = list(self._objects().values())
         if prefix:
             rows = [row for row in rows if row.key.startswith(prefix)]

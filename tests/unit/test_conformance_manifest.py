@@ -24,6 +24,7 @@ import tomllib
 from pathlib import Path
 from types import ModuleType
 
+import attrs
 import pytest
 
 # ----------------------- #
@@ -636,3 +637,202 @@ def test_the_repo_field_encryption_plane_derives_a_closed_loop() -> None:
 
     assert derived, "the derivation found no engines — the ratchet would be vacuous"
     assert derived <= set(plane.engines), f"a document backend has no leg: {sorted(derived)}"
+
+
+# ----------------------- #
+# The entry points CI actually calls
+
+
+def _synthetic_census(manifest) -> dict:
+    """A census in which every declared leg exists and every catalogued probe resolves.
+
+    Built from the manifest rather than from a pytest run: the checks under test are about
+    the *comparison*, and a real collection would make this a slow test of pytest.
+    """
+
+    from forze_dst.conformance.catalog import PLANE_DIVERGENCES
+
+    probes = [row.probe for rows in PLANE_DIVERGENCES.values() for row in rows]
+
+    return {
+        "legs": [
+            {"plane": plane.name, "engine": engine, "node_ids": [f"tests/{plane.name}.py::t"]}
+            for plane in manifest.planes.values()
+            for engine in plane.engines
+        ],
+        "malformed": [],
+        "node_ids": probes,
+    }
+
+
+def test_main_accepts_the_repo_manifest_when_every_leg_is_present(tmp_path: Path) -> None:
+    """The whole pipeline against the real table — loader, checks, exit code."""
+
+    manifest = checker.load_manifest(_REPO / "pyproject.toml")
+    census = tmp_path / "census.json"
+    census.write_text(json.dumps(_synthetic_census(manifest)), encoding="utf-8")
+
+    assert checker.main([str(census), "--pyproject", str(_REPO / "pyproject.toml")]) == 0
+
+
+def test_main_returns_one_when_a_leg_is_missing(tmp_path: Path) -> None:
+    manifest = checker.load_manifest(_REPO / "pyproject.toml")
+    payload = _synthetic_census(manifest)
+    payload["legs"] = payload["legs"][1:]  # one declared leg nothing collects
+
+    census = tmp_path / "census.json"
+    census.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert checker.main([str(census), "--pyproject", str(_REPO / "pyproject.toml")]) == 1
+
+
+def test_main_executed_mode_needs_no_census_argument(tmp_path: Path) -> None:
+    """The post-run gate: reads the shard files and the manifest, and nothing else."""
+
+    manifest = checker.load_manifest(_REPO / "pyproject.toml")
+    shard = tmp_path / "conformance-all.json"
+    shard.write_text(
+        json.dumps(
+            {
+                "legs": [
+                    {"plane": plane.name, "engine": engine, "passed": 3}
+                    for plane in manifest.planes.values()
+                    for engine in plane.engines
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    argv = ["--executed", str(tmp_path), "--pyproject", str(_REPO / "pyproject.toml")]
+
+    assert checker.main(argv) == 0
+
+    shard.write_text(json.dumps({"legs": []}), encoding="utf-8")
+
+    assert checker.main(argv) == 1, "no shard ran any leg — that cannot be a pass"
+
+
+def test_main_without_a_census_or_collect_is_a_usage_error() -> None:
+    with pytest.raises(SystemExit):
+        checker.main(["--pyproject", str(_REPO / "pyproject.toml")])
+
+
+def test_a_missing_manifest_table_is_a_readable_error(tmp_path: Path) -> None:
+    empty = tmp_path / "pyproject.toml"
+    empty.write_text("[tool.other]\nx = 1\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exit_code:
+        checker.load_manifest(empty)
+
+    assert "conformance_manifest" in str(exit_code.value)
+
+
+def test_the_collected_census_round_trips(tmp_path: Path) -> None:
+    """The parser the collection hook feeds — its shape is a contract between two files."""
+
+    census = tmp_path / "census.json"
+    census.write_text(
+        json.dumps(
+            {
+                "legs": [{"plane": "counter", "engine": "mock", "node_ids": ["tests/a.py::t"]}],
+                "malformed": ["tests/b.py::t"],
+                "node_ids": ["tests/a.py::t"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = checker.load_census(census)
+
+    assert loaded.legs == {("counter", "mock"): ("tests/a.py::t",)}
+    assert loaded.malformed == ("tests/b.py::t",)
+    assert "tests/a.py::t" in loaded.node_ids
+
+
+def test_a_collection_that_produces_no_census_is_an_error(tmp_path: Path) -> None:
+    """Collection failing must not read as "no legs" — that would be a silent green."""
+
+    with pytest.raises(SystemExit) as failed:
+        checker.collect_census(tmp_path / "never-written.json", tmp_path / "no-such-tests")
+
+    assert "collection itself failed" in str(failed.value)
+
+
+# ....................... #
+# Divergence catalog wiring
+
+
+def test_a_catalog_that_does_not_resolve_fails() -> None:
+    report = checker.Report()
+    checker.check_divergence_probes(
+        _manifest(planes=[_plane()], catalog="forze_dst.conformance.catalog:GONE"),
+        _census(),
+        report,
+    )
+
+    assert "does not resolve" in _violations(report)
+
+
+def test_a_catalog_that_is_not_a_mapping_fails() -> None:
+    report = checker.Report()
+    checker.check_divergence_probes(
+        _manifest(planes=[_plane()], catalog="forze_dst.conformance.catalog:COUNTER_DIVERGENCES"),
+        _census(),
+        report,
+    )
+
+    assert "must be a plane → rows mapping" in _violations(report)
+
+
+def test_no_catalog_declared_is_not_an_error() -> None:
+    report = checker.Report()
+    checker.check_divergence_probes(_manifest(planes=[_plane()]), _census(), report)
+
+    assert not report.violations
+
+
+def test_a_scenario_reference_without_an_attribute_is_refused() -> None:
+    """``module:attribute`` or nothing — a bare module would resolve to something unusable."""
+
+    with pytest.raises(ValueError, match="module:attribute"):
+        checker.resolve_scenario("forze_dst.conformance.counters")
+
+
+def test_a_gap_without_a_real_reason_fails() -> None:
+    """A gap is a standing admission; "TODO" is not one."""
+
+    report = checker.Report()
+    checker.check_gaps(
+        _manifest(gaps=[checker.Gap(name="queue", dep_keys=(), engines=(), reason="later")]),
+        {},
+        report,
+    )
+
+    assert "needs a real reason" in _violations(report)
+
+
+def test_a_catalogued_row_without_a_probe_fails() -> None:
+    """The catalog's own guard refuses this at construction, so the checker sees it only
+    from a hand-built row — but the checker must not depend on that guard existing."""
+
+    report = checker.Report()
+    checker.check_divergence_probes(
+        _manifest(planes=[_plane()], catalog="tests.unit.test_conformance_manifest:_PROBELESS"),
+        _census(),
+        report,
+    )
+
+    assert "has no probe" in _violations(report)
+
+
+@attrs.frozen
+class _ProbelessRow:
+    """A catalog row that names no probe — what the checker must refuse on its own."""
+
+    plane: str = "counter"
+    name: str = "unpinned"
+    probe: str = ""
+
+
+_PROBELESS: dict[str, tuple[object, ...]] = {"counter": (_ProbelessRow(),)}

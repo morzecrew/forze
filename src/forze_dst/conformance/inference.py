@@ -86,16 +86,27 @@ async def _one_chunk(instances: Sequence[BaseModel]) -> AsyncIterator[Sequence[B
     yield list(instances)
 
 
+def _refusal_verdict(error: CoreException) -> GateVerdict:
+    """Classify a refusal: only the capability gate is a verdict, everything else propagates.
+
+    The one rule this scenario cannot get wrong. A broken route, a wiring error or a
+    validation failure reported as ``REFUSED`` would make a defect look like a correctly
+    enforced capability — and two backends would then "agree" for the worst possible reason.
+    """
+
+    if error.code == UNSUPPORTED_INFERENCE_FEATURE_CODE:
+        return GateVerdict.REFUSED
+
+    raise error
+
+
 async def _verdict_of(awaitable: Any) -> GateVerdict:
     """Reduce one gated call to a verdict, letting anything that is not a gate through."""
 
     try:
         await awaitable
     except CoreException as error:
-        if error.code == UNSUPPORTED_INFERENCE_FEATURE_CODE:
-            return GateVerdict.REFUSED
-
-        raise
+        return _refusal_verdict(error)
 
     return GateVerdict.ACCEPTED
 
@@ -115,10 +126,7 @@ async def _stream_verdict(
         async for _chunk in port.predict_stream(_one_chunk(instances)):
             pass
     except CoreException as error:
-        if error.code == UNSUPPORTED_INFERENCE_FEATURE_CODE:
-            return GateVerdict.REFUSED
-
-        raise
+        return _refusal_verdict(error)
 
     return GateVerdict.ACCEPTED
 

@@ -9,13 +9,11 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
-from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
-from forze.application.execution import CryptoDepsModule, Deps, ExecutionContext
-from forze_mock import MockKeyManagement
+from forze.application.execution import Deps, ExecutionContext
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import (
@@ -26,12 +24,11 @@ from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from tests.support.execution_context import context_from_deps
 from tests.support.field_encryption_conformance import (
-    DETERMINISTIC_ROOT,
     FIELD_ENCRYPTION_BATTERY,
-    KEY_ID,
     SPEC_NAME,
     Check,
     FieldEncryptionHarness,
+    crypto_deps,
     spec,
 )
 
@@ -61,11 +58,7 @@ def _ctx(pg_client: PostgresClient) -> ExecutionContext:
 
     return context_from_deps(
         Deps.merge(
-            CryptoDepsModule(
-                kms=MockKeyManagement(),
-                directory=StaticKeyDirectory(KeyRef(key_id=KEY_ID)),
-                deterministic_root=DETERMINISTIC_ROOT,
-            )(),
+            crypto_deps(),
             Deps.plain(
                 {
                     PostgresClientDepKey: pg_client,

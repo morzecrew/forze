@@ -477,8 +477,11 @@ class Neo4jGraphAdapter(TenancyMixin):
             filter_to_kinds=to_vertex_kinds is not None,
         )
         # The kind filter has to reach the query, or LIMIT truncates before it and the
-        # caller silently receives fewer matches than exist. The Python pass below stays
-        # as the mapping guard it always was (a label that is not a known kind).
+        # caller silently receives fewer matches than exist. The Python pass below is not
+        # thereby redundant: Cypher matches on *any* label, while the caller is handed the
+        # single kind `_node_kind_from_labels` resolves, and for a multi-labelled node the
+        # two can disagree. Keeping both means the returned rows match the kind the caller
+        # actually sees.
         extra: dict[str, Any] = {"key": origin.key, "limit": limit}
 
         if to_vertex_kinds is not None:

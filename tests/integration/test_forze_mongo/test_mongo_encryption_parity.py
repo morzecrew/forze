@@ -16,24 +16,21 @@ import pytest_asyncio
 
 pytest.importorskip("pymongo")
 
-from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
-from forze.application.execution import CryptoDepsModule, Deps, ExecutionContext
-from forze_mock import MockKeyManagement
+from forze.application.execution import Deps, ExecutionContext
 from forze_mongo.execution.deps.configs import MongoDocumentConfig
 from forze_mongo.execution.deps.factories import ConfigurableMongoDocument
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.client import MongoClient
 from tests.support.execution_context import context_from_deps
 from tests.support.field_encryption_conformance import (
-    DETERMINISTIC_ROOT,
     FIELD_ENCRYPTION_BATTERY,
-    KEY_ID,
     Check,
     FieldEncryptionHarness,
+    crypto_deps,
     spec,
 )
 
@@ -47,11 +44,7 @@ def _ctx(mongo_client: MongoClient, db: str, collection: str) -> ExecutionContex
 
     return context_from_deps(
         Deps.merge(
-            CryptoDepsModule(
-                kms=MockKeyManagement(),
-                directory=StaticKeyDirectory(KeyRef(key_id=KEY_ID)),
-                deterministic_root=DETERMINISTIC_ROOT,
-            )(),
+            crypto_deps(),
             Deps.plain(
                 {
                     MongoClientDepKey: mongo_client,
