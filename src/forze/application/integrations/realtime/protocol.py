@@ -21,7 +21,9 @@ from forze.base.exceptions import exc
 # ----------------------- #
 
 __all__ = [
+    "REALTIME_ACK_EVENT",
     "REALTIME_PROTOCOL_VERSION",
+    "REALTIME_REAUTH_EVENT",
     "SUPPORTED_REALTIME_PROTOCOLS",
     "RealtimeAck",
     "negotiate_realtime_protocol",
@@ -32,6 +34,14 @@ REALTIME_PROTOCOL_VERSION: Final[int] = 1
 
 SUPPORTED_REALTIME_PROTOCOLS: Final[frozenset[int]] = frozenset({REALTIME_PROTOCOL_VERSION})
 """Every protocol version this server accepts at connect."""
+
+REALTIME_ACK_EVENT: Final[str] = "realtime.ack"
+"""The cumulative-ack wire event name — the single definition every dispatch surface
+(Socket.IO registration, raw-WS frame router) and the AsyncAPI export share, so the
+documented contract cannot drift from what the transports actually dispatch."""
+
+REALTIME_REAUTH_EVENT: Final[str] = "realtime.reauth"
+"""The in-place credential-refresh wire event name — same single-definition rule."""
 
 
 class RealtimeAck(BaseModel):

@@ -17,7 +17,7 @@ from .planes import (
     plane_of_key,
     plane_of_spec,
 )
-from .reconcile import reconcile_specs
+from .reconcile import inventory_route_guard, reconcile_specs
 from .refusal import assert_exportable, refusal_reason
 from .registry import FrozenSpecRegistry, SpecRegistry, spec_ref
 from .value_objects import (
@@ -50,6 +50,7 @@ __all__ = [
     "entry_shape",
     "plane_of_key",
     "plane_of_spec",
+    "inventory_route_guard",
     "reconcile_specs",
     "refusal_reason",
     "spec_ref",

@@ -22,14 +22,33 @@ before the clients they depend on are closed.
 """
 
 import asyncio
-from typing import Any, final
+from typing import Any, Final, final
 
 import attrs
 
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
 
 # ----------------------- #
+
+_DRAINING_CODE: Final[str] = "draining"
+"""The gate's refusal code — the single definition :func:`is_draining_refusal` and
+:meth:`DrainGate.admit` share, so consumers' classification cannot drift from it."""
+
+
+def is_draining_refusal(error: BaseException) -> bool:
+    """Whether *error* is the drain gate refusing admission (a shutdown signal).
+
+    Every consumer loop must branch on this **before** its retry/poison ladder: a
+    draining refusal is not a delivery attempt, must never count toward a delivery
+    ceiling, and must never dead-letter or ack-away the message — the loop stops and
+    the message is redelivered by the next process.
+    """
+
+    return isinstance(error, CoreException) and error.code == _DRAINING_CODE
+
+
+# ....................... #
 
 
 def _current_task() -> "asyncio.Task[Any] | None":
@@ -114,7 +133,7 @@ class OperationDrainGate:
         if self._draining:
             raise exc.throttled(
                 f"Runtime scope is draining; operation {str(op)!r} rejected",
-                code="draining",
+                code=_DRAINING_CODE,
                 details={"op": str(op)},
             )
 

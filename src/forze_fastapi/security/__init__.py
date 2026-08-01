@@ -7,6 +7,7 @@ from .value_objects import (
     CookieTokenAuthn,
     HeaderApiKeyAuthn,
     HeaderTokenAuthn,
+    origin_authority,
 )
 
 # ----------------------- #
@@ -20,5 +21,6 @@ __all__ = [
     "CookieTokenAuthn",
     "apply_openapi_security",
     "resolve_authn_ingress",
+    "origin_authority",
     "resolve_tenant_identity",
 ]

@@ -35,6 +35,8 @@ from forze.application.contracts.realtime import Audience
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.application.integrations.realtime import (
+    REALTIME_ACK_EVENT,
+    REALTIME_REAUTH_EVENT,
     BacklogDrain,
     acknowledge_up_to,
     iter_backlog,
@@ -558,10 +560,10 @@ def attach_realtime_connection(
 
     sio.on("connect", handler=lifecycle.on_connect, namespace=namespace)
     sio.on("disconnect", handler=lifecycle.on_disconnect, namespace=namespace)
-    sio.on("realtime.reauth", handler=lifecycle.on_reauth, namespace=namespace)
+    sio.on(REALTIME_REAUTH_EVENT, handler=lifecycle.on_reauth, namespace=namespace)
 
     if lifecycle.replay_enabled:
-        sio.on("realtime.ack", handler=lifecycle.on_ack, namespace=namespace)
+        sio.on(REALTIME_ACK_EVENT, handler=lifecycle.on_ack, namespace=namespace)
 
 
 # ----------------------- #

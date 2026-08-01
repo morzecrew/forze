@@ -104,9 +104,12 @@ _FORZE_KEY_EXTRAS: tuple[str, ...] = (
 # counterpart here and vice versa, so a credential is masked whether it appears
 # as an event-dict key or inline in a message string. The one deliberate
 # key-only term is ``authorization``, whose *bare* value form is owned by the
-# full-line ``authorization\s*:`` rule below — an assignment match would stop
-# at the scheme word (``Basic``) and leak the credential after it. A parity
-# test enforces the reconciliation.
+# full-line ``authorization\s*[=:]`` rule below — an assignment match would stop
+# at the scheme word (``Basic``) and leak the credential after it. A behavioral
+# property test enforces the reconciliation: every vocabulary term, morphed
+# through the naming shapes the key heuristic accepts (compounds, camelCase,
+# plural, digit-suffixed), must mask in the value forms whenever
+# ``is_sensitive_key`` masks it as a key.
 #
 # These terms are also the vocabulary of the quoted-key rule below, which is what
 # catches the same credentials in a serialized body.
@@ -182,30 +185,67 @@ _QUOTED_VALUE = r"""(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,}\]]+)"""
 # never turn a failed match into a successful one.
 _COMPOUND_SUFFIX = r"(?>(?:[._-]\w+|(?-i:[A-Z][a-z0-9]*)){0,6})"
 
+# Optional numbering and plural between the term and its suffix/separator:
+# numbered secrets (``token2=…``, ``"api_key2": "…"``) and pluralized names
+# (``tokens=…``, ``credentials: …``) carry their values too, and the key
+# heuristic already treats both as sensitive — without this affix the value
+# form leaked exactly the names the key path masks. Digits are bounded; the
+# single optional ``s`` cannot re-admit the deliberate non-secrets
+# (``secretary=`` / ``tokenizer=`` continue with other lowercase letters, so
+# the required ``=``/``:`` still never lines up).
+_TERM_AFFIX = r"(?:\d{1,4})?s?"
+
 _LOG_ASSIGNMENT_FRAGMENTS: tuple[str, ...] = (
-    "(?:" + "|".join(_LOG_ASSIGNMENT_TERM_FRAGMENTS) + ")" + _COMPOUND_SUFFIX + r"\s*[=:]\s*\S+",
+    "(?:"
+    + "|".join(_LOG_ASSIGNMENT_TERM_FRAGMENTS)
+    + ")"
+    + _TERM_AFFIX
+    + _COMPOUND_SUFFIX
+    + r"\s*[=:]\s*\S+",
     "(?:"
     + "|".join(_LOG_QUOTED_KEY_TERM_FRAGMENTS)
     + ")"
+    + _TERM_AFFIX
     + _COMPOUND_SUFFIX
     + r"[\"']\s*[=:]\s*"
     + _QUOTED_VALUE,
 )
 
+# The email and userinfo fragments below are length-bounded AND possessive. Their
+# prefilter literals (``@``, ``://``) are one character of attacker-controlled text
+# away, and an *unbounded* run before a required literal costs O(run) at every start
+# position the sub scan tries — quadratic over the string, ~5 s of CPU at 30 KB of
+# ``aaaa…@`` — on the path every logged string takes. Bounds cap the per-position
+# work at the RFC sizes real values obey (emails: 64-octet local parts, 63-octet
+# labels; DSNs: schemes ≲32, userinfo far under the bounds chosen); possessiveness
+# removes in-position backtracking, which is free because every bounded class
+# excludes the character required next. A value exceeding a bound is out-of-spec;
+# the sliding scan still masks its tail (the bound-sized window before ``@``).
 _LOG_STRING_EXTRAS: tuple[str, ...] = (
-    r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+    r"[a-zA-Z0-9._%+-]{1,64}+@(?:[a-zA-Z0-9-]{1,63}+\.){1,8}+[a-zA-Z]{2,63}",
     r"Bearer\s+\S+",
-    # Any ``Authorization: <credential>`` header value, not just the Bearer
-    # scheme; consume the rest of the line so ``Basic <b64>`` / ``Bearer <jwt>``
-    # (scheme + credential token) are masked whole, not just the scheme word.
-    r"authorization\s*:\s*[^\r\n]+",
+    # Any ``Authorization: <credential>`` value, not just the Bearer scheme; also
+    # the ``=`` form (a header echoed into a query string or key=value log line)
+    # and the compound/plural/numbered names the key heuristic accepts
+    # (``authorization_value=…``); consume the rest of the line so ``Basic <b64>``
+    # / ``Bearer <jwt>`` (scheme + credential token) are masked whole, not just
+    # the scheme word. This term stays out of the assignment vocabulary — that
+    # rule's ``\S+`` value would stop at the scheme word and, matching first in
+    # the alternation, would preempt this rule and leak the credential after it.
+    r"authorization" + _TERM_AFFIX + _COMPOUND_SUFFIX + r"\s*[=:]\s*[^\r\n]+",
     r"postgresql(?:\+[a-z]+)?://\S+",
     r"mysql(?:\+[a-z]+)?://\S+",
     r"redis(?:\+[a-z]+)?://\S+",
     r"amqps?://\S+",
     # Scheme-agnostic ``scheme://user:pass@`` userinfo, so clickhouse://, mongodb://,
     # https://user:pass@ … DSNs are masked, not only the four schemes enumerated above.
-    r"\w[\w+.-]*://[^\s/@:]+:[^\s@]+@",
+    # The user/password bounds are deliberately generous (512/4096 — far past any real
+    # token-as-password), because an oversized field does not degrade to a partial
+    # mask here: the scheme anchor cannot re-slide into the userinfo run, so a field
+    # past its bound would leak the credential WHOLE. The bounds exist only for the
+    # per-anchor DoS cap (see the block comment above); values beyond them are
+    # pathological and accepted as the residual.
+    r"\w[\w+.-]{0,31}+://[^\s/@:]{1,512}+:[^\s@]{1,4096}+@",
 )
 
 _SCRUB_FLAGS = re.IGNORECASE | re.DOTALL
@@ -328,7 +368,15 @@ def _literals_from_node(op: Any, arg: Any) -> frozenset[str] | None:
         # (group, add_flags, del_flags, subpattern) — group content is required.
         return _literals_from_nodes(arg[3])
 
-    if op in (_sre_constants.MAX_REPEAT, _sre_constants.MIN_REPEAT):  # type: ignore[attr-defined]
+    if op is _sre_constants.ATOMIC_GROUP:  # type: ignore[attr-defined]
+        # ``(?>…)`` — atomicity changes cost, never what is required to match.
+        return _literals_from_nodes(arg)
+
+    if op in (
+        _sre_constants.MAX_REPEAT,  # type: ignore[attr-defined]
+        _sre_constants.MIN_REPEAT,  # type: ignore[attr-defined]
+        _sre_constants.POSSESSIVE_REPEAT,  # type: ignore[attr-defined]
+    ):
         min_count, _max_count, item = arg
 
         if min_count >= 1:  # repeated at least once -> content is required

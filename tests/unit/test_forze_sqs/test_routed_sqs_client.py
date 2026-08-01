@@ -144,3 +144,20 @@ def test_routed_sqs_credential_fingerprint_detects_secret_rotation() -> None:
 
     assert fp_a != fp_b  # rotating only the secret key changes the dedup key
     assert "secret-a" not in fp_a  # raw secret never embedded
+
+
+def test_routing_credentials_secret_never_leaks_in_repr_or_dump() -> None:
+    # ``secret_access_key`` is a SecretStr (matching the S3 sibling): the AWS secret
+    # must not surface through repr, str, model_dump, or JSON serialization.
+    creds = SQSRoutingCredentials(
+        endpoint="http://localhost:4566",
+        region_name="us-east-1",
+        access_key_id="AKIA",
+        secret_access_key="wide-open-secret",
+    )
+
+    assert creds.secret_access_key.get_secret_value() == "wide-open-secret"
+    assert "wide-open-secret" not in repr(creds)
+    assert "wide-open-secret" not in str(creds)
+    assert "wide-open-secret" not in str(creds.model_dump())
+    assert "wide-open-secret" not in creds.model_dump_json()

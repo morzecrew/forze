@@ -42,6 +42,7 @@ from forze.application.contracts.inventory import (
     SpecRegistry,
     SpecSource,
     assert_exportable,
+    inventory_route_guard,
     reconcile_specs,
 )
 from forze.application.contracts.outbox import OutboxSpec
@@ -550,3 +551,95 @@ def test_an_empty_inventory_downgrades_to_a_warning_when_allowed() -> None:
 def test_an_empty_inventory_with_no_inventoried_planes_reconciles_clean() -> None:
     # Nothing catalogued and nothing bound: genuinely nothing to reconcile.
     assert reconcile_specs(SpecRegistry().freeze(), frozenset()) == ()
+
+
+# ----------------------- #
+# The routeless-provider blind spot, closed at resolve time
+
+
+def test_plain_provider_uncatalogued_route_is_refused_at_resolve() -> None:
+    """Registration-time reconciliation cannot see routes through a plain (routeless)
+    provider — the one blind spot an export cannot survive. The resolve-time guard
+    closes it: the route is the spec's own name, independent of provider shape, so an
+    uncatalogued spec is refused at first use instead of being served, used, and
+    silently omitted by an export."""
+
+    import asyncio
+
+    from forze_mock import MockDepsModule
+
+    runtime = build_runtime(
+        deps=[MockDepsModule()()],
+        specs=SpecRegistry().register(_document("orders")),
+    )
+
+    async def _use() -> None:
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            ctx.document.query(_document("orders"))  # catalogued → resolves
+
+            with pytest.raises(CoreException, match="missing from the spec inventory"):
+                ctx.document.query(_document("ghost"))  # plain-served, uncatalogued
+
+    asyncio.run(_use())
+
+
+def test_allow_unregistered_downgrades_the_resolve_guard_to_a_warning() -> None:
+    import asyncio
+
+    from forze_mock import MockDepsModule
+
+    runtime = build_runtime(
+        deps=[MockDepsModule()()],
+        specs=SpecRegistry().register(_document("orders")),
+        allow_unregistered=True,
+    )
+
+    async def _use() -> None:
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            ctx.document.query(_document("ghost"))  # warned, not refused
+            ctx.document.query(_document("ghost"))  # repeat: warned once, never re-logged
+
+    asyncio.run(_use())
+
+
+def test_no_inventory_means_no_resolve_guard() -> None:
+    import asyncio
+
+    from forze_mock import MockDepsModule
+
+    runtime = build_runtime(deps=[MockDepsModule()()])
+
+    async def _use() -> None:
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            ctx.document.query(_document("anything"))  # untouched, as before
+
+    asyncio.run(_use())
+
+
+def test_uninventoried_keys_pass_the_resolve_guard() -> None:
+    guard = inventory_route_guard(SpecRegistry().register(_document("orders")).freeze())
+
+    guard("some_uninventoried_key", "whatever")  # not a plane key → no opinion
+
+
+def test_plain_provider_runtimes_with_different_catalogues_are_never_equal() -> None:
+    """The assertion the blind spot allowed to fail silently: two plain-provider
+    runtimes with different catalogued sets must never read as the same application.
+    Their inventory fingerprints differ (the export identity), and the smaller
+    catalogue cannot silently serve the larger one's route — the resolve guard
+    refuses exactly the set difference."""
+
+    small = SpecRegistry().register(_document("orders")).freeze()
+    large = SpecRegistry().register(_document("orders"), _document("invoices")).freeze()
+
+    assert small.fingerprint() != large.fingerprint()
+
+    guard = inventory_route_guard(small)
+    guard(DocumentQueryDepKey.name, "orders")  # the shared route resolves on both
+
+    with pytest.raises(CoreException, match="invoices"):
+        guard(DocumentQueryDepKey.name, "invoices")  # the difference is refused

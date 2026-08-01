@@ -63,7 +63,7 @@ from forze.application.contracts.realtime import (
 )
 from forze.application.contracts.stream import AckStreamGroupQueryDepKey, StreamSpec
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import ExecutionContext
+from forze.application.execution import ExecutionContext, is_draining_refusal
 from forze.application.execution.background import run_supervised
 from forze.application.integrations.realtime import (
     room_for as room_for,  # re-export: established home
@@ -339,6 +339,16 @@ async def _process_messages(
                 )
 
         except Exception as error:
+            # Draining refusal (the runtime is quiescing): a shutdown artifact, never a
+            # delivery. Nothing was emitted, so neither ack lane applies — acking the
+            # ephemeral lane would *lose* an undelivered signal, and counting the
+            # durable lane could push a healthy signal to the poison ceiling across
+            # deploys. Re-raise: the loop stops (the gate is one-way — the rest of the
+            # batch would only re-refuse), everything unacked redelivers to the next
+            # process. Same ladder as the kits queue/commit-stream runners.
+            if is_draining_refusal(error):
+                raise
+
             # A deterministic wiring error (a misrouted spec, a missing dep) never succeeds
             # on retry — re-raise to fail fast instead of leaving the durable message
             # pending and reclaim-looping it forever. The message stays unacked, so it
@@ -477,6 +487,18 @@ async def _consume_group_stream(
             raise
 
         except CoreException as error:
+            if is_draining_refusal(error):
+                # The runtime is quiescing: everything unacked (the refused message and
+                # the batch tail) stays pending for the next process. Return cleanly —
+                # continuing would re-refuse against the one-way gate; supervision's
+                # backoff paces any restart until the stop signal lands.
+                _logger.info(
+                    "Realtime gateway draining: stopping consume for %s; "
+                    "unacked signals will be redelivered",
+                    stream,
+                )
+                return
+
             if error.kind is ExceptionKind.CONFIGURATION:
                 raise  # a wiring error won't fix itself by retrying — let the task exit (logged)
 
@@ -660,6 +682,15 @@ class PubSubSignalSource(RealtimeSignalSource):
                 raise
 
             except CoreException as error:
+                if is_draining_refusal(error):
+                    # Quiescing: pub/sub is fire-and-forget, so there is nothing to
+                    # redeliver — but resubscribing would only re-refuse against the
+                    # one-way gate. Stop cleanly instead of critical-logging a churn.
+                    _logger.info(
+                        "Realtime pubsub source draining: stopping consume for %s", channel
+                    )
+                    return
+
                 if error.kind is ExceptionKind.CONFIGURATION:
                     raise  # a wiring error won't fix itself by retrying
 
@@ -720,6 +751,13 @@ class PubSubSignalSource(RealtimeSignalSource):
                         )
 
                 except CoreException as error:
+                    if is_draining_refusal(error):
+                        # Shutdown artifact, not a bridge failure: re-raise so the run
+                        # loop stops cleanly instead of counting/logging a churn
+                        # against the one-way gate (pub/sub is fire-and-forget, so
+                        # there is nothing to redeliver either way).
+                        raise
+
                     if error.kind is ExceptionKind.CONFIGURATION:
                         raise
 
@@ -972,18 +1010,23 @@ class RealtimeGateway:
     scopes by it. Off by default because the header is untrusted/forgeable — enable only
     on brokers where every producer is trusted to assert tenancy (see :func:`_bind_tenant`)."""
 
-    require_tenant: bool = False
+    require_tenant: bool | None = None
     """Refuse (drop, loudly) any signal that resolves **no tenant**, instead of emitting it
     to the untenanted global room.
 
     The room name is the isolation boundary, and on the tenant-global stream the tenant
     comes from an untrusted header: absent or malformed, the signal would otherwise degrade
     to the unprefixed room — the wrong direction for a tenanted deployment, where "no
-    tenant" means "misrouted", never "everyone". Set ``True`` on every deployment whose
-    connections are tenant-scoped; leave ``False`` only where untenanted delivery is the
-    intended, declared posture. Dropped signals are counted
-    (``stats.untenanted_dropped``) and logged critically; a missing tenant is a
-    deterministic property of the signal, so the drop is final (retrying cannot heal it)."""
+    tenant" means "misrouted", never "everyone". ``None`` (the default) **follows the
+    deployment's own tenancy declaration**: it resolves to
+    :attr:`bind_tenant_from_headers` — a gateway that binds per-signal tenancy is a
+    tenanted deployment, and a signal that resolves none there is misrouted, so the
+    requirement is on unless explicitly declared off. Set ``False`` only where
+    untenanted delivery is the intended, declared posture; ``True`` forces the
+    requirement on a gateway that resolves tenants some other way. Dropped signals are
+    counted (``stats.untenanted_dropped``) and logged critically; a missing tenant is a
+    deterministic property of the signal, so the drop is final (retrying cannot heal
+    it)."""
 
     emit_timeout: timedelta | None = timedelta(seconds=5)
     """Bound on a single ``sio.emit`` — **bounded by default**; ``None`` opts into
@@ -1000,6 +1043,19 @@ class RealtimeGateway:
     """Delivery counters for the live path (emit outcomes, dedup/presence skips,
     admission rejects, mailbox stores). Share the **same** instance with the source's
     ``stats`` and hand it to ``instrument_realtime_gateway`` at assembly."""
+
+    # ....................... #
+
+    @property
+    def _tenant_required(self) -> bool:
+        """The resolved tenancy requirement: an explicit setting wins; unset follows
+        :attr:`bind_tenant_from_headers` — a gateway that binds per-signal tenancy is a
+        tenanted deployment, and its untenanted signals are misrouted, not global."""
+
+        if self.require_tenant is not None:
+            return self.require_tenant
+
+        return self.bind_tenant_from_headers
 
     # ....................... #
 
@@ -1090,7 +1146,7 @@ class RealtimeGateway:
 
         signal = admitted  # emit/store the catalog-normalized payload, not the raw one
 
-        if self.require_tenant and tenant is None:
+        if self._tenant_required and tenant is None:
             # The room name is the isolation boundary — an untenanted signal would land in
             # the global (unprefixed) room. A missing/malformed tenant header is a
             # deterministic property of the signal, so the drop is final: the caller acks,

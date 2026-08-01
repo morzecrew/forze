@@ -10,6 +10,7 @@ import asyncio
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from decimal import Decimal
 from typing import Any, TypeVar, final
 
 import attrs
@@ -33,6 +34,54 @@ _DEFAULT_EXTENSIONS: tuple[str, ...] = ("httpfs",)
 # ....................... #
 
 
+_DECIMAL_MAX_WIDTH = 38
+"""DuckDB ``DECIMAL`` holds at most 38 digits. The driver does not fail past that —
+it silently rebinds the parameter as ``DOUBLE``, rounding the value (and a
+non-finite ``Decimal`` binds as a float ``nan``/``inf``). Refuse instead: a money
+value that cannot bind exactly must not bind at all."""
+
+
+def _require_exact_decimal(value: Decimal) -> None:
+    """Refuse a ``Decimal`` DuckDB cannot bind as an exact ``DECIMAL(38)``."""
+
+    if not value.is_finite():
+        raise exc.precondition(f"Non-finite numeric not allowed: {value!r}")
+
+    if value.is_zero():
+        return
+
+    _sign, digits, exponent = value.as_tuple()
+    exponent = int(exponent)
+
+    # Trailing zero digits are spelling, not precision — strip before counting.
+    while len(digits) > 1 and digits[-1] == 0:
+        digits = digits[:-1]
+        exponent += 1
+
+    scale = max(0, -exponent)
+    integer_digits = max(0, len(digits) + exponent)
+
+    if integer_digits + scale > _DECIMAL_MAX_WIDTH:
+        raise exc.precondition(
+            f"Decimal exceeds DuckDB DECIMAL({_DECIMAL_MAX_WIDTH}) exactness "
+            f"({integer_digits} integer digits, scale {scale}); the driver would "
+            f"silently bind it as a rounded DOUBLE: {value!r}"
+        )
+
+
+def _validate_param_value(value: Any) -> None:
+    if isinstance(value, Decimal):
+        _require_exact_decimal(value)
+
+    elif isinstance(value, (list, tuple)):
+        for item in value:  # pyright: ignore[reportUnknownVariableType]
+            _validate_param_value(item)
+
+    elif isinstance(value, dict):
+        for item in value.values():  # pyright: ignore[reportUnknownVariableType]
+            _validate_param_value(item)
+
+
 def _params_dict(params: BaseModel | JsonDict | None) -> dict[str, Any] | None:
     """Coerce params to a ``$name`` binding dict, or ``None`` when there is nothing to bind."""
 
@@ -44,6 +93,9 @@ def _params_dict(params: BaseModel | JsonDict | None) -> dict[str, Any] | None:
 
     else:
         data = dict(params)
+
+    for value in data.values():
+        _validate_param_value(value)
 
     return data or None
 

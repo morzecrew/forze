@@ -364,6 +364,60 @@ async def test_gateway_stats_count_delivery_outcomes() -> None:
     assert stats.emit_failed == 0
 
 
+async def test_draining_refusal_stops_the_loop_without_ack_or_poison() -> None:
+    """The commit-stream draining discipline, inherited: a drain-gate refusal mid-bridge
+    is a shutdown artifact — the message is not acked (it would be lost), not counted
+    toward failure/poison (a healthy signal must not ride the ceiling across deploys),
+    and the loop stops instead of re-refusing against the one-way gate. The signal is
+    then redelivered to a healthy consumer via reclaim."""
+
+    from forze.base.exceptions import exc as _exc
+    from forze_socketio import RealtimeGatewayStats
+
+    class _DrainingSio(_StubSio):
+        async def emit(self, *args: Any, **kwargs: Any) -> None:
+            self.attempts += 1
+            raise _exc.throttled(
+                "Runtime scope is draining; operation rejected", code="draining"
+            )
+
+    spec = realtime_stream_spec()
+    draining_sio = _DrainingSio()
+    stats = RealtimeGatewayStats()
+    gw = RealtimeGateway(
+        sio=draining_sio,  # pyright: ignore[reportArgumentType]
+        source=StreamGroupSignalSource(stream_spec=spec, poll_interval=_FAST, stats=stats),
+        dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock"),
+        stats=stats,
+    )
+    sig = RealtimeSignal.of(Audience.principal("u1"), "order.shipped", {"text": "x"})
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await _append(ctx, spec, sig, event_id="evt-1")
+
+        # The run must END ON ITS OWN (the draining stop), not need the cancel.
+        await asyncio.wait_for(gw.run(ctx), timeout=2.0)
+
+        assert draining_sio.attempts >= 1  # the refusal actually happened
+        assert stats.bridge_failed == 0  # a shutdown artifact is not a failure
+        assert stats.poisoned == 0  # and never poison
+
+        # The unacked signal redelivers: a healthy consumer reclaims and emits it.
+        healthy_sio = _StubSio()
+        healthy = RealtimeGateway(
+            sio=healthy_sio,  # pyright: ignore[reportArgumentType]
+            source=StreamGroupSignalSource(
+                stream_spec=spec, poll_interval=_FAST, reclaim_idle=timedelta(seconds=0)
+            ),
+            dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock"),
+        )
+        await _run_settle(healthy, ctx, lambda: len(healthy_sio.emits) >= 1)
+
+    assert [e["event"] for e in healthy_sio.emits] == ["order.shipped"]
+
+
 async def test_encrypted_realtime_stream_is_refused_at_run() -> None:
     from typing import cast
 

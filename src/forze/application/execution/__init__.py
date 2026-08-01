@@ -8,6 +8,7 @@ from .context import (
     InvocationMetadata,
     bind_deadline,
     current_deadline,
+    is_draining_refusal,
     remaining_time,
 )
 from .crypto import CryptoDepsModule
@@ -96,6 +97,7 @@ __all__ = [
     "build_runtime",
     "InvocationMetadata",
     "bind_deadline",
+    "is_draining_refusal",
     "current_deadline",
     "remaining_time",
     "Deps",

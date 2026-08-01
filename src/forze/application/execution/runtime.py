@@ -9,7 +9,11 @@ from typing import final
 import attrs
 
 from forze.application._logger import logger
-from forze.application.contracts.inventory import FrozenSpecRegistry, reconcile_specs
+from forze.application.contracts.inventory import (
+    FrozenSpecRegistry,
+    inventory_route_guard,
+    reconcile_specs,
+)
 from forze.application.contracts.querying import (
     CursorTokenCipher,
     CursorTokenSigner,
@@ -19,6 +23,7 @@ from forze.application.contracts.querying import (
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import (
     CpuExecutor,
+    OnceCell,
     RuntimeVar,
     ThreadPoolCpuExecutor,
     bind_cpu_executor,
@@ -121,6 +126,11 @@ class ExecutionRuntime:
 
     ``None`` (default) skips the check entirely, so existing apps are untouched. Portable
     export refuses to run without an inventory: it cannot export what it cannot enumerate.
+
+    Declaring one also installs the **resolve-time guard**: every configurable resolution
+    of an inventoried plane must name a catalogued route, whatever the provider's shape —
+    the routeless-provider blind spot registration-time reconciliation cannot see
+    (see :func:`~forze.application.contracts.inventory.inventory_route_guard`).
     """
 
     allow_unregistered: bool = False
@@ -225,6 +235,16 @@ class ExecutionRuntime:
     )
     """Per-scope execution context."""
 
+    __guarded_deps: OnceCell[FrozenDepsRegistry] = attrs.field(
+        factory=OnceCell,
+        repr=False,
+        init=False,
+        eq=False,
+    )
+    """The deps registry with the resolve-time inventory guard attached (set at
+    construction when :attr:`spec_registry` is declared; unset otherwise — scopes then
+    resolve from :attr:`deps` as-is). A cell, not a rebound field: the runtime is frozen."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -283,6 +303,20 @@ class ExecutionRuntime:
         for warning in warnings:
             logger.warning("Bound route missing from the spec inventory:%s", warning)
 
+        # The resolve-time half: registration-time reconciliation cannot see per-route
+        # completeness through a plain (routeless) provider, so the guard checks every
+        # configurable resolution's route against the inventory instead. Memoized into
+        # the cell here — construction is the one place holding both halves — and read
+        # by ``create_context``, so every scope this runtime mints resolves guarded.
+        self.__guarded_deps.set(
+            attrs.evolve(
+                self.deps,
+                inventory_guard=inventory_route_guard(
+                    self.spec_registry, allow_unregistered=self.allow_unregistered
+                ),
+            )
+        )
+
     # ....................... #
 
     @property
@@ -337,7 +371,8 @@ class ExecutionRuntime:
 
         logger.info("Creating execution context")
 
-        resolved_deps = self.deps.resolve()
+        # The guarded registry when an inventory is declared, the plain one otherwise.
+        resolved_deps = (self.__guarded_deps.peek() or self.deps).resolve()
 
         ctx = ExecutionContext(
             deps=resolved_deps,

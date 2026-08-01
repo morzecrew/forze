@@ -66,12 +66,19 @@ def _row(
     )
 
 
-def _runtime() -> ExecutionRuntime:
+def _runtime(*extra_specs: Any) -> ExecutionRuntime:
     # Carries its inventory: a runtime without one can no longer attest (its operational
     # surface cannot be enumerated), which is exactly what these tests need it to do.
+    # Every spec a test resolves must be catalogued — the resolve-time inventory guard
+    # refuses uncatalogued routes on inventoried planes (the routeless-provider fix).
+    registry = SpecRegistry().register(OUTBOX)
+
+    for spec in extra_specs:
+        registry.register(spec)
+
     return ExecutionRuntime(
         deps=DepsRegistry.from_modules(MockDepsModule()).freeze(),
-        spec_registry=SpecRegistry().register(OUTBOX).freeze(),
+        spec_registry=registry.freeze(),
     )
 
 
@@ -428,7 +435,7 @@ async def test_ack_stream_plane_settles_when_group_is_at_rest() -> None:
     from forze_kits.integrations.realtime import realtime_stream_spec
 
     spec = realtime_stream_spec()
-    runtime = _runtime()
+    runtime = _runtime(spec)
 
     async with runtime.scope():
         ctx = runtime.get_context()
@@ -457,7 +464,7 @@ async def test_ack_stream_plane_reports_undelivered_backlog_as_residual() -> Non
     from forze_kits.integrations.realtime import realtime_stream_spec
 
     spec = realtime_stream_spec()
-    runtime = _runtime()
+    runtime = _runtime(spec)
 
     async with runtime.scope():
         ctx = runtime.get_context()
@@ -677,7 +684,7 @@ async def test_a_commit_stream_group_named_in_streams_is_probed() -> None:
     spec = StreamSpec(name="firehose", codec=PydanticModelCodec(_Payload))
     runtime = ExecutionRuntime(
         deps=DepsRegistry.from_modules(MockDepsModule()).freeze(),
-        spec_registry=SpecRegistry().register(OUTBOX).freeze(),
+        spec_registry=SpecRegistry().register(OUTBOX).register(spec).freeze(),
     )
 
     async with runtime.scope():
@@ -754,13 +761,14 @@ async def test_quiesce_flushes_the_in_process_relay_it_stopped() -> None:
     from forze_kits.integrations.outbox import outbox_relay_background_lifecycle_step
 
     codec = PydanticModelCodec(_Payload)
+    jobs = QueueSpec(name="jobs", codec=codec)
     step = outbox_relay_background_lifecycle_step(
         outbox_spec=OUTBOX,
-        queue_spec=QueueSpec(name="jobs", codec=codec),
+        queue_spec=jobs,
         interval=timedelta(hours=1),  # never ticks on its own within the sweep
     )
     rows = [_row(index=0), _row(index=1)]
-    runtime = _runtime()
+    runtime = _runtime(jobs)
 
     async with runtime.scope():
         ctx = runtime.get_context()
@@ -777,7 +785,18 @@ async def test_quiesce_flushes_the_in_process_relay_it_stopped() -> None:
         )
 
     assert [row.status for row in rows] == [OutboxStatus.PUBLISHED] * 2
-    assert report.attested
+
+    # The flush is what the test proves: the outbox plane settles instead of burning
+    # the budget on a depth nothing drains. With the queue honestly catalogued (the
+    # resolve-time inventory guard requires it), the flushed messages now sitting in
+    # ``jobs`` weigh against attestation as an unobserved plane — which is correct:
+    # they are pending work this process no longer delivers.
+    outbox_plane = next(p for p in report.planes if p.name == "outbox:events")
+    assert outbox_plane.state == "settled"
+
+    jobs_plane = next(p for p in report.planes if p.name.startswith("queue:jobs"))
+    assert jobs_plane.state == "unobserved"
+    assert not report.attested
 
 
 @pytest.mark.asyncio

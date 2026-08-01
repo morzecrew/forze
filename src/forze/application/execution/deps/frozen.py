@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, final
 
@@ -67,6 +67,12 @@ class FrozenDepsRegistry:
     this tracer (an OTel ``Tracer``; production observability, opt-in via
     ``DepsRegistry.with_otel_port_spans``). ``None`` leaves ports bare (zero cost)."""
 
+    inventory_guard: Callable[[str, str], None] | None = None
+    """Resolve-time spec-inventory guard (see ``inventory_route_guard``): called with
+    ``(key_name, route)`` on every routed configurable resolution when set, refusing
+    routes missing from the declared inventory. Installed by the runtime; ``None``
+    (no inventory declared) costs nothing."""
+
     # ....................... #
 
     def resolve(self) -> FrozenDeps:
@@ -78,6 +84,7 @@ class FrozenDepsRegistry:
             runtime_tracer=self.runtime_tracer,
             interceptors=self.interceptors,
             otel_port_tracer=self.otel_port_tracer,
+            inventory_guard=self.inventory_guard,
         )
 
 
@@ -104,6 +111,12 @@ class FrozenDeps:
     otel_port_tracer: Any = None
     """When set, each resolved configurable port emits a per-call OpenTelemetry client span through
     this tracer (an OTel ``Tracer``); ``None`` leaves ports bare (zero cost)."""
+
+    inventory_guard: Callable[[str, str], None] | None = None
+    """Resolve-time spec-inventory guard (see ``inventory_route_guard``): called with
+    ``(key_name, route)`` on every routed configurable resolution when set, refusing
+    routes missing from the declared inventory. Installed by the runtime; ``None``
+    (no inventory declared) costs nothing."""
 
     _resolution: ResolutionContext = attrs.field(
         default=attrs.Factory(
@@ -239,6 +252,12 @@ class FrozenDeps:
         """
 
         from ..interception import current_interceptors
+
+        if self.inventory_guard is not None and route is not None:
+            # The resolve-time half of spec-inventory reconciliation: the route here is
+            # the spec's own name, independent of the provider's shape — which is what
+            # closes the routeless-provider blind spot the registration-time check has.
+            self.inventory_guard(key.name, str(route))
 
         cache_key = (key, route)
         # Bypass the port cache while a run-scoped (ambient) interceptor chain is bound — the

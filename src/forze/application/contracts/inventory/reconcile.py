@@ -11,15 +11,19 @@ So the inventory is reconciled, in both directions, against the dependency regis
 static frame list — the one thing that already knows every ``(key, route)`` the app bound.
 """
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from forze.base.exceptions import exc
+from forze.base.logging import get_logger
 
 from ..deps import ResolutionFrame
 from .planes import PLANE_DEP_KEYS, plane_of_key
 from .registry import FrozenSpecRegistry
+from .value_objects import SpecPlane
 
 # ----------------------- #
+
+logger = get_logger("forze.inventory")
 
 
 def _binds(entry_name: str, plane_keys: frozenset[str], frames: Iterable[ResolutionFrame]) -> bool:
@@ -61,12 +65,15 @@ def reconcile_specs(
       an export driven by it carries nothing while reporting success.
     - **An edge points at a spec that is not in the inventory.**
 
-    **A known blind spot, stated rather than hidden:** a *plain* (routeless) provider — one
-    object serving every route of a key, the mock backend's shape — carries no route names, so
-    the bound-but-not-catalogued check has nothing to compare per spec. On a runtime wired
-    entirely with plain providers, that direction can only fire in aggregate (the empty-registry
-    check above); per-route completeness there rests on the contributors
-    (``spec_contributions()``) rather than on this reconciliation.
+    **The routeless-provider gap and its second half:** a *plain* (routeless) provider — one
+    object serving every route of a key, the shape of the mock backend *and* of most
+    production wiring (one configurable provider per key) — carries no route names, so the
+    bound-but-not-catalogued check here has nothing to compare per spec. This registration-time
+    reconciliation therefore only fires in aggregate there (the empty-registry check above);
+    **per-route completeness is enforced at resolve time instead**, by
+    :func:`inventory_route_guard`, which the runtime installs whenever an inventory is
+    declared: every configurable resolution names its route (the spec's own name) regardless
+    of the provider's shape, so an uncatalogued route cannot be silently served.
 
     Only the dependency keys in :data:`PLANE_DEP_KEYS` participate; everything else a runtime
     binds (transaction engines, resilience policies, crypto singletons, authn/authz routes) is
@@ -151,3 +158,57 @@ def reconcile_specs(
         )
 
     return tuple(sorted(warnings))
+
+
+# ....................... #
+
+
+def inventory_route_guard(
+    registry: FrozenSpecRegistry,
+    *,
+    allow_unregistered: bool = False,
+) -> Callable[[str, str], None]:
+    """The resolve-time half of reconciliation — closes the routeless-provider gap.
+
+    :func:`reconcile_specs` checks *registrations*, and a plain provider registers no
+    route names, so on a plain-provider runtime an uncatalogued spec could be served,
+    used, and then silently omitted by an export — the one blind spot an export cannot
+    survive. This guard checks *resolutions* instead: the runtime installs it on its
+    frozen deps whenever an inventory is declared, and every configurable resolution of
+    an inventoried plane key must name a catalogued route or be refused at first use
+    (with ``check_wiring`` at startup, that is boot time for everything an operation
+    reaches). Non-inventoried keys pass untouched.
+
+    *allow_unregistered* mirrors :func:`reconcile_specs`: the refusal downgrades to one
+    warning per route, for incremental adoption.
+    """
+
+    catalogued = frozenset((entry.plane, entry.name) for entry in registry.entries)
+    warned: set[tuple[SpecPlane, str]] = set()
+
+    def _guard(key_name: str, route: str) -> None:
+        plane = plane_of_key(key_name)
+
+        if plane is None or (plane, route) in catalogued:
+            return
+
+        if allow_unregistered:
+            if (plane, route) not in warned:
+                warned.add((plane, route))
+                logger.warning(
+                    "Uncatalogued route resolved: %s:%s (via %s) is missing from the "
+                    "spec inventory — an export would silently omit it",
+                    plane.value,
+                    route,
+                    key_name,
+                )
+
+            return
+
+        raise exc.configuration(
+            f"{plane.value}:{route} resolved (via {key_name}) but missing from the spec "
+            f"inventory — an export would silently omit it. Catalogue the spec, or start "
+            f"with allow_unregistered=True during incremental adoption."
+        )
+
+    return _guard

@@ -164,6 +164,27 @@ class TestFailurePolicy:
 
         assert failures["n"] == 1  # failed once, dropped (at-most-once), moved on
 
+    async def test_draining_refusal_stops_the_loop_cleanly(self) -> None:
+        # The commit-stream draining discipline, inherited by the pubsub source: a
+        # drain-gate refusal is a shutdown artifact — the loop ends on its own
+        # instead of critical-logging a resubscribe churn against the one-way gate.
+        runtime = _runtime()
+
+        async def draining(*args: Any) -> None:
+            raise exc.throttled("Runtime scope is draining; rejected", code="draining")
+
+        source = _source()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            run = asyncio.create_task(source.run(ctx, draining))
+            await asyncio.sleep(0.05)
+
+            pub = build_realtime_pubsub_publisher(ctx, pubsub_spec=realtime_pubsub_spec())
+            await pub.publish(Audience.topic("t"), _EVENT, _View(n=1))
+
+            await asyncio.wait_for(run, timeout=5)  # ends on its own, no raise
+
     async def test_configuration_error_from_the_bridge_is_terminal(self) -> None:
         runtime = _runtime()
 
