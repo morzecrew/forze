@@ -60,6 +60,7 @@ def _plane(
     dep_keys: tuple[str, ...] = ("counter",),
     engines: tuple[str, ...] = ("mock", "postgres"),
     waivers: dict[str, str] | None = None,
+    derive_from: tuple[str, ...] = (),
 ):
     return checker.Plane(
         name=name,
@@ -67,6 +68,7 @@ def _plane(
         dep_keys=dep_keys,
         engines=engines,
         waivers=waivers or {},
+        derive_from=derive_from,
     )
 
 
@@ -549,3 +551,88 @@ def test_the_marker_is_registered_so_strict_markers_accepts_it() -> None:
 )
 def test_scenario_references_resolve(reference: str) -> None:
     assert checker.resolve_scenario(reference) is not None
+
+
+# ----------------------- #
+# derive_from — the ratchet for planes whose own keys nobody registers
+
+
+def test_derive_from_reads_the_engines_from_a_proxy_plane() -> None:
+    """A plane whose keys nobody registers can borrow one that answers the same question.
+
+    Field encryption is the case: its keys are bound once in core and *consumed* by each
+    adapter that seals values, so deriving from them finds nothing and requires nothing —
+    a ratchet that is vacuously true. The document ports answer it exactly, because the
+    battery is document-plane specific.
+    """
+
+    report = checker.Report()
+    checker.check_planes(
+        _manifest(planes=[_plane(dep_keys=("crypto.keyring",), derive_from=("document_command",))]),
+        # Nobody registers the crypto key; three backends register the document port.
+        {"crypto.keyring": set(), "document_command": {"forze_postgres", "forze_cassandra"}},
+        _census(legs={("counter", "mock"): (), ("counter", "postgres"): ()}),
+        report,
+    )
+
+    assert "cassandra" in _violations(report), (
+        "the proxy keys must drive the requirement, not the plane's own unregistered ones"
+    )
+
+
+def test_without_derive_from_an_unregistered_plane_ratchets_nothing() -> None:
+    """The hole this option closes, kept visible as a test.
+
+    Same providers, same missing leg — but deriving from keys nobody registers finds no
+    engines, so the check passes and a new backend ships uncompared. This is what the
+    manifest looked like before, and it is why an empty derivation must never be mistaken
+    for "nothing required".
+    """
+
+    report = checker.Report()
+    checker.check_planes(
+        _manifest(planes=[_plane(dep_keys=("crypto.keyring",))]),
+        {"crypto.keyring": set(), "document_command": {"forze_postgres", "forze_cassandra"}},
+        _census(legs={("counter", "mock"): (), ("counter", "postgres"): ()}),
+        report,
+    )
+
+    assert not report.violations
+
+
+def test_a_derive_from_naming_an_unknown_key_fails() -> None:
+    """A typo would derive from nothing — which reads as "no leg required".
+
+    The failure mode is silent by construction, so it has to be a hard error rather than
+    an empty set: a misspelled proxy key restores exactly the hole the option closes, and
+    nothing else about the build would look different.
+    """
+
+    report = checker.Report()
+    checker.check_key_triage(
+        _manifest(planes=[_plane(derive_from=("document_commnad",))]),
+        {"counter": "contracts.counter"},
+        report,
+    )
+
+    assert "derive_from names 'document_commnad'" in _violations(report)
+
+
+def test_the_repo_field_encryption_plane_derives_a_closed_loop() -> None:
+    """The live wiring: every document backend today has a field-encryption leg.
+
+    Asserts the derivation is non-empty as well as satisfied — an empty derived set would
+    satisfy the subset check while proving nothing, which is the failure this whole option
+    exists to rule out.
+    """
+
+    manifest = checker.load_manifest(_REPO / "pyproject.toml")
+    plane = manifest.planes["field_encryption"]
+    providers = checker.provider_census(_REPO / "src")
+
+    derived = checker._engines_for(
+        plane.derivation_keys(), providers, manifest.package_engines()
+    )
+
+    assert derived, "the derivation found no engines — the ratchet would be vacuous"
+    assert derived <= set(plane.engines), f"a document backend has no leg: {sorted(derived)}"

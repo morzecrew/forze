@@ -77,11 +77,14 @@ Uncovered planes are declared rather than omitted, which is the part worth readi
 Read that table as the honest complement to the green matrices above: those planes are tested,
 they are simply not *compared*.
 
-One plane carries that caveat even though it now has legs. Field encryption is compared across
-Postgres, Mongo and Firestore, but its ports are *resolved* by adapters rather than registered by
-a backend, so the provider census cannot see them: adding a document store means adding its leg by
-hand, and nothing will fail if you forget. It is the one plane in the manifest where the engine
-list is a promise rather than a derived fact.
+Deriving the requirement from the code is what keeps that table honest, and one plane needed
+help to manage it. Field encryption's ports are *resolved* by the adapters that seal values
+rather than registered by a backend, so the census sees no providers for them — and a
+derivation that finds nothing requires nothing, which is a ratchet that cannot fail. The
+manifest lets such a plane name a proxy instead (`derive_from`), and here the proxy is exact
+rather than approximate: the battery is document-plane specific, so "which backends need a
+field-encryption leg" *is* "which backends provide a document port". A misspelled proxy key is
+a hard error for the same reason — it would derive from nothing and look like success.
 
 Known differences that are real and expected live in `forze_dst.conformance.catalog` as data, not
 prose. Each row records what each engine did, what was done about it (unified, normalized, or

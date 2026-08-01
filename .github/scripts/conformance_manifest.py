@@ -115,6 +115,25 @@ class Plane:
     waivers: dict[str, str]
     """Engine → why this provider legitimately has no leg. Reviewed, printed, never silent."""
 
+    derive_from: tuple[str, ...] = ()
+    """Dep keys to read the required engines from, when the plane's own keys cannot say.
+
+    Most planes derive their engines from the ports they cover: whoever registers
+    ``counter`` must run the counter leg. Some cannot, because *nobody* registers their
+    keys — field encryption's are registered once in core and **consumed** by each adapter
+    that seals values, so the census sees no providers and the ratchet becomes vacuously
+    true. That is the difference between an engine list derived from the code and one a
+    human remembers to update.
+
+    Naming another plane's keys restores the derivation from a proxy that does answer the
+    question. For field encryption the proxy is exact rather than approximate: the battery
+    is document-plane specific, so "which backends need a field-encryption leg" *is* "which
+    backends provide a document port".
+    """
+
+    def derivation_keys(self) -> tuple[str, ...]:
+        return self.derive_from or self.dep_keys
+
 
 @dataclass(frozen=True)
 class Gap:
@@ -233,6 +252,7 @@ def load_manifest(pyproject_path: Path) -> Manifest:
             dep_keys=tuple(entry.get("dep_keys", ())),
             engines=tuple(entry["engines"]),
             waivers={str(k): str(v) for k, v in entry.get("waivers", {}).items()},
+            derive_from=tuple(entry.get("derive_from", ())),
         )
         for name, entry in table.get("planes", {}).items()
     }
@@ -569,6 +589,19 @@ def check_key_triage(
                 f"dep key {key!r} is claimed more than once ({', '.join(owners)}) — one owner only"
             )
 
+    for plane in sorted(manifest.planes.values(), key=lambda entry: entry.name):
+        for key in plane.derive_from:
+            if key in declared:
+                continue
+
+            # A derive_from naming a key that does not exist derives from nothing, which
+            # reads as "no backend needs a leg" — silently restoring the exact hole the
+            # option was added to close. It has to be a hard error, not an empty set.
+            report.violations.append(
+                f"plane {plane.name!r}: derive_from names {key!r}, which is not a dep key "
+                "declared under contracts/ — the derivation would silently find no engines"
+            )
+
 
 def check_exemptions(
     manifest: Manifest,
@@ -675,7 +708,7 @@ def check_planes(
                     f"carries @pytest.mark.conformance(plane={plane.name!r}, engine={engine!r})"
                 )
 
-        derived = _engines_for(plane.dep_keys, providers, package_engines)
+        derived = _engines_for(plane.derivation_keys(), providers, package_engines)
         missing = sorted(derived - set(plane.engines) - set(plane.waivers))
 
         if missing:

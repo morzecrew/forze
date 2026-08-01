@@ -520,11 +520,12 @@ dep_keys = [
     "crypto.aead",
     "crypto.key_directory",
 ]
-# Declared, not derived, and this is the one plane where that is a real limitation rather
-# than a formality: these keys are CONSUMED by every field-encrypting adapter rather than
-# registered by a backend, so the provider census cannot see them and cannot ratchet a new
-# one. Adding a document backend means adding its leg here by hand.
 engines = ["postgres", "mongo", "firestore"]
+# Nobody REGISTERS the crypto keys — they are bound once in core and consumed by each
+# adapter that seals values — so deriving from this plane's own keys would find no engines
+# and require nothing. The document ports answer the same question exactly: this battery
+# is document-plane specific, so whoever provides a document port needs a leg here.
+derive_from = ["document_command", "document_query"]
 
 [tool.conformance_manifest.gaps.kms]
 dep_keys = ["crypto.kms"]
