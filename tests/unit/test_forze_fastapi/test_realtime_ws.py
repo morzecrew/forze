@@ -901,6 +901,93 @@ class TestCredentialExpiry:
         assert caught.value.code == 1008
         assert "credential expired" in str(caught.value.reason)
 
+    def test_expiry_close_survives_even_a_stuck_close(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The close frame goes into the same stuffed buffer as ordinary sends, so the
+        close itself is bounded too: when both the sender and the close hang, the
+        guard still finishes its raise and tears the connection down via the
+        task-group unwind instead of wedging inside ``websocket.close``."""
+
+        import asyncio
+        import threading
+
+        from starlette.websockets import WebSocket as _StarletteWebSocket
+
+        from forze_fastapi.realtime import ws as ws_module
+
+        monkeypatch.setattr(ws_module, "_CLOSE_LOCK_TIMEOUT_SECONDS", 0.3)
+
+        async def stuck_send(self: Any, *args: Any, **kwargs: Any) -> None:
+            await asyncio.Event().wait()
+
+        close_calls = {"n": 0}
+
+        async def stuck_close(self: Any, *args: Any, **kwargs: Any) -> None:
+            close_calls["n"] += 1
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(_StarletteWebSocket, "send_text", stuck_send)
+        monkeypatch.setattr(_StarletteWebSocket, "close", stuck_close)
+
+        # No close frame can ever reach the wire here, so the client never sees a
+        # disconnect — the observable is the guard COMPLETING its raise (the line
+        # right after the bounded close timed out). Record it by subclassing the
+        # exception the guard instantiates from the module namespace.
+        guard_raised = threading.Event()
+        real_disconnect = ws_module.WebSocketDisconnect
+
+        class _RecordingDisconnect(real_disconnect):  # type: ignore[misc, valid-type]
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                guard_raised.set()
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(ws_module, "WebSocketDisconnect", _RecordingDisconnect)
+
+        mailbox = InMemoryRealtimeMailbox()
+        client, _ = _build(mailbox=mailbox)
+        asyncio.run(_seed(mailbox, count=1))  # one frame parks the sender mid-send
+
+        with client.websocket_connect("/realtime/ws?token=expiring-soon"):
+            # ~300ms deadline + 0.3s lock timeout + 0.3s close timeout, then the raise.
+            assert guard_raised.wait(timeout=10.0), "guard wedged behind the stuck close"
+
+        assert close_calls["n"] == 1  # the close WAS attempted — and abandoned, bounded
+
+    def test_expiry_recheck_lets_a_fresh_credential_win(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The re-read right before closing exists so a reauth landing between the
+        deadline check and the close wins. Deterministically exercised with a
+        scripted clock: the first wake reads a 'now' past the deadline, the recheck
+        reads one before it — the guard must continue, not close."""
+
+        from datetime import timedelta as _td
+
+        from forze_fastapi.realtime import ws as ws_module
+
+        real_utcnow = ws_module.utcnow
+        calls = {"n": 0}
+
+        def scripted_utcnow() -> Any:
+            calls["n"] += 1
+            # First guard iteration: the outer read believes the credential expired…
+            if calls["n"] == 1:
+                return real_utcnow() + _td(seconds=10)
+            # …and the recheck sees the (unchanged) deadline still in the future.
+            return real_utcnow()
+
+        monkeypatch.setattr(ws_module, "utcnow", scripted_utcnow)
+
+        client, _ = _build()
+
+        with client.websocket_connect("/realtime/ws?token=expiring-soon") as ws:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                ws.receive_json()  # the REAL deadline (~300ms) still closes it
+
+        assert caught.value.code == 1008
+        assert calls["n"] >= 3  # the second-chance recheck actually ran
+
     def test_unexpiring_credential_stays_connected(self) -> None:
         client, _ = _build()
 

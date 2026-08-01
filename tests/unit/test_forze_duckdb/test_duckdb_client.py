@@ -222,6 +222,21 @@ class TestDecimalParamExactness:
             await client.run_query("SELECT 1 AS a", {"vals": [Decimal("1e40")]})
         assert ei.value.kind is ExceptionKind.PRECONDITION
 
+        # Dict-shaped values are walked too (DuckDB binds them as STRUCTs).
+        with pytest.raises(CoreException) as ei:
+            await client.run_query("SELECT 1 AS a", {"m": {"amount": Decimal("1e40")}})
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+
+    @pytest.mark.asyncio
+    async def test_benign_nested_params_pass_the_walk(self, client: DuckDbClient) -> None:
+        from decimal import Decimal
+
+        result = await client.run_query("SELECT $vals AS a", {"vals": [Decimal("1.5"), 2]})
+        assert result.rows[0]["a"] is not None
+
+        result = await client.run_query("SELECT $m AS a", {"m": {"amount": Decimal("1.5")}})
+        assert result.rows[0]["a"] is not None
+
     @pytest.mark.asyncio
     async def test_zero_with_wide_exponent_spelling_is_fine(self, client: DuckDbClient) -> None:
         from decimal import Decimal

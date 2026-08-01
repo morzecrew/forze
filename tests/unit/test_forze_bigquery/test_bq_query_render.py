@@ -207,6 +207,18 @@ class TestDecimalParameterType:
         # Twelve trailing zeros are still the value 1 — scale 0, NUMERIC.
         assert self._one(Decimal("1.000000000000"))["parameterType"] == {"type": "NUMERIC"}
 
+    def test_zero_is_numeric_regardless_of_spelling(self) -> None:
+        # Zero with any exponent is representable exactly — the fast path, so a
+        # wide-exponent spelling never trips the scale check.
+        assert self._one(Decimal("0"))["parameterType"] == {"type": "NUMERIC"}
+        assert self._one(Decimal("0E-100"))["parameterType"] == {"type": "NUMERIC"}
+
+    def test_unannotated_decimal_list_infers_from_sample_and_widens(self) -> None:
+        # Raw-dict path: no annotation, so the first element infers the array type —
+        # and the widening scan must still cover every element past the sample.
+        (qp,) = params_to_query_parameters({"amounts": [Decimal("1.5"), Decimal("1e30")]})
+        assert qp["parameterType"] == {"type": "ARRAY", "arrayType": {"type": "BIGNUMERIC"}}
+
     def test_non_finite_decimal_refused(self) -> None:
         # Reachable through the raw-dict path only — pydantic already refuses a
         # non-finite Decimal on a typed model field; the dict form has no such
