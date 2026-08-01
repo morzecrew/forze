@@ -110,6 +110,7 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> RotatingStoreHarness:
 # ....................... #
 
 
+@pytest.mark.conformance(plane="rotating_credentials", engine="mock")
 @pytest.mark.parametrize("check", ROTATING_STORE_BATTERY, ids=lambda check: check.__name__)
 async def test_rotating_store_battery(check: Check, harness: RotatingStoreHarness) -> None:
     await check(harness)

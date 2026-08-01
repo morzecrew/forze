@@ -40,10 +40,45 @@ page measures:
 The framing matters: these are differential catches, not seed-search catches — which is exactly
 what the tables above are for. Claiming more would be the overreach this page exists to prevent.
 
+## Which planes have a leg
+
+A differential is only evidence for the plane it runs on, so the next question after "does the
+mock agree?" is "agree about *what*?". That answer is a manifest rather than a paragraph:
+`[tool.conformance_manifest]` in `pyproject.toml` names every plane, the scenario it runs, the
+contract ports it covers and the engines it must run against. `just conformance-check` (part of
+`just quality`) enforces it, and `just conformance` runs the legs themselves.
+
+The manifest exists because the previous answer was prose, and prose does not fail a build. A
+plane could gain a backend whose only test ran against that backend alone, with nothing
+comparing it to anything, and CI stayed green. So the checker derives which packages actually
+*register* each plane's ports — from the integration packages, not from a list somebody
+maintains — and fails when one of them runs no leg. Adding a backend now means adding its leg or
+writing down, in the manifest, why there isn't one.
+
+Uncovered planes are declared rather than omitted, which is the part worth reading:
+
+| Gap | Engines with no differential | Why it matters |
+| --- | --- | --- |
+| `queue` | RabbitMQ, SQS | two brokers, no comparison of publish/consume/nack/redelivery |
+| `analytics` | BigQuery, ClickHouse, DuckDB, Postgres | four engines answer the same ports |
+| `durable_function` | Postgres, Inngest | replay determinism and step idempotency uncompared |
+| `kms` | Vault (plus the AWS/GCP/Yandex/local backends) | wrap/unwrap/rotate under one AAD |
+| `field_encryption` | — | consumed by every field-encrypting adapter, so the census cannot see them |
+
+Read that table as the honest complement to the green matrices above: those planes are tested,
+they are simply not *compared*. `field_encryption` is the weakest row and says so — its ports are
+resolved by adapters rather than registered by a backend, so nothing automatic can ratchet it.
+
+Known differences that are real and expected live in `forze_dst.conformance.catalog` as data, not
+prose. Each row records what each engine did, what was done about it (unified, normalized, or
+declared), and a `probe` naming the test that asserts it — a link the checker resolves against
+real pytest collection, so a catalog entry cannot outlive the test behind it.
+
 ## What these numbers license — and what they don't
 
 - A green matrix licenses trusting the mock **for the phenomena, levels, and backends tested**
-  — the isolation family on Postgres and Mongo. It says nothing about untested planes.
+  — the isolation family on Postgres and Mongo. It says nothing about untested planes, and
+  [the gap table](#which-planes-have-a-leg) is where those are named.
 - The transfer table is the *direct* evidence, at found-bug granularity — and its N is what it
   is: every transferable corpus instance, currently against Postgres.
 - The pre-registered predictor analysis is currently uninformative by construction (zero

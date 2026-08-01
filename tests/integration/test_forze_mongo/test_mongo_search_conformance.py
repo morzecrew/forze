@@ -68,6 +68,7 @@ async def harness(mongo_client: MongoClient) -> SearchHarness:
     )
 
 
+@pytest.mark.conformance(plane="search", engine="mongo")
 @pytest.mark.parametrize("check", SEARCH_BATTERY, ids=lambda check: check.__name__)
 async def test_search_battery(check: Check, harness: SearchHarness) -> None:
     await check(harness)

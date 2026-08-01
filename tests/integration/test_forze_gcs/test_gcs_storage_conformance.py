@@ -37,6 +37,7 @@ async def harness(gcs_client, gcs_bucket) -> StorageHarness:
     )
 
 
+@pytest.mark.conformance(plane="storage", engine="gcs")
 @pytest.mark.parametrize("check", STORAGE_BATTERY, ids=lambda check: check.__name__)
 async def test_storage_battery(check: Check, harness: StorageHarness) -> None:
     await check(harness)

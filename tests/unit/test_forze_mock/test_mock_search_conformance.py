@@ -101,6 +101,7 @@ async def harness() -> SearchHarness:
     )
 
 
+@pytest.mark.conformance(plane="search", engine="mock")
 @pytest.mark.parametrize("check", SEARCH_BATTERY, ids=lambda check: check.__name__)
 async def test_search_battery(check: Check, harness: SearchHarness) -> None:
     await check(harness)
@@ -123,6 +124,7 @@ def write_harness() -> SearchWriteHarness:
     )
 
 
+@pytest.mark.conformance(plane="search_write", engine="mock")
 @pytest.mark.parametrize("check", SEARCH_WRITE_BATTERY, ids=lambda check: check.__name__)
 async def test_search_write_battery(check: WriteCheck, write_harness: SearchWriteHarness) -> None:
     await check(write_harness)

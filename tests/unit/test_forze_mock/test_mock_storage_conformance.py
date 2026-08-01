@@ -25,6 +25,7 @@ def harness() -> StorageHarness:
     return StorageHarness(cmd=adapter, query=adapter, key=lambda name: f"{name}-{run}")
 
 
+@pytest.mark.conformance(plane="storage", engine="mock")
 @pytest.mark.parametrize("check", STORAGE_BATTERY, ids=lambda check: check.__name__)
 async def test_storage_battery(check: Check, harness: StorageHarness) -> None:
     await check(harness)

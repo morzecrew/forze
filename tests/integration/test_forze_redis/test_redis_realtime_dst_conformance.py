@@ -130,6 +130,7 @@ async def _run(
 # ----------------------- #
 
 
+@pytest.mark.conformance(plane="realtime_delivery", engine="redis")
 class TestRedisGatewayCrashDelivery:
     """Every expected outcome below is byte-identical to the mock leg's — the differential."""
 

@@ -60,6 +60,7 @@ async def harness(neo4j_client: Neo4jClient) -> GraphManagementHarness:
         await adapter.drop_schema()
 
 
+@pytest.mark.conformance(plane="graph_management", engine="neo4j")
 @pytest.mark.parametrize("check", GRAPH_MANAGEMENT_BATTERY, ids=lambda check: check.__name__)
 async def test_graph_management_battery(check: Check, harness: GraphManagementHarness) -> None:
     await check(harness)

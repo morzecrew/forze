@@ -27,6 +27,23 @@ drown in false positives.
 from __future__ import annotations
 
 from .anomalies import BATTERY, AnomalyCase, expected_verdict
+from .catalog import (
+    PLANE_DIVERGENCES,
+    DivergenceResolution,
+    EngineBehaviour,
+    PlaneDivergence,
+)
+from .counters import (
+    EXPECTED_ALLOCATION,
+    EXPECTED_CEILING_PORTABLE,
+    EXPECTED_PARTITIONS,
+    CeilingOutcome,
+    CounterOutcome,
+    PartitionOutcome,
+    run_counter_allocation,
+    run_counter_ceiling,
+    run_counter_partitions,
+)
 from .delivery import (
     DELIVERY_EVENTS,
     DELIVERY_INBOX,
@@ -83,6 +100,19 @@ __all__ = [
     "AnomalyCase",
     "BATTERY",
     "expected_verdict",
+    "PLANE_DIVERGENCES",
+    "DivergenceResolution",
+    "EngineBehaviour",
+    "PlaneDivergence",
+    "CeilingOutcome",
+    "CounterOutcome",
+    "PartitionOutcome",
+    "EXPECTED_ALLOCATION",
+    "EXPECTED_CEILING_PORTABLE",
+    "EXPECTED_PARTITIONS",
+    "run_counter_allocation",
+    "run_counter_ceiling",
+    "run_counter_partitions",
     "CellVerdict",
     "Classification",
     "FidelityMatrix",

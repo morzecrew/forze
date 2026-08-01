@@ -267,6 +267,7 @@ markers = [
     "integration: Integration test",
     "unit: Unit test",
     "asyncio: Async test",
+    "conformance(plane, engine): A differential conformance leg — this test runs the named plane's shared scenario against the named engine. Censused by .github/scripts/conformance_manifest.py; both kwargs are required",
     "mongo_atlas_search: Integration test requiring mongodb/mongodb-atlas-local",
     "yc_kms: Integration test requiring real Yandex Cloud KMS credentials (no emulator exists; skipped unless FORZE_YC_KMS_KEY_ID is set)",
 ]
@@ -339,6 +340,326 @@ default = 80
 # a trailing reason). Raise or delete entries as coverage improves.
 # Empty as of 2026-07-13: combined CI coverage has every package >= 82%.
 [tool.coverage_floors.exceptions]
+
+# ....................... #
+# Conformance manifest (.github/scripts/conformance_manifest.py)
+#
+# The differential ratchet, built on the same shape as the coverage floors above.
+# DST proves invariants against the mock; a conformance leg is what makes "passed
+# on the mock" mean "matches the real engine". This table is the one place that
+# says which planes have such a leg, against which engines — and the checker
+# derives the engines that ACTUALLY register each plane's ports from the
+# integration packages, so a backend that registers a manifested port without
+# running the leg fails CI. Every DepKey under contracts/ must be claimed exactly
+# once: by a plane, by a declared gap, or by a categorised exemption.
+#
+# Locally: `just conformance-check` (offline, ~10s) or `just conformance` (the
+# Docker-backed legs themselves).
+
+[tool.conformance_manifest]
+divergence_catalog = "forze_dst.conformance.catalog:PLANE_DIVERGENCES"
+
+# Engines whose name does not map to `forze_<engine>`. Used to attribute a derived
+# provider package to the leg that covers it.
+[tool.conformance_manifest.engines]
+mock = { package = "forze_mock" }
+local = { package = "forze" }
+kserve_v2 = { package = "forze_inference" }
+mlflow = { package = "forze_inference" }
+
+# ....................... #
+# Planes with a leg
+
+[tool.conformance_manifest.planes.counter]
+scenario = "forze_dst.conformance.counters:run_counter_allocation"
+dep_keys = ["counter", "counter_admin"]
+engines = ["mock", "postgres", "redis", "mongo", "firestore"]
+
+[tool.conformance_manifest.planes.storage]
+scenario = "tests.support.storage_conformance:STORAGE_BATTERY"
+dep_keys = ["storage_command", "storage_query", "storage_uploads"]
+engines = ["mock", "s3", "gcs"]
+
+[tool.conformance_manifest.planes.search]
+scenario = "tests.support.search_conformance:SEARCH_BATTERY"
+dep_keys = ["search_query", "hub_search_query", "federated_search_query"]
+engines = ["mock", "postgres", "mongo", "meilisearch"]
+
+[tool.conformance_manifest.planes.search_write]
+scenario = "tests.support.search_conformance:SEARCH_WRITE_BATTERY"
+dep_keys = ["search_command", "search_management"]
+engines = ["mock", "meilisearch"]
+
+[tool.conformance_manifest.planes.graph_management]
+scenario = "tests.support.graph_management_conformance:GRAPH_MANAGEMENT_BATTERY"
+dep_keys = ["graph_management"]
+engines = ["mock", "neo4j"]
+
+[tool.conformance_manifest.planes.idempotency]
+scenario = "tests.support.idempotency_conformance:IDEMPOTENCY_BATTERY"
+dep_keys = ["idempotency"]
+engines = ["mock", "postgres", "redis"]
+
+[tool.conformance_manifest.planes.inference]
+scenario = "tests.support.inference_conformance:INFERENCE_BATTERY"
+dep_keys = ["inference_query"]
+engines = ["mock", "local", "kserve_v2", "mlflow"]
+
+[tool.conformance_manifest.planes.rotating_credentials]
+scenario = "tests.support.rotating_credentials:ROTATING_STORE_BATTERY"
+dep_keys = ["rotating_credentials", "rotating_credentials_admin"]
+engines = ["mock", "postgres"]
+
+[tool.conformance_manifest.planes.isolation]
+scenario = "forze_dst.conformance.anomalies:BATTERY"
+dep_keys = ["transaction_manager", "document_command", "document_query"]
+engines = ["mock", "postgres", "mongo"]
+
+[tool.conformance_manifest.planes.isolation.waivers]
+firestore = """
+Firestore transactions are not a general isolation surface: the client exposes optimistic \
+read-then-commit retries over a single document set, with no session-per-participant model, \
+so the N-independent-sessions ConformanceBackend the anomaly battery requires cannot be \
+built against it. The document adapter is covered by its own suite; a real isolation leg \
+needs a different harness, not this one.\
+"""
+neo4j = """
+Neo4j registers the transaction manager for the graph plane, which has no document store \
+for the Adya anomalies to act on — the battery's read/write sets are document rows. Graph \
+transactional behaviour is covered by the graph mock conformance suite instead.\
+"""
+
+[tool.conformance_manifest.planes.delivery]
+scenario = "forze_dst.conformance.delivery:run_crash_recovery_delivery"
+dep_keys = ["outbox_command", "outbox_query", "outbox_admin", "inbox"]
+engines = ["mock", "postgres"]
+
+[tool.conformance_manifest.planes.delivery.waivers]
+mongo = """
+Mongo registers the outbox trio but no inbox, so the exactly-once half of the crash-recovery \
+scenario (publish, crash, recover, dedupe on the inbox) has nothing to dedupe against. Open \
+gap rather than a property of Mongo: it becomes a leg the moment a Mongo inbox adapter lands.\
+"""
+
+[tool.conformance_manifest.planes.realtime_delivery]
+scenario = "forze_dst.conformance.realtime:run_gateway_crash_delivery"
+dep_keys = [
+    "stream_command",
+    "stream_query",
+    "stream_group_admin",
+    "stream_group_query",
+]
+engines = ["mock", "redis"]
+
+[tool.conformance_manifest.planes.realtime_delivery.waivers]
+kafka = """
+Kafka registers stream_command as the offset-log delivery model, whose commit-stream group \
+contract is a different one: consumers advance an offset instead of acking individual \
+messages, so the gateway's store-then-forward crash windows do not map onto it. Covered by \
+the commit_stream gap, which names it explicitly.\
+"""
+
+[tool.conformance_manifest.planes.misuse_transfer]
+scenario = "forze_dst.conformance.transfer:run_transfer"
+dep_keys = []
+engines = ["postgres"]
+
+# ....................... #
+# Declared gaps: planes with real providers and no leg yet. Listed so "not covered"
+# is data a reviewer sees, never an absence they have to notice.
+
+[tool.conformance_manifest.gaps.queue]
+dep_keys = ["queue_command", "queue_query"]
+engines = ["rabbitmq", "sqs"]
+reason = """
+Two independent brokers implement the queue port and nothing compares them. The \
+failure-path review already found their poison/retry dispositions differ; a battery over \
+publish, consume, nack and redelivery is the leg this gap is waiting for.\
+"""
+
+[tool.conformance_manifest.gaps.analytics]
+dep_keys = ["analytics_ingest", "analytics_query"]
+engines = ["bigquery", "clickhouse", "duckdb", "postgres"]
+reason = """
+Four engines answer the analytics ports and no shared scenario runs against more than one. \
+Scoping is the work here, as it was for search: most of what an analytics engine does is \
+meant to differ, so the battery must assert the structural contract (row shape, typed \
+scalars, empty results, parameter binding) and nothing about the plan or the dialect.\
+"""
+
+[tool.conformance_manifest.gaps.durable_function]
+dep_keys = [
+    "durable_function_step",
+    "durable_function_run_store",
+    "durable_function_run_admin",
+    "durable_function_schedule_store",
+    "durable_function_event_command",
+]
+engines = ["postgres", "inngest"]
+reason = """
+Postgres and Inngest both implement the durable-function step port with materially \
+different execution models (in-process replay against a step store versus a hosted \
+event-driven runner). Step idempotency, replay determinism and JSON-only step results are \
+exactly the guarantees a differential should pin, and none of them are compared today.\
+"""
+
+[tool.conformance_manifest.gaps.field_encryption]
+dep_keys = [
+    "crypto.keyring",
+    "crypto.deterministic",
+    "crypto.aead",
+    "crypto.key_directory",
+]
+engines = []
+reason = """
+The seventh designed leg, not yet built. Note the engine list is empty and that is not the \
+blast radius: these keys are CONSUMED by every field-encrypting adapter rather than \
+registered by a backend, so the provider census cannot see them and this entry cannot \
+ratchet. The leg must assert the envelope round-trip, AAD binding and the three refusals \
+across the planes that field-encrypt, and it is the one place in this table where the \
+checker is trusting prose.\
+"""
+
+[tool.conformance_manifest.gaps.kms]
+dep_keys = ["crypto.kms"]
+engines = ["vault"]
+reason = """
+Vault is the only KMS the provider census can see, but forze_kms ships AWS, GCP, Yandex and \
+a self-hosted local backend behind the same port without an execution/deps module, so they \
+are invisible here. Wrap/unwrap/rotate under one AAD is a sharp equivalence relation and \
+deserves a battery across all of them.\
+"""
+
+# ....................... #
+# Exemptions: contract keys with no differential to run. Each states a claim about
+# the world, and the two structural kinds are CHECKED against the provider census —
+# `single-engine` fails the moment a second backend registers the key, which is the
+# exact event that turns "nothing to compare" into "nothing is comparing".
+
+[[tool.conformance_manifest.exempt_groups]]
+kind = "single-engine"
+keys = [
+    "cache",
+    "distributed_lock_command",
+    "distributed_lock_query",
+    "pubsub_command",
+    "pubsub_query",
+    "search_result_snapshot",
+]
+reason = """
+Redis is the only backend that registers these, so there is no second implementation to \
+compare it against; the mock stands in for it in unit tests and any divergence would be \
+mock-vs-Redis alone. A second cache, lock, pub/sub or snapshot backend turns this claim \
+false and fails the checker.\
+"""
+
+[[tool.conformance_manifest.exempt_groups]]
+kind = "single-engine"
+keys = ["commit_stream_group_admin", "commit_stream_group_query"]
+reason = """
+Kafka alone implements the commit-stream (offset-log) delivery model. The contract is not \
+shared with the ack-stream ports, so there is nothing to run a cross-engine differential \
+against until a second offset-log broker lands.\
+"""
+
+[[tool.conformance_manifest.exempt_groups]]
+kind = "single-engine"
+keys = ["graph_command", "graph_query", "graph_raw_query"]
+reason = """
+Neo4j is the only real graph backend, so the mock is the only cross-check that exists and \
+it already runs: tests/integration/test_forze_neo4j/test_neo4j_mock_conformance.py compares \
+the two directly. Tenant-aware traversal stays out of reach by construction — a cross-tenant \
+edge is unrepresentable in the mock, so a mock-backed proof there would prove nothing.\
+"""
+
+[[tool.conformance_manifest.exempt_groups]]
+kind = "single-engine"
+keys = [
+    "durable_workflow_command",
+    "durable_workflow_query",
+    "durable_workflow_schedule_command",
+    "durable_workflow_schedule_query",
+]
+reason = """
+Temporal is the only workflow engine behind these ports, and its semantics (deterministic \
+replay inside a sandboxed worker) are not reproduced by any second implementation, including \
+the mock. The durable-function step port is the shared surface, and it has its own gap entry.\
+"""
+
+[[tool.conformance_manifest.exempt_groups]]
+kind = "single-engine"
+keys = ["secrets", "secrets_admin", "secrets_lease"]
+reason = """
+Vault is the only registered secrets backend; the local file/env presets are wiring for \
+development rather than a second engine. The lifecycle plane's own batteries already run the \
+mock against Vault for the fetch/rotate/verify-before-promote sequence.\
+"""
+
+[[tool.conformance_manifest.exempt_groups]]
+kind = "single-engine"
+keys = ["hlc_checkpoint", "procedure_command", "http_service"]
+reason = """
+One implementation each (Postgres for the HLC checkpoint and the procedure port, forze_http \
+for the outbound service port) and no second backend to disagree with. Each is exercised \
+directly against its real server; there is simply no second party to a differential.\
+"""
+
+[[tool.conformance_manifest.exempt_groups]]
+kind = "no-engine-matrix"
+keys = [
+    "authn",
+    "authn_api_key_lifecycle",
+    "authn_api_key_verifier",
+    "authn_event_sink",
+    "authn_password_account_provisioning",
+    "authn_password_lifecycle",
+    "authn_password_reset",
+    "authn_password_verifier",
+    "authn_principal_deactivation",
+    "authn_principal_eligibility",
+    "authn_principal_resolver",
+    "authn_token_lifecycle",
+    "authn_token_verifier",
+    "authz_decision",
+    "authz_delegation",
+    "authz_delegation_grant",
+    "authz_grant_query",
+    "authz_principal_registry",
+    "authz_role_assignment",
+    "authz_scope",
+    "tenant_management",
+    "tenant_resolver",
+]
+reason = """
+The identity plane's ports are implemented in forze_identity over whichever document store \
+the app already wired — there is no backend-specific adapter for them, so no engine axis \
+exists to run a differential along. Their storage-level behaviour is inherited from the \
+document plane, which the isolation plane does compare. The checker verifies the claim: any \
+integration package registering one of these fails here.\
+"""
+
+[[tool.conformance_manifest.exempt_groups]]
+kind = "no-engine-matrix"
+keys = [
+    "domain_event_dispatcher",
+    "saga_executor",
+    "resilience_admin",
+    "resilience_executor",
+    "resilience_port_policies",
+    "embeddings_provider",
+]
+reason = """
+Kernel-side ports with a single in-process implementation registered by the execution layer \
+itself, not by an integration package. There is no backend behind them to diverge, and the \
+checker fails if one ever appears.\
+"""
+
+[tool.conformance_manifest.exemptions."crypto.required_reach"]
+kind = "config-value"
+reason = """
+A declared EncryptionReach value read by outbox and transport wiring rather than a port with \
+behaviour, so there is nothing for a conformance leg to observe.\
+"""
 
 # ....................... #
 # Mypy configuration

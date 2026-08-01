@@ -39,6 +39,7 @@ async def harness(s3_client, s3_bucket) -> StorageHarness:
     )
 
 
+@pytest.mark.conformance(plane="storage", engine="s3")
 @pytest.mark.parametrize("check", STORAGE_BATTERY, ids=lambda check: check.__name__)
 async def test_storage_battery(check: Check, harness: StorageHarness) -> None:
     await check(harness)

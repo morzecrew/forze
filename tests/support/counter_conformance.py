@@ -24,20 +24,29 @@ The claims, in the order a reader should meet them:
    stored — the case where Redis silently accepted the write and broke the *next* caller;
 6. **the value domain is int64 and leaving it changes nothing** — the divergence that
    started this: the mock accepted 2⁶³, Postgres refused as a precondition, Mongo and Redis
-   refused as infrastructure, and Redis's ``reset`` did not refuse at all.
+   refused as infrastructure, and Redis's ``reset`` did not refuse at all;
+7. **a fixed allocation script gives one answer** — the whole sequence compared against a
+   constant rather than property by property;
+8. **two tenants across two suffixes are four disjoint sequences** — tenant and route live
+   in the key, on a store that actually holds both tenants' rows;
+9. **an allocation that overshoots the ceiling is refused whole**, next to one that lands
+   exactly on it and is allowed.
 
-On (6) the battery asserts what every backend can honestly promise: the allocation is
-refused and the stored value is untouched. Where the adapter knows the result up front — any
-``reset``, and Firestore's read-modify-write — it must be the shared
-``counter_value_out_of_range``. Where the store does the arithmetic atomically, the adapter
-cannot know before asking, so the *kind* of refusal is still the backend's own; that residue
-is deliberate and named here rather than papered over with error-message sniffing.
+On (6) and (9) the battery asserts what every backend can honestly promise: the allocation
+is refused and the stored value is untouched. Measured against live servers, no engine
+wraps. Where the adapter knows the result up front — any ``reset``, and Firestore's
+read-modify-write — it must be the shared ``counter_value_out_of_range``. Where the store
+does the arithmetic atomically the adapter cannot know before asking, so the *kind* of
+refusal is still the backend's own; that residue is deliberate, catalogued in
+``forze_dst.conformance.catalog`` with its consequence spelled out, and named here rather
+than papered over with error-message sniffing.
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import Any, final
+from uuid import UUID, uuid4
 
 import attrs
 import pytest
@@ -48,6 +57,14 @@ from forze.application.contracts.counter import (
     COUNTER_VALUE_OUT_OF_RANGE_CODE,
 )
 from forze.base.exceptions import CoreException
+from forze_dst.conformance.counters import (
+    EXPECTED_ALLOCATION,
+    EXPECTED_CEILING_PORTABLE,
+    EXPECTED_PARTITIONS,
+    run_counter_allocation,
+    run_counter_ceiling,
+    run_counter_partitions,
+)
 
 # ----------------------- #
 
@@ -69,6 +86,14 @@ class CounterHarness:
 
     admin: Any = None
     """Optional :class:`CounterAdminPort`; checks that need it skip when absent."""
+
+    for_tenant: Callable[[UUID], Any] | None = None
+    """Optional factory building a counter bound to a given tenant, over the SAME store.
+
+    Tenant isolation is only observable when both tenants share one backing store — a leg
+    that hands out two separately-namespaced counters would prove nothing. A leg that
+    cannot build one skips the partition check visibly rather than passing it silently.
+    """
 
 
 Check = Callable[[CounterHarness], Awaitable[None]]
@@ -240,6 +265,66 @@ async def check_suffixes_are_independent_partitions(h: CounterHarness) -> None:
     assert await h.counter.incr(by=0, suffix=two) == 3
 
 
+async def check_the_frozen_allocation_script_gives_one_answer(h: CounterHarness) -> None:
+    """The differential as a value comparison: one script, one outcome, every engine.
+
+    The checks above assert properties one at a time, which is how a plane ends up with
+    five adapters that each pass their own file and none that were ever compared. This runs
+    a fixed sequence and compares the whole result to a constant — so the mock leg fails in
+    the unit suite the moment it stops agreeing with a Postgres nobody started.
+    """
+
+    outcome = await run_counter_allocation(h.counter, suffix=h.suffix("script"))
+
+    assert outcome == EXPECTED_ALLOCATION
+
+
+# ....................... #
+
+
+async def check_tenants_and_suffixes_are_four_disjoint_sequences(h: CounterHarness) -> None:
+    """Tenant AND route live in the key — asserted across backends, not just on the oracle.
+
+    The mock gets this right for a reason that does not generalise: it hard-partitions its
+    store per tenant, so a shared-store leak is unrepresentable there. Only a real backend
+    holding both tenants' rows in one table can actually demonstrate the rule, which is why
+    this check needs a factory rather than the harness's single counter.
+    """
+
+    if h.for_tenant is None:
+        pytest.skip("this leg cannot build two tenant-bound counters over one shared store")
+
+    outcome = await run_counter_partitions(
+        h.for_tenant,
+        tenants=(uuid4(), uuid4()),
+        suffixes=(h.suffix("one"), h.suffix("two")),
+    )
+
+    assert outcome == EXPECTED_PARTITIONS
+
+
+# ....................... #
+
+
+async def check_crossing_the_ceiling_is_refused_whole(h: CounterHarness) -> None:
+    """A multi-step allocation that overshoots the ceiling, and the control that lands on it.
+
+    ``check_the_value_domain_is_int64`` moves by one from the ceiling itself. That never
+    tests a *crossing*: from one below, an ``incr()`` succeeds and lands exactly on the
+    ceiling, and only a larger step can go over. Both live here, because "refused" only
+    means something next to an allocation of the same shape that is still allowed.
+
+    Every engine refuses and leaves the counter untouched. None of them wraps — measured,
+    not assumed. What they do not agree on is the KIND of refusal, which is why
+    :meth:`CeilingOutcome.portable` leaves it out of the comparison and the catalog records
+    it per engine instead.
+    """
+
+    outcome = await run_counter_ceiling(h.counter, suffix=h.suffix("cross"))
+
+    assert outcome.portable() == EXPECTED_CEILING_PORTABLE
+
+
 COUNTER_BATTERY: tuple[Check, ...] = (
     check_a_fresh_counter_starts_at_zero,
     check_incr_by_zero_reads_without_moving,
@@ -249,6 +334,9 @@ COUNTER_BATTERY: tuple[Check, ...] = (
     check_reset_is_absolute,
     check_a_reset_outside_the_domain_is_refused_before_it_is_stored,
     check_the_value_domain_is_int64,
+    check_crossing_the_ceiling_is_refused_whole,
     check_suffixes_are_independent_partitions,
+    check_tenants_and_suffixes_are_four_disjoint_sequences,
+    check_the_frozen_allocation_script_gives_one_answer,
 )
 """Every check. The mock runs them as a unit test; each real backend runs them live."""

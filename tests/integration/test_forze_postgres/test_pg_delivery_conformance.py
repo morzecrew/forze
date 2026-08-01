@@ -134,6 +134,7 @@ def _outbox_context(pg_client: PostgresClient, outbox_table: str) -> ExecutionCo
 
 
 @pytest.mark.integration
+@pytest.mark.conformance(plane="delivery", engine="postgres")
 class TestPostgresCrashRecoveryDelivery:
     async def test_exactly_once_effect_with_inbox(
         self, pg_client: PostgresClient, delivery_tables

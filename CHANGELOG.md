@@ -9,9 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Conformance ratchet** — a backend that registers a manifested port without running that plane's differential leg now fails CI:
+
+- New `[tool.conformance_manifest]` in `pyproject.toml` (planes, dep keys, engines, declared gaps and exemptions) enforced by `.github/scripts/conformance_manifest.py`, wired into `just quality` and available as `just conformance-check`. Every `DepKey` under `contracts/` must be claimed exactly once.
+- Legs carry `@pytest.mark.conformance(plane=…, engine=…)`; `just conformance` runs them. New `forze_dst.conformance.catalog` (`PLANE_DIVERGENCES`) records each known cross-engine divergence with a `probe=` the checker resolves against collection.
+
 **Cross-backend conformance** — shared batteries for the counter, graph, storage, inference, search and idempotency planes; each behaviour change below now holds on every backend of its plane:
 
-- **Counters** are signed 64-bit: new `COUNTER_MIN_VALUE`/`COUNTER_MAX_VALUE` and `validate_counter_value`; an out-of-range `reset` raises `counter_value_out_of_range`.
+- **Counters** are signed 64-bit: new `COUNTER_MIN_VALUE`/`COUNTER_MAX_VALUE` and `validate_counter_value`; an out-of-range `reset` raises `counter_value_out_of_range`. New `forze_dst.conformance.counters` adds frozen-outcome scenarios (`run_counter_allocation`, `run_counter_partitions`, `run_counter_ceiling`) covering the allocation script, tenant/route-in-key across two tenants, and a multi-step overshoot of the int64 ceiling. No backend wraps at the boundary; the refusal *kind* still differs per engine and is catalogued.
 - **Storage:** `delete`/`abort_upload` are idempotent; a same-key `copy`/`move` is refused with new `SELF_COPY_CODE`; mock `list` is lexicographic; S3 maps `NoSuchUpload` to `not_found`.
 - **Inference:** a `max_batch_size` cap sub-batches `predict_stream`; a spent budget raises new `inference_budget_exhausted` pre-flight; scalar outputs wrap via new `scalar_output_field`.
 - **Search:** `delete_all()` on an unprovisioned index is a no-op; a Meilisearch `invalid_request` raises `precondition` with the engine's message.
