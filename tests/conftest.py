@@ -1,14 +1,17 @@
 """Root pytest configuration for the Forze test suite.
 
-Beyond the usual plumbing this file carries the **conformance census**: an opt-in
-collection hook that records which ``(plane, engine)`` differential legs the suite
-actually contains. It exists because the conformance ratchet
-(``.github/scripts/conformance_manifest.py``) must read the legs from collection
-rather than from a promise — a manifest that says a leg exists is worth nothing if
-nothing checks that pytest can still see it.
+Beyond the usual plumbing this file carries the **conformance census**, in two forms that
+answer two different questions about the differential legs:
 
-The hook is inert unless ``--conformance-census PATH`` is passed, so a normal run
-pays nothing for it.
+- ``--conformance-census PATH`` records what pytest can *collect*. That is what proves a
+  manifested leg still exists, and it runs offline in ``just quality``.
+- ``--conformance-executed PATH`` records what actually *ran*, per leg, with outcomes. A
+  collectable leg that skips wholesale — the engine's container never came up, an extra is
+  missing, the suite's directory is not in CI's matrix at all — is indistinguishable from a
+  passing one in a green build. This closes that: each CI shard writes its own file and the
+  coverage job unions them, so a leg nobody ran fails the build.
+
+Both hooks are inert unless their option is passed, so a normal run pays nothing for them.
 """
 
 from __future__ import annotations
@@ -24,7 +27,16 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 _CENSUS_OPTION = "--conformance-census"
+_EXECUTED_OPTION = "--conformance-executed"
 _MARKER = "conformance"
+
+_LEG_BY_NODE_ID: dict[str, tuple[str, str]] = {}
+"""Node id → its ``(plane, engine)``, filled at collection and read as tests report."""
+
+_OUTCOMES: defaultdict[tuple[str, str], defaultdict[str, int]] = defaultdict(
+    lambda: defaultdict(int)
+)
+"""``(plane, engine)`` → outcome → count, accumulated across the session."""
 
 
 def pytest_addoption(parser: Any) -> None:
@@ -38,25 +50,36 @@ def pytest_addoption(parser: Any) -> None:
             "(plane, engine) leg is still collectable."
         ),
     )
+    parser.addoption(
+        _EXECUTED_OPTION,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Write per-leg execution outcomes to PATH as JSON at the end of the session. "
+            "Shard files are unioned by `conformance_manifest.py --executed` to prove every "
+            "manifested leg actually ran somewhere, rather than skipping quietly."
+        ),
+    )
 
 
 def pytest_collection_modifyitems(
     config: Any,
     items: list[pytest.Item],
 ) -> None:
-    """Record the conformance legs this collection contains, when asked to.
+    """Read the conformance markers off this collection, for either census.
 
-    Two things are written. The ``legs`` map is the census proper: every
-    ``@pytest.mark.conformance(plane=…, engine=…)`` pair pytest can see, with the node
-    ids carrying it — that is what proves a manifested leg still exists. ``node_ids``
-    is every collected test, both as collected and with its parameter id stripped, so
-    the divergence catalog's ``probe=`` links resolve against real tests instead of being
-    trusted — whether a row pins a whole battery or one named check inside it.
+    The collected census writes two things. The ``legs`` map is the census proper: every
+    ``@pytest.mark.conformance(plane=…, engine=…)`` pair pytest can see, with the node ids
+    carrying it. ``node_ids`` is every collected test, both as collected and with its
+    parameter id stripped, so the divergence catalog's ``probe=`` links resolve against real
+    tests instead of being trusted — whether a row pins a whole battery or one named check
+    inside it.
     """
 
     destination = config.getoption("conformance_census")
+    executed = config.getoption("conformance_executed")
 
-    if destination is None:
+    if destination is None and executed is None:
         return
 
     legs: defaultdict[tuple[str, str], set[str]] = defaultdict(set)
@@ -72,6 +95,10 @@ def pytest_collection_modifyitems(
                 continue
 
             legs[(plane, engine)].add(_base_node_id(item.nodeid))
+            _LEG_BY_NODE_ID[item.nodeid] = (plane, engine)
+
+    if destination is None:
+        return
 
     census = {
         "legs": [
@@ -85,6 +112,47 @@ def pytest_collection_modifyitems(
     }
 
     Path(destination).write_text(json.dumps(census, indent=2) + "\n", encoding="utf-8")
+
+
+def pytest_runtest_logreport(report: Any) -> None:
+    """Tally each leg's outcomes.
+
+    A skip decided in a fixture never reaches the ``call`` phase, so setup reports count
+    too — that is precisely the case worth catching, since a leg whose container never
+    started skips at setup and reports nothing at all otherwise.
+    """
+
+    leg = _LEG_BY_NODE_ID.get(report.nodeid)
+
+    if leg is None:
+        return
+
+    if report.when == "call" or (report.when == "setup" and report.outcome != "passed"):
+        _OUTCOMES[leg][report.outcome] += 1
+
+
+def pytest_sessionfinish(session: Any) -> None:
+    destination = session.config.getoption("conformance_executed")
+
+    if destination is None:
+        return
+
+    path = Path(destination)
+    # Under xdist every worker finishes its own session; give each a distinct file rather
+    # than letting them overwrite one another. The combiner unions whatever it is given.
+    worker = getattr(session.config, "workerinput", {}).get("workerid")
+
+    if worker:
+        path = path.with_name(f"{path.stem}-{worker}{path.suffix}")
+
+    payload = {
+        "legs": [
+            {"plane": plane, "engine": engine, **dict(sorted(outcomes.items()))}
+            for (plane, engine), outcomes in sorted(_OUTCOMES.items())
+        ],
+    }
+
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def _base_node_id(node_id: str) -> str:

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New `[tool.conformance_manifest]` in `pyproject.toml` (planes, dep keys, engines, declared gaps and exemptions) enforced by `.github/scripts/conformance_manifest.py`, wired into `just quality` and available as `just conformance-check`. Every `DepKey` under `contracts/` must be claimed exactly once.
 - Legs carry `@pytest.mark.conformance(plane=…, engine=…)`; `just conformance` runs them. New `forze_dst.conformance.catalog` (`PLANE_DIVERGENCES`) records each known cross-engine divergence with a `probe=` the checker resolves against collection.
+- `--conformance-executed` records what each shard actually ran; a new `conformance` CI job unions the shard files and fails when a manifested leg passed nothing anywhere. `test_forze_inference` and `test_portability` join the CI matrix — neither ran before — and a guard keeps every integration suite wired up or triaged.
 
 **Cross-backend conformance** — shared batteries for the counter, graph, storage, inference, search and idempotency planes; each behaviour change below now holds on every backend of its plane:
 

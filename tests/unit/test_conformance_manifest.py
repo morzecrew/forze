@@ -18,6 +18,7 @@ where a gap hides behind a missing reason.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import tomllib
 from pathlib import Path
@@ -337,6 +338,112 @@ def test_a_gap_must_name_every_backend_it_leaves_uncovered() -> None:
     )
 
     assert "does not list engine(s) sqs" in _violations(report)
+
+
+# ----------------------- #
+# Execution — collection proves a leg exists, this proves it ran
+
+
+def _run(passed: int = 0, skipped: int = 0, failed: int = 0):
+    return checker.LegRun(passed=passed, skipped=skipped, failed=failed)
+
+
+def test_a_leg_no_shard_ran_fails() -> None:
+    """The live finding: two inference legs sat un-run because no CI shard covered them."""
+
+    report = checker.Report()
+    checker.check_legs_actually_ran(
+        _manifest(planes=[_plane()]),
+        {("counter", "mock"): _run(passed=12)},
+        report,
+    )
+
+    assert "engine 'postgres': no shard ran this leg" in _violations(report)
+    assert "part of CI's test matrix" in _violations(report)
+
+
+def test_a_leg_that_skipped_wholesale_fails() -> None:
+    """A container that never came up leaves a green build and an untested engine."""
+
+    report = checker.Report()
+    checker.check_legs_actually_ran(
+        _manifest(planes=[_plane()]),
+        {("counter", "mock"): _run(passed=12), ("counter", "postgres"): _run(skipped=12)},
+        report,
+    )
+
+    assert "passed none" in _violations(report)
+    assert "skips wholesale proves nothing" in _violations(report)
+
+
+def test_individual_skips_inside_a_leg_are_allowed_and_reported() -> None:
+    """Deliberate per-check skips must not fail the gate — but must stay visible.
+
+    The local inference leg skips both transport-cap checks with a reason naming it: an
+    in-process model has no transport, so there is no cap to test. That is a visible skip,
+    not a silent pass, and the note is how it stays visible.
+    """
+
+    report = checker.Report()
+    checker.check_legs_actually_ran(
+        _manifest(planes=[_plane()]),
+        {
+            ("counter", "mock"): _run(passed=7, skipped=2),
+            ("counter", "postgres"): _run(passed=9),
+        },
+        report,
+    )
+
+    assert not report.violations
+    assert any("7 passed, 2 skipped" in note for note in report.notes)
+
+
+def test_shard_files_are_unioned_not_overwritten(tmp_path: Path) -> None:
+    """Each shard sees its own slice, so a leg counts as run if any shard ran it."""
+
+    first = tmp_path / "conformance-unit.json"
+    second = tmp_path / "conformance-postgres.json"
+    first.write_text(
+        json.dumps({"legs": [{"plane": "counter", "engine": "mock", "passed": 12}]}),
+        encoding="utf-8",
+    )
+    second.write_text(
+        json.dumps(
+            {
+                "legs": [
+                    {"plane": "counter", "engine": "postgres", "passed": 9, "skipped": 1},
+                    {"plane": "counter", "engine": "mock", "passed": 3},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    runs = checker.load_runs([tmp_path])
+
+    assert runs[("counter", "mock")].passed == 15, "same leg across shards must sum"
+    assert runs[("counter", "postgres")] == checker.LegRun(passed=9, skipped=1)
+
+
+def test_an_empty_execution_census_is_an_error_not_a_pass(tmp_path: Path) -> None:
+    """The gate must not read 'no data' as 'nothing to complain about'."""
+
+    with pytest.raises(SystemExit):
+        checker.load_runs([tmp_path])
+
+
+def test_the_executed_mode_needs_no_project_imports() -> None:
+    """It runs on a bare CI runner, so it must not reach for forze or an extra.
+
+    The check is the last gate standing when the shards are done; making it depend on an
+    installed extra would mean it silently stops running exactly when an extra is broken.
+    """
+
+    source = _SCRIPT.read_text(encoding="utf-8")
+    body = source.split("def _check_executed")[1].split("\ndef ")[0]
+
+    assert "contract_dep_keys" not in body
+    assert "provider_census" not in body
 
 
 # ----------------------- #

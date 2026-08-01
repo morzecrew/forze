@@ -137,6 +137,7 @@ jobs:
           - { name: fastapi, path: tests/integration/test_forze_fastapi }
           - { name: firestore, path: tests/integration/test_forze_firestore }
           - { name: gcs, path: tests/integration/test_forze_gcs }
+          - { name: inference, path: tests/integration/test_forze_inference }
           - { name: inngest, path: tests/integration/test_forze_inngest_integration }
           - { name: kafka, path: tests/integration/test_forze_kafka }
           - { name: kms, path: tests/integration/test_forze_kms }
@@ -144,6 +145,7 @@ jobs:
           - { name: mock, path: tests/integration/test_forze_mock }
           - { name: mongo, path: tests/integration/test_forze_mongo }
           - { name: neo4j, path: tests/integration/test_forze_neo4j }
+          - { name: portability, path: tests/integration/test_portability }
           - { name: postgres, path: tests/integration/test_forze_postgres }
           - { name: rabbitmq, path: tests/integration/test_forze_rabbitmq }
           - { name: redis, path: tests/integration/test_forze_redis }
@@ -191,7 +193,8 @@ jobs:
             --cov-report= \
             --cov-fail-under=0 \
             --junitxml="junit-${{ matrix.name }}.xml" \
-            -o junit_family=legacy
+            -o junit_family=legacy \
+            --conformance-executed="conformance-${{ matrix.name }}.json"
 
       - name: Upload coverage data
         if: ${{ !cancelled() }}
@@ -200,6 +203,17 @@ jobs:
           name: coverage-data-${{ matrix.name }}
           path: .coverage.${{ matrix.name }}
           include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 1
+
+      # Which conformance legs this shard actually RAN, and how they fared. Unioned in the
+      # coverage job below: collection proves a leg exists, only this proves it ran.
+      - name: Upload conformance execution data
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: conformance-data-${{ matrix.name }}
+          path: conformance-${{ matrix.name }}*.json
           if-no-files-found: ignore
           retention-days: 1
 
@@ -271,9 +285,46 @@ jobs:
           uv run coverage json --fail-under=0 -o coverage.json
           uv run python .github/scripts/coverage_floors.py coverage.json
 
+  # `just quality` proves every manifested conformance leg is still collectable. That is
+  # not the same as running: a leg whose engine never came up, whose extra is missing, or
+  # whose suite is absent from the matrix above skips quietly and leaves the build green.
+  # This unions the per-shard execution data and fails when a leg passed nothing anywhere.
+  conformance:
+    name: Conformance execution gate
+    needs: [changes, quality, test]
+    if: |
+      !cancelled() &&
+      (needs.changes.outputs.force_full == 'true' || needs.changes.outputs.code == 'true') &&
+      needs.quality.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout code # zizmor: ignore[artipacked] no workspace/.git is uploaded as an artifact
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download conformance execution data
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: conformance-data-*
+          path: conformance-data
+          merge-multiple: true
+
+      # No Python setup and no dependency install: in this mode the check reads
+      # pyproject.toml and the shard JSON through the standard library alone, so the
+      # runner's own interpreter is enough and the gate cannot fail for want of an extra.
+      - name: Enforce that every manifested leg ran
+        run: python3 .github/scripts/conformance_manifest.py --executed conformance-data
+
   required-ci:
     name: Required Continuous Integration
-    needs: [changes, quality, test, coverage]
+    needs: [changes, quality, test, coverage, conformance]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -296,6 +347,7 @@ jobs:
           QUALITY_RESULT: ${{ needs.quality.result }}
           TEST_RESULT: ${{ needs.test.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
+          CONFORMANCE_RESULT: ${{ needs.conformance.result }}
           CODE: ${{ needs.changes.outputs.code }}
           FORCE_FULL: ${{ needs.changes.outputs.force_full }}
         run: |
@@ -303,6 +355,7 @@ jobs:
           echo "quality.result=${QUALITY_RESULT}"
           echo "test.result=${TEST_RESULT}"
           echo "coverage.result=${COVERAGE_RESULT}"
+          echo "conformance.result=${CONFORMANCE_RESULT}"
           echo "code=${CODE}"
           echo "force_full=${FORCE_FULL}"
 
@@ -324,6 +377,10 @@ jobs:
               echo "coverage gate did not succeed"
               exit 1
             fi
+            if [[ "${CONFORMANCE_RESULT}" != "success" ]]; then
+              echo "conformance execution gate did not succeed"
+              exit 1
+            fi
           else
             if [[ "${QUALITY_RESULT}" != "skipped" ]]; then
               echo "quality was expected to be skipped"
@@ -335,6 +392,10 @@ jobs:
             fi
             if [[ "${COVERAGE_RESULT}" != "skipped" ]]; then
               echo "coverage was expected to be skipped"
+              exit 1
+            fi
+            if [[ "${CONFORMANCE_RESULT}" != "skipped" ]]; then
+              echo "conformance was expected to be skipped"
               exit 1
             fi
           fi

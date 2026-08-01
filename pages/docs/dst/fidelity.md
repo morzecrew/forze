@@ -55,6 +55,16 @@ comparing it to anything, and CI stayed green. So the checker derives which pack
 maintains — and fails when one of them runs no leg. Adding a backend now means adding its leg or
 writing down, in the manifest, why there isn't one.
 
+That check runs before the suite does, so it can only prove a leg **exists**. Existing is not
+running: a leg whose engine never starts, whose optional extra is missing, or whose suite is
+absent from CI's matrix skips quietly, and a skipped test looks exactly like a passing one in a
+green pipeline. So each CI shard also records what it actually ran, per leg, and a final job
+unions those records and fails on any manifested leg that passed nothing anywhere. That gate
+earned its place immediately: it found that two of the four inference legs, and the whole
+portability suite, had never run in CI at all. Individual skips *inside* a leg stay allowed —
+a check that cannot apply to an engine should skip with a reason naming it — but they are
+reported, so a leg quietly hollowing out one check at a time stays visible.
+
 Uncovered planes are declared rather than omitted, which is the part worth reading:
 
 | Gap | Engines with no differential | Why it matters |

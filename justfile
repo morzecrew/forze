@@ -69,14 +69,19 @@ conformance-check:
 
     uv run python .github/scripts/conformance_manifest.py --collect
 
-# Run the differential conformance legs themselves (needs Docker for every real engine).
-# CI runs these inside its per-integration shards rather than as one job: starting every
-# engine's containers at once peaks well past a 16 GB runner, which is the same reason the
-# test matrix is sharded at all.
+# Run the differential conformance legs themselves and gate on what actually ran (needs
+# Docker for every real engine). CI does this across its per-integration shards instead of
+# one job — starting every engine's containers at once peaks well past a 16 GB runner,
+# which is the same reason the test matrix is sharded at all — and unions the per-shard
+# files in the `conformance` job. This recipe is the single-machine equivalent.
 conformance *args='':
     {{ _uv_sync }}
 
-    uv run pytest -m "conformance and not perf and not fuzz" {{ args }}
+    rm -rf .conformance && mkdir -p .conformance
+
+    uv run pytest -m "conformance and not perf and not fuzz" \
+        --conformance-executed=.conformance/local.json {{ args }}
+    uv run python .github/scripts/conformance_manifest.py --executed .conformance
 
 # Save a local perf baseline for the gated (in-process) benchmark subset
 perf-save:
@@ -196,6 +201,7 @@ quality strict="false":
     just _uv_cmd "Sealed sort" {{ strict }} pytest "tests/unit/test_sealed_sort_guard.py" -q
     just _uv_cmd "Mock coverage" {{ strict }} pytest "tests/unit/test_mock_coverage_guard.py" -q
     just _uv_cmd "Conformance" {{ strict }} python .github/scripts/conformance_manifest.py --collect
+    just _uv_cmd "CI matrix" {{ strict }} pytest "tests/unit/test_ci_matrix_guard.py" -q
     just _uv_cmd "Dead code" {{ strict }} vulture
     just _uv_cmd "Dependencies" {{ strict }} deptry .
     just _uv_cmd "Security" {{ strict }} bandit -c pyproject.toml -r "src"

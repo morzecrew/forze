@@ -35,14 +35,24 @@ The manifest lives in ``pyproject.toml``:
     [tool.conformance_manifest.exemptions]
     cache = { kind = "single-engine", reason = "…" }
 
+Collection proves a leg exists; it does not prove it ran. A leg whose engine never came up,
+whose extra is missing, or whose whole suite is absent from CI's matrix skips quietly and
+leaves the build green — which is how two of the four inference legs went un-run. So there
+is a second, post-run mode: each shard writes its own outcome file and they are unioned at
+the end, where a leg that passed nothing anywhere fails.
+
 Usage (from the repo root):
 
+    # before the run — is every manifested leg still there?
     pytest tests --collect-only -q -m conformance --conformance-census census.json
     python .github/scripts/conformance_manifest.py census.json
 
-or, letting the checker run collection itself:
-
+    # or let the checker run collection itself
     python .github/scripts/conformance_manifest.py --collect
+
+    # after the run — did every manifested leg actually pass something?
+    pytest <shard> --conformance-executed conformance-<shard>.json
+    python .github/scripts/conformance_manifest.py --executed conformance-*.json
 """
 
 from __future__ import annotations
@@ -172,6 +182,28 @@ class Census:
     malformed: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class LegRun:
+    """How one leg fared when it ran, summed over every shard that ran any of it."""
+
+    passed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    error: int = 0
+
+    def merged(self, other: LegRun) -> LegRun:
+        return LegRun(
+            passed=self.passed + other.passed,
+            failed=self.failed + other.failed,
+            skipped=self.skipped + other.skipped,
+            error=self.error + other.error,
+        )
+
+    @property
+    def total(self) -> int:
+        return self.passed + self.failed + self.skipped + self.error
+
+
 @dataclass
 class Report:
     violations: list[str] = field(default_factory=list)
@@ -253,6 +285,83 @@ def load_census(path: Path) -> Census:
         node_ids=frozenset(payload["node_ids"]),
         malformed=tuple(payload.get("malformed", ())),
     )
+
+
+def load_runs(paths: list[Path]) -> dict[tuple[str, str], LegRun]:
+    """Union the per-shard execution censuses written by ``--conformance-executed``.
+
+    Every shard sees only its own slice of the suite, so a leg is "run" if ANY shard ran
+    it. Summing rather than picking a winner also keeps the numbers meaningful when a leg
+    is split across shards, or when xdist wrote one file per worker.
+    """
+
+    runs: dict[tuple[str, str], LegRun] = {}
+    files = [
+        # A directory is the shape CI produces (one downloaded artifact folder), and taking
+        # it directly keeps the workflow free of shell globbing.
+        *(entry for path in paths if path.is_dir() for entry in sorted(path.glob("*.json"))),
+        *(path for path in paths if not path.is_dir()),
+    ]
+
+    if not files:
+        raise SystemExit(f"error: no execution census files found in {[str(p) for p in paths]}")
+
+    for path in files:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+
+        for leg in payload["legs"]:
+            key = (str(leg["plane"]), str(leg["engine"]))
+            observed = LegRun(
+                passed=int(leg.get("passed", 0)),
+                failed=int(leg.get("failed", 0)),
+                skipped=int(leg.get("skipped", 0)),
+                error=int(leg.get("error", 0)),
+            )
+            runs[key] = runs.get(key, LegRun()).merged(observed)
+
+    return runs
+
+
+def check_legs_actually_ran(
+    manifest: Manifest,
+    runs: dict[tuple[str, str], LegRun],
+    report: Report,
+) -> None:
+    """Every manifested leg passed at least one test somewhere.
+
+    Collection proves a leg exists; only this proves it ran. The two failures it separates
+    want different fixes, so they get different messages: a leg that ran and skipped
+    everything usually means the engine never came up or an extra is missing, while a leg
+    with no record at all usually means nothing in CI runs the directory it lives in —
+    which is how two of the four inference legs sat un-run while every gate stayed green.
+
+    Individual skips inside a leg are fine and deliberate: a check that cannot apply to an
+    engine skips with a reason naming it. What must not happen is the whole leg vanishing.
+    """
+
+    for plane in sorted(manifest.planes.values(), key=lambda entry: entry.name):
+        for engine in plane.engines:
+            run = runs.get((plane.name, engine))
+
+            if run is None:
+                report.violations.append(
+                    f"plane {plane.name!r} engine {engine!r}: no shard ran this leg — check "
+                    "that the suite it lives in is part of CI's test matrix"
+                )
+                continue
+
+            if run.passed == 0:
+                report.violations.append(
+                    f"plane {plane.name!r} engine {engine!r}: ran {run.total} test(s) and "
+                    f"passed none ({run.skipped} skipped, {run.failed} failed, {run.error} "
+                    "errored) — a leg that skips wholesale proves nothing"
+                )
+                continue
+
+            if run.skipped:
+                report.notes.append(
+                    f"leg {plane.name}/{engine}: {run.passed} passed, {run.skipped} skipped"
+                )
 
 
 def collect_census(destination: Path, tests_root: Path) -> Census:
@@ -686,6 +795,42 @@ def run_checks(
     return report
 
 
+def _check_executed(manifest: Manifest, paths: list[Path]) -> Report:
+    """The post-run half of the gate: did every manifested leg actually run?"""
+
+    report = Report()
+    runs = load_runs(paths)
+
+    check_legs_actually_ran(manifest, runs, report)
+
+    width = max((len(plane) for plane, _ in runs), default=0)
+
+    for (plane, engine), run in sorted(runs.items()):
+        print(
+            f"{plane:<{width}}  {engine:<12}  {run.passed:4d} passed  "
+            f"{run.skipped:3d} skipped  {run.failed:3d} failed"
+        )
+
+    return report
+
+
+def _report(report: Report, *, banner: str, summary: str = "") -> int:
+    for note in report.notes:
+        print(f"  note: {note}")
+
+    if report.violations:
+        print(f"\n{banner} FAILED ({len(report.violations)} violation(s)):")
+
+        for violation in report.violations:
+            print(f"  - {violation}")
+
+        return 1
+
+    print(f"\n{summary or f'{banner} passed.'}")
+
+    return 0
+
+
 def _render(manifest: Manifest, census: Census) -> None:
     width = max((len(name) for name in manifest.planes), default=0)
 
@@ -728,6 +873,17 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="test root to collect when --collect is given (default: tests)",
     )
+    parser.add_argument(
+        "--executed",
+        nargs="+",
+        type=Path,
+        metavar="PATH",
+        help=(
+            "per-shard files written by `pytest --conformance-executed PATH`. Checks that "
+            "every manifested leg actually ran and passed somewhere, instead of skipping "
+            "quietly. Runs on its own — no imports, so it works on a runner without extras."
+        ),
+    )
     args = parser.parse_args(argv)
 
     # Scenarios live in tests/support as often as in src/, and `tests` is only importable
@@ -739,6 +895,10 @@ def main(argv: list[str] | None = None) -> int:
         sys.path.insert(0, repository_root)
 
     manifest = load_manifest(args.pyproject)
+
+    if args.executed:
+        return _report(_check_executed(manifest, args.executed), banner="Conformance execution")
+
     declared = contract_dep_keys()
     providers = provider_census(args.src_root)
 
@@ -754,23 +914,11 @@ def main(argv: list[str] | None = None) -> int:
 
     _render(manifest, census)
 
-    for note in report.notes:
-        print(f"  note: {note}")
-
-    if report.violations:
-        print(f"\nConformance manifest FAILED ({len(report.violations)} violation(s)):")
-
-        for violation in report.violations:
-            print(f"  - {violation}")
-
-        return 1
-
-    print(
-        f"\nConformance manifest passed: {len(manifest.planes)} plane(s), "
+    summary = (
+        f"Conformance manifest passed: {len(manifest.planes)} plane(s), "
         f"{len(census.legs)} collected leg(s), {len(declared)} contract key(s) triaged."
     )
-
-    return 0
+    return _report(report, banner="Conformance manifest", summary=summary)
 
 
 if __name__ == "__main__":
