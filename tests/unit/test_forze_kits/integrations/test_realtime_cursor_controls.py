@@ -25,6 +25,7 @@ from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.exceptions import CoreException, exc
 from forze_kits.integrations.realtime import realtime_cursor_spec, realtime_mailbox_spec
 from forze_kits.integrations.realtime.conformance import (
+    BACKLOG_OVERSHOOT,
     CURSOR_STALLED_CODE,
     EXPECTED_CURSOR_REPLAY,
     REPLAY_CAP,
@@ -32,8 +33,8 @@ from forze_kits.integrations.realtime.conformance import (
     Scoped,
     _is_complete_suffix,
     _overflowed,
-    _tenant_cursors_independent,
     run_capped_replay_boundary,
+    run_tenant_cursor_independence,
 )
 from forze_mock.execution import MockDepsModule, MockRouteConfig
 from tests.support.realtime_cursor_conformance import tenant_scoped
@@ -183,6 +184,28 @@ async def test_any_truncation_is_caught(scoped_factory: Any, keep: int) -> None:
     assert outcome.undelivered_deleted == REPLAY_CAP - keep
 
 
+async def test_a_replay_that_delivers_nothing_is_counted_as_total_loss(
+    scoped_factory: Any,
+) -> None:
+    """The degenerate truncation, where the window floor has no replayed entry to come from.
+
+    The worst store there is — it sends none of the backlog — and the one the arithmetic
+    could most easily excuse: with no replayed entry the floor has to be *assumed*, and
+    assuming the live frame's position would put it above every seeded entry and report a
+    clean run while the trim deleted the whole backlog. The floor falls back to the bottom
+    of the backlog instead, so every entry the cumulative ack covered counts.
+    """
+
+    outcome = await run_capped_replay_boundary(scoped_factory(0))
+
+    assert outcome.replayed_count == 0
+    assert outcome.replayed_complete_suffix is False
+    assert outcome.cursor_crossed_undelivered is True
+    assert outcome.undelivered_deleted == REPLAY_CAP + BACKLOG_OVERSHOOT, (
+        "nothing was delivered, so every seeded entry the trim removed is a loss"
+    )
+
+
 # ....................... #
 # The tenant probe's own failure branches — the paths that fire only when isolation breaks.
 
@@ -279,7 +302,7 @@ async def test_a_tenant_blind_cursor_store_is_reported_as_not_independent(
 
     scoped = _scope_with(_SharedCursors(), scoped_factory(None))
 
-    assert await _tenant_cursors_independent(scoped) is False
+    assert await run_tenant_cursor_independence(scoped) is False
 
 
 async def test_the_scripted_double_reports_a_healthy_store_as_independent(
@@ -289,7 +312,7 @@ async def test_the_scripted_double_reports_a_healthy_store_as_independent(
 
     scoped = _scope_with(_ScriptedCursors(), scoped_factory(None))
 
-    assert await _tenant_cursors_independent(scoped) is True
+    assert await run_tenant_cursor_independence(scoped) is True
 
 
 async def test_a_stalled_advance_is_reported_as_not_independent(scoped_factory: Any) -> None:
@@ -297,7 +320,7 @@ async def test_a_stalled_advance_is_reported_as_not_independent(scoped_factory: 
 
     scoped = _scope_with(_ScriptedCursors(on_second_advance=_stalls), scoped_factory(None))
 
-    assert await _tenant_cursors_independent(scoped) is False
+    assert await run_tenant_cursor_independence(scoped) is False
 
 
 async def test_an_unrelated_failure_from_the_cursor_store_propagates(
@@ -312,7 +335,7 @@ async def test_an_unrelated_failure_from_the_cursor_store_propagates(
     scoped = _scope_with(_ScriptedCursors(on_second_advance=_falls_over), scoped_factory(None))
 
     with pytest.raises(CoreException) as propagated:
-        await _tenant_cursors_independent(scoped)
+        await run_tenant_cursor_independence(scoped)
 
     assert propagated.value.code != CURSOR_STALLED_CODE
 
@@ -334,7 +357,7 @@ async def test_a_setup_that_does_not_take_is_not_read_as_independence(
 
     scoped = _scope_with(_IgnoresEveryAdvance(), scoped_factory(None))
 
-    assert await _tenant_cursors_independent(scoped) is False
+    assert await run_tenant_cursor_independence(scoped) is False
 
 
 async def test_a_mailbox_without_counters_reports_no_overflows(scoped_factory: Any) -> None:

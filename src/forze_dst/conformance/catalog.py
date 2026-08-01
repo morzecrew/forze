@@ -23,6 +23,7 @@ Read a row's :class:`DivergenceResolution` as the claim it makes:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
 
 import attrs
@@ -65,7 +66,13 @@ class PlaneDivergence:
     """A short stable handle, used in failure messages and cross-references."""
 
     observed: tuple[EngineBehaviour, ...]
-    """What each engine did when the divergence was found. At least two, or it is not one."""
+    """What each engine was measured doing, in its own terms — agreeing ones included.
+
+    At least two, because one engine's behaviour is not a comparison and nothing can be
+    concluded from it. That floor is not a claim they must disagree: rows where every engine
+    lands in the same place are as worth pinning as rows where they split, and both shapes
+    ship here.
+    """
 
     resolution: DivergenceResolution
     reason: str
@@ -714,7 +721,7 @@ REALTIME_CURSOR_DIVERGENCES: tuple[PlaneDivergence, ...] = (
         ),
         probe=(
             "tests/integration/test_forze_postgres/test_pg_realtime_cursor_conformance.py::"
-            "test_cursor_replay_battery[check_a_capped_replay_survives_a_live_ack]"
+            "test_cursor_replay_battery[check_tenant_cursors_are_independent]"
         ),
     ),
 )
@@ -770,3 +777,35 @@ PLANE_DIVERGENCES: dict[str, tuple[PlaneDivergence, ...]] = {
     "realtime_cursor": REALTIME_CURSOR_DIVERGENCES,
 }
 """Every catalogued divergence, by plane. The isolation family lives in ``divergence.py``."""
+
+
+def validate_catalog(catalog: Mapping[str, tuple[PlaneDivergence, ...]]) -> None:
+    """Refuse a catalog whose rows are filed wrong, at import rather than at review.
+
+    ``PlaneDivergence`` can only check a row against itself; these are the two things that
+    are only wrong *in context*. A row filed under a plane it does not name is a row the
+    manifest checker resolves against the wrong plane's probes — it reads as coverage of a
+    plane nobody measured. Two rows sharing a name inside one plane make the handle they
+    exist to provide ambiguous, so a cross-reference points at either of them.
+    """
+
+    for plane, rows in catalog.items():
+        seen: set[str] = set()
+
+        for row in rows:
+            if row.plane != plane:
+                raise exc.configuration(
+                    "a divergence row is filed under a plane it does not name",
+                    details={"filed_under": plane, "names": row.plane, "row": row.name},
+                )
+
+            if row.name in seen:
+                raise exc.configuration(
+                    "two divergence rows in one plane share a name",
+                    details={"plane": plane, "name": row.name},
+                )
+
+            seen.add(row.name)
+
+
+validate_catalog(PLANE_DIVERGENCES)

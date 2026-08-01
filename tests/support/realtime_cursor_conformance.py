@@ -4,9 +4,11 @@ The scenario itself lives with the code it validates
 (``forze_kits.integrations.realtime.conformance``); this is the thin test-side wrapper that
 turns it into a battery the mock, Postgres and Mongo legs each run unchanged.
 
-There is only one check, and that is deliberate: the scenario already reduces a run to a
-frozen outcome, so splitting it into several assertions would just spread one comparison
-over several failures.
+The replay itself is one check, deliberately: the scenario already reduces a run to a frozen
+outcome, so splitting it into several assertions would just spread one comparison over
+several failures. Tenant-cursor independence gets its own check anyway — it is a separate
+guarantee with its own catalogued divergence, and a leg that lost it should say so rather
+than report a mismatched replay outcome.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from forze_kits.integrations.realtime.conformance import (
     MailboxScope,
     Scoped,
     run_capped_replay_boundary,
+    run_tenant_cursor_independence,
 )
 
 # ----------------------- #
@@ -100,4 +103,20 @@ async def check_a_capped_replay_survives_a_live_ack(h: CursorReplayHarness) -> N
     assert outcome == EXPECTED_CURSOR_REPLAY, f"{h.backend}: {outcome}"
 
 
-CURSOR_REPLAY_BATTERY: tuple[Check, ...] = (check_a_capped_replay_survives_a_live_ack,)
+async def check_tenant_cursors_are_independent(h: CursorReplayHarness) -> None:
+    """One principal on one device, present in two tenants, keeps two read positions.
+
+    Separate from the replay check because it is a separate guarantee — the cursor id is
+    derived so concurrent first-acks converge on one row, and leaving the tenant out of that
+    derivation makes two tenants share it. The mock cannot demonstrate the collision (it
+    hard-partitions per tenant), so only the real stores prove the guarantee holds; the mock
+    leg pins that the probe itself still reports cleanly.
+    """
+
+    assert await run_tenant_cursor_independence(h.scoped) is True, h.backend
+
+
+CURSOR_REPLAY_BATTERY: tuple[Check, ...] = (
+    check_a_capped_replay_survives_a_live_ack,
+    check_tenant_cursors_are_independent,
+)

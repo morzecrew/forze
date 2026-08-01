@@ -73,7 +73,7 @@ class MockState:
 
     - ``queues`` / ``queue_pending`` / ``pubsub_logs`` — brokers (RabbitMQ/SQS)
     - ``streams`` / ``stream_ack`` — stream backends
-    - ``storage`` / ``storage_bytes`` — object storage (S3/GCS)
+    - ``storage`` / ``storage_bytes`` / ``storage_buckets`` — object storage (S3/GCS)
     - ``cache_kv`` / ``cache_pointers`` / ``cache_bodies`` — cache (Redis)
     - ``counters``, ``dlocks`` / ``dlock_fences`` — Redis-backed
     - ``search_snapshots`` / ``search_snapshot_chunks`` — search engine

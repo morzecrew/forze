@@ -204,6 +204,16 @@ def _signal(text: str) -> RealtimeSignal:
     return RealtimeSignal.of(Audience.principal(PRINCIPAL), "order.shipped", {"text": text})
 
 
+BACKLOG_FLOOR: Final = _hlc(1)
+"""The oldest seeded position, and the window floor when a replay delivers nothing at all.
+
+An empty replay has no minimum of its own, and falling back to :data:`LIVE_HLC` would put
+the floor *above* every seeded entry — so the worst truncation there is, one that sends
+nothing, would report zero undelivered deletions and an uncrossed cursor while the trim
+deleted the entire backlog. Falling back to the bottom of the backlog instead makes the
+degenerate case read as the total loss it is.
+"""
+
 LIVE_HLC: Final = _hlc(10_000)
 """A live frame's position, far beyond every seeded entry.
 
@@ -231,9 +241,11 @@ async def _live_frame_arrives(scope: MailboxScope) -> None:
 
 
 async def _seed_backlog(mailbox: RealtimeMailbox) -> None:
-    """Store ``cap + 3`` entries at ascending positions."""
+    """Store ``cap + 3`` entries at ascending positions, starting at :data:`BACKLOG_FLOOR`."""
 
-    for n in range(1, REPLAY_CAP + BACKLOG_OVERSHOOT + 1):
+    first = BACKLOG_FLOOR.physical_ms
+
+    for n in range(first, first + REPLAY_CAP + BACKLOG_OVERSHOOT):
         await mailbox.store(
             principal=PRINCIPAL,
             event_id=_event_id(n),
@@ -246,8 +258,11 @@ def _overflowed(mailbox: RealtimeMailbox) -> int:
     """How many replays reported losing oldest backlog, for mailboxes that count.
 
     Optional rather than part of ``RealtimeMailbox``: the counters are the document-backed
-    store's observability, and a mailbox that keeps none still has to satisfy every other
-    field of the outcome. Narrowed through :class:`CountsOverflows` rather than ``getattr``
+    store's observability, so the scenario runs — and measures every other field — against a
+    mailbox that keeps none. It reports 0 for such a store, which does not match
+    :data:`EXPECTED_CURSOR_REPLAY` and is not meant to: the leg's claim is that the retention
+    loss is *declared*, and a store that cannot say it overflowed cannot make that claim.
+    Narrowed through :class:`CountsOverflows` rather than ``getattr``
     so the counter read is type-checked — an untyped probe here would silently accept a
     ``stats()`` that returned something else entirely and report 0.
     """
@@ -310,16 +325,13 @@ async def run_capped_replay_boundary(scoped: Scoped) -> CursorReplayOutcome:
             await _live_frame_arrives(scope)
 
         delivered = {entry.event_id for entry in replayed} | {LIVE_EVENT_ID}
-        window_floor = min((entry.hlc for entry in replayed), default=LIVE_HLC)
+        window_floor = min((entry.hlc for entry in replayed), default=BACKLOG_FLOOR)
 
         before = list(await scope.observer.read_since(principal=PRINCIPAL, since=None))
         cursor = await scope.cursors.min_cursor(principal=PRINCIPAL)
 
-        crossed = any(
-            entry.hlc >= window_floor
-            and cursor is not None
-            and entry.hlc <= cursor
-            and entry.event_id not in delivered
+        crossed = cursor is not None and any(
+            entry.hlc >= window_floor and entry.hlc <= cursor and entry.event_id not in delivered
             for entry in before
         )
 
@@ -350,12 +362,16 @@ async def run_capped_replay_boundary(scoped: Scoped) -> CursorReplayOutcome:
         overflowed=overflowed,
         undelivered_deleted=undelivered_deleted,
         cursor_crossed_undelivered=crossed,
-        tenant_cursors_independent=await _tenant_cursors_independent(scoped),
+        tenant_cursors_independent=await run_tenant_cursor_independence(scoped),
     )
 
 
-async def _tenant_cursors_independent(scoped: Scoped) -> bool:
+async def run_tenant_cursor_independence(scoped: Scoped) -> bool:
     """Whether the same principal + device key keeps separate cursors in two tenants.
+
+    Public because it is its own claim: the capped-replay outcome carries the answer as a
+    field, and the battery also runs it under a check that names it, so a failure of tenant
+    isolation reports as one instead of as a mismatched replay outcome.
 
     A tenant-blind cursor id does not merely leak a read position: on the tagged-tenancy
     table shape this kit recommends, the derived primary key collides, so the second
