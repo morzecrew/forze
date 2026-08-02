@@ -63,12 +63,18 @@ class TestInferenceCapabilities:
         assert not caps.supports_async_jobs
         assert not caps.deterministic
 
-    def test_full_is_superset(self) -> None:
+    def test_full_is_superset_of_what_is_servable(self) -> None:
         caps = FULL_INFERENCE_CAPABILITIES
         assert caps.native_batch
         assert caps.supports_stream
-        assert caps.supports_async_jobs
         assert caps.deterministic
+
+        # The one exception, and deliberately so: the batch-job plane has not shipped, so
+        # there is no verb the mock could serve a job with and an oracle claiming one would
+        # out-capable every real adapter on a dimension nothing can test. Pinned here as
+        # well as in the DST tripwire because this is where the superset is defined — a
+        # future plane turns both green together.
+        assert not caps.supports_async_jobs
 
     def test_stream_refused_fail_closed(self) -> None:
         with pytest.raises(CoreException) as ei:
