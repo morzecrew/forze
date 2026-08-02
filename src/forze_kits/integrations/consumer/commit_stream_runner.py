@@ -23,7 +23,7 @@ from forze.application.contracts.stream import (
     UndecodableStreamPayload,
 )
 from forze.application.execution.context import ExecutionContext
-from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
+from forze.application.integrations.crypto import is_payload_cipher_missing
 from forze.application.integrations.outbox import decrypt_consumed_payload
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
 from forze.base.primitives import StrKey, uuid4
@@ -33,9 +33,6 @@ from ..inbox import process_with_inbox
 from ._draining import is_draining_refusal
 
 # ----------------------- #
-
-_CIPHER_MISSING_CODE = PAYLOAD_CIPHER_MISSING_CODE
-"""Decrypt config error (no keyring): a deployment fault, not a poison message."""
 
 _POLL_INTERVAL = timedelta(milliseconds=50)
 """Sleep between empty reads when running forever (``timeout=None``)."""
@@ -400,7 +397,7 @@ class CommitStreamGroupConsumer[M]:
                     raise
 
                 except CoreException as e:
-                    if e.code == _CIPHER_MISSING_CODE:
+                    if is_payload_cipher_missing(e):
                         raise  # deployment fault — abort, don't dead-letter every message
 
                     # Decrypt runs through the KMS-backed keyring, so a transient

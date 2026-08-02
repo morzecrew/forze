@@ -11,6 +11,7 @@ import attrs
 import pytest
 from pydantic import BaseModel
 
+from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
 from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.stream import (
@@ -263,3 +264,66 @@ async def test_forever_loop_polls_until_cancelled() -> None:
     # timeout=None runs forever on an empty log (poll-and-sleep); cancel it.
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(_consumer(handler).run(ctx, timeout=None), timeout=0.2)
+
+
+@pytest.mark.asyncio
+async def test_a_missing_keyring_aborts_instead_of_dead_lettering_the_backlog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The offset-log half of a rule all three encrypted-payload loops share.
+
+    No keyring wired at all is a *deployment* fault, not per-message poison: every
+    encrypted message on the stream will fail identically, so dead-lettering them would
+    destroy the whole encrypted backlog at consume speed for a wiring mistake, and pausing
+    would stall on a condition no redelivery can clear. Both loops abort the pass instead
+    (`is_payload_cipher_missing`), and the queue twin has asserted it since it was written
+    — `test_queue_consumer_runner.py::test_missing_keyring_aborts_on_the_first_encrypted_
+    message`. This side was relying on the rule being written down in three places.
+
+    That asymmetry is the shape the drain-gate bug already took once: a rule present in one
+    runner, absent from its twin, found only in production. Here the rule is present in
+    both and *verified* in one, which is the same exposure one step later.
+    """
+
+    ctx, admin, _state = _harness()
+    await admin.ensure_group("g", [_TOPIC], start=OffsetReset.EARLIEST)
+    command = ctx.deps.resolve_configurable(
+        ctx, StreamCommandDepKey, _ENC_SPEC, route=_ENC_SPEC.name
+    )
+    await command.append(_TOPIC, _Payload(value="secret"))
+    await command.append(_TOPIC, _Payload(value="also-secret"))
+
+    from forze_kits.integrations.consumer import commit_stream_runner as _runner
+
+    async def _no_keyring(*_args: Any, **_kwargs: Any) -> Any:
+        raise exc.configuration(
+            "No cipher wired for the encrypted payload",
+            code=PAYLOAD_CIPHER_MISSING_CODE,
+        )
+
+    monkeypatch.setattr(_runner, "decrypt_consumed_payload", _no_keyring)
+
+    async def blocked_handler(_msg: StreamMessage[_Payload]) -> None:  # pragma: no cover
+        raise AssertionError("handler must not run on an undecrypted message")
+
+    # Raises rather than pausing: a paused group reads as "operator, look at this message",
+    # which is the wrong diagnosis when nothing on the stream can ever decrypt.
+    with pytest.raises(CoreException) as aborted:
+        await _consumer(blocked_handler).run(ctx, timeout=_IDLE)
+
+    assert aborted.value.code == PAYLOAD_CIPHER_MISSING_CODE
+
+    # Nothing was dead-lettered and nothing was committed past: once a keyring is wired,
+    # a restarted consumer still gets both messages.
+    monkeypatch.undo()
+
+    seen: list[str] = []
+
+    async def handler(msg: StreamMessage[_Payload]) -> None:
+        seen.append(msg.payload.value)
+
+    restarted = _consumer(handler)
+    await restarted.reset_to_committed(ctx)
+
+    assert (await restarted.run(ctx, timeout=_IDLE)).processed == 2
+    assert seen == ["secret", "also-secret"]

@@ -31,7 +31,7 @@ from forze.application.contracts.crypto import (
 )
 from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_TENANT_ID
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, uuid7
 from forze.base.serialization import ModelCodec
 
@@ -51,13 +51,35 @@ the mock and vice versa, so the domain cannot belong to either package. Paired w
 another tenant fails authentication rather than decrypting into the wrong grant."""
 
 PAYLOAD_CIPHER_MISSING_CODE = "core.crypto.payload_cipher_missing"
+"""No keyring is wired at all, so *nothing* encrypted on this route can be decrypted."""
 PAYLOAD_BASE64_INVALID_CODE = "core.crypto.payload_base64_invalid"
 PAYLOAD_HEADER_MISSING_CODE = "core.crypto.payload_header_missing"
+
+
+def is_payload_cipher_missing(error: BaseException) -> bool:
+    """Whether *error* is the no-keyring-wired deployment fault.
+
+    A named predicate for the same reason :func:`is_draining_refusal` is one: three loops
+    — both consumer runners and the outbox relay — branch on this condition, and each
+    reaches the same verdict for the same reason, which is worth stating once instead of
+    three times in comments.
+
+    The verdict is **abort the pass**, and it is the disposition that makes this different
+    from every other decrypt failure. Per-message poison would nack-with-no-requeue every
+    envelope on the route at consume speed and dead-letter the entire encrypted backlog for
+    a wiring mistake; requeueing would churn the same messages forever, since no redelivery
+    can conjure a keyring. Neither of those is expressible as ``retryable`` true or false,
+    which is why the loops classify it by code before they classify by kind.
+    """
+
+    return isinstance(error, CoreException) and error.code == PAYLOAD_CIPHER_MISSING_CODE
+
 
 __all__ = [
     "MESSAGE_PAYLOAD_DOMAIN",
     "ROTATING_CREDENTIAL_PAYLOAD_DOMAIN",
     "PAYLOAD_CIPHER_MISSING_CODE",
+    "is_payload_cipher_missing",
     "PAYLOAD_BASE64_INVALID_CODE",
     "PAYLOAD_HEADER_MISSING_CODE",
     "is_encrypted_payload",

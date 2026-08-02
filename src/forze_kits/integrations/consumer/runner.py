@@ -20,7 +20,7 @@ from forze.application.contracts.queue import (
     QueueSpec,
 )
 from forze.application.execution.context import ExecutionContext
-from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
+from forze.application.integrations.crypto import is_payload_cipher_missing
 from forze.application.integrations.outbox import decrypt_consumed_payload
 from forze.base.exceptions import (
     CoreException,
@@ -35,9 +35,6 @@ from ..inbox import process_with_inbox
 from ._draining import is_draining_refusal
 
 # ----------------------- #
-
-_CIPHER_MISSING_CODE = PAYLOAD_CIPHER_MISSING_CODE
-"""Decrypt config error (no keyring): a deployment fault, not a poison message."""
 
 _CONFIG_FAULT_PAUSE_STREAK = 25
 """Consecutive configuration-kind decrypt failures after which the loop starts pausing.
@@ -433,7 +430,7 @@ class QueueConsumer[M]:
                     # No keyring at all: *nothing* on this queue can decrypt, so churning
                     # through messages would requeue every one of them for no progress.
                     # Abort outright — a deployment fault, not per-message.
-                    if e.code == _CIPHER_MISSING_CODE:
+                    if is_payload_cipher_missing(e):
                         raise
 
                     # A configuration-kind failure (KMS key disabled / pending deletion /

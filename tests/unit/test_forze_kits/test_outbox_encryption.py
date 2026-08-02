@@ -6,6 +6,8 @@ from datetime import timedelta
 from uuid import uuid4
 
 import pytest
+from typing import Any
+
 from pydantic import BaseModel
 
 from forze.application.contracts.inbox import InboxSpec
@@ -17,6 +19,8 @@ from forze.application.contracts.outbox import (
 )
 from forze.application.contracts.queue import QueueMessage, QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
+from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
+from forze.base.exceptions import CoreException, exc
 from forze.application.integrations.outbox import is_encrypted_payload
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
@@ -204,3 +208,58 @@ async def test_plaintext_route_unaffected() -> None:
 
         state = ctx.deps.provide(MockStateDepKey)
         assert state.outbox_rows["events"][0].payload == {"n": 3}
+
+
+@pytest.mark.asyncio
+async def test_a_missing_keyring_aborts_the_pass_instead_of_failing_the_backlog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The relay's half of the deployment-fault rule both consumer runners share.
+
+    Encrypted rows meeting a ``None`` keyring is a wiring mistake, and every encrypted row
+    in the outbox will hit it identically. ``mark_failed`` per row would dead-letter the
+    entire encrypted backlog at claim-batch rate for that mistake, so the relay aborts the
+    pass and leaves the rows to be reclaimed — the same verdict, for the same reason, as
+    ``is_payload_cipher_missing`` in both consumer runners.
+
+    Verified here because it was the third site relying on the rule being written down
+    three times rather than checked: the drain-gate bug was a rule present in one runner
+    and missing from its twin, and an unverified rule is one refactor from the same place.
+    """
+
+    outbox_spec, queue_spec = _specs(encryption="at_rest")
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        for n in (1, 2):
+            await ctx.outbox.command(outbox_spec).stage("job.requested", _EventPayload(n=n))
+
+        await outbox_flush_tx_on_success_factory(outbox_spec)(ctx)(0, 0)
+
+        from forze_kits.integrations.outbox import _relay_core
+
+        async def _no_keyring(*_args: Any, **_kwargs: Any) -> Any:
+            raise exc.configuration(
+                "No cipher wired for the encrypted payload",
+                code=PAYLOAD_CIPHER_MISSING_CODE,
+            )
+
+        monkeypatch.setattr(_relay_core, "decrypt_outbox_payload", _no_keyring)
+
+        with pytest.raises(CoreException) as aborted:
+            await OutboxRelay(outbox_spec=outbox_spec).to_queue(ctx, queue_spec)
+
+        assert aborted.value.code == PAYLOAD_CIPHER_MISSING_CODE
+
+        # Nothing published and, the point of the rule, nothing burnt: the rows are left
+        # PROCESSING for the reclaim path rather than marked FAILED. Dead-lettering here
+        # is what would have cost the backlog — a claim batch at a time, for a wiring
+        # mistake that an operator fixes in one place.
+        state = ctx.deps.provide(MockStateDepKey)
+        rows = state.outbox_rows["events"]
+
+        assert state.queues.get("jobs", {}).get("jobs", []) == []
+        assert [row.status for row in rows] == [OutboxStatus.PROCESSING] * 2
+        assert not any(row.status is OutboxStatus.FAILED for row in rows)
