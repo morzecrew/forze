@@ -664,3 +664,31 @@ class TestTemporalClientListSchedules:
             page = await client.list_schedules(next_page_token=cursor)
 
         assert tuple(d.schedule_id for d in page.descriptions) == ("s3",)
+
+    @pytest.mark.parametrize(
+        "pages",
+        [[[]], [["s1"], []]],
+        ids=["only-page-empty", "trailing-page-empty"],
+    )
+    @pytest.mark.asyncio
+    async def test_an_empty_page_is_walked_not_refused(
+        self, pages: list[list[object]]
+    ) -> None:
+        """Why the tamper guard is ``>`` and not ``>=``.
+
+        An empty page meets ``offset == len(page)`` at offset **zero** — the bare cursor
+        every first call uses, with nothing tampered anywhere. Tightening the bound to
+        ``>=`` to also reject the page-end offset turns a listing that happens to be empty
+        into ``page_token_invalid``, which is a refusal for the caller and not a defence
+        against anything: the page-end offset skips no entry, it resumes exactly where the
+        previous call stopped.
+        """
+
+        client = self._connected_client(_paged_backend(pages))
+
+        with self._mapper():
+            page = await client.list_schedules()
+
+        expected = tuple(str(entry) for group in pages for entry in group)
+
+        assert tuple(d.schedule_id for d in page.descriptions) == expected

@@ -619,6 +619,39 @@ class TestRetentionIsPaired:
             finally:
                 await step.shutdown(ctx)
 
+    @pytest.mark.parametrize(
+        ("declared", "swept"),
+        [
+            (timedelta(milliseconds=1200), timedelta(milliseconds=1900)),
+            (timedelta(milliseconds=500), timedelta(milliseconds=900)),
+        ],
+        ids=["same-whole-second", "both-under-a-second"],
+    )
+    async def test_windows_inside_one_second_are_still_different_windows(
+        self, declared: timedelta, swept: timedelta
+    ) -> None:
+        # The marker keyed whole seconds, so every window inside a second collided: a
+        # mailbox promising 1.2s was vouched for by a sweep deleting at 1.9s, and anything
+        # sub-second collapsed onto 0 and was covered by any other sub-second sweep. The
+        # window is only evidence if the comparison keeps the value it compares.
+        from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
+
+        step = realtime_mailbox_retention_lifecycle_step(max_age=swept)
+        runtime = _runtime()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+
+            try:
+                with _bind(ctx), pytest.raises(CoreException) as ei:
+                    build_realtime_mailbox(ctx, retention=MailboxRetention(max_age=declared))
+
+            finally:
+                await step.shutdown(ctx)
+
+        assert ei.value.code == "realtime_mailbox_retention_mismatch"
+
     async def test_a_sweeper_vouches_only_for_the_mailbox_it_sweeps(self) -> None:
         # Two channels, one sweeper: the marker is keyed on the spec, so the unswept
         # channel is not covered by its neighbour's step.

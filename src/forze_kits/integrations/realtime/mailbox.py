@@ -679,16 +679,26 @@ def mailbox_retention_marker(spec_name: str, retention: "MailboxRetention") -> s
     # so this cannot drift from what the step configures. Keying the raw fields made a bare
     # MailboxRetention(max_age=7d) and a step configured (7d, 7d) differ, though they are
     # the same promise.
-    max_age = _window_seconds(retention.max_age)
-    cursor = _window_seconds(retention.resolved_cursor_max_age)
+    max_age = _window_key(retention.max_age)
+    cursor = _window_key(retention.resolved_cursor_max_age)
 
     return f"{_RETENTION_MARKER_PREFIX}:{spec_name}:{max_age}:{cursor}"
 
 
-def _window_seconds(window: timedelta | None) -> str:
-    """A window as whole seconds, for the marker."""
+def _window_key(window: timedelta | None) -> str:
+    """A window as exact microseconds, for the marker.
 
-    return "-" if window is None else str(int(window.total_seconds()))
+    Whole seconds looked like enough — retention windows are days — but truncating is how
+    a coverage check starts saying yes to a window it never compared. Any two declarations
+    inside the same second keyed identically, so a mailbox promising 1.2s was vouched for
+    by a sweep deleting at 1.9s, and anything under a second collapsed onto ``0`` and was
+    covered by every other sub-second window. Microseconds are ``timedelta``'s own
+    resolution, so this is the whole value rather than a rounding of it, and integer rather
+    than ``total_seconds()`` so no float formatting sits between the two sides of a
+    comparison that must be exact.
+    """
+
+    return "-" if window is None else str(window // timedelta(microseconds=1))
 
 
 @final
