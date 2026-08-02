@@ -390,6 +390,11 @@ scenario = "tests.support.search_conformance:SEARCH_WRITE_BATTERY"
 dep_keys = ["search_command", "search_management"]
 engines = ["mock", "meilisearch"]
 
+[tool.conformance_manifest.planes.graph]
+scenario = "forze_dst.conformance.graph:run_bounded_neighbors"
+dep_keys = ["graph_command", "graph_query"]
+engines = ["mock", "neo4j"]
+
 [tool.conformance_manifest.planes.graph_management]
 scenario = "tests.support.graph_management_conformance:GRAPH_MANAGEMENT_BATTERY"
 dep_keys = ["graph_management"]
@@ -571,12 +576,13 @@ against until a second offset-log broker lands.\
 
 [[tool.conformance_manifest.exempt_groups]]
 kind = "single-engine"
-keys = ["graph_command", "graph_query", "graph_raw_query"]
+keys = ["graph_raw_query"]
 reason = """
-Neo4j is the only real graph backend, so the mock is the only cross-check that exists and \
-it already runs: tests/integration/test_forze_neo4j/test_neo4j_mock_conformance.py compares \
-the two directly. Tenant-aware traversal stays out of reach by construction — a cross-tenant \
-edge is unrepresentable in the mock, so a mock-backed proof there would prove nothing.\
+The raw-query hatch is Cypher by definition — there is no shared contract for a second \
+engine to answer differently, so nothing about it is comparable. The graph data ports it \
+sits beside are covered by the `graph` plane above. Tenant-aware traversal stays out of \
+reach by construction — a cross-tenant edge is unrepresentable in the mock, so a \
+mock-backed proof there would prove nothing.\
 """
 
 [[tool.conformance_manifest.exempt_groups]]

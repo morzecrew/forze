@@ -1,6 +1,7 @@
 """Declarative graph module, node, and edge specifications."""
 
-from typing import Literal, final
+from decimal import Decimal
+from typing import Final, Literal, final
 
 import attrs
 from pydantic import BaseModel
@@ -70,6 +71,77 @@ def assert_key_field_not_sealed(
 
 # ----------------------- #
 
+_NON_STRING_KEY_TYPES: Final[tuple[type, ...]] = (bool, int, float, Decimal)
+"""Declared key-field types a store keeps as a *native* scalar, not as text.
+
+A denylist rather than an allowlist, deliberately: anything that serializes to a JSON
+string (``str``, ``UUID``, a str-valued enum, a custom type with a string serializer)
+round-trips through :attr:`VertexRef.key` correctly, and enumerating those exhaustively
+would refuse legitimate wiring the moment someone wrote a new one. These four are the
+types measured to break, and the check cannot false-positive on anything else."""
+
+
+def assert_key_field_is_string_typed(
+    model: type[BaseModel] | None,
+    key_field: str | None,
+    *,
+    kind: str,
+    what: str,
+) -> None:
+    """Refuse a kind whose *key_field* is declared as a non-string scalar.
+
+    :attr:`VertexRef.key` is a ``str`` — that is the contract, and the adapters honour it
+    literally: producing a ref stringifies the property, and a keyed lookup compiles to
+    ``MATCH (n:Kind {key_field: $key})`` binding that string. A store that keeps the
+    property in its native type never matches it. Measured on Neo4j with an ``int`` key:
+    the writes succeed, ``find_vertices`` returns the rows, and *every keyed read is
+    silently empty* — ``vertex_exists`` false, ``get_vertex`` none, ``vertex_degree`` zero,
+    ``neighbors`` nothing. Not an error the caller can catch: an empty graph.
+
+    The mock hides it exactly as it hid the sealed key, and for the same reason — it keys
+    its store by ``str(value)``, so the round-trip works there and only there. An
+    application built against the oracle reads its whole graph back and then reads nothing
+    in production.
+
+    Refused at construction because no later point makes it safe. Native-typed keys are a
+    capability, not a bug fix: they would need the key's type threaded through every ref
+    the ports exchange, and ``VertexRef.key`` says otherwise today.
+    """
+
+    if model is None or key_field is None:
+        return
+
+    field = model.model_fields.get(key_field)
+
+    if field is None or field.annotation is None:
+        return
+
+    annotation = field.annotation
+
+    if not isinstance(annotation, type):  # pyright: ignore[reportUnnecessaryIsInstance]
+        return
+
+    offending = next(
+        (native for native in _NON_STRING_KEY_TYPES if issubclass(annotation, native)),
+        None,
+    )
+
+    if offending is None:
+        return
+
+    raise exc.configuration(
+        f"{what} {kind!r} names {key_field!r} as its key_field, and {key_field!r} is "
+        f"declared as {annotation.__name__}. VertexRef.key is a string, so a keyed lookup "
+        f"binds text against a property the store holds as a native {offending.__name__} "
+        f"and matches nothing — every keyed read comes back empty instead of failing. "
+        f"Use a string key (a str field, or a UUID, which serializes as one) and keep the "
+        f"numeric value as an ordinary property.",
+        code="graph_non_string_key_field",
+    )
+
+
+# ----------------------- #
+
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class GraphNodeSpec[R: BaseModel](BaseSpec):
@@ -106,6 +178,12 @@ class GraphNodeSpec[R: BaseModel](BaseSpec):
     def __attrs_post_init__(self) -> None:
         assert_key_field_not_sealed(
             self.encryption,
+            self.key_field,
+            kind=str(self.name),
+            what="GraphNodeSpec",
+        )
+        assert_key_field_is_string_typed(
+            self.read,
             self.key_field,
             kind=str(self.name),
             what="GraphNodeSpec",
@@ -168,6 +246,12 @@ class GraphEdgeSpec[R: BaseModel](BaseSpec):
     def __attrs_post_init__(self) -> None:
         assert_key_field_not_sealed(
             self.encryption,
+            self.key_field,
+            kind=str(self.name),
+            what="GraphEdgeSpec",
+        )
+        assert_key_field_is_string_typed(
+            self.read,
             self.key_field,
             kind=str(self.name),
             what="GraphEdgeSpec",

@@ -79,7 +79,7 @@ field absent from its own read model — is refused when the `GraphModuleSpec` i
 | `find_vertices(node_kind, *, property_filter=None, limit=100, offset=0)` | list nodes of a kind, optionally filtered by properties |
 | `find_edges(edge_kind, *, property_filter=None, limit=100, offset=0)` | list edges of a kind |
 | `count_vertices(node_kind, *, property_filter=None)` / `count_edges(edge_kind, …)` | counts by kind |
-| `neighbors(origin, direction, edge_kinds, *, limit, to_vertex_kinds=None)` | adjacent nodes with the connecting edge, filtered by kind and direction |
+| `neighbors(origin, direction, edge_kinds, *, limit, to_vertex_kinds=None)` | adjacent nodes with the connecting edge, filtered by kind and direction. `limit` truncates to an **arbitrary** subset — see below |
 | `incident_edges(origin, direction, edge_kinds, *, limit)` | the edges touching a node |
 | `vertex_degree(ref, …)` / `count_neighbors(ref, …)` | degree / distinct-neighbor counts by direction and edge kind |
 | `expand(start, params)` | breadth-limited walk (`GraphWalkParams`: `max_depth`, `max_results`, direction, edge kinds) returning `GraphWalkStep`s |
@@ -131,6 +131,31 @@ They **fail closed** rather than serve a scan that looks complete and is not
     created under a sealed key could never be fetched, updated or deleted by that key again —
     a write-only black hole. It also has no order to page or seek on. Encrypting an ordinary
     property is entirely fine; this is about the key alone.
+
+!!! warning "A key field must be a string"
+
+    `VertexRef.key` is a `str`, so a `key_field` declared as `bool`, `int`, `float` or
+    `Decimal` is refused at spec construction (`graph_non_string_key_field`). A store that
+    keeps the property in its native type never matches the string a keyed lookup binds —
+    measured on Neo4j with an `int` key, the writes land and `find_vertices` returns the rows
+    while `vertex_exists`, `get_vertex`, `vertex_degree` and `neighbors` all answer as though
+    the vertex were not there. No error, just an empty graph, and the in-memory mock keys its
+    store by `str(value)` so everything works there. Use a `str` key — or a `UUID` or
+    str-valued enum, which reach the store as text — and keep the number as an ordinary
+    property.
+
+!!! note "A bounded `neighbors` call returns an *arbitrary* subset"
+
+    When `limit` is smaller than the neighbourhood, which neighbours come back is the engine's
+    choice: Neo4j's adjacency `LIMIT` carries no `ORDER BY`, and the mock walks its edge list in
+    insertion order. The differential compares how many arrive, not which — asking Neo4j for a
+    deterministic page would mean sorting a whole neighbourhood before truncating it, and the
+    cost lands hardest on the high-degree vertices a limit exists to protect.
+
+    What you *can* rely on is that the page is **full**: a `to_vertex_kinds` filter is applied
+    before the limit on every backend, so a short page means the neighbourhood really is
+    exhausted. That distinction is load-bearing — the rows a filter drops are not a cursor you
+    can page past, so a page cut short by filtering would read as "there are no more".
 
 ## Command port  (`ctx.graph.command(spec)`)
 

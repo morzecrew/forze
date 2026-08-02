@@ -652,6 +652,90 @@ GRAPH_MANAGEMENT_DIVERGENCES: tuple[PlaneDivergence, ...] = (
 # ....................... #
 
 
+GRAPH_DIVERGENCES: tuple[PlaneDivergence, ...] = (
+    PlaneDivergence(
+        plane="graph",
+        name="which-neighbours-a-bounded-read-returns",
+        observed=(
+            EngineBehaviour(
+                engine="mock",
+                behaviour=(
+                    "walks its edge list in insertion order, so a truncated page is the "
+                    "OLDEST matching neighbours — measured as ('w0', 'w1')"
+                ),
+            ),
+            EngineBehaviour(
+                engine="neo4j",
+                behaviour=(
+                    "the adjacency LIMIT carries no ORDER BY, so the page is whatever the "
+                    "planner reaches first — measured as ('w2', 'w1'), most-recent-first"
+                ),
+            ),
+        ),
+        resolution=DivergenceResolution.DECLARED,
+        reason=(
+            "Both engines return a full page of genuine neighbours; they disagree only on "
+            "WHICH ones, and neither answer is wrong. Unifying it would mean an ORDER BY on "
+            "the adjacency, which asks Neo4j to sort a whole neighbourhood before truncating "
+            "it — the cost falls hardest on exactly the high-degree vertices a limit exists "
+            "to protect. So the leg compares cardinality and membership and leaves identity "
+            "out, and the contract says a bounded neighbours call returns an arbitrary "
+            "subset. Callers who need a deterministic page need an ordered read, not a "
+            "bounded one. What is emphatically NOT declared is a short page: filling the "
+            "limit from the wanted kind is asserted on both engines, because a page cut "
+            "short by a filter is indistinguishable from the end of the neighbourhood."
+        ),
+        probe=(
+            "tests/unit/test_forze_mock/test_mock_graph_conformance.py::"
+            "test_bounded_neighbors_fills_the_page"
+        ),
+    ),
+    PlaneDivergence(
+        plane="graph",
+        name="non-string-key-field",
+        observed=(
+            EngineBehaviour(
+                engine="mock",
+                behaviour=(
+                    "keys its store by str(value), so an int-keyed vertex answered every "
+                    "keyed read correctly — exists, get, degree, neighbours"
+                ),
+            ),
+            EngineBehaviour(
+                engine="neo4j",
+                behaviour=(
+                    "stores the native int and matches it against the string VertexRef.key "
+                    "carries: writes succeeded and find_vertices returned the rows, while "
+                    "vertex_exists was false, get_vertex none, vertex_degree 0 and neighbors "
+                    "empty — an empty graph, raised as nothing"
+                ),
+            ),
+        ),
+        resolution=DivergenceResolution.UNIFIED,
+        reason=(
+            "Found by building this leg, not by looking for it. VertexRef.key is typed str "
+            "and the adapters honour that literally, so a key the store keeps as a number "
+            "can never be matched — and the failure is a silent empty read on the engine, "
+            "against a mock where everything works. Coercing the string back to the declared "
+            "type was rejected: a str key field whose value happens to be '999' would then "
+            "be indistinguishable from the integer 999, so the adapter would be guessing. "
+            "GraphNodeSpec/GraphEdgeSpec now refuse a key field declared as bool, int, float "
+            "or Decimal at construction (graph_non_string_key_field), the same wiring-time "
+            "refusal the sealed key field already gets and for the same reason: no later "
+            "point makes it safe. Native-typed keys remain a capability someone could add; "
+            "they are not what silently pretending to work was."
+        ),
+        probe=(
+            "tests/unit/test_forze/application/contracts/test_graph.py::"
+            "TestKeyFieldTyping::test_a_numeric_key_field_is_refused_at_construction"
+        ),
+    ),
+)
+
+
+# ....................... #
+
+
 REALTIME_CURSOR_DIVERGENCES: tuple[PlaneDivergence, ...] = (
     PlaneDivergence(
         plane="realtime_cursor",
@@ -777,6 +861,7 @@ PLANE_DIVERGENCES: dict[str, tuple[PlaneDivergence, ...]] = {
     "inference": INFERENCE_DIVERGENCES,
     "search": SEARCH_DIVERGENCES,
     "search_write": SEARCH_WRITE_DIVERGENCES,
+    "graph": GRAPH_DIVERGENCES,
     "graph_management": GRAPH_MANAGEMENT_DIVERGENCES,
     "delivery": DELIVERY_DIVERGENCES,
     "realtime_cursor": REALTIME_CURSOR_DIVERGENCES,

@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New `[tool.conformance_manifest]` in `pyproject.toml` (planes, dep keys, engines, gaps, exemptions) enforced by `.github/scripts/conformance_manifest.py`, wired into `just quality`; `just conformance-check` / `just conformance` run it alone. Every `DepKey` under `contracts/` must be claimed exactly once.
 - Legs carry `@pytest.mark.conformance(plane=…, engine=…)`; `--conformance-executed` records what each CI shard ran and a new `conformance` job fails when a manifested leg passed nothing anywhere. `test_forze_inference` and `test_portability` join the CI matrix.
-- New scenario modules: `forze_dst.conformance` `counters`/`storage`/`inference`/`catalog` and `forze_kits.integrations.realtime.conformance`.
+- New scenario modules: `forze_dst.conformance` `counters`/`storage`/`graph`/`inference`/`catalog` and `forze_kits.integrations.realtime.conformance`. The `graph` plane (mock + Neo4j) replaces the single-engine exemption its data ports held.
 
 **Cross-backend conformance** — shared batteries for the counter, graph, storage, inference, search, idempotency, field-encryption and realtime-cursor planes; each behaviour change below now holds on every backend of its plane:
 
@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Commit-stream dead-lettering is exactly-once for any producer** — a DLQ copy of a message without a `forze_event_id` header now carries a deterministically minted dedup id (a re-produced copy could previously process twice); sealed envelopes stay byte-identical.
 
 **A routed SQS consumer survives credential rotation** — `evict_tenant` moves an in-flight `RoutedSQSClient.consume` stream onto fresh credentials at the next poll instead of tearing it down; `guarded=True` is fully supported across the facade (previously it raised on first use); non-retryable resolution failures still raise out of the stream. `SQSRoutingCredentials.secret_access_key` is now `SecretStr` (matching S3) — read it via `get_secret_value()`.
+
+**A graph key field must be a string** (**behaviour change**) — `GraphNodeSpec`/`GraphEdgeSpec` refuse a `key_field` declared as `bool`/`int`/`float`/`Decimal` (`graph_non_string_key_field`); on Neo4j every keyed read of such a vertex silently answered as absent. **Migration:** use a `str`/`UUID` key and keep the number as an ordinary property. A bounded `neighbors` call is now documented as returning an arbitrary — but full — page.
 
 **`missing_ok` no longer hides that a storage container is absent** (**breaking**) — `StorageQueryPort.list` returns a `StoredObjectPage` (`objects`, `total`, `container_missing`) instead of a `(objects, total)` tuple; the kit's `ListedObjects` gains `provisioned`. **Migration:** unpack sites become `page.objects` / `page.total`.
 
