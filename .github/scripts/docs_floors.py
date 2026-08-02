@@ -19,7 +19,9 @@ Three properties, all of them cheap to check and none of them a judgement about 
    file appears in the nav — an orphan page is invisible to readers and rots unnoticed.
    Snippet includes are legitimately not nav entries and are declared as globs.
 
-3. **Link integrity.** Every relative markdown link between docs resolves.
+3. **Link integrity.** Every relative markdown link between docs resolves. A link into a
+   build-output tree (the rendered diagrams, which are gitignored) is resolved against the
+   source that generates it, so the check holds on a checkout that has never run the build.
 
 Symbols are collected **by import**, like the conformance manifest and the mock-coverage
 guard, for the same reason: a key re-exported under another name is the same object, which
@@ -31,6 +33,11 @@ Policy lives in ``pyproject.toml``:
     docs_root = "pages/docs"
     nav_config = "pages/zensical.toml"
     orphan_allow = ["dst/_generated/*.md"]
+
+    [tool.docs_floors.generated_links]
+    prefix = "_diagrams"
+    source_dir = "pages/diagrams"
+    source_suffix = ".d2"
 
     [[tool.docs_floors.exempt_groups]]
     kind = "..."
@@ -103,6 +110,42 @@ class ExemptGroup:
 
 
 @dataclass(frozen=True)
+class GeneratedLinks:
+    """A docs subtree the build writes into, checked against the sources that write it.
+
+    Diagrams are rendered from ``.d2`` at build time and the output directory is
+    gitignored, so a checkout has the sources and not the SVGs. Skipping the subtree
+    outright would be the easy fix and the wrong one: the link check exists to catch a
+    misspelled or deleted target, and a blanket skip retires it for exactly the links most
+    likely to rot (a renamed diagram breaks silently and only shows as a hole in the built
+    page). Resolving the output back to its source keeps the check honest on a machine
+    that has never run the build.
+    """
+
+    prefix: Path
+    """Docs-root-relative directory the build writes into."""
+
+    source_dir: Path
+    """Repo-relative directory holding the sources."""
+
+    source_suffix: str
+    """Extension of a source file, replacing the link target's own."""
+
+    def source_for(self, target: Path, docs_root: Path) -> Path | None:
+        """The source that would generate *target*, or ``None`` if it is not an output."""
+
+        try:
+            relative = target.relative_to(docs_root.resolve())
+        except ValueError:
+            return None
+
+        if not relative.is_relative_to(self.prefix):
+            return None
+
+        return self.source_dir / f"{target.stem}{self.source_suffix}"
+
+
+@dataclass(frozen=True)
 class Policy:
     """Where the docs live and what is allowed to be missing."""
 
@@ -110,6 +153,7 @@ class Policy:
     nav_config: Path
     orphan_allow: tuple[str, ...] = ()
     exempt_groups: tuple[ExemptGroup, ...] = ()
+    generated: GeneratedLinks | None = None
     _exempt: dict[str, ExemptGroup] = field(default_factory=dict, compare=False)
 
     def exempt_for(self, symbol: str) -> ExemptGroup | None:
@@ -146,11 +190,23 @@ def load_policy(pyproject_path: Path) -> Policy:
         for name in group.symbols:
             index[name] = group
 
+    raw_generated = table.get("generated_links")
+    generated = (
+        GeneratedLinks(
+            prefix=Path(str(raw_generated["prefix"])),
+            source_dir=Path(str(raw_generated["source_dir"])),
+            source_suffix=str(raw_generated["source_suffix"]),
+        )
+        if raw_generated is not None
+        else None
+    )
+
     return Policy(
         docs_root=Path(str(table["docs_root"])),
         nav_config=Path(str(table["nav_config"])),
         orphan_allow=tuple(str(pattern) for pattern in table.get("orphan_allow", ())),
         exempt_groups=groups,
+        generated=generated,
         _exempt=index,
     )
 
@@ -307,10 +363,28 @@ def check_links(policy: Policy) -> list[str]:
             if not target or target.startswith(_EXTERNAL_PREFIXES):
                 continue
 
-            if not (page.parent / target).resolve().exists():
-                violations.append(
-                    f"{page.relative_to(policy.docs_root)}: dangling link -> {target}"
-                )
+            resolved = (page.parent / target).resolve()
+
+            if resolved.exists():
+                continue
+
+            source = (
+                policy.generated.source_for(resolved, policy.docs_root)
+                if policy.generated is not None
+                else None
+            )
+
+            if source is not None:
+                # A build output: absent is expected, so the source is what must exist.
+                if not source.exists():
+                    violations.append(
+                        f"{page.relative_to(policy.docs_root)}: link -> {target} names a "
+                        f"generated file with no source at {source}"
+                    )
+
+                continue
+
+            violations.append(f"{page.relative_to(policy.docs_root)}: dangling link -> {target}")
 
     return violations
 

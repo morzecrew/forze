@@ -365,6 +365,15 @@ nav_config = "pages/zensical.toml"
 # destinations, so they are deliberately absent from the nav.
 orphan_allow = ["dst/_generated/*.md"]
 
+# `just build-diagrams` renders pages/diagrams/*.d2 into a gitignored output tree, so a
+# fresh checkout links to SVGs that do not exist yet. Such a link is checked against the
+# .d2 that generates it instead of the rendered file: CI passes without running the build,
+# and a renamed or deleted diagram still fails.
+[tool.docs_floors.generated_links]
+prefix = "_diagrams"
+source_dir = "pages/diagrams"
+source_suffix = ".d2"
+
 [[tool.docs_floors.exempt_groups]]
 kind = "port-plane-undocumented"
 symbols = [
