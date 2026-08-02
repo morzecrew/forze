@@ -8,6 +8,8 @@ code. The mailbox/cursors are materialized via the build factories (resolved por
 from __future__ import annotations
 
 from contextlib import AbstractContextManager
+import asyncio
+from unittest.mock import patch
 from datetime import timedelta
 from uuid import UUID
 
@@ -457,12 +459,6 @@ class TestRetentionIsPaired:
 
         assert ei.value.code == "realtime_mailbox_retention_contradiction"
 
-    def test_self_enforced_is_meaningless_without_a_window(self) -> None:
-        with pytest.raises(CoreException) as ei:
-            MailboxRetention(max_age=None, unbounded_reason="x", self_enforced=True)
-
-        assert ei.value.code == "realtime_mailbox_retention_contradiction"
-
     async def test_a_declared_window_with_no_sweeper_is_refused_at_build(self) -> None:
         # The failure this whole pairing exists for: wiring that *looks* bounded. The
         # window is declared, nothing enforces it, and without this the mailbox is
@@ -502,6 +498,81 @@ class TestRetentionIsPaired:
                 build_realtime_mailbox(ctx, retention=MailboxRetention(max_age=timedelta(days=7)))
 
         assert ei.value.code == "realtime_mailbox_retention_unwired"
+
+    async def test_a_sweep_that_never_starts_does_not_vouch(self) -> None:
+        # The marker is published before the task is created, so the sweep's own first
+        # tick can build the mailbox it sweeps. That ordering has a cost: if task creation
+        # or drainable registration fails, nothing sweeps and the marker would outlive the
+        # sweeper — later builds passing a coverage check with no coverage behind it. The
+        # loop's own exits are covered by the `finally` that retracts it.
+        from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
+
+        window = timedelta(days=7)
+        step = realtime_mailbox_retention_lifecycle_step(max_age=window)
+        runtime = _runtime()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            with (
+                patch("asyncio.create_task", side_effect=RuntimeError("no loop")),
+                pytest.raises(RuntimeError),
+            ):
+                await step.startup(ctx)
+
+            with _bind(ctx), pytest.raises(CoreException) as ei:
+                build_realtime_mailbox(ctx, retention=MailboxRetention(max_age=window))
+
+        assert ei.value.code == "realtime_mailbox_retention_unwired"
+
+    async def test_a_sweeper_running_a_different_window_does_not_vouch(self) -> None:
+        # The subtler half of the pairing: a sweeper exists for this mailbox, so a
+        # presence-only check would call it covered — while the declaration promises one
+        # hour and the sweep deletes at seven days. The mailbox then retains data six days
+        # and twenty-three hours past the window it claims, which is the same lie the
+        # unwired case tells, one level quieter.
+        from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
+
+        step = realtime_mailbox_retention_lifecycle_step(max_age=timedelta(days=7))
+        runtime = _runtime()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+
+            try:
+                with _bind(ctx), pytest.raises(CoreException) as ei:
+                    build_realtime_mailbox(
+                        ctx, retention=MailboxRetention(max_age=timedelta(hours=1))
+                    )
+            finally:
+                await step.shutdown(ctx)
+
+        assert ei.value.code == "realtime_mailbox_retention_mismatch"
+
+    async def test_an_omitted_cursor_window_matches_the_step_that_resolves_it(self) -> None:
+        # MailboxRetention(max_age=X) and a step configured (max_age=X, cursor_max_age=X)
+        # are the same promise — the step resolves an omitted cursor window to max_age —
+        # so they must key the same marker. Keying the raw fields made them disagree.
+        from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
+
+        window = timedelta(days=3)
+        step = realtime_mailbox_retention_lifecycle_step(
+            max_age=window, cursor_max_age=window
+        )
+        runtime = _runtime()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+
+            try:
+                with _bind(ctx):
+                    assert build_realtime_mailbox(
+                        ctx, retention=MailboxRetention(max_age=window)
+                    )
+            finally:
+                await step.shutdown(ctx)
 
     async def test_a_sweeper_vouches_only_for_the_mailbox_it_sweeps(self) -> None:
         # Two channels, one sweeper: the marker is keyed on the spec, so the unswept

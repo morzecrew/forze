@@ -9,6 +9,8 @@ no tenant code.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
@@ -401,14 +403,14 @@ async def test_a_sealed_mailbox_round_trips_a_json_boundary_payload(
     """
 
     ctx = sealed_mailbox_ctx
+    # LIVE objects where the boundary accepts them, not their string spellings: the
+    # payload is typed ``JsonDict`` but nothing coerces it, so writing everything
+    # pre-stringified is what hid this class of bug last time and would make the test
+    # unable to fail for the reason it names. ``Decimal`` is deliberately the exception —
+    # see the assertion at the end of this test, which pins it as the sharp edge it is.
     ref = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-    body = {
-        "text": "sealed",
-        "ref": str(ref),
-        "at": "2026-08-02T10:30:00+00:00",
-        "amount": "10.05",
-        "count": 3,
-    }
+    at = datetime(2026, 8, 2, 10, 30, tzinfo=UTC)
+    body = {"text": "sealed", "ref": ref, "at": at, "amount": "10.05", "count": 3}
     signal = RealtimeSignal.of(Audience.principal("u1"), "order.shipped", body)
 
     with _bind(ctx, _T1):
@@ -418,7 +420,15 @@ async def test_a_sealed_mailbox_round_trips_a_json_boundary_payload(
         entries = await mb.read_since(principal="u1", since=None)
 
     assert [e.event_id for e in entries] == [_eid(1)]
-    assert entries[0].payload == body, "the sealed payload did not survive the round trip"
+
+    # Compared by VALUE across the boundary, not by identity: whatever spelling the codec
+    # chose on the way out, the meaning has to come back intact.
+    read = entries[0].payload
+    assert read["text"] == "sealed"
+    assert read["count"] == 3
+    assert UUID(str(read["ref"])) == ref
+    assert Decimal(str(read["amount"])) == Decimal("10.05")
+    assert datetime.fromisoformat(str(read["at"])) == at
 
     # The index the mailbox filters and sorts on stays plaintext, or replay could not work
     # at all — and the body really is ciphertext at rest, which is the other half of the
@@ -432,6 +442,25 @@ async def test_a_sealed_mailbox_round_trips_a_json_boundary_payload(
     assert stored["hlc"] == _hlc(1).pack()
     assert "sealed" not in stored["payload"], f"payload stored in the clear: {stored['payload']}"
     assert str(ref) not in stored["payload"]
+
+    # A live ``Decimal`` in the payload is NOT supported, and fails badly: the field is
+    # typed ``JsonDict``, nothing coerces or refuses it at ``RealtimeSignal.of``, and the
+    # write dies deep in the codec with a bare ``TypeError`` rather than a CoreException
+    # naming the field. UUID and datetime survive (orjson serializes both natively), which
+    # is why only this one is pinned. Change this assertion when the boundary is fixed —
+    # it is documenting a defect, not a guarantee.
+    with pytest.raises(TypeError, match="Decimal"):
+        with _bind(ctx, _T1):
+            await mb.store(
+                principal="u1",
+                event_id=_eid(2),
+                hlc=_hlc(2),
+                signal=RealtimeSignal.of(
+                    Audience.principal("u1"),
+                    "order.shipped",
+                    {"amount": Decimal("10.05")},
+                ),
+            )
 
 
 @pytest.mark.asyncio

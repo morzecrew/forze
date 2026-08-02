@@ -1,7 +1,7 @@
 """Declarative graph module, node, and edge specifications."""
 
 from decimal import Decimal
-from typing import Final, Literal, final
+from typing import Final, Literal, final, get_args
 
 import attrs
 from pydantic import BaseModel
@@ -81,6 +81,37 @@ would refuse legitimate wiring the moment someone wrote a new one. These four ar
 types measured to break, and the check cannot false-positive on anything else."""
 
 
+def _native_scalar_in(annotation: object) -> type | None:
+    """The first denied native scalar reachable from *annotation*, if any.
+
+    Walks unions and parameterised generics rather than testing the annotation itself:
+    ``int | None`` is a ``UnionType``, not a ``type``, so an ``isinstance(..., type)``
+    guard skipped it outright and an optional int key sailed through to fail silently on
+    the engine. (``Annotated[int, ...]`` needs no unwrapping — pydantic resolves the
+    metadata away before ``annotation`` is read — but the walk covers it for free.)
+
+    ``None`` is skipped rather than denied: an optional key is a separate question from a
+    natively-typed one, and this guard answers only the second.
+    """
+
+    if isinstance(annotation, type):
+        return next(
+            (native for native in _NON_STRING_KEY_TYPES if issubclass(annotation, native)),
+            None,
+        )
+
+    for argument in get_args(annotation):
+        if argument is type(None):
+            continue
+
+        found = _native_scalar_in(argument)
+
+        if found is not None:
+            return found
+
+    return None
+
+
 def assert_key_field_is_string_typed(
     model: type[BaseModel] | None,
     key_field: str | None,
@@ -116,22 +147,16 @@ def assert_key_field_is_string_typed(
     if field is None or field.annotation is None:
         return
 
-    annotation = field.annotation
-
-    if not isinstance(annotation, type):  # pyright: ignore[reportUnnecessaryIsInstance]
-        return
-
-    offending = next(
-        (native for native in _NON_STRING_KEY_TYPES if issubclass(annotation, native)),
-        None,
-    )
+    offending = _native_scalar_in(field.annotation)
 
     if offending is None:
         return
 
+    declared = getattr(field.annotation, "__name__", str(field.annotation))
+
     raise exc.configuration(
         f"{what} {kind!r} names {key_field!r} as its key_field, and {key_field!r} is "
-        f"declared as {annotation.__name__}. VertexRef.key is a string, so a keyed lookup "
+        f"declared as {declared}. VertexRef.key is a string, so a keyed lookup "
         f"binds text against a property the store holds as a native {offending.__name__} "
         f"and matches nothing — every keyed read comes back empty instead of failing. "
         f"Use a string key (a str field, or a UUID, which serializes as one) and keep the "

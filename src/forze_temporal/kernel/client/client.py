@@ -83,7 +83,13 @@ def _decode_schedule_cursor(cursor: str | None) -> tuple[bytes | None, int]:
         # ``binascii.Error`` (bad padding) subclasses ValueError, as does a
         # non-numeric offset.
         offset = int(raw_offset) if raw_offset else 0
-        token = base64.urlsafe_b64decode(encoded.encode()) if encoded else None
+        # validate=True, because the permissive default *discards* non-alphabet
+        # characters instead of rejecting them: a cursor of pure garbage decoded to b""
+        # and was sent on as "start from the beginning", silently restarting the walk
+        # rather than raising the documented refusal.
+        token = (
+            base64.b64decode(encoded.encode(), altchars=b"-_", validate=True) if encoded else None
+        )
 
     except ValueError as error:
         raise exc.validation(

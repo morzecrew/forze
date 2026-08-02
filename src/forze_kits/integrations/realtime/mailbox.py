@@ -661,16 +661,34 @@ class DocumentMailboxCursors:
 # retention declaration
 
 
-def mailbox_retention_marker(spec_name: str) -> str:
+_RETENTION_MARKER_PREFIX = "realtime_mailbox_retention"
+
+
+def mailbox_retention_marker(spec_name: str, retention: "MailboxRetention") -> str:
     """The lifecycle marker a retention sweep publishes for the mailbox it covers.
 
-    Carried in :attr:`ExecutionContext.lifecycle_started` — a per-spec name rather than
-    the step's own ``step_id``, which callers may rename. The sweep adds it at startup
-    and discards it at shutdown, so the marker means "a sweeper is running for *this*
-    mailbox right now", which is the fact :func:`build_realtime_mailbox` needs.
+    Carried in :attr:`ExecutionContext.lifecycle_started`. Keyed on the spec rather than
+    the step's own ``step_id``, which callers may rename — and on the **window**, because
+    a sweeper is only evidence for the declaration it actually enforces. A mailbox
+    declaring a one-hour window while the registered sweep runs a seven-day one is not
+    covered; it is retaining data for six days and six hours longer than it claims, which
+    a marker keyed on the spec alone would have called compliant.
     """
 
-    return f"realtime_mailbox_retention:{spec_name}"
+    # Both windows are RESOLVED before they are keyed, exactly as the lifecycle step
+    # resolves them: an omitted cursor_max_age means "the same as max_age", so a bare
+    # MailboxRetention(max_age=7d) and a step configured (7d, 7d) are the same promise and
+    # must produce the same marker. Keying the raw fields made them differ.
+    max_age = _window_seconds(retention.max_age)
+    cursor = _window_seconds(retention.cursor_max_age or retention.max_age)
+
+    return f"{_RETENTION_MARKER_PREFIX}:{spec_name}:{max_age}:{cursor}"
+
+
+def _window_seconds(window: timedelta | None) -> str:
+    """A window as whole seconds, for the marker."""
+
+    return "-" if window is None else str(int(window.total_seconds()))
 
 
 @final
@@ -701,22 +719,7 @@ class MailboxRetention:
     unbounded_reason: str | None = None
     """Why this mailbox is deliberately unbounded. Required when *max_age* is ``None``."""
 
-    self_enforced: bool = False
-    """Set only by :meth:`enforced_by_this_sweep` — this build *is* the sweeper.
-
-    Without it the coverage check is circular: the retention sweep builds the very mailbox
-    it sweeps, so requiring it to find a marker would make it depend on its own startup
-    having run. Any other build asking for a window must find a sweeper.
-    """
-
     def __attrs_post_init__(self) -> None:
-        if self.self_enforced and self.max_age is None:
-            raise exc.configuration(
-                "An unbounded MailboxRetention cannot claim to be self-enforced: there is "
-                "no window for a sweep to enforce",
-                code="realtime_mailbox_retention_contradiction",
-            )
-
         if self.max_age is None:
             if not self.unbounded_reason:
                 raise exc.configuration(
@@ -767,22 +770,6 @@ class MailboxRetention:
 
     # ....................... #
 
-    @classmethod
-    def enforced_by_this_sweep(
-        cls,
-        *,
-        max_age: timedelta,
-        cursor_max_age: timedelta | None = None,
-    ) -> "MailboxRetention":
-        """The retention sweep's own build of the mailbox it sweeps.
-
-        Exempt from the coverage check for the one reason that is not an excuse: this
-        build is the coverage. Reserved for
-        :func:`~forze_kits.integrations.realtime.realtime_mailbox_retention_lifecycle_step`.
-        """
-
-        return cls(max_age=max_age, cursor_max_age=cursor_max_age, self_enforced=True)
-
     # ....................... #
 
     @property
@@ -810,33 +797,79 @@ def build_realtime_mailbox(
     Refuses a build in a read-only (QUERY) operation, since the mailbox writes.
 
     *retention* is required and has no default — see :class:`MailboxRetention`. A bounded
-    declaration is checked against the sweepers that actually started: declaring a window
-    and forgetting to register
+    declaration is checked against the sweepers that actually started, **window included**:
+    declaring a window and forgetting to register
     :func:`~forze_kits.integrations.realtime.realtime_mailbox_retention_lifecycle_step`
-    leaves the mailbox exactly as unbounded as declaring nothing, while *looking* bounded
-    in the wiring — so the two halves fail separately and say different things.
+    leaves the mailbox exactly as unbounded as declaring nothing, and declaring a window
+    the registered sweep does not enforce is a different lie with the same shape. The two
+    failures say different things.
+
+    There is no way to opt a build out of the check. The sweep's own mailbox — which
+    cannot wait for its own marker — goes through :func:`_build_mailbox` instead, so the
+    exemption is a private call path rather than a flag any caller could pass.
+    """
+
+    resolved = spec if spec is not None else realtime_mailbox_spec()
+
+    if retention.is_bounded:
+        _require_sweeper(ctx, spec_name=str(resolved.name), retention=retention)
+
+    return _build_mailbox(ctx, spec=resolved, cap=cap, replay_page_size=replay_page_size)
+
+
+def _require_sweeper(
+    ctx: ExecutionContext,
+    *,
+    spec_name: str,
+    retention: MailboxRetention,
+) -> None:
+    """Refuse a bounded declaration that no running sweep enforces."""
+
+    if mailbox_retention_marker(spec_name, retention) in ctx.lifecycle_started:
+        return
+
+    prefix = f"{_RETENTION_MARKER_PREFIX}:{spec_name}:"
+    running = sorted(marker for marker in ctx.lifecycle_started if str(marker).startswith(prefix))
+
+    if running:
+        raise exc.configuration(
+            f"Mailbox {spec_name!r} declares a retention window that no running sweeper "
+            f"enforces: the registered step sweeps a different window ({running}). A "
+            f"declaration the sweep does not honour retains data past the window it "
+            f"claims — match realtime_mailbox_retention_lifecycle_step(max_age=..., "
+            f"cursor_max_age=...) to this declaration.",
+            code="realtime_mailbox_retention_mismatch",
+        )
+
+    raise exc.configuration(
+        f"Mailbox {spec_name!r} declares a retention window but no sweeper is running for "
+        f"it. Register realtime_mailbox_retention_lifecycle_step(max_age=..., "
+        f"mailbox_spec=<this spec>) in the application's lifecycle steps — a declared "
+        f"window that nothing enforces bounds nothing.",
+        code="realtime_mailbox_retention_unwired",
+    )
+
+
+def _build_mailbox(
+    ctx: ExecutionContext,
+    *,
+    spec: DocumentSpec[_MailboxRead, _MailboxDoc, _MailboxCreate, Any],
+    cap: int = _DEFAULT_CAP,
+    replay_page_size: int = _DEFAULT_REPLAY_PAGE_SIZE,
+) -> DocumentRealtimeMailbox:
+    """Build without the coverage check — the retention sweep's own path.
+
+    Private on purpose: the sweep builds the very mailbox it sweeps, so requiring it to
+    find its own marker would be circular. Every other caller goes through
+    :func:`build_realtime_mailbox`, and there is no argument that reaches this one.
     """
 
     if ctx.inv_ctx.is_read_only():
         raise exc.precondition("Cannot build a realtime mailbox in a read-only (QUERY) operation")
 
-    resolved = spec if spec is not None else realtime_mailbox_spec()
-
-    if retention.is_bounded and not retention.self_enforced:
-        marker = mailbox_retention_marker(str(resolved.name))
-
-        if marker not in ctx.lifecycle_started:
-            raise exc.configuration(
-                f"Mailbox {resolved.name!r} declares a retention window but no sweeper is "
-                f"running for it. Register realtime_mailbox_retention_lifecycle_step("
-                f"max_age=..., mailbox_spec=<this spec>) in the application's lifecycle "
-                f"steps — a declared window that nothing enforces bounds nothing.",
-                code="realtime_mailbox_retention_unwired",
-            )
-
     return DocumentRealtimeMailbox(
-        command=ctx.document.command(resolved),
-        query=ctx.document.query(resolved),
+        command=ctx.document.command(spec),
+        query=ctx.document.query(spec),
         cap=cap,
         replay_page_size=replay_page_size,
     )
