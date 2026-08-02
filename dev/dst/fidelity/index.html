@@ -6739,10 +6739,108 @@ page measures:</p>
 </ul>
 <p>The framing matters: these are differential catches, not seed-search catches — which is exactly
 what the tables above are for. Claiming more would be the overreach this page exists to prevent.</p>
+<h2 id="which-planes-have-a-leg">Which planes have a leg<a class="headerlink" href="#which-planes-have-a-leg" title="Permanent link">&para;</a></h2>
+<p>A differential is only evidence for the plane it runs on, so the next question after "does the
+mock agree?" is "agree about <em>what</em>?". That answer is a manifest rather than a paragraph:
+<code>[tool.conformance_manifest]</code> in <code>pyproject.toml</code> names every plane, the scenario it runs, the
+contract ports it covers and the engines it must run against. <code>just conformance-check</code> (part of
+<code>just quality</code>) enforces it, and <code>just conformance</code> runs the legs themselves.</p>
+<p>The manifest exists because the previous answer was prose, and prose does not fail a build. A
+plane could gain a backend whose only test ran against that backend alone, with nothing
+comparing it to anything, and CI stayed green. So the checker derives which packages actually
+<em>register</em> each plane's ports — from the integration packages, not from a list somebody
+maintains — and fails when one of them runs no leg. Adding a backend now means adding its leg or
+writing down, in the manifest, why there isn't one.</p>
+<p>That check runs before the suite does, so it can only prove a leg <strong>exists</strong>. Existing is not
+running: a leg whose engine never starts, whose optional extra is missing, or whose suite is
+absent from CI's matrix skips quietly, and a skipped test looks exactly like a passing one in a
+green pipeline. So each CI shard also records what it actually ran, per leg, and a final job
+unions those records and fails on any manifested leg that passed nothing anywhere. That gate
+earned its place immediately: it found that two of the four inference legs, and the whole
+portability suite, had never run in CI at all. Individual skips <em>inside</em> a leg stay allowed —
+a check that cannot apply to an engine should skip with a reason naming it — but they are
+reported, so a leg quietly hollowing out one check at a time stays visible.</p>
+<p>Uncovered planes are declared rather than omitted, which is the part worth reading:</p>
+<table>
+<thead>
+<tr>
+<th>Gap</th>
+<th>Engines with no differential</th>
+<th>Why it matters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>queue</code></td>
+<td>RabbitMQ, SQS</td>
+<td>two brokers, no comparison of publish/consume/nack/redelivery</td>
+</tr>
+<tr>
+<td><code>analytics</code></td>
+<td>BigQuery, ClickHouse, DuckDB, Postgres</td>
+<td>four engines answer the same ports</td>
+</tr>
+<tr>
+<td><code>durable_function</code></td>
+<td>Postgres, Inngest</td>
+<td>replay determinism and step idempotency uncompared</td>
+</tr>
+<tr>
+<td><code>kms</code></td>
+<td>Vault (plus the AWS/GCP/Yandex/local backends)</td>
+<td>wrap/unwrap/rotate under one <abbr title="Additional Authenticated Data">AAD</abbr></td>
+</tr>
+</tbody>
+</table>
+<p>Read that table as the honest complement to the green matrices above: those planes are tested,
+they are simply not <em>compared</em>.</p>
+<p>Deriving the requirement from the code is what keeps that table honest, and one plane needed
+help to manage it. Field encryption's ports are <em>resolved</em> by the adapters that seal values
+rather than registered by a backend, so the census sees no providers for them — and a
+derivation that finds nothing requires nothing, which is a ratchet that cannot fail. The
+manifest lets such a plane name a proxy instead (<code>derive_from</code>), and here the proxy is exact
+rather than approximate: the battery is document-plane specific, so "which backends need a
+field-encryption leg" <em>is</em> "which backends provide a document port". A misspelled proxy key is
+a hard error for the same reason — it would derive from nothing and look like success.</p>
+<p>Known differences that are real and expected live in <code>forze_dst.conformance.catalog</code> as data, not
+prose. Each row records what each engine did, what was done about it (unified, normalized, or
+declared), and a <code>probe</code> naming the test that asserts it — a link the checker resolves against
+real pytest collection, so a catalog entry cannot outlive the test behind it.</p>
+<p>One row is worth reading for a different reason: it records a case where the oracle could not
+be <em>wrong</em>, because it could not model the outcome at all. The storage port lets a caller ask
+<code>list(missing_ok=False)</code> so a <strong>vanished</strong> bucket can be told from an <strong>emptied</strong> one — the
+distinction the re-encryption sweep is built on. The mock reached its bucket through
+<code>setdefault</code>, so the bucket existed the instant anything looked at it and the parameter was
+documented as a no-op. That is a stronger failure than "untested": no test written against
+that oracle could have failed, so every mock-backed test of the contract was green without
+exercising anything. Closing it meant giving the mock the concept first — reads never
+provision, the documented write paths do — and the sweep's own test then had to say which
+state it meant, having asserted "empty" while exercising "absent".</p>
+<p>A third row records the one interaction none of this page's other machinery can reach. The
+offline mailbox bounds a reconnect replay by a retention cap, and clients ack <strong>cumulatively</strong>
+— "I have everything up to this id". Each is fine alone; together, a replay that delivered an
+incomplete window plus an ack on a live frame lets the cursor jump the gap, and the trim floor
+then deletes signals that were never sent. Nothing raises. Simulation cannot find it either,
+because the race lives in document-port code rather than stream code, so no schedule the
+explorer drives will interleave it. The leg drives that interleaving directly against the mock,
+Postgres and Mongo, and its controls reconstruct the fault by truncating the replay — so the
+check is known to fail when the guarantee does, rather than merely passing today.</p>
+<p>One divergence there is worth reading as a pattern rather than an entry. The inference port is
+<strong>declarative</strong>: each adapter publishes an <code>InferenceCapabilities</code> and the shared validators gate
+requests against it, so "does this call get through?" is a property of the declaration, not of the
+model behind it. A mock told nothing advertises the full surface — unbounded batches, streaming,
+async jobs — which is true of the mock and truer than any backend it stands in for, so a
+capability gate that passes against the oracle can still refuse in production. The fix is a
+wiring obligation (<code>MockInferenceRegistry.on(..., capabilities=…)</code>) and it cannot be defaulted
+away, because the mock is also used where no backend is being mirrored at all. So the differential
+carries it instead: the battery compares a backend's gates against a mock built from that
+backend's own declaration, and asserts that an <em>untold</em> oracle disagrees — which is what makes
+forgetting the wiring fail at authoring time rather than in production.</p>
 <h2 id="what-these-numbers-license-and-what-they-dont">What these numbers license — and what they don't<a class="headerlink" href="#what-these-numbers-license-and-what-they-dont" title="Permanent link">&para;</a></h2>
 <ul>
 <li>A green matrix licenses trusting the mock <strong>for the phenomena, levels, and backends tested</strong>
-  — the isolation family on Postgres and Mongo. It says nothing about untested planes.</li>
+  — the isolation family on Postgres and Mongo. It says nothing about untested planes, and
+  <a href="#which-planes-have-a-leg">the gap table</a> is where those are named.</li>
 <li>The transfer table is the <em>direct</em> evidence, at found-bug granularity — and its N is what it
   is: every transferable corpus instance, currently against Postgres.</li>
 <li>The pre-registered predictor analysis is currently uninformative by construction (zero
