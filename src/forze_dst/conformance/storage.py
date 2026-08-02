@@ -60,8 +60,13 @@ class ContainerVerdict(StrEnum):
     NON_EMPTY = "non-empty"
 
     MISSING_CONTAINER = "missing-container"
-    """Refused because the container is not there — the ``infrastructure`` class every
-    shipped backend uses for a missing bucket."""
+    """Refused because the container is not there — the ``configuration`` class every
+    shipped backend uses for a missing bucket.
+
+    ``configuration`` rather than ``infrastructure`` is load-bearing, not cosmetic: the
+    egress policy reads the latter as retryable, and an unprovisioned bucket does not
+    become provisioned by asking again, so a saga or consumer retry loop spun against it
+    until an operator intervened. The class is what tells those loops to stop."""
 
     MISSING_OBJECT = "missing-object"
     """Refused because the object is not there — ``not_found``."""
@@ -175,7 +180,7 @@ def _refusal_verdict(error: CoreException) -> ContainerVerdict:
     if error.kind is ExceptionKind.NOT_FOUND:
         return ContainerVerdict.MISSING_OBJECT
 
-    if error.kind is ExceptionKind.INFRASTRUCTURE:
+    if error.kind is ExceptionKind.CONFIGURATION:
         return ContainerVerdict.MISSING_CONTAINER
 
     raise error

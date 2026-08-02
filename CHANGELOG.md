@@ -70,6 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **`missing_ok` no longer hides that a storage container is absent** (**breaking**) — `StorageQueryPort.list` returns a `StoredObjectPage` (`objects`, `total`, `container_missing`) instead of a `(objects, total)` tuple; the kit's `ListedObjects` gains `provisioned`. **Migration:** unpack sites become `page.objects` / `page.total`.
 
+**A missing storage bucket is `configuration`, not retryable `infrastructure`** (**behaviour change**) — S3, GCS and the mock agreed on a kind the egress policy reads as retryable, so a saga step or consumer loop hit an unprovisioned bucket and retried forever. Client-facing behaviour is unchanged (details still withheld, still HTTP 500); only the retry decision moves.
+
 **Mongo counter allocations cost one round trip instead of two** — the pre-route legacy lookup runs only on a counter's first touch, matching Postgres and Firestore. A legacy document appearing after the counter exists is now left in place, unread and unenumerated, rather than retired.
 
 **A paged Temporal schedule listing silently dropped schedules** — a `limit` reached mid-page skipped the rest of that page; paging now returns every matching schedule exactly once. Cursors stay opaque, but a mid-page one is no longer a bare Temporal token — do not decode it.

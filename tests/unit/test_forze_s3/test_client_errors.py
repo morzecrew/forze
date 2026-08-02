@@ -2,7 +2,7 @@
 
 import pytest
 
-from forze.base.exceptions import CoreException, ExceptionKind, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc, exception_egress_policy
 
 pytest.importorskip("botocore")
 
@@ -55,7 +55,6 @@ class TestS3ErrorHandler:
         ("code", "needle"),
         [
             ("AccessDenied", "access denied"),
-            ("NoSuchBucket", "not found"),
             ("SlowDown", "throttl"),
             ("Throttling", "throttl"),
             ("InternalError", "internal error"),
@@ -66,6 +65,16 @@ class TestS3ErrorHandler:
         r = _s3_eh(_client_error(code), site="op")
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert needle in r.summary.lower()
+
+    def test_missing_bucket_is_configuration_not_retryable_infrastructure(self) -> None:
+        # A provisioning fault, and the kind is what says so to a retry loop: the egress
+        # policy reads infrastructure as retryable, so classifying it there had a saga or
+        # consumer spinning against a bucket that never appears on its own.
+        r = _s3_eh(_client_error("NoSuchBucket"), site="op")
+
+        assert isinstance(r, CoreException) and r.kind == ExceptionKind.CONFIGURATION
+        assert "not found" in r.summary.lower()
+        assert not exception_egress_policy(r.kind).retryable
 
     @pytest.mark.parametrize("code", ["NoSuchKey", "NotFound", "404"])
     def test_missing_object_is_caller_caused(self, code: str) -> None:

@@ -261,14 +261,13 @@ STORAGE_DIVERGENCES: tuple[PlaneDivergence, ...] = (
             EngineBehaviour(
                 engine="s3",
                 behaviour=(
-                    "MinIO and floci both raise infrastructure 'bucket not found' on a "
-                    "listing of an absent bucket, and return an empty page for an existing "
-                    "empty one"
+                    "MinIO and floci both raise 'bucket not found' on a listing of an "
+                    "absent bucket, and return an empty page for an existing empty one"
                 ),
             ),
             EngineBehaviour(
                 engine="gcs",
-                behaviour="same: infrastructure on absent, empty page on existing-and-empty",
+                behaviour="same: refuses on absent, empty page on existing-and-empty",
             ),
         ),
         resolution=DivergenceResolution.UNIFIED,
@@ -325,7 +324,7 @@ STORAGE_DIVERGENCES: tuple[PlaneDivergence, ...] = (
             EngineBehaviour(
                 engine="s3",
                 behaviour=(
-                    "raises infrastructure 'bucket not found' — GetObject reports the "
+                    "raises configuration 'bucket not found' — GetObject reports the "
                     "missing container, not the missing key"
                 ),
             ),
@@ -344,6 +343,48 @@ STORAGE_DIVERGENCES: tuple[PlaneDivergence, ...] = (
             "would mean choosing which fact a download reports, which is a contract decision "
             "rather than an adapter bug, so it is declared and both sides are pinned: the day "
             "one is changed the other fails and the choice has to be made deliberately."
+        ),
+        probe=(
+            "tests/integration/test_forze_s3/test_s3_storage_new_ops.py::"
+            "test_download_from_an_absent_bucket_reports_the_container"
+        ),
+    ),
+    PlaneDivergence(
+        plane="storage",
+        name="missing-container-refusal-kind",
+        observed=(
+            EngineBehaviour(
+                engine="s3",
+                behaviour=(
+                    "raised infrastructure on NoSuchBucket — a structured vendor code, so "
+                    "the mapping site always knew exactly which condition it was"
+                ),
+            ),
+            EngineBehaviour(
+                engine="gcs",
+                behaviour=(
+                    "raised infrastructure on a bucket-scoped 404 (URL shape: /b/<bucket> "
+                    "rather than /o/<name>) — likewise structurally identified"
+                ),
+            ),
+            EngineBehaviour(
+                engine="mock",
+                behaviour="raised infrastructure, deferring to the two real backends",
+            ),
+        ),
+        resolution=DivergenceResolution.UNIFIED,
+        reason=(
+            "Not a disagreement between engines — all three agreed, and all three were "
+            "wrong in the same direction. exception_egress_policy reads infrastructure as "
+            "retryable, so a saga step or a consumer loop that hit an unprovisioned bucket "
+            "retried a condition that cannot resolve without an operator, forever. Both "
+            "mapping sites already called it a deployment fault in their own comments; only "
+            "the kind disagreed. Now configuration on all three: non-retryable, details "
+            "still withheld from clients, still HTTP 500 — the client-facing behaviour is "
+            "unchanged and only the retry decision moves. Detection needed no error-text "
+            "matching, which is what separates this from the counter-overflow row on the "
+            "same theme: there the store does the arithmetic and reports it in prose, so "
+            "that one stays DECLARED."
         ),
         probe=(
             "tests/integration/test_forze_s3/test_s3_storage_new_ops.py::"

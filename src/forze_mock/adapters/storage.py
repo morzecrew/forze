@@ -95,15 +95,17 @@ class MockStorageAdapter(
         absent key returns the same not-found whether or not the bucket exists — the
         distinction is not expressible at that verb — so the mock must not invent one.
 
-        The *kind* mirrors the real backends rather than improving on them: MinIO, floci
-        and GCS all surface a missing bucket as ``infrastructure``. That is arguably the
-        wrong class for a permanent, configuration-caused condition — the egress policy
-        reads ``infrastructure`` as retryable — but an oracle that classified it better
-        than production would hide the problem instead of exposing it.
+        The *kind* mirrors the real backends, as it must: MinIO, floci and GCS all classify
+        a missing bucket ``configuration``. They used to say ``infrastructure``, which the
+        egress policy reads as retryable — so a saga or consumer retry loop would spin
+        forever against a bucket that will never appear on its own. The oracle followed
+        them then and follows them now; what changed is the adapters, not this line's
+        deference to them. An oracle that had classified it better than production would
+        have hidden the problem instead of exposing it.
         """
 
         if not self._bucket_exists():
-            raise exc.infrastructure(f"Mock storage bucket {self._bucket()!r} does not exist.")
+            raise exc.configuration(f"Mock storage bucket {self._bucket()!r} does not exist.")
 
     # ....................... #
 
