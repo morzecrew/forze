@@ -43,6 +43,8 @@ _TOPIC_SIGNALS = tuple(
     RealtimeSignal.of(Audience.topic("dst-room"), "conformance.realtime", {"seq": i})
     for i in range(_N)
 )
+from tests.support.realtime_retention import UNSWEPT
+
 """Topic-addressed durable signals — the non-mailboxed (emit-inside-tx) lane."""
 
 
@@ -102,7 +104,7 @@ async def _run(
         source=_NullSource(),
         dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock") if dedup else None,
     )
-    mailbox = build_realtime_mailbox(ctx) if (dedup and mailboxed) else None
+    mailbox = build_realtime_mailbox(ctx, retention=UNSWEPT) if (dedup and mailboxed) else None
 
     async def _rows() -> int:
         if mailbox is None:

@@ -31,6 +31,7 @@ from forze_kits.integrations.realtime import (
 )
 from forze_kits.integrations.realtime.mailbox import DocumentRealtimeMailbox
 from forze_mock.execution import MockDepsModule, MockRouteConfig
+from tests.support.realtime_retention import UNSWEPT
 
 # ----------------------- #
 
@@ -74,7 +75,7 @@ def _bind(ctx: ExecutionContext, tenant: UUID):  # type: ignore[no-untyped-def]
 
 
 async def _seed_ancient_and_fresh(ctx: ExecutionContext) -> None:
-    mailbox = build_realtime_mailbox(ctx)
+    mailbox = build_realtime_mailbox(ctx, retention=UNSWEPT)
     await mailbox.store(principal="u1", event_id=_eid(1), hlc=_hlc(1), signal=_signal("old"))
     await mailbox.store(principal="u1", event_id=_eid(2), hlc=_now_hlc(), signal=_signal("new"))
 
@@ -113,7 +114,7 @@ async def test_step_sweeps_on_an_interval_and_stops_cleanly() -> None:
         assert step.startup in ctx.drainables.loops  # type: ignore[comparison-overlap]
         assert step.startup.loop_name == "realtime_mailbox_retention"  # type: ignore[attr-defined]
 
-        mailbox = build_realtime_mailbox(ctx)
+        mailbox = build_realtime_mailbox(ctx, retention=UNSWEPT)
 
         async def _ancient_gone() -> bool:
             retained = await mailbox.read_since(principal="u1", since=None)
@@ -146,7 +147,7 @@ async def test_step_sweeps_each_assigned_tenant() -> None:
         async def _both_swept() -> bool:
             for tenant in (_T1, _T2):
                 with _bind(ctx, tenant):
-                    retained = await build_realtime_mailbox(ctx).read_since(
+                    retained = await build_realtime_mailbox(ctx, retention=UNSWEPT).read_since(
                         principal="u1", since=None
                     )
 
@@ -244,7 +245,7 @@ async def test_one_tenants_failure_does_not_starve_the_others(
 
         async def _healthy_swept() -> bool:
             with _bind(ctx, healthy):
-                retained = await build_realtime_mailbox(ctx).read_since(
+                retained = await build_realtime_mailbox(ctx, retention=UNSWEPT).read_since(
                     principal="u1", since=None
                 )
 
@@ -253,7 +254,7 @@ async def test_one_tenants_failure_does_not_starve_the_others(
         assert await _wait_until(_healthy_swept)  # the sibling tenant kept its retention
 
         with _bind(ctx, broken):
-            retained = await build_realtime_mailbox(ctx).read_since(principal="u1", since=None)
+            retained = await build_realtime_mailbox(ctx, retention=UNSWEPT).read_since(principal="u1", since=None)
             assert len(retained) == 2  # the broken tenant's sweep never landed
 
         task = step.startup.task  # type: ignore[attr-defined]

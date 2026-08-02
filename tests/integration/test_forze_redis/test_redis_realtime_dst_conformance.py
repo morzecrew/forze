@@ -47,6 +47,7 @@ from forze_redis.adapters import (
 )
 from forze_redis.kernel.client import RedisClient
 from forze_socketio import GatewayDedup, RealtimeGateway
+from tests.support.realtime_retention import UNSWEPT
 
 # ----------------------- #
 
@@ -100,7 +101,7 @@ async def _run(
         source=_NullSource(),
         dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock"),
     )
-    mailbox = build_realtime_mailbox(store_ctx)
+    mailbox = build_realtime_mailbox(store_ctx, retention=UNSWEPT)
 
     async def bridge(
         signal: RealtimeSignal, tenant: UUID | None, dedup_id: str | None, hlc: HlcTimestamp

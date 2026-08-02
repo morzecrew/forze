@@ -103,6 +103,31 @@ need to guarantee forever belongs in domain state, not in realtime). Topic
 broadcasts are never mailboxed — there's no fixed membership to store them for —
 and an event can opt out of offline delivery when it isn't worth persisting.
 
+That bound is something you wire, not something you get. The mailbox has **no
+delete path of its own**: the ack-driven trim only follows the slowest device's
+cursor and the replay cap bounds *reads*, so a principal whose devices stop
+acking accumulates entries forever. So `build_realtime_mailbox` takes a required
+`retention=` with no default, and a declared window is checked against the
+sweeper that enforces it:
+
+```python
+# a window, plus the step that actually deletes
+mailbox = build_realtime_mailbox(
+    ctx, retention=MailboxRetention(max_age=timedelta(days=7)),
+)
+
+lifecycle_steps = [
+    realtime_mailbox_retention_lifecycle_step(max_age=timedelta(days=7)),
+]
+```
+
+Declaring the window and forgetting the step is refused at build
+(`realtime_mailbox_retention_unwired`) — that wiring *looks* bounded and is not,
+which is worse than the honest unbounded case. If unbounded is genuinely what you
+want, say so and it is allowed: `MailboxRetention.unbounded(reason=…)`. Nothing
+about this failure mode is loud otherwise — storage grows, replays stay correct,
+and the first symptom is a disk.
+
 ## Where to go next
 
 - [Socket.IO integration](../integrations/socketio.md) — the full wiring: the

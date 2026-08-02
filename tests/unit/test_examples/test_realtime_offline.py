@@ -15,6 +15,7 @@ from examples.recipes.realtime_offline.app import (
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.primitives import HlcTimestamp
 from forze_kits.integrations.realtime import build_realtime_cursors, build_realtime_mailbox
+from tests.support.realtime_retention import UNSWEPT
 
 _E1 = str(UUID(int=1))
 _E2 = str(UUID(int=2))
@@ -24,7 +25,7 @@ async def test_offline_signals_replay_then_ack_stops_re_replay() -> None:
     ctx = _context()
 
     with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=TENANT)):
-        mailbox = build_realtime_mailbox(ctx)
+        mailbox = build_realtime_mailbox(ctx, retention=UNSWEPT)
         cursors = build_realtime_cursors(ctx)
 
         await emit_while_offline(mailbox, event_id=_E1, hlc=HlcTimestamp(physical_ms=1, logical=0), signal=_signal("shipped"))

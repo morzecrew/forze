@@ -34,8 +34,11 @@ from .mailbox import (
     DocumentMailboxCursors,
     DocumentRealtimeMailbox,
     MailboxDocumentSpec,
+    MailboxRetention,
     build_realtime_cursors,
     build_realtime_mailbox,
+    mailbox_retention_marker,
+    realtime_mailbox_spec,
 )
 
 # ----------------------- #
@@ -399,6 +402,14 @@ class _MailboxRetentionStartup(LifecycleHook):
     jitter: float
     tenants: Callable[[], Sequence[UUID]] | None
 
+    covers: str
+    """Name of the mailbox spec this sweep covers, published as its lifecycle marker.
+
+    Keyed on the spec rather than on ``step_id`` because callers rename the latter: what
+    ``build_realtime_mailbox`` needs to know is that *this* mailbox has a sweeper, and an
+    app running two channels wires two steps that must not vouch for each other.
+    """
+
     control: BackgroundLoopControl = attrs.field(
         default=attrs.Factory(lambda: BackgroundLoopControl(name="realtime_mailbox_retention")),
         init=False,
@@ -491,6 +502,12 @@ class _MailboxRetentionStartup(LifecycleHook):
 
         self.control.arm()
 
+        # Published as soon as the loop is armed, before the task exists: the sweep's own
+        # first tick builds this very mailbox, and that build runs the coverage check.
+        # Adding the marker afterwards would leave it depending on the event loop not
+        # having scheduled the task yet.
+        ctx.lifecycle_started.add(mailbox_retention_marker(self.covers))
+
         async def _loop() -> None:
             while True:
                 try:
@@ -537,6 +554,10 @@ class _MailboxRetentionShutdown(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
+        # Retracted before the loop stops: past this point no sweeper is running for
+        # the mailbox, so a build must not keep believing one is.
+        ctx.lifecycle_started.discard(mailbox_retention_marker(self.startup.covers))
+
         clock = asyncio.get_running_loop()
         await self.startup.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
 
@@ -595,14 +616,27 @@ def realtime_mailbox_retention_lifecycle_step(
     if not 0.0 <= jitter < 1.0:
         raise exc.configuration("Jitter must be in [0, 1)")
 
+    resolved_mailbox = mailbox_spec if mailbox_spec is not None else realtime_mailbox_spec()
+    # The sweep's own mailbox build is exempt from the coverage check by construction —
+    # it *is* the coverage. Declaring the window it enforces keeps the two in step.
+    sweep_retention = MailboxRetention.enforced_by_this_sweep(
+        max_age=max_age,
+        cursor_max_age=resolved_cursor_age,
+    )
+
     startup = _MailboxRetentionStartup(
         max_age=max_age,
         cursor_max_age=resolved_cursor_age,
-        mailbox_builder=lambda ctx: build_realtime_mailbox(ctx, spec=mailbox_spec),
+        mailbox_builder=lambda ctx: build_realtime_mailbox(
+            ctx,
+            spec=resolved_mailbox,
+            retention=sweep_retention,
+        ),
         cursors_builder=lambda ctx: build_realtime_cursors(ctx, spec=cursor_spec),
         interval=interval,
         jitter=jitter,
         tenants=tenants,
+        covers=str(resolved_mailbox.name),
     )
 
     return LifecycleStep(

@@ -61,13 +61,16 @@ def tenant_scoped(
     def _scoped(tenant: UUID) -> Iterator[MailboxScope]:
         with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
             mailbox = build_realtime_mailbox(
-                ctx, cap=REPLAY_CAP, replay_page_size=REPLAY_PAGE_SIZE
+                ctx,
+                retention=UNSWEPT,
+                cap=REPLAY_CAP,
+                replay_page_size=REPLAY_PAGE_SIZE,
             )
 
             yield MailboxScope(
                 mailbox=mailbox if wrap_mailbox is None else wrap_mailbox(mailbox),
                 cursors=build_realtime_cursors(ctx),
-                observer=build_realtime_mailbox(ctx, cap=UNCAPPED),
+                observer=build_realtime_mailbox(ctx, retention=UNSWEPT, cap=UNCAPPED),
             )
 
     return _scoped
@@ -120,3 +123,4 @@ CURSOR_REPLAY_BATTERY: tuple[Check, ...] = (
     check_a_capped_replay_survives_a_live_ack,
     check_tenant_cursors_are_independent,
 )
+from tests.support.realtime_retention import UNSWEPT
