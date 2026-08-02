@@ -612,20 +612,12 @@ def realtime_mailbox_retention_lifecycle_step(
     tenant's collections; ``None`` sweeps the tenant-global collections once.
     """
 
-    if max_age.total_seconds() <= 0:
-        raise exc.configuration("Mailbox retention max_age must be positive")
-
+    # The window rules live on the declaration, so the sweep states its window as one and
+    # lets `__attrs_post_init__` check it. Validating here as well drifted: the same
+    # misconfiguration raised an uncoded error through this door and a
+    # `realtime_mailbox_retention_invalid` one through `MailboxRetention`.
+    retention = MailboxRetention(max_age=max_age, cursor_max_age=cursor_max_age)
     resolved_cursor_age = cursor_max_age if cursor_max_age is not None else max_age
-
-    if resolved_cursor_age < max_age:
-        # A cursor pruned while its acked prefix is still retained would replay (and
-        # re-offer) entries the device already confirmed — keep the registry's memory
-        # at least as long as the entries it indexes.
-        raise exc.configuration(
-            "Mailbox retention cursor_max_age must be at least max_age: pruning a "
-            "device cursor before its acked entries expire re-offers confirmed "
-            "deliveries on every reconnect"
-        )
 
     if interval.total_seconds() <= 0:
         raise exc.configuration("Mailbox retention interval must be positive")
@@ -636,10 +628,7 @@ def realtime_mailbox_retention_lifecycle_step(
     resolved_mailbox = mailbox_spec if mailbox_spec is not None else realtime_mailbox_spec()
     # The marker this sweep publishes: the mailbox it covers *and* the window it enforces,
     # so a build declaring a different window is not silently vouched for.
-    marker = mailbox_retention_marker(
-        str(resolved_mailbox.name),
-        MailboxRetention(max_age=max_age, cursor_max_age=resolved_cursor_age),
-    )
+    marker = mailbox_retention_marker(str(resolved_mailbox.name), retention)
 
     startup = _MailboxRetentionStartup(
         max_age=max_age,

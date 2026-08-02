@@ -526,7 +526,7 @@ INFERENCE_DIVERGENCES: tuple[PlaneDivergence, ...] = (
                 engine="mock",
                 behaviour=(
                     "a route registered without capabilities= advertises "
-                    "FULL_INFERENCE_CAPABILITIES: unbounded batches, streaming, async jobs, "
+                    "FULL_INFERENCE_CAPABILITIES: unbounded batches, streaming, "
                     "deterministic — so every capability gate passes"
                 ),
             ),

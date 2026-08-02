@@ -752,9 +752,9 @@ class MailboxRetention:
             )
 
         if self.cursor_max_age is not None and self.cursor_max_age < self.max_age:
-            # Same rule the lifecycle step enforces, stated at the declaration too: a
-            # cursor pruned while its acked prefix is still retained re-offers confirmed
-            # deliveries on the device's next connect.
+            # The one place this rule lives — the lifecycle step states its own window as
+            # a declaration so it lands here too. A cursor pruned while its acked prefix
+            # is still retained re-offers confirmed deliveries on the next connect.
             raise exc.configuration(
                 "MailboxRetention cursor_max_age must be at least max_age",
                 code="realtime_mailbox_retention_invalid",

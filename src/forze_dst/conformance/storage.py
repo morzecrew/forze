@@ -154,10 +154,15 @@ async def _list_verdict(port: ListsObjects, *, missing_ok: bool) -> ContainerVer
     except CoreException as error:
         return _refusal_verdict(error)
 
-    if page.container_missing:
-        return ContainerVerdict.EMPTY_UNPROVISIONED
+    if page.objects:
+        # Objects *and* "the container is not there" is a self-contradictory page. Reading
+        # the flag first would launder it into the expected unprovisioned verdict, so the
+        # one answer no backend may give is the one the oracle would not catch.
+        return ContainerVerdict.NON_EMPTY
 
-    return ContainerVerdict.EMPTY if not page.objects else ContainerVerdict.NON_EMPTY
+    return (
+        ContainerVerdict.EMPTY_UNPROVISIONED if page.container_missing else ContainerVerdict.EMPTY
+    )
 
 
 async def _head_verdict(port: ListsObjects, key: str) -> ContainerVerdict:
