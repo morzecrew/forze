@@ -16,6 +16,7 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowSpec,
 )
 from forze.application.contracts.durable.workflow.specs import DurableWorkflowInvokeSpec
+from forze.base.primitives import uuid7
 from forze_temporal.adapters.schedule import (
     TemporalWorkflowScheduleCommandAdapter,
     TemporalWorkflowScheduleQueryAdapter,
@@ -23,6 +24,7 @@ from forze_temporal.adapters.schedule import (
 from forze_temporal.sandbox import sandboxed_workflow_runner
 
 from ._workflow_defs import ItSumWorkflow, SumIn, SumOut, it_sum_pair
+from .conftest import await_listed_schedules
 
 
 async def _await_workflow_result(
@@ -125,3 +127,74 @@ async def test_schedule_trigger_starts_workflow(temporal_dev_env) -> None:
         assert (await qry.describe(handle)).paused is False
 
         await cmd.delete(handle)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_paging_a_filtered_listing_returns_every_schedule_once(
+    temporal_dev_env,
+) -> None:
+    """Walking a filtered listing in small pages loses and duplicates nothing.
+
+    Paging is client-side-filtered, so the resume cursor has to carry a position *inside*
+    a page, not just a page token — and that cursor has to survive a real server round
+    trip. The layout below is tuned to the dev server's observed listing order (schedule
+    id descending) so that, at ``limit=2``, the second page hits the limit on its *first*
+    entry and leaves a wanted schedule un-yielded: ``keep, skip | keep, keep | …``. The
+    assertion does not depend on that order holding — full coverage is the property; the
+    mid-page stop itself is pinned deterministically by the unit battery.
+    """
+
+    forze_client = temporal_dev_env.forze_client
+
+    run = uuid7().hex[:8]
+    prefix = f"it-paging-{run}-"
+    schedule_ids = tuple(f"{prefix}{index:02d}" for index in range(6))
+    # Listed high-to-low, this reads keep, skip | keep, keep | skip, keep.
+    wanted = {0, 2, 3, 5}
+    expected = tuple(sid for index, sid in enumerate(schedule_ids) if index in wanted)
+
+    for index, schedule_id in enumerate(schedule_ids):
+        await forze_client.create_schedule(
+            schedule_id,
+            workflow_name="ItSumWorkflow" if index in wanted else "ItPingWorkflow",
+            queue="it-forze-paging",
+            arg=SumIn(a=1, b=index),
+            timing=DurableWorkflowScheduleTiming(interval=timedelta(hours=1)),
+            workflow_id=f"{schedule_id}-run",
+        )
+
+    try:
+        # Page only once the whole set is listable, or a not-yet-visible entry would
+        # read as a pagination loss.
+        async def _listed():
+            page = await forze_client.list_schedules(schedule_id_prefix=prefix)
+            return page.descriptions
+
+        await await_listed_schedules(_listed, count=len(schedule_ids))
+
+        collected: list[str] = []
+        cursor: str | None = None
+
+        for _ in range(len(expected) + 2):  # bounded: 2 per call must finish sooner
+            page = await forze_client.list_schedules(
+                limit=2,
+                next_page_token=cursor,
+                schedule_id_prefix=prefix,
+                workflow_name="ItSumWorkflow",
+            )
+            assert len(page.descriptions) <= 2, "a page overshot the requested limit"
+
+            collected.extend(d.schedule_id for d in page.descriptions)
+            cursor = page.next_page_token
+
+            if cursor is None:
+                break
+
+        assert cursor is None, "pagination did not terminate"
+        assert len(collected) == len(set(collected)), f"duplicated across pages: {collected}"
+        assert sorted(collected) == sorted(expected)
+
+    finally:
+        for schedule_id in schedule_ids:
+            await forze_client.delete_schedule(schedule_id)

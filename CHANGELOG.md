@@ -62,6 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **A routed SQS consumer survives credential rotation** — `evict_tenant` moves an in-flight `RoutedSQSClient.consume` stream onto fresh credentials at the next poll instead of tearing it down; `guarded=True` is fully supported across the facade (previously it raised on first use); non-retryable resolution failures still raise out of the stream. `SQSRoutingCredentials.secret_access_key` is now `SecretStr` (matching S3) — read it via `get_secret_value()`.
 
+**A paged Temporal schedule listing silently dropped schedules** — a `limit` reached mid-page skipped the rest of that page; paging now returns every matching schedule exactly once. Cursors stay opaque, but a mid-page one is no longer a bare Temporal token — do not decode it.
+
 **Local KMS has no wrap-count rotation cadence** — each wrap seals under a one-shot HKDF subkey, so the AES-GCM ~2^32 ceiling never accrues against a master key; envelopes sealed by earlier builds stay readable.
 
 ## [0.5.1] - 2026-07-25

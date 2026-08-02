@@ -25,6 +25,7 @@ from forze_temporal.adapters.schedule import (
 from forze_temporal.adapters.workflow import TemporalWorkflowCommandAdapter
 
 from ._workflow_defs import SumIn, SumOut
+from .conftest import await_listed_schedules
 
 
 def _spec() -> DurableWorkflowSpec[SumIn, SumOut]:
@@ -117,7 +118,11 @@ async def test_schedules_are_tenant_isolated(temporal_dev_env) -> None:
 
     try:
         # A's listing shows only A's id-space; B's tenant id never surfaces.
-        items_a, _ = await qry_a.list(limit=100)
+        async def _listed_for_a():
+            items, _ = await qry_a.list(limit=100)
+            return items
+
+        items_a = await await_listed_schedules(_listed_for_a, count=1)
         assert items_a, "tenant A must see its own schedule"
         assert all(
             d.schedule_id.startswith(f"tenant:{tid_a}:") for d in items_a

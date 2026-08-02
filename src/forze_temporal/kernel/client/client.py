@@ -42,6 +42,86 @@ from .workflow_mapping import description_from_temporal_execution
 
 # ----------------------- #
 
+_DEFAULT_SCHEDULE_PAGE_SIZE = 100
+"""Server page size used when the caller asks for an unbounded listing."""
+
+_SCHEDULE_CURSOR_SEPARATOR = "."
+"""Splits a schedule cursor into page token and intra-page offset.
+
+Outside the urlsafe base64 alphabet, so a separator-free cursor is unambiguously a
+bare page token — the shape earlier versions emitted.
+"""
+
+
+def _encode_schedule_cursor(page_token: bytes | None, offset: int) -> str | None:
+    """Encode a resume position: a server page token plus an offset inside that page.
+
+    A page token alone cannot express where to resume, because the client-side filters
+    can exhaust ``limit`` in the *middle* of a page: the next page's token would skip
+    the entries of the current page that were fetched but never yielded. ``offset``
+    counts entries of the page that ``page_token`` fetches, so that tail is handed back
+    on the following call. Offset zero encodes to the bare token.
+    """
+
+    encoded = base64.urlsafe_b64encode(page_token).decode() if page_token else ""
+
+    if offset == 0:
+        return encoded or None
+
+    return f"{encoded}{_SCHEDULE_CURSOR_SEPARATOR}{offset}"
+
+
+def _decode_schedule_cursor(cursor: str | None) -> tuple[bytes | None, int]:
+    """Inverse of :func:`_encode_schedule_cursor`; a malformed cursor is caller-caused."""
+
+    if not cursor:
+        return None, 0
+
+    encoded, _, raw_offset = cursor.partition(_SCHEDULE_CURSOR_SEPARATOR)
+
+    try:
+        # ``binascii.Error`` (bad padding) subclasses ValueError, as does a
+        # non-numeric offset.
+        offset = int(raw_offset) if raw_offset else 0
+        token = base64.urlsafe_b64decode(encoded.encode()) if encoded else None
+
+    except ValueError as error:
+        raise exc.validation(
+            "Malformed schedule page token",
+            code="schedule.page_token_invalid",
+        ) from error
+
+    if offset < 0:
+        raise exc.validation(
+            "Malformed schedule page token",
+            code="schedule.page_token_invalid",
+        )
+
+    return token, offset
+
+
+def _accepts_schedule(
+    description: DurableWorkflowScheduleDescription,
+    *,
+    schedule_id_prefix: str | None,
+    workflow_name: str | None,
+) -> bool:
+    """Whether a listed schedule passes the caller's filters.
+
+    Prefix filtering is applied client-side: visibility-query support for
+    ``ScheduleId STARTS_WITH`` varies by server version and visibility store, so
+    relying on it could silently return unfiltered pages. Filtering here (like
+    ``workflow_name``) keeps the guarantee independent of the backing server, and
+    skipped entries do not consume the requested ``limit``.
+    """
+
+    if schedule_id_prefix is not None and not description.schedule_id.startswith(
+        schedule_id_prefix
+    ):
+        return False
+
+    return workflow_name is None or description.workflow_name == workflow_name
+
 
 @final
 @attrs.define(slots=True)
@@ -407,50 +487,57 @@ class TemporalClient(TemporalClientPort):
         schedule_id_prefix: str | None = None,
     ) -> TemporalScheduleListPage:
         c = self.__require_client()
-        page_size = limit if limit is not None else 100
+        page_size = limit if limit is not None else _DEFAULT_SCHEDULE_PAGE_SIZE
 
-        token_bytes = (
-            base64.urlsafe_b64decode(next_page_token.encode()) if next_page_token else None
-        )
+        page_token, offset = _decode_schedule_cursor(next_page_token)
 
         descriptions: list[DurableWorkflowScheduleDescription] = []
 
         iterator = await c.list_schedules(
             page_size=page_size,
-            next_page_token=token_bytes,
+            next_page_token=page_token,
         )
 
-        async for entry in iterator:
-            mapped = description_from_list_entry(entry)
+        # Pages are walked explicitly instead of with ``async for`` so that the token
+        # of the page being read stays in hand: filtering can stop the scan mid-page,
+        # and only ``(this page's token, position in it)`` resumes without dropping the
+        # entries that were fetched but never yielded.
+        while True:
+            await iterator.fetch_next_page()
+            page = iterator.current_page or ()
 
-            if mapped is None:
-                continue
+            index = offset
+            offset = 0  # only the page this call resumes into starts mid-way
 
-            # Prefix filtering is applied client-side: visibility-query support
-            # for ``ScheduleId STARTS_WITH`` varies by server version and
-            # visibility store, so relying on it could silently return
-            # unfiltered pages. Filtering here (like ``workflow_name`` below)
-            # keeps the guarantee independent of the backing server, and
-            # skipped entries do not consume the requested ``limit``.
-            if schedule_id_prefix is not None and not mapped.schedule_id.startswith(
-                schedule_id_prefix
-            ):
-                continue
+            while index < len(page):
+                mapped = description_from_list_entry(page[index])
+                index += 1
 
-            if workflow_name is not None and mapped.workflow_name != workflow_name:
-                continue
+                if mapped is None or not _accepts_schedule(
+                    mapped,
+                    schedule_id_prefix=schedule_id_prefix,
+                    workflow_name=workflow_name,
+                ):
+                    continue
 
-            descriptions.append(mapped)
+                descriptions.append(mapped)
 
-            if limit is not None and len(descriptions) >= limit:
-                break
+                if limit is None or len(descriptions) < limit:
+                    continue
 
-        next_token: str | None = None
+                return TemporalScheduleListPage(
+                    descriptions=tuple(descriptions),
+                    next_page_token=(
+                        _encode_schedule_cursor(page_token, index)
+                        if index < len(page)
+                        else _encode_schedule_cursor(iterator.next_page_token, 0)
+                    ),
+                )
 
-        if iterator.next_page_token:
-            next_token = base64.urlsafe_b64encode(iterator.next_page_token).decode()
+            if iterator.next_page_token is None:
+                return TemporalScheduleListPage(
+                    descriptions=tuple(descriptions),
+                    next_page_token=None,
+                )
 
-        return TemporalScheduleListPage(
-            descriptions=tuple(descriptions),
-            next_page_token=next_token,
-        )
+            page_token = iterator.next_page_token
