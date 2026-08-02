@@ -16,8 +16,11 @@ compare, and then pinned it.
 The four probes, and why these four:
 
 - an **absent** bucket listed with ``missing_ok=False`` — must raise;
-- the same bucket with ``missing_ok=True`` — must read as empty. Without this the first
-  probe is satisfied by a backend that simply always raises;
+- the same bucket with ``missing_ok=True`` — must read as empty *and say the container was
+  absent*. Without the first half the strict probe is satisfied by a backend that simply
+  always raises; without the second, ``missing_ok`` would answer a question by deleting it,
+  which under per-tenant buckets is the difference between an unprovisioned tenant and an
+  idle one;
 - an **emptied** bucket (created, written, cleared) — must read as empty with
   ``missing_ok=False``. This is the positive control that makes "raises" mean *absent*
   rather than "raises whenever there are no objects";
@@ -29,7 +32,7 @@ The four probes, and why these four:
 
 from __future__ import annotations
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Sequence
 from enum import StrEnum
 from typing import Any, Protocol
 
@@ -44,7 +47,15 @@ class ContainerVerdict(StrEnum):
     """What a read of a container-scoped operation did, normalised across backends."""
 
     EMPTY = "empty"
-    """Answered, with nothing in it."""
+    """Answered, with nothing in it — and the container was there to answer for."""
+
+    EMPTY_UNPROVISIONED = "empty-unprovisioned"
+    """Answered with nothing *and* said the container does not exist.
+
+    Distinct from :attr:`EMPTY` on purpose. ``missing_ok`` lets a caller tolerate an absent
+    container; it must not make the two indistinguishable, or a per-tenant deployment
+    reports the same blank page for a tenant nobody provisioned and a tenant that has
+    uploaded nothing."""
 
     NON_EMPTY = "non-empty"
 
@@ -59,6 +70,16 @@ class ContainerVerdict(StrEnum):
 # ....................... #
 
 
+class ObjectPage(Protocol):
+    """The part of a listing result this scenario reads."""
+
+    @property
+    def objects(self) -> Sequence[Any]: ...  # pragma: no cover
+
+    @property
+    def container_missing(self) -> bool: ...  # pragma: no cover
+
+
 class ListsObjects(Protocol):
     """The one read this scenario needs from a storage query port."""
 
@@ -68,7 +89,7 @@ class ListsObjects(Protocol):
         offset: int,
         *,
         missing_ok: bool = False,
-    ) -> Awaitable[tuple[list[Any], int]]: ...  # pragma: no cover
+    ) -> Awaitable[ObjectPage]: ...  # pragma: no cover
 
     def head(self, key: str) -> Awaitable[Any]: ...  # pragma: no cover
 
@@ -84,13 +105,18 @@ class ContainerOutcome:
     """``list(missing_ok=False)`` over a bucket nothing ever created."""
 
     absent_tolerant: ContainerVerdict
-    """The same list with ``missing_ok=True`` — the caller opting out of the distinction."""
+    """The same list with ``missing_ok=True`` — the caller opting out of the *raise*.
+
+    Must come back ``EMPTY_UNPROVISIONED``, not ``EMPTY``: tolerating the absence is not
+    the same as being told nothing about it."""
 
     emptied_strict: ContainerVerdict
     """``list(missing_ok=False)`` over a bucket that exists and holds nothing.
 
-    The positive control. Without it, ``absent_strict`` raising proves only that something
-    raised, which a backend that refuses every empty listing would satisfy just as well.
+    The positive control, twice over. Without it, ``absent_strict`` raising proves only
+    that something raised, which a backend that refuses every empty listing would satisfy
+    just as well — and it is what stops a backend from passing ``absent_tolerant`` by
+    flagging *every* empty page as unprovisioned.
     """
 
     head_absent_object: ContainerVerdict
@@ -106,7 +132,7 @@ class ContainerOutcome:
 
 EXPECTED_CONTAINER_OUTCOME = ContainerOutcome(
     absent_strict=ContainerVerdict.MISSING_CONTAINER,
-    absent_tolerant=ContainerVerdict.EMPTY,
+    absent_tolerant=ContainerVerdict.EMPTY_UNPROVISIONED,
     emptied_strict=ContainerVerdict.EMPTY,
     head_absent_object=ContainerVerdict.MISSING_OBJECT,
     head_absent_container=ContainerVerdict.MISSING_OBJECT,
@@ -119,11 +145,14 @@ EXPECTED_CONTAINER_OUTCOME = ContainerOutcome(
 
 async def _list_verdict(port: ListsObjects, *, missing_ok: bool) -> ContainerVerdict:
     try:
-        objects, _total = await port.list(100, 0, missing_ok=missing_ok)
+        page = await port.list(100, 0, missing_ok=missing_ok)
     except CoreException as error:
         return _refusal_verdict(error)
 
-    return ContainerVerdict.EMPTY if not objects else ContainerVerdict.NON_EMPTY
+    if page.container_missing:
+        return ContainerVerdict.EMPTY_UNPROVISIONED
+
+    return ContainerVerdict.EMPTY if not page.objects else ContainerVerdict.NON_EMPTY
 
 
 async def _head_verdict(port: ListsObjects, key: str) -> ContainerVerdict:

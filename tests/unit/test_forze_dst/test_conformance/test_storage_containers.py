@@ -129,7 +129,9 @@ async def test_reads_never_provision_a_container() -> None:
     with pytest.raises(CoreException):
         await port.list(10, 0)
 
-    assert await port.list(10, 0, missing_ok=True) == ([], 0)
+    tolerated = await port.list(10, 0, missing_ok=True)
+    assert (tolerated.objects, tolerated.total) == ([], 0)
+    assert tolerated.container_missing is True
 
     with pytest.raises(CoreException):
         await port.head("nope")
@@ -163,9 +165,9 @@ async def test_every_documented_write_path_provisions(write: str) -> None:
         case "begin_upload":
             await port.begin_upload("k")
 
-    listed, _total = await port.list(10, 0)
+    listed = await port.list(10, 0)
 
-    assert isinstance(listed, list), "the container must now exist and be listable"
+    assert listed.container_missing is False, "the write path must have provisioned"
 
 
 async def test_a_head_that_succeeds_is_not_reported_as_missing() -> None:

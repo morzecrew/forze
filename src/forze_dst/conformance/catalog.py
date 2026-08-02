@@ -282,7 +282,12 @@ STORAGE_DIVERGENCES: tuple[PlaneDivergence, ...] = (
             "lacked (MockState.storage_buckets) before there was anything to compare: reads "
             "never provision, the four documented write paths do, exactly as the real "
             "adapters draw the line. The sweep's own test then had to say which state it "
-            "meant, having asserted 'empty' while exercising 'absent'."
+            "meant, having asserted 'empty' while exercising 'absent'. The unification "
+            "goes one step further than the raise: missing_ok lets a caller tolerate an "
+            "absent container without being made blind to it, since every backend now "
+            "reports StoredObjectPage.container_missing — under per-tenant buckets the "
+            "absent case is the normal state of every tenant that has not uploaded yet, "
+            "and collapsing it into a plain empty page hid exactly that population."
         ),
         probe=(
             "tests/unit/test_forze_mock/test_mock_storage_conformance.py::"

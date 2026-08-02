@@ -34,6 +34,7 @@ from forze.application.contracts.storage.value_objects import (
     PresignedUrl,
     RangedDownload,
     StoredObject,
+    StoredObjectPage,
     StreamedDownload,
     UploadedObject,
     UploadPart,
@@ -1544,7 +1545,7 @@ class ObjectStorageAdapter(
         prefix: tuple[str, ...] | str | None = None,
         include_tags: bool = False,
         missing_ok: bool = False,
-    ) -> tuple[list[StoredObject], int]:
+    ) -> StoredObjectPage:
         """List stored objects with pagination.
 
         ``include_tags`` is a guarantee, not a filter: with the default
@@ -1568,6 +1569,11 @@ class ObjectStorageAdapter(
         unprovisioned bucket legitimately means "nothing stored yet" — the object-list
         route on a fresh deployment, a portability export of an app with no blobs — rather
         than a fault. The sweep keeps the default so a *vanished* bucket still raises.
+
+        Tolerating the absence does not mean discarding it: the empty page carries
+        :attr:`StoredObjectPage.container_missing`. Under per-tenant buckets that flag is
+        the difference between a tenant nothing has provisioned and a tenant that has
+        simply uploaded nothing, which are the same zero objects to anyone downstream.
         """
 
         prefix = default_path_codec.join(prefix)
@@ -1593,7 +1599,7 @@ class ObjectStorageAdapter(
                 # outage, a permission error) still propagates. The existence probe is a
                 # read, so it never creates the bucket the raise was distinguishing.
                 if missing_ok and not await self.client.bucket_exists(bucket):
-                    return [], 0
+                    return StoredObjectPage(objects=[], total=0, container_missing=True)
 
                 raise
 
@@ -1608,7 +1614,7 @@ class ObjectStorageAdapter(
                 for o, h in zip(objects, heads, strict=True)
             ]
 
-        return out, total_count
+        return StoredObjectPage(objects=out, total=total_count)
 
     # ....................... #
 

@@ -207,13 +207,13 @@ async def reencrypt_objects(
     offset = 0
 
     while True:
-        page, _ = await query.list(page_size, offset, prefix=prefix)
+        page = await query.list(page_size, offset, prefix=prefix)
 
-        if not page:
+        if not page.objects:
             break
 
-        keys.extend(item.key for item in page)
-        offset += len(page)
+        keys.extend(item.key for item in page.objects)
+        offset += len(page.objects)
 
     rewritten = 0
     skipped = 0

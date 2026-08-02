@@ -160,17 +160,17 @@ async def check_listing_is_ordered_by_key(h: StorageHarness) -> None:
             f"{prefix}/{name}.txt", one_chunk(b"x"), content_type="text/plain"
         )
 
-    listed, total = await h.query.list(limit=10, offset=0, prefix=prefix)
+    listed = await h.query.list(limit=10, offset=0, prefix=prefix)
 
-    assert total == 3
-    assert [obj.key for obj in listed] == [
+    assert listed.total == 3
+    assert [obj.key for obj in listed.objects] == [
         f"{prefix}/alpha.txt",
         f"{prefix}/mid.txt",
         f"{prefix}/zeta.txt",
     ]
 
     # And ``offset`` walks that same order.
-    page, _ = await h.query.list(limit=1, offset=1, prefix=prefix)
+    page = (await h.query.list(limit=1, offset=1, prefix=prefix)).objects
     assert [obj.key for obj in page] == [f"{prefix}/mid.txt"]
 
 

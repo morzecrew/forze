@@ -161,6 +161,36 @@ class StoredObject(_InternalMetadata):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class StoredObjectPage:
+    """One page of a listing, plus whether the container was there to list.
+
+    The third field exists because ``missing_ok=True`` otherwise *erases* the answer to a
+    question its callers still need. An absent container and an empty one both reduce to
+    zero objects, and under per-tenant buckets — where a tenant's container is created by
+    its first write — the absent case is the normal state of every tenant that has not
+    uploaded yet. A listing route could not tell an unprovisioned tenant from an idle one,
+    and neither could an operator reading its output.
+    """
+
+    objects: list[StoredObject]
+    """Objects on this page, lexicographically by key."""
+
+    total: int
+    """Total matching objects across all pages; ``0`` when the container is missing."""
+
+    container_missing: bool = False
+    """``True`` only when ``missing_ok`` turned an absent container into this empty page.
+
+    Never ``True`` for a container that exists and holds nothing — that is the distinction.
+    Always ``False`` when ``missing_ok`` is not set, because the listing raises instead.
+    """
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class ObjectHead:
     """Honest head/metadata view of a stored object.
 

@@ -196,13 +196,13 @@ async def list_keys(query: Any) -> list[str]:
     offset = 0
 
     while True:
-        page, _ = await query.list(BLOB_PAGE, offset, missing_ok=True)
+        page = await query.list(BLOB_PAGE, offset, missing_ok=True)
 
-        if not page:
+        if not page.objects:
             return keys
 
-        keys.extend(obj.key for obj in page)
-        offset += len(page)
+        keys.extend(obj.key for obj in page.objects)
+        offset += len(page.objects)
 
 
 # ....................... #
