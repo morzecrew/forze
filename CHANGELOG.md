@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Docs floors** — a public contract symbol that no page mentions now fails CI, the coverage-floors move applied to documentation:
+
+- New `[tool.docs_floors]` in `pyproject.toml` enforced by `.github/scripts/docs_floors.py`, wired into `just quality`; `just docs-check` runs it alone. Checks three properties: every public `DepKey`/`*Spec` under `contracts/` is mentioned in `pages/docs`, the nav resolves in both directions (no dangling entry, no orphan page), and every relative link between docs lands.
+- Exemptions are grouped and reasoned, and checked both ways: a symbol that no longer exists fails, and so does one that has since been documented — the table can only shrink. 82/133 symbols documented, 51 declared.
+- New `reference/spec-registry.md`; the realtime, object-storage and graph Agent Skills are refreshed against this release's contract changes.
+
 **Conformance ratchet** — a backend that registers a manifested port without running that plane's differential leg now fails CI:
 
 - New `[tool.conformance_manifest]` in `pyproject.toml` (planes, dep keys, engines, gaps, exemptions) enforced by `.github/scripts/conformance_manifest.py`, wired into `just quality`; `just conformance-check` / `just conformance` run it alone. Every `DepKey` under `contracts/` must be claimed exactly once.

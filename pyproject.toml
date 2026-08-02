@@ -342,6 +342,132 @@ default = 80
 [tool.coverage_floors.exceptions]
 
 # ....................... #
+# Docs floors (.github/scripts/docs_floors.py)
+#
+# The coverage-floors move, applied to documentation. A public contract symbol that no
+# page mentions is the debt that recurred through six audits: the plane ships, the docs
+# follow a release or three later, and nothing fails in between. Here it fails.
+#
+# Three properties: every public DepKey/*Spec under contracts/ is mentioned somewhere in
+# pages/docs; the nav resolves both ways (no dangling entry, no orphan page); every
+# relative link between docs resolves.
+#
+# Exemptions are grouped and reasoned, like the conformance manifest's declared gaps —
+# and they are checked in BOTH directions: an exempt symbol that no longer exists fails,
+# and so does one that has since been documented. The table can only shrink.
+#
+# Locally: `just docs-check` (offline, ~5s) — part of `just quality`.
+
+[tool.docs_floors]
+docs_root = "pages/docs"
+nav_config = "pages/zensical.toml"
+# Snippet includes pulled into other pages with `--8<--`; they are content, not
+# destinations, so they are deliberately absent from the nav.
+orphan_allow = ["dst/_generated/*.md"]
+
+[[tool.docs_floors.exempt_groups]]
+kind = "port-plane-undocumented"
+symbols = [
+    "AnalyticsIngestDepKey",
+    "AnalyticsQueryDepKey",
+    "CounterAdminDepKey",
+    "DistributedLockCommandDepKey",
+    "DistributedLockQueryDepKey",
+    "DocumentQueryDepKey",
+    "DomainEventDispatcherDepKey",
+    "EmbeddingsProviderDepKey",
+    "FederatedSearchQueryDepKey",
+    "GraphCommandDepKey",
+    "GraphManagementDepKey",
+    "GraphQueryDepKey",
+    "GraphRawQueryDepKey",
+    "HubSearchQueryDepKey",
+    "OutboxAdminDepKey",
+    "OutboxCommandDepKey",
+    "OutboxQueryDepKey",
+    "ProcedureCommandDepKey",
+    "ResilienceExecutorDepKey",
+    "ResiliencePortPoliciesDepKey",
+    "RotatingCredentialsAdminDepKey",
+    "SearchCommandDepKey",
+    "SearchManagementDepKey",
+    "SearchQueryDepKey",
+    "SearchResultSnapshotDepKey",
+    "StorageCommandDepKey",
+    "StorageQueryDepKey",
+    "StorageUploadSessionDepKey",
+    "TransactionManagerDepKey",
+]
+reason = """
+The plane is documented — its ports, verbs and semantics all have pages — but the pages \
+speak in terms of the accessor (`ctx.storage.query(spec)`) rather than the dep key behind \
+it, so the key's own symbol never appears. That is mostly the right altitude for a guide: \
+an app author resolves through `ctx`, and the key matters only when wiring a custom \
+provider. What is missing is the wiring-facing half — one reference table mapping every \
+dep key to its accessor, its plane and the modules that register it. Until that page \
+exists these are declared rather than pretended-documented, and this is the single \
+biggest entry in the table for that reason.\
+"""
+
+[[tool.docs_floors.exempt_groups]]
+kind = "identity-plane-undocumented"
+symbols = [
+    "ApiKeyLifecycleDepKey",
+    "AuthnEventSinkDepKey",
+    "AuthzDecisionDepKey",
+    "AuthzScopeDepKey",
+    "DelegationDepKey",
+    "DelegationGrantDepKey",
+    "GrantQueryDepKey",
+    "PasswordAccountProvisioningDepKey",
+    "PasswordLifecycleDepKey",
+    "PrincipalDeactivationDepKey",
+    "PrincipalEligibilityDepKey",
+    "PrincipalRegistryDepKey",
+    "RoleAssignmentDepKey",
+    "TokenLifecycleDepKey",
+]
+reason = """
+The identity plane splits its surface across many small lifecycle ports, and the docs \
+teach it through the presets and recipes that wire them together rather than port by \
+port. The gap is real for anyone replacing one port (a custom password lifecycle, an \
+external principal registry), which is exactly the audience the identity reference page \
+does not yet serve.\
+"""
+
+[[tool.docs_floors.exempt_groups]]
+kind = "crypto-internals-undocumented"
+symbols = [
+    "DeterministicCipherDepKey",
+    "KeyDirectoryDepKey",
+    "RequiredReachDepKey",
+]
+reason = """
+Wired by `CryptoDepsModule` and rarely named by an application: the encryption page \
+teaches the policy (`FieldEncryption`, tiers, the keyring) and leaves the keys that \
+module binds implicit. Documenting them belongs with the same dep-key reference table \
+the port-plane group is waiting on.\
+"""
+
+[[tool.docs_floors.exempt_groups]]
+kind = "structural-base-types"
+symbols = [
+    "AggregateTruncSpec",
+    "BaseSpec",
+    "IngestSpec",
+    "QuerySortKeySpec",
+    "TenancyRouteSpec",
+]
+reason = """
+Not application-facing vocabulary: `BaseSpec` is the shared base every documented spec \
+inherits, and the rest are structural parts of a documented surface (an aggregate \
+truncation unit, a sort-key declaration, an ingest target, a tenancy route) that the \
+pages describe by behaviour rather than by type name. Documenting the type would add a \
+name to learn without adding a decision to make — the one case where the gate's bar is \
+worth declining rather than meeting.\
+"""
+
+# ....................... #
 # Conformance manifest (.github/scripts/conformance_manifest.py)
 #
 # The differential ratchet, built on the same shape as the coverage floors above.
