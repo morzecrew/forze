@@ -29,12 +29,17 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, final
+from uuid import uuid4
 
 import attrs
 import pytest
 
 from forze.application.contracts.storage import SELF_COPY_CODE, UploadedObject
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze_dst.conformance.storage import (
+    EXPECTED_CONTAINER_OUTCOME,
+    run_container_probes,
+)
 
 # ----------------------- #
 
@@ -55,6 +60,15 @@ class StorageHarness:
 
     key: Callable[[str], str]
     """A key unique to this run, so checks are order-independent on a shared bucket."""
+
+    for_bucket: Callable[[str], tuple[Any, Any]] | None = None
+    """Build ``(query, command)`` ports over an arbitrary bucket *name*, provisioned or not.
+
+    The absent-vs-empty check needs whole containers in known states, which the shared
+    bucket cannot provide: other checks are writing into it, so it is never empty, and it
+    certainly is not absent. ``None`` for a leg that cannot address an arbitrary bucket —
+    the check then skips visibly rather than passing against the wrong thing.
+    """
 
 
 Check = Callable[[StorageHarness], Awaitable[None]]
@@ -208,7 +222,41 @@ async def check_conditional_overwrite_of_a_missing_object_fails(h: StorageHarnes
     assert missing.value.kind is ExceptionKind.NOT_FOUND
 
 
+async def check_an_absent_container_is_not_an_empty_one(h: StorageHarness) -> None:
+    """A bucket nobody created reads differently from one that was emptied.
+
+    This is the check the oracle could not have failed before, and not for want of effort:
+    the mock reached its bucket through ``setdefault``, so a container existed the instant
+    anything looked at it and ``missing_ok`` was documented as a no-op. The contract was
+    structurally inexpressible there, which is a stronger statement than "untested" — every
+    mock-backed test of it was green without exercising anything at all.
+
+    Both states are built here rather than assumed: the emptied bucket is written to and
+    then cleared, because a write is the only portable way to provision one (every shipped
+    backend creates on demand from a write, and from nothing else).
+    """
+
+    if h.for_bucket is None:
+        pytest.skip("this leg cannot address an arbitrary bucket by name")
+
+    run = uuid4().hex[:12]
+    absent_query, _ = h.for_bucket(f"forze-absent-{run}")
+    emptied_query, emptied_command = h.for_bucket(f"forze-emptied-{run}")
+
+    seeded = await emptied_command.upload(UploadedObject(filename="seed.txt", data=b"x"))
+    await emptied_command.delete(seeded.key)
+
+    outcome = await run_container_probes(
+        absent=absent_query,
+        emptied=emptied_query,
+        missing_key=h.key("never-written"),
+    )
+
+    assert outcome == EXPECTED_CONTAINER_OUTCOME
+
+
 STORAGE_BATTERY: tuple[Check, ...] = (
+    check_an_absent_container_is_not_an_empty_one,
     check_deleting_a_missing_object_is_a_no_op,
     check_aborting_an_upload_twice_is_a_no_op,
     check_copying_onto_the_same_key_is_refused,

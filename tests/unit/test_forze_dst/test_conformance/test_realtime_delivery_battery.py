@@ -126,6 +126,7 @@ async def _run(
 # ----------------------- #
 
 
+@pytest.mark.conformance(plane="realtime_delivery", engine="mock")
 class TestMockGatewayCrashDelivery:
     async def test_crash_before_bridge_recovers_every_signal_once(self) -> None:
         outcome = await _run(crash=GatewayCrashPoint.BEFORE_BRIDGE)

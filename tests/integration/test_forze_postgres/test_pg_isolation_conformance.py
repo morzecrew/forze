@@ -140,6 +140,7 @@ _LOCK_RACE_BATTERY = tuple(case for case in BATTERY if case.abort_engine_only)
 
 
 @pytest.mark.integration
+@pytest.mark.conformance(plane="isolation", engine="postgres")
 @pytest.mark.parametrize("case", _LOCK_SAFE_BATTERY, ids=lambda case: case.name)
 @pytest.mark.parametrize("level", _LEVELS, ids=lambda level: level.name)
 class TestPostgresIsolationDifferential:

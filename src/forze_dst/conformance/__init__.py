@@ -27,6 +27,23 @@ drown in false positives.
 from __future__ import annotations
 
 from .anomalies import BATTERY, AnomalyCase, expected_verdict
+from .catalog import (
+    PLANE_DIVERGENCES,
+    DivergenceResolution,
+    EngineBehaviour,
+    PlaneDivergence,
+)
+from .counters import (
+    EXPECTED_ALLOCATION,
+    EXPECTED_CEILING_PORTABLE,
+    EXPECTED_PARTITIONS,
+    CeilingOutcome,
+    CounterOutcome,
+    PartitionOutcome,
+    run_counter_allocation,
+    run_counter_ceiling,
+    run_counter_partitions,
+)
 from .delivery import (
     DELIVERY_EVENTS,
     DELIVERY_INBOX,
@@ -48,6 +65,11 @@ from .harness import (
     is_serialization_conflict,
     record_outcome,
 )
+from .inference import (
+    CapabilityGateOutcome,
+    GateVerdict,
+    run_capability_gates,
+)
 from .realtime import (
     REALTIME_DELIVERY_GROUP,
     REALTIME_DELIVERY_PRINCIPAL,
@@ -66,6 +88,12 @@ from .report import (
     render_markdown,
     write_matrix,
 )
+from .storage import (
+    EXPECTED_CONTAINER_OUTCOME,
+    ContainerOutcome,
+    ContainerVerdict,
+    run_container_probes,
+)
 from .transfer import (
     Detection,
     TransferClassification,
@@ -83,6 +111,26 @@ __all__ = [
     "AnomalyCase",
     "BATTERY",
     "expected_verdict",
+    "PLANE_DIVERGENCES",
+    "DivergenceResolution",
+    "EngineBehaviour",
+    "PlaneDivergence",
+    "CeilingOutcome",
+    "CounterOutcome",
+    "PartitionOutcome",
+    "EXPECTED_ALLOCATION",
+    "EXPECTED_CEILING_PORTABLE",
+    "EXPECTED_PARTITIONS",
+    "run_counter_allocation",
+    "run_counter_ceiling",
+    "run_counter_partitions",
+    "CapabilityGateOutcome",
+    "GateVerdict",
+    "run_capability_gates",
+    "ContainerOutcome",
+    "ContainerVerdict",
+    "EXPECTED_CONTAINER_OUTCOME",
+    "run_container_probes",
     "CellVerdict",
     "Classification",
     "FidelityMatrix",

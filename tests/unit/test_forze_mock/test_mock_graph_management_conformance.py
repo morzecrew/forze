@@ -56,6 +56,7 @@ def harness() -> GraphManagementHarness:
     )
 
 
+@pytest.mark.conformance(plane="graph_management", engine="mock")
 @pytest.mark.parametrize("check", GRAPH_MANAGEMENT_BATTERY, ids=lambda check: check.__name__)
 async def test_graph_management_battery(check: Check, harness: GraphManagementHarness) -> None:
     await check(harness)

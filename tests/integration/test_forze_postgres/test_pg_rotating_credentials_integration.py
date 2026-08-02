@@ -192,6 +192,7 @@ async def harness(
 # ....................... #
 
 
+@pytest.mark.conformance(plane="rotating_credentials", engine="postgres")
 @pytest.mark.parametrize("check", ROTATING_STORE_BATTERY, ids=lambda check: check.__name__)
 async def test_rotating_store_battery(check: Check, harness: RotatingStoreHarness) -> None:
     await check(harness)

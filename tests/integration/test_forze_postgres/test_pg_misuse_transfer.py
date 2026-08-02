@@ -120,6 +120,7 @@ async def misuse_tables(pg_client: PostgresClient):
 
 
 @pytest.mark.integration
+@pytest.mark.conformance(plane="misuse_transfer", engine="postgres")
 class TestPostgresMisuseTransfer:
     async def test_every_script_agrees_and_ground_truth_is_licensed(
         self, pg_client: PostgresClient, misuse_tables

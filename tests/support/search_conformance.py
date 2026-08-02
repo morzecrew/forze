@@ -33,12 +33,14 @@ which pins each backend's *declared* answer instead of forcing agreement.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
 import attrs
 import pytest
 
+from forze.application.contracts.querying import UNSUPPORTED_QUERY_FEATURE_CODE
 from forze.application.contracts.search import (
     SearchCommandPort,
     SearchManagementPort,
@@ -51,18 +53,28 @@ from forze.base.exceptions import CoreException
 PROBE_TERM = "python"
 """A term every corpus document contains, so relevance never decides membership."""
 
-CORPUS: tuple[tuple[str, str, str], ...] = (
-    ("alpha guide", "python basics", "books"),
-    ("beta guide", "python advanced", "books"),
-    ("gamma notes", "python tips", "notes"),
-    ("delta notes", "python tricks", "notes"),
+CORPUS: tuple[tuple[str, str, str, Decimal], ...] = (
+    ("alpha guide", "python basics", "books", Decimal("123.456789012345678901")),
+    ("beta guide", "python advanced", "books", Decimal("234.567890123456789012")),
+    ("gamma notes", "python tips", "notes", Decimal("345.678901234567890123")),
+    ("delta notes", "python tricks", "notes", Decimal("456.789012345678901234")),
 )
-"""``(title, content, category)`` rows every leg seeds identically.
+"""``(title, content, category, price)`` rows every leg seeds identically.
 
 Titles are distinct and sort unambiguously (alpha/beta/delta/gamma), so an explicit sort
 has exactly one correct answer on every engine. ``category`` splits the corpus 2/2 for the
 filter check and is never searched, so it stays an exact predicate rather than a text match.
+
+``price`` carries **21 significant digits**, which is the point of the number rather than an
+affectation: an f64 cannot hold it, so any backend that round-trips the value through a
+double comes back visibly wrong instead of plausibly wrong. Meilisearch indexes decimals as
+f64 precisely so it can filter and sort them, and carries the exact value in a shadow field
+alongside — a mechanism that has to be checked from the outside, since a rounded read looks
+entirely reasonable until someone reconciles it against a ledger.
 """
+
+PRICES: tuple[Decimal, ...] = tuple(price for *_rest, price in CORPUS)
+"""The corpus prices, exact — what a projected read must return, digit for digit."""
 
 TITLES_ASC = ("alpha guide", "beta guide", "delta notes", "gamma notes")
 """The corpus titles in ascending order — the expected order under an explicit sort."""
@@ -290,7 +302,95 @@ async def check_phrase_combine_is_honored(h: SearchHarness) -> None:
     assert sorted(_titles(conjunction)) == list(NOTES_TITLES), h.backend
 
 
+async def check_the_stream_gate_matches_the_declaration(h: SearchHarness) -> None:
+    """A backend serves ``search_stream`` if and only if it declares ``supports_stream``.
+
+    Templated on the inference capability gate, but the shape it found is different and
+    worth stating: the search oracle does **not** advertise a superset. It declares the same
+    narrow surface Postgres and Mongo do, so there is no untold-mock divergence to mirror
+    away — which is why this check asserts self-consistency per backend instead.
+
+    That is the property with teeth here anyway. The capability's own contract says an
+    offset-only backend must *refuse* the stream rather than emulate it via deep offset,
+    "which would silently truncate" — a backend quietly serving a stream it declared it
+    could not is how a bounded-memory export comes back short with no error at all. Both
+    directions are checked, because a backend that refuses everything satisfies half of
+    this just as well as a correct one does.
+    """
+
+    declared = h.query.search_capabilities.supports_stream
+
+    if declared:
+        # The stream yields CHUNKS, not hits — the bounded-memory unit is the page.
+        streamed = [
+            hit.title
+            async for chunk in h.query.search_stream(PROBE_TERM, None, None)
+            for hit in chunk
+        ]
+
+        assert sorted(streamed) == sorted(await _all_titles(h)), (
+            f"{h.backend}: declares supports_stream but the stream and the page disagree"
+        )
+
+        return
+
+    with pytest.raises(CoreException) as refused:
+        async for _chunk in h.query.search_stream(PROBE_TERM, None, None):
+            pass
+
+    assert refused.value.code == UNSUPPORTED_QUERY_FEATURE_CODE, (
+        f"{h.backend}: refused the undeclared stream, but not as a capability gate"
+    )
+
+
+async def check_a_projected_decimal_survives_search_and_count(h: SearchHarness) -> None:
+    """A projection returns the same fields and the same exact Decimal with or without a count.
+
+    Two failures ride together here, and both are quiet ones.
+
+    The **field set** must be exactly what was asked for. An engine that keeps an internal
+    companion field — Meilisearch shadows every Decimal with its exact string, because the
+    indexed copy is an f64 it can sort — must not let that field surface in a projected row.
+    A leaked ``_forze_...`` key does not raise; it just appears in a caller's dict, gets
+    serialized into an API response, and becomes a field somebody depends on.
+
+    The **value** must be exact. A Decimal that round-trips through a double comes back
+    subtly wrong, which is the worst kind of wrong for a price: it renders, it compares, it
+    sums — to something nobody can reconcile. The corpus uses 21 significant digits so a
+    rounded read cannot masquerade as a correct one.
+
+    And both are asserted for ``project_search`` *and* ``project_search_page``, because they
+    are different code paths on every backend — one skips the count, the other does not —
+    and a projection built correctly in one is no evidence about the other.
+    """
+
+    fields = ["title", "price"]
+    sorts = {"title": "asc"}
+
+    countless = await h.query.project_search(fields, PROBE_TERM, None, {"limit": 50}, sorts)
+    counted = await h.query.project_search_page(fields, PROBE_TERM, None, {"limit": 50}, sorts)
+
+    for label, page in (("project_search", countless), ("project_search_page", counted)):
+        assert len(page.hits) == len(CORPUS), f"{h.backend}.{label}"
+
+        for row in page.hits:
+            assert set(row) == set(fields), f"{h.backend}.{label}: {sorted(row)}"
+
+    # Exact to the last digit, on both paths. Compared as Decimal rather than by string, so
+    # a backend returning a numerically equal value in another form still passes.
+    for label, page in (("project_search", countless), ("project_search_page", counted)):
+        prices = sorted(Decimal(str(row["price"])) for row in page.hits)
+
+        assert prices == sorted(PRICES), f"{h.backend}.{label}: {prices}"
+
+    assert [row["title"] for row in countless.hits] == [row["title"] for row in counted.hits], (
+        f"{h.backend}: asking for a total changed which rows came back"
+    )
+
+
 SEARCH_BATTERY: tuple[Check, ...] = (
+    check_a_projected_decimal_survives_search_and_count,
+    check_the_stream_gate_matches_the_declaration,
     check_a_zero_match_query_is_an_empty_page,
     check_page_count_matches_the_hits_it_returns,
     check_limit_offset_windows_partition_the_result_set,
@@ -457,8 +557,14 @@ def corpus_rows(id_factory: Callable[[], Any]) -> list[dict[str, Any]]:
     """The corpus as plain records, ready for whichever writer a backend needs."""
 
     return [
-        {"id": id_factory(), "title": title, "content": content, "category": category}
-        for title, content, category in CORPUS
+        {
+            "id": id_factory(),
+            "title": title,
+            "content": content,
+            "category": category,
+            "price": price,
+        }
+        for title, content, category, price in CORPUS
     ]
 
 

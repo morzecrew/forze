@@ -67,6 +67,7 @@ def harness(client: InferenceHttpClient) -> InferenceHarness:
     )
 
 
+@pytest.mark.conformance(plane="inference", engine="mlflow")
 @pytest.mark.parametrize("check", INFERENCE_BATTERY, ids=lambda check: check.__name__)
 async def test_inference_battery(check: Check, harness: InferenceHarness) -> None:
     await check(harness)

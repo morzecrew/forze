@@ -277,12 +277,25 @@ def neighbors(
     edge_types: Iterable[str],
     tenant_field: str | None = None,
     interior: bool = False,
+    filter_to_kinds: bool = False,
 ) -> str:
+    """Adjacent vertices, bounded by ``$limit``.
+
+    ``filter_to_kinds`` moves the caller's vertex-kind filter into the query, against
+    ``$to_kinds``. It has to be here rather than applied to the result rows: ``LIMIT``
+    would otherwise run *before* the filter, so a caller asking for five neighbours of a
+    given kind could get fewer — or none — while plenty existed just past the cut. The
+    filtered-out rows are not a page boundary the caller can page past, so the shortfall
+    reads as "there are no more", which is a wrong answer rather than a partial one.
+    """
+
     rel = _rel(direction, _type_pattern(edge_types))
     other = f"(m{_tenant_only_map(tenant_field, interior=interior)})"
+    kind_filter = "\nWHERE any(lbl IN labels(m) WHERE lbl IN $to_kinds)" if filter_to_kinds else ""
 
     return (
-        f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)}){rel}{other}\n"
+        f"MATCH (n:{quote(label)} {_match_map(key_field, tenant_field)}){rel}{other}"
+        f"{kind_filter}\n"
         f"RETURN properties(m) AS other, labels(m) AS other_labels, "
         f"properties(r) AS via_edge, type(r) AS via_type\nLIMIT $limit"
     )

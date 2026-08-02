@@ -8,6 +8,7 @@ plane consistent.
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -21,24 +22,29 @@ from tests.support.storage_conformance import STORAGE_BATTERY, Check, StorageHar
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
+def _ports(s3_client, bucket: str) -> tuple[Any, Any]:
+    ctx = context_from_deps(
+        S3DepsModule(client=s3_client, storages={bucket: S3StorageConfig(bucket=bucket)})()
+    )
+    spec = StorageSpec(name=bucket)
+
+    return ctx.storage.query(spec), ctx.storage.command(spec)
+
+
 @pytest_asyncio.fixture
 async def harness(s3_client, s3_bucket) -> StorageHarness:
-    ctx = context_from_deps(
-        S3DepsModule(
-            client=s3_client,
-            storages={s3_bucket: S3StorageConfig(bucket=s3_bucket)},
-        )()
-    )
-    spec = StorageSpec(name=s3_bucket)
+    query, command = _ports(s3_client, s3_bucket)
     run = uuid4().hex[:8]
 
     return StorageHarness(
-        cmd=ctx.storage.command(spec),
-        query=ctx.storage.query(spec),
+        cmd=command,
+        query=query,
         key=lambda name: f"{name}-{run}",
+        for_bucket=lambda bucket: _ports(s3_client, bucket),
     )
 
 
+@pytest.mark.conformance(plane="storage", engine="s3")
 @pytest.mark.parametrize("check", STORAGE_BATTERY, ids=lambda check: check.__name__)
 async def test_storage_battery(check: Check, harness: StorageHarness) -> None:
     await check(harness)

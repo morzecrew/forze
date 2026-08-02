@@ -37,6 +37,7 @@ _LEVELS = (
 # ....................... #
 
 
+@pytest.mark.conformance(plane="isolation", engine="mock")
 @pytest.mark.parametrize("case", BATTERY, ids=lambda c: c.name)
 @pytest.mark.parametrize("level", _LEVELS, ids=lambda level: level.name)
 class TestIsolationBattery:

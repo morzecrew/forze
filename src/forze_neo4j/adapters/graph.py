@@ -474,10 +474,22 @@ class Neo4jGraphAdapter(TenancyMixin):
             edge_types=edge_kinds,
             tenant_field=self._tenant_field,
             interior=self._interior_scope,
+            filter_to_kinds=to_vertex_kinds is not None,
         )
+        # The kind filter has to reach the query, or LIMIT truncates before it and the
+        # caller silently receives fewer matches than exist. The Python pass below is not
+        # thereby redundant: Cypher matches on *any* label, while the caller is handed the
+        # single kind `_node_kind_from_labels` resolves, and for a multi-labelled node the
+        # two can disagree. Keeping both means the returned rows match the kind the caller
+        # actually sees.
+        extra: dict[str, Any] = {"key": origin.key, "limit": limit}
+
+        if to_vertex_kinds is not None:
+            extra["to_kinds"] = sorted(to_vertex_kinds)
+
         rows = await self.client.run(
             query,
-            self._params(key=origin.key, limit=limit),
+            self._params(**extra),
             database=await self._resolved_database(),
         )
 

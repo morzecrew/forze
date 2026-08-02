@@ -33,6 +33,7 @@ def harness() -> IdempotencyHarness:
     )
 
 
+@pytest.mark.conformance(plane="idempotency", engine="mock")
 @pytest.mark.parametrize("check", IDEMPOTENCY_BATTERY, ids=lambda check: check.__name__)
 async def test_idempotency_battery(check: Check, harness: IdempotencyHarness) -> None:
     await check(harness)

@@ -49,10 +49,15 @@ from pydantic import BaseModel
 
 from forze.application.contracts.inference import (
     UNSUPPORTED_INFERENCE_FEATURE_CODE,
+    InferenceCapabilities,
     InferencePort,
+    InferenceSpec,
 )
 from forze.application.integrations.inference import BUDGET_EXHAUSTED_CODE
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.testing import context_from_modules
+from forze_dst.conformance.inference import GateVerdict, run_capability_gates
+from forze_mock import MockDepsModule, MockInferenceRegistry
 
 # ----------------------- #
 
@@ -280,8 +285,72 @@ async def check_an_off_spec_instance_fails_the_whole_call(h: InferenceHarness) -
 
 # ....................... #
 
+MIRROR_ROUTE = "capability-mirror"
+"""Route name for the oracle standing in for the backend under test."""
+
+
+def _mirror(capabilities: InferenceCapabilities | None) -> InferenceRoute:
+    """A mock route declaring *capabilities* — the oracle told (or not told) the surface.
+
+    ``None`` is the case the two checks below exist for: an unregistered route falls back
+    to the full surface, which is what a wiring that forgot ``capabilities=`` produces.
+    """
+
+    registry = MockInferenceRegistry().on(MIRROR_ROUTE, _double, capabilities=capabilities)
+    spec = InferenceSpec(name=MIRROR_ROUTE, input=Features, output=Scores)
+
+    return context_from_modules(MockDepsModule(inference=registry)).inference.model(spec)
+
+
+def _double(instances: Sequence[BaseModel]) -> Sequence[Any]:
+    return [{"y": i.x * 2.0, "tag_len": len(i.tag)} for i in instances if isinstance(i, Features)]
+
+
+async def check_the_oracle_mirrors_the_backends_capability_gates(h: InferenceHarness) -> None:
+    """Told the backend's declaration, the oracle admits and refuses exactly what it does.
+
+    The comparison is admission, not predictions: two backends run different models, so
+    their outputs are not comparable, while *which requests get through* is — and on a
+    declarative port that is the whole contract.
+    """
+
+    backend = _capped(h)
+    batch = _over_cap()
+    gates = {"within_cap": batch[:BATCH_CAP], "oversized": batch}
+
+    observed = await run_capability_gates(backend, **gates)
+    mirrored = await run_capability_gates(_mirror(backend.inference_capabilities), **gates)
+
+    assert mirrored == observed
+
+
+async def check_an_unmirrored_oracle_diverges_from_a_capped_backend(h: InferenceHarness) -> None:
+    """The catch: a route that never pinned ``capabilities=`` accepts what production refuses.
+
+    This is the control that keeps the check above from being decoration. If an untold
+    oracle agreed with a capped backend anyway, mirroring would be a no-op and forgetting
+    it would cost nothing — so the divergence is asserted at the exact gate it appears at,
+    rather than as a bare inequality that any unrelated difference could satisfy.
+    """
+
+    backend = _capped(h)
+    batch = _over_cap()
+    gates = {"within_cap": batch[:BATCH_CAP], "oversized": batch}
+
+    observed = await run_capability_gates(backend, **gates)
+    untold = await run_capability_gates(_mirror(None), **gates)
+
+    assert observed.oversized_predict_many is GateVerdict.REFUSED
+    assert untold.oversized_predict_many is GateVerdict.ACCEPTED
+    assert untold.within_cap_predict_many is observed.within_cap_predict_many, (
+        "the positive control must still agree — the divergence is the cap, not the route"
+    )
+
+
 INFERENCE_BATTERY: tuple[Check, ...] = (
     check_predict_many_refuses_a_batch_over_the_cap,
+    check_the_oracle_mirrors_the_backends_capability_gates,
+    check_an_unmirrored_oracle_diverges_from_a_capped_backend,
     check_a_stream_chunk_over_the_cap_is_served_not_refused,
     check_an_empty_batch_is_a_no_op,
     check_an_empty_chunk_yields_an_empty_chunk,

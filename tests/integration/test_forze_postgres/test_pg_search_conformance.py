@@ -6,6 +6,7 @@ reads the same table an application would already own.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
@@ -39,6 +40,7 @@ class _Row(BaseModel):
     title: str
     content: str
     category: str = ""
+    price: Decimal = Decimal(0)
 
 
 @pytest_asyncio.fixture
@@ -52,7 +54,8 @@ async def harness(pg_client: PostgresClient) -> SearchHarness:
             id uuid PRIMARY KEY,
             title text NOT NULL,
             content text NOT NULL,
-            category text NOT NULL
+            category text NOT NULL,
+            price numeric NOT NULL
         );
         CREATE INDEX {index} ON {table}
         USING gin (to_tsvector('english', coalesce(title,'') || ' ' || coalesce(content,'')));
@@ -61,8 +64,8 @@ async def harness(pg_client: PostgresClient) -> SearchHarness:
 
     for row in corpus_rows(lambda: str(uuid4())):
         await pg_client.execute(
-            f"INSERT INTO {table} (id, title, content, category) "
-            "VALUES (%(id)s, %(title)s, %(content)s, %(category)s)",
+            f"INSERT INTO {table} (id, title, content, category, price) "
+            "VALUES (%(id)s, %(title)s, %(content)s, %(category)s, %(price)s)",
             row,
         )
 
@@ -91,6 +94,7 @@ async def harness(pg_client: PostgresClient) -> SearchHarness:
     )
 
 
+@pytest.mark.conformance(plane="search", engine="postgres")
 @pytest.mark.parametrize("check", SEARCH_BATTERY, ids=lambda check: check.__name__)
 async def test_search_battery(check: Check, harness: SearchHarness) -> None:
     await check(harness)

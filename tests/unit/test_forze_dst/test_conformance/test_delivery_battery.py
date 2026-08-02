@@ -35,6 +35,7 @@ async def _run(*, dedup: bool) -> DeliveryOutcome:
 # ....................... #
 
 
+@pytest.mark.conformance(plane="delivery", engine="mock")
 class TestMockCrashRecoveryDelivery:
     async def test_exactly_once_effect_with_inbox(self) -> None:
         outcome = await _run(dedup=True)

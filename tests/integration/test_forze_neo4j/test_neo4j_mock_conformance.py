@@ -672,3 +672,73 @@ async def test_mock_matches_neo4j_null_property_filter(neo4j_client: Neo4jClient
     assert mock_snap["null_on_absent_key"] == 0
     assert mock_snap["null_on_known_key"] == 0
     assert mock_snap["total"] == 2
+
+
+async def test_mock_matches_neo4j_bounded_neighbors_filter_before_limit(
+    neo4j_client: Neo4jClient,
+) -> None:
+    """A bounded ``neighbors`` call filters by kind BEFORE applying the limit.
+
+    The order of those two operations was the divergence. The mock filtered as it walked
+    and stopped once it had ``limit`` *matches*; Neo4j applied ``LIMIT`` in Cypher and
+    filtered the returned rows afterwards, so a caller asking for two neighbours of a given
+    kind could get one, or none, while plenty existed just past the cut.
+
+    That is worse than a partial answer. The filtered-out rows are not a page boundary the
+    caller can advance past, so a short result reads as "there are no more" — and a caller
+    walking a graph stops early believing it is done. The excluded kind deliberately
+    outnumbers the limit here, so a limit-then-filter implementation cannot fill the page.
+    """
+
+    spec = _multi_spec()
+    mock_cmd, mock_qry, neo_cmd, neo_qry = _planes(spec, neo4j_client)
+    limit = 2
+
+    async def snapshot(cmd: Any, qry: Any) -> dict[str, Any]:
+        await cmd.create_vertex("Tag", TagCreate(id="x"))
+
+        # Seeded wanted-kind FIRST on purpose. Neo4j returns adjacency most-recent-first,
+        # so the four Posts land at the head of the row order and a limit-then-filter
+        # implementation spends its whole budget on them, returning nothing. Seeded the
+        # other way round the fault is invisible — the two Notes would arrive first and
+        # fill the page by luck. The assertion below is still a set, not an order; only
+        # the *seeding* leans on the engine's ordering, to keep the probe discriminating.
+        for n in range(2):  # exactly `limit` of the wanted kind
+            await cmd.create_vertex("Note", TagCreate(id=f"n{n}"))
+            await cmd.create_edge(
+                "TAGGED",
+                TaggedCreate(from_key=f"n{n}", to_key="x", from_kind="Note", to_kind="Tag"),
+            )
+
+        for n in range(4):  # four of the excluded kind, twice the limit
+            await cmd.create_vertex("Post", TagCreate(id=f"p{n}"))
+            await cmd.create_edge(
+                "TAGGED",
+                TaggedCreate(from_key=f"p{n}", to_key="x", from_kind="Post", to_kind="Tag"),
+            )
+
+        tag = VertexRef(kind="Tag", key="x")
+        rows = await qry.neighbors(
+            tag,
+            GraphDirection.IN,
+            frozenset({"TAGGED"}),
+            limit=limit,
+            to_vertex_kinds=frozenset({"Note"}),
+        )
+
+        # A set: which neighbours came back is the contract, the order they arrive in is
+        # the engine's business and asserting it would make this a test of Cypher's planner.
+        return {
+            "notes": {row.other.id for row in rows},
+            "unbounded_total": len(
+                await qry.neighbors(tag, GraphDirection.IN, frozenset({"TAGGED"}), limit=100)
+            ),
+        }
+
+    mock_snap = await snapshot(mock_cmd, mock_qry)
+    neo_snap = await snapshot(neo_cmd, neo_qry)
+
+    assert mock_snap == neo_snap
+    # Absolute, so "both under-deliver identically" cannot pass as agreement.
+    assert mock_snap["notes"] == {"n0", "n1"}
+    assert mock_snap["unbounded_total"] == 6, "the excluded kind must really be there"

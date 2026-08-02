@@ -19,12 +19,26 @@ from tests.support.storage_conformance import STORAGE_BATTERY, Check, StorageHar
 
 @pytest.fixture
 def harness() -> StorageHarness:
-    adapter = MockStorageAdapter(state=MockState(), bucket="files")
+    # One shared state across every bucket, so an absent container is genuinely absent
+    # rather than merely unreachable from a separate store.
+    state = MockState()
+    adapter = MockStorageAdapter(state=state, bucket="files")
     run = uuid4().hex[:8]
 
-    return StorageHarness(cmd=adapter, query=adapter, key=lambda name: f"{name}-{run}")
+    def _for_bucket(name: str) -> tuple[MockStorageAdapter, MockStorageAdapter]:
+        port = MockStorageAdapter(state=state, bucket=name)
+
+        return port, port
+
+    return StorageHarness(
+        cmd=adapter,
+        query=adapter,
+        key=lambda name: f"{name}-{run}",
+        for_bucket=_for_bucket,
+    )
 
 
+@pytest.mark.conformance(plane="storage", engine="mock")
 @pytest.mark.parametrize("check", STORAGE_BATTERY, ids=lambda check: check.__name__)
 async def test_storage_battery(check: Check, harness: StorageHarness) -> None:
     await check(harness)

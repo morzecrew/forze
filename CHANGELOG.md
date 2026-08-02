@@ -9,10 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**Cross-backend conformance** — shared batteries for the counter, graph, storage, inference, search and idempotency planes; each behaviour change below now holds on every backend of its plane:
+**Conformance ratchet** — a backend that registers a manifested port without running that plane's differential leg now fails CI:
+
+- New `[tool.conformance_manifest]` in `pyproject.toml` (planes, dep keys, engines, gaps, exemptions) enforced by `.github/scripts/conformance_manifest.py`, wired into `just quality`; `just conformance-check` / `just conformance` run it alone. Every `DepKey` under `contracts/` must be claimed exactly once.
+- Legs carry `@pytest.mark.conformance(plane=…, engine=…)`; `--conformance-executed` records what each CI shard ran and a new `conformance` job fails when a manifested leg passed nothing anywhere. `test_forze_inference` and `test_portability` join the CI matrix.
+- New scenario modules: `forze_dst.conformance` `counters`/`storage`/`inference`/`catalog` and `forze_kits.integrations.realtime.conformance`.
+
+**Cross-backend conformance** — shared batteries for the counter, graph, storage, inference, search, idempotency, field-encryption and realtime-cursor planes; each behaviour change below now holds on every backend of its plane:
 
 - **Counters** are signed 64-bit: new `COUNTER_MIN_VALUE`/`COUNTER_MAX_VALUE` and `validate_counter_value`; an out-of-range `reset` raises `counter_value_out_of_range`.
-- **Storage:** `delete`/`abort_upload` are idempotent; a same-key `copy`/`move` is refused with new `SELF_COPY_CODE`; mock `list` is lexicographic; S3 maps `NoSuchUpload` to `not_found`.
+- **Storage:** `delete`/`abort_upload` are idempotent; a same-key `copy`/`move` is refused with new `SELF_COPY_CODE`; mock `list` is lexicographic; S3 maps `NoSuchUpload` to `not_found`. **Behaviour change:** the mock models bucket existence (new `MockState.storage_buckets`) — `list` over a never-written bucket now raises unless `missing_ok=True` (previously a no-op); reads never provision, the four write paths do.
 - **Inference:** a `max_batch_size` cap sub-batches `predict_stream`; a spent budget raises new `inference_budget_exhausted` pre-flight; scalar outputs wrap via new `scalar_output_field`.
 - **Search:** `delete_all()` on an unprovisioned index is a no-op; a Meilisearch `invalid_request` raises `precondition` with the engine's message.
 - **Graph:** new `normalize_property_filter` and `MockGraphManagementAdapter`; `UUID`/`datetime`/`Decimal` property filters match everywhere; a `None` filter value matches nothing; duplicate vertex keys raise `graph_vertex_conflict` (Neo4j needs `ensure_schema()`).
@@ -39,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Numeric exactness fails closed on every backend** (**behaviour change**) — a value a backend cannot hold exactly raises `precondition` instead of being silently degraded: Firestore refuses non-finite and double-overflowing numerics on writes (previously persisted as `inf`/`nan`); BigQuery `Decimal` parameters pick `NUMERIC` vs `BIGNUMERIC` by value (arrays widen to their neediest element; non-finite and beyond-`BIGNUMERIC` refused); Mongo refuses a `Decimal` beyond BSON decimal128 exactness (was a bare `decimal.Inexact` internal error); DuckDB refuses non-finite and beyond-`DECIMAL(38)` values (previously silently rebound as a rounded `DOUBLE`).
 
 **Postgres `update_many`/`touch_many` could attach one document's returned diff to another** when the server reordered `RETURNING` rows; diffs are now keyed by document id.
+
+**Neo4j `neighbors(to_vertex_kinds=…)` returned fewer matches than exist** — `LIMIT` applied before the kind filter, so a bounded call could come back short or empty while matches sat just past the cut; the filter now runs in Cypher.
 
 **Log scrubbing masks pluralized, numbered, and compound-`authorization` names** — `tokens=…`, `"api_key2": "…"`, `authorization_value: …` previously leaked; the email and userinfo-DSN rules are length-bounded (RFC sizes for emails, generous caps for DSN userinfo), removing a quadratic-cost path on adversarial log text.
 

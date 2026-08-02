@@ -9,6 +9,7 @@ same battery here is worth doing: it checks the declaration is honest.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
@@ -51,6 +52,7 @@ class _Row(BaseModel):
     title: str
     content: str
     category: str = ""
+    price: Decimal = Decimal(0)
 
 
 @pytest_asyncio.fixture
@@ -87,6 +89,7 @@ async def harness(meilisearch_client) -> SearchHarness:
     )
 
 
+@pytest.mark.conformance(plane="search", engine="meilisearch")
 @pytest.mark.parametrize("check", SEARCH_BATTERY, ids=lambda check: check.__name__)
 async def test_search_battery(check: Check, harness: SearchHarness) -> None:
     await check(harness)
@@ -121,6 +124,7 @@ def write_harness(meilisearch_client) -> SearchWriteHarness:
     )
 
 
+@pytest.mark.conformance(plane="search_write", engine="meilisearch")
 @pytest.mark.parametrize("check", SEARCH_WRITE_BATTERY, ids=lambda check: check.__name__)
 async def test_search_write_battery(check: WriteCheck, write_harness: SearchWriteHarness) -> None:
     await check(write_harness)
