@@ -8,6 +8,7 @@ protocols, so they are exercised via ``isinstance`` structural checks.
 
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID, uuid4
 
 import pytest
@@ -504,10 +505,49 @@ class TestKeyFieldTyping:
     class _StrEnumKeyRead(BaseModel):
         id: _Colour
 
+    class _OptionalNumericKeyRead(BaseModel):
+        id: int | None
+
+    class _ListKeyRead(BaseModel):
+        id: list[str]
+
+    class _DictKeyRead(BaseModel):
+        id: dict[str, str]
+
+    class _LiteralIntKeyRead(BaseModel):
+        id: Literal[1]
+
+    class _MixedLiteralKeyRead(BaseModel):
+        id: Literal["a", 2]
+
+    class _LiteralStrKeyRead(BaseModel):
+        id: Literal["a", "b"]
+
     @pytest.mark.parametrize(
         "read",
-        [_NumericKeyRead, _BoolKeyRead],
-        ids=["int", "bool"],
+        [
+            _NumericKeyRead,
+            _BoolKeyRead,
+            _OptionalNumericKeyRead,
+            _ListKeyRead,
+            _DictKeyRead,
+            _LiteralIntKeyRead,
+            _MixedLiteralKeyRead,
+        ],
+        ids=[
+            "int",
+            "bool",
+            "optional-int",
+            # A container serializes to a JSON array or object, so it matches a string key
+            # no better than an int does. Reached through get_origin: get_args(list[str])
+            # is (str,), which read as "a string key" until the origin was checked first.
+            "list",
+            "dict",
+            # get_args of a Literal are *values*, not types, so walking them found nothing
+            # that was a type and accepted a plain int key.
+            "literal-int",
+            "literal-mixed",
+        ],
     )
     def test_a_numeric_key_field_is_refused_at_construction(
         self, read: type[BaseModel]
@@ -532,8 +572,8 @@ class TestKeyFieldTyping:
 
     @pytest.mark.parametrize(
         "read",
-        [_PersonRead, _UuidKeyRead, _StrEnumKeyRead, _DecimalKeyRead],
-        ids=["str", "uuid", "str-enum", "decimal"],
+        [_PersonRead, _UuidKeyRead, _StrEnumKeyRead, _DecimalKeyRead, _LiteralStrKeyRead],
+        ids=["str", "uuid", "str-enum", "decimal", "literal-str"],
     )
     def test_anything_that_serializes_as_a_string_is_accepted(
         self, read: type[BaseModel]

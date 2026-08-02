@@ -554,6 +554,17 @@ class _MailboxRetentionStartup(LifecycleHook):
 
         except BaseException:
             # Nothing is sweeping if the task never started or could not be registered.
+            # When registration is what failed, the task *is* running, and retracting the
+            # marker alone would leave the worst of both: a sweep no drainable can stop
+            # (shutdown never learns about it) and no marker claims. Cancel it and put the
+            # control back where startup found it, so a retry is a clean start.
+            task = self.control.task
+
+            if task is not None:
+                task.cancel()
+
+            self.control.task = None
+            self.control.event = None
             ctx.lifecycle_started.discard(self.marker)
             raise
 
@@ -617,7 +628,9 @@ def realtime_mailbox_retention_lifecycle_step(
     # misconfiguration raised an uncoded error through this door and a
     # `realtime_mailbox_retention_invalid` one through `MailboxRetention`.
     retention = MailboxRetention(max_age=max_age, cursor_max_age=cursor_max_age)
-    resolved_cursor_age = cursor_max_age if cursor_max_age is not None else max_age
+    # From the declaration, not recomputed: the marker keys the same property, so the sweep
+    # cannot enforce one window while vouching for another.
+    resolved_cursor_age = retention.resolved_cursor_max_age or max_age
 
     if interval.total_seconds() <= 0:
         raise exc.configuration("Mailbox retention interval must be positive")

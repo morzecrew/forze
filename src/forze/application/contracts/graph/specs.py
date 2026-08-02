@@ -1,6 +1,6 @@
 """Declarative graph module, node, and edge specifications."""
 
-from typing import Final, Literal, final, get_args
+from typing import Final, Literal, final, get_args, get_origin
 
 import attrs
 from pydantic import BaseModel
@@ -18,12 +18,10 @@ GraphEdgeIdentity = Literal["key", "endpoints"]
 """How an edge kind is addressed by :class:`~forze.application.contracts.graph.EdgeRef`.
 
 ``"key"`` — each edge has a stable business key (the :attr:`GraphEdgeSpec.key_field`
-property; an ArangoDB ``_key`` or a Neo4j property). ``"endpoints"`` — at most one edge
-of this kind per ``(from, to)`` pair, addressed by its endpoints (Cypher ``MERGE`` /
-ArangoDB unique ``[_from, _to]`` index).
+property). ``"endpoints"`` — at most one edge of this kind per ``(from, to)`` pair, addressed by its endpoints.
 """
 
-# ----------------------- #
+# ....................... #
 
 
 def assert_key_field_not_sealed(
@@ -68,7 +66,7 @@ def assert_key_field_not_sealed(
         )
 
 
-# ----------------------- #
+# ....................... #
 
 _NON_STRING_KEY_TYPES: Final[tuple[type, ...]] = (bool, int, float)
 """Declared key-field types a store keeps as a *native* scalar, not as text.
@@ -90,14 +88,34 @@ through.) One caveat the type cannot express: the key is that *text*, so ``Decim
 and ``Decimal("1.5")`` are two different keys even though Python calls them equal."""
 
 
-def _native_scalar_in(annotation: object) -> type | None:
-    """The first denied native scalar reachable from *annotation*, if any.
+_JSON_CONTAINER_ORIGINS: Final[tuple[type, ...]] = (list, tuple, set, frozenset, dict)
+"""Origins of a declared key that serializes to a JSON array or object rather than a scalar.
 
-    Walks unions and parameterised generics rather than testing the annotation itself:
-    ``int | None`` is a ``UnionType``, not a ``type``, so an ``isinstance(..., type)``
-    guard skipped it outright and an optional int key sailed through to fail silently on
-    the engine. (``Annotated[int, ...]`` needs no unwrapping — pydantic resolves the
-    metadata away before ``annotation`` is read — but the walk covers it for free.)
+Denied for the same reason as the native scalars, one step further out: a key held as a
+list matches no string either. Named separately because they are found through
+``get_origin``, not ``issubclass`` — ``list[str]`` is not a ``type``.
+"""
+
+# ....................... #
+
+
+def _native_scalar_in(annotation: object) -> type | None:
+    """The first denied native type reachable from *annotation*, if any.
+
+    Walks unions rather than testing the annotation itself: ``int | None`` is a
+    ``UnionType``, not a ``type``, so an ``isinstance(..., type)`` guard skipped it
+    outright and an optional int key sailed through to fail silently on the engine.
+    (``Annotated[int, ...]`` needs no unwrapping — pydantic resolves the metadata away
+    before ``annotation`` is read — but the walk covers it for free.)
+
+    Two constructs must be inspected *before* that walk, because walking their arguments
+    reaches the wrong answer rather than no answer:
+
+    - **Containers.** ``get_args(list[str])`` is ``(str,)``, so the walk saw a string and
+      accepted a key the store holds as an array.
+    - **Literals.** ``get_args(Literal[1])`` is ``(1,)`` — *values*, not types — and a
+      value is not a ``type``, so the walk fell through and accepted a plain int key.
+      ``Literal["a", "b"]`` stays legal: every member serializes to text.
 
     ``None`` is skipped rather than denied: an optional key is a separate question from a
     natively-typed one, and this guard answers only the second.
@@ -109,6 +127,23 @@ def _native_scalar_in(annotation: object) -> type | None:
             None,
         )
 
+    origin = get_origin(annotation)
+
+    if origin is Literal:
+        return next(
+            (
+                native
+                for value in get_args(annotation)
+                if value is not None
+                for native in _NON_STRING_KEY_TYPES
+                if isinstance(value, native)
+            ),
+            None,
+        )
+
+    if isinstance(origin, type) and issubclass(origin, _JSON_CONTAINER_ORIGINS):
+        return origin  # pyright: ignore[reportUnknownVariableType]
+
     for argument in get_args(annotation):
         if argument is type(None):
             continue
@@ -119,6 +154,9 @@ def _native_scalar_in(annotation: object) -> type | None:
             return found
 
     return None
+
+
+# ....................... #
 
 
 def assert_key_field_is_string_typed(
@@ -174,7 +212,7 @@ def assert_key_field_is_string_typed(
     )
 
 
-# ----------------------- #
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -310,6 +348,8 @@ class GraphModuleSpec(BaseSpec):
 
     edges: tuple[GraphEdgeSpec[BaseModel], ...]
     """All edge kinds in this module."""
+
+    # ....................... #
 
     # Kind-name -> spec, resolved once so lookups are O(1) instead of a linear scan
     # over all kinds on every call (these are hit per element during traversal result
@@ -455,6 +495,7 @@ def validate_graph_module_spec(
                 f"Duplicate graph node kind name: {k!r}",
                 code="graph_spec_duplicate_node",
             )
+
         node_kinds.add(k)
 
         if not _model_has_field(n.read, n.key_field):
@@ -473,6 +514,7 @@ def validate_graph_module_spec(
                 f"Duplicate graph edge kind name: {ek!r}",
                 code="graph_spec_duplicate_edge",
             )
+
         edge_kinds.add(ek)
 
         if not e.endpoints:
@@ -497,6 +539,7 @@ def validate_graph_module_spec(
                     f"entities and need a key_field to say so.",
                     code="graph_spec_missing_key_field",
                 )
+
             if not _model_has_field(e.read, e.key_field):
                 raise exc.configuration(
                     f"GraphEdgeSpec {ek!r} key_field {e.key_field!r} is not a field of its read model",
@@ -510,6 +553,7 @@ def validate_graph_module_spec(
                     f"(not in GraphModuleSpec.nodes)",
                     code="graph_spec_unknown_endpoint",
                 )
+
             if end.to_kind not in node_kinds:
                 raise exc.configuration(
                     f"GraphEdgeSpec {ek!r} references unknown to_kind {end.to_kind!r} "

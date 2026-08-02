@@ -675,12 +675,12 @@ def mailbox_retention_marker(spec_name: str, retention: "MailboxRetention") -> s
     a marker keyed on the spec alone would have called compliant.
     """
 
-    # Both windows are RESOLVED before they are keyed, exactly as the lifecycle step
-    # resolves them: an omitted cursor_max_age means "the same as max_age", so a bare
-    # MailboxRetention(max_age=7d) and a step configured (7d, 7d) are the same promise and
-    # must produce the same marker. Keying the raw fields made them differ.
+    # Both windows are RESOLVED before they are keyed — via the declaration's own property,
+    # so this cannot drift from what the step configures. Keying the raw fields made a bare
+    # MailboxRetention(max_age=7d) and a step configured (7d, 7d) differ, though they are
+    # the same promise.
     max_age = _window_seconds(retention.max_age)
-    cursor = _window_seconds(retention.cursor_max_age or retention.max_age)
+    cursor = _window_seconds(retention.resolved_cursor_max_age)
 
     return f"{_RETENTION_MARKER_PREFIX}:{spec_name}:{max_age}:{cursor}"
 
@@ -777,6 +777,20 @@ class MailboxRetention:
         """Whether a sweeper is required for this declaration."""
 
         return self.max_age is not None
+
+    # ....................... #
+
+    @property
+    def resolved_cursor_max_age(self) -> timedelta | None:
+        """The cursor window this declaration actually promises.
+
+        The defaulting rule — an omitted ``cursor_max_age`` means "as long as *max_age*" —
+        lives here alone. It was applied in three places, and the moment two of them
+        disagreed a bare ``MailboxRetention(max_age=7d)`` and a step configured ``(7d, 7d)``
+        keyed different markers: the same promise, one refusing to vouch for the other.
+        """
+
+        return self.cursor_max_age if self.cursor_max_age is not None else self.max_age
 
 
 # ----------------------- #

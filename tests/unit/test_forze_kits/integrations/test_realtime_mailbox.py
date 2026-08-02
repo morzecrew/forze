@@ -525,6 +525,51 @@ class TestRetentionIsPaired:
 
         assert ei.value.code == "realtime_mailbox_retention_unwired"
 
+    async def test_a_sweep_whose_registration_fails_is_cancelled_not_orphaned(self) -> None:
+        # The other half of the same window, and the worse one. When *task creation* fails
+        # there is nothing to clean up; when registration fails the task is already
+        # running, and retracting only the marker leaves a sweep that no drainable can
+        # stop — shutdown never learns of it — deleting on an interval nothing claims.
+        from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
+
+        window = timedelta(days=7)
+        step = realtime_mailbox_retention_lifecycle_step(max_age=window)
+        runtime = _runtime()
+        created: list[asyncio.Task[None]] = []
+        real_create_task = asyncio.create_task
+
+        def _capturing_create_task(coro, **kwargs):  # type: ignore[no-untyped-def]
+            task = real_create_task(coro, **kwargs)
+            created.append(task)
+
+            return task
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            with (
+                patch("asyncio.create_task", _capturing_create_task),
+                patch.object(
+                    type(ctx.drainables), "register", side_effect=RuntimeError("registry full")
+                ),
+                pytest.raises(RuntimeError),
+            ):
+                await step.startup(ctx)
+
+            assert created, "the task was never created; this test would prove nothing"
+
+            # Let the cancellation the handler requested actually land.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+            assert created[0].cancelled(), "the orphaned sweep kept running"
+            assert step.startup.task is None  # type: ignore[attr-defined]
+
+            with _bind(ctx), pytest.raises(CoreException) as ei:
+                build_realtime_mailbox(ctx, retention=MailboxRetention(max_age=window))
+
+        assert ei.value.code == "realtime_mailbox_retention_unwired"
+
     async def test_a_sweeper_running_a_different_window_does_not_vouch(self) -> None:
         # The subtler half of the pairing: a sweeper exists for this mailbox, so a
         # presence-only check would call it covered — while the declaration promises one
