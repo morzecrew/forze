@@ -419,6 +419,107 @@ async def test_routed_rabbitmq_consume_survives_rotation_eviction(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_routed_rabbitmq_consume_survives_eviction_mid_fetch(
+    rabbitmq_container: RabbitMqContainer,
+) -> None:
+    """The rotation that lands *inside* a fetch, not between two of them.
+
+    Releasing the lease between fetches only helps when the eviction falls in the gap.
+    The default pool is unguarded, so an eviction during the five-second receive window
+    closes the client while that receive is still awaiting it — and the exception it
+    raises used to escape the generator, ending the very stream the per-fetch design
+    exists to keep alive. The sibling rotation test cannot catch this: it evicts while
+    the generator is suspended at a yield, when no fetch is in flight.
+    """
+
+    dsn = _dsn(rabbitmq_container)
+    t1 = uuid4()
+    secrets = _MemSecretsTenantDsn({t1: dsn})
+    tenant_get, tenant_set = _tenant_holder()
+
+    routed = RoutedRabbitMQClient(
+        secrets=secrets,
+        secret_ref_for_tenant=_ref,
+        tenant_provider=tenant_get,
+        max_cached_tenants=4,
+    )
+    tenant_set(t1)
+    await routed.startup()
+
+    queue = f"it:routed-midfetch:{uuid4().hex[:12]}"
+
+    try:
+        gen = routed.consume(queue)
+
+        async with aclosing(gen):
+            # Nothing queued, so this fetch blocks for the whole window and the eviction
+            # below is guaranteed to land while it is in flight.
+            pending = asyncio.ensure_future(anext(gen))
+            await asyncio.sleep(1.0)
+            assert not pending.done(), "fetch finished early; the eviction would not overlap"
+
+            await routed.evict_tenant(t1)
+            await routed.enqueue(queue, b"after-rotation")
+
+            delivered = await asyncio.wait_for(pending, timeout=60)
+
+        assert delivered.body == b"after-rotation"
+        await routed.ack(queue, [delivered.id])
+
+    finally:
+        await routed.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_routed_rabbitmq_consume_timeout_excludes_caller_processing(
+    rabbitmq_container: RabbitMqContainer,
+) -> None:
+    """``timeout`` bounds idle time, so a slow handler must not end a busy stream."""
+
+    dsn = _dsn(rabbitmq_container)
+    t1 = uuid4()
+    secrets = _MemSecretsTenantDsn({t1: dsn})
+    tenant_get, tenant_set = _tenant_holder()
+
+    routed = RoutedRabbitMQClient(
+        secrets=secrets,
+        secret_ref_for_tenant=_ref,
+        tenant_provider=tenant_get,
+        max_cached_tenants=4,
+    )
+    tenant_set(t1)
+    await routed.startup()
+
+    queue = f"it:routed-idle:{uuid4().hex[:12]}"
+
+    try:
+        await routed.enqueue(queue, b"m1")
+        await routed.enqueue(queue, b"m2")
+
+        bodies: list[bytes] = []
+        gen = routed.consume(queue, timeout=timedelta(seconds=2))
+
+        async with aclosing(gen):
+            async for message in gen:
+                bodies.append(message.body)
+                await routed.ack(queue, [message.id])
+
+                if len(bodies) == 2:
+                    break
+
+                # Longer than the timeout. Charged against the idle budget, the stream
+                # would end here with m2 still queued and report a clean exhaustion.
+                await asyncio.sleep(3.0)
+
+        assert bodies == [b"m1", b"m2"]
+
+    finally:
+        await routed.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_routed_rabbitmq_guarded_registry_full_facade(
     rabbitmq_container: RabbitMqContainer,
 ) -> None:

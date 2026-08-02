@@ -134,15 +134,21 @@ They **fail closed** rather than serve a scan that looks complete and is not
 
 !!! warning "A key field must be a string"
 
-    `VertexRef.key` is a `str`, so a `key_field` declared as `bool`, `int`, `float` or
-    `Decimal` is refused at spec construction (`graph_non_string_key_field`). A store that
-    keeps the property in its native type never matches the string a keyed lookup binds —
-    measured on Neo4j with an `int` key, the writes land and `find_vertices` returns the rows
-    while `vertex_exists`, `get_vertex`, `vertex_degree` and `neighbors` all answer as though
+    `VertexRef.key` is a `str`, so a `key_field` declared as `bool`, `int` or `float` is
+    refused at spec construction (`graph_non_string_key_field`). A store that keeps the
+    property in its native type never matches the string a keyed lookup binds — measured on
+    Neo4j with an `int` key, the writes land and `find_vertices` returns the rows while
+    `vertex_exists`, `get_vertex`, `vertex_degree` and `neighbors` all answer as though
     the vertex were not there. No error, just an empty graph, and the in-memory mock keys its
     store by `str(value)` so everything works there. Use a `str` key — or a `UUID` or
     str-valued enum, which reach the store as text — and keep the number as an ordinary
     property.
+
+    A `Decimal` key **is** allowed: properties are written through `model_dump(mode="json")`,
+    which renders it as a string, so Neo4j holds `STRING` and every keyed read resolves —
+    exponent and high-precision forms included, byte-exact. Note that the key is that *text*:
+    `Decimal("1.50")` and `Decimal("1.5")` are two different keys even though Python calls
+    them equal.
 
 !!! note "A bounded `neighbors` call returns an *arbitrary* subset"
 

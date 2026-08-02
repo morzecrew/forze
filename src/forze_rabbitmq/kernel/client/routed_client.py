@@ -188,6 +188,16 @@ class RoutedRabbitMQClient(DsnRoutedTenantClientBase[RabbitMQClient], RabbitMQCl
         :meth:`RabbitMQClient.receive` is that fetch, and the loop below is the same
         structure the SQS consumer gets for free from a long poll.
 
+        **The fetch that straddles the rotation.** Releasing between fetches would only
+        help if the eviction fell in the gap, and on the default (unguarded) pool it does
+        not wait: the evicted client is closed while the fetch is still awaiting it. That
+        is survivable because :meth:`RabbitMQClient.receive` answers a close with an *empty
+        list* rather than an exception — measured, not assumed, and pinned by
+        ``test_routed_rabbitmq_consume_survives_eviction_mid_fetch``. The empty answer falls
+        through to the next iteration, which acquires the rebuilt client. Were that to
+        become a raise, this loop would need to retry the fetch; nothing here does today,
+        so an in-flight failure would end the stream.
+
         The cost is a routed consumer that polls instead of holding a subscription, and it
         is paid only by routed (multi-tenant) callers. :meth:`RabbitMQClient.consume` is
         untouched: a single-tenant consumer keeps the push stream and its prefetch.
@@ -223,11 +233,14 @@ class RoutedRabbitMQClient(DsnRoutedTenantClientBase[RabbitMQClient], RabbitMQCl
             if not messages:
                 continue
 
-            if idle_deadline is not None and idle_seconds is not None:
-                idle_deadline = loop.time() + idle_seconds
-
             for message in messages:
                 yield message
+
+            # Reset after the caller's processing, not before it: the timeout is an *idle*
+            # bound, and charging handler time against it ends a busy stream — a handler
+            # slower than the timeout would stop the consumer with work still queued.
+            if idle_deadline is not None and idle_seconds is not None:
+                idle_deadline = loop.time() + idle_seconds
 
     # ....................... #
 

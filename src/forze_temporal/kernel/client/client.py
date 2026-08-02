@@ -512,6 +512,16 @@ class TemporalClient(TemporalClientPort):
             await iterator.fetch_next_page()
             page = iterator.current_page or ()
 
+            if offset > len(page):
+                # No cursor this method mints can point past its own page, so this is a
+                # tampered or stale one. Skipping ahead would silently drop every entry
+                # the page holds and report the remainder as the whole answer — the same
+                # duplicate-or-lose failure the strict base64 decode refuses up front.
+                raise exc.validation(
+                    "Malformed schedule page token",
+                    code="schedule.page_token_invalid",
+                )
+
             index = offset
             offset = 0  # only the page this call resumes into starts mid-way
 

@@ -506,8 +506,8 @@ class TestKeyFieldTyping:
 
     @pytest.mark.parametrize(
         "read",
-        [_NumericKeyRead, _DecimalKeyRead, _BoolKeyRead],
-        ids=["int", "decimal", "bool"],
+        [_NumericKeyRead, _BoolKeyRead],
+        ids=["int", "bool"],
     )
     def test_a_numeric_key_field_is_refused_at_construction(
         self, read: type[BaseModel]
@@ -532,8 +532,8 @@ class TestKeyFieldTyping:
 
     @pytest.mark.parametrize(
         "read",
-        [_PersonRead, _UuidKeyRead, _StrEnumKeyRead],
-        ids=["str", "uuid", "str-enum"],
+        [_PersonRead, _UuidKeyRead, _StrEnumKeyRead, _DecimalKeyRead],
+        ids=["str", "uuid", "str-enum", "decimal"],
     )
     def test_anything_that_serializes_as_a_string_is_accepted(
         self, read: type[BaseModel]
@@ -541,7 +541,26 @@ class TestKeyFieldTyping:
         # The guard is a denylist on purpose: a UUID and a str-valued enum both reach the
         # store as text and match a VertexRef fine, and refusing them would be a false
         # positive on legitimate wiring.
+        #
+        # Decimal is in this list rather than the refused one because model_dump(mode="json")
+        # renders it as a string: measured on Neo4j the property lands as STRING and every
+        # keyed read resolves, where the same probe with an int key lands as INTEGER and
+        # returns nothing. See test_decimal_key_round_trips_through_the_json_property_form.
         assert GraphNodeSpec(name="ok", read=read).key_field == "id"
+
+    def test_decimal_key_round_trips_through_the_json_property_form(self) -> None:
+        # The reason Decimal is accepted, asserted rather than assumed: the write path is
+        # model_dump(mode="json"), and the key a VertexRef carries is str(value). If those
+        # two ever stop agreeing, a Decimal key becomes the silent empty read the int key
+        # was, so pin the agreement here — the engine legs live in the Neo4j suite.
+        class _Item(BaseModel):
+            id: Decimal
+
+        for raw in ("123.45", "1E+2", "-3.75", "12345678901234567890.123456789"):
+            dumped = _Item(id=Decimal(raw)).model_dump(mode="json")["id"]
+
+            assert isinstance(dumped, str)
+            assert dumped == str(Decimal(raw))
 
     def test_a_key_field_the_model_does_not_declare_is_left_to_the_existing_check(
         self,

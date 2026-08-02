@@ -23,6 +23,7 @@ from forze.application.execution import DepsRegistry, ExecutionContext, Executio
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import HlcTimestamp, utcnow
 from forze_kits.integrations.realtime import (
+    MailboxRetention,
     build_realtime_cursors,
     build_realtime_mailbox,
     realtime_cursor_spec,
@@ -97,9 +98,7 @@ async def _wait_until(check, timeout: float = 5.0) -> bool:  # type: ignore[no-u
 
 
 async def test_step_sweeps_on_an_interval_and_stops_cleanly() -> None:
-    step = realtime_mailbox_retention_lifecycle_step(
-        max_age=_MAX_AGE, interval=_FAST, jitter=0.0
-    )
+    step = realtime_mailbox_retention_lifecycle_step(max_age=_MAX_AGE, interval=_FAST, jitter=0.0)
     runtime = _runtime()
 
     async with runtime.scope():
@@ -182,9 +181,7 @@ async def test_operational_error_does_not_stop_the_loop(
 
     monkeypatch.setattr(DocumentRealtimeMailbox, "sweep_older_than", _flaky)
 
-    step = realtime_mailbox_retention_lifecycle_step(
-        max_age=_MAX_AGE, interval=_FAST, jitter=0.0
-    )
+    step = realtime_mailbox_retention_lifecycle_step(max_age=_MAX_AGE, interval=_FAST, jitter=0.0)
     runtime = _runtime()
 
     async with runtime.scope():
@@ -254,7 +251,9 @@ async def test_one_tenants_failure_does_not_starve_the_others(
         assert await _wait_until(_healthy_swept)  # the sibling tenant kept its retention
 
         with _bind(ctx, broken):
-            retained = await build_realtime_mailbox(ctx, retention=UNSWEPT).read_since(principal="u1", since=None)
+            retained = await build_realtime_mailbox(ctx, retention=UNSWEPT).read_since(
+                principal="u1", since=None
+            )
             assert len(retained) == 2  # the broken tenant's sweep never landed
 
         task = step.startup.task  # type: ignore[attr-defined]
@@ -301,3 +300,47 @@ async def test_configuration_error_stops_the_loop(
 def test_invalid_jitter_is_refused() -> None:
     with pytest.raises(CoreException, match="Jitter"):
         realtime_mailbox_retention_lifecycle_step(max_age=_MAX_AGE, jitter=1.5)
+
+
+async def test_a_gateway_factory_builds_against_the_step_that_started_on_the_run_ctx() -> None:
+    """The documented pairing, end to end: step first, then the factory that relies on it.
+
+    Coverage is published on ``ctx.lifecycle_started``, so the pairing only holds if the
+    factory is handed the *same* context the step started on. A gateway builds its mailbox
+    once inside ``run(ctx)`` with exactly that context, which is what makes the documented
+    ``mailbox_factory=lambda ctx: build_realtime_mailbox(ctx, retention=...)`` legal —
+    every existing gateway test declares an unbounded mailbox instead, so nothing else
+    exercises a bounded one against a live sweeper.
+    """
+
+    retention = MailboxRetention(max_age=_MAX_AGE)
+    step = realtime_mailbox_retention_lifecycle_step(
+        max_age=_MAX_AGE,
+        interval=_FAST,
+        jitter=0.0,
+    )
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        # Before the step: the same declaration the gateway would make is refused.
+        with pytest.raises(CoreException) as unwired:
+            build_realtime_mailbox(ctx, retention=retention)
+
+        assert unwired.value.code == "realtime_mailbox_retention_unwired"
+
+        await step.startup(ctx)
+
+        try:
+            # What RealtimeGateway.run(ctx) does with mailbox_factory, on the run ctx.
+            assert build_realtime_mailbox(ctx, retention=retention) is not None
+
+        finally:
+            await step.shutdown(ctx)
+
+        # And once the sweeper is gone the vouching stops, rather than outliving it.
+        with pytest.raises(CoreException) as after:
+            build_realtime_mailbox(ctx, retention=retention)
+
+        assert after.value.code == "realtime_mailbox_retention_unwired"

@@ -1,6 +1,5 @@
 """Declarative graph module, node, and edge specifications."""
 
-from decimal import Decimal
 from typing import Final, Literal, final, get_args
 
 import attrs
@@ -71,14 +70,24 @@ def assert_key_field_not_sealed(
 
 # ----------------------- #
 
-_NON_STRING_KEY_TYPES: Final[tuple[type, ...]] = (bool, int, float, Decimal)
+_NON_STRING_KEY_TYPES: Final[tuple[type, ...]] = (bool, int, float)
 """Declared key-field types a store keeps as a *native* scalar, not as text.
 
 A denylist rather than an allowlist, deliberately: anything that serializes to a JSON
 string (``str``, ``UUID``, a str-valued enum, a custom type with a string serializer)
 round-trips through :attr:`VertexRef.key` correctly, and enumerating those exhaustively
-would refuse legitimate wiring the moment someone wrote a new one. These four are the
-types measured to break, and the check cannot false-positive on anything else."""
+would refuse legitimate wiring the moment someone wrote a new one. These three are the
+types measured to break, and the check cannot false-positive on anything else.
+
+``Decimal`` is deliberately *not* here, though it reads like it belongs: properties are
+written through ``model_dump(mode="json")``, which renders a ``Decimal`` as a **string**,
+so the store holds text and the keyed read matches. Measured on Neo4j — the property comes
+back ``STRING``, and ``get_vertex`` / ``vertex_exists`` / ``vertex_degree`` / ``neighbors``
+all resolve, including exponent and 29-significant-digit forms, which survive byte-exact.
+(The same reasoning is why :func:`~forze.application.contracts.graph.filters
+.normalize_property_filter` json-encodes a ``Decimal`` filter value rather than passing it
+through.) One caveat the type cannot express: the key is that *text*, so ``Decimal("1.50")``
+and ``Decimal("1.5")`` are two different keys even though Python calls them equal."""
 
 
 def _native_scalar_in(annotation: object) -> type | None:

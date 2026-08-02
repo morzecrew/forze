@@ -760,10 +760,13 @@ GRAPH_DIVERGENCES: tuple[PlaneDivergence, ...] = (
             "against a mock where everything works. Coercing the string back to the declared "
             "type was rejected: a str key field whose value happens to be '999' would then "
             "be indistinguishable from the integer 999, so the adapter would be guessing. "
-            "GraphNodeSpec/GraphEdgeSpec now refuse a key field declared as bool, int, float "
-            "or Decimal at construction (graph_non_string_key_field), the same wiring-time "
+            "GraphNodeSpec/GraphEdgeSpec now refuse a key field declared as bool, int or "
+            "float at construction (graph_non_string_key_field), the same wiring-time "
             "refusal the sealed key field already gets and for the same reason: no later "
-            "point makes it safe. Native-typed keys remain a capability someone could add; "
+            'point makes it safe. Decimal is not refused: model_dump(mode="json") renders '
+            "it as a string, so it lands on Neo4j as STRING and every keyed read resolves — "
+            "measured on the same probe that shows an int key landing as INTEGER and "
+            "matching nothing. Native-typed keys remain a capability someone could add; "
             "they are not what silently pretending to work was."
         ),
         probe=(

@@ -637,3 +637,30 @@ class TestTemporalClientListSchedules:
 
         assert ei.value.kind is ExceptionKind.VALIDATION
         assert ei.value.code == "schedule.page_token_invalid"
+
+    @pytest.mark.asyncio
+    async def test_cursor_offset_past_the_page_is_rejected_not_skipped(self) -> None:
+        """An offset no cursor of ours can mint must refuse, never drop the page silently."""
+
+        client = self._connected_client(_paged_backend([["s1", "s2"], ["s3"]]))
+        # Offset 9 into a 2-entry page: falling through would return ("s3",) and report a
+        # complete listing, losing s1 and s2 with nothing to signal it.
+        cursor = f"{base64.urlsafe_b64encode(_page_token(0)).decode()}.9"
+
+        with self._mapper(), pytest.raises(CoreException) as ei:
+            await client.list_schedules(next_page_token=cursor)
+
+        assert ei.value.kind is ExceptionKind.VALIDATION
+        assert ei.value.code == "schedule.page_token_invalid"
+
+    @pytest.mark.asyncio
+    async def test_cursor_offset_at_the_page_end_still_advances(self) -> None:
+        """The boundary case is lossless, so it stays allowed — only *past* the end refuses."""
+
+        client = self._connected_client(_paged_backend([["s1", "s2"], ["s3"]]))
+        cursor = f"{base64.urlsafe_b64encode(_page_token(0)).decode()}.2"
+
+        with self._mapper():
+            page = await client.list_schedules(next_page_token=cursor)
+
+        assert tuple(d.schedule_id for d in page.descriptions) == ("s3",)
