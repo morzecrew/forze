@@ -84,8 +84,9 @@ class _MongoCounterBase(TenancyMixin):
 
     def _legacy_doc_id(self, suffix: str | None, tenant_id: UUID | None) -> str:
         # The pre-route ``_id`` (no route tag) a counter allocated before the route fold
-        # was keyed under. The allocation path migrates it onto the new id so an existing
-        # sequence continues instead of restarting from zero.
+        # was keyed under. On the counter's first touch the allocation path migrates it
+        # onto the new id so an existing sequence continues instead of restarting from
+        # zero; past that the id is never read again.
         key = f"{_SUFFIX_PREFIX}{suffix}" if suffix is not None else _UNSUFFIXED
 
         return f"tenant:{tenant_id}:{key}" if tenant_id is not None else key
@@ -108,29 +109,32 @@ class _MongoCounterBase(TenancyMixin):
 class MongoCounterAdapter(_MongoCounterBase, CounterPort):
     """Mongo implementation of :class:`~forze.application.contracts.counter.CounterPort`.
 
-    Every operation is a single ``find_one_and_update`` with ``upsert`` returning the
-    post-update document, so allocation is atomic without a session: concurrent callers
-    serialize on the ``_id`` and each sees a distinct value. Operations run **detached**
-    — never on the caller's transaction/session — so an allocation survives the caller's
-    rollback; otherwise the same value could be handed out twice (Redis parity: a counter
-    value is burned the moment it is returned).
+    An allocation against an existing counter is a single ``find_one_and_update``
+    returning the post-update document, so it is atomic without a session: concurrent
+    callers serialize on the ``_id`` and each sees a distinct value. Operations run
+    **detached** — never on the caller's transaction/session — so an allocation survives
+    the caller's rollback; otherwise the same value could be handed out twice (Redis
+    parity: a counter value is burned the moment it is returned).
 
     Documents look like ``{_id, suffix, tenant_id, route, value}``; ``suffix`` /
     ``tenant_id`` / ``route`` are carried as plain fields so enumeration never has to
     parse the ``_id`` composition.
     """
 
-    async def _migrate_legacy(
+    async def _seed_from_legacy(
         self, coll: AsyncCollection[JsonDict], suffix: str | None, tenant_id: UUID | None
     ) -> None:
         """Carry a pre-route counter document onto its new route-prefixed ``_id``, once.
 
         A counter allocated before the route fold lives under the legacy ``_id`` with no
-        ``route`` field, so the new upsert would create a fresh document from zero and
-        reissue numbers already handed out. This copies the legacy value onto the new id
-        (leaving the new document untouched if it already exists — a concurrent writer or a
-        prior migration) and drops the legacy document, so enumeration and the next
-        allocation both see one row. A no-op once migrated (the legacy read finds nothing).
+        ``route`` field; creating the new document from zero would reissue numbers already
+        handed out. The seed must land as the new document's *birth* value, not as a later
+        adjustment — a concurrent allocator that read the un-seeded document would hand out
+        a duplicate — so this inserts it (keeping the existing document if a racing writer
+        won, which is the same outcome) and drops the legacy one.
+
+        Reached only when the new document is absent, so a migrated counter never pays for
+        the lookup again.
         """
 
         legacy_id = self._legacy_doc_id(suffix, tenant_id)
@@ -162,25 +166,35 @@ class MongoCounterAdapter(_MongoCounterBase, CounterPort):
     async def _apply(self, update: JsonDict, suffix: str | None) -> int:
         coll = await self._collection()
         tenant_id = self.require_tenant_if_aware()
+        doc_id = self._doc_id(suffix, tenant_id)
+        write = {
+            **update,
+            # Idempotent bookkeeping so the admin enumeration reads fields, not ids.
+            "$set": {
+                **update.get("$set", {}),
+                "suffix": suffix,
+                "tenant_id": (str(tenant_id) if tenant_id is not None else None),
+                "route": self.route,
+            },
+        }
 
         async with self.client.detached():
-            await self._migrate_legacy(coll, suffix, tenant_id)
-            doc = await self.client.find_one_and_update(
-                coll,
-                {"_id": self._doc_id(suffix, tenant_id)},
-                {
-                    **update,
-                    # Idempotent bookkeeping so the admin enumeration reads fields,
-                    # not ids.
-                    "$set": {
-                        **update.get("$set", {}),
-                        "suffix": suffix,
-                        "tenant_id": (str(tenant_id) if tenant_id is not None else None),
-                        "route": self.route,
-                    },
-                },
-                upsert=True,
-            )
+            # ``upsert=False`` first: a matched document does the whole allocation in one
+            # command, and a miss *is* the guard the pre-route seed hangs off — the same
+            # "only on first touch" condition Postgres expresses as a COALESCE subquery on
+            # the INSERT branch and Firestore as a read of the legacy document taken only
+            # when the current one is absent. Checking the legacy id on every allocation
+            # instead billed a second round trip forever to serve a one-time migration.
+            doc = await self.client.find_one_and_update(coll, {"_id": doc_id}, write)
+
+            if doc is None:
+                await self._seed_from_legacy(coll, suffix, tenant_id)
+                doc = await self.client.find_one_and_update(
+                    coll,
+                    {"_id": doc_id},
+                    write,
+                    upsert=True,
+                )
 
         if doc is None:  # pragma: no cover - upsert + AFTER always yields the document
             raise exc.internal("Counter upsert returned no document")
