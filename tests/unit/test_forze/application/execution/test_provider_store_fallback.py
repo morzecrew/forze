@@ -5,7 +5,7 @@ real one instead of colliding, and nothing else changes. Every same-provenance o
 two real modules, or two fallback environments — still fails loud, in both merge orders.
 """
 
-from itertools import permutations
+from itertools import combinations_with_replacement, permutations
 from typing import Any
 
 import pytest
@@ -320,6 +320,143 @@ class TestFallbackMarksSurviveCopies:
 
         assert merged.fallback_report().shadowed_names() == ("a (plain)",)
         assert merged.without(_A).fallback_report().shadowed == ()
+
+
+def _shape(kind: str, tag: str) -> Deps:
+    """One store's registrations for ``_A``, tagged so the merge output identifies it."""
+
+    marked = kind.endswith("fallback")
+
+    if kind.startswith("plain"):
+        return Deps.plain({_A: f"plain-{tag}"}, fallback=marked)
+
+    if kind.startswith("route"):
+        return Deps.routed({_A: {"main": f"route-{tag}"}}, fallback=marked)
+
+    # A single store registering both: a catch-all *and* a specific route. Resolution
+    # prefers the route and falls back to the plain entry, so this is a real shape a
+    # module can author — and the one a cross-store rule most easily mishandles.
+    return Deps(
+        store=ProviderStore(
+            plain_deps={_A: f"plain-{tag}"},
+            routed_deps={_A: {"main": f"route-{tag}"}},
+            fallback_plain=frozenset({_A}) if marked else frozenset(),
+            fallback_routes={_A: frozenset({"main"})} if marked else {},
+        )
+    )
+
+
+_SHAPES = (
+    "plain-real",
+    "plain-fallback",
+    "route-real",
+    "route-fallback",
+    "both-real",
+    "both-fallback",
+)
+
+
+def _tiers(blob: Deps) -> set[str]:
+    """Which provenances this blob registers ``_A`` under (plain or route alike)."""
+
+    store = blob.store
+    tiers: set[str] = set()
+
+    if _A in store.plain_deps:
+        tiers.add("fallback" if _A in store.fallback_plain else "real")
+
+    if "main" in (store.routed_deps.get(_A) or {}):
+        tiers.add("fallback" if "main" in (store.fallback_routes.get(_A) or ()) else "real")
+
+    return tiers
+
+
+def _real_values(blob: Deps) -> tuple[str | None, str | None]:
+    """The non-fallback plain value and route value this blob contributes, if any."""
+
+    store = blob.store
+    plain = store.plain_deps.get(_A) if _A not in store.fallback_plain else None
+    routes = store.routed_deps.get(_A) or {}
+    marked = store.fallback_routes.get(_A) or frozenset()
+
+    return plain, (routes.get("main") if "main" not in marked else None)
+
+
+class TestNoRealRegistrationIsEverSilentlyDropped:
+    """Exhaustive over every small composition, because this is the property both merge
+    bugs violated: a fallback exists to *yield*, so whatever survives a successful merge
+    must still answer with the real registration's own provider — never a different one
+    that happens to sit behind it.
+    """
+
+    @pytest.mark.parametrize("size", [2, 3])
+    def test_every_composition_keeps_its_real_registrations(self, size: int) -> None:
+        for kinds in combinations_with_replacement(_SHAPES, size):
+            parts = [_shape(kind, str(i)) for i, kind in enumerate(kinds)]
+
+            try:
+                store = Deps.merge(*parts).store
+
+            except CoreException:
+                continue  # a conflict is a legitimate outcome; the property is about success
+
+            expected_plain = [value for blob in parts if (value := _real_values(blob)[0])]
+            expected_route = [value for blob in parts if (value := _real_values(blob)[1])]
+
+            assert len(expected_plain) <= 1, f"{kinds}: two real plain entries should conflict"
+            assert len(expected_route) <= 1, f"{kinds}: two real routes should conflict"
+
+            if expected_plain:
+                assert store.plain_deps.get(_A) == expected_plain[0], kinds
+
+            if expected_route:
+                # The route must survive *and* still answer with its own provider — being
+                # dropped in favour of a real catch-all reads as "resolved" but is not.
+                assert (store.routed_deps.get(_A) or {}).get("main") == expected_route[0], kinds
+                assert store.get_provider(_A, route="main") == expected_route[0], kinds
+
+    @pytest.mark.parametrize("size", [2, 3])
+    def test_a_composition_conflicts_exactly_when_two_stores_share_a_tier(
+        self, size: int
+    ) -> None:
+        # The other half of the bug class: a merge must raise when two *different* stores
+        # claim the same slot at the same provenance — and must not raise otherwise. Stated
+        # as a biconditional so neither a suppressed guard nor a spurious one can pass.
+        for kinds in combinations_with_replacement(_SHAPES, size):
+            parts = [_shape(kind, str(i)) for i, kind in enumerate(kinds)]
+
+            same_tier_overlap = any(
+                sum(1 for blob in parts if _tiers(blob) & {tier}) > 1 for tier in ("real", "fallback")
+            )
+            raised = _outcome(tuple(parts))[0] == "error"
+
+            assert raised == same_tier_overlap, f"{kinds}: raised={raised}"
+
+    @pytest.mark.parametrize("size", [2, 3])
+    def test_every_composition_is_order_independent(self, size: int) -> None:
+        for kinds in combinations_with_replacement(_SHAPES, size):
+            parts = [_shape(kind, str(i)) for i, kind in enumerate(kinds)]
+            outcomes = {_outcome(order) for order in permutations(parts)}
+
+            assert len(outcomes) == 1, f"{kinds}: merge order changed the result — {outcomes}"
+
+
+def _outcome(parts: tuple[Deps, ...]) -> tuple[Any, ...]:
+    """What a merge of *parts* resolves to, or the error it raises — for comparison."""
+
+    try:
+        store = Deps.merge(*parts).store
+
+    except CoreException as error:
+        return ("error", str(error))
+
+    return (
+        "ok",
+        store.plain_deps.get(_A),
+        tuple(sorted((str(route), dep) for route, dep in (store.routed_deps.get(_A) or {}).items())),
+        store.fallback_report().shadowed_names(),
+        store.fallback_report().served_names(),
+    )
 
 
 class TestRegistrationIsASnapshot:

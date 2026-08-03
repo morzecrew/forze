@@ -139,10 +139,16 @@ def _reject_cross_conflicts(
     answer *ahead* of it, since routed lookup runs first — while a fallback plain entry
     coexists with real routes, serving only what the real module does not cover.
 
-    Every cross-store *pair* is judged, not just the two winners: a real registration must
-    not disarm the guard between the entries it outranks, the same way it does not for the
-    plain-vs-plain and route-vs-route checks. Otherwise a second fallback environment could
-    hide behind a real override and be discovered only as wrong behaviour.
+    The two questions are answered over different populations, and conflating them is a
+    bug in both directions:
+
+    - **Conflict** is judged over every cross-store *pair*. A real registration must not
+      disarm the guard between the entries it outranks, the same way it does not for the
+      plain-vs-plain and route-vs-route checks — otherwise a second fallback environment
+      hides behind a real override.
+    - **Displacement** is judged on the *survivors*, because it deletes a whole route slot.
+      A route whose winning entry is real answers ahead of the catch-all by design and must
+      be kept, even when a fallback happens to claim the same route name.
     """
 
     conflicting: set[str] = set()
@@ -155,16 +161,22 @@ def _reject_cross_conflicts(
             continue
 
         for plain in entries:
-            for route, route_entries in per_route.items():
+            for route_entries in per_route.values():
                 for routed in route_entries:
-                    if routed.origin == plain.origin:
-                        continue
-
-                    if routed.fallback == plain.fallback:
+                    if routed.origin != plain.origin and routed.fallback == plain.fallback:
                         conflicting.add(key.name)
 
-                    elif not plain.fallback:
-                        displaced.setdefault(key, set()).add(route)
+        plain_winner = _winner(entries)
+
+        if plain_winner.fallback:
+            # A fallback catch-all never displaces: it serves only what no route covers.
+            continue
+
+        for route, route_entries in per_route.items():
+            routed_winner = _winner(route_entries)
+
+            if routed_winner.origin != plain_winner.origin and routed_winner.fallback:
+                displaced.setdefault(key, set()).add(route)
 
     if conflicting:
         raise exc.internal(
