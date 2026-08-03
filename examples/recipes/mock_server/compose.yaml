@@ -1,0 +1,23 @@
+# The mock backend a frontend team runs while the real one is being built.
+#
+# One service and no dependencies — that is the point. Bring it up, point the frontend at
+# localhost:8000, and use /_mock to provoke the states a screen has to handle.
+services:
+  mock-api:
+    build:
+      # The repo root: the image installs the framework and the example app from source.
+      context: ../../..
+      dockerfile: examples/recipes/mock_server/Dockerfile
+    ports:
+      # Bound to loopback: the control plane is unauthenticated, so the port must not be
+      # reachable from the network. Change this and anyone who can route to the host can
+      # reset your data.
+      - "127.0.0.1:8000:8000"
+    environment:
+      # Point at your own declaration to serve your app instead of the recipe's.
+      MOCK_APP: examples.recipes.mock_server.served:mock_app
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/_mock/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

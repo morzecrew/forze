@@ -24,7 +24,7 @@ class TestTenancyDeps:
         deps.lock(ctx)
 
         assert deps.resolver() is None
-        ctx.deps.exists.assert_called_once_with(TenantResolverDepKey)
+        ctx.deps.exists.assert_called_once_with(TenantResolverDepKey, route=None)
 
     def test_manager_returns_none_when_not_registered(self) -> None:
         ctx = MagicMock()
@@ -33,7 +33,7 @@ class TestTenancyDeps:
         deps.lock(ctx)
 
         assert deps.manager() is None
-        ctx.deps.exists.assert_called_once_with(TenantManagementDepKey)
+        ctx.deps.exists.assert_called_once_with(TenantManagementDepKey, route=None)
 
     def test_resolver_resolves_when_registered(self) -> None:
         port = object()

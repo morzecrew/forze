@@ -38,13 +38,13 @@ def build_tenancy_registry(
         return ListTenants(
             resolver=ctx.inv_ctx.get_authn,
             current_tenant=ctx.inv_ctx.get_tenant,
-            tenant_management=ctx.tenancy.require_manager(),
+            tenant_management=ctx.tenancy.require_manager(spec.name),
         )
 
     def _switch_tenant(ctx: ExecutionContext) -> SwitchTenant:
         return SwitchTenant(
             resolver=ctx.inv_ctx.get_authn,
-            tenant_resolver=ctx.tenancy.require_resolver(),
+            tenant_resolver=ctx.tenancy.require_resolver(spec.name),
             token_lifecycle=ctx.deps.resolve_configurable(
                 ctx,
                 TokenLifecycleDepKey,
@@ -56,7 +56,7 @@ def build_tenancy_registry(
     def _leave_tenant(ctx: ExecutionContext) -> LeaveTenant:
         return LeaveTenant(
             resolver=ctx.inv_ctx.get_authn,
-            tenant_management=ctx.tenancy.require_manager(),
+            tenant_management=ctx.tenancy.require_manager(spec.name),
         )
 
     reg = OperationRegistry(

@@ -201,6 +201,7 @@ async def resolve_tenant_identity(
     request: Request,
     ctx: ExecutionContext,
     trust_tenant_header: bool = False,
+    tenancy_route: str | None = None,
 ) -> TenantIdentity | None:
     issuer_hint = authn.issuer_tenant_hint if authn is not None else None
     header_hint = request.headers.get(TENANT_ID_HEADER)
@@ -209,7 +210,10 @@ async def resolve_tenant_identity(
         header_hint=header_hint,
     )
 
-    ten = ctx.tenancy.resolver()
+    # The route the credential authenticated on — `TenancyDepsModule` registers the
+    # resolver routed, so without it this lookup finds nothing and the request proceeds
+    # with no tenant bound.
+    ten = ctx.tenancy.resolver(tenancy_route)
 
     if ten is not None and authn is not None:
         resolved = await ten.resolve_from_principal(

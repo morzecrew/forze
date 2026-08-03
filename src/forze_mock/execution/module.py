@@ -233,6 +233,7 @@ from forze_mock.execution.factories import (
     mock_journal_txmanager,
     mock_strict_txmanager,
     mock_txmanager,
+    route_simple_stubs,
     route_stubs,
 )
 from forze_mock.tenancy import MockRoutedStateRegistry
@@ -553,10 +554,12 @@ class MockDepsModule(DepsModule):
             DelegationDepKey: route_stubs(MockDelegationPort, authz_keys, state=self.state),
             AuthzDecisionDepKey: route_stubs(MockAuthzDecisionPort, authz_keys, state=self.state),
             AuthzScopeDepKey: route_stubs(MockAuthzScopePort, authz_keys),
-            TenantResolverDepKey: route_stubs(
+            # Simple, not configurable: both tenancy keys are ``SimpleDepPort`` s, so a
+            # ``(ctx, spec)`` factory here raises the moment anything resolves them.
+            TenantResolverDepKey: route_simple_stubs(
                 MockTenantResolverPort, tenancy_keys, state=self.state
             ),
-            TenantManagementDepKey: route_stubs(
+            TenantManagementDepKey: route_simple_stubs(
                 MockTenantManagementPort, tenancy_keys, state=self.state
             ),
         }

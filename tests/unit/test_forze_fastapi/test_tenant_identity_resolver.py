@@ -298,3 +298,36 @@ async def test_resolve_tenant_identity_returns_none_without_tenant_resolver() ->
     out = await resolve_tenant_identity(_authn(pid), request=req, ctx=ctx)
 
     assert out is None
+
+
+@pytest.mark.asyncio
+async def test_a_routed_resolver_is_found_the_way_the_shipped_module_registers_it() -> None:
+    """The registration shape `TenancyDepsModule` actually produces.
+
+    Every other case here registers the resolver **plain** — a shape no shipped module
+    emits. `TenancyDepsModule` registers it *routed*, and a route-less lookup found
+    nothing, so `SecurityContextMiddleware` bound no tenant and every tenant-aware adapter
+    then failed closed on a correctly authenticated request. Tested the way the framework
+    wires it, not the way a test finds convenient.
+    """
+
+    tid = uuid4()
+    pid = uuid4()
+
+    class _TenantResolver:
+        async def resolve_from_principal(self, principal_id, *, requested_tenant_id=None):
+            return TenantIdentity(tenant_id=tid)
+
+    ctx = context_from_deps(
+        Deps.routed({TenantResolverDepKey: {"api": lambda c: _TenantResolver()}}),
+    )
+
+    # Without the route, there is nothing to find — the historical behavior.
+    assert await resolve_tenant_identity(_authn(pid), request=_request(), ctx=ctx) is None
+
+    out = await resolve_tenant_identity(
+        _authn(pid), request=_request(), ctx=ctx, tenancy_route="api"
+    )
+
+    assert out is not None
+    assert out.tenant_id == tid

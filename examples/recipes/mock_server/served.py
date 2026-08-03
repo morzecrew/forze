@@ -16,11 +16,6 @@ Then provoke the states a frontend needs, instead of waiting for them::
 
 from __future__ import annotations
 
-from forze_identity.authz import policy_principal_spec
-from forze_identity.builtin.local import from_json_path, local_identity_deps
-from forze_mock.seeding import SeedPlan, spec_seed
-from forze_mock.server import MockApp
-
 from examples.recipes.mock_server.app import (
     AUTHN,
     DEV_PRINCIPAL,
@@ -28,6 +23,10 @@ from examples.recipes.mock_server.app import (
     build_app,
     product_spec,
 )
+from forze_identity.authz import policy_principal_spec
+from forze_identity.builtin.local import from_json_path, local_identity_deps
+from forze_mock.seeding import SeedPlan, spec_seed
+from forze_mock.server import MockApp
 
 # ----------------------- #
 

@@ -154,6 +154,33 @@ would be teaching the frontend a lie.
     laptop and for CI, and unacceptable anywhere else — which is the same reason `serve`
     demands `FORZE_MOCK_SERVER=1`. Bind it to localhost; never expose it.
 
+### In a container
+
+A frontend team should not need a Python toolchain to run your backend:
+
+```bash
+cd examples/recipes/mock_server
+just up            # docker compose up --build, health-checked
+just down
+```
+
+The recipe's `Dockerfile` and `compose.yaml` build from the repo root and serve
+`$MOCK_APP` — point that at your own declaration to serve your app. The image sets
+`FORZE_MOCK_SERVER=1` deliberately: the container *is* the mock, so running it is the
+opt-in. The port is published on `127.0.0.1` for the reason above.
+
+## Multi-tenant data
+
+If your specs are tenant-aware, the served mock partitions them the way a real relation's
+tenant `WHERE` clause does. Two API keys on two tenants, one server, disjoint data — the
+tenant comes from your identity wiring, so nothing about the app changes:
+
+```python
+mock = MockDepsModule(routes={"notes": MockRouteConfig(tenant_aware=True)})
+```
+
+An unauthenticated request binds no tenant and is refused rather than shown everything.
+
 ## What you get that a schema mock cannot give you
 
 - `create` → `list` → `get` coherence, so a form, a table and a detail screen all work.

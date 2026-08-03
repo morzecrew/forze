@@ -1245,6 +1245,56 @@ class ConfigurableMockPrincipalDeactivation(_MockFactoryBase):
 # ....................... #
 
 
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class ConstantSimpleMockFactory:
+    """Adapt a pre-built mock port to the **simple** dep protocol — ``(ctx) -> port``.
+
+    Not every routed identity key is configurable. ``TenantResolverDepKey`` and
+    ``TenantManagementDepKey`` are ``SimpleDepPort`` s, resolved with the context alone,
+    and registering a ``(ctx, spec)`` factory for one raises ``TypeError`` the moment it is
+    resolved — which is why the arity mismatch here went unseen for so long: nothing
+    resolved them.
+    """
+
+    port: Any
+    """Pre-built mock port returned for every resolution on this route."""
+
+    # ....................... #
+
+    def __call__(self, ctx: ExecutionContext) -> Any:
+        _ = ctx
+
+        return self.port
+
+
+# ....................... #
+
+
+def route_simple_stubs(
+    cls: type[Any],
+    routes: Iterable[StrKey],
+    *,
+    state: MockState | None = None,
+) -> dict[StrKey, Any]:
+    """Build a ``{route: factory}`` map of constant **simple** factories.
+
+    The simple-dep counterpart of :func:`route_stubs` — see
+    :class:`ConstantSimpleMockFactory` for why the distinction matters.
+    """
+
+    if state is None:
+        return {route: ConstantSimpleMockFactory(port=cls()) for route in routes}
+
+    return {
+        route: ConstantSimpleMockFactory(port=cls(state=state, route=str(route)))
+        for route in routes
+    }
+
+
+# ....................... #
+
+
 def route_stubs(
     cls: type[Any],
     routes: Iterable[StrKey],

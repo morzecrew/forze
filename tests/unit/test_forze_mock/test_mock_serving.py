@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 import pytest
 
@@ -18,6 +19,7 @@ pytest.importorskip("starlette")
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
+from forze.application.contracts.authn import AuthnSpec
 from forze.application.contracts.deps import Deps
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.realtime import RealtimeSignal
@@ -26,9 +28,14 @@ from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_fastapi.exceptions import register_exception_handlers
 from forze_fastapi.lifespan import runtime_lifespan
+from forze_fastapi.middlewares import InvocationMetadataMiddleware, SecurityContextMiddleware
 from forze_fastapi.routes import attach_document_routes
+from forze_fastapi.security import AuthnRequirement, HeaderApiKeyAuthn
+from forze_identity.authz import policy_principal_spec
+from forze_identity.builtin.local import from_mapping, local_identity_deps
 from forze_kits.aggregates.document import build_document_registry
 from forze_mock import MockDepsModule, MockState
+from forze_mock.execution.configs import MockRouteConfig
 from forze_mock.seeding import SeedPlan, spec_seed
 from forze_mock.server import ControlPlane, MockApp, MockSession, build_mock_server, serve
 
@@ -100,6 +107,57 @@ def _titles(client: TestClient) -> list[str]:
     assert response.status_code == 200, response.text
 
     return [row["title"] for row in response.json()["hits"]]
+
+
+# ....................... #
+# A second app, authenticated and tenant-partitioned — for the isolation cases.
+
+ADA, BOB = UUID(int=0xADA), UUID(int=0xB0B)
+TENANT_A, TENANT_B = UUID(int=0xA1), UUID(int=0xB1)
+
+AUTHN = AuthnSpec(name="main", enabled_methods=frozenset({"api_key"}))
+
+_IDENTITY = from_mapping(
+    {
+        "api_keys": {
+            "ada-key": {"principal_id": str(ADA), "tenant_id": str(TENANT_A)},
+            "bob-key": {"principal_id": str(BOB), "tenant_id": str(TENANT_B)},
+        }
+    }
+)
+
+
+def _build_authenticated_app(runtime: ExecutionRuntime) -> FastAPI:
+    app = _build_app(runtime)
+    app.add_middleware(InvocationMetadataMiddleware, ctx_dep=runtime.get_context)
+    app.add_middleware(
+        SecurityContextMiddleware,
+        ctx_dep=runtime.get_context,
+        authn=AuthnRequirement(
+            ingress=(HeaderApiKeyAuthn(authn_spec=AUTHN, header_name="X-API-Key", required=True),),
+        ),
+        when_multiple_credentials="first_in_order",
+    )
+
+    return app
+
+
+def _tenanted_app() -> MockApp:
+    return MockApp(
+        build_app=_build_authenticated_app,
+        # tenant_aware: the mock partitions storage and filters rows, mirroring the tenant
+        # WHERE clause a real relation carries.
+        mock=MockDepsModule(routes={"notes": MockRouteConfig(tenant_aware=True)}),
+        deps=(local_identity_deps(_IDENTITY, authn_route=AUTHN.name, tenancy_route=AUTHN.name),),
+        seed=SeedPlan(
+            specs=(
+                spec_seed(
+                    policy_principal_spec,
+                    fixtures=({"id": str(ADA), "kind": "user"}, {"id": str(BOB), "kind": "user"}),
+                ),
+            )
+        ),
+    )
 
 
 # ....................... #
@@ -283,6 +341,77 @@ class TestTheControlPlane:
 
         assert response.status_code == 202
         assert [signal.event for signal in delivered] == ["order.placed"]
+
+
+class TestPaginationIsReal:
+    def test_the_cursor_loop_terminates_and_visits_every_row_once(self) -> None:
+        """The claim §1 makes against schema mocks, asserted rather than assumed.
+
+        A synthesized `next_cursor` is a random string, so the client's loop never ends.
+        Here the cursor is the real one: the walk terminates on its own and yields each
+        seeded document exactly once.
+        """
+
+        with TestClient(build_mock_server(MockApp(build_app=_build_app, seed=_plan(7)))) as client:
+            seen: list[str] = []
+            cursor: str | None = None
+
+            for _ in range(20):  # a bound, so a non-terminating cursor fails instead of hanging
+                body: dict[str, object] = {"limit": 2}
+
+                if cursor is not None:
+                    body["cursor"] = cursor
+
+                page = client.post("/notes/list_cursor", json=body)
+                assert page.status_code == 200, page.text
+
+                data = page.json()
+                seen.extend(row["id"] for row in data["hits"])
+                cursor = data.get("next_cursor")
+
+                if cursor is None:
+                    break
+
+            assert cursor is None, "the cursor loop did not terminate"
+            assert len(seen) == 7
+            assert len(set(seen)) == 7, "a document was visited twice"
+
+
+class TestTenancy:
+    def test_two_keys_on_different_tenants_see_disjoint_data(self) -> None:
+        """One server, two credentials, two tenants — and neither sees the other's rows.
+
+        This is the case that surfaced the tenancy-binding bug: the resolver is registered
+        *routed* by the shipped modules, so nothing was bound and every request failed
+        closed with `tenant_required`.
+        """
+
+        with TestClient(build_mock_server(_tenanted_app())) as client:
+            ada = {"X-API-Key": "ada-key"}
+            bob = {"X-API-Key": "bob-key"}
+
+            assert client.post("/notes", json={"title": "ada-note"}, headers=ada).status_code in (
+                200,
+                201,
+            )
+            assert client.post("/notes", json={"title": "bob-note"}, headers=bob).status_code in (
+                200,
+                201,
+            )
+
+            def titles(headers: dict[str, str]) -> list[str]:
+                response = client.post("/notes/list", json={}, headers=headers)
+                assert response.status_code == 200, response.text
+
+                return [row["title"] for row in response.json()["hits"]]
+
+            assert titles(ada) == ["ada-note"]
+            assert titles(bob) == ["bob-note"]
+
+    def test_an_unauthenticated_request_binds_no_tenant_and_fails_closed(self) -> None:
+        # The other half of isolation: no credential must not mean "every tenant".
+        with TestClient(build_mock_server(_tenanted_app())) as client:
+            assert client.post("/notes/list", json={}).status_code == 401
 
 
 # ....................... #

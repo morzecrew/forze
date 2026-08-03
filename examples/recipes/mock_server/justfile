@@ -9,6 +9,14 @@ serve:
     FORZE_MOCK_SERVER=1 uv run --directory ../../.. \
         forze mock serve examples.recipes.mock_server.served:mock_app
 
+# Build and run the container a frontend team would use — no Python toolchain required.
+up:
+    docker compose up --build -d --wait
+    @echo "mock API on http://localhost:8000 — control plane at /_mock"
+
+down:
+    docker compose down
+
 # Arm a real 409 on the next product create, then show what is armed.
 fault:
     curl -sS -X POST localhost:8000/_mock/fault \
