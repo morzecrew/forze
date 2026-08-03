@@ -16,7 +16,7 @@ from forze.base.primitives import (
 
 from .links import plan_links
 from .plan import SeedPlan, SeedResult, SpecSeed
-from .values import build_rows, validate_rows
+from .values import build_rows, split_row_id, validate_rows
 
 if TYPE_CHECKING:
     from forze.application.execution import ExecutionContext
@@ -106,8 +106,13 @@ async def apply_seed(ctx: ExecutionContext, plan: SeedPlan) -> SeedResult:
             created[name] = ids
 
             for row in rows:
-                payload = _linked(dict(row), seed=seed, targets=targets, created=created, rng=rng)
-                document = await command.create(seed.create_cmd(**payload), return_new=True)
+                explicit_id, payload = split_row_id(row)
+                linked = _linked(payload, seed=seed, targets=targets, created=created, rng=rng)
+                document = await command.create(
+                    seed.create_cmd(**linked),
+                    id=explicit_id,
+                    return_new=True,
+                )
                 ids.append(document.id)
 
             payloads[name] = tuple(rows)

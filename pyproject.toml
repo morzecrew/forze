@@ -168,6 +168,10 @@ inference-sagemaker = [
 mcp = ["fastmcp>=3.0.0", "mcp>=1.27.0"]
 dst = ["polyfactory>=3.3.0", "hypothesis>=6.153.0"]
 cli = ["typer>=0.12.0"]
+# The served mock: routing + a server for the control plane, and polyfactory for seeding.
+# Listed concretely rather than referencing the 'dst' extra — extras that depend on extras
+# resolve unpredictably across installers.
+mock-server = ["polyfactory>=3.3.0", "starlette>=0.52.1", "uvicorn[standard]>=0.42.0"]
 zstd = ["zstandard>=0.23.0"]
 
 # ....................... #

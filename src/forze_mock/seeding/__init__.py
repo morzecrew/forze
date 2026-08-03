@@ -46,12 +46,13 @@ from .plan import (
     seed_plan,
     spec_seed,
 )
-from .values import build_rows, load_fixtures
+from .values import ROW_ID, build_rows, load_fixtures
 
 # ----------------------- #
 
 __all__ = [
     "DEFAULT_SEED_INSTANT",
+    "ROW_ID",
     "SeedPlan",
     "SeedResult",
     "SpecSeed",

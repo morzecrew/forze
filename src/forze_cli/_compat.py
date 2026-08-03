@@ -23,3 +23,25 @@ def require_dst() -> None:
             err=True,
         )
         raise typer.Exit(code=1)
+
+
+# ....................... #
+
+
+def require_mock_server() -> None:
+    """Exit with a clear message when the ``mock-server`` extra is missing.
+
+    Serving needs routing, a server and the seeding generator; those live in the
+    ``mock-server`` extra, not ``cli``.
+    """
+
+    missing = [name for name in ("starlette", "uvicorn", "polyfactory") if find_spec(name) is None]
+
+    if missing:
+        typer.echo(
+            "The 'forze mock' commands require the mock-server extra "
+            f"(missing: {', '.join(missing)}). "
+            "Install it with:  pip install 'forze[cli,mock-server]'",
+            err=True,
+        )
+        raise typer.Exit(code=1)

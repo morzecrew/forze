@@ -302,6 +302,28 @@ class MockState:
 
     # ....................... #
 
+    def clear(self) -> None:
+        """Empty every store, in place.
+
+        In place because the adapters hold *this* object: rebinding a fresh
+        :class:`MockState` would leave every resolved port writing to the old one. Derived
+        from the field definitions rather than a written-out list, so a store added later is
+        cleared too — a hand-maintained list is exactly the kind that silently goes stale.
+
+        The lock, the transaction serializer and the id sequence are private and survive: a
+        reset empties the data, it does not rebuild the state's machinery mid-flight.
+        """
+
+        with self.__lock:
+            for field in attrs.fields(type(self)):
+                if field.name.startswith("_") or not isinstance(field.default, attrs.Factory):  # type: ignore[arg-type]
+                    continue
+
+                factory: Any = field.default.factory  # type: ignore[union-attr]
+                setattr(self, field.name, factory())
+
+    # ....................... #
+
     def snapshot_tx_stores(self) -> MockTxSnapshot:
         """Deep-copy the transaction-participating stores (see class docstring)."""
 

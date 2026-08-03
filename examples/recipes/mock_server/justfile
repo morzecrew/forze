@@ -4,6 +4,18 @@ set shell := ["bash", "-cu"]
 run:
     uv run --directory ../../.. python -m examples.recipes.mock_server.app
 
+# The same app through the CLI, with the /_mock control plane mounted beside it.
+serve:
+    FORZE_MOCK_SERVER=1 uv run --directory ../../.. \
+        forze mock serve examples.recipes.mock_server.served:mock_app
+
+# Arm a real 409 on the next product create, then show what is armed.
+fault:
+    curl -sS -X POST localhost:8000/_mock/fault \
+        -H 'content-type: application/json' \
+        -d '{"route": "products", "op": "create", "kind": "conflict", "times": 1}'
+    curl -sS localhost:8000/_mock/health
+
 # The seeded catalog, through the generated list route.
 smoke:
     curl -sS -X POST localhost:8000/products/list \

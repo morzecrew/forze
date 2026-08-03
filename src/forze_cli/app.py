@@ -13,6 +13,7 @@ import typer
 
 from forze._version import __version__
 from forze_cli.dst import dst_app
+from forze_cli.mock import mock_app_cli
 
 # ----------------------- #
 
@@ -56,3 +57,4 @@ def root(
 
 
 app.add_typer(dst_app, name="dst")
+app.add_typer(mock_app_cli, name="mock")

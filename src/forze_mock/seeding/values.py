@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from random import Random
 from typing import Any
+from uuid import UUID
 
 import yaml
 
@@ -80,6 +81,40 @@ def build_rows(seed: SpecSeed, rng: Random) -> tuple[dict[str, Any], ...]:
 # ....................... #
 
 
+ROW_ID = "id"
+"""Reserved fixture key: the document id to create the row under.
+
+Not a create-command field — the write path mints ids — but a fixture sometimes has to name
+one: an identity principal must exist under the id its credential maps to, or authentication
+fails against a row that is otherwise correct.
+"""
+
+
+# ....................... #
+
+
+def split_row_id(row: Mapping[str, Any]) -> tuple[UUID | None, dict[str, Any]]:
+    """Separate a fixture's reserved id from the payload the create command receives."""
+
+    payload = dict(row)
+    raw = payload.pop(ROW_ID, None)
+
+    if raw is None:
+        return None, payload
+
+    if isinstance(raw, UUID):
+        return raw, payload
+
+    try:
+        return UUID(str(raw)), payload
+
+    except ValueError as error:
+        raise exc.configuration(f"Fixture 'id' is not a UUID: {raw!r}") from error
+
+
+# ....................... #
+
+
 def validate_rows(seed: SpecSeed, rows: Sequence[Mapping[str, Any]]) -> None:
     """Refuse fixture fields the create command does not accept, naming them.
 
@@ -88,7 +123,7 @@ def validate_rows(seed: SpecSeed, rows: Sequence[Mapping[str, Any]]) -> None:
     you read.
     """
 
-    known = set(seed.create_cmd.model_fields)
+    known = set(seed.create_cmd.model_fields) | {ROW_ID}
 
     for index, row in enumerate(rows):
         unknown = sorted(set(row) - known)

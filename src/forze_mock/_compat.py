@@ -20,3 +20,22 @@ def require_seeding() -> None:
             "forze_mock.seeding requires polyfactory — install it with 'forze[dst]' "
             "(or add polyfactory directly)"
         )
+
+
+# ....................... #
+
+
+def require_server() -> None:
+    """Raise a clear error when the ``mock-server`` extra is missing.
+
+    Kept out of ``forze_mock/__init__`` deliberately: without the extra, importing
+    ``forze_mock`` behaves exactly as it always has, and nothing pulls a web server into a
+    library dependency tree.
+    """
+
+    missing = [name for name in ("starlette", "uvicorn") if find_spec(name) is None]
+
+    if missing:
+        raise RuntimeError(
+            f"forze_mock.server requires 'forze[mock-server]' (missing: {', '.join(missing)})"
+        )

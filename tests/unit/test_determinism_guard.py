@@ -44,6 +44,9 @@ _ALLOWLIST: frozenset[str] = frozenset(
     {
         "forze/base/primitives/entropy_source.py",
         "forze/base/primitives/time_source.py",
+        # A TimeSource implementation *is* the seam: the mock server's controllable clock
+        # reads the wall clock so everything bound to it does not have to.
+        "forze_mock/server/clock.py",
         # The simulation harness *builds* the deterministic substrate: it constructs
         # seeded RNGs (schedule perturbation, workload generation) on purpose.
         "forze_dst/runtime.py",

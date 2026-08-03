@@ -105,6 +105,20 @@ class TestItIsStateful:
         assert stale.status_code == 400, stale.text
         assert stale.headers[ERROR_CODE_HEADER] == "revision_mismatch"
 
+    def test_the_declared_mock_app_serves_the_same_thing(self) -> None:
+        # `served.py` is what `forze mock serve` resolves. It declares no app of its own —
+        # the factory, the identity wiring and the specs all come from app.py — so serving
+        # through it must be indistinguishable from the hand-composed server above.
+        from forze_mock.server import build_mock_server
+
+        from examples.recipes.mock_server.served import mock_app
+
+        with TestClient(build_mock_server(mock_app)) as client:
+            assert {row["name"] for row in _list(client)} == {"Espresso", "Cortado", "Filter"}
+            assert client.post("/products/list", json={}).status_code == 401
+            # ...plus the control plane, which the hand-composed one does not have.
+            assert client.get("/_mock/health").json()["mock"] is True
+
     def test_each_server_starts_from_the_same_pristine_seed(self) -> None:
         # Two servers, no shared state: a mutation in one is invisible to the other.
         with TestClient(build_server()) as first, TestClient(build_server()) as second:

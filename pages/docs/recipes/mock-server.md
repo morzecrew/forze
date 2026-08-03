@@ -97,6 +97,63 @@ just run                    # http://localhost:8000 — no compose file, no cont
 just smoke                  # the seeded catalog through the generated list route
 ```
 
+## Serve it with the CLI, and drive it
+
+Composing the runtime by hand is fine for one app. `MockApp` is the declaration form — it
+says which real modules to keep, what to seed, and nothing about the app itself:
+
+```python
+--8<-- "recipes/mock_server/served.py:declaration"
+```
+
+```bash
+FORZE_MOCK_SERVER=1 forze mock serve examples.recipes.mock_server.served:mock_app
+```
+
+The gate is not decoration: `serve` refuses without it, and refuses a composition whose deps
+contain no fallback-marked mock module — so a real runtime cannot be served here, and can
+never grow the routes below. Install with the `mock-server` extra.
+
+### The control plane
+
+A frontend developer needs to *provoke* states, not wait for them. `/_mock` does that, and
+it sits beside your app rather than inside it, so your own auth does not lock you out of it:
+
+| Route | What it does |
+|---|---|
+| `POST /_mock/reset` | Back to the pristine seed — state cleared, faults disarmed |
+| `POST /_mock/seed` | Re-apply the plan (`{"reset": true}` to wipe first) |
+| `GET /_mock/state/{store}` | Peek at a mock store (`documents`, `queues`, `storage`, …) |
+| `POST /_mock/fault` | Arm a failure for matching port calls |
+| `POST /_mock/latency` | Delay matching calls — spinners and timeouts |
+| `POST /_mock/disarm` | Clear every armed fault and delay |
+| `POST /_mock/time` | `freeze` / `advance` / `resume` the server clock |
+| `POST /_mock/emit` | Fire one realtime signal (needs `MockApp(on_emit=...)`) |
+| `GET /_mock/health` | Readiness, the clock, and the loud "this is a mock" |
+
+```bash
+# every products call fails as a real 409, once
+curl -X POST localhost:8000/_mock/fault \
+     -d '{"route": "products", "op": "create", "kind": "conflict", "times": 1}'
+
+# the expiry screen, without waiting a day
+curl -X POST localhost:8000/_mock/time -d '{"action": "advance", "seconds": 86400}'
+```
+
+The fault's `kind` is a **real** `exc` kind, so your own exception handlers turn it into the
+real status and error envelope — an armed `conflict` reaches the client exactly as a genuine
+optimistic-concurrency failure would. A control plane that invented its own error shape
+would be teaching the frontend a lie.
+
+`route` is the spec name and `op` is the **port method** (`create`, `update`, `find_page`,
+`get`, …) — omit `op` to match every call on that spec, which is usually what you want.
+
+!!! warning "The control plane is unauthenticated"
+
+    Anyone who can reach the port can reset your data and arm faults. That is correct for a
+    laptop and for CI, and unacceptable anywhere else — which is the same reason `serve`
+    demands `FORZE_MOCK_SERVER=1`. Bind it to localhost; never expose it.
+
 ## What you get that a schema mock cannot give you
 
 - `create` → `list` → `get` coherence, so a form, a table and a detail screen all work.
