@@ -42,20 +42,25 @@ def load_fixtures(path: str | Path) -> tuple[Mapping[str, Any], ...]:
 # ....................... #
 
 
-def _generated_rows(seed: SpecSeed, rng: Random) -> tuple[dict[str, Any], ...]:
-    """Generate *count* shape-correct rows for the spec's create command."""
+def generated_rows(model: type[Any], count: int, rng: Random) -> tuple[dict[str, Any], ...]:
+    """Generate *count* shape-correct rows for a pydantic *model*.
 
-    if seed.count == 0:
+    Plane-agnostic on purpose: a document's create command, a search index's model and a
+    queue payload are all just models to fill, and one generator keeps the determinism story
+    identical across the planes.
+    """
+
+    if count == 0:
         return ()
 
     from polyfactory.factories.pydantic_factory import ModelFactory
 
-    # A factory per spec, seeded from the plan's rng so the whole plan reproduces from one
-    # number — and drawn in a fixed order, so adding a spec does not reshuffle the others.
-    factory = ModelFactory.create_factory(seed.create_cmd)
+    # A factory per call site, seeded from the plan's rng so the whole plan reproduces from
+    # one number — and drawn in a fixed order, so adding a spec does not reshuffle the others.
+    factory = ModelFactory.create_factory(model)
     factory.seed_random(rng.getrandbits(32))
 
-    return tuple(factory.build().model_dump() for _ in range(seed.count))
+    return tuple(factory.build().model_dump() for _ in range(count))
 
 
 # ....................... #
@@ -69,11 +74,33 @@ def build_rows(seed: SpecSeed, rng: Random) -> tuple[dict[str, Any], ...]:
     per-spec constant (a tenant, an owner), not a default.
     """
 
-    rows: list[dict[str, Any]] = [dict(row) for row in seed.fixtures]
-    rows.extend(_generated_rows(seed, rng))
+    return merged_rows(
+        fixtures=seed.fixtures,
+        model=seed.create_cmd,
+        count=seed.count,
+        overrides=seed.overrides,
+        rng=rng,
+    )
+
+
+# ....................... #
+
+
+def merged_rows(
+    *,
+    fixtures: Sequence[Mapping[str, Any]],
+    model: type[Any],
+    count: int,
+    overrides: Mapping[str, Any],
+    rng: Random,
+) -> tuple[dict[str, Any], ...]:
+    """Fixtures first, then generated rows, with *overrides* forced on every one."""
+
+    rows: list[dict[str, Any]] = [dict(row) for row in fixtures]
+    rows.extend(generated_rows(model, count, rng))
 
     for row in rows:
-        row.update(seed.overrides)
+        row.update(overrides)
 
     return tuple(rows)
 

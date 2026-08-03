@@ -20,7 +20,11 @@ from pydantic import BaseModel
 
 from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze.application.contracts.queue import QueueQueryDepKey, QueueSpec
+from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.storage import StorageSpec
 from forze.base.exceptions import CoreException
+from forze.base.serialization import PydanticModelCodec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze.testing import context_from_modules
 from forze_kits.domain.soft_deletion.models import (
@@ -29,7 +33,10 @@ from forze_kits.domain.soft_deletion.models import (
 )
 from forze_mock import MockDepsModule, MockState
 from forze_mock.seeding import (
+    QueueSeed,
+    SearchSeed,
     SeedPlan,
+    StorageSeed,
     apply_seed,
     infer_links,
     load_fixtures,
@@ -399,3 +406,151 @@ class TestDeterminism:
         }
 
         assert len(snapshots) == 1, "the seed is not reproducible across processes"
+
+# ....................... #
+
+
+class _Indexed(BaseModel):
+    id: str = ""
+    title: str = ""
+
+
+class _Msg(BaseModel):
+    body: str = ""
+
+
+_INDEX = SearchSpec(name="notes_index", model_type=_Indexed, fields=["title"])
+_BLOBS = StorageSpec(name="attachments")
+_QUEUE = QueueSpec(name="jobs", codec=PydanticModelCodec(model_type=_Msg))
+
+
+class TestEveryPlaneGoesThroughItsOwnWritePath:
+    """§9 wants "a new plane the seeder cannot fill" to fail CI, which only means something
+    once the seeder fills planes rather than document specs. Each of these asserts through the
+    plane's *read* path, so a seeder that wrote into ``MockState`` directly would not pass."""
+
+    @pytest.mark.asyncio
+    async def test_search_documents_are_upserted_and_searchable(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+
+        result = await apply_seed(
+            ctx,
+            SeedPlan(
+                search=(SearchSeed(spec=_INDEX, fixtures=({"id": "a", "title": "alpha"},)),),
+            ),
+        )
+
+        page = await ctx.search.query(_INDEX).search("alpha", pagination={"limit": 10})
+
+        assert [hit.id for hit in page.hits] == ["a"]
+        assert result.indexed["notes_index"] == ("a",)
+
+    @pytest.mark.asyncio
+    async def test_search_ids_follow_a_seeded_document_spec(self) -> None:
+        # An index whose ids name nothing is an index every hit of which 404s when the
+        # client fetches the row behind it.
+        ctx = context_from_modules(MockDepsModule())
+
+        result = await apply_seed(
+            ctx,
+            SeedPlan(
+                specs=(spec_seed(_projects(), count=3),),
+                search=(SearchSeed(spec=_INDEX, count=3, ids_from="projects"),),
+            ),
+        )
+
+        assert set(result.indexed["notes_index"]) == {str(doc) for doc in result["projects"]}
+
+    @pytest.mark.asyncio
+    async def test_storage_objects_are_uploaded_and_downloadable(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+
+        result = await apply_seed(
+            ctx,
+            SeedPlan(
+                storage=(
+                    StorageSeed(
+                        spec=_BLOBS,
+                        objects=({"filename": "readme.txt", "data": "hello"},),
+                        count=2,
+                    ),
+                ),
+            ),
+        )
+
+        keys = result.stored["attachments"]
+        assert len(keys) == 3
+
+        downloaded = await ctx.storage.query(_BLOBS).download(keys[0])
+        assert downloaded.data == b"hello"
+
+    @pytest.mark.asyncio
+    async def test_queue_messages_are_enqueued_and_consumable(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+
+        result = await apply_seed(
+            ctx,
+            SeedPlan(
+                queues=(
+                    QueueSeed(
+                        spec=_QUEUE,
+                        channel="jobs",
+                        fixtures=({"body": "first"}, {"body": "second"}),
+                    ),
+                ),
+            ),
+        )
+
+        assert result.queued == {"jobs/jobs": 2}
+
+        received = await ctx.deps.resolve_configurable(
+            ctx, QueueQueryDepKey, _QUEUE, route=_QUEUE.name
+        ).receive("jobs", limit=2)
+
+        assert [message.payload.body for message in received] == ["first", "second"]
+
+    @pytest.mark.asyncio
+    async def test_a_search_seed_naming_an_unseeded_spec_is_refused(self) -> None:
+        with pytest.raises(CoreException, match="take ids from specs that are not seeded"):
+            SeedPlan(search=(SearchSeed(spec=_INDEX, count=1, ids_from="ghosts"),))
+
+    @pytest.mark.asyncio
+    async def test_every_plane_reproduces_from_one_seed(self) -> None:
+        async def run() -> tuple:
+            ctx = context_from_modules(MockDepsModule())
+            result = await apply_seed(
+                ctx,
+                SeedPlan(
+                    specs=(spec_seed(_projects(), count=2),),
+                    search=(SearchSeed(spec=_INDEX, count=2, ids_from="projects"),),
+                    storage=(StorageSeed(spec=_BLOBS, count=2),),
+                    queues=(QueueSeed(spec=_QUEUE, channel="jobs", count=2),),
+                    rng_seed=5,
+                ),
+            )
+
+            return (
+                tuple(str(doc) for doc in result["projects"]),
+                result.indexed["notes_index"],
+                result.stored["attachments"],
+                tuple(sorted(result.queued.items())),
+            )
+
+        assert await run() == await run()
+
+    @pytest.mark.asyncio
+    async def test_the_plane_totals_are_reported_together(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+
+        result = await apply_seed(
+            ctx,
+            SeedPlan(
+                specs=(spec_seed(_projects(), count=2),),
+                search=(SearchSeed(spec=_INDEX, count=1),),
+                storage=(StorageSeed(spec=_BLOBS, count=1),),
+                queues=(QueueSeed(spec=_QUEUE, channel="jobs", count=3),),
+            ),
+        )
+
+        assert result.total == 2, "total stays document-only"
+        assert result.total_all_planes == 7

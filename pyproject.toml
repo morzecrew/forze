@@ -833,6 +833,50 @@ ignore_missing_imports = true
 implicit_reexport = true
 
 # ....................... #
+# Mock-server catalog gate
+#
+# Every operation in the driving example's catalog must resolve, and must answer against
+# seeded data. A plane the seeder cannot fill therefore fails CI instead of shipping green.
+# The exemptions below are operations that cannot be driven blind — not planes that are
+# unsupported — and the table is checked BOTH ways: an exemption whose operation starts
+# passing must be deleted, so it can only ever shrink.
+
+[tool.mock_gate]
+app = "examples.recipes.mock_workspace.served:mock_app"
+
+[[tool.mock_gate.exempt]]
+op = "attachments.complete_upload"
+reason = "needs a live multipart session id; a seed has no way to leave one open"
+
+[[tool.mock_gate.exempt]]
+op = "attachments.list_parts"
+reason = "needs a live multipart session id; a seed has no way to leave one open"
+
+[[tool.mock_gate.exempt]]
+op = "attachments.download"
+reason = "the catalog carries no input type for this operation, so a blind sweep has nothing to author"
+
+[[tool.mock_gate.exempt]]
+op = "attachments.head"
+reason = "the catalog carries no input type for this operation, so a blind sweep has nothing to author"
+
+[[tool.mock_gate.exempt]]
+op = "attachments.download_stream"
+reason = "the catalog carries no input type for this operation, so a blind sweep has nothing to author"
+
+[[tool.mock_gate.exempt]]
+op = "attachments.download_range"
+reason = "a byte range only means something against a known object length; the sweep has no size to range over"
+
+[[tool.mock_gate.exempt]]
+op = "projects.agg_list"
+reason = "an aggregate request names functions and fields the caller chooses; a blind sweep cannot author one"
+
+[[tool.mock_gate.exempt]]
+op = "tasks.agg_list"
+reason = "an aggregate request names functions and fields the caller chooses; a blind sweep cannot author one"
+
+# ....................... #
 # Import contracts
 
 [tool.importlinter]

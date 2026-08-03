@@ -7,6 +7,8 @@ from random import Random
 from typing import TYPE_CHECKING, Any, get_args
 from uuid import UUID
 
+from forze.application.contracts.queue import QueueCommandDepKey
+from forze.application.contracts.storage import UploadedObject
 from forze.base.primitives import (
     FrozenTimeSource,
     SeededEntropySource,
@@ -16,7 +18,7 @@ from forze.base.primitives import (
 
 from .links import plan_links
 from .plan import SeedPlan, SeedResult, SpecSeed
-from .values import build_rows, split_row_id, validate_rows
+from .values import build_rows, merged_rows, split_row_id, validate_rows
 
 if TYPE_CHECKING:
     from forze.application.execution import ExecutionContext
@@ -117,7 +119,154 @@ async def apply_seed(ctx: ExecutionContext, plan: SeedPlan) -> SeedResult:
 
             payloads[name] = tuple(rows)
 
+        indexed = await _apply_search(ctx, plan, created, rng)
+        stored = await _apply_storage(ctx, plan, rng)
+        queued = await _apply_queues(ctx, plan, rng)
+
     return SeedResult(
         ids={name: tuple(ids) for name, ids in created.items()},
         rows=payloads,
+        indexed=indexed,
+        stored=stored,
+        queued=queued,
     )
+
+
+# ....................... #
+
+
+async def _apply_search(
+    ctx: ExecutionContext,
+    plan: SeedPlan,
+    created: dict[str, list[UUID]],
+    rng: Random,
+) -> dict[str, tuple[str, ...]]:
+    """Fill each search index through its **upsert** — the plane's own write path.
+
+    Ids come from a seeded document spec when ``ids_from`` says so: an index whose ids name
+    nothing is an index every hit of which 404s the moment the client fetches the row.
+    """
+
+    indexed: dict[str, tuple[str, ...]] = {}
+
+    for seed in plan.search:
+        model = seed.spec.model_type
+        rows = merged_rows(
+            fixtures=seed.fixtures,
+            model=model,
+            count=seed.count,
+            overrides=seed.overrides,
+            rng=rng,
+        )
+
+        if seed.ids_from is not None:
+            pool = created.get(seed.ids_from, [])
+            rows = tuple(
+                {**row, "id": str(pool[index])} if index < len(pool) else row
+                for index, row in enumerate(rows)
+            )
+
+        documents = [model(**row) for row in rows]
+
+        if documents:
+            await ctx.search.command(seed.spec).upsert(documents)
+
+        indexed[str(seed.spec.name)] = tuple(str(document.id) for document in documents)
+
+    return indexed
+
+
+# ....................... #
+
+
+async def _apply_storage(
+    ctx: ExecutionContext,
+    plan: SeedPlan,
+    rng: Random,
+) -> dict[str, tuple[str, ...]]:
+    """Upload each object through the storage command port."""
+
+    stored: dict[str, tuple[str, ...]] = {}
+
+    for seed in plan.storage:
+        uploads = [
+            UploadedObject(
+                filename=str(obj["filename"]),
+                data=_as_bytes(obj.get("data", b"")),
+                prefix=obj.get("prefix", seed.prefix),
+                tags=obj.get("tags"),
+            )
+            for obj in seed.objects
+        ]
+
+        # Filler blobs are deterministic bytes, not random ones: a seed that changes its
+        # payloads between runs is a seed you cannot diff a response against.
+        uploads.extend(
+            UploadedObject(
+                filename=f"seeded-{index}.txt",
+                data=f"seeded object {index}".encode(),
+                prefix=seed.prefix,
+            )
+            for index in range(seed.count)
+        )
+
+        command = ctx.storage.command(seed.spec)
+        keys: list[str] = []
+
+        for upload in uploads:
+            result = await command.upload(upload)
+            keys.append(str(result.key))
+
+        stored[str(seed.spec.name)] = tuple(keys)
+
+    _ = rng
+
+    return stored
+
+
+# ....................... #
+
+
+async def _apply_queues(
+    ctx: ExecutionContext,
+    plan: SeedPlan,
+    rng: Random,
+) -> dict[str, int]:
+    """Enqueue each payload through the queue command port."""
+
+    queued: dict[str, int] = {}
+
+    for seed in plan.queues:
+        model = seed.spec.codec.model_type
+        rows = merged_rows(
+            fixtures=seed.fixtures,
+            model=model,
+            count=seed.count,
+            overrides=seed.overrides,
+            rng=rng,
+        )
+
+        # No `ctx.queue` accessor exists; this is the resolution the outbox relay uses,
+        # route and all, so a routed real queue resolves the same way it does in production.
+        command = ctx.deps.resolve_configurable(
+            ctx,
+            QueueCommandDepKey,
+            seed.spec,
+            route=seed.spec.name,
+        )
+
+        for row in rows:
+            await command.enqueue(seed.channel, model(**row))
+
+        queued[f"{seed.spec.name}/{seed.channel}"] = len(rows)
+
+    return queued
+
+
+# ....................... #
+
+
+def _as_bytes(data: Any) -> bytes:
+    """Accept a fixture's ``data`` as text or bytes."""
+
+    return data if isinstance(data, bytes) else str(data).encode()

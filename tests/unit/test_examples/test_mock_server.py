@@ -109,9 +109,8 @@ class TestItIsStateful:
         # `served.py` is what `forze mock serve` resolves. It declares no app of its own —
         # the factory, the identity wiring and the specs all come from app.py — so serving
         # through it must be indistinguishable from the hand-composed server above.
-        from forze_mock.server import build_mock_server
-
         from examples.recipes.mock_server.served import mock_app
+        from forze_mock.server import build_mock_server
 
         with TestClient(build_mock_server(mock_app)) as client:
             assert {row["name"] for row in _list(client)} == {"Espresso", "Cortado", "Filter"}

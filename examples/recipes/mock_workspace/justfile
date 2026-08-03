@@ -1,0 +1,15 @@
+set shell := ["bash", "-cu"]
+
+# Serve the broad workspace app on in-memory backends, control plane included.
+serve:
+    FORZE_MOCK_SERVER=1 uv run --directory ../../.. \
+        forze mock serve examples.recipes.mock_workspace.served:mock_app
+
+# The catalog gate: every operation reachable, every plane seeded.
+gate:
+    uv run --directory ../../.. pytest tests/unit/test_examples/test_mock_workspace.py -q
+
+# The seeded tasks, through the generated list route.
+smoke:
+    curl -sS -X POST localhost:8000/tasks/list \
+        -H 'content-type: application/json' -d '{}'
