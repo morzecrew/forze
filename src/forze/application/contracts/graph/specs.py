@@ -88,15 +88,30 @@ through.) One caveat the type cannot express: the key is that *text*, so ``Decim
 and ``Decimal("1.5")`` are two different keys even though Python calls them equal."""
 
 
-_JSON_CONTAINER_ORIGINS: Final[tuple[type, ...]] = (list, tuple, set, frozenset, dict)
-"""Origins of a declared key that serializes to a JSON array or object rather than a scalar.
+_JSON_CONTAINERS: Final[tuple[type, ...]] = (list, tuple, set, frozenset, dict)
+"""Declared key types that serialize to a JSON array or object rather than a scalar.
 
 Denied for the same reason as the native scalars, one step further out: a key held as a
-list matches no string either. Named separately because they are found through
-``get_origin``, not ``issubclass`` — ``list[str]`` is not a ``type``.
+list matches no string either. A ``NamedTuple`` key lands here too, via ``tuple``, and
+should — it serializes as an array like any other.
+"""
+
+_DENIED_KEY_TYPES: Final[tuple[type, ...]] = (*_NON_STRING_KEY_TYPES, *_JSON_CONTAINERS)
+"""Every declared type a keyed read cannot match, whether written bare or parameterised.
+
+One tuple for both spellings on purpose. Splitting them is what let ``id: list`` through
+while ``id: list[str]`` was refused: the bare class is a ``type``, so it took the
+``isinstance`` path and was only ever compared against the scalars, while the
+parameterised form was a ``GenericAlias`` and reached the container check.
 """
 
 # ....................... #
+
+
+def _denied_key_type(candidate: type) -> type | None:
+    """The denied type *candidate* is or subclasses, if any."""
+
+    return next((denied for denied in _DENIED_KEY_TYPES if issubclass(candidate, denied)), None)
 
 
 def _native_scalar_in(annotation: object) -> type | None:
@@ -122,10 +137,7 @@ def _native_scalar_in(annotation: object) -> type | None:
     """
 
     if isinstance(annotation, type):
-        return next(
-            (native for native in _NON_STRING_KEY_TYPES if issubclass(annotation, native)),
-            None,
-        )
+        return _denied_key_type(annotation)
 
     origin = get_origin(annotation)
 
@@ -141,8 +153,13 @@ def _native_scalar_in(annotation: object) -> type | None:
             None,
         )
 
-    if isinstance(origin, type) and issubclass(origin, _JSON_CONTAINER_ORIGINS):
-        return origin  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(origin, type):
+        # A parameterised container is denied on its origin. Anything else parameterised
+        # (an Annotated, a custom generic) falls through to the argument walk.
+        found = _denied_key_type(origin)
+
+        if found is not None:
+            return found
 
     for argument in get_args(annotation):
         if argument is type(None):

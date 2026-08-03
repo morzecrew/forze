@@ -514,6 +514,12 @@ class TestKeyFieldTyping:
     class _DictKeyRead(BaseModel):
         id: dict[str, str]
 
+    class _BareListKeyRead(BaseModel):
+        id: list
+
+    class _BareDictKeyRead(BaseModel):
+        id: dict
+
     class _LiteralIntKeyRead(BaseModel):
         id: Literal[1]
 
@@ -531,6 +537,8 @@ class TestKeyFieldTyping:
             _OptionalNumericKeyRead,
             _ListKeyRead,
             _DictKeyRead,
+            _BareListKeyRead,
+            _BareDictKeyRead,
             _LiteralIntKeyRead,
             _MixedLiteralKeyRead,
         ],
@@ -543,6 +551,11 @@ class TestKeyFieldTyping:
             # is (str,), which read as "a string key" until the origin was checked first.
             "list",
             "dict",
+            # Both spellings, because they take different paths and only one was covered:
+            # a bare `list` is a type, so it short-circuits on the isinstance branch and
+            # never reaches the origin check that catches `list[str]`.
+            "bare-list",
+            "bare-dict",
             # get_args of a Literal are *values*, not types, so walking them found nothing
             # that was a type and accepted a plain int key.
             "literal-int",

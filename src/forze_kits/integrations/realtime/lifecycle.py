@@ -628,8 +628,10 @@ def realtime_mailbox_retention_lifecycle_step(
     # misconfiguration raised an uncoded error through this door and a
     # `realtime_mailbox_retention_invalid` one through `MailboxRetention`.
     retention = MailboxRetention(max_age=max_age, cursor_max_age=cursor_max_age)
-    # From the declaration, not recomputed: the marker keys the same property, so the sweep
-    # cannot enforce one window while vouching for another.
+    # From the declaration, not recomputed: the marker keys this same property, so the
+    # sweep cannot enforce one window while vouching for another. The `or` is a type
+    # narrowing and never a fallback — the property is optional only for an *unbounded*
+    # declaration, and this step's max_age is required, so it is always Some here.
     resolved_cursor_age = retention.resolved_cursor_max_age or max_age
 
     if interval.total_seconds() <= 0:
