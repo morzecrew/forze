@@ -58,6 +58,29 @@ An API that answers `[]` is one no frontend can build against:
 Seeds go through the **write path**, never into `MockState` directly, so `rev`, timestamps,
 materialized fields and field encryption come from the same code that serves the reads.
 
+Three hand-written rows is the right size for a recipe and the wrong size for a real screen.
+`forze_mock.seeding` fills specs from a plan instead — generated rows for volume, fixtures
+for the rows a demo actually shows, and references that point at documents the seed created:
+
+```python
+from forze_mock.seeding import SeedPlan, apply_seed, load_fixtures, spec_seed
+
+plan = SeedPlan(
+    specs=(
+        spec_seed(project_spec, count=5),
+        spec_seed(task_spec, count=40, fixtures=load_fixtures("tasks.json")),
+    ),
+    rng_seed=7,
+)
+result = await apply_seed(ctx, plan)   # result["tasks"] -> the created ids
+```
+
+A seeded `Task.project_id` names a seeded project — inferred from the field and spec names,
+corrected by `SeedPlan.links` where the names don't line up. The plan is reproducible: one
+`rng_seed` fixes the values, and `SeedPlan.instant` pins the clock the write path mints ids
+and timestamps from, so two processes running the plan produce byte-identical documents.
+Seeding needs `polyfactory` (it ships with the `dst` extra).
+
 !!! warning "Identity needs a principal document"
 
     The default eligibility gate reads a `policy_principal` document, so a dev key whose

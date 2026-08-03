@@ -987,6 +987,22 @@ protected_modules = [
 allowed_importers = ["forze_cli"]
 as_packages = true
 
+[[tool.importlinter.contracts]]
+name = "forze_mock never imports a sibling integration package"
+type = "forbidden"
+source_modules = ["forze_mock"]
+forbidden_modules = [
+    "forze_fastapi",
+    "forze_identity",
+    "forze_kits",
+    "forze_dst",
+    "forze_mcp",
+]
+# The mock is a leaf provider: every consumer of it depends on that. A submodule reaching
+# for a transport's route attachers or the identity plane's verifiers would invert the
+# layering for all of them — and would let a mock server mint its own principal, which is
+# the one thing it must never be able to do.
+
 # ....................... #
 # Dead code
 
