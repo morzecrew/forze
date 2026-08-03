@@ -6184,6 +6184,13 @@ misconfiguration caught before the app starts, not at the first request.</p>
 </div>
 <p>Build incrementally with <code>registry.with_modules(...)</code> when modules come from
 different parts of your codebase.</p>
+<p>One registration kind is exempt from that conflict: a <strong>fallback</strong> module
+(<code>Deps.plain(..., fallback=True)</code>, which is how <code>MockDepsModule</code> registers
+everything) yields to a real module instead of colliding with it. That is what
+lets a test or a partially-migrated app say "real Postgres, mock everything
+else" in one deps list — see
+<a href="../../testing/overview/#hybrid-contexts-one-real-backend-mock-for-the-rest">hybrid contexts</a>.
+Production wiring marks nothing, so every overlap there stays fail-loud.</p>
 <h2 id="the-lifecycle-plan">The lifecycle plan<a class="headerlink" href="#the-lifecycle-plan" title="Permanent link">&para;</a></h2>
 <p>Deps describe <strong>what to build</strong>; the <strong>lifecycle plan</strong> decides <strong>when clients
 connect and disconnect</strong>. They're kept separate on purpose — registration is

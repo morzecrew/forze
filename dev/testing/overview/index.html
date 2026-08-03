@@ -2256,6 +2256,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#hybrid-contexts-one-real-backend-mock-for-the-rest" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Hybrid contexts: one real backend, mock for the rest
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#testing-operations-directly" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6061,6 +6072,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#hybrid-contexts-one-real-backend-mock-for-the-rest" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Hybrid contexts: one real backend, mock for the rest
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#testing-operations-directly" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6260,6 +6282,25 @@
         <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">user_spec</span><span class="p">)</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">CreateUser</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Ada&quot;</span><span class="p">))</span>
 </code></pre></div>
 <p>Integration tests are slower and require Docker, but they catch issues that mock adapters miss — schema migrations, constraint violations, connection handling.</p>
+<h2 id="hybrid-contexts-one-real-backend-mock-for-the-rest">Hybrid contexts: one real backend, mock for the rest<a class="headerlink" href="#hybrid-contexts-one-real-backend-mock-for-the-rest" title="Permanent link">&para;</a></h2>
+<p>Most integration tests only need <em>one</em> plane to be real. Pass <code>MockDepsModule</code> alongside the real modules and you get exactly that — real Postgres for documents and transactions, the mock for the queue the relay publishes into, the cache, the locks, everything else:</p>
+<div class="highlight"><pre><span></span><code><span class="n">runtime</span> <span class="o">=</span> <span class="n">ExecutionRuntime</span><span class="p">(</span>
+    <span class="n">deps</span><span class="o">=</span><span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
+        <span class="n">PostgresDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">tx</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;default&quot;</span><span class="p">},</span> <span class="n">outboxes</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;events&quot;</span><span class="p">:</span> <span class="n">events_pg</span><span class="p">}),</span>
+        <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">state</span><span class="o">=</span><span class="n">shared_state</span><span class="p">),</span>
+    <span class="p">)</span><span class="o">.</span><span class="n">freeze</span><span class="p">(),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Everything <code>MockDepsModule</code> registers is marked a <strong>fallback</strong>: a background environment rather than a claim on a key. Where a real module registers the same contract, the real one wins; where none does, the mock answers. Module order does not matter — provenance decides, not position. Two real modules registering the same route still raise at build time, exactly as before, and so do two mock modules in one context.</p>
+<p>You can mark your own registrations the same way — <code>Deps.plain(deps, fallback=True)</code> / <code>Deps.routed(routes, fallback=True)</code> — if you ship an environment module of your own. Real backend modules never set it.</p>
+<div class="admonition warning">
+<p class="admonition-title">A route the real module never registered reaches the mock</p>
+<p>In a context that includes a fallback, an unregistered route does not fail — it falls back to the plain catch-all. A typo in a spec name therefore resolves to the mock instead of raising, and the mock is the capability <em>superset</em>, so it may accept a call the real backend would refuse.</p>
+<p>Freeze names that hazard set at <code>INFO</code> (<code>Hybrid deps wiring: … catch-all behind real routes: document_query, …</code>) — the keys your real module routes <em>and</em> the mock still backs; the full fallback-served list is at <code>DEBUG</code>. The same report is <code>check_wiring(...).fallbacks</code>, and <code>report.fallbacks.catch_all</code> is the set to look at. To prove a test really hit the real adapter, assert your route is registered rather than inferred:</p>
+<div class="highlight"><pre><span></span><code><span class="k">assert</span> <span class="s2">&quot;orders&quot;</span> <span class="ow">in</span> <span class="n">ctx</span><span class="o">.</span><span class="n">deps</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">routed_deps</span><span class="p">[</span><span class="n">DocumentQueryDepKey</span><span class="p">]</span>
+</code></pre></div>
+<p>Production is unaffected: it has no fallback module, so every overlap is still fail-loud.</p>
+</div>
 <h2 id="testing-operations-directly">Testing operations directly<a class="headerlink" href="#testing-operations-directly" title="Permanent link">&para;</a></h2>
 <p>To exercise a <em>registered</em> operation — with its stage hooks and transaction plan, not just a raw port — run it with <code>run_operation</code> against a mock context. No HTTP, no transport:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
