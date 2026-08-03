@@ -40,6 +40,7 @@ from forze_socketio import (
     RealtimeShard,
     TenantShardedSignalSource,
 )
+from tests.support.realtime_retention import UNSWEPT
 
 # ----------------------- #
 
@@ -181,7 +182,7 @@ async def test_durable_signal_relayed_to_per_tenant_stream_reaches_sharded_gatew
         sio=sio,  # type: ignore[arg-type]
         source=TenantShardedSignalSource(shard=_shard(stream, [_T1, _T2]), poll_interval=_FAST),
         dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock"),
-        mailbox_factory=build_realtime_mailbox,
+        mailbox_factory=lambda ctx: build_realtime_mailbox(ctx, retention=UNSWEPT),
     )
     # The outbox stays tenant-global (tagged rows); only the stream + mailbox are tenant-aware.
     module = MockDepsModule(routes={
@@ -203,9 +204,9 @@ async def test_durable_signal_relayed_to_per_tenant_stream_reaches_sharded_gatew
         await _run_settle(gw, ctx, lambda: bool(sio.emits))
 
         with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_T1)):
-            t1 = await build_realtime_mailbox(ctx).read_since(principal="u1", since=None)
+            t1 = await build_realtime_mailbox(ctx, retention=UNSWEPT).read_since(principal="u1", since=None)
         with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_T2)):
-            t2 = await build_realtime_mailbox(ctx).read_since(principal="u1", since=None)
+            t2 = await build_realtime_mailbox(ctx, retention=UNSWEPT).read_since(principal="u1", since=None)
 
     assert sio.emits[0]["room"] == f"t:{_T1}:principal:u1"  # delivered to T1's room
     assert len(t1) == 1 and t2 == []  # mailboxed under the trusted tenant, isolated from T2
@@ -237,7 +238,7 @@ async def test_tenant_aware_mailbox_scopes_by_trusted_tenant_without_header_bind
         sio=sio,  # type: ignore[arg-type]
         source=TenantShardedSignalSource(shard=_shard(spec, [_T1, _T2]), poll_interval=_FAST),
         dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock"),
-        mailbox_factory=build_realtime_mailbox,
+        mailbox_factory=lambda ctx: build_realtime_mailbox(ctx, retention=UNSWEPT),
     )
     eid = str(UUID(int=1))
     sig = RealtimeSignal.of(Audience.principal("u1"), "order.shipped", {"text": "hi"})
@@ -253,9 +254,9 @@ async def test_tenant_aware_mailbox_scopes_by_trusted_tenant_without_header_bind
         await _run_settle(gw, ctx, lambda: bool(sio.emits))
 
         with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_T1)):
-            t1 = await build_realtime_mailbox(ctx).read_since(principal="u1", since=None)
+            t1 = await build_realtime_mailbox(ctx, retention=UNSWEPT).read_since(principal="u1", since=None)
         with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_T2)):
-            t2 = await build_realtime_mailbox(ctx).read_since(principal="u1", since=None)
+            t2 = await build_realtime_mailbox(ctx, retention=UNSWEPT).read_since(principal="u1", since=None)
 
     assert [e.event_id for e in t1] == [eid]  # stored under the trusted shard tenant…
     assert t2 == []  # …and isolated from the other tenant

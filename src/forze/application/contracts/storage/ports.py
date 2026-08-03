@@ -15,6 +15,7 @@ from .value_objects import (
     PresignedUrl,
     RangedDownload,
     StoredObject,
+    StoredObjectPage,
     StreamedDownload,
     UploadedObject,
     UploadPart,
@@ -176,7 +177,7 @@ class StorageQueryPort(Protocol):
         prefix: str | None = None,
         include_tags: bool = False,
         missing_ok: bool = False,
-    ) -> Awaitable[tuple[list[StoredObject], int]]:
+    ) -> Awaitable[StoredObjectPage]:
         """List stored objects with pagination.
 
         ``include_tags`` is a **guarantee, not a filter**: with ``False``
@@ -194,6 +195,10 @@ class StorageQueryPort(Protocol):
         bucket raises, so a reader that needs *absent* told apart from *empty*
         (the re-encryption sweep) keeps that distinction.
 
+        Opting out of the *raise* is not the same as opting out of the *fact*:
+        the empty page reports :attr:`StoredObjectPage.container_missing`, so a
+        caller that tolerates an unprovisioned container can still say so.
+
         Results are ordered **lexicographically by key**, which is how an object store lists
         and therefore what ``offset`` paginates through. With generated keys that coincides
         with creation order (uuid7 sorts by time); with caller-supplied keys it does not, and
@@ -204,7 +209,7 @@ class StorageQueryPort(Protocol):
         :param prefix: Optional prefix filter.
         :param include_tags: Guarantee tags are populated on results.
         :param missing_ok: Treat a missing bucket as an empty listing.
-        :returns: A pair of results and the total count.
+        :returns: The page, its total count, and whether the container was absent.
         """
         ...  # pragma: no cover
 

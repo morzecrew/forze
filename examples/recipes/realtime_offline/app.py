@@ -33,6 +33,7 @@ from forze.base.primitives import HlcTimestamp, uuid7
 from forze_kits.integrations.realtime import (
     DocumentMailboxCursors,
     DocumentRealtimeMailbox,
+    MailboxRetention,
     build_realtime_cursors,
     build_realtime_mailbox,
     realtime_cursor_spec,
@@ -135,7 +136,14 @@ async def main() -> None:
 
     # A worker binds the recipient's tenant; the mailbox reads it ambiently via the store.
     with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=TENANT)):
-        mailbox = build_realtime_mailbox(ctx)
+        # Retention is a decision, never a default: this demo keeps everything for the
+        # length of one process, and says so instead of leaving the mailbox unbounded
+        # by omission. A service names a window and registers the sweeper that enforces
+        # it (realtime_mailbox_retention_lifecycle_step), which the build then verifies.
+        mailbox = build_realtime_mailbox(
+            ctx,
+            retention=MailboxRetention.unbounded(reason="in-process demo, one run"),
+        )
         cursors = build_realtime_cursors(ctx)
 
         # Two durable signals arrive while Bob's phone is offline (ids are the durable

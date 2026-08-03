@@ -261,14 +261,13 @@ STORAGE_DIVERGENCES: tuple[PlaneDivergence, ...] = (
             EngineBehaviour(
                 engine="s3",
                 behaviour=(
-                    "MinIO and floci both raise infrastructure 'bucket not found' on a "
-                    "listing of an absent bucket, and return an empty page for an existing "
-                    "empty one"
+                    "MinIO and floci both raise 'bucket not found' on a listing of an "
+                    "absent bucket, and return an empty page for an existing empty one"
                 ),
             ),
             EngineBehaviour(
                 engine="gcs",
-                behaviour="same: infrastructure on absent, empty page on existing-and-empty",
+                behaviour="same: refuses on absent, empty page on existing-and-empty",
             ),
         ),
         resolution=DivergenceResolution.UNIFIED,
@@ -282,7 +281,12 @@ STORAGE_DIVERGENCES: tuple[PlaneDivergence, ...] = (
             "lacked (MockState.storage_buckets) before there was anything to compare: reads "
             "never provision, the four documented write paths do, exactly as the real "
             "adapters draw the line. The sweep's own test then had to say which state it "
-            "meant, having asserted 'empty' while exercising 'absent'."
+            "meant, having asserted 'empty' while exercising 'absent'. The unification "
+            "goes one step further than the raise: missing_ok lets a caller tolerate an "
+            "absent container without being made blind to it, since every backend now "
+            "reports StoredObjectPage.container_missing — under per-tenant buckets the "
+            "absent case is the normal state of every tenant that has not uploaded yet, "
+            "and collapsing it into a plain empty page hid exactly that population."
         ),
         probe=(
             "tests/unit/test_forze_mock/test_mock_storage_conformance.py::"
@@ -320,7 +324,7 @@ STORAGE_DIVERGENCES: tuple[PlaneDivergence, ...] = (
             EngineBehaviour(
                 engine="s3",
                 behaviour=(
-                    "raises infrastructure 'bucket not found' — GetObject reports the "
+                    "raises configuration 'bucket not found' — GetObject reports the "
                     "missing container, not the missing key"
                 ),
             ),
@@ -339,6 +343,48 @@ STORAGE_DIVERGENCES: tuple[PlaneDivergence, ...] = (
             "would mean choosing which fact a download reports, which is a contract decision "
             "rather than an adapter bug, so it is declared and both sides are pinned: the day "
             "one is changed the other fails and the choice has to be made deliberately."
+        ),
+        probe=(
+            "tests/integration/test_forze_s3/test_s3_storage_new_ops.py::"
+            "test_download_from_an_absent_bucket_reports_the_container"
+        ),
+    ),
+    PlaneDivergence(
+        plane="storage",
+        name="missing-container-refusal-kind",
+        observed=(
+            EngineBehaviour(
+                engine="s3",
+                behaviour=(
+                    "raised infrastructure on NoSuchBucket — a structured vendor code, so "
+                    "the mapping site always knew exactly which condition it was"
+                ),
+            ),
+            EngineBehaviour(
+                engine="gcs",
+                behaviour=(
+                    "raised infrastructure on a bucket-scoped 404 (URL shape: /b/<bucket> "
+                    "rather than /o/<name>) — likewise structurally identified"
+                ),
+            ),
+            EngineBehaviour(
+                engine="mock",
+                behaviour="raised infrastructure, deferring to the two real backends",
+            ),
+        ),
+        resolution=DivergenceResolution.UNIFIED,
+        reason=(
+            "Not a disagreement between engines — all three agreed, and all three were "
+            "wrong in the same direction. exception_egress_policy reads infrastructure as "
+            "retryable, so a saga step or a consumer loop that hit an unprovisioned bucket "
+            "retried a condition that cannot resolve without an operator, forever. Both "
+            "mapping sites already called it a deployment fault in their own comments; only "
+            "the kind disagreed. Now configuration on all three: non-retryable, details "
+            "still withheld from clients, still HTTP 500 — the client-facing behaviour is "
+            "unchanged and only the retry decision moves. Detection needed no error-text "
+            "matching, which is what separates this from the counter-overflow row on the "
+            "same theme: there the store does the arithmetic and reports it in prose, so "
+            "that one stays DECLARED."
         ),
         probe=(
             "tests/integration/test_forze_s3/test_s3_storage_new_ops.py::"
@@ -480,7 +526,7 @@ INFERENCE_DIVERGENCES: tuple[PlaneDivergence, ...] = (
                 engine="mock",
                 behaviour=(
                     "a route registered without capabilities= advertises "
-                    "FULL_INFERENCE_CAPABILITIES: unbounded batches, streaming, async jobs, "
+                    "FULL_INFERENCE_CAPABILITIES: unbounded batches, streaming, "
                     "deterministic — so every capability gate passes"
                 ),
             ),
@@ -647,6 +693,93 @@ GRAPH_MANAGEMENT_DIVERGENCES: tuple[PlaneDivergence, ...] = (
 # ....................... #
 
 
+GRAPH_DIVERGENCES: tuple[PlaneDivergence, ...] = (
+    PlaneDivergence(
+        plane="graph",
+        name="which-neighbours-a-bounded-read-returns",
+        observed=(
+            EngineBehaviour(
+                engine="mock",
+                behaviour=(
+                    "walks its edge list in insertion order, so a truncated page is the "
+                    "OLDEST matching neighbours — measured as ('w0', 'w1')"
+                ),
+            ),
+            EngineBehaviour(
+                engine="neo4j",
+                behaviour=(
+                    "the adjacency LIMIT carries no ORDER BY, so the page is whatever the "
+                    "planner reaches first — measured as ('w2', 'w1'), most-recent-first"
+                ),
+            ),
+        ),
+        resolution=DivergenceResolution.DECLARED,
+        reason=(
+            "Both engines return a full page of genuine neighbours; they disagree only on "
+            "WHICH ones, and neither answer is wrong. Unifying it would mean an ORDER BY on "
+            "the adjacency, which asks Neo4j to sort a whole neighbourhood before truncating "
+            "it — the cost falls hardest on exactly the high-degree vertices a limit exists "
+            "to protect. So the leg compares cardinality and membership and leaves identity "
+            "out, and the contract says a bounded neighbours call returns an arbitrary "
+            "subset. Callers who need a deterministic page need an ordered read, not a "
+            "bounded one. What is emphatically NOT declared is a short page: filling the "
+            "limit from the wanted kind is asserted on both engines, because a page cut "
+            "short by a filter is indistinguishable from the end of the neighbourhood."
+        ),
+        probe=(
+            "tests/unit/test_forze_mock/test_mock_graph_conformance.py::"
+            "test_bounded_neighbors_fills_the_page"
+        ),
+    ),
+    PlaneDivergence(
+        plane="graph",
+        name="non-string-key-field",
+        observed=(
+            EngineBehaviour(
+                engine="mock",
+                behaviour=(
+                    "keys its store by str(value), so an int-keyed vertex answered every "
+                    "keyed read correctly — exists, get, degree, neighbours"
+                ),
+            ),
+            EngineBehaviour(
+                engine="neo4j",
+                behaviour=(
+                    "stores the native int and matches it against the string VertexRef.key "
+                    "carries: writes succeeded and find_vertices returned the rows, while "
+                    "vertex_exists was false, get_vertex none, vertex_degree 0 and neighbors "
+                    "empty — an empty graph, raised as nothing"
+                ),
+            ),
+        ),
+        resolution=DivergenceResolution.UNIFIED,
+        reason=(
+            "Found by building this leg, not by looking for it. VertexRef.key is typed str "
+            "and the adapters honour that literally, so a key the store keeps as a number "
+            "can never be matched — and the failure is a silent empty read on the engine, "
+            "against a mock where everything works. Coercing the string back to the declared "
+            "type was rejected: a str key field whose value happens to be '999' would then "
+            "be indistinguishable from the integer 999, so the adapter would be guessing. "
+            "GraphNodeSpec/GraphEdgeSpec now refuse a key field declared as bool, int or "
+            "float at construction (graph_non_string_key_field), the same wiring-time "
+            "refusal the sealed key field already gets and for the same reason: no later "
+            'point makes it safe. Decimal is not refused: model_dump(mode="json") renders '
+            "it as a string, so it lands on Neo4j as STRING and every keyed read resolves — "
+            "measured on the same probe that shows an int key landing as INTEGER and "
+            "matching nothing. Native-typed keys remain a capability someone could add; "
+            "they are not what silently pretending to work was."
+        ),
+        probe=(
+            "tests/unit/test_forze/application/contracts/test_graph.py::"
+            "TestKeyFieldTyping::test_a_numeric_key_field_is_refused_at_construction"
+        ),
+    ),
+)
+
+
+# ....................... #
+
+
 REALTIME_CURSOR_DIVERGENCES: tuple[PlaneDivergence, ...] = (
     PlaneDivergence(
         plane="realtime_cursor",
@@ -772,6 +905,7 @@ PLANE_DIVERGENCES: dict[str, tuple[PlaneDivergence, ...]] = {
     "inference": INFERENCE_DIVERGENCES,
     "search": SEARCH_DIVERGENCES,
     "search_write": SEARCH_WRITE_DIVERGENCES,
+    "graph": GRAPH_DIVERGENCES,
     "graph_management": GRAPH_MANAGEMENT_DIVERGENCES,
     "delivery": DELIVERY_DIVERGENCES,
     "realtime_cursor": REALTIME_CURSOR_DIVERGENCES,

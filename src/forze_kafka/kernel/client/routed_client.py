@@ -31,6 +31,13 @@ class RoutedKafkaClient(DsnRoutedTenantClientBase[KafkaClient], KafkaClientPort)
     streams. Use
     :func:`~forze_kafka.execution.lifecycle.routed_kafka_lifecycle_step` after
     registering the same instance under :data:`KafkaClientDepKey`.
+
+    Every operation runs inside a pool scope (``client_scope``), so ``guarded=True`` is
+    fully supported: a rotation eviction drains a client only after in-flight operations
+    finish. The consume side needs nothing further — the commit-stream adapter calls
+    :meth:`get_consumer` on every ``read``, so an eviction already takes effect at the
+    next read; what the lease adds is that the old client is not disposed underneath an
+    in-flight poll.
     """
 
     secrets: SecretsPort
@@ -53,8 +60,8 @@ class RoutedKafkaClient(DsnRoutedTenantClientBase[KafkaClient], KafkaClientPort)
     # ....................... #
 
     async def health(self) -> tuple[str, bool]:
-        inner = await self._get_client()
-        return await inner.health()
+        async with self.client_scope() as inner:
+            return await inner.health()
 
     # ....................... #
 
@@ -67,14 +74,14 @@ class RoutedKafkaClient(DsnRoutedTenantClientBase[KafkaClient], KafkaClientPort)
         headers: Sequence[tuple[str, bytes]] | None = None,
         timestamp_ms: int | None = None,
     ) -> RecordMetadata:
-        inner = await self._get_client()
-        return await inner.send(
-            topic,
-            value,
-            key=key,
-            headers=headers,
-            timestamp_ms=timestamp_ms,
-        )
+        async with self.client_scope() as inner:
+            return await inner.send(
+                topic,
+                value,
+                key=key,
+                headers=headers,
+                timestamp_ms=timestamp_ms,
+            )
 
     # ....................... #
 
@@ -88,21 +95,21 @@ class RoutedKafkaClient(DsnRoutedTenantClientBase[KafkaClient], KafkaClientPort)
         max_poll_records: int | None = None,
         listener: ConsumerRebalanceListener | None = None,
     ) -> AIOKafkaConsumer:
-        inner = await self._get_client()
-        return await inner.get_consumer(
-            group=group,
-            member=member,
-            topics=topics,
-            auto_offset_reset=auto_offset_reset,
-            max_poll_records=max_poll_records,
-            listener=listener,
-        )
+        async with self.client_scope() as inner:
+            return await inner.get_consumer(
+                group=group,
+                member=member,
+                topics=topics,
+                auto_offset_reset=auto_offset_reset,
+                max_poll_records=max_poll_records,
+                listener=listener,
+            )
 
     # ....................... #
 
     async def discard_consumer(self, consumer: AIOKafkaConsumer) -> None:
-        inner = await self._get_client()
-        await inner.discard_consumer(consumer)
+        async with self.client_scope() as inner:
+            await inner.discard_consumer(consumer)
 
     # ....................... #
 
@@ -111,14 +118,14 @@ class RoutedKafkaClient(DsnRoutedTenantClientBase[KafkaClient], KafkaClientPort)
         *,
         group: str | None = None,
     ) -> AIOKafkaConsumer:
-        inner = await self._get_client()
-        return await inner.new_transient_consumer(group=group)
+        async with self.client_scope() as inner:
+            return await inner.new_transient_consumer(group=group)
 
     # ....................... #
 
     async def admin(self) -> AIOKafkaAdminClient:
-        inner = await self._get_client()
-        return await inner.admin()
+        async with self.client_scope() as inner:
+            return await inner.admin()
 
     # ....................... #
 

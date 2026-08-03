@@ -107,8 +107,7 @@ class TestStoredFileHandlers:
         )
 
         storage = stub_ctx.storage.query(kit.resolved_storage)
-        _, total = await storage.list(limit=10, offset=0)
-        assert total == 0
+        assert (await storage.list(limit=10, offset=0)).total == 0
 
         get = GetStoredFile(doc=stub_ctx.doc.query(kit.document))
         with pytest.raises(CoreException):

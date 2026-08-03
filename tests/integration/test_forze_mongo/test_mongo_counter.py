@@ -1,6 +1,9 @@
 """Integration tests for MongoCounterAdapter and MongoCounterAdminAdapter."""
 
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -34,6 +37,27 @@ async def mongo_counter_admin(
     counter_config: MongoCounterConfig,
 ) -> MongoCounterAdminAdapter:
     return MongoCounterAdminAdapter(client=mongo_client, config=counter_config, route="orders")
+
+
+@contextmanager
+def _counting_client_commands(*names: str) -> Iterator[list[str]]:
+    """Record the client commands issued inside the block, in order."""
+
+    issued: list[str] = []
+
+    with patch.multiple(
+        MongoClient,
+        **{name: _recorder(name, getattr(MongoClient, name), issued) for name in names},
+    ):
+        yield issued
+
+
+def _recorder(name: str, original, issued: list[str]):
+    async def _record(self, *args, **kwargs):
+        issued.append(name)
+        return await original(self, *args, **kwargs)
+
+    return _record
 
 
 # ....................... #
@@ -259,9 +283,8 @@ async def test_legacy_document_continues_its_sequence(
 async def test_legacy_migration_keeps_new_document_when_both_exist(
     mongo_client: MongoClient, counter_config: MongoCounterConfig
 ) -> None:
-    """If a route-prefixed document already exists when a legacy row is found (a concurrent
-    writer or a prior migration), migration keeps the new document and only retires the
-    legacy one — the new sequence is never overwritten by the legacy value."""
+    """Once the route-prefixed document exists, the legacy id is never consulted again —
+    the live sequence can never be overwritten by a legacy value, whenever one shows up."""
 
     db_name, coll_name = counter_config.collection
     coll = await mongo_client.collection(coll_name, db_name=db_name)
@@ -275,5 +298,37 @@ async def test_legacy_migration_keeps_new_document_when_both_exist(
 
     assert await counter.incr() == 2  # continues the new sequence, ignores the legacy 500
 
-    # The legacy row is retired even though its value was discarded.
-    assert await coll.find_one({"_id": ""}) is None
+    # The stale row is left where it is (Postgres does the same with its legacy row): the
+    # seed is guarded on the counter's *first touch*, so past that the pre-route id costs
+    # no round trip at all. It stays invisible to enumeration — no ``route`` field.
+    assert await coll.find_one({"_id": ""}) == {"_id": "", "suffix": None, "value": 500}
+
+    admin = MongoCounterAdminAdapter(client=mongo_client, config=counter_config, route="orders")
+    assert {e.suffix: e.value for e in await admin.list_counters()} == {None: 2}
+
+
+@pytest.mark.asyncio
+async def test_allocation_costs_one_command_past_the_first_touch(
+    mongo_counter: MongoCounterAdapter,
+) -> None:
+    """Every allocation but the first is a single command.
+
+    The pre-route seed is a one-time migration; billing a lookup for it on every
+    allocation doubles the round trips of the hottest call in the plane, forever, and no
+    behavioural assertion would notice. Both allocation shapes are checked because
+    ``reset`` writes through the same path as ``incr``.
+    """
+
+    _COMMANDS = ("find_one", "find_one_and_update", "insert_one", "delete_one")
+
+    with _counting_client_commands(*_COMMANDS) as first_touch:
+        assert await mongo_counter.incr() == 1
+
+    # First touch: the miss is what tells the adapter to look for a pre-route document.
+    assert first_touch == ["find_one_and_update", "find_one", "find_one_and_update"]
+
+    with _counting_client_commands(*_COMMANDS) as steady:
+        assert await mongo_counter.incr() == 2
+        assert await mongo_counter.reset(7) == 7
+
+    assert steady == ["find_one_and_update", "find_one_and_update"]

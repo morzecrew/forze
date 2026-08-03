@@ -100,7 +100,11 @@ documented as a no-op. That is a stronger failure than "untested": no test writt
 that oracle could have failed, so every mock-backed test of the contract was green without
 exercising anything. Closing it meant giving the mock the concept first — reads never
 provision, the documented write paths do — and the sweep's own test then had to say which
-state it meant, having asserted "empty" while exercising "absent".
+state it meant, having asserted "empty" while exercising "absent". The leg then went a step
+past the raise: `missing_ok=True` still reports `container_missing` on the page it returns,
+because tolerating an absent bucket should not mean being unable to see one. With per-tenant
+buckets that is the difference between a tenant nobody provisioned and a tenant that has
+uploaded nothing, and every backend in the leg — MinIO, floci, GCS, the mock — is held to it.
 
 A third row records the one interaction none of this page's other machinery can reach. The
 offline mailbox bounds a reconnect replay by a retention cap, and clients ack **cumulatively**

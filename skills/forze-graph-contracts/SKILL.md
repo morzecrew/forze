@@ -61,7 +61,12 @@ Edge identity, and this is the decision to get right up front:
 - `identity="key"` (the default) addresses each edge by a stable business key and **requires** `key_field` (a field of the edge read model); `ensure_edge` upserts on that key so concurrent calls cannot create duplicates. The shortest edge declaration you would write is a keyed edge with no key — that now fails at construction instead of at first use.
 - `identity="endpoints"` means **at most one edge of the kind per `(from, to)` pair, and that uniqueness is enforced** — a second create conflicts. A kind that legitimately needs parallel edges between the same two vertices must declare a `key_field` and identify by it.
 
-A node or edge `key_field` may not be sealed — an encrypted key cannot be addressed.
+A node or edge `key_field` may not be sealed — an encrypted key cannot be addressed. It
+must also be **string-typed** (`str`, or a `UUID`/str-enum, which reach the store as text):
+`VertexRef.key` is a `str`, so a key field declared `int`/`float`/`bool`/`Decimal` is
+refused at construction (`graph_non_string_key_field`). On a store that keeps the native
+type, a keyed lookup would match nothing and every read would come back empty with no
+error. Keep the number as an ordinary property.
 
 ## Resolving ports
 

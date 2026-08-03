@@ -164,3 +164,96 @@ async def test_routed_client_requires_tenant(
             await client.health()  # no bound tenant → routed access is refused
     finally:
         await client.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_routed_kafka_guarded_registry_full_facade(
+    kafka_container,
+) -> None:
+    """``guarded=True`` works across the whole facade.
+
+    Every routed method reached the pool through the unleased ``_get_client``, which a
+    guarded registry refuses outright — so a routed Kafka client built with
+    ``guarded=True`` raised ``internal`` on its first call, whichever call that was. The
+    flag was accepted and unusable, the same defect the SQS facade had.
+
+    Kafka needs no consume-side rotation fix beyond this: the commit-stream adapter
+    re-acquires the client on every ``read``, so an eviction already takes effect at the
+    next read. What it lacked was the lease that stops an eviction disposing the client
+    *underneath* an in-flight poll.
+    """
+
+    bootstrap = kafka_container.get_bootstrap_server()
+    tenant = uuid4()
+    get_tenant, set_tenant = _tenant_holder()
+
+    client = RoutedKafkaClient(
+        secrets=_MemSecrets({f"tenants/{tenant}/kafka": bootstrap}),  # type: ignore[arg-type]
+        secret_ref_for_tenant=_ref,
+        tenant_provider=get_tenant,
+        connection_config=KafkaConfig(auto_offset_reset="earliest"),
+        guarded=True,
+    )
+    await client.startup()
+    set_tenant(tenant)
+
+    try:
+        producer = KafkaStreamCommandAdapter(
+            client=client,
+            codec=_codec(),
+            namespace="",
+            tenant_aware=False,
+            tenant_provider=lambda: None,
+        )
+        consumer = KafkaCommitStreamGroupAdapter(
+            client=client,
+            codec=_codec(),
+            namespace="",
+            tenant_aware=False,
+            tenant_provider=lambda: None,
+            auto_offset_reset="earliest",
+        )
+        admin = KafkaCommitStreamGroupAdminAdapter(
+            client=client,
+            namespace="",
+            tenant_aware=False,
+            tenant_provider=lambda: None,
+        )
+
+        topic = f"it-routed-grd-{uuid4().hex[:8]}"
+        group = f"g-{uuid4().hex[:8]}"
+
+        await admin.ensure_topic(topic, partitions=1)
+        await producer.append(topic, Payload(value="one"), key="k")
+
+        positions: list[StreamPosition] = []
+        for _ in range(20):
+            batch = await consumer.read(group, "m1", [topic], timeout=timedelta(seconds=1))
+            positions.extend(StreamPosition.from_message(m) for m in batch)
+            if positions:
+                break
+
+        assert positions
+        await consumer.commit(group, positions)
+
+        # A rotation between reads swaps the stream onto a rebuilt client rather than
+        # tearing it down, and under a lease it drains the old one first.
+        await client.evict_tenant(tenant)
+        await producer.append(topic, Payload(value="two"), key="k")
+
+        after: list[StreamPosition] = []
+        for _ in range(20):
+            batch = await consumer.read(group, "m1", [topic], timeout=timedelta(seconds=1))
+            after.extend(StreamPosition.from_message(m) for m in batch)
+            if after:
+                break
+
+        assert after, "the consumer did not recover after the rotation eviction"
+        await consumer.commit(group, after)
+
+        assert (await client.health())[1] is True
+        assert await admin.lag(group, topic) is not None
+
+    finally:
+        await client.close()

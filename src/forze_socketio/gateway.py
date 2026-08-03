@@ -981,11 +981,34 @@ class RealtimeGateway:
     exactly-once for mailboxed signals, at-least-once otherwise (see :class:`GatewayDedup`)."""
 
     mailbox_factory: Callable[[ExecutionContext], RealtimeMailbox] | None = None
-    """Builds the mailbox once at ``run(ctx)`` start, with its ports resolved (e.g.
-    ``build_realtime_mailbox``). When set (with ``dedup``), a durable **principal**
-    signal is stored for offline replay before it is emitted, so a recipient offline at
-    emit time receives it on reconnect. Topic and ephemeral signals are never
-    mailboxed. A factory (not a built object) so deps materialize against the run ctx."""
+    """Builds the mailbox once at ``run(ctx)`` start, with its ports resolved. When set
+    (with ``dedup``), a durable **principal** signal is stored for offline replay before it
+    is emitted, so a recipient offline at emit time receives it on reconnect. Topic and
+    ephemeral signals are never mailboxed. A factory (not a built object) so deps
+    materialize against the run ctx.
+
+    This is where a gateway declares its mailbox's retention, since it is the gateway that
+    decides a mailbox exists at all::
+
+        mailbox_factory=lambda ctx: build_realtime_mailbox(
+            ctx, retention=MailboxRetention(max_age=timedelta(days=7)),
+        )
+
+    A declared window is only half of it: the build refuses unless a
+    :func:`realtime_mailbox_retention_lifecycle_step` is already running for **the same
+    mailbox spec and the same window**, so the example above must be wired alongside::
+
+        realtime_mailbox_retention_lifecycle_step(max_age=timedelta(days=7))
+
+    Both omit ``mailbox_spec``, so both resolve the default spec and the step's marker
+    covers the factory's build. Declaring a window with nothing sweeping it fails
+    ``run(ctx)`` with ``realtime_mailbox_retention_unwired``, and a step whose window
+    differs fails with ``realtime_mailbox_retention_mismatch``.
+
+    ``build_realtime_mailbox`` has no retention default, so it cannot be passed bare — the
+    mailbox has no delete path of its own, and a gateway that stores signals forever is a
+    decision somebody should have made on purpose. Say so explicitly with
+    :meth:`MailboxRetention.unbounded`, which needs no sweeper."""
 
     event_catalog: RealtimeEventCatalog | None = None
     """Optional catalog consulted for the per-event ``offline_delivery`` opt-out; when

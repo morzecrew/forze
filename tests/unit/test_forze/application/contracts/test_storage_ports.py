@@ -9,6 +9,7 @@ from forze.application.contracts.storage import (
     PresignedUrl,
     RangedDownload,
     StoredObject,
+    StoredObjectPage,
     StreamedDownload,
     UploadedObject,
 )
@@ -168,8 +169,8 @@ class _StubStorage:
         *,
         prefix: str | None = None,
         include_tags: bool = False,
-    ) -> tuple[list[StoredObject], int]:
-        return [], 0
+    ) -> StoredObjectPage:
+        return StoredObjectPage(objects=[], total=0)
 
 
 class TestStoragePorts:
@@ -197,9 +198,10 @@ class TestStoragePorts:
 
     async def test_list(self) -> None:
         stub = _StubStorage()
-        items, total = await stub.list(10, 0)
-        assert items == []
-        assert total == 0
+        page = await stub.list(10, 0)
+        assert page.objects == []
+        assert page.total == 0
+        assert page.container_missing is False
 
     async def test_presign_download(self) -> None:
         stub = _StubStorage()

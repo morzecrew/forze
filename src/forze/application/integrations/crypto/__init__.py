@@ -12,6 +12,7 @@ from .payload import (
     encrypt_payload,
     header_uuid,
     is_encrypted_payload,
+    is_payload_cipher_missing,
     payload_aad,
     seal_message_payload,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "resolve_document_codecs",
     "decrypt_rows",
     "PAYLOAD_CIPHER_MISSING_CODE",
+    "is_payload_cipher_missing",
     "MESSAGE_PAYLOAD_DOMAIN",
     "encrypt_payload",
     "decrypt_payload",

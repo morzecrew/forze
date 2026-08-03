@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.storage import StorageSpec, UploadedObject
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind, exception_egress_policy
 from forze_s3.execution.deps.configs import S3StorageConfig
 from forze_s3.execution.deps.module import S3DepsModule
 from forze_s3.kernel.client import S3Client
@@ -159,6 +159,10 @@ async def test_download_from_an_absent_bucket_reports_the_container(
 
     Note ``head`` does *not* make this distinction on either backend — ``HeadObject``
     cannot — so the asymmetry is between the two read verbs, not just the two vendors.
+
+    The kind S3 reports is ``configuration``: a bucket that was never created is a
+    provisioning fault, and classifying it ``infrastructure`` told the egress policy it was
+    retryable, so a saga or consumer loop kept asking a question whose answer cannot change.
     """
 
     absent = f"forze-never-created-{uuid4().hex[:12]}"
@@ -167,4 +171,5 @@ async def test_download_from_an_absent_bucket_reports_the_container(
     with pytest.raises(CoreException) as refused:
         await query.download("nope")
 
-    assert refused.value.kind == ExceptionKind.INFRASTRUCTURE
+    assert refused.value.kind == ExceptionKind.CONFIGURATION
+    assert not exception_egress_policy(refused.value.kind).retryable

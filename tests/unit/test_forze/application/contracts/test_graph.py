@@ -6,8 +6,10 @@ dependency keys/ports. The ports themselves are ``runtime_checkable``
 protocols, so they are exercised via ``isinstance`` structural checks.
 """
 
+from decimal import Decimal
 from enum import StrEnum
-from uuid import uuid4
+from typing import Literal
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel
@@ -57,6 +59,15 @@ class _TagRead(BaseModel):
 
 class _KnowsRead(BaseModel):
     since: int
+
+
+class _Colour(StrEnum):
+    RED = "red"
+
+
+class _NumericPropertyRead(BaseModel):
+    id: str
+    weight: int
 
 
 # ....................... #
@@ -467,6 +478,154 @@ class TestKeyField:
                     ),
                 ),
             )
+
+
+class TestKeyFieldTyping:
+    """A key the store keeps as a native scalar can never match the string VertexRef holds.
+
+    Measured on Neo4j with an int key: the writes land, ``find_vertices`` returns the rows,
+    and every *keyed* read comes back empty — no error, just an empty graph. The mock keys
+    its store by ``str(value)`` and answers all of them correctly, so the fault appears only
+    in production. Refused at construction instead.
+    """
+
+    class _NumericKeyRead(BaseModel):
+        id: int
+        name: str
+
+    class _DecimalKeyRead(BaseModel):
+        id: Decimal
+
+    class _BoolKeyRead(BaseModel):
+        id: bool
+
+    class _UuidKeyRead(BaseModel):
+        id: UUID
+
+    class _StrEnumKeyRead(BaseModel):
+        id: _Colour
+
+    class _OptionalNumericKeyRead(BaseModel):
+        id: int | None
+
+    class _ListKeyRead(BaseModel):
+        id: list[str]
+
+    class _DictKeyRead(BaseModel):
+        id: dict[str, str]
+
+    class _BareListKeyRead(BaseModel):
+        id: list
+
+    class _BareDictKeyRead(BaseModel):
+        id: dict
+
+    class _LiteralIntKeyRead(BaseModel):
+        id: Literal[1]
+
+    class _MixedLiteralKeyRead(BaseModel):
+        id: Literal["a", 2]
+
+    class _LiteralStrKeyRead(BaseModel):
+        id: Literal["a", "b"]
+
+    @pytest.mark.parametrize(
+        "read",
+        [
+            _NumericKeyRead,
+            _BoolKeyRead,
+            _OptionalNumericKeyRead,
+            _ListKeyRead,
+            _DictKeyRead,
+            _BareListKeyRead,
+            _BareDictKeyRead,
+            _LiteralIntKeyRead,
+            _MixedLiteralKeyRead,
+        ],
+        ids=[
+            "int",
+            "bool",
+            "optional-int",
+            # A container serializes to a JSON array or object, so it matches a string key
+            # no better than an int does. Reached through get_origin: get_args(list[str])
+            # is (str,), which read as "a string key" until the origin was checked first.
+            "list",
+            "dict",
+            # Both spellings, because they take different paths and only one was covered:
+            # a bare `list` is a type, so it short-circuits on the isinstance branch and
+            # never reaches the origin check that catches `list[str]`.
+            "bare-list",
+            "bare-dict",
+            # get_args of a Literal are *values*, not types, so walking them found nothing
+            # that was a type and accepted a plain int key.
+            "literal-int",
+            "literal-mixed",
+        ],
+    )
+    def test_a_numeric_key_field_is_refused_at_construction(
+        self, read: type[BaseModel]
+    ) -> None:
+        with pytest.raises(CoreException) as ei:
+            GraphNodeSpec(name="numeric", read=read)
+
+        assert ei.value.code == "graph_non_string_key_field"
+
+    def test_the_same_refusal_applies_to_a_keyed_edge(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            GraphEdgeSpec(
+                name="numeric_edge",
+                read=self._NumericKeyRead,
+                identity="key",
+                key_field="id",
+                endpoints=(GraphEdgeEndpoint(from_kind="person", to_kind="person"),),
+                directionality=GraphEdgeDirectionality.DIRECTED,
+            )
+
+        assert ei.value.code == "graph_non_string_key_field"
+
+    @pytest.mark.parametrize(
+        "read",
+        [_PersonRead, _UuidKeyRead, _StrEnumKeyRead, _DecimalKeyRead, _LiteralStrKeyRead],
+        ids=["str", "uuid", "str-enum", "decimal", "literal-str"],
+    )
+    def test_anything_that_serializes_as_a_string_is_accepted(
+        self, read: type[BaseModel]
+    ) -> None:
+        # The guard is a denylist on purpose: a UUID and a str-valued enum both reach the
+        # store as text and match a VertexRef fine, and refusing them would be a false
+        # positive on legitimate wiring.
+        #
+        # Decimal is in this list rather than the refused one because model_dump(mode="json")
+        # renders it as a string: measured on Neo4j the property lands as STRING and every
+        # keyed read resolves, where the same probe with an int key lands as INTEGER and
+        # returns nothing. See test_decimal_key_round_trips_through_the_json_property_form.
+        assert GraphNodeSpec(name="ok", read=read).key_field == "id"
+
+    def test_decimal_key_round_trips_through_the_json_property_form(self) -> None:
+        # The reason Decimal is accepted, asserted rather than assumed: the write path is
+        # model_dump(mode="json"), and the key a VertexRef carries is str(value). If those
+        # two ever stop agreeing, a Decimal key becomes the silent empty read the int key
+        # was, so pin the agreement here — the engine legs live in the Neo4j suite.
+        class _Item(BaseModel):
+            id: Decimal
+
+        for raw in ("123.45", "1E+2", "-3.75", "12345678901234567890.123456789"):
+            dumped = _Item(id=Decimal(raw)).model_dump(mode="json")["id"]
+
+            assert isinstance(dumped, str)
+            assert dumped == str(Decimal(raw))
+
+    def test_a_key_field_the_model_does_not_declare_is_left_to_the_existing_check(
+        self,
+    ) -> None:
+        # Not this guard's job — the module-level validation already refuses an unknown
+        # key_field, and duplicating it here would report the wrong cause.
+        assert GraphNodeSpec(name="ok", read=_PersonRead, key_field="absent").key_field == "absent"
+
+    def test_a_numeric_non_key_property_is_untouched(self) -> None:
+        # The rule is about the KEY alone: ordinary numeric properties are the point of
+        # having typed properties at all.
+        assert GraphNodeSpec(name="ok", read=_NumericPropertyRead).key_field == "id"
 
 
 class TestResolveQueryDirections:

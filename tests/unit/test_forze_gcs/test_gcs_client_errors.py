@@ -99,6 +99,53 @@ class TestGCSErrorHandler:
         assert r.details["error"] == "nope"
 
 
+class TestBucket404Classification:
+    """The arm's reach, pinned against a reviewer reading it as under-applied."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            # Real gcloud-aio upload URLs: the object name rides in the query
+            # string, so no `/o/` segment — a 404 here can only be the bucket.
+            "http://example.com/upload/storage/v1/b/bkt/o?name=k.txt&uploadType=media",
+            "http://example.com/upload/storage/v1/b/bkt/o?uploadType=resumable",
+            "http://example.com/storage/v1/b/bkt/o",
+            "http://example.com/storage/v1/b/bkt",
+        ],
+    )
+    def test_upload_and_bucket_urls_are_configuration(self, url: str) -> None:
+        # Non-retryable *and* detail-withholding: an unprovisioned bucket never
+        # becomes provisioned by asking again.
+        out = exc_interceptor.mapper(_client_error(404, url=url), site="put")
+        assert out is not None
+        assert out.kind == ExceptionKind.CONFIGURATION
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://example.com/storage/v1/b/bkt/o/key?alt=media",
+            "http://example.com/storage/v1/b/bkt/o/key?alt=json",
+            "http://example.com/storage/v1/b/bkt/o/key",
+        ],
+    )
+    def test_object_urls_stay_not_found_even_when_the_bucket_is_gone(self, url: str) -> None:
+        # Deliberate, not a gap: a 404 on an object URL cannot be attributed to
+        # the bucket vs the object (same code/reason/domain; only the free-text
+        # message differs, and it is not contractual). Costs nothing in retry
+        # terms — not_found is non-retryable too. See errors._object_scoped_404.
+        out = exc_interceptor.mapper(_client_error(404, url=url), site="get")
+        assert out is not None
+        assert out.kind == ExceptionKind.NOT_FOUND
+
+    def test_both_kinds_are_non_retryable(self) -> None:
+        # The property that actually matters: neither classification can spin a
+        # delivery loop against an unprovisioned bucket.
+        from forze.base.exceptions.egress import exception_egress_policy
+
+        assert not exception_egress_policy(ExceptionKind.NOT_FOUND).retryable
+        assert not exception_egress_policy(ExceptionKind.CONFIGURATION).retryable
+
+
 class TestAssembledChain:
     """Regression: the package mapper must be reachable through the chain
     wired into ``exc_interceptor`` (nested default chain used to shadow it)."""

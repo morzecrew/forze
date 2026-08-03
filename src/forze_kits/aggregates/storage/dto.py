@@ -72,6 +72,14 @@ class ListedObjects(BaseDTO):
     count: int
     """Total number of matching objects."""
 
+    provisioned: bool = True
+    """Whether the storage container backing this route exists yet.
+
+    ``False`` is an empty page for a container nothing has created — under per-tenant
+    buckets, the normal state of a tenant that has never uploaded. Distinguishing it from
+    an idle tenant is the caller's business; both are ``hits == []``.
+    """
+
 
 # ....................... #
 # Presigned-URL DTOs (direct upload/download, app out of the data path).

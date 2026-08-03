@@ -5,6 +5,7 @@ These exercise the load-bearing contract assumptions: both edge-identity modes
 tenant-property isolation.
 """
 
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -324,3 +325,78 @@ async def test_scoped_walk_is_tenant_safe(neo4j_client: Neo4jClient) -> None:
     )
 
     assert {u.id for u in targets} == {bid}  # foreign node F excluded
+
+
+# ----------------------- #
+# Decimal key field
+
+
+class PriceRead(BaseModel):
+    id: Decimal
+    label: str | None = None
+
+
+class PriceCreate(BaseModel):
+    id: Decimal
+    label: str | None = None
+
+
+def _decimal_spec() -> GraphModuleSpec:
+    return GraphModuleSpec(
+        name="catalog",
+        nodes=(GraphNodeSpec(name="Price", read=PriceRead, create=PriceCreate),),
+        edges=(),
+    )
+
+
+async def test_decimal_key_field_is_stored_as_text_and_keyed_reads_resolve(
+    neo4j_client: Neo4jClient,
+) -> None:
+    """A Decimal key is text on the engine, so every keyed read matches it.
+
+    This is the leg that earns Decimal its exemption from the non-string key denylist.
+    An int key is refused because Neo4j keeps it as a native INTEGER that the string
+    VertexRef.key can never match — writes land, find_vertices returns rows, and every
+    keyed read is silently empty. A Decimal is written through model_dump(mode="json"),
+    which renders it as a string, so the engine holds STRING and the match works. The
+    assertion on the stored value type is the load-bearing one: if that ever becomes a
+    native numeric, the denylist entry has to come back.
+    """
+
+    a = Neo4jGraphAdapter(spec=_decimal_spec(), client=neo4j_client)
+
+    # Exponent and high-precision forms included: the key is the text form, so any
+    # normalization on the way through would silently strand the vertex.
+    values = [Decimal("123.45"), Decimal("1E+2"), Decimal("12345678901234567890.123456789")]
+
+    for value in values:
+        await a.create_vertex("Price", PriceCreate(id=value, label=str(value)))
+
+    rows = await neo4j_client.run("MATCH (n:Price) RETURN DISTINCT valueType(n.id) AS type")
+    assert [r["type"] for r in rows] == ["STRING NOT NULL"]
+
+    for value in values:
+        ref = VertexRef(kind="Price", key=str(value))
+
+        assert await a.vertex_exists(ref) is True
+
+        got = await a.get_vertex(ref)
+        assert got is not None
+        assert got.id == value  # byte-exact: no precision or exponent normalization
+
+
+async def test_decimal_keys_are_the_text_form_not_the_numeric_value(
+    neo4j_client: Neo4jClient,
+) -> None:
+    """``Decimal("1.50")`` and ``Decimal("1.5")`` are two keys, though Python calls them equal.
+
+    The consequence of keying on the JSON text form, pinned so it stays a documented
+    property rather than a surprise: trailing zeros are part of the key.
+    """
+
+    a = Neo4jGraphAdapter(spec=_decimal_spec(), client=neo4j_client)
+    await a.create_vertex("Price", PriceCreate(id=Decimal("1.50")))
+
+    assert Decimal("1.50") == Decimal("1.5")
+    assert await a.vertex_exists(VertexRef(kind="Price", key="1.50")) is True
+    assert await a.vertex_exists(VertexRef(kind="Price", key="1.5")) is False

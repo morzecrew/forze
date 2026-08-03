@@ -69,6 +69,13 @@ conformance-check:
 
     uv run python .github/scripts/conformance_manifest.py --collect
 
+# Docs floors: every public contract symbol is mentioned by some page, the nav resolves
+# both ways, and every relative link between docs lands. Offline; part of `just quality`.
+docs-check:
+    {{ _uv_sync }}
+
+    uv run python .github/scripts/docs_floors.py
+
 # Run the differential conformance legs themselves and gate on what actually ran (needs
 # Docker for every real engine). CI does this across its per-integration shards instead of
 # one job — starting every engine's containers at once peaks well past a 16 GB runner,
@@ -202,6 +209,7 @@ quality strict="false":
     just _uv_cmd "Mock coverage" {{ strict }} pytest "tests/unit/test_mock_coverage_guard.py" -q
     just _uv_cmd "Conformance" {{ strict }} python .github/scripts/conformance_manifest.py --collect
     just _uv_cmd "CI matrix" {{ strict }} pytest "tests/unit/test_ci_matrix_guard.py" -q
+    just _uv_cmd "Docs floors" {{ strict }} python .github/scripts/docs_floors.py
     just _uv_cmd "Dead code" {{ strict }} vulture
     just _uv_cmd "Dependencies" {{ strict }} deptry .
     just _uv_cmd "Security" {{ strict }} bandit -c pyproject.toml -r "src"

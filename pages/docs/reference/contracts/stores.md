@@ -136,7 +136,7 @@ name). Objects are addressed by string `key`.
 | query | `download_if_changed` | `download_if_changed(key, *, if_none_match=None, if_modified_since=None)` | `None` when unchanged (the 304 equivalent); at least one condition required |
 | query | `head` | `head(key, *, include_tags=False)` | an `ObjectHead` — size, content type, ETag, last-modified — without the body; works for raw presigned uploads too |
 | query | `presign_download` | `presign_download(key, *, expires_in)` | time-limited direct-`GET` URL — a bearer credential, never log it |
-| query | `list` | `list(limit, offset, *, prefix=None, include_tags=False)` | `(objects, total_count)` |
+| query | `list` | `list(limit, offset, *, prefix=None, include_tags=False, missing_ok=False)` | a `StoredObjectPage` — `objects`, `total`, `container_missing`. A missing bucket raises; `missing_ok=True` reads it as an empty page flagged `container_missing` instead, so an unprovisioned container stays distinguishable from an empty one |
 | command | `upload` | `upload(obj)` | takes an `UploadedObject`, returns `StoredObject` metadata |
 | command | `upload_stream` | `upload_stream(chunks, *, filename, ...)` | bounded-memory multipart upload from an async chunk iterator; an encrypting route seals it chunk by chunk |
 | command | `overwrite_stream` | `overwrite_stream(key, chunks, *, ...)` | replace an existing key in place, in bounded memory (the re-encryption seam) |

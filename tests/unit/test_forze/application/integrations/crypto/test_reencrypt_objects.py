@@ -13,9 +13,12 @@ from collections.abc import AsyncIterator
 import attrs
 import pytest
 
-from forze.application.contracts.storage import OVERWRITE_PRECONDITION_FAILED_CODE
+from forze.application.contracts.storage import (
+    OVERWRITE_PRECONDITION_FAILED_CODE,
+    StoredObjectPage,
+)
 from forze.application.integrations.crypto import ReencryptReport, reencrypt_objects
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind, exception_egress_policy
 from forze_mock import MockState
 from forze_mock.adapters import MockStorageAdapter
 
@@ -115,7 +118,11 @@ class TestReencryptObjects:
         with pytest.raises(CoreException) as vanished:
             await reencrypt_objects(_adapter(), _adapter())
 
-        assert vanished.value.kind == ExceptionKind.INFRASTRUCTURE
+        # `configuration`, so the sweep's caller does not retry it: a bucket that is gone
+        # stays gone until somebody provisions it, and the egress policy is what tells a
+        # saga or consumer loop that (see the storage adapters' NoSuchBucket mapping).
+        assert vanished.value.kind == ExceptionKind.CONFIGURATION
+        assert not exception_egress_policy(vanished.value.kind).retryable
 
     async def test_a_rewrite_that_reorders_the_listing_skips_nothing(self) -> None:
         """The storage contract promises no particular `list` order.
@@ -145,7 +152,10 @@ class TestReencryptObjects:
                 window = self._order[offset : offset + limit]
                 items = [await adapter.head(k) for k in window]
 
-                return [_Listed(k) for k, _ in zip(window, items, strict=True)], len(self._order)
+                return StoredObjectPage(
+                    objects=[_Listed(k) for k, _ in zip(window, items, strict=True)],
+                    total=len(self._order),
+                )
 
             async def head(self, key: str, **kwargs: object):
                 return await adapter.head(key, **kwargs)  # type: ignore[arg-type]
@@ -196,12 +206,12 @@ class TestReencryptObjects:
             """Deletes the victim once enumeration finishes, before processing."""
 
             async def list(self, limit: int, offset: int, **kwargs: object):
-                page, total = await adapter.list(limit, offset)
+                page = await adapter.list(limit, offset)
 
-                if not page:
+                if not page.objects:
                     await adapter.delete(victim)
 
-                return page, total
+                return page
 
             async def head(self, key: str, **kwargs: object):
                 return await adapter.head(key)
@@ -391,12 +401,12 @@ class TestReencryptObjects:
                 if self.enumerated:
                     raise CoreException.not_found("bucket gone")
 
-                page, total = await adapter.list(limit, offset)
+                page = await adapter.list(limit, offset)
 
-                if not page:
+                if not page.objects:
                     self.enumerated = True
 
-                return page, total
+                return page
 
             async def head(self, key: str, **kwargs: object):
                 raise CoreException.not_found("bucket gone")

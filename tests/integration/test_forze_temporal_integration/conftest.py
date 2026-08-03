@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import socket
+import time
+from collections.abc import Awaitable, Callable, Sequence
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +23,34 @@ from .temporal_dev_server import (
     ensure_docker_available,
     start_temporal_dev_container,
 )
+
+
+async def await_listed_schedules[T](
+    fetch: Callable[[], Awaitable[Sequence[T]]],
+    *,
+    count: int,
+    timeout: timedelta = timedelta(seconds=30),
+) -> Sequence[T]:
+    """Poll a schedule listing until at least *count* entries are visible.
+
+    Schedule listings read from Temporal's visibility store, which lags writes: asserting
+    on a listing taken right after a create is a race that a namespace with other
+    schedule traffic loses. Waiting keeps such an assertion about *isolation* or
+    *pagination* rather than about visibility timing.
+    """
+
+    deadline = time.monotonic() + timeout.total_seconds()
+    listed: Sequence[T] = ()
+
+    while time.monotonic() < deadline:
+        listed = await fetch()
+
+        if len(listed) >= count:
+            return listed
+
+        await asyncio.sleep(0.25)
+
+    pytest.fail(f"only {len(listed)}/{count} schedules became visible within {timeout}")
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -19,7 +19,7 @@ packed (monotonic int, range-queryable). Encryption is whatever the app sets on 
 """
 
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Final, final
 from uuid import UUID, uuid5
 
@@ -658,12 +658,159 @@ class DocumentMailboxCursors:
 
 
 # ----------------------- #
+# retention declaration
+
+
+_RETENTION_MARKER_PREFIX = "realtime_mailbox_retention"
+
+
+def mailbox_retention_marker(spec_name: str, retention: "MailboxRetention") -> str:
+    """The lifecycle marker a retention sweep publishes for the mailbox it covers.
+
+    Carried in :attr:`ExecutionContext.lifecycle_started`. Keyed on the spec rather than
+    the step's own ``step_id``, which callers may rename — and on the **window**, because
+    a sweeper is only evidence for the declaration it actually enforces. A mailbox
+    declaring a one-hour window while the registered sweep runs a seven-day one is not
+    covered; it is retaining data for six days and six hours longer than it claims, which
+    a marker keyed on the spec alone would have called compliant.
+    """
+
+    # Both windows are RESOLVED before they are keyed — via the declaration's own property,
+    # so this cannot drift from what the step configures. Keying the raw fields made a bare
+    # MailboxRetention(max_age=7d) and a step configured (7d, 7d) differ, though they are
+    # the same promise.
+    max_age = _window_key(retention.max_age)
+    cursor = _window_key(retention.resolved_cursor_max_age)
+
+    return f"{_RETENTION_MARKER_PREFIX}:{spec_name}:{max_age}:{cursor}"
+
+
+def _window_key(window: timedelta | None) -> str:
+    """A window as exact microseconds, for the marker.
+
+    Whole seconds looked like enough — retention windows are days — but truncating is how
+    a coverage check starts saying yes to a window it never compared. Any two declarations
+    inside the same second keyed identically, so a mailbox promising 1.2s was vouched for
+    by a sweep deleting at 1.9s, and anything under a second collapsed onto ``0`` and was
+    covered by every other sub-second window. Microseconds are ``timedelta``'s own
+    resolution, so this is the whole value rather than a rounding of it, and integer rather
+    than ``total_seconds()`` so no float formatting sits between the two sides of a
+    comparison that must be exact.
+    """
+
+    return "-" if window is None else str(window // timedelta(microseconds=1))
+
+
+@final
+@attrs.define(frozen=True, slots=True, kw_only=True)
+class MailboxRetention:
+    """How long this mailbox owes offline delivery — a decision, never a default.
+
+    The mailbox has **no delete path of its own**. The ack-driven trim follows the
+    all-device cursor floor and the replay cap bounds *reads*, so a principal whose
+    devices stop acking accumulates entries forever, and the per-connection cursor
+    fallback mints one immortal row per connection whose stale position freezes the trim
+    floor. Nothing in that failure mode is loud: storage grows, replays stay correct, and
+    the first symptom is a disk.
+
+    So :func:`build_realtime_mailbox` requires one of these and has no default. Either
+    name a window — paired with a :func:`realtime_mailbox_retention_lifecycle_step` that
+    actually sweeps it, which the build verifies — or call :meth:`unbounded` and say why.
+    An unbounded mailbox is a legitimate choice for an ephemeral single-node gateway; it
+    is not a legitimate accident.
+    """
+
+    max_age: timedelta | None
+    """How long an entry is retained, acked or not. ``None`` only via :meth:`unbounded`."""
+
+    cursor_max_age: timedelta | None = None
+    """How long a silent device stays in the trim-floor registry (defaults to *max_age*)."""
+
+    unbounded_reason: str | None = None
+    """Why this mailbox is deliberately unbounded. Required when *max_age* is ``None``."""
+
+    def __attrs_post_init__(self) -> None:
+        if self.max_age is None:
+            if not self.unbounded_reason:
+                raise exc.configuration(
+                    "MailboxRetention with no max_age must say why: build it with "
+                    "MailboxRetention.unbounded(reason=...) so an unbounded mailbox is a "
+                    "recorded decision rather than an omission",
+                    code="realtime_mailbox_unbounded_without_reason",
+                )
+
+            if self.cursor_max_age is not None:
+                raise exc.configuration(
+                    "An unbounded MailboxRetention cannot set cursor_max_age: there is no "
+                    "retention window for the cursor registry to outlive",
+                    code="realtime_mailbox_unbounded_with_cursor_age",
+                )
+
+            return
+
+        if self.unbounded_reason is not None:
+            raise exc.configuration(
+                "MailboxRetention carries both a max_age and an unbounded reason; a "
+                "bounded mailbox needs no exemption",
+                code="realtime_mailbox_retention_contradiction",
+            )
+
+        if self.max_age.total_seconds() <= 0:
+            raise exc.configuration(
+                "MailboxRetention max_age must be positive",
+                code="realtime_mailbox_retention_invalid",
+            )
+
+        if self.cursor_max_age is not None and self.cursor_max_age < self.max_age:
+            # The one place this rule lives — the lifecycle step states its own window as
+            # a declaration so it lands here too. A cursor pruned while its acked prefix
+            # is still retained re-offers confirmed deliveries on the next connect.
+            raise exc.configuration(
+                "MailboxRetention cursor_max_age must be at least max_age",
+                code="realtime_mailbox_retention_invalid",
+            )
+
+    # ....................... #
+
+    @classmethod
+    def unbounded(cls, *, reason: str) -> "MailboxRetention":
+        """Declare, on the record, that this mailbox is never swept."""
+
+        return cls(max_age=None, unbounded_reason=reason)
+
+    # ....................... #
+
+    # ....................... #
+
+    @property
+    def is_bounded(self) -> bool:
+        """Whether a sweeper is required for this declaration."""
+
+        return self.max_age is not None
+
+    # ....................... #
+
+    @property
+    def resolved_cursor_max_age(self) -> timedelta | None:
+        """The cursor window this declaration actually promises.
+
+        The defaulting rule — an omitted ``cursor_max_age`` means "as long as *max_age*" —
+        lives here alone. It was applied in three places, and the moment two of them
+        disagreed a bare ``MailboxRetention(max_age=7d)`` and a step configured ``(7d, 7d)``
+        keyed different markers: the same promise, one refusing to vouch for the other.
+        """
+
+        return self.cursor_max_age if self.cursor_max_age is not None else self.max_age
+
+
+# ----------------------- #
 # build factories (resolve ports once; refuse a write-side build in read-only)
 
 
 def build_realtime_mailbox(
     ctx: ExecutionContext,
     *,
+    retention: MailboxRetention,
     spec: DocumentSpec[_MailboxRead, _MailboxDoc, _MailboxCreate, Any] | None = None,
     cap: int = _DEFAULT_CAP,
     replay_page_size: int = _DEFAULT_REPLAY_PAGE_SIZE,
@@ -672,16 +819,81 @@ def build_realtime_mailbox(
 
     Call from the gateway's ``run(ctx)`` or the connection layer's per-unit-of-work scope.
     Refuses a build in a read-only (QUERY) operation, since the mailbox writes.
+
+    *retention* is required and has no default — see :class:`MailboxRetention`. A bounded
+    declaration is checked against the sweepers that actually started, **window included**:
+    declaring a window and forgetting to register
+    :func:`~forze_kits.integrations.realtime.realtime_mailbox_retention_lifecycle_step`
+    leaves the mailbox exactly as unbounded as declaring nothing, and declaring a window
+    the registered sweep does not enforce is a different lie with the same shape. The two
+    failures say different things.
+
+    There is no way to opt a build out of the check. The sweep's own mailbox — which
+    cannot wait for its own marker — goes through :func:`_build_mailbox` instead, so the
+    exemption is a private call path rather than a flag any caller could pass.
+    """
+
+    resolved = spec if spec is not None else realtime_mailbox_spec()
+
+    if retention.is_bounded:
+        _require_sweeper(ctx, spec_name=str(resolved.name), retention=retention)
+
+    return _build_mailbox(ctx, spec=resolved, cap=cap, replay_page_size=replay_page_size)
+
+
+def _require_sweeper(
+    ctx: ExecutionContext,
+    *,
+    spec_name: str,
+    retention: MailboxRetention,
+) -> None:
+    """Refuse a bounded declaration that no running sweep enforces."""
+
+    if mailbox_retention_marker(spec_name, retention) in ctx.lifecycle_started:
+        return
+
+    prefix = f"{_RETENTION_MARKER_PREFIX}:{spec_name}:"
+    running = sorted(marker for marker in ctx.lifecycle_started if str(marker).startswith(prefix))
+
+    if running:
+        raise exc.configuration(
+            f"Mailbox {spec_name!r} declares a retention window that no running sweeper "
+            f"enforces: the registered step sweeps a different window ({running}). A "
+            f"declaration the sweep does not honour retains data past the window it "
+            f"claims — match realtime_mailbox_retention_lifecycle_step(max_age=..., "
+            f"cursor_max_age=...) to this declaration.",
+            code="realtime_mailbox_retention_mismatch",
+        )
+
+    raise exc.configuration(
+        f"Mailbox {spec_name!r} declares a retention window but no sweeper is running for "
+        f"it. Register realtime_mailbox_retention_lifecycle_step(max_age=..., "
+        f"mailbox_spec=<this spec>) in the application's lifecycle steps — a declared "
+        f"window that nothing enforces bounds nothing.",
+        code="realtime_mailbox_retention_unwired",
+    )
+
+
+def _build_mailbox(
+    ctx: ExecutionContext,
+    *,
+    spec: DocumentSpec[_MailboxRead, _MailboxDoc, _MailboxCreate, Any],
+    cap: int = _DEFAULT_CAP,
+    replay_page_size: int = _DEFAULT_REPLAY_PAGE_SIZE,
+) -> DocumentRealtimeMailbox:
+    """Build without the coverage check — the retention sweep's own path.
+
+    Private on purpose: the sweep builds the very mailbox it sweeps, so requiring it to
+    find its own marker would be circular. Every other caller goes through
+    :func:`build_realtime_mailbox`, and there is no argument that reaches this one.
     """
 
     if ctx.inv_ctx.is_read_only():
         raise exc.precondition("Cannot build a realtime mailbox in a read-only (QUERY) operation")
 
-    resolved = spec if spec is not None else realtime_mailbox_spec()
-
     return DocumentRealtimeMailbox(
-        command=ctx.document.command(resolved),
-        query=ctx.document.query(resolved),
+        command=ctx.document.command(spec),
+        query=ctx.document.query(spec),
         cap=cap,
         replay_page_size=replay_page_size,
     )

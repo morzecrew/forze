@@ -36,23 +36,24 @@ async def test_gcs_storage_adapter_upload_list_download_delete(
     assert uploaded.size == len(b"forze-gcs-storage-adapter")
     assert uploaded.key.startswith("inbox/contracts/")
 
-    listed, total_count = await storage_q.list(limit=10, offset=0, prefix="inbox")
-    assert total_count == 1
-    assert len(listed) == 1
-    assert listed[0].key == uploaded.key
-    assert listed[0].filename == "contract.txt"
-    assert listed[0].description == "integration test"
+    listed = await storage_q.list(limit=10, offset=0, prefix="inbox")
+    assert listed.total == 1
+    assert listed.container_missing is False
+    assert len(listed.objects) == 1
+    assert listed.objects[0].key == uploaded.key
+    assert listed.objects[0].filename == "contract.txt"
+    assert listed.objects[0].description == "integration test"
 
     downloaded = await storage_q.download(uploaded.key)
     assert downloaded.filename == "contract.txt"
     assert downloaded.data == b"forze-gcs-storage-adapter"
 
     await storage_c.delete(uploaded.key)
-    listed_after_delete, total_after_delete = await storage_q.list(
-        limit=10, offset=0, prefix="inbox"
-    )
-    assert total_after_delete == 0
-    assert listed_after_delete == []
+    after_delete = await storage_q.list(limit=10, offset=0, prefix="inbox")
+    assert after_delete.total == 0
+    assert after_delete.objects == []
+    # Emptied, not absent — the bucket is still there.
+    assert after_delete.container_missing is False
 
 
 @pytest.mark.integration
@@ -77,14 +78,13 @@ async def test_gcs_storage_list_pagination(
         )
         keys.append(up.key)
 
-    page_all, total_all = await storage_q.list(limit=50, offset=0, prefix=None)
-    assert total_all == 3
+    page_all = (await storage_q.list(limit=50, offset=0, prefix=None)).objects
     assert len(page_all) == 3
     assert {o.key for o in page_all} == set(keys)
 
     slices: list[str] = []
     for offset in range(3):
-        page, _total = await storage_q.list(limit=1, offset=offset, prefix=base)
+        page = (await storage_q.list(limit=1, offset=offset, prefix=base)).objects
         assert len(page) == 1
         slices.append(page[0].key)
 

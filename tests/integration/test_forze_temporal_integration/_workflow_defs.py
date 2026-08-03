@@ -162,46 +162,77 @@ class SagaOut(BaseModel):
     code: str | None = None
 
 
+async def _drive_checkout_saga(fail_at: str) -> None:
+    """Run the three-step checkout saga; a failure escapes as the saga's ApplicationError."""
+
+    with workflow.unsafe.imports_passed_through():
+        from forze.application.contracts.saga import SagaStepKind
+        from forze_temporal import TemporalSaga
+
+    saga = TemporalSaga(name="checkout")
+    opts: dict[str, Any] = {
+        "schedule_to_close_timeout": timedelta(seconds=5),
+        "retry_policy": RetryPolicy(maximum_attempts=1),
+    }
+
+    await saga.step(
+        "reserve",
+        lambda: workflow.execute_activity(it_saga_reserve, args=[fail_at], **opts),
+        compensation=lambda: workflow.execute_activity(it_saga_unreserve, args=[], **opts),
+    )
+    await saga.step(
+        "charge",
+        lambda: workflow.execute_activity(it_saga_charge, args=[fail_at], **opts),
+        kind=SagaStepKind.PIVOT,
+    )
+    await saga.step(
+        "ship",
+        lambda: workflow.execute_activity(it_saga_ship, args=[fail_at], **opts),
+        kind=SagaStepKind.RETRYABLE,
+    )
+
+
 @workflow.defn(name="ItCheckoutSagaWorkflow")
 class ItCheckoutSagaWorkflow:
     @workflow.run
     async def run(self, fail_at: str) -> SagaOut:
-        with workflow.unsafe.imports_passed_through():
-            from forze.application.contracts.saga import SagaStepKind
-            from forze_temporal import TemporalSaga
-
-        saga = TemporalSaga(name="checkout")
-        opts: dict[str, Any] = {
-            "schedule_to_close_timeout": timedelta(seconds=5),
-            "retry_policy": RetryPolicy(maximum_attempts=1),
-        }
-
         try:
-            await saga.step(
-                "reserve",
-                lambda: workflow.execute_activity(
-                    it_saga_reserve, args=[fail_at], **opts
-                ),
-                compensation=lambda: workflow.execute_activity(
-                    it_saga_unreserve, args=[], **opts
-                ),
-            )
-            await saga.step(
-                "charge",
-                lambda: workflow.execute_activity(
-                    it_saga_charge, args=[fail_at], **opts
-                ),
-                kind=SagaStepKind.PIVOT,
-            )
-            await saga.step(
-                "ship",
-                lambda: workflow.execute_activity(it_saga_ship, args=[fail_at], **opts),
-                kind=SagaStepKind.RETRYABLE,
-            )
+            await _drive_checkout_saga(fail_at)
 
         except ApplicationError as error:
-            # TemporalSaga now raises an ApplicationError (so an *uncaught* saga failure fails the
+            # TemporalSaga raises an ApplicationError (so an *uncaught* saga failure fails the
             # workflow instead of retrying the task forever); its ``type`` carries the saga code.
             return SagaOut(status="failed", code=error.type or "")
 
         return SagaOut(status="completed")
+
+
+@workflow.defn(name="ItUncaughtSagaWorkflow")
+class ItUncaughtSagaWorkflow:
+    """The production shape: the saga failure is *not* caught, so it leaves ``@workflow.run``.
+
+    Whether that terminates the run or wedges it in a workflow-task retry loop is the whole
+    point of the ApplicationError conversion — and is only observable on a real server.
+    """
+
+    @workflow.run
+    async def run(self, fail_at: str) -> SagaOut:
+        await _drive_checkout_saga(fail_at)
+        return SagaOut(status="completed")
+
+
+@workflow.defn(name="ItRawCoreFailureWorkflow")
+class ItRawCoreFailureWorkflow:
+    """Control for :class:`ItUncaughtSagaWorkflow`: the un-converted failure shape.
+
+    A Forze ``CoreException`` is not a temporalio ``FailureError``, so raising it out of
+    ``@workflow.run`` fails the *workflow task*, which Temporal retries forever — the run
+    never reaches a terminal state. This is the behaviour ``TemporalSaga`` converts away.
+    """
+
+    @workflow.run
+    async def run(self) -> None:
+        with workflow.unsafe.imports_passed_through():
+            from forze.base.exceptions import exc
+
+        raise exc.validation("bad charge", code="charge.invalid")

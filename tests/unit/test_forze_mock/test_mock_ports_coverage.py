@@ -56,8 +56,8 @@ async def test_mock_storage_upload_download_list_delete() -> None:
     assert meta.size == 5
     got = await s.download(meta.key)
     assert got.data == b"hello"
-    rows, total = await s.list(10, 0, prefix="pre")
-    assert total >= 1
+    listed = await s.list(10, 0, prefix="pre")
+    assert listed.total >= 1
     await s.delete(meta.key)
     with pytest.raises(CoreException):
         await s.download(meta.key)
@@ -72,7 +72,7 @@ async def test_mock_storage_round_trips_tags() -> None:
         UploadedObject(filename="f.txt", data=b"x", tags={"env": "dev"}),
     )
     assert stored.tags == {"env": "dev"}
-    rows, _total = await s.list(10, 0)
+    rows = (await s.list(10, 0)).objects
     assert [row.tags for row in rows if row.key == stored.key] == [{"env": "dev"}]
 
 @pytest.mark.asyncio
@@ -206,4 +206,4 @@ async def test_mock_storage_list_include_tags_is_a_free_no_op() -> None:
     with_flag = await s.list(10, 0, include_tags=True)
 
     assert with_flag == without_flag
-    assert with_flag[0][0].tags == {"env": "dev"}
+    assert with_flag.objects[0].tags == {"env": "dev"}

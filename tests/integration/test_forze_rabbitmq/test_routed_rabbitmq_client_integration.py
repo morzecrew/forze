@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from contextlib import aclosing
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 from urllib.parse import quote
@@ -327,5 +329,254 @@ async def test_routed_rabbitmq_lru_and_evict(
         await routed.evict_tenant(uuid4())
         tenant_set(t1)
         assert (await routed.health())[1] is True
+    finally:
+        await routed.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_routed_rabbitmq_consume_survives_rotation_eviction(
+    rabbitmq_container: RabbitMqContainer,
+) -> None:
+    """A long-lived consumer follows a rotation eviction onto the rebuilt client.
+
+    ``consume`` used to resolve the tenant's client once and iterate it for the stream's
+    whole life, so ``evict_tenant`` — the rotation signal — either did nothing for the
+    running consumer or killed it outright, depending on timing. It now runs as bounded
+    legs that re-acquire, which is the SQS consumer's contract reached a different way:
+    a long poll ends by itself, while an AMQP consume is a push stream that has to be
+    given a boundary.
+    """
+
+    dsn = _dsn(rabbitmq_container)
+    t1 = uuid4()
+    secrets = _MemSecretsTenantDsn({t1: dsn})
+    tenant_get, tenant_set = _tenant_holder()
+
+    routed = RoutedRabbitMQClient(
+        secrets=secrets,
+        secret_ref_for_tenant=_ref,
+        tenant_provider=tenant_get,
+        max_cached_tenants=4,
+    )
+    tenant_set(t1)
+    await routed.startup()
+
+    # Keeping the closed instances referenced keeps their id()s from being reused by
+    # freshly built clients, which the identity assertion below depends on.
+    closed: list[RabbitMQClient] = []
+    real_close = RabbitMQClient.close
+
+    async def counting_close(self: RabbitMQClient) -> None:
+        closed.append(self)
+        await real_close(self)
+
+    # The routed consumer fetches per window (see RoutedRabbitMQClient.consume): recording
+    # `receive` is recording which pooled client served each fetch.
+    servers: list[RabbitMQClient] = []
+    real_receive = RabbitMQClient.receive
+
+    async def recording_receive(self: RabbitMQClient, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        servers.append(self)
+        return await real_receive(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    queue = f"it:routed-rot:{uuid4().hex[:12]}"
+
+    try:
+        await routed.enqueue(queue, b"m1")
+
+        with (
+            patch.object(RabbitMQClient, "close", counting_close),
+            patch.object(RabbitMQClient, "receive", recording_receive),
+        ):
+            gen = routed.consume(queue)
+
+            async with aclosing(gen):
+                first = await asyncio.wait_for(anext(gen), timeout=30)
+                assert first.body == b"m1"
+                await routed.ack(queue, [first.id])  # else eviction requeues it
+
+                first_server = servers[-1]
+
+                # The rotation signal. Unguarded, the old client is disposed at once;
+                # the next leg must resolve the secret again and build a new one.
+                await routed.evict_tenant(t1)
+                assert first_server in closed, "eviction did not dispose the old client"
+
+                await routed.enqueue(queue, b"m2")
+                second = await asyncio.wait_for(anext(gen), timeout=60)
+
+                assert second.body == b"m2"
+                await routed.ack(queue, [second.id])
+
+        # The stream kept running and did so on a DIFFERENT client — the point of the
+        # fix. Same-instance would mean the stream never left the evicted client.
+        assert servers[-1] is not first_server
+
+    finally:
+        await routed.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_routed_rabbitmq_consume_survives_eviction_mid_fetch(
+    rabbitmq_container: RabbitMqContainer,
+) -> None:
+    """The rotation that lands *inside* a fetch, not between two of them.
+
+    Releasing the lease between fetches only helps when the eviction falls in the gap.
+    The default pool is unguarded, so an eviction during the five-second receive window
+    closes the client while that receive is still awaiting it — and the exception it
+    raises used to escape the generator, ending the very stream the per-fetch design
+    exists to keep alive. The sibling rotation test cannot catch this: it evicts while
+    the generator is suspended at a yield, when no fetch is in flight.
+    """
+
+    dsn = _dsn(rabbitmq_container)
+    t1 = uuid4()
+    secrets = _MemSecretsTenantDsn({t1: dsn})
+    tenant_get, tenant_set = _tenant_holder()
+
+    routed = RoutedRabbitMQClient(
+        secrets=secrets,
+        secret_ref_for_tenant=_ref,
+        tenant_provider=tenant_get,
+        max_cached_tenants=4,
+    )
+    tenant_set(t1)
+    await routed.startup()
+
+    queue = f"it:routed-midfetch:{uuid4().hex[:12]}"
+
+    try:
+        gen = routed.consume(queue)
+
+        async with aclosing(gen):
+            # Nothing queued, so this fetch blocks for the whole window and the eviction
+            # below is guaranteed to land while it is in flight.
+            pending = asyncio.ensure_future(anext(gen))
+            await asyncio.sleep(1.0)
+            assert not pending.done(), "fetch finished early; the eviction would not overlap"
+
+            await routed.evict_tenant(t1)
+            await routed.enqueue(queue, b"after-rotation")
+
+            delivered = await asyncio.wait_for(pending, timeout=60)
+
+        assert delivered.body == b"after-rotation"
+        await routed.ack(queue, [delivered.id])
+
+    finally:
+        await routed.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_routed_rabbitmq_consume_timeout_excludes_caller_processing(
+    rabbitmq_container: RabbitMqContainer,
+) -> None:
+    """``timeout`` bounds idle time, so a slow handler must not end a busy stream."""
+
+    dsn = _dsn(rabbitmq_container)
+    t1 = uuid4()
+    secrets = _MemSecretsTenantDsn({t1: dsn})
+    tenant_get, tenant_set = _tenant_holder()
+
+    routed = RoutedRabbitMQClient(
+        secrets=secrets,
+        secret_ref_for_tenant=_ref,
+        tenant_provider=tenant_get,
+        max_cached_tenants=4,
+    )
+    tenant_set(t1)
+    await routed.startup()
+
+    queue = f"it:routed-idle:{uuid4().hex[:12]}"
+
+    try:
+        await routed.enqueue(queue, b"m1")
+        await routed.enqueue(queue, b"m2")
+
+        bodies: list[bytes] = []
+        gen = routed.consume(queue, timeout=timedelta(seconds=2))
+
+        async with aclosing(gen):
+            async for message in gen:
+                bodies.append(message.body)
+                await routed.ack(queue, [message.id])
+
+                if len(bodies) == 2:
+                    break
+
+                # Longer than the timeout. Charged against the idle budget, the stream
+                # would end here with m2 still queued and report a clean exhaustion.
+                await asyncio.sleep(3.0)
+
+        assert bodies == [b"m1", b"m2"]
+
+    finally:
+        await routed.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_routed_rabbitmq_guarded_registry_full_facade(
+    rabbitmq_container: RabbitMqContainer,
+) -> None:
+    """``guarded=True`` works across the whole facade.
+
+    Every operation went through the unleased ``_get_client``, which a guarded registry
+    refuses outright — so a routed RabbitMQ client built with ``guarded=True`` raised
+    ``internal`` on its first call, whichever call that was. The flag was accepted and
+    unusable.
+    """
+
+    dsn = _dsn(rabbitmq_container)
+    t1 = uuid4()
+    secrets = _MemSecretsTenantDsn({t1: dsn})
+    tenant_get, tenant_set = _tenant_holder()
+
+    routed = RoutedRabbitMQClient(
+        secrets=secrets,
+        secret_ref_for_tenant=_ref,
+        tenant_provider=tenant_get,
+        max_cached_tenants=4,
+        guarded=True,
+    )
+    tenant_set(t1)
+    await routed.startup()
+
+    try:
+        assert (await routed.health())[1] is True
+
+        async with routed.channel():
+            pass
+
+        queue = f"it:routed-grd:{uuid4().hex[:12]}"
+        mid = await routed.enqueue(queue, b"one")
+        await routed.enqueue_many(queue, [b"two"])
+
+        messages = await _receive_until(routed, queue)
+        assert await routed.ack(queue, [messages[0].id]) == 1
+        rest = await _receive_until(routed, queue)
+        assert await routed.nack(queue, [rest[0].id], requeue=True) == 1
+        assert mid
+
+        # And the consume leg holds its lease per leg, not per stream: a guarded
+        # eviction drains the old client instead of waiting on a stream that may never
+        # see another message.
+        await routed.enqueue(queue, b"three")
+        gen = routed.consume(queue)
+
+        async with aclosing(gen):
+            first = await asyncio.wait_for(anext(gen), timeout=30)
+            await routed.ack(queue, [first.id])
+
+            await asyncio.wait_for(routed.evict_tenant(t1), timeout=30)
+
+            await routed.enqueue(queue, b"four")
+            second = await asyncio.wait_for(anext(gen), timeout=60)
+            await routed.ack(queue, [second.id])
+
     finally:
         await routed.close()

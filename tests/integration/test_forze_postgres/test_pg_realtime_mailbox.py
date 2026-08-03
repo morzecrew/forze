@@ -9,23 +9,32 @@ no tenant code.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
 import pytest_asyncio
 
+from forze.application.contracts.crypto import (
+    FieldEncryption,
+    KeyRef,
+    StaticKeyDirectory,
+)
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
 from forze.application.contracts.realtime import Audience, RealtimeSignal
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import CryptoDepsModule, Deps, ExecutionContext
 from forze.base.primitives import HlcTimestamp
 from forze_kits.integrations.realtime import (
     build_realtime_cursors,
     build_realtime_mailbox,
+    realtime_mailbox_spec,
 )
+from forze_mock import MockKeyManagement
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import (
@@ -35,6 +44,7 @@ from forze_postgres.execution.deps.keys import (
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from tests.support.execution_context import context_from_deps
+from tests.support.realtime_retention import UNSWEPT
 
 pytestmark = pytest.mark.integration
 
@@ -143,7 +153,7 @@ async def test_store_read_since_and_tenant_isolation(
     ctx = mailbox_ctx
 
     with _bind(ctx, _T1):
-        mb = build_realtime_mailbox(ctx)
+        mb = build_realtime_mailbox(ctx, retention=UNSWEPT)
         await mb.store(
             principal="u1", event_id=_eid(2), hlc=_hlc(2), signal=_signal("b")
         )
@@ -169,7 +179,7 @@ async def test_store_read_since_and_tenant_isolation(
 
     with _bind(ctx, _T2):  # a different tenant sees nothing — the adapter scopes it
         assert (
-            await build_realtime_mailbox(ctx).read_since(principal="u1", since=None)
+            await build_realtime_mailbox(ctx, retention=UNSWEPT).read_since(principal="u1", since=None)
             == []
         )
 
@@ -182,7 +192,7 @@ async def test_replay_since_keyset_pages_over_postgres(
     ctx = mailbox_ctx
 
     with _bind(ctx, _T1):
-        mb = build_realtime_mailbox(ctx, replay_page_size=2)
+        mb = build_realtime_mailbox(ctx, retention=UNSWEPT, replay_page_size=2)
         for n in range(1, 6):
             await mb.store(
                 principal="u1", event_id=_eid(n), hlc=_hlc(n), signal=_signal(f"s{n}")
@@ -207,7 +217,7 @@ async def test_cursors_monotonic_min_and_ack_trim(
     ctx = mailbox_ctx
 
     with _bind(ctx, _T1):
-        mb = build_realtime_mailbox(ctx)
+        mb = build_realtime_mailbox(ctx, retention=UNSWEPT)
         cursors = build_realtime_cursors(ctx)
 
         for i in (1, 2, 3):
@@ -240,7 +250,7 @@ async def test_equal_hlc_run_pages_without_skipping_on_postgres(
     ctx = mailbox_ctx
 
     with _bind(ctx, _T1):
-        mb = build_realtime_mailbox(ctx, replay_page_size=2)
+        mb = build_realtime_mailbox(ctx, retention=UNSWEPT, replay_page_size=2)
         for n in range(1, 6):  # one burst, one HLC — the wall-clock fallback shape
             await mb.store(
                 principal="u1", event_id=_eid(n), hlc=_hlc(7), signal=_signal(f"s{n}")
@@ -261,7 +271,7 @@ async def test_overflow_window_keeps_the_newest_entries_on_postgres(
     ctx = mailbox_ctx
 
     with _bind(ctx, _T1):
-        mb = build_realtime_mailbox(ctx, cap=5, replay_page_size=2)
+        mb = build_realtime_mailbox(ctx, retention=UNSWEPT, cap=5, replay_page_size=2)
         for n in (1, 2, 3):
             await mb.store(
                 principal="u1", event_id=_eid(n), hlc=_hlc(10), signal=_signal(f"s{n}")
@@ -293,12 +303,12 @@ async def test_retention_sweeps_scope_by_tenant_on_postgres(
     ctx = mailbox_ctx
 
     with _bind(ctx, _T2):  # another tenant's ancient row must survive T1's sweep
-        await build_realtime_mailbox(ctx).store(
+        await build_realtime_mailbox(ctx, retention=UNSWEPT).store(
             principal="u1", event_id=_eid(9), hlc=_hlc(1), signal=_signal("other-tenant")
         )
 
     with _bind(ctx, _T1):
-        mb = build_realtime_mailbox(ctx)
+        mb = build_realtime_mailbox(ctx, retention=UNSWEPT)
         cursors = build_realtime_cursors(ctx)
 
         await mb.store(principal="u1", event_id=_eid(1), hlc=_hlc(1), signal=_signal("old"))
@@ -319,5 +329,165 @@ async def test_retention_sweeps_scope_by_tenant_on_postgres(
         assert await cursors.get(principal="u1", client_key="d1") is None
 
     with _bind(ctx, _T2):
-        survivors = await build_realtime_mailbox(ctx).read_since(principal="u1", since=None)
+        survivors = await build_realtime_mailbox(ctx, retention=UNSWEPT).read_since(principal="u1", since=None)
         assert [e.event_id for e in survivors] == [_eid(9)]  # the sweep never crossed tenants
+
+
+# ----------------------- #
+# sealing the stored signal bodies, against the real adapter
+
+
+_SEALED_MAILBOX_DDL = """
+CREATE TABLE rt_sealed_mailbox (
+    id uuid PRIMARY KEY,
+    rev integer NOT NULL,
+    created_at timestamptz NOT NULL,
+    last_update_at timestamptz NOT NULL,
+    tenant_id uuid NOT NULL,
+    principal text NOT NULL,
+    event_id text NOT NULL,
+    hlc bigint NOT NULL,
+    event text NOT NULL,
+    payload jsonb NOT NULL
+);
+"""
+
+_SEALED_SPEC = realtime_mailbox_spec(
+    encryption=FieldEncryption(encrypted=frozenset({"payload"})),
+)
+
+
+@pytest_asyncio.fixture
+async def sealed_mailbox_ctx(pg_client: PostgresClient) -> ExecutionContext:
+    await pg_client.execute("DROP TABLE IF EXISTS rt_sealed_mailbox;")
+    await pg_client.execute(_SEALED_MAILBOX_DDL)
+
+    configurable = _configurable("rt_sealed_mailbox")
+
+    return context_from_deps(
+        Deps.merge(
+            CryptoDepsModule(
+                kms=MockKeyManagement(),
+                directory=StaticKeyDirectory(KeyRef(key_id="mailbox-cmk")),
+            )(),
+            Deps.plain(
+                {
+                    PostgresClientDepKey: pg_client,
+                    PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                }
+            ),
+            Deps.routed(
+                {
+                    DocumentQueryDepKey: {str(_SEALED_SPEC.name): configurable},
+                    DocumentCommandDepKey: {str(_SEALED_SPEC.name): configurable},
+                }
+            ),
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_sealed_mailbox_round_trips_a_json_boundary_payload(
+    sealed_mailbox_ctx: ExecutionContext,
+    pg_client: PostgresClient,
+) -> None:
+    """The encryption seam, driven through a real adapter rather than asserted on the spec.
+
+    ``realtime_mailbox_spec(encryption=...)`` was only ever checked by reading the policy
+    back off the spec, which proves the argument was stored, not that a sealed mailbox
+    works. The payload is where that gap bites: it is typed ``JsonDict`` and crosses the
+    codec, and this repo has already been caught once by a codec that keeps ``UUID`` /
+    ``datetime`` / ``Decimal`` *live* in ``mode="python"`` — a lie the tests missed because
+    every payload in them was ``str`` and ``int``. So this one carries all three, and the
+    values are compared after the seal-store-fetch-unseal round trip, not before.
+    """
+
+    ctx = sealed_mailbox_ctx
+    # LIVE objects where the boundary accepts them, not their string spellings: the
+    # payload is typed ``JsonDict`` but nothing coerces it, so writing everything
+    # pre-stringified is what hid this class of bug last time and would make the test
+    # unable to fail for the reason it names. ``Decimal`` is deliberately the exception —
+    # see the assertion at the end of this test, which pins it as the sharp edge it is.
+    ref = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    at = datetime(2026, 8, 2, 10, 30, tzinfo=UTC)
+    body = {"text": "sealed", "ref": ref, "at": at, "amount": "10.05", "count": 3}
+    signal = RealtimeSignal.of(Audience.principal("u1"), "order.shipped", body)
+
+    with _bind(ctx, _T1):
+        mb = build_realtime_mailbox(ctx, spec=_SEALED_SPEC, retention=UNSWEPT)
+        await mb.store(principal="u1", event_id=_eid(1), hlc=_hlc(1), signal=signal)
+
+        entries = await mb.read_since(principal="u1", since=None)
+
+    assert [e.event_id for e in entries] == [_eid(1)]
+
+    # Compared by VALUE across the boundary, not by identity: whatever spelling the codec
+    # chose on the way out, the meaning has to come back intact.
+    read = entries[0].payload
+    assert read["text"] == "sealed"
+    assert read["count"] == 3
+    assert UUID(str(read["ref"])) == ref
+    assert Decimal(str(read["amount"])) == Decimal("10.05")
+    assert datetime.fromisoformat(str(read["at"])) == at
+
+    # The index the mailbox filters and sorts on stays plaintext, or replay could not work
+    # at all — and the body really is ciphertext at rest, which is the other half of the
+    # claim and the half a decrypting read cannot make.
+    rows = await pg_client.fetch_all("SELECT principal, hlc, payload::text FROM rt_sealed_mailbox")
+    assert len(rows) == 1
+    stored = dict(rows[0])
+    assert stored["principal"] == "u1"
+    # Stored packed, and stored as a NUMBER: sealed it would be text and the keyset
+    # replay would have nothing to order by.
+    assert stored["hlc"] == _hlc(1).pack()
+    assert "sealed" not in stored["payload"], f"payload stored in the clear: {stored['payload']}"
+    assert str(ref) not in stored["payload"]
+
+    # A live ``Decimal`` in the payload is NOT supported, and fails badly: the field is
+    # typed ``JsonDict``, nothing coerces or refuses it at ``RealtimeSignal.of``, and the
+    # write dies deep in the codec with a bare ``TypeError`` rather than a CoreException
+    # naming the field. UUID and datetime survive (orjson serializes both natively), which
+    # is why only this one is pinned. Change this assertion when the boundary is fixed —
+    # it is documenting a defect, not a guarantee.
+    with pytest.raises(TypeError, match="Decimal"):
+        with _bind(ctx, _T1):
+            await mb.store(
+                principal="u1",
+                event_id=_eid(2),
+                hlc=_hlc(2),
+                signal=RealtimeSignal.of(
+                    Audience.principal("u1"),
+                    "order.shipped",
+                    {"amount": Decimal("10.05")},
+                ),
+            )
+
+
+@pytest.mark.asyncio
+async def test_replay_and_ack_still_work_over_a_sealed_mailbox(
+    sealed_mailbox_ctx: ExecutionContext,
+) -> None:
+    """Sealing the body must not disturb the replay index — the ordering and the since
+    cursor are computed from ``hlc``/``event_id``, which the spec refuses to seal."""
+
+    ctx = sealed_mailbox_ctx
+
+    with _bind(ctx, _T1):
+        mb = build_realtime_mailbox(ctx, spec=_SEALED_SPEC, retention=UNSWEPT)
+
+        for n in (3, 1, 2):
+            await mb.store(
+                principal="u1",
+                event_id=_eid(n),
+                hlc=_hlc(n),
+                signal=RealtimeSignal.of(
+                    Audience.principal("u1"), "order.shipped", {"n": str(n)}
+                ),
+            )
+
+        everything = await mb.read_since(principal="u1", since=None)
+        tail = await mb.read_since(principal="u1", since=_hlc(1))
+
+    assert [e.event_id for e in everything] == [_eid(1), _eid(2), _eid(3)]
+    assert [e.event_id for e in tail] == [_eid(2), _eid(3)]
+    assert [e.payload["n"] for e in everything] == ["1", "2", "3"]

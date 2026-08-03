@@ -264,7 +264,7 @@ class ListObjects(Handler[ListObjectsRequestDTO, ListedObjects]):
         # missing_ok: a fresh deployment where nothing has been uploaded has no bucket yet
         # (only write paths create it) — that is an empty listing, not a 500. The
         # re-encryption sweep keeps the default so a *vanished* bucket still raises.
-        hits, count = await self.storage.list(
+        page = await self.storage.list(
             limit=limit,
             offset=offset,
             prefix=args.prefix,
@@ -272,10 +272,14 @@ class ListObjects(Handler[ListObjectsRequestDTO, ListedObjects]):
         )
 
         return ListedObjects(
-            hits=[_stored_object_to_dto(h) for h in hits],
+            hits=[_stored_object_to_dto(h) for h in page.objects],
             page=args.page,
             size=args.size,
-            count=count,
+            count=page.total,
+            # Reported rather than smoothed over: with per-tenant buckets this route
+            # answers "nothing here" for every tenant nobody has provisioned, and that
+            # reads identically to a tenant that has simply uploaded nothing.
+            provisioned=not page.container_missing,
         )
 
 

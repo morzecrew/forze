@@ -150,7 +150,8 @@ With `tenant_aware=True`, the adapter derives the tenant from `ExecutionContext`
 
 ## Behavior worth knowing
 
-- **Listing a bucket that does not exist raises** by default (a missing bucket is a provisioning fault, not a caller miss). Pass `missing_ok=True` on the list call when a not-yet-provisioned bucket should read as an empty listing. Object listing also bounds its per-object HEAD fan-out, so a large prefix does not turn one call into thousands of concurrent requests.
+- **`list` returns a `StoredObjectPage`** — `objects`, `total`, and `container_missing` — not a `(objects, total)` tuple.
+- **Listing a bucket that does not exist raises** by default (a missing bucket is a provisioning fault, not a caller miss, and it is classified `configuration` so a retry loop stops instead of asking forever). Pass `missing_ok=True` when a not-yet-provisioned bucket should read as an empty listing — the page then comes back flagged `container_missing`, so tolerating the absence does not mean being unable to see it. Under per-tenant buckets that flag is the difference between a tenant nobody provisioned and one that has uploaded nothing. Object listing also bounds its per-object HEAD fan-out, so a large prefix does not turn one call into thousands of concurrent requests.
 - **Tags on a streamed (multipart) upload** are applied after completion — multipart completion itself carries no tagging. Tag-dependent lifecycle rules therefore see the object a moment after the last part lands.
 - **An unconditional `overwrite_stream` creates the object** when it does not exist, on the mock exactly as on S3 and GCS.
 

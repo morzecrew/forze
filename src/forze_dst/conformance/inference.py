@@ -9,9 +9,10 @@ declaration, not of the model behind it.
 
 That makes the oracle's default the whole problem. ``MockInferenceAdapter`` advertises
 :data:`~forze.application.contracts.inference.FULL_INFERENCE_CAPABILITIES` when a route
-registers none: unbounded batches, streaming, async jobs, deterministic. It is not lying —
-the mock really does serve all of that — but it out-capables every real adapter it stands in
-for, so a capability gate that passes against the oracle can still refuse in production.
+registers none: unbounded batches, streaming, deterministic — every dimension the mock can
+actually serve (async jobs stay off until that plane ships). It is not lying, but it
+out-capables every real adapter it stands in for, so a capability gate that passes against
+the oracle can still refuse in production.
 The registration seam exists to fix that (``MockInferenceRegistry.on(..., capabilities=…)``),
 and this scenario is what makes forgetting it fail somewhere other than production.
 

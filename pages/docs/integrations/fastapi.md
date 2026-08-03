@@ -192,7 +192,11 @@ hub = RealtimeSseHub()
 attach_realtime_sse_route(
     router,
     ctx_dep=runtime.get_context,
-    mailbox_factory=build_realtime_mailbox,  # the same stores the gateway fills
+    # the same stores the gateway fills; retention has no default, so the factory
+    # names the window (and a sweeper must be registered to back it)
+    mailbox_factory=lambda ctx: build_realtime_mailbox(
+        ctx, retention=MailboxRetention(max_age=timedelta(days=7)),
+    ),
     cursors_factory=build_realtime_cursors,
     hub=hub,
 )

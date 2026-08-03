@@ -29,6 +29,7 @@ from forze_kits.integrations.realtime import (
 )
 from forze_mock import MockDepsModule
 from forze_socketio import GatewayDedup, RealtimeGateway, StreamGroupSignalSource
+from tests.support.realtime_retention import UNSWEPT
 
 # ----------------------- #
 
@@ -462,7 +463,7 @@ async def test_stats_count_mailboxed_emit_failed_and_poisoned() -> None:
         sio=sio,  # pyright: ignore[reportArgumentType]
         source=source,
         dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock"),
-        mailbox_factory=build_realtime_mailbox,
+        mailbox_factory=lambda ctx: build_realtime_mailbox(ctx, retention=UNSWEPT),
         stats=stats,
     )
 

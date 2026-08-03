@@ -86,13 +86,19 @@ FULL_INFERENCE_CAPABILITIES: Final[InferenceCapabilities] = InferenceCapabilitie
     native_batch=True,
     max_batch_size=None,
     supports_stream=True,
-    supports_async_jobs=True,
+    # Off, though this is the "full" surface: the batch-job plane has not shipped, so there
+    # is no verb the mock could serve a job with. An oracle advertising it would out-capable
+    # every real adapter on the one dimension no test can reach — the exact shape the
+    # capability differential exists to catch. Turn it on with the plane.
+    supports_async_jobs=False,
     deterministic=True,
 )
 """The canonical full surface every backend is a subset of.
 
 The in-memory mock is the reference: it scores batches in one pure-function call, streams
-chunks exactly, and is deterministic by construction, so it advertises the superset.
+chunks exactly, and is deterministic by construction, so it advertises the superset — of
+what is actually servable. :attr:`InferenceCapabilities.supports_async_jobs` is the
+exception and stays off until its plane lands (see the comment above it).
 """
 
 DEFAULT_INFERENCE_CAPABILITIES: Final[InferenceCapabilities] = InferenceCapabilities()

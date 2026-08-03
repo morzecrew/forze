@@ -90,20 +90,36 @@ device has a **cursor**, advanced by its ack, so a reconnecting device is replay
 exactly what it has not seen.
 
 ```python
+from datetime import timedelta
+
 from forze_kits.integrations.realtime import (
+    MailboxRetention,
     build_realtime_cursors,
     build_realtime_mailbox,
+    realtime_mailbox_retention_lifecycle_step,
 )
 
-mailbox = build_realtime_mailbox(ctx)
+mailbox = build_realtime_mailbox(
+    ctx, retention=MailboxRetention(max_age=timedelta(days=7)),
+)
 cursors = build_realtime_cursors(ctx)
+
+# ...and the step that actually enforces the window, in your lifecycle steps:
+retention = realtime_mailbox_retention_lifecycle_step(max_age=timedelta(days=7))
 ```
 
 Both are document-backed and tenant-aware — the document store scopes every row by
-the ambient tenant, so your code carries no tenant logic. The mailbox is **bounded
-recent history**, not a queue: register
-`realtime_mailbox_retention_lifecycle_step` so an age sweep bounds growth and prunes
-idle device cursors. Delivery you must guarantee forever belongs in domain state.
+the ambient tenant, so your code carries no tenant logic.
+
+`retention` is **required and has no default**, because the mailbox has no delete path
+of its own: the ack-driven trim only follows the slowest device's cursor and the replay
+cap bounds *reads*, so a principal whose devices stop acking accumulates entries
+forever. Declaring a window without registering
+`realtime_mailbox_retention_lifecycle_step` is refused at build
+(`realtime_mailbox_retention_unwired`) — wiring that *looks* bounded and is not is worse
+than the honest unbounded case. If unbounded is genuinely what you want, say so:
+`MailboxRetention.unbounded(reason=...)`. Delivery you must guarantee forever belongs in
+domain state, not in a mailbox.
 
 Topic broadcasts are never mailboxed — there is no fixed membership to store them
 for.
@@ -130,7 +146,10 @@ hub = RealtimeSseHub()
 attach_realtime_sse_route(
     router,
     ctx_dep=runtime.get_context,
-    mailbox_factory=build_realtime_mailbox,
+    # the factory names the window; build_realtime_mailbox cannot be passed bare
+    mailbox_factory=lambda ctx: build_realtime_mailbox(
+        ctx, retention=MailboxRetention(max_age=timedelta(days=7)),
+    ),
     cursors_factory=build_realtime_cursors,
     hub=hub,
     authorize_topics=grant_topics,   # required for ?topics=; fail-closed

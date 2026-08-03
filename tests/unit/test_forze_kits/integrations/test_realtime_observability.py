@@ -20,6 +20,7 @@ from forze_kits.integrations.realtime import (
     realtime_mailbox_spec,
 )
 from forze_mock import MockDepsModule
+from tests.support.realtime_retention import UNSWEPT
 
 # ----------------------- #
 
@@ -48,7 +49,7 @@ async def test_instrument_reflects_store_and_cursor_counters() -> None:
         # specs referenced for completeness — the mock serves any route plainly
         _ = realtime_mailbox_spec(), realtime_cursor_spec()
 
-        mailbox = build_realtime_mailbox(ctx)
+        mailbox = build_realtime_mailbox(ctx, retention=UNSWEPT)
         cursors = build_realtime_cursors(ctx)
 
         meter = _StubMeter()

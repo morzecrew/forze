@@ -34,8 +34,11 @@ from .mailbox import (
     DocumentMailboxCursors,
     DocumentRealtimeMailbox,
     MailboxDocumentSpec,
+    MailboxRetention,
+    _build_mailbox,  # pyright: ignore[reportPrivateUsage]
     build_realtime_cursors,
-    build_realtime_mailbox,
+    mailbox_retention_marker,
+    realtime_mailbox_spec,
 )
 
 # ----------------------- #
@@ -399,6 +402,15 @@ class _MailboxRetentionStartup(LifecycleHook):
     jitter: float
     tenants: Callable[[], Sequence[UUID]] | None
 
+    marker: str
+    """The lifecycle marker this sweep publishes while it runs.
+
+    Keyed on the mailbox spec and the enforced window rather than on ``step_id``, which
+    callers rename: what ``build_realtime_mailbox`` needs is that *this* mailbox has a
+    sweeper honouring *that* window. Two channels wire two steps that must not vouch for
+    each other, and two windows are two different promises.
+    """
+
     control: BackgroundLoopControl = attrs.field(
         default=attrs.Factory(lambda: BackgroundLoopControl(name="realtime_mailbox_retention")),
         init=False,
@@ -491,37 +503,70 @@ class _MailboxRetentionStartup(LifecycleHook):
 
         self.control.arm()
 
+        # Published as soon as the loop is armed, before the task exists: the sweep's own
+        # first tick builds this very mailbox, and that build runs the coverage check.
+        # Adding the marker afterwards would leave it depending on the event loop not
+        # having scheduled the task yet.
+        ctx.lifecycle_started.add(self.marker)
+
         async def _loop() -> None:
-            while True:
-                try:
-                    await self._sweep_tick(ctx, tenants)
-                except asyncio.CancelledError:
-                    raise
-                except CoreException as error:
-                    if error.kind is ExceptionKind.CONFIGURATION:
-                        logger.exception(
-                            "Realtime mailbox retention hit a configuration error; "
-                            "loop stopped — fix the wiring and restart"
+            # The marker means "a sweeper is running for this mailbox and window". Every
+            # way out of this loop makes that false, and a stale marker is worse than no
+            # marker: it vouches for a window nothing enforces. Retracted in `finally` so
+            # a configuration stop, an unexpected raise and cancellation all clear it.
+            try:
+                while True:
+                    try:
+                        await self._sweep_tick(ctx, tenants)
+                    except asyncio.CancelledError:
+                        raise
+                    except CoreException as error:
+                        if error.kind is ExceptionKind.CONFIGURATION:
+                            logger.exception(
+                                "Realtime mailbox retention hit a configuration error; "
+                                "loop stopped — fix the wiring and restart"
+                            )
+                            return
+
+                        logger.exception("Realtime mailbox retention sweep failed")
+                    except Exception:
+                        logger.exception("Realtime mailbox retention sweep failed")
+
+                    # Multiplicative jitter desynchronizes N replicas' sweeps; racing
+                    # sweeps are harmless (deletes are idempotent), this only avoids
+                    # redundant work.
+                    if await self.control.sleep_or_stop(
+                        self.interval.total_seconds()
+                        * (
+                            1.0
+                            + current_entropy_source()
+                            .as_random()
+                            .uniform(-self.jitter, self.jitter)
                         )
+                    ):
                         return
+            finally:
+                ctx.lifecycle_started.discard(self.marker)
 
-                    logger.exception("Realtime mailbox retention sweep failed")
-                except Exception:
-                    logger.exception("Realtime mailbox retention sweep failed")
+        try:
+            self.control.task = asyncio.create_task(_loop(), name=self.control.loop_name)
+            ctx.drainables.register(self)
 
-                # Multiplicative jitter desynchronizes N replicas' sweeps; racing sweeps
-                # are harmless (deletes are idempotent), this only avoids redundant work.
-                if await self.control.sleep_or_stop(
-                    self.interval.total_seconds()
-                    * (
-                        1.0
-                        + current_entropy_source().as_random().uniform(-self.jitter, self.jitter)
-                    )
-                ):
-                    return
+        except BaseException:
+            # Nothing is sweeping if the task never started or could not be registered.
+            # When registration is what failed, the task *is* running, and retracting the
+            # marker alone would leave the worst of both: a sweep no drainable can stop
+            # (shutdown never learns about it) and no marker claims. Cancel it and put the
+            # control back where startup found it, so a retry is a clean start.
+            task = self.control.task
 
-        self.control.task = asyncio.create_task(_loop(), name=self.control.loop_name)
-        ctx.drainables.register(self)
+            if task is not None:
+                task.cancel()
+
+            self.control.task = None
+            self.control.event = None
+            ctx.lifecycle_started.discard(self.marker)
+            raise
 
 
 # ....................... #
@@ -537,6 +582,10 @@ class _MailboxRetentionShutdown(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
+        # Retracted before the loop stops: past this point no sweeper is running for
+        # the mailbox, so a build must not keep believing one is.
+        ctx.lifecycle_started.discard(self.startup.marker)
+
         clock = asyncio.get_running_loop()
         await self.startup.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
 
@@ -574,20 +623,16 @@ def realtime_mailbox_retention_lifecycle_step(
     tenant's collections; ``None`` sweeps the tenant-global collections once.
     """
 
-    if max_age.total_seconds() <= 0:
-        raise exc.configuration("Mailbox retention max_age must be positive")
-
-    resolved_cursor_age = cursor_max_age if cursor_max_age is not None else max_age
-
-    if resolved_cursor_age < max_age:
-        # A cursor pruned while its acked prefix is still retained would replay (and
-        # re-offer) entries the device already confirmed — keep the registry's memory
-        # at least as long as the entries it indexes.
-        raise exc.configuration(
-            "Mailbox retention cursor_max_age must be at least max_age: pruning a "
-            "device cursor before its acked entries expire re-offers confirmed "
-            "deliveries on every reconnect"
-        )
+    # The window rules live on the declaration, so the sweep states its window as one and
+    # lets `__attrs_post_init__` check it. Validating here as well drifted: the same
+    # misconfiguration raised an uncoded error through this door and a
+    # `realtime_mailbox_retention_invalid` one through `MailboxRetention`.
+    retention = MailboxRetention(max_age=max_age, cursor_max_age=cursor_max_age)
+    # From the declaration, not recomputed: the marker keys this same property, so the
+    # sweep cannot enforce one window while vouching for another. The `or` is a type
+    # narrowing and never a fallback — the property is optional only for an *unbounded*
+    # declaration, and this step's max_age is required, so it is always Some here.
+    resolved_cursor_age = retention.resolved_cursor_max_age or max_age
 
     if interval.total_seconds() <= 0:
         raise exc.configuration("Mailbox retention interval must be positive")
@@ -595,14 +640,21 @@ def realtime_mailbox_retention_lifecycle_step(
     if not 0.0 <= jitter < 1.0:
         raise exc.configuration("Jitter must be in [0, 1)")
 
+    resolved_mailbox = mailbox_spec if mailbox_spec is not None else realtime_mailbox_spec()
+    # The marker this sweep publishes: the mailbox it covers *and* the window it enforces,
+    # so a build declaring a different window is not silently vouched for.
+    marker = mailbox_retention_marker(str(resolved_mailbox.name), retention)
+
     startup = _MailboxRetentionStartup(
         max_age=max_age,
         cursor_max_age=resolved_cursor_age,
-        mailbox_builder=lambda ctx: build_realtime_mailbox(ctx, spec=mailbox_spec),
+        # The sweep's own build takes the private path: it cannot wait for its own marker.
+        mailbox_builder=lambda ctx: _build_mailbox(ctx, spec=resolved_mailbox),
         cursors_builder=lambda ctx: build_realtime_cursors(ctx, spec=cursor_spec),
         interval=interval,
         jitter=jitter,
         tenants=tenants,
+        marker=marker,
     )
 
     return LifecycleStep(

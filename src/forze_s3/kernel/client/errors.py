@@ -92,9 +92,13 @@ def _s3_eh(  # skipcq: PY-R1000
                     details=details,
                 )
 
-            # A missing bucket is a deployment/provisioning fault, not a caller miss.
+            # A missing bucket is a deployment/provisioning fault, not a caller miss —
+            # and ``configuration`` rather than ``infrastructure`` because the egress
+            # policy reads the latter as retryable. Nothing about an unprovisioned bucket
+            # improves by asking again, so a saga or consumer retry loop that treated it
+            # as transient would spin against it until an operator noticed.
             if code == "NoSuchBucket":
-                return CoreException.infrastructure(
+                return CoreException.configuration(
                     "S3 bucket not found.",
                     details=details,
                 )

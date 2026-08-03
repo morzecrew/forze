@@ -9,17 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Docs floors** — a public contract symbol that no page mentions now fails CI, the coverage-floors move applied to documentation:
+
+- New `[tool.docs_floors]` in `pyproject.toml` enforced by `.github/scripts/docs_floors.py`, wired into `just quality`; `just docs-check` runs it alone. Checks three properties: every public `DepKey`/`*Spec` under `contracts/` is mentioned in `pages/docs`, the nav resolves in both directions (no dangling entry, no orphan page), and every relative link between docs lands.
+- Exemptions are grouped and reasoned, and checked both ways: a symbol that no longer exists fails, and so does one that has since been documented — the table can only shrink. 82/133 symbols documented, 51 declared.
+- New `reference/spec-registry.md`; the realtime, object-storage and graph Agent Skills are refreshed against this release's contract changes.
+
 **Conformance ratchet** — a backend that registers a manifested port without running that plane's differential leg now fails CI:
 
 - New `[tool.conformance_manifest]` in `pyproject.toml` (planes, dep keys, engines, gaps, exemptions) enforced by `.github/scripts/conformance_manifest.py`, wired into `just quality`; `just conformance-check` / `just conformance` run it alone. Every `DepKey` under `contracts/` must be claimed exactly once.
 - Legs carry `@pytest.mark.conformance(plane=…, engine=…)`; `--conformance-executed` records what each CI shard ran and a new `conformance` job fails when a manifested leg passed nothing anywhere. `test_forze_inference` and `test_portability` join the CI matrix.
-- New scenario modules: `forze_dst.conformance` `counters`/`storage`/`inference`/`catalog` and `forze_kits.integrations.realtime.conformance`.
+- New scenario modules: `forze_dst.conformance` `counters`/`storage`/`graph`/`inference`/`catalog` and `forze_kits.integrations.realtime.conformance`. The `graph` plane (mock + Neo4j) replaces the single-engine exemption its data ports held.
 
 **Cross-backend conformance** — shared batteries for the counter, graph, storage, inference, search, idempotency, field-encryption and realtime-cursor planes; each behaviour change below now holds on every backend of its plane:
 
 - **Counters** are signed 64-bit: new `COUNTER_MIN_VALUE`/`COUNTER_MAX_VALUE` and `validate_counter_value`; an out-of-range `reset` raises `counter_value_out_of_range`.
 - **Storage:** `delete`/`abort_upload` are idempotent; a same-key `copy`/`move` is refused with new `SELF_COPY_CODE`; mock `list` is lexicographic; S3 maps `NoSuchUpload` to `not_found`. **Behaviour change:** the mock models bucket existence (new `MockState.storage_buckets`) — `list` over a never-written bucket now raises unless `missing_ok=True` (previously a no-op); reads never provision, the four write paths do.
-- **Inference:** a `max_batch_size` cap sub-batches `predict_stream`; a spent budget raises new `inference_budget_exhausted` pre-flight; scalar outputs wrap via new `scalar_output_field`.
+- **Inference:** a `max_batch_size` cap sub-batches `predict_stream`; a spent budget raises new `inference_budget_exhausted` pre-flight; scalar outputs wrap via new `scalar_output_field`. `FULL_INFERENCE_CAPABILITIES.supports_async_jobs` is now `False` — the batch-job plane has no verb to serve, so the oracle no longer advertises it.
 - **Search:** `delete_all()` on an unprovisioned index is a no-op; a Meilisearch `invalid_request` raises `precondition` with the engine's message.
 - **Graph:** new `normalize_property_filter` and `MockGraphManagementAdapter`; `UUID`/`datetime`/`Decimal` property filters match everywhere; a `None` filter value matches nothing; duplicate vertex keys raise `graph_vertex_conflict` (Neo4j needs `ensure_schema()`).
 - **Idempotency:** key reuse with a different payload raises `conflict` on the Redis store too.
@@ -61,6 +67,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Commit-stream dead-lettering is exactly-once for any producer** — a DLQ copy of a message without a `forze_event_id` header now carries a deterministically minted dedup id (a re-produced copy could previously process twice); sealed envelopes stay byte-identical.
 
 **A routed SQS consumer survives credential rotation** — `evict_tenant` moves an in-flight `RoutedSQSClient.consume` stream onto fresh credentials at the next poll instead of tearing it down; `guarded=True` is fully supported across the facade (previously it raised on first use); non-retryable resolution failures still raise out of the stream. `SQSRoutingCredentials.secret_access_key` is now `SecretStr` (matching S3) — read it via `get_secret_value()`.
+
+**Routed RabbitMQ and Kafka consumers survive credential rotation too** — `guarded=True` now works across both facades (every operation runs under a pool lease; previously the first call raised). `RoutedRabbitMQClient.consume` re-acquires the tenant's client per fetch instead of pinning one for the stream's life; it polls where the single-tenant `RabbitMQClient.consume` keeps its push subscription.
+
+**The offline mailbox has no unbounded default** (**breaking**) — `build_realtime_mailbox` takes a required `retention=`: a new `MailboxRetention` window, or `MailboxRetention.unbounded(reason=…)`. A declared window with no `realtime_mailbox_retention_lifecycle_step` backing it is refused at build (`realtime_mailbox_retention_unwired`). **Migration:** pass `retention=` at every build, including the Socket.IO/SSE `mailbox_factory`.
+
+**A graph key field must be a string** (**behaviour change**) — `GraphNodeSpec`/`GraphEdgeSpec` refuse a `key_field` declared as `bool`/`int`/`float` (`graph_non_string_key_field`); on Neo4j every keyed read of such a vertex silently answered as absent. `Decimal` is allowed — it persists as text, and that text is the key (`Decimal("1.50")` ≠ `Decimal("1.5")`). **Migration:** use a `str`/`UUID` key and keep the number as an ordinary property. A bounded `neighbors` call is now documented as returning an arbitrary — but full — page.
+
+**`missing_ok` no longer hides that a storage container is absent** (**breaking**) — `StorageQueryPort.list` returns a `StoredObjectPage` (`objects`, `total`, `container_missing`) instead of a `(objects, total)` tuple; the kit's `ListedObjects` gains `provisioned`. **Migration:** unpack sites become `page.objects` / `page.total`.
+
+**A missing storage bucket is `configuration`, not retryable `infrastructure`** (**behaviour change**) — S3, GCS and the mock agreed on a kind the egress policy reads as retryable, so a saga step or consumer loop hit an unprovisioned bucket and retried forever. Client-facing behaviour is unchanged (details still withheld, still HTTP 500); only the retry decision moves.
+
+**Mongo counter allocations cost one round trip instead of two** — the pre-route legacy lookup runs only on a counter's first touch, matching Postgres and Firestore. A legacy document appearing after the counter exists is now left in place, unread and unenumerated, rather than retired.
+
+**A paged Temporal schedule listing silently dropped schedules** — a `limit` reached mid-page skipped the rest of that page; paging now returns every matching schedule exactly once. Cursors stay opaque, but a mid-page one is no longer a bare Temporal token — do not decode it.
 
 **Local KMS has no wrap-count rotation cadence** — each wrap seals under a one-shot HKDF subkey, so the AES-GCM ~2^32 ceiling never accrues against a master key; envelopes sealed by earlier builds stay readable.
 

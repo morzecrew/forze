@@ -66,7 +66,7 @@ from forze.application.contracts.outbox import OutboxRelayResult, OutboxSpec
 from forze.application.contracts.resilience import BackoffStrategy
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.resilience.backoff import compute_delay
-from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
+from forze.application.integrations.crypto import is_payload_cipher_missing
 from forze.application.integrations.outbox import (
     decrypt_outbox_payload,
     is_encrypted_payload,
@@ -86,8 +86,6 @@ PublishOne = Callable[["OutboxClaim", Any], Awaitable[None]]
 # Same taxonomy as the two consumer runners (see
 # ``forze_kits.integrations.consumer``): a decrypt config error (an encrypted row
 # with no keyring wired) is a deployment fault, not a poison row.
-_CIPHER_MISSING_CODE = PAYLOAD_CIPHER_MISSING_CODE
-"""Decrypt config error (no keyring): a deployment fault, not a poison row."""
 
 
 def _under_claim_tenant(
@@ -282,7 +280,7 @@ async def relay_outbox_claims(
                 payload = outbox_spec.codec.decode_mapping(decrypted)
 
         except CoreException as decode_error:
-            if decode_error.code == _CIPHER_MISSING_CODE:
+            if is_payload_cipher_missing(decode_error):
                 # A deployment fault, not row poison: encrypted rows met a ``None``
                 # keyring (no CryptoDepsModule wired). Marking failed here would
                 # dead-letter the whole encrypted backlog at claim-batch rate. Abort

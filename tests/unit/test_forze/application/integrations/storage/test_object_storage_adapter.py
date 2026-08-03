@@ -162,9 +162,11 @@ async def test_list_enriches_objects_from_head_metadata(
         ),
     )
 
-    objects, total = await storage_adapter.list(10, 0, prefix="docs")
+    page = await storage_adapter.list(10, 0, prefix="docs")
+    objects = page.objects
 
-    assert total == 1
+    assert page.total == 1
+    assert page.container_missing is False
     assert len(objects) == 1
     assert objects[0].key == "docs/k1"
     assert objects[0].content_type == "text/plain"
@@ -195,9 +197,10 @@ async def test_list_falls_back_for_envelope_less_objects(
         ),
     )
 
-    objects, total = await storage_adapter.list(10, 0, prefix="docs")
+    page = await storage_adapter.list(10, 0, prefix="docs")
+    objects = page.objects
 
-    assert total == 1
+    assert page.total == 1
     assert objects[0].key == "docs/raw.bin"
     assert objects[0].filename == "raw.bin"
     assert objects[0].description is None
@@ -245,7 +248,7 @@ async def test_list_surfaces_tags_from_head(
         ),
     )
 
-    objects, _ = await storage_adapter.list(10, 0, prefix="docs")
+    objects = (await storage_adapter.list(10, 0, prefix="docs")).objects
 
     assert objects[0].tags == {"env": "dev"}
 
@@ -291,6 +294,6 @@ async def test_list_prefers_listed_object_tags_over_head_tags(
         ),
     )
 
-    objects, _ = await storage_adapter.list(10, 0, include_tags=True)
+    objects = (await storage_adapter.list(10, 0, include_tags=True)).objects
 
     assert objects[0].tags == {"env": "dev"}

@@ -201,6 +201,7 @@ nav = [
             "reference/encryption-matrix.md",
         ] },
         { "Schemas & syntax" = [
+            "reference/spec-registry.md",
             "reference/query-syntax.md",
             "reference/mapping.md",
             "reference/outbox-schema.md",
