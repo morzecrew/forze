@@ -153,6 +153,7 @@ nav = [
             "recipes/cache-reads-with-redis.md",
             "recipes/analytics-over-a-data-lake.md",
             "recipes/expose-an-aggregate-over-mcp.md",
+            "recipes/mock-server.md",
         ] },
         { "Writing an operation" = [
             "recipes/add-idempotency.md",

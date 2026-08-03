@@ -46,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Server-side CSRF gate on cookie ingress, on by default** — `CookieTokenAuthn.csrf` (new `CookieCsrf`): an unsafe-method request using the cookie must prove a same-host or `allowed_origins` origin via `Origin`/`Referer`, refused as 403 `csrf_rejected`; `allow_missing_origin=True` admits header-less non-browser cookie clients, `csrf=None` opts out.
 
+**Mock server recipe** (`examples/recipes/mock_server/`, docs: *Serve your app on the mock*) — serve an app's own generated routes, middleware and identity plane on in-memory backends: a stateful API with real cursors and `rev`, no infrastructure. No new framework code.
+
 **Hybrid deps contexts — `MockDepsModule` composes with real backend modules** ("real Postgres, mock everything else" in one deps list). New keyword-only `fallback=` on `Deps.plain`/`Deps.routed`/`Deps.routed_group` marks registrations that yield to a real one instead of colliding, order-independently; the mock marks everything. Overlap between two real (or two fallback) registrations still raises. New `FallbackReport` from `ProviderStore.fallback_report()`, logged at freeze and on `check_wiring(...).fallbacks`; its `catch_all` names the keys where an unregistered route silently reaches the fallback.
 
 ### Fixed

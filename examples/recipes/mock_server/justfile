@@ -1,0 +1,16 @@
+set shell := ["bash", "-cu"]
+
+# Serve the app on in-memory backends at http://localhost:8000 — no infra, no compose file.
+run:
+    uv run --directory ../../.. python -m examples.recipes.mock_server.app
+
+# The seeded catalog, through the generated list route.
+smoke:
+    curl -sS -X POST localhost:8000/products/list \
+        -H 'X-API-Key: dev-key' -H 'content-type: application/json' -d '{}'
+
+# Export the OpenAPI document — the handoff for consumers with no Python (see the docs page).
+openapi:
+    uv run --directory ../../.. python -c \
+        "import json; from examples.recipes.mock_server.app import build_server; \
+         print(json.dumps(build_server().openapi(), indent=2))"
