@@ -214,6 +214,34 @@ class TestMergeOrderIndependence:
             Deps.merge(once, Deps.plain({_A: "other-real"}))
 
 
+class TestCatchAllIsTheHazardSet:
+    """``catch_all`` separates "this plane is mocked" from "this plane is real, with a mock
+    behind it" — only the second can absorb a mistyped route, so only it is a hazard."""
+
+    def test_a_fallback_plain_under_real_routes_is_a_catch_all(self) -> None:
+        store = Deps.merge(Deps.routed({_A: {"main": "real"}}), _fallback_plain()).store
+
+        assert store.fallback_report().catch_all_names() == ("a",)
+
+    def test_a_fallback_plain_nobody_routed_is_not(self) -> None:
+        store = Deps.merge(_fallback_plain(), Deps.plain({_B: "real-b"})).store
+
+        assert store.fallback_report().catch_all_names() == ()
+        assert store.fallback_report().served_names() == ("a",)
+
+    def test_fallback_routes_over_a_fallback_plain_do_not_count(self) -> None:
+        # Both sides fallback: an unwired plane, not a half-real one. (One store may
+        # author this pair; merging two of them is still a conflict.)
+        store = ProviderStore(
+            plain_deps={_A: "mock"},
+            routed_deps={_A: {"main": "mock-main"}},
+            fallback_plain=frozenset({_A}),
+            fallback_routes={_A: frozenset({"main"})},
+        )
+
+        assert store.fallback_report().catch_all_names() == ()
+
+
 class TestTypoRouteHazard:
     def test_a_mistyped_route_reaches_the_fallback_and_the_report_says_so(self) -> None:
         # The residual hazard the RFC accepts: in a context that includes a fallback

@@ -28,6 +28,7 @@ from forze.application.contracts.execution import LifecycleStep
 from forze.application.contracts.outbox import (
     IntegrationEvent,
     OutboxClaim,
+    OutboxCommandDepKey,
     OutboxDestination,
     OutboxSpec,
     OutboxStatus,
@@ -205,6 +206,40 @@ async def test_outbox_rollback_discards_staged_rows(
         )
 
     assert rows == []
+
+
+def test_the_hybrid_context_serves_the_outbox_from_postgres_not_the_mock(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    """The guard the hybrid wiring costs: prove the outbox route is the real adapter.
+
+    Composing the whole mock as a fallback means an outbox route Postgres does *not*
+    register no longer fails — it resolves to the in-memory store, and a suite asserting
+    only through ports would pass against the mock. So assert the registration itself: the
+    declared route is Postgres-backed, and the mock is only the catch-all behind it.
+    """
+
+    pg_module = PostgresDepsModule(
+        client=pg_client,
+        tx={"default"},
+        outboxes={"integration": PostgresOutboxConfig(relation=("public", outbox_table))},
+    )
+    store = (
+        DepsRegistry.from_modules(pg_module).with_modules(_mock_fallback(MockState())).freeze().store
+    )
+
+    assert store.routed_deps[OutboxCommandDepKey].keys() == {"integration"}
+    assert type(store.get_provider(OutboxCommandDepKey, route="integration")) is not type(
+        store.get_provider(OutboxCommandDepKey, route="not-a-route")
+    )
+    # ...and the report names exactly the keys where a misspelt route would go unnoticed.
+    assert set(store.fallback_report().catch_all_names()) == {
+        "outbox_command",
+        "outbox_query",
+        "outbox_admin",
+        "transaction_manager",
+    }
 
 
 @pytest.mark.asyncio

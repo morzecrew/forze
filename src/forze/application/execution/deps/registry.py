@@ -93,11 +93,19 @@ def _report_fallbacks(store: ProviderStore) -> None:
     if not report.hybrid:
         return
 
+    # The catch-all set is named in full at info: those are the keys where a mistyped route
+    # resolves to the fallback instead of failing. The bulk fallback-served list (every
+    # plane nobody wired for real — ~80 keys under the mock) stays at debug.
     _logger.info(
-        "Hybrid deps wiring: %s fallback-served entry(ies), %s shadowed by real modules%s",
+        "Hybrid deps wiring: %s fallback-served entry(ies), %s shadowed by real modules%s%s",
         len(report.served_names()),
         len(report.shadowed),
-        f" ({', '.join(report.shadowed_names())})" if report.shadowed else "",
+        f"; shadowed: {', '.join(report.shadowed_names())}" if report.shadowed else "",
+        (
+            f"; catch-all behind real routes: {', '.join(report.catch_all_names())}"
+            if report.catch_all
+            else ""
+        ),
     )
     _logger.debug("Hybrid deps wiring detail:\n%s", report.describe())
 

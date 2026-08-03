@@ -349,6 +349,15 @@ class ProviderStore:
 
     # ....................... #
 
+    def _has_real_route(self, key: DepKey[Any]) -> bool:
+        """Whether any route registered under *key* is a non-fallback registration."""
+
+        routes = self.routed_deps.get(key) or {}
+
+        return bool(routes.keys() - (self.fallback_routes.get(key) or frozenset()))
+
+    # ....................... #
+
     def fallback_report(self) -> FallbackReport:
         """Describe what this store owes to fallback registrations.
 
@@ -368,6 +377,12 @@ class ProviderStore:
             shadowed=self.shadowed_fallbacks,
             served_plain=self.fallback_plain,
             served_routes=dict(self.fallback_routes),
+            # A fallback plain entry under a key a real module also routes is the one that
+            # can absorb a mistyped route — the real routes answer, and everything else
+            # quietly does not fail. Naming it separately is what makes the report a
+            # mitigation rather than a list. Routes that are themselves fallback do not
+            # count: that key is simply an unwired plane, not a half-real one.
+            catch_all=frozenset(key for key in self.fallback_plain if self._has_real_route(key)),
             mixed=bool(fallback_count) and bool(real_count),
         )
 

@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from forze.application.contracts.outbox import (
     IntegrationEvent,
     OutboxClaim,
+    OutboxCommandDepKey,
     OutboxDestination,
     OutboxSpec,
     OutboxStatus,
@@ -222,6 +223,43 @@ async def test_mongo_outbox_ordering_key_round_trips_stage_doc_claim(
         claims = {c.event_type: c for c in await ctx.outbox.query(outbox_spec).claim_pending()}
         assert claims["demo.created"].ordering_key == "order-1"
         assert claims["demo.updated"].ordering_key is None
+
+
+def test_the_hybrid_context_serves_the_outbox_from_mongo_not_the_mock(
+    mongo_client_replica: MongoClient,
+    outbox_collection: tuple[str, str],
+) -> None:
+    """The guard the hybrid wiring costs: prove the outbox route is the real adapter.
+
+    Composing the whole mock as a fallback means an outbox route Mongo does *not* register
+    no longer fails — it resolves to the in-memory store, and a suite asserting only
+    through ports would pass against the mock. So assert the registration itself.
+    """
+
+    db_name, coll_name = outbox_collection
+    mongo_module = MongoDepsModule(
+        client=mongo_client_replica,
+        tx={"default"},
+        outboxes={"integration": MongoOutboxConfig(collection=(db_name, coll_name))},
+    )
+    store = (
+        DepsRegistry.from_modules(mongo_module)
+        .with_modules(_mock_fallback(MockState()))
+        .freeze()
+        .store
+    )
+
+    assert store.routed_deps[OutboxCommandDepKey].keys() == {"integration"}
+    assert type(store.get_provider(OutboxCommandDepKey, route="integration")) is not type(
+        store.get_provider(OutboxCommandDepKey, route="not-a-route")
+    )
+    # ...and the report names exactly the keys where a misspelt route would go unnoticed.
+    assert set(store.fallback_report().catch_all_names()) == {
+        "outbox_command",
+        "outbox_query",
+        "outbox_admin",
+        "transaction_manager",
+    }
 
 
 @pytest.mark.asyncio

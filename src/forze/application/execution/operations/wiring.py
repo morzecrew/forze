@@ -86,10 +86,11 @@ class WiringReport:
     """Failures, one per operation that did not resolve cleanly."""
 
     fallbacks: FallbackReport | None = None
-    """What the checked context owes to fallback registrations, when it mixes a fallback
-    environment (the mock) with real modules. Reporting only: fallback service is a
-    legitimate hybrid wiring, so it never turns into a failure — but a check that passes
-    *because* a mistyped route reached the mock is exactly what this names."""
+    """What the checked context owes to fallback registrations — always set by
+    :func:`check_wiring` (``FallbackReport.hybrid`` is ``False`` when the context mixes
+    nothing), ``None`` only on a report built by hand. Reporting only: fallback service is
+    a legitimate hybrid wiring, so it never turns into a failure — but a check that passes
+    *because* a mistyped route reached the mock is what ``fallbacks.catch_all`` names."""
 
     @property
     def ok(self) -> bool:

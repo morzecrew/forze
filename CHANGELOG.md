@@ -46,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Server-side CSRF gate on cookie ingress, on by default** — `CookieTokenAuthn.csrf` (new `CookieCsrf`): an unsafe-method request using the cookie must prove a same-host or `allowed_origins` origin via `Origin`/`Referer`, refused as 403 `csrf_rejected`; `allow_missing_origin=True` admits header-less non-browser cookie clients, `csrf=None` opts out.
 
-**Hybrid deps contexts — `MockDepsModule` composes with real backend modules** ("real Postgres, mock everything else" in one deps list). New keyword-only `fallback=` on `Deps.plain`/`Deps.routed`/`Deps.routed_group` marks a registration as a background environment that yields to a real one instead of colliding, order-independently; `MockDepsModule` marks everything it registers. Overlap between two real (or two fallback) registrations still raises as before. New `FallbackReport`/`ShadowedFallback` from `ProviderStore.fallback_report()`, logged at freeze and returned as `check_wiring(...).fallbacks` — a hybrid context serves unregistered routes from the fallback rather than failing.
+**Hybrid deps contexts — `MockDepsModule` composes with real backend modules** ("real Postgres, mock everything else" in one deps list). New keyword-only `fallback=` on `Deps.plain`/`Deps.routed`/`Deps.routed_group` marks registrations that yield to a real one instead of colliding, order-independently; the mock marks everything. Overlap between two real (or two fallback) registrations still raises. New `FallbackReport` from `ProviderStore.fallback_report()`, logged at freeze and on `check_wiring(...).fallbacks`; its `catch_all` names the keys where an unregistered route silently reaches the fallback.
 
 ### Fixed
 

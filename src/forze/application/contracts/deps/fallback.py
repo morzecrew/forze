@@ -70,6 +70,12 @@ class FallbackReport:
     )
     """Routes whose surviving routed entry is fallback-provided, per key."""
 
+    catch_all: frozenset[DepKey[Any]] = frozenset()
+    """The hazard set: :attr:`served_plain` keys a real module **also** registered routes
+    for. Those routes resolve to the real adapter, and the fallback silently answers every
+    other route — so a mistyped spec name on one of these keys reaches the mock instead of
+    failing. The rest of :attr:`served_plain` is simply a plane nobody wired for real."""
+
     mixed: bool = False
     """Whether the store holds both fallback-marked and non-fallback registrations."""
 
@@ -112,10 +118,23 @@ class FallbackReport:
 
     # ....................... #
 
+    def catch_all_names(self) -> tuple[str, ...]:
+        """Sorted names of the keys in :attr:`catch_all`."""
+
+        return tuple(sorted(key.name for key in self.catch_all))
+
+    # ....................... #
+
     def describe(self) -> str:
-        """Full multi-line description: what is shadowed, what the fallback still serves."""
+        """Full multi-line description: what is shadowed, what the fallback still serves,
+        and which of those sit behind real routes (the mistyped-route hazard)."""
 
         shadowed = ", ".join(self.shadowed_names()) or "<none>"
         served = ", ".join(self.served_names()) or "<none>"
+        catch_all = ", ".join(self.catch_all_names()) or "<none>"
 
-        return f"shadowed fallbacks: {shadowed}\nfallback-served: {served}"
+        return (
+            f"shadowed fallbacks: {shadowed}\n"
+            f"fallback-served: {served}\n"
+            f"catch-all behind real routes: {catch_all}"
+        )

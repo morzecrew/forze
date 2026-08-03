@@ -90,7 +90,15 @@ You can mark your own registrations the same way — `Deps.plain(deps, fallback=
 
 !!! warning "A route the real module never registered reaches the mock"
 
-    In a context that includes a fallback, an unregistered route does not fail — it falls back to the plain catch-all. A typo in a spec name therefore resolves to the mock instead of raising, and the mock is the capability *superset*, so it may accept a call the real backend would refuse. Freeze logs every fallback-served key for this reason (`Hybrid deps wiring: …`), and `check_wiring(...).fallbacks` returns the same report — assert on it when a test must prove it hit the real adapter. Production is unaffected: it has no fallback module, so every overlap is still fail-loud.
+    In a context that includes a fallback, an unregistered route does not fail — it falls back to the plain catch-all. A typo in a spec name therefore resolves to the mock instead of raising, and the mock is the capability *superset*, so it may accept a call the real backend would refuse.
+
+    Freeze names that hazard set at `INFO` (`Hybrid deps wiring: … catch-all behind real routes: document_query, …`) — the keys your real module routes *and* the mock still backs; the full fallback-served list is at `DEBUG`. The same report is `check_wiring(...).fallbacks`, and `report.fallbacks.catch_all` is the set to look at. To prove a test really hit the real adapter, assert your route is registered rather than inferred:
+
+    ```python
+    assert "orders" in ctx.deps.store.routed_deps[DocumentQueryDepKey]
+    ```
+
+    Production is unaffected: it has no fallback module, so every overlap is still fail-loud.
 
 ## Testing operations directly
 

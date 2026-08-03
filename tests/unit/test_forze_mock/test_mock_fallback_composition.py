@@ -12,10 +12,17 @@ from collections.abc import Sequence
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze.application.contracts.authn import AuthnDepKey
+from forze.application.contracts.crypto import KeyManagementDepKey
+from forze.application.contracts.document import (
+    DocumentQueryDepKey,
+    DocumentSpec,
+    DocumentWriteTypes,
+)
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.inference import InferenceDepKey, InferenceSpec
-from forze.application.execution import ExecutionContext
+from forze.application.contracts.tenancy import TenantResolverDepKey
+from forze.application.execution import Deps, DepsRegistry, ExecutionContext
 from forze.application.execution.operations import check_wiring
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.integrations.inference import (
@@ -122,6 +129,43 @@ class TestHybridContext:
         assert InferenceDepKey.name in report.served_names()
         assert InferenceDepKey in report.served_plain
         assert ctx.deps.store.routed_deps[InferenceDepKey].keys() == {"doubler"}
+
+    def test_the_report_separates_the_catch_all_hazard_from_a_plain_mocked_plane(self) -> None:
+        # The two are not the same risk and must not read the same: inference is real for
+        # its own routes with the mock behind it (a typo there resolves silently), while
+        # documents are simply not wired for real at all.
+        report = context_from_modules(MockDepsModule(), _local_inference()).deps.store
+        fallbacks = report.fallback_report()
+
+        assert InferenceDepKey in fallbacks.catch_all
+        assert DocumentQueryDepKey in fallbacks.served_plain
+        assert DocumentQueryDepKey not in fallbacks.catch_all
+
+
+class TestEveryCollisionClassComposes:
+    """One per class of the drift census — plain-vs-routed, plain-vs-plain, routed-vs-routed.
+
+    The plain-vs-routed class is covered by the inference cases above; these two are the
+    ones a "it follows from the first" argument would have left untested.
+    """
+
+    def test_plain_vs_plain_the_real_crypto_stack_wins(self) -> None:
+        real_kms = Deps.plain({KeyManagementDepKey: "real-kms"})
+        store = DepsRegistry.from_modules(MockDepsModule()).with_deps(real_kms).freeze().store
+
+        assert store.get_provider(KeyManagementDepKey) == "real-kms"
+        assert store.fallback_report().shadowed_names() == (f"{KeyManagementDepKey.name} (plain)",)
+
+    def test_routed_vs_routed_a_real_identity_module_wins_its_route(self) -> None:
+        # The mock registers identity stubs routed on "main" — the same route the real
+        # identity modules default to, so this class collides head-on.
+        real_authn = Deps.routed({AuthnDepKey: {"main": "real-authn"}})
+        store = DepsRegistry.from_modules(MockDepsModule()).with_deps(real_authn).freeze().store
+
+        assert store.get_provider(AuthnDepKey, route="main") == "real-authn"
+        assert store.fallback_report().shadowed_names() == (f"{AuthnDepKey.name} (route 'main')",)
+        # Every other identity route the mock declared is untouched.
+        assert store.exists(TenantResolverDepKey, route="main")
 
     def test_the_standalone_mock_is_not_reported_as_hybrid(self) -> None:
         report = context_from_modules(MockDepsModule()).deps.store.fallback_report()
