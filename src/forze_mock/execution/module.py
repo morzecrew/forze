@@ -567,4 +567,14 @@ class MockDepsModule(DepsModule):
                 route: ConstantMockPortFactory(port=recording) for route in authn_keys
             }
 
-        return Deps.merge(Deps.plain(deps), Deps.routed(identity_routed))
+        # Everything the mock registers is marked *fallback*: it is a background
+        # environment, not a claim on a key. Merged alone it behaves exactly as before
+        # (the marks are inert without an overlap); merged with a real backend module the
+        # real registration wins for the keys and routes it covers, and the mock keeps
+        # answering the rest — so "real Postgres, mock everything else" is one deps list
+        # instead of a hand-built backend-only context. What the mock still serves in such
+        # a context is reported at freeze (see ``ProviderStore.fallback_report``).
+        return Deps.merge(
+            Deps.plain(deps, fallback=True),
+            Deps.routed(identity_routed, fallback=True),
+        )

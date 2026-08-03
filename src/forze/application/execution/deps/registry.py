@@ -79,6 +79,40 @@ def _resolve_runtime_tracer(
 # ....................... #
 
 
+def _report_fallbacks(store: ProviderStore) -> None:
+    """Log the fallback report for a hybrid wiring (fallback + real modules in one context).
+
+    Only a genuinely hybrid store logs: a pure-mock context (everything fallback) and a
+    production one (nothing fallback) are silent. This is the visibility that keeps the
+    relaxed merge honest — a route the real module never registered is served by the
+    fallback instead of failing, so the context says so at freeze rather than never.
+    """
+
+    report = store.fallback_report()
+
+    if not report.hybrid:
+        return
+
+    # The catch-all set is named in full at info: those are the keys where a mistyped route
+    # resolves to the fallback instead of failing. The bulk fallback-served list (every
+    # plane nobody wired for real — ~80 keys under the mock) stays at debug.
+    _logger.info(
+        "Hybrid deps wiring: %s fallback-served entry(ies), %s shadowed by real modules%s%s",
+        len(report.served_names()),
+        len(report.shadowed),
+        f"; shadowed: {', '.join(report.shadowed_names())}" if report.shadowed else "",
+        (
+            f"; catch-all behind real routes: {', '.join(report.catch_all_names())}"
+            if report.catch_all
+            else ""
+        ),
+    )
+    _logger.debug("Hybrid deps wiring detail:\n%s", report.describe())
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class DepsRegistry:
@@ -272,6 +306,8 @@ class DepsRegistry:
             store: ProviderStore = ProviderStore()
         else:
             store = ProviderStore.merge(*(d.store for d in built))
+
+        _report_fallbacks(store)
 
         return FrozenDepsRegistry(
             store=store,

@@ -71,6 +71,35 @@ async def test_postgres_integration(postgres_dsn):
 
 Integration tests are slower and require Docker, but they catch issues that mock adapters miss — schema migrations, constraint violations, connection handling.
 
+## Hybrid contexts: one real backend, mock for the rest
+
+Most integration tests only need *one* plane to be real. Pass `MockDepsModule` alongside the real modules and you get exactly that — real Postgres for documents and transactions, the mock for the queue the relay publishes into, the cache, the locks, everything else:
+
+```python
+runtime = ExecutionRuntime(
+    deps=DepsRegistry.from_modules(
+        PostgresDepsModule(client=pg, tx={"default"}, outboxes={"events": events_pg}),
+        MockDepsModule(state=shared_state),
+    ).freeze(),
+)
+```
+
+Everything `MockDepsModule` registers is marked a **fallback**: a background environment rather than a claim on a key. Where a real module registers the same contract, the real one wins; where none does, the mock answers. Module order does not matter — provenance decides, not position. Two real modules registering the same route still raise at build time, exactly as before, and so do two mock modules in one context.
+
+You can mark your own registrations the same way — `Deps.plain(deps, fallback=True)` / `Deps.routed(routes, fallback=True)` — if you ship an environment module of your own. Real backend modules never set it.
+
+!!! warning "A route the real module never registered reaches the mock"
+
+    In a context that includes a fallback, an unregistered route does not fail — it falls back to the plain catch-all. A typo in a spec name therefore resolves to the mock instead of raising, and the mock is the capability *superset*, so it may accept a call the real backend would refuse.
+
+    Freeze names that hazard set at `INFO` (`Hybrid deps wiring: … catch-all behind real routes: document_query, …`) — the keys your real module routes *and* the mock still backs; the full fallback-served list is at `DEBUG`. The same report is `check_wiring(...).fallbacks`, and `report.fallbacks.catch_all` is the set to look at. To prove a test really hit the real adapter, assert your route is registered rather than inferred:
+
+    ```python
+    assert "orders" in ctx.deps.store.routed_deps[DocumentQueryDepKey]
+    ```
+
+    Production is unaffected: it has no fallback module, so every overlap is still fail-loud.
+
 ## Testing operations directly
 
 To exercise a *registered* operation — with its stage hooks and transaction plan, not just a raw port — run it with `run_operation` against a mock context. No HTTP, no transport:

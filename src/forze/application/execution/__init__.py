@@ -1,6 +1,6 @@
 """Execution kernel, dependency injection, and lifecycle."""
 
-from forze.application.contracts.deps import Deps, DepsModule
+from forze.application.contracts.deps import Deps, DepsModule, FallbackReport, ShadowedFallback
 
 from .assemble import build_runtime
 from .context import (
@@ -103,6 +103,8 @@ __all__ = [
     "Deps",
     "DepsModule",
     "DepsRegistry",
+    "FallbackReport",
+    "ShadowedFallback",
     "FrozenDeps",
     "FrozenDepsRegistry",
     "ResolutionContext",

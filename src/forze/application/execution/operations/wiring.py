@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 
 import attrs
 
+from forze.application.contracts.deps import FallbackReport
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import StrKey
 
@@ -84,6 +85,13 @@ class WiringReport:
     failures: tuple[WiringFailure, ...]
     """Failures, one per operation that did not resolve cleanly."""
 
+    fallbacks: FallbackReport | None = None
+    """What the checked context owes to fallback registrations — always set by
+    :func:`check_wiring` (``FallbackReport.hybrid`` is ``False`` when the context mixes
+    nothing), ``None`` only on a report built by hand. Reporting only: fallback service is
+    a legitimate hybrid wiring, so it never turns into a failure — but a check that passes
+    *because* a mistyped route reached the mock is what ``fallbacks.catch_all`` names."""
+
     @property
     def ok(self) -> bool:
         """Whether every checked operation resolved without error."""
@@ -129,7 +137,9 @@ def check_wiring(
         ops: Operations to check; defaults to every operation in ``registry.handlers``.
 
     Returns:
-        A :class:`WiringReport`. Call :meth:`WiringReport.raise_if_failed` to fail fast.
+        A :class:`WiringReport`. Call :meth:`WiringReport.raise_if_failed` to fail fast;
+        read :attr:`WiringReport.fallbacks` to see what a hybrid context resolved through
+        a fallback registration rather than a real one.
     """
 
     keys = tuple(ops) if ops is not None else tuple(registry.handlers)
@@ -157,7 +167,11 @@ def check_wiring(
                 )
             )
 
-    return WiringReport(checked=keys, failures=tuple(failures))
+    return WiringReport(
+        checked=keys,
+        failures=tuple(failures),
+        fallbacks=ctx.deps.store.fallback_report(),
+    )
 
 
 # ....................... #

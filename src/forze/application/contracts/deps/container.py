@@ -11,6 +11,7 @@ from forze.base.descriptors import hybridmethod
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
+from .fallback import FallbackReport
 from .frame import ResolutionFrame
 from .keys import DepKey
 from .store import PlainDepsMap, ProviderStore, RoutedDeps
@@ -51,10 +52,24 @@ class Deps:
     def plain(
         cls,
         deps: PlainDepsMap,
+        *,
+        fallback: bool = False,
     ) -> Deps:
-        """Create a registration blob from plain dependencies."""
+        """Create a registration blob from plain dependencies.
 
-        return cls(store=ProviderStore(plain_deps=deps))
+        *fallback* marks every entry as a background environment (see
+        :attr:`~forze.application.contracts.deps.ProviderStore.fallback_plain`): a real
+        registration of the same key wins at merge instead of colliding. Only a module
+        that is semantically an environment — the mock — sets it; real backend modules
+        never do, so production wiring keeps every fail-loud merge guard.
+        """
+
+        return cls(
+            store=ProviderStore(
+                plain_deps=deps,
+                fallback_plain=frozenset(deps.keys()) if fallback else frozenset(),
+            )
+        )
 
     # ....................... #
 
@@ -62,10 +77,22 @@ class Deps:
     def routed(
         cls,
         deps: RoutedDeps,
+        *,
+        fallback: bool = False,
     ) -> Deps:
-        """Create a registration blob from routed dependencies."""
+        """Create a registration blob from routed dependencies.
 
-        return cls(store=ProviderStore(routed_deps=deps))
+        *fallback* marks every route as a background environment — see :meth:`plain`.
+        """
+
+        return cls(
+            store=ProviderStore(
+                routed_deps=deps,
+                fallback_routes=(
+                    {key: frozenset(routes) for key, routes in deps.items()} if fallback else {}
+                ),
+            )
+        )
 
     # ....................... #
 
@@ -75,8 +102,12 @@ class Deps:
         deps: PlainDepsMap,
         *,
         routes: set[StrKey] | frozenset[StrKey],
+        fallback: bool = False,
     ) -> Deps:
-        """Create routed dependencies by expanding one provider per many routing keys."""
+        """Create routed dependencies by expanding one provider per many routing keys.
+
+        *fallback* marks every expanded route as a background environment — see :meth:`plain`.
+        """
 
         if not routes:
             raise exc.precondition("Routes must not be empty")
@@ -85,7 +116,12 @@ class Deps:
             key: dict.fromkeys(routes, dep) for key, dep in deps.items()
         }
 
-        return cls(store=ProviderStore(routed_deps=expanded))
+        return cls(
+            store=ProviderStore(
+                routed_deps=expanded,
+                fallback_routes=({key: frozenset(routes) for key in expanded} if fallback else {}),
+            )
+        )
 
     # ....................... #
 
@@ -134,3 +170,11 @@ class Deps:
         """Return total number of registered dependency entries."""
 
         return self.store.count()
+
+    # ....................... #
+
+    def fallback_report(self) -> FallbackReport:
+        """Describe what this blob owes to fallback registrations (see
+        :meth:`~forze.application.contracts.deps.ProviderStore.fallback_report`)."""
+
+        return self.store.fallback_report()

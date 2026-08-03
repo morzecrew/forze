@@ -382,7 +382,6 @@ symbols = [
     "CounterAdminDepKey",
     "DistributedLockCommandDepKey",
     "DistributedLockQueryDepKey",
-    "DocumentQueryDepKey",
     "DomainEventDispatcherDepKey",
     "EmbeddingsProviderDepKey",
     "FederatedSearchQueryDepKey",
