@@ -5631,6 +5631,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/spec-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Spec registry
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/query-syntax/" class="md-nav__link">
         
   
@@ -6216,6 +6243,27 @@ offline longer than the retention window loses the oldest signals (delivery you
 need to guarantee forever belongs in domain state, not in realtime). Topic
 broadcasts are never mailboxed — there's no fixed membership to store them for —
 and an event can opt out of offline delivery when it isn't worth persisting.</p>
+<p>That bound is something you wire, not something you get. The mailbox has <strong>no
+delete path of its own</strong>: the ack-driven trim only follows the slowest device's
+cursor and the replay cap bounds <em>reads</em>, so a principal whose devices stop
+acking accumulates entries forever. So <code>build_realtime_mailbox</code> takes a required
+<code>retention=</code> with no default, and a declared window is checked against the
+sweeper that enforces it:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># a window, plus the step that actually deletes</span>
+<span class="n">mailbox</span> <span class="o">=</span> <span class="n">build_realtime_mailbox</span><span class="p">(</span>
+    <span class="n">ctx</span><span class="p">,</span> <span class="n">retention</span><span class="o">=</span><span class="n">MailboxRetention</span><span class="p">(</span><span class="n">max_age</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">7</span><span class="p">)),</span>
+<span class="p">)</span>
+
+<span class="n">lifecycle_steps</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="n">realtime_mailbox_retention_lifecycle_step</span><span class="p">(</span><span class="n">max_age</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">7</span><span class="p">)),</span>
+<span class="p">]</span>
+</code></pre></div>
+<p>Declaring the window and forgetting the step is refused at build
+(<code>realtime_mailbox_retention_unwired</code>) — that wiring <em>looks</em> bounded and is not,
+which is worse than the honest unbounded case. If unbounded is genuinely what you
+want, say so and it is allowed: <code>MailboxRetention.unbounded(reason=…)</code>. Nothing
+about this failure mode is loud otherwise — storage grows, replays stay correct,
+and the first symptom is a disk.</p>
 <h2 id="where-to-go-next">Where to go next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../integrations/socketio/">Socket.IO integration</a> — the full wiring: the

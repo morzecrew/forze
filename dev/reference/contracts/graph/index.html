@@ -5665,6 +5665,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../spec-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Spec registry
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../query-syntax/" class="md-nav__link">
         
   
@@ -6289,7 +6316,7 @@ carry all of them (it carries the graph it <em>finds</em>, not the graph the spe
 </tr>
 <tr>
 <td><code>neighbors(origin, direction, edge_kinds, *, limit, to_vertex_kinds=None)</code></td>
-<td>adjacent nodes with the connecting edge, filtered by kind and direction</td>
+<td>adjacent nodes with the connecting edge, filtered by kind and direction. <code>limit</code> truncates to an <strong>arbitrary</strong> subset — see below</td>
 </tr>
 <tr>
 <td><code>incident_edges(origin, direction, edge_kinds, *, limit)</code></td>
@@ -6368,6 +6395,35 @@ caller's <em>plaintext</em> against what the write <em>sealed</em>, so the two n
 created under a sealed key could never be fetched, updated or deleted by that key again —
 a write-only black hole. It also has no order to page or seek on. Encrypting an ordinary
 property is entirely fine; this is about the key alone.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">A key field must be a string</p>
+<p><code>VertexRef.key</code> is a <code>str</code>, so a <code>key_field</code> declared as <code>bool</code>, <code>int</code> or <code>float</code> is
+refused at spec construction (<code>graph_non_string_key_field</code>). A store that keeps the
+property in its native type never matches the string a keyed lookup binds — measured on
+Neo4j with an <code>int</code> key, the writes land and <code>find_vertices</code> returns the rows while
+<code>vertex_exists</code>, <code>get_vertex</code>, <code>vertex_degree</code> and <code>neighbors</code> all answer as though
+the vertex were not there. No error, just an empty graph, and the in-memory mock keys its
+store by <code>str(value)</code> so everything works there. Use a <code>str</code> key — or a <code>UUID</code> or
+str-valued enum, which reach the store as text — and keep the number as an ordinary
+property.</p>
+<p>A <code>Decimal</code> key <strong>is</strong> allowed: properties are written through <code>model_dump(mode="json")</code>,
+which renders it as a string, so Neo4j holds <code>STRING</code> and every keyed read resolves —
+exponent and high-precision forms included, byte-exact. Note that the key is that <em>text</em>:
+<code>Decimal("1.50")</code> and <code>Decimal("1.5")</code> are two different keys even though Python calls
+them equal.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">A bounded <code>neighbors</code> call returns an <em>arbitrary</em> subset</p>
+<p>When <code>limit</code> is smaller than the neighbourhood, which neighbours come back is the engine's
+choice: Neo4j's adjacency <code>LIMIT</code> carries no <code>ORDER BY</code>, and the mock walks its edge list in
+insertion order. The differential compares how many arrive, not which — asking Neo4j for a
+deterministic page would mean sorting a whole neighbourhood before truncating it, and the
+cost lands hardest on the high-degree vertices a limit exists to protect.</p>
+<p>What you <em>can</em> rely on is that the page is <strong>full</strong>: a <code>to_vertex_kinds</code> filter is applied
+before the limit on every backend, so a short page means the neighbourhood really is
+exhausted. That distinction is load-bearing — the rows a filter drops are not a cursor you
+can page past, so a page cut short by filtering would read as "there are no more".</p>
 </div>
 <h2 id="command-port-ctxgraphcommandspec">Command port  (<code>ctx.graph.command(spec)</code>)<a class="headerlink" href="#command-port-ctxgraphcommandspec" title="Permanent link">&para;</a></h2>
 <p>Every create/ensure takes <code>return_new: bool = True</code>.</p>

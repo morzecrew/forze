@@ -5698,6 +5698,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/spec-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Spec registry
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/query-syntax/" class="md-nav__link">
         
   
@@ -6366,7 +6393,11 @@ two transports:</p>
 <span class="n">attach_realtime_sse_route</span><span class="p">(</span>
     <span class="n">router</span><span class="p">,</span>
     <span class="n">ctx_dep</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">,</span>
-    <span class="n">mailbox_factory</span><span class="o">=</span><span class="n">build_realtime_mailbox</span><span class="p">,</span>  <span class="c1"># the same stores the gateway fills</span>
+    <span class="c1"># the same stores the gateway fills; retention has no default, so the factory</span>
+    <span class="c1"># names the window (and a sweeper must be registered to back it)</span>
+    <span class="n">mailbox_factory</span><span class="o">=</span><span class="k">lambda</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">build_realtime_mailbox</span><span class="p">(</span>
+        <span class="n">ctx</span><span class="p">,</span> <span class="n">retention</span><span class="o">=</span><span class="n">MailboxRetention</span><span class="p">(</span><span class="n">max_age</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">7</span><span class="p">)),</span>
+    <span class="p">),</span>
     <span class="n">cursors_factory</span><span class="o">=</span><span class="n">build_realtime_cursors</span><span class="p">,</span>
     <span class="n">hub</span><span class="o">=</span><span class="n">hub</span><span class="p">,</span>
 <span class="p">)</span>
