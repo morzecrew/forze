@@ -118,6 +118,19 @@ class TestRoutedOverPlain:
                 Deps.routed({_A: {"main": "mock-main"}}, fallback=True),
             )
 
+    def test_a_real_registration_does_not_disarm_the_guard_between_two_fallbacks(self) -> None:
+        # Two fallback environments colliding across plain/routed is an error on its own;
+        # a real registration outranking both must not swallow it, or the second mock is
+        # discovered as wrong behaviour instead of a wiring error. Judged pairwise, so the
+        # winner is irrelevant.
+        mock_plain = _fallback_plain()
+        mock_routed = Deps.routed({_A: {"main": "mock-main"}}, fallback=True)
+
+        for extra in (_real_plain(), Deps.routed({_A: {"main": "real-main"}})):
+            for order in permutations((mock_plain, mock_routed, extra)):
+                with pytest.raises(CoreException, match="registered both as plain and routed: a"):
+                    Deps.merge(*order)
+
     def test_one_store_may_register_a_key_plain_and_routed(self) -> None:
         # Unchanged: within a single store this is a deliberate catch-all, not a collision.
         store = ProviderStore(plain_deps={_A: "plain"}, routed_deps={_A: {"main": "routed"}})
@@ -286,3 +299,82 @@ class TestFallbackMarksSurviveCopies:
 
         assert store.routed_deps == {}
         assert store.fallback_routes == {}
+
+    def test_without_route_forgets_the_shadow_record_for_that_route(self) -> None:
+        # A shadow record describes a slot; once the slot is gone the record is history
+        # about nothing, and it would keep reporting the store as hybrid.
+        merged = Deps.merge(
+            Deps.routed({_R: {"main": "real", "spare": "real-spare"}}),
+            Deps.routed({_R: {"main": "mock"}}, fallback=True),
+        ).store
+
+        assert merged.fallback_report().shadowed_names() == ("r (route 'main')",)
+
+        pruned = merged.without_route(_R, "main")
+
+        assert pruned.fallback_report().shadowed == ()
+        assert not pruned.fallback_report().hybrid
+
+    def test_without_forgets_the_shadow_records_for_that_key(self) -> None:
+        merged = Deps.merge(_real_plain(), _fallback_plain()).store
+
+        assert merged.fallback_report().shadowed_names() == ("a (plain)",)
+        assert merged.without(_A).fallback_report().shadowed == ()
+
+
+class TestRegistrationIsASnapshot:
+    """A registration blob is frozen, so what the caller does to the mapping afterwards
+    must not reach it — least of all split the registrations from their provenance, which
+    would turn an intended fallback into a same-tier conflict."""
+
+    def test_plain_registrations_do_not_track_the_caller_mapping(self) -> None:
+        deps = {_A: "mock-a"}
+        blob = Deps.plain(deps, fallback=True)
+        deps[_B] = "mock-b"
+
+        assert set(blob.plain_deps) == {_A}
+        # ...so a real registration of the late key composes instead of colliding.
+        assert Deps.merge(blob, Deps.plain({_B: "real-b"})).store.get_provider(_B) == "real-b"
+
+    def test_routed_registrations_do_not_track_the_caller_route_map(self) -> None:
+        routes = {"main": "mock-main"}
+        blob = Deps.routed({_R: routes}, fallback=True)
+        routes["spare"] = "mock-spare"
+
+        assert set(blob.routed_deps[_R]) == {"main"}
+        assert (
+            Deps.merge(blob, Deps.routed({_R: {"spare": "real-spare"}})).store.get_provider(
+                _R, route="spare"
+            )
+            == "real-spare"
+        )
+
+    def test_routed_group_registrations_do_not_track_the_caller_route_set(self) -> None:
+        routes = {"main"}
+        blob = Deps.routed_group({_R: "mock"}, routes=routes, fallback=True)
+        routes.add("spare")
+
+        assert set(blob.routed_deps[_R]) == {"main"}
+
+    def test_a_marked_registration_cannot_be_emptied_from_under_its_marks(self) -> None:
+        # The mirror hazard: removing a key would leave a mark naming nothing registered.
+        deps = {_A: "mock-a", _B: "mock-b"}
+        blob = Deps.plain(deps, fallback=True)
+        deps.pop(_A)
+
+        assert set(blob.plain_deps) == set(blob.store.fallback_plain) == {_A, _B}
+
+
+class TestReportIsASnapshot:
+    def test_served_routes_cannot_be_edited_by_a_reader(self) -> None:
+        # The report is frozen; a reader holding it must not be able to change what it
+        # later says about the wiring.
+        report = Deps.routed({_R: {"main": "mock"}}, fallback=True).fallback_report()
+
+        with pytest.raises((TypeError, AttributeError)):
+            report.served_routes.clear()  # type: ignore[attr-defined]
+
+        with pytest.raises(TypeError):
+            report.served_routes[_A] = frozenset({"x"})  # type: ignore[index]
+
+        assert report.served_names() == ("r[main]",)

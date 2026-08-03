@@ -25,6 +25,30 @@ type FallbackRoutes = Mapping[DepKey[Any], frozenset[StrKey]]
 # ....................... #
 
 
+def _snapshot_plain(deps: PlainDepsMap) -> PlainDepsMap:
+    """Copy the caller's plain registrations into the store.
+
+    A store is frozen and its fallback marks are captured at construction, so an aliased
+    mapping the caller keeps mutating would drift the registrations away from their
+    provenance — a key added later would be unmarked, and composing it with a real module
+    would report a same-tier conflict instead of the intended fallback.
+    """
+
+    return dict(deps)
+
+
+# ....................... #
+
+
+def _snapshot_routed(deps: RoutedDeps) -> RoutedDeps:
+    """Copy both levels of the caller's routed registrations — see :func:`_snapshot_plain`."""
+
+    return {key: dict(routes) for key, routes in deps.items()}
+
+
+# ....................... #
+
+
 def _freeze_keys(keys: Iterable[DepKey[Any]]) -> frozenset[DepKey[Any]]:
     """Normalize a set of marked keys."""
 
@@ -114,6 +138,11 @@ def _reject_cross_conflicts(
     catch-all displaces fallback routes outright — keeping them would let a fallback
     answer *ahead* of it, since routed lookup runs first — while a fallback plain entry
     coexists with real routes, serving only what the real module does not cover.
+
+    Every cross-store *pair* is judged, not just the two winners: a real registration must
+    not disarm the guard between the entries it outranks, the same way it does not for the
+    plain-vs-plain and route-vs-route checks. Otherwise a second fallback environment could
+    hide behind a real override and be discovered only as wrong behaviour.
     """
 
     conflicting: set[str] = set()
@@ -125,19 +154,17 @@ def _reject_cross_conflicts(
         if not per_route:
             continue
 
-        plain = _winner(entries)
+        for plain in entries:
+            for route, route_entries in per_route.items():
+                for routed in route_entries:
+                    if routed.origin == plain.origin:
+                        continue
 
-        for route, route_entries in per_route.items():
-            routed = _winner(route_entries)
+                    if routed.fallback == plain.fallback:
+                        conflicting.add(key.name)
 
-            if routed.origin == plain.origin:
-                continue
-
-            if routed.fallback == plain.fallback:
-                conflicting.add(key.name)
-
-            elif not plain.fallback:
-                displaced.setdefault(key, set()).add(route)
+                    elif not plain.fallback:
+                        displaced.setdefault(key, set()).add(route)
 
     if conflicting:
         raise exc.internal(
@@ -176,11 +203,17 @@ def _reject_route_conflicts(
 class ProviderStore:
     """Registered dependency providers (internal; no resolution or tracing)."""
 
-    plain_deps: PlainDepsMap = attrs.field(factory=dict[DepKey[Any], Any])
-    """Dependencies registered without affinity."""
+    plain_deps: PlainDepsMap = attrs.field(
+        factory=dict[DepKey[Any], Any],
+        converter=_snapshot_plain,
+    )
+    """Dependencies registered without affinity (snapshotted at construction)."""
 
-    routed_deps: RoutedDeps = attrs.field(factory=dict[DepKey[Any], dict[StrKey, Any]])
-    """Dependencies registered for specific affinity groups."""
+    routed_deps: RoutedDeps = attrs.field(
+        factory=dict[DepKey[Any], dict[StrKey, Any]],
+        converter=_snapshot_routed,
+    )
+    """Dependencies registered for specific affinity groups (snapshotted, both levels)."""
 
     fallback_plain: frozenset[DepKey[Any]] = attrs.field(
         factory=frozenset,
@@ -512,7 +545,11 @@ class ProviderStore:
             routed_deps=new_routed,
             fallback_plain=self.fallback_plain - {key},
             fallback_routes={k: v for k, v in self.fallback_routes.items() if k != key},
-            shadowed_fallbacks=self.shadowed_fallbacks,
+            # A shadow record describes a slot that still exists; once the key is gone,
+            # keeping it would report a hybrid the store no longer has.
+            shadowed_fallbacks=tuple(
+                entry for entry in self.shadowed_fallbacks if entry.key != key
+            ),
         )
 
     # ....................... #
@@ -550,5 +587,10 @@ class ProviderStore:
             routed_deps=new_routed,
             fallback_plain=self.fallback_plain,
             fallback_routes=new_marked,
-            shadowed_fallbacks=self.shadowed_fallbacks,
+            # Drop the shadow record for the route that just went away — see :meth:`without`.
+            shadowed_fallbacks=tuple(
+                entry
+                for entry in self.shadowed_fallbacks
+                if not (entry.key == key and entry.route == route)
+            ),
         )

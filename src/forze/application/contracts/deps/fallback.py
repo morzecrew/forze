@@ -14,7 +14,7 @@ from typing import Any, final
 
 import attrs
 
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKey
 
 from .keys import DepKey
 
@@ -66,9 +66,11 @@ class FallbackReport:
     what makes a mistyped route reach the fallback instead of failing."""
 
     served_routes: Mapping[DepKey[Any], frozenset[StrKey]] = attrs.field(
-        factory=dict[DepKey[Any], frozenset[StrKey]]
+        factory=dict[DepKey[Any], frozenset[StrKey]],
+        converter=MappingConverter.frozen,  # type: ignore[misc]
     )
-    """Routes whose surviving routed entry is fallback-provided, per key."""
+    """Routes whose surviving routed entry is fallback-provided, per key. Frozen: a report
+    is a snapshot of one wiring, so a reader cannot edit what it later describes."""
 
     catch_all: frozenset[DepKey[Any]] = frozenset()
     """The hazard set: :attr:`served_plain` keys a real module **also** registered routes
