@@ -55,10 +55,7 @@ class TestTheAppRunsUnchanged:
         # No key → the app's own authn refuses. The mock never mints a principal.
         assert client.post("/products/list", json={}).status_code == 401
         assert (
-            client.post(
-                "/products/list", json={}, headers={"X-API-Key": "nope"}
-            ).status_code
-            == 401
+            client.post("/products/list", json={}, headers={"X-API-Key": "nope"}).status_code == 401
         )
 
 
@@ -67,9 +64,7 @@ class TestItIsStateful:
         assert {row["name"] for row in _list(client)} == {"Espresso", "Cortado", "Filter"}
 
     def test_create_then_list_then_get_cohere(self, client: TestClient) -> None:
-        created = client.post(
-            "/products", json={"name": "Ristretto", "price": 240}, headers=_AUTH
-        )
+        created = client.post("/products", json={"name": "Ristretto", "price": 240}, headers=_AUTH)
         assert created.status_code in (200, 201), created.text
         product_id = created.json()["id"]
 

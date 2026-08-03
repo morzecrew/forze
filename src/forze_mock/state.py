@@ -310,17 +310,36 @@ class MockState:
         from the field definitions rather than a written-out list, so a store added later is
         cleared too — a hand-maintained list is exactly the kind that silently goes stale.
 
-        The lock, the transaction serializer and the id sequence are private and survive: a
-        reset empties the data, it does not rebuild the state's machinery mid-flight.
+        Every public field is restored to its declared default, **including scalar ones**
+        like the MVCC commit counter. Skipping those would have left the derivation covering
+        only factory-defaulted fields, which is the same silent gap a written-out list has:
+        the next counter someone adds would quietly survive a reset.
+
+        **Synchronisation primitives are the exception, and it is not cosmetic.** A striped
+        lock table is machinery, not data: replacing it while a caller waits on one of its
+        locks hands the next caller a *different* lock and silently breaks single-flight.
+        Detected by type rather than by name, so a second lock table added later is exempt
+        without anyone remembering to say so.
+
+        The lock, the transaction serializer and the id sequence are private and survive for
+        the same reason: a reset empties the data, it does not rebuild the state's machinery
+        mid-flight.
         """
 
         with self.__lock:
             for field in attrs.fields(type(self)):
-                if field.name.startswith("_") or not isinstance(field.default, attrs.Factory):  # type: ignore[arg-type]
+                if field.name.startswith("_") or field.default is attrs.NOTHING:
                     continue
 
-                factory: Any = field.default.factory  # type: ignore[union-attr]
-                setattr(self, field.name, factory())
+                if isinstance(getattr(self, field.name, None), StripedAsyncLocks):
+                    continue
+
+                default: Any = field.default
+                setattr(
+                    self,
+                    field.name,
+                    default.factory() if isinstance(default, attrs.Factory) else default,  # type: ignore[arg-type]
+                )
 
     # ....................... #
 

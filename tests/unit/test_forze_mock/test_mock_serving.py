@@ -7,7 +7,8 @@ that an armed fault produces the *asserted kind* rather than merely an error.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -100,6 +101,15 @@ def _mock_app(**overrides) -> MockApp:
 def client() -> Iterator[TestClient]:
     with TestClient(build_mock_server(_mock_app())) as running:
         yield running
+
+
+def _elapsed(call: Callable[[], object]) -> float:
+    """Wall-clock seconds a call took — the control plane's delays are real sleeps."""
+
+    started = time.perf_counter()
+    call()
+
+    return time.perf_counter() - started
 
 
 def _titles(client: TestClient) -> list[str]:
@@ -276,10 +286,28 @@ class TestTheControlPlane:
         assert client.post("/notes/list", json={}).status_code == 200
 
     def test_latency_delays_the_matching_call(self, client: TestClient) -> None:
-        armed = client.post("/_mock/latency", json={"route": "notes", "seconds": 0.05})
+        # Timed, not merely armed: asserting the arm succeeded would pass just as happily
+        # against an interceptor that ignored the board, which is most of the point of it.
+        baseline = _elapsed(lambda: client.post("/notes/list", json={}))
 
+        armed = client.post("/_mock/latency", json={"route": "notes", "seconds": 0.25})
         assert armed.status_code == 201
         assert client.get("/_mock/health").json()["armed_latencies"] == 1
+
+        delayed = _elapsed(lambda: client.post("/notes/list", json={}))
+
+        # A sleep is a floor, so this is a threshold rather than a race.
+        assert delayed >= 0.2, f"the armed delay was not applied ({delayed:.3f}s)"
+        assert baseline < 0.2
+
+        client.post("/_mock/disarm")
+
+        assert _elapsed(lambda: client.post("/notes/list", json={})) < 0.2
+
+    def test_latency_leaves_other_routes_alone(self, client: TestClient) -> None:
+        client.post("/_mock/latency", json={"route": "somewhere-else", "seconds": 0.25})
+
+        assert _elapsed(lambda: client.post("/notes/list", json={})) < 0.2
 
     def test_state_is_inspectable_and_bounded_to_an_allowlist(self, client: TestClient) -> None:
         documents = client.get("/_mock/state/documents")
@@ -294,7 +322,9 @@ class TestTheControlPlane:
     def test_time_freezes_advances_and_resumes(self, client: TestClient) -> None:
         instant = datetime(2030, 1, 1, tzinfo=UTC)
 
-        frozen = client.post("/_mock/time", json={"action": "freeze", "instant": instant.isoformat()})
+        frozen = client.post(
+            "/_mock/time", json={"action": "freeze", "instant": instant.isoformat()}
+        )
         assert frozen.json() == {"now": instant.isoformat(), "frozen": True}
 
         advanced = client.post("/_mock/time", json={"action": "advance", "seconds": 3600})

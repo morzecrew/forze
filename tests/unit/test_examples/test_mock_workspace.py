@@ -74,7 +74,9 @@ def seeded() -> Iterator[_World]:
             async with runtime.scope():
                 nonlocal world
                 ctx = runtime.get_context()
-                world = _World(ctx=ctx, state=mock.state, result=await apply_seed(ctx, build_seed()))
+                world = _World(
+                    ctx=ctx, state=mock.state, result=await apply_seed(ctx, build_seed())
+                )
                 await stop.wait()
 
         world: _World | None = None
@@ -242,7 +244,11 @@ class TestEveryPlaneIsActuallySeeded:
         required = {
             plane
             for plane in planes
-            if any(str(op) not in exempt for op in registry.catalog() if str(op).startswith(f"{plane}."))
+            if any(
+                str(op) not in exempt
+                for op in registry.catalog()
+                if str(op).startswith(f"{plane}.")
+            )
         }
 
         missing = required - covered
@@ -330,3 +336,54 @@ class TestTheServerServesIt:
             assert listed.status_code == 200, listed.text
             assert listed.json()["hits"], "the served app answered with no seeded data"
             assert client.get("/_mock/health").json()["mock"] is True
+
+
+class TestTheProgrammedPlanesAnswer:
+    """Decision 12's other half: programming a plane has to mean it *works*.
+
+    The catalog gate never touches these — HTTP, inference and procedures have no registered
+    operations, so a handler with the wrong shape sits there looking programmed. All three of
+    these were wrong when first written (a single-instance scorer for a batch port, reversed
+    procedure arguments, a raw-request HTTP handler) and only the type checker objected. So
+    they are called here, for real.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_http_operation_answers_with_its_declared_return_type(
+        self, seeded: _World
+    ) -> None:
+        from examples.recipes.mock_workspace.app import ChargeArgs, ChargeResult, billing_service
+
+        response = await seeded.ctx.http.service(billing_service).invoke(
+            "charge", ChargeArgs(amount=250)
+        )
+
+        assert isinstance(response, ChargeResult)
+        assert (response.status, response.amount) == ("charged", 250)
+
+    @pytest.mark.asyncio
+    async def test_the_inference_route_scores_a_batch_in_order(self, seeded: _World) -> None:
+        from examples.recipes.mock_workspace.app import TaskFeatures, TaskPriority, priority_spec
+
+        port = seeded.ctx.inference.model(priority_spec)
+
+        single = await port.predict(TaskFeatures(points=5))
+        assert isinstance(single, TaskPriority)
+        assert single.score == 0.5
+
+        # The port is batch-shaped; a handler taking one instance passes the call above by
+        # accident and breaks here.
+        batch = await port.predict_many([TaskFeatures(points=2), TaskFeatures(points=30)])
+        assert [item.score for item in batch] == [0.2, 1.0]
+
+    @pytest.mark.asyncio
+    async def test_the_procedure_reports_its_effect(self, seeded: _World) -> None:
+        from examples.recipes.mock_workspace.app import RecalculateParams, recalculate_spec
+
+        result = await seeded.ctx.procedure.command(recalculate_spec).run(
+            RecalculateParams(project_id="any")
+        )
+
+        # Side-effect-only (`result=None` on the spec), so the count is what comes back —
+        # and it counts the tasks the seed actually created.
+        assert result.affected_count == len(seeded.result["tasks"])

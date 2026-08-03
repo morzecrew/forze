@@ -11,6 +11,9 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.queue import QueueSpec
+from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.storage import StorageSpec
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
@@ -89,8 +92,8 @@ class SearchSeed:
     shape would mean a seed type where half the fields are inert.
     """
 
-    spec: Any
-    """The :class:`SearchSpec` to fill."""
+    spec: SearchSpec[Any]
+    """The search index to fill."""
 
     count: int = 0
     """How many documents to generate on top of :attr:`fixtures`."""
@@ -118,8 +121,8 @@ class SearchSeed:
 class StorageSeed:
     """Objects to upload into one storage spec."""
 
-    spec: Any
-    """The :class:`StorageSpec` to fill."""
+    spec: StorageSpec
+    """The storage spec to fill."""
 
     objects: tuple[Mapping[str, Any], ...] = ()
     """Explicit uploads — ``{"filename": ..., "data": str | bytes, "prefix"?, "tags"?}``."""
@@ -139,8 +142,8 @@ class StorageSeed:
 class QueueSeed:
     """Messages to enqueue on one queue."""
 
-    spec: Any
-    """The :class:`QueueSpec` whose codec types the payload."""
+    spec: QueueSpec[Any]
+    """The queue spec whose codec types the payload."""
 
     channel: str
     """The queue name to enqueue on."""

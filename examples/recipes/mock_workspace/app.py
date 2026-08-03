@@ -7,9 +7,11 @@ than left to raise. That is what makes an app fully answerable on in-memory back
 is what the catalog-reachability gate in `tests/unit/test_examples/test_mock_workspace.py`
 checks: every registered operation must resolve and answer against seeded data.
 
-Programming a plane is a two-line registry, not a fake adapter:
+Programming a plane is a small typed handler, not a fake adapter — and typed is the point:
+the inference port is **batch**-shaped, so a handler written to take one instance is wrong
+in a way only a real call reveals.
 
-    MockInferenceRegistry().on("priority", lambda features: {"score": ...})
+    MockInferenceRegistry().on("priority", lambda batch: [score(item) for item in batch])
 
 Run it:  ``just serve``  (from examples/recipes/mock_workspace/)
 Exercised by ``tests/unit/test_examples/test_mock_workspace.py``.
@@ -17,7 +19,7 @@ Exercised by ``tests/unit/test_examples/test_mock_workspace.py``.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -25,12 +27,18 @@ from pydantic import BaseModel
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.http import HttpOperationSpec, HttpServiceSpec
 from forze.application.contracts.inference import InferenceSpec
-from forze.application.contracts.procedure import ProcedureSpec
+from forze.application.contracts.procedure import ExecResult, ProcedureSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import StorageSpec
 from forze.base.serialization import PydanticModelCodec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_mock import MockState
+from forze_mock.adapters import (
+    MockHttpRegistry,
+    MockInferenceRegistry,
+    MockProcedureRegistry,
+)
 
 # ----------------------- #
 
@@ -140,47 +148,73 @@ billing_service = HttpServiceSpec(
     },
 )
 
-recalculate_spec = ProcedureSpec(name="recalculate", params=RecalculateParams)
+recalculate_spec: ProcedureSpec[RecalculateParams, int] = ProcedureSpec(
+    name="recalculate",
+    params=RecalculateParams,
+)
 # --8<-- [end:planes]
 
 
 # --8<-- [start:programmed]
-def programmed_http() -> Any:
+def _charge(args: BaseModel | None) -> ChargeResult:
+    """One outbound HTTP operation, answered in-process.
+
+    The handler receives the **validated args model** (or ``None`` for an operation with no
+    body), not a raw request — so this is ordinary typed code, and a wrong field name is a
+    type error rather than a mystery at call time.
+    """
+
+    amount = args.amount if isinstance(args, ChargeArgs) else 0
+
+    return ChargeResult(status="charged", amount=amount)
+
+
+def programmed_http() -> MockHttpRegistry:
     """Outbound HTTP, answered in-process.
 
     Unprogrammed, an `HttpServicePort` call raises ``mock.http.unprogrammed`` — correct, and
     the reason a broad app is not answerable on the mock until someone writes these.
     """
 
-    from forze_mock.adapters import MockHttpRegistry
-
-    return MockHttpRegistry().on(
-        billing_service.name,
-        "charge",
-        lambda request: {"status": "charged", "amount": request.json.get("amount", 0)},
-    )
+    return MockHttpRegistry().on(billing_service.name, "charge", _charge)
 
 
-def programmed_inference() -> Any:
+def _score(instances: Sequence[BaseModel]) -> Sequence[TaskPriority]:
+    """Score a **batch** — one prediction per instance, in order.
+
+    The port is batch-shaped even when a caller predicts a single row, so a handler written
+    to take one instance is wrong in a way only a real call reveals.
+    """
+
+    return [
+        TaskPriority(score=min(1.0, item.points / 10))
+        for item in instances
+        if isinstance(item, TaskFeatures)
+    ]
+
+
+def programmed_inference() -> MockInferenceRegistry:
     """A pure scoring function per route — purity is what keeps a replay exact."""
 
-    from forze_mock.adapters import MockInferenceRegistry
-
-    return MockInferenceRegistry().on(
-        priority_spec.name,
-        lambda features: TaskPriority(score=min(1.0, features.points / 10)),
-    )
+    return MockInferenceRegistry().on(priority_spec.name, _score)
 
 
-def programmed_procedures() -> Any:
-    """A governed procedure, modelled as its effect on the mock's state."""
+def _recalculate(params: BaseModel, state: MockState) -> ExecResult[int]:
+    """A governed procedure, modelled as its effect on the mock's state.
 
-    from forze_mock.adapters import MockProcedureRegistry
+    Params first, state second, and an ``ExecResult`` back: this spec declares
+    ``result=None``, so it is side-effect-only and reports an affected count.
+    """
 
-    return MockProcedureRegistry().on(
-        recalculate_spec.name,
-        lambda state, params: {"recalculated": len(state.documents.get("tasks", {}))},
-    )
+    _ = params
+
+    return ExecResult(affected_count=len(state.documents.get("tasks", {})))
+
+
+def programmed_procedures() -> MockProcedureRegistry:
+    """Program the procedure plane; unprogrammed it raises ``mock.procedures.unprogrammed``."""
+
+    return MockProcedureRegistry().on(recalculate_spec.name, _recalculate)
 
 
 # --8<-- [end:programmed]

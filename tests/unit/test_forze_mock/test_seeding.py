@@ -24,6 +24,7 @@ from forze.application.contracts.queue import QueueQueryDepKey, QueueSpec
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import StorageSpec
 from forze.base.exceptions import CoreException
+from forze.base.primitives import StripedAsyncLocks
 from forze.base.serialization import PydanticModelCodec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze.testing import context_from_modules
@@ -333,7 +334,9 @@ class TestPlausibility:
     def test_fixtures_load_from_json_and_yaml(self, tmp_path: Path, suffix: str) -> None:
         rows = [{"name": "Apollo"}, {"name": "Gemini"}]
         source = tmp_path / f"projects{suffix}"
-        source.write_text(json.dumps(rows) if suffix == ".json" else "- name: Apollo\n- name: Gemini\n")
+        source.write_text(
+            json.dumps(rows) if suffix == ".json" else "- name: Apollo\n- name: Gemini\n"
+        )
 
         assert load_fixtures(source) == tuple(rows)
 
@@ -406,6 +409,7 @@ class TestDeterminism:
         }
 
         assert len(snapshots) == 1, "the seed is not reproducible across processes"
+
 
 # ....................... #
 
@@ -554,3 +558,48 @@ class TestEveryPlaneGoesThroughItsOwnWritePath:
 
         assert result.total == 2, "total stays document-only"
         assert result.total_all_planes == 7
+
+
+class TestStateResetIsTotal:
+    """`MockState.clear()` is what `POST /_mock/reset` calls, so a store it misses is data
+    that survives a reset — and the miss is silent."""
+
+    def test_every_public_field_returns_to_its_declared_default(self) -> None:
+        import attrs
+
+        state = MockState()
+        state.documents["notes"] = {"a": {"id": "a"}}
+        state.storage_buckets.add("bucket")
+        state.mvcc_version = 57  # a scalar counter, not a factory-defaulted collection
+
+        state.clear()
+
+        for field in attrs.fields(MockState):
+            if field.name.startswith("_") or field.default is attrs.NOTHING:
+                continue
+
+            if isinstance(getattr(state, field.name), StripedAsyncLocks):
+                continue  # machinery, asserted separately below
+
+            expected = (
+                field.default.factory()
+                if isinstance(field.default, attrs.Factory)
+                else field.default
+            )
+
+            assert getattr(state, field.name) == expected, (
+                f"{field.name} survived a reset — a store the derivation skips is data that "
+                "outlives POST /_mock/reset"
+            )
+
+    def test_the_machinery_survives_because_callers_may_be_waiting_on_it(self) -> None:
+        # Rebuilding a striped lock table mid-flight hands the next caller a *different*
+        # lock than the one a waiter holds, which silently breaks single-flight.
+        state = MockState()
+        lock = state.lock
+        stripes = state.rotating_credential_locks
+
+        state.clear()
+
+        assert state.lock is lock
+        assert state.rotating_credential_locks is stripes

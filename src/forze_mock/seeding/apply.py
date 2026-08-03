@@ -120,7 +120,7 @@ async def apply_seed(ctx: ExecutionContext, plan: SeedPlan) -> SeedResult:
             payloads[name] = tuple(rows)
 
         indexed = await _apply_search(ctx, plan, created, rng)
-        stored = await _apply_storage(ctx, plan, rng)
+        stored = await _apply_storage(ctx, plan)
         queued = await _apply_queues(ctx, plan, rng)
 
     return SeedResult(
@@ -182,7 +182,6 @@ async def _apply_search(
 async def _apply_storage(
     ctx: ExecutionContext,
     plan: SeedPlan,
-    rng: Random,
 ) -> dict[str, tuple[str, ...]]:
     """Upload each object through the storage command port."""
 
@@ -218,8 +217,6 @@ async def _apply_storage(
             keys.append(str(result.key))
 
         stored[str(seed.spec.name)] = tuple(keys)
-
-    _ = rng
 
     return stored
 

@@ -128,7 +128,7 @@ it sits beside your app rather than inside it, so your own auth does not lock yo
 | `POST /_mock/latency` | Delay matching calls — spinners and timeouts |
 | `POST /_mock/disarm` | Clear every armed fault and delay |
 | `POST /_mock/time` | `freeze` / `advance` / `resume` the server clock |
-| `POST /_mock/emit` | Fire one realtime signal (needs `MockApp(on_emit=...)`) |
+| `POST /_mock/emit` | Fire one realtime signal at one audience (needs `MockApp(on_emit=...)`) |
 | `GET /_mock/health` | Readiness, the clock, and the loud "this is a mock" |
 
 ```bash
@@ -147,6 +147,12 @@ would be teaching the frontend a lie.
 
 `route` is the spec name and `op` is the **port method** (`create`, `update`, `find_page`,
 `get`, …) — omit `op` to match every call on that spec, which is usually what you want.
+
+`emit` is where a notification badge gets built: one signal, at one principal, on demand —
+which is what a traffic generator cannot give you. The realtime egress plane lives above
+`forze_mock`, so the server hands the signal to your `on_emit` and your own mailbox decides
+who receives it; see `examples/recipes/realtime_sse/served.py`. Note that `/_mock/reset`
+clears the mock's stores and **not** state your app holds itself, like that mailbox.
 
 !!! warning "The control plane is unauthenticated"
 
