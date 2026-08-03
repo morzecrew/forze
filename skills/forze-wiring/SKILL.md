@@ -374,6 +374,12 @@ async with runtime.scope():
     result = await facade.get(DocumentIdDTO(id=some_uuid))
 ```
 
+**Hybrid contexts** — pass `MockDepsModule` *alongside* real modules to get "real Postgres, mock everything else" in one list: everything the mock registers is a **fallback**, so a real registration of the same key or route wins instead of conflicting (order irrelevant; two real — or two mock — modules still raise). Caveat: an unregistered route then falls back to the mock instead of failing, so a spec-name typo resolves silently. Freeze logs every fallback-served key, and `check_wiring(...).fallbacks` returns the same report — assert on it when a test must prove it hit the real adapter.
+
+```python
+DepsRegistry.from_modules(PostgresDepsModule(...), MockDepsModule(state=shared_state))
+```
+
 ## Search composition
 
 ```python

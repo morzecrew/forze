@@ -14,6 +14,7 @@ from .builders import (
     routed_shared_factories,
 )
 from .container import Deps
+from .fallback import FallbackReport, ShadowedFallback
 from .frame import ResolutionFrame, format_cycle_error, frame_for
 from .keys import (
     ConfigurableDepPort,
@@ -32,10 +33,12 @@ __all__ = [
     "DepKey",
     "Deps",
     "DepsModule",
+    "FallbackReport",
     "PlainDepsMap",
     "ProviderStore",
     "ResolutionFrame",
     "RoutedDeps",
+    "ShadowedFallback",
     "SimpleDepPort",
     "format_cycle_error",
     "frame_for",

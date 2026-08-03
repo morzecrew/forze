@@ -27,19 +27,14 @@ from forze.application.contracts.outbox import (
     OutboxSpec,
     OutboxStatus,
 )
-from forze.application.contracts.queue import (
-    QueueCommandDepKey,
-    QueueQueryDepKey,
-    QueueSpec,
-)
-from forze.application.execution import Deps, DepsRegistry, ExecutionRuntime
+from forze.application.contracts.queue import QueueSpec
+from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import OutboxRelay
 from forze_kits.integrations.outbox._relay_core import relay_outbox_claims
-from forze_mock import MockStateDepKey
 from forze_mock.adapters import MockState
-from forze_mock.execution.module import ConfigurableMockQueue, MockDepsModule
+from forze_mock.execution.module import MockDepsModule
 from forze_mongo.execution.deps import MongoDepsModule
 from forze_mongo.execution.deps.configs import MongoOutboxConfig
 from forze_mongo.kernel.client import MongoClient
@@ -58,17 +53,16 @@ class _RichPayload(BaseModel):
     label: str
 
 
-def _mock_queue_deps(shared_state: MockState) -> Deps:
-    mock_module = MockDepsModule(state=shared_state)
-    queue = ConfigurableMockQueue(module=mock_module)
-    return Deps.plain({MockStateDepKey: shared_state}).merge(
-        Deps.routed(
-            {
-                QueueCommandDepKey: {"relay": queue},
-                QueueQueryDepKey: {"relay": queue},
-            }
-        )
-    )
+def _mock_fallback(shared_state: MockState) -> MockDepsModule:
+    """Everything Mongo does not provide — here, the queue the relay publishes into.
+
+    The mock registers as a *fallback*, so the real Mongo module wins every key and route
+    it covers (outbox, transactions) and the two compose in one context. This used to be a
+    hand-picked ``Deps.routed`` of the queue factory alone, because merging the whole mock
+    raised a plain-vs-routed conflict on every plane Mongo also serves.
+    """
+
+    return MockDepsModule(state=shared_state)
 
 
 @pytest.fixture
@@ -255,7 +249,7 @@ async def test_mongo_outbox_relay_publishes_ordering_key_to_queue(
     shared_state = MockState()
     runtime = ExecutionRuntime(
         deps=DepsRegistry.from_modules(mongo_module)
-        .with_deps(_mock_queue_deps(shared_state))
+        .with_modules(_mock_fallback(shared_state))
         .freeze(),
     )
     unkeyed_event_id = uuid4()
@@ -441,7 +435,7 @@ async def test_mongo_outbox_relay_to_mock_queue(
     shared_state = MockState()
     runtime = ExecutionRuntime(
         deps=DepsRegistry.from_modules(mongo_module)
-        .with_deps(_mock_queue_deps(shared_state))
+        .with_modules(_mock_fallback(shared_state))
         .freeze(),
     )
 
@@ -485,7 +479,7 @@ async def test_mongo_outbox_relay_reclaims_stale_processing(
     shared_state = MockState()
     runtime = ExecutionRuntime(
         deps=DepsRegistry.from_modules(mongo_module)
-        .with_deps(_mock_queue_deps(shared_state))
+        .with_modules(_mock_fallback(shared_state))
         .freeze(),
     )
     row_id = uuid4()
@@ -551,7 +545,7 @@ async def test_mongo_outbox_requeue_failed_then_relay(
     shared_state = MockState()
     runtime = ExecutionRuntime(
         deps=DepsRegistry.from_modules(mongo_module)
-        .with_deps(_mock_queue_deps(shared_state))
+        .with_modules(_mock_fallback(shared_state))
         .freeze(),
     )
     row_id = uuid4()

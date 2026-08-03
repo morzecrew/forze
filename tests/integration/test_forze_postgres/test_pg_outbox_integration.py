@@ -32,14 +32,9 @@ from forze.application.contracts.outbox import (
     OutboxSpec,
     OutboxStatus,
 )
-from forze.application.contracts.queue import (
-    QueueCommandDepKey,
-    QueueQueryDepKey,
-    QueueSpec,
-)
+from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.stream import StreamQueryDepKey, StreamSpec
 from forze.application.execution import (
-    Deps,
     DepsRegistry,
     ExecutionRuntime,
     LifecyclePlan,
@@ -51,9 +46,8 @@ from forze_kits.integrations.outbox import (
     outbox_relay_background_lifecycle_step,
 )
 from forze_kits.integrations.outbox._relay_core import relay_outbox_claims
-from forze_mock import MockStateDepKey
 from forze_mock.adapters import MockState
-from forze_mock.execution.module import ConfigurableMockQueue, MockDepsModule
+from forze_mock.execution.module import MockDepsModule
 from forze_postgres.adapters.outbox import PostgresOutboxStore
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.execution.deps.configs import PostgresOutboxConfig
@@ -86,17 +80,16 @@ class _RichPayload(BaseModel):
     label: str
 
 
-def _mock_queue_deps(shared_state: MockState) -> Deps:
-    mock_module = MockDepsModule(state=shared_state)
-    queue = ConfigurableMockQueue(module=mock_module)
-    return Deps.plain({MockStateDepKey: shared_state}).merge(
-        Deps.routed(
-            {
-                QueueCommandDepKey: {"relay": queue},
-                QueueQueryDepKey: {"relay": queue},
-            }
-        )
-    )
+def _mock_fallback(shared_state: MockState) -> MockDepsModule:
+    """Everything Postgres does not provide — here, the queue the relay publishes into.
+
+    The mock registers as a *fallback*, so the real Postgres module wins every key and
+    route it covers (outbox, transactions) and the two compose in one context. This used
+    to be a hand-picked ``Deps.routed`` of the queue factory alone, because merging the
+    whole mock raised a plain-vs-routed conflict on every plane Postgres also serves.
+    """
+
+    return MockDepsModule(state=shared_state)
 
 
 @pytest.fixture
@@ -236,9 +229,9 @@ async def test_outbox_relay_to_mock_queue(
         },
     )
     shared_state = MockState()
-    mock_queue_deps = _mock_queue_deps(shared_state)
+    mock_fallback = _mock_fallback(shared_state)
     runtime = ExecutionRuntime(
-        deps=DepsRegistry.from_modules(pg_module).with_deps(mock_queue_deps).freeze(),
+        deps=DepsRegistry.from_modules(pg_module).with_modules(mock_fallback).freeze(),
     )
 
     async with runtime.scope():
@@ -294,7 +287,7 @@ async def test_an_event_payload_of_uuid_datetime_and_decimal_round_trips(
     shared_state = MockState()
     runtime = ExecutionRuntime(
         deps=DepsRegistry.from_modules(pg_module)
-        .with_deps(_mock_queue_deps(shared_state))
+        .with_modules(_mock_fallback(shared_state))
         .freeze(),
     )
 
@@ -411,7 +404,7 @@ async def test_outbox_relay_publishes_ordering_key_to_queue(
     shared_state = MockState()
     runtime = ExecutionRuntime(
         deps=DepsRegistry.from_modules(pg_module)
-        .with_deps(_mock_queue_deps(shared_state))
+        .with_modules(_mock_fallback(shared_state))
         .freeze(),
     )
     unkeyed_event_id = uuid4()
@@ -565,9 +558,9 @@ async def test_outbox_relay_reclaims_stale_processing(
         },
     )
     shared_state = MockState()
-    mock_queue_deps = _mock_queue_deps(shared_state)
+    mock_fallback = _mock_fallback(shared_state)
     runtime = ExecutionRuntime(
-        deps=DepsRegistry.from_modules(pg_module).with_deps(mock_queue_deps).freeze(),
+        deps=DepsRegistry.from_modules(pg_module).with_modules(mock_fallback).freeze(),
     )
     row_id = uuid4()
     event_id = uuid4()
@@ -634,7 +627,7 @@ async def test_outbox_requeue_failed_then_relay(
     shared_state = MockState()
     runtime = ExecutionRuntime(
         deps=DepsRegistry.from_modules(pg_module)
-        .with_deps(_mock_queue_deps(shared_state))
+        .with_modules(_mock_fallback(shared_state))
         .freeze(),
     )
     row_id = uuid4()
@@ -1151,7 +1144,7 @@ def _drain_relay_runtime(
 
     runtime = ExecutionRuntime(
         deps=DepsRegistry.from_modules(pg_module)
-        .with_deps(_mock_queue_deps(shared_state))
+        .with_modules(_mock_fallback(shared_state))
         .freeze(),
         lifecycle=LifecyclePlan.from_steps(client_step, relay_step).freeze(),
     )

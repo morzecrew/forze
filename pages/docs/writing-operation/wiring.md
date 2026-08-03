@@ -56,6 +56,14 @@ deps = DepsRegistry.from_modules(
 Build incrementally with `registry.with_modules(...)` when modules come from
 different parts of your codebase.
 
+One registration kind is exempt from that conflict: a **fallback** module
+(`Deps.plain(..., fallback=True)`, which is how `MockDepsModule` registers
+everything) yields to a real module instead of colliding with it. That is what
+lets a test or a partially-migrated app say "real Postgres, mock everything
+else" in one deps list — see
+[hybrid contexts](../testing/overview.md#hybrid-contexts-one-real-backend-mock-for-the-rest).
+Production wiring marks nothing, so every overlap there stays fail-loud.
+
 ## The lifecycle plan
 
 Deps describe **what to build**; the **lifecycle plan** decides **when clients

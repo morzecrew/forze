@@ -19,6 +19,7 @@ from forze.application.integrations.inference import (
 )
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.testing import context_from_modules
+from forze_mock import MockDepsModule
 
 # ----------------------- #
 
@@ -51,9 +52,10 @@ class _CountingLoader:
 
 
 def _ctx(module: LocalInferenceDepsModule) -> ExecutionContext:
-    # The local module alone: MockDepsModule also registers the inference key (as the
-    # plain fallback), so merging both would double-register the route.
-    return context_from_modules(module)
+    # A hybrid context: the local module owns the inference routes it declares, the mock
+    # answers every other plane. The mock's inference registration is a *fallback*, so the
+    # real routed one wins for these routes instead of colliding with it.
+    return context_from_modules(MockDepsModule(), module)
 
 
 # ....................... #
