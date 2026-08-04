@@ -197,9 +197,14 @@ the stored row rather than writing what it received:
    tick cannot resurrect a job that failed, however late its timestamp. Two racing
    terminals still converge: the later one wins, and at the same instant `failed`
    outranks `succeeded`.
-4. **`heartbeat_at` takes the max** of every accepted event. It answers "when did
-   we last hear from this job", so a reordered straggler must not make a live job
-   look stale.
+4. **`heartbeat_at` takes the max** of every report the job made *about itself*. It
+   answers "when did we last hear from this job", so a reordered straggler must not
+   make a live job look stale. `pending` is the one status a job does not report
+   about itself — it comes from whatever queued the work, on that process's clock —
+   so it holds the heartbeat only until the job speaks, and is then replaced rather
+   than maxed. A queueing service running ahead of the worker would otherwise pin
+   the heartbeat in the future, and a job that hangs after its first tick would read
+   as freshly heard from until real time caught up.
 5. **An unknown job id creates its row.** A dashboard started mid-sweep, a
    consumer replaying from an offset — a late joiner gets a record, not an error.
 6. **`pending` is where a job begins, not somewhere it returns to.** The report

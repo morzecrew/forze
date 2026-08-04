@@ -431,9 +431,11 @@ class TestLateJoiner:
 
             assert row.status is JobStatus.RUNNING
             assert row.started_at == _T0
-            # It is still a report, so the job is still heard from — only its *status* is
-            # refused.
-            assert row.heartbeat_at == _T0 + timedelta(seconds=30)
+            # And it does not move the heartbeat either: that answers "when did we last hear
+            # from *the job*", and this report came from whatever queued it, on that
+            # process's clock. Letting the queue's stamp stand would put the heartbeat 30
+            # seconds ahead of anything the worker ever said.
+            assert row.heartbeat_at == _T0
 
     async def test_a_late_running_report_supersedes_a_newer_pending_one(self) -> None:
         # The same pair the other way round, which is what keeps the rule order-independent:
@@ -486,8 +488,67 @@ class TestLateJoiner:
         assert all(result == results[0] for result in results)
         assert results[0]["status"] is JobStatus.WAITING
         assert results[0]["started_at"] == _T0
-        # Refused as a status, still counted as a report.
-        assert results[0]["heartbeat_at"] == _T0 + timedelta(seconds=3)
+        # The heartbeat is the newest thing the *job* said, not the newest report about it:
+        # the declaration's clock does not get to speak for a job that is running.
+        assert results[0]["heartbeat_at"] == _T0 + timedelta(seconds=2)
+
+    async def test_a_declaration_from_a_clock_ahead_cannot_hide_a_hung_job(self) -> None:
+        # The staleness sweep's blind spot, produced by the one report it should trust
+        # least. Whatever queues a job stamps `pending` on its own clock; a queueing service
+        # running an hour ahead would, under a plain max, leave the heartbeat an hour in the
+        # future — so every tick the worker makes is "older", the row never refreshes, and a
+        # job that hangs after its first tick reads as freshly heard from until real time
+        # catches up with the skew.
+        runtime = _runtime()
+
+        async with runtime.scope():
+            projector = build_job_progress_projector(runtime.get_context())
+            job_id = uuid4()
+
+            await projector.apply(_event(job_id, JobStatus.PENDING, seconds=3600, seq=1))
+            await projector.apply(_event(job_id, JobStatus.RUNNING, seconds=0, seq=1))
+            row = await projector.apply(_event(job_id, JobStatus.RUNNING, seconds=60, seq=2))
+
+            # The worker's clock is the one the sweep compares against, so the job's own
+            # first word replaces the queue's stamp rather than losing to it.
+            assert row.heartbeat_at == _T0 + timedelta(seconds=60)
+
+            # And the job is findable when it goes quiet, on the window the operator set —
+            # not an hour later.
+            stalled = await projector.count_stalled(silent_since=_T0 + timedelta(minutes=15))
+
+            assert stalled == 1
+
+    async def test_a_redelivered_enqueue_cannot_renew_the_mask(self) -> None:
+        # The same skew, made permanent: an at-least-once enqueue redelivered every so often
+        # would keep pushing the heartbeat further into the future, so the mask never
+        # expires and the job is never flagged at all. Once the job has spoken for itself,
+        # the queue no longer speaks for it.
+        runtime = _runtime()
+
+        async with runtime.scope():
+            projector = build_job_progress_projector(runtime.get_context())
+            job_id = uuid4()
+
+            await projector.apply(_event(job_id, JobStatus.RUNNING, seconds=0, seq=1))
+            row = await projector.apply(_event(job_id, JobStatus.PENDING, seconds=7200, seq=2))
+
+        assert row.heartbeat_at == _T0
+        assert row.status is JobStatus.RUNNING
+
+    async def test_a_queued_job_that_never_starts_still_has_a_heartbeat(self) -> None:
+        # The queue's stamp is not ignored, only outranked: while it is the only thing
+        # anyone has said about this job, it is what "last heard from" means.
+        runtime = _runtime()
+
+        async with runtime.scope():
+            projector = build_job_progress_projector(runtime.get_context())
+            job_id = uuid4()
+
+            await projector.apply(_event(job_id, JobStatus.PENDING, seconds=0, seq=1))
+            row = await projector.apply(_event(job_id, JobStatus.PENDING, seconds=30, seq=2))
+
+        assert row.heartbeat_at == _T0 + timedelta(seconds=30)
 
     async def test_a_terminal_event_for_an_unknown_job_lands_finished(self) -> None:
         runtime = _runtime()

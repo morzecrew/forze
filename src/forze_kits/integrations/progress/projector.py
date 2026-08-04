@@ -26,9 +26,11 @@ function of arrival order, so it rides the merge key too. The last message *by s
 time* wins, which is what "the last human-readable line" means when the transport does not
 preserve order.
 
-``heartbeat_at`` is the exception, and takes the max of every accepted event: it answers
-"when did we last hear from this job", so a reordered straggler must not make a live job
-look stale.
+``heartbeat_at`` is the exception, and takes the max of every report the job made about
+itself: it answers "when did we last hear from this job", so a reordered straggler must not
+make a live job look stale. ``pending`` is not one of those reports — it comes from whatever
+queued the work, on another clock — so it holds the heartbeat only until the job speaks for
+itself (see :func:`_heartbeat_for`).
 """
 
 from collections.abc import Sequence
@@ -92,6 +94,37 @@ def _merge_key(status: JobStatus, at: datetime, seq: int) -> tuple[int, datetime
     """The total order events are merged by (see the module docstring)."""
 
     return (int(status.is_terminal), at, seq, _STATUS_RANK[status])
+
+
+def _heartbeat_for(row: JobRecord, event: JobProgress) -> datetime | None:
+    """When the job was last heard from, given *event* — or ``None`` if it does not move.
+
+    A max over every report is the obvious rule and it is wrong for one of them. ``pending``
+    is the only status a job does not report about itself: it comes from whatever queued the
+    work, on *that* process's clock. A queueing service running ahead of the worker stamps a
+    declaration in the future, and under a plain max the worker's own ticks are all older
+    than it — so the heartbeat sits ahead of real time, a job that hangs after its first tick
+    reads as freshly heard from for as long as the skew lasts, and a redelivered enqueue
+    renews the mask indefinitely. That is the staleness sweep's blind spot, produced by the
+    one report the sweep should trust least.
+
+    So the queue's stamp holds only until the job itself says something, and is then
+    *replaced* rather than maxed — even by an earlier instant, because the worker's clock is
+    the one the sweep compares against. Stated over the merged set ("a pending report counts
+    only while nothing else has"), never over arrival order, so the projection stays
+    order-independent.
+    """
+
+    from_the_job = event.status is not JobStatus.PENDING
+    job_has_spoken = row.status is not JobStatus.PENDING
+
+    if from_the_job and not job_has_spoken:
+        return event.at
+
+    if from_the_job == job_has_spoken and event.at > row.heartbeat_at:
+        return event.at
+
+    return None
 
 
 def _accepts_status(row: JobRecord, event: JobProgress) -> bool:
@@ -396,8 +429,10 @@ def _merged_update(row: JobRecord, event: JobProgress) -> JobUpdate | None:
     if progress is not None and (row.progress is None or progress > row.progress):
         patch["progress"] = progress
 
-    if event.at > row.heartbeat_at:
-        patch["heartbeat_at"] = event.at
+    heartbeat = _heartbeat_for(row, event)
+
+    if heartbeat is not None:
+        patch["heartbeat_at"] = heartbeat
 
     # The earliest report that says the job left `pending` is when it started — a min, so
     # that a late-arriving first tick still dates the start correctly.
