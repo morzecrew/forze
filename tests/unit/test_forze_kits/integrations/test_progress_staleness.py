@@ -21,8 +21,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import bind_time_source, uuid7
 from forze_kits.integrations.progress import (
     JOBS_OLDEST_SILENCE_GAUGE,
@@ -38,6 +39,7 @@ from forze_kits.integrations.progress import (
     job_record_spec,
     job_staleness_lifecycle_step,
 )
+from forze_kits.integrations.progress import lifecycle as lifecycle_module
 from forze_kits.integrations.progress import observability
 from forze_mock import MockDepsModule
 
@@ -110,6 +112,16 @@ async def _report(
     )
 
     return resolved
+
+
+async def _settle(task: Any, *, ticks: int = 200) -> None:
+    """Wait for a loop task to finish on its own, without pinning a wall-clock duration."""
+
+    for _ in range(ticks):
+        if task is not None and task.done():
+            return
+
+        await asyncio.sleep(0.002)
 
 
 # ----------------------- #
@@ -371,6 +383,80 @@ class TestTheGauges:
 # ....................... #
 
 
+class TestAPerTenantSweep:
+    """A tenant-partitioned collection is swept bound, once per tenant, and folded into one."""
+
+    async def test_the_shard_folds_its_tenants_instead_of_replacing_them(self) -> None:
+        # The tenant is never a metric label, so a per-tenant sweep has to *add up* rather
+        # than publish a series each: the gauge says "N jobs are stuck on this shard" and
+        # the record answers which. The bug this shape invites is a loop that assigns where
+        # it should fold — every tenant overwriting the last, so a shard reports whichever
+        # tenant it happened to sweep last and every other one is invisible.
+        #
+        # Asserted as "more than one tenant's worth, and the worst instant anywhere", not as
+        # a literal count: this collection is not tenant-partitioned, so both bindings read
+        # the same rows. The property holds either way; a count would only pin the mock.
+        first, second = uuid4(), uuid4()
+        clock = _Clock()
+        runtime = _runtime()
+        solo = JobStalenessMonitor(silent_after=_WINDOW, spec=_SPEC, tenants=lambda: [first])
+        shard = JobStalenessMonitor(
+            silent_after=_WINDOW, spec=_SPEC, tenants=lambda: [first, second]
+        )
+
+        with bind_time_source(clock):
+            async with runtime.scope():
+                ctx = runtime.get_context()
+
+                with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=first)):
+                    await _report(ctx, kind="export", status=JobStatus.RUNNING, at=_T0)
+                    await _report(ctx, kind="export", status=JobStatus.RUNNING, at=_T0)
+
+                clock.advance(hours=2)
+
+                with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=second)):
+                    await _report(ctx, kind="export", status=JobStatus.RUNNING, at=clock.instant)
+
+                clock.advance(hours=1)
+                await solo.sweep(ctx)
+                await shard.sweep(ctx)
+
+            assert shard.stats().stalled > solo.stats().stalled
+            # And the worst offender is the earliest heartbeat anywhere on the shard — a
+            # `max` here, or a last-writer-wins, would report the shard as three hours
+            # healthier than it is.
+            assert shard.stats().oldest_heartbeat_at == _T0
+            assert shard.stats().silence() == pytest.approx(timedelta(hours=3).total_seconds())
+
+    async def test_a_tenant_arriving_re_arms_the_empty_shard_warning(self, mocker: Any) -> None:
+        # Once per streak, not once per process: a shard that is idle, then busy, then idle
+        # again has something new to say the second time.
+        tenants: list[UUID] = []
+        runtime = _runtime()
+        monitor = JobStalenessMonitor(silent_after=_WINDOW, spec=_SPEC, tenants=lambda: tenants)
+        logger = mocker.patch.object(observability, "logger")
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            await monitor.sweep(ctx)  # empty: says so
+            tenants.append(uuid4())
+            await monitor.sweep(ctx)  # busy: the streak is over
+            tenants.clear()
+            await monitor.sweep(ctx)  # empty again: worth saying again
+
+        empty_warnings = [
+            call
+            for call in logger.warning.call_args_list
+            if "no tenants to examine" in call.args[0]
+        ]
+
+        assert len(empty_warnings) == 2
+
+
+# ....................... #
+
+
 class TestTheLifecycleStep:
     async def test_the_step_sweeps_and_stops(self) -> None:
         runtime = _runtime()
@@ -462,6 +548,169 @@ class TestTheLifecycleStep:
         instrument_job_progress(monitor, meter=meter)  # type: ignore[arg-type]
 
         assert JOBS_STALLED_GAUGE in meter.gauges
+
+    async def test_a_configuration_error_stops_the_loop_loudly(self, mocker: Any) -> None:
+        # A misrouted spec or a missing dep does not fix itself on the next tick, and a loop
+        # that keeps failing every minute would bury the reason. It stops — and the scan age
+        # is what tells an operator the numbers underneath it have stopped moving.
+        runtime = _runtime()
+        mocker.patch.object(
+            JobStalenessMonitor, "sweep", side_effect=exc.configuration("no such route")
+        )
+        logger = mocker.patch.object(lifecycle_module, "logger")
+        step, monitor = job_staleness_lifecycle_step(
+            silent_after=_WINDOW, spec=_SPEC, interval=timedelta(milliseconds=5), jitter=0.0
+        )
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+            await _settle(step.startup.task)
+
+            assert step.startup.task is not None
+            assert step.startup.task.done()
+
+            await step.shutdown(ctx)  # idempotent: the loop already returned
+
+        assert monitor.scan_age() == -1.0  # it never completed a sweep, and says so
+        assert any(
+            "configuration error" in call.args[0] for call in logger.exception.call_args_list
+        )
+
+    @pytest.mark.parametrize(
+        "failure",
+        [exc.infrastructure("the store blinked"), RuntimeError("a bug in a projector")],
+        ids=["backend", "defect"],
+    )
+    async def test_a_passing_failure_does_not_stop_the_loop(
+        self, mocker: Any, failure: BaseException
+    ) -> None:
+        # The opposite of the rule above: a store that blinked, or a defect in one sweep, is
+        # not a reason to stop watching for stuck jobs forever. It is logged and the next
+        # tick asks again.
+        runtime = _runtime()
+        sweep = mocker.patch.object(JobStalenessMonitor, "sweep", side_effect=[failure, None, None])
+        step, _ = job_staleness_lifecycle_step(
+            silent_after=_WINDOW, spec=_SPEC, interval=timedelta(milliseconds=1), jitter=0.0
+        )
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+
+            for _ in range(200):
+                await asyncio.sleep(0.002)
+
+                if sweep.call_count >= 2:
+                    break
+
+            still_running = step.startup.task is not None and not step.startup.task.done()
+            await step.shutdown(ctx)
+
+        assert sweep.call_count >= 2  # it asked again after the failure
+        assert still_running
+
+    async def test_a_second_startup_does_not_start_a_second_loop(self, mocker: Any) -> None:
+        # Two sweeps against one monitor would interleave their answers into one cache; the
+        # duplicate is refused rather than silently doubling the reads.
+        runtime = _runtime()
+        logger = mocker.patch.object(lifecycle_module, "logger")
+        step, _ = job_staleness_lifecycle_step(
+            silent_after=_WINDOW, spec=_SPEC, interval=timedelta(seconds=30)
+        )
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+            first = step.startup.task
+
+            await step.startup(ctx)
+
+            assert step.startup.task is first
+            assert step.startup.loop_name == "job_staleness"
+
+            await step.shutdown(ctx)
+
+        assert any("already running" in call.args[0] for call in logger.warning.call_args_list)
+
+    async def test_a_sweep_cancelled_mid_flight_does_not_become_a_logged_failure(
+        self, mocker: Any
+    ) -> None:
+        # Cancellation is the runtime asking this loop to stop — a deploy, a deadline, a
+        # shutdown — not a sweep that failed. Swallowed by the generic handler it would be
+        # logged as an error and the loop would carry on running through a drain.
+        runtime = _runtime()
+        logger = mocker.patch.object(lifecycle_module, "logger")
+
+        async def _never_finishes(_ctx: Any) -> None:
+            await asyncio.sleep(3600)
+
+        mocker.patch.object(JobStalenessMonitor, "sweep", side_effect=_never_finishes)
+        step, _ = job_staleness_lifecycle_step(
+            silent_after=_WINDOW, spec=_SPEC, interval=timedelta(seconds=30)
+        )
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+            task = step.startup.task
+            assert task is not None
+
+            await asyncio.sleep(0)  # let the loop reach the sweep
+            task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert not logger.exception.called
+
+    async def test_a_loop_that_cannot_even_start_leaves_nothing_behind(self, mocker: Any) -> None:
+        # The other half of the cleanup: if spawning the task fails, the control block must
+        # come back armed-for-nothing rather than half-set, or a later startup would see a
+        # loop that does not exist and decline to start one.
+        runtime = _runtime()
+        step, _ = job_staleness_lifecycle_step(
+            silent_after=_WINDOW, spec=_SPEC, interval=timedelta(seconds=30)
+        )
+
+        def _refuse(coro: Any, **_kwargs: Any) -> None:
+            coro.close()  # the loop never ran; closing it keeps the failure quiet
+
+            raise RuntimeError("no event loop")
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            # Scoped to this one call: `create_task` is the event loop's, and leaving it
+            # broken would take the runtime's own teardown with it.
+            mocker.patch.object(lifecycle_module.asyncio, "create_task", side_effect=_refuse)
+
+            with pytest.raises(RuntimeError):
+                await step.startup(ctx)
+
+            mocker.stopall()
+
+            assert step.startup.task is None
+            assert not step.startup.control.running
+
+    async def test_a_loop_that_cannot_be_registered_is_not_left_running(self, mocker: Any) -> None:
+        # The loop is only useful if the runtime can drain it. If registration fails, the
+        # task it just spawned would otherwise outlive the failure — a sweep nothing owns,
+        # still reading, unstoppable through the lifecycle.
+        runtime = _runtime()
+        step, _ = job_staleness_lifecycle_step(
+            silent_after=_WINDOW, spec=_SPEC, interval=timedelta(seconds=30)
+        )
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            mocker.patch.object(
+                type(ctx.drainables), "register", side_effect=RuntimeError("registry closed")
+            )
+
+            with pytest.raises(RuntimeError):
+                await step.startup(ctx)
+
+            assert step.startup.task is None
 
     def test_a_nonsense_schedule_is_refused(self) -> None:
         with pytest.raises(CoreException):

@@ -23,6 +23,7 @@ from itertools import permutations
 from typing import Any, Final
 from uuid import UUID, uuid4
 
+import attrs
 import pytest
 from pydantic import ValidationError
 
@@ -39,6 +40,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import FrozenTimeSource, bind_time_source, uuid7
+from forze_kits.integrations.progress import reporter as reporter_module
 from forze_kits.integrations.progress import (
     JOB_PROGRESS_EVENT_NAME,
     JobProgress,
@@ -590,6 +592,20 @@ class TestCoalescing:
                 await reporter.report(index / 10)
 
         assert len(sink.ticks) == 5
+
+    async def test_a_heartbeat_says_alive_without_moving_the_bar(self) -> None:
+        # What a job with nothing countable to report has: the staleness sweep reads
+        # `heartbeat_at`, so a long indeterminate stretch has to be able to stay out of it
+        # without inventing a fraction.
+        sink = _RecordingSink()
+        reporter = _reporter(sink, min_interval=0.0)
+
+        await reporter.report(0.5, "halfway")
+        await reporter.heartbeat("still working")
+
+        assert reporter.progress == 0.5  # the high-water mark, unchanged
+        assert sink.ticks[-1].progress == 0.5
+        assert sink.ticks[-1].message == "still working"
 
 
 # ....................... #
@@ -1166,6 +1182,162 @@ class TestTheJobsIdentity:
 # ....................... #
 
 
+class _BlindQuery:
+    """A query that cannot see the row — the shape a misrouted or mis-tenanted port has."""
+
+    def __init__(self, inner: Any, *, blind_for: int) -> None:
+        self.inner = inner
+        self.blind_for = blind_for
+
+    async def find(self, *args: Any, **kwargs: Any) -> Any:
+        if self.blind_for > 0:
+            self.blind_for -= 1
+
+            return None
+
+        return await self.inner.find(*args, **kwargs)
+
+
+class _FailingCommand:
+    """A command that raises *failure* on its first *times* calls, then behaves."""
+
+    def __init__(self, inner: Any, *, failure: BaseException, times: int, on: str) -> None:
+        self.inner = inner
+        self.failure = failure
+        self.times = times
+        self.on = on
+
+    async def _maybe_fail(self, name: str) -> None:
+        if name == self.on and self.times > 0:
+            self.times -= 1
+
+            raise self.failure
+
+    async def create(self, *args: Any, **kwargs: Any) -> Any:
+        await self._maybe_fail("create")
+
+        return await self.inner.create(*args, **kwargs)
+
+    async def update(self, *args: Any, **kwargs: Any) -> Any:
+        await self._maybe_fail("update")
+
+        return await self.inner.update(*args, **kwargs)
+
+
+def _projector(ctx: ExecutionContext, *, query: Any = None, command: Any = None) -> Any:
+    built = build_job_progress_projector(ctx)
+
+    return attrs.evolve(
+        built,
+        query=query if query is not None else built.query,
+        command=command if command is not None else built.command,
+    )
+
+
+class TestTheMergeUnderConcurrency:
+    """The CAS loop: two reporters, one row, and the ways a store says "someone else won"."""
+
+    async def test_a_lost_insert_race_merges_onto_the_winner(self) -> None:
+        # Two first events for one job arrive at once: both see no row, both insert, one
+        # loses. The loser must not raise and must not lose its report — it re-reads and
+        # merges onto the row the winner created.
+        runtime = _runtime()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            job_id = uuid4()
+
+            await _projector(ctx).apply(_event(job_id, JobStatus.RUNNING, seconds=0, seq=1))
+
+            # Blind for one read: it will try to insert, conflict, and look again.
+            loser = _projector(ctx, query=_BlindQuery(ctx.document.query(_SPEC), blind_for=1))
+            row = await loser.apply(
+                _event(job_id, JobStatus.RUNNING, seconds=1, seq=2, progress=0.5)
+            )
+
+        assert row.progress == 0.5
+        assert row.rev == 2  # merged onto the winner's row, not a second row
+
+    async def test_a_lost_update_race_retries(self) -> None:
+        # The store rejecting a stale revision is the ordinary outcome of two projectors
+        # merging one job, not an error to surface: re-read, re-merge, write again.
+        runtime = _runtime()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            job_id = uuid4()
+
+            await _projector(ctx).apply(_event(job_id, JobStatus.RUNNING, seconds=0, seq=1))
+
+            contended = _projector(
+                ctx,
+                command=_FailingCommand(
+                    ctx.document.command(_SPEC),
+                    failure=exc.concurrency("someone else bumped the rev"),
+                    times=1,
+                    on="update",
+                ),
+            )
+            row = await contended.apply(
+                _event(job_id, JobStatus.SUCCEEDED, seconds=1, seq=2, message="done")
+            )
+
+        assert row.status is JobStatus.SUCCEEDED
+        assert row.message == "done"
+
+    @pytest.mark.parametrize("failing", ["create", "update"], ids=["insert", "merge"])
+    async def test_a_store_failure_is_not_swallowed_as_contention(self, failing: str) -> None:
+        # Only a revision conflict means "try again". Anything else is the store being
+        # broken, and a merge loop that retried it would spin eight times and then report a
+        # convergence problem that never existed.
+        runtime = _runtime()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            job_id = uuid4()
+
+            if failing == "update":
+                await _projector(ctx).apply(_event(job_id, JobStatus.RUNNING, seconds=0, seq=1))
+
+            projector = _projector(
+                ctx,
+                command=_FailingCommand(
+                    ctx.document.command(_SPEC),
+                    failure=exc.infrastructure("the store is down"),
+                    times=1,
+                    on=failing,
+                ),
+            )
+
+            with pytest.raises(CoreException) as err:
+                await projector.apply(_event(job_id, JobStatus.RUNNING, seconds=1, seq=2))
+
+        assert err.value.kind.value == "infrastructure"
+
+    async def test_a_row_that_conflicts_but_cannot_be_read_gives_up_and_says_why(self) -> None:
+        # The unwinnable shape: the id conflicts on insert, so a row exists — and this scope
+        # cannot see it, so there is nothing to merge onto. Retrying forever would hang the
+        # consumer; the exception names the cause, because it is nearly always the job
+        # collection's tenancy wiring rather than contention.
+        runtime = _runtime()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            job_id = uuid4()
+
+            await _projector(ctx).apply(_event(job_id, JobStatus.RUNNING, seconds=0, seq=1))
+
+            blind = _projector(ctx, query=_BlindQuery(ctx.document.query(_SPEC), blind_for=1_000))
+
+            with pytest.raises(CoreException) as err:
+                await blind.apply(_event(job_id, JobStatus.RUNNING, seconds=1, seq=2))
+
+        assert err.value.code == "job_progress_merge_stalled"
+
+
+# ....................... #
+
+
 class TestSpecContributions:
     """The inventory half — both progress specs are ones no application author wrote."""
 
@@ -1194,6 +1366,13 @@ class TestSpecContributions:
         entries = progress_spec_contributions(spec=_SPEC).freeze()
 
         assert [entry.plane for entry in entries.entries] == [SpecPlane.DOCUMENT]
+
+    def test_only_the_outbox_half_is_catalogued_when_that_is_all_you_wired(self) -> None:
+        # The mirror of the case above: a deployment projecting from a consumer wires the
+        # route and not the collection, and cataloguing a spec nothing binds fails startup.
+        entries = progress_spec_contributions(outbox_spec=_PROGRESS_OUTBOX).freeze()
+
+        assert [entry.plane for entry in entries.entries] == [SpecPlane.OUTBOX]
 
     def test_contributing_nothing_is_refused(self) -> None:
         with pytest.raises(CoreException) as err:
@@ -1263,6 +1442,14 @@ class TestWiringGuards:
     def test_a_reporter_with_no_sinks_is_refused(self) -> None:
         with pytest.raises(CoreException) as err:
             ProgressReporter(job_id=uuid4(), kind="export", sinks=())
+
+        assert err.value.kind.value == "configuration"
+
+    def test_a_negative_window_is_refused(self) -> None:
+        # A negative window is not "no throttling" — `_within_window` would compare against
+        # a time in the past and the coalescer would silently become a plain emitter.
+        with pytest.raises(CoreException) as err:
+            _reporter(_RecordingSink(), min_interval=-1.0)
 
         assert err.value.kind.value == "configuration"
 
@@ -1340,6 +1527,37 @@ class TestDurableLinkage:
         assert row is not None
         assert row.durable_run_id == run.run_id
 
+    async def test_a_run_id_learned_later_fills_in(self) -> None:
+        # A job can outlive the run that produced it (that is what `waiting` is for), so the
+        # link often arrives on a later report than the one that created the row. It fills
+        # in rather than being ignored — and a tick that omits it is not asserting the job
+        # has no run.
+        runtime = _runtime()
+        run_id = str(uuid7())
+
+        async with runtime.scope():
+            projector = build_job_progress_projector(runtime.get_context())
+            job_id = uuid4()
+
+            await projector.apply(_event(job_id, JobStatus.RUNNING, seconds=0, seq=1))
+            row = await projector.apply(
+                JobProgress(
+                    job_id=job_id,
+                    kind="export",
+                    status=JobStatus.RUNNING,
+                    at=_T0 + timedelta(seconds=1),
+                    seq=2,
+                    subject="acme",
+                    durable_run_id=run_id,
+                )
+            )
+            kept = await projector.apply(_event(job_id, JobStatus.RUNNING, seconds=2, seq=3))
+
+        assert row.durable_run_id == run_id
+        assert row.subject == "acme"
+        assert kept.durable_run_id == run_id  # a later tick that omits it says nothing
+        assert kept.subject == "acme"
+
     async def test_a_reporter_built_outside_a_run_links_to_nothing(self) -> None:
         runtime = _runtime()
 
@@ -1390,6 +1608,33 @@ class TestInlineRecording:
         assert row.subject == "acme"
         assert row.started_at is not None
         assert row.finished_at is not None
+
+    async def test_a_block_that_raises_after_succeeding_keeps_its_own_word(
+        self, mocker: Any
+    ) -> None:
+        # Both facts are real and only one can be in the record: the job stated success, and
+        # then the block failed on its way out. The stated outcome stands — a second
+        # transition would raise out of the `async with` and punish the most explicit
+        # caller — but it is worth saying out loud, because the record and the traceback
+        # now disagree and only the log connects them.
+        logger = mocker.patch.object(reporter_module, "logger")
+        sink = _RecordingSink()
+        reporter = _reporter(sink, min_interval=0.0)
+
+        with pytest.raises(RuntimeError):
+            async with reporter.track():
+                await reporter.finish("done")
+
+                raise RuntimeError("the cleanup blew up")
+
+        assert [event.status for event in sink.transitions] == [
+            JobStatus.RUNNING,
+            JobStatus.SUCCEEDED,
+        ]
+        assert any(
+            "raised after reporting success" in call.args[0]
+            for call in logger.warning.call_args_list
+        )
 
     async def test_a_failed_terminal_can_be_stated_again(self) -> None:
         # The strand this closes: the local status was committed before the durable emit
