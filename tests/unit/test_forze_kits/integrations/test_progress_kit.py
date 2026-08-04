@@ -1636,6 +1636,28 @@ class TestInlineRecording:
             for call in logger.warning.call_args_list
         )
 
+    async def test_a_failed_finish_does_not_leave_the_bar_at_the_end(self) -> None:
+        # `finish()` completes the bar before emitting, because the terminal event carries
+        # the fraction. If that emit fails the job is still running — and a 1.0 high-water
+        # mark left behind clamps every later report up to it, so the work carries on under
+        # a bar that says it is done.
+        flaky = _FlakySink()
+        reporter = _reporter(flaky, min_interval=0.0)
+
+        await reporter.start()
+        await reporter.report(0.5, "halfway")
+        flaky.down = True
+
+        with pytest.raises(CoreException):
+            await reporter.finish("done")
+
+        flaky.down = False
+        assert reporter.progress == 0.5
+
+        await reporter.report(0.6, "still going")
+
+        assert flaky.ticks[-1].progress == 0.6
+
     async def test_a_failed_terminal_can_be_stated_again(self) -> None:
         # The strand this closes: the local status was committed before the durable emit
         # that publishes it, so an outbox that was down for one call left a reporter that

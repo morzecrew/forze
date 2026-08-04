@@ -298,6 +298,16 @@ class TestWhatTheSweepCounts:
         # The empty page is the later, truer answer — so both numbers say so.
         assert monitor.stats() == JobStalenessStats()
 
+    def test_declaring_the_catch_all_as_a_kind_is_refused(self) -> None:
+        # It is appended to whatever is declared, so a kind by that name reports one label
+        # value twice — the scrape double-counts it and any sum over the label is wrong.
+        with pytest.raises(CoreException) as err:
+            JobStalenessMonitor(
+                silent_after=_WINDOW, spec=_SPEC, kinds=("export", OTHER_KIND_LABEL)
+            )
+
+        assert err.value.code == "progress_kind_reserved"
+
     def test_a_window_of_zero_is_refused(self) -> None:
         with pytest.raises(CoreException) as err:
             JobStalenessMonitor(silent_after=timedelta(0), spec=_SPEC)

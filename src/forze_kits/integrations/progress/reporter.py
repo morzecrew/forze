@@ -350,8 +350,21 @@ class ProgressReporter:
     async def finish(self, message: str | None = None) -> None:
         """Report success. Completes the bar: a finished job is ``1.0``, never ``0.97``."""
 
+        # Completed *before* the transition, because the terminal event carries the
+        # fraction and a success that reports 0.97 is the thing this line exists to
+        # prevent — and rolled back here rather than in `_transition`, which cannot capture
+        # a value its caller has already overwritten. Without it, a finish that failed to
+        # emit leaves a 1.0 high-water mark on a job that is still running: every later
+        # report is clamped up to it, so the bar sits at 100% for the rest of the work.
+        was_progress = self._progress
         self._progress = 1.0
-        await self._transition(JobStatus.SUCCEEDED, message=message)
+
+        try:
+            await self._transition(JobStatus.SUCCEEDED, message=message)
+
+        except BaseException:
+            self._progress = was_progress
+            raise
 
     # ....................... #
 

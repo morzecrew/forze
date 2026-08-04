@@ -158,6 +158,16 @@ class JobStalenessMonitor:
         if self.silent_after.total_seconds() <= 0:
             raise exc.configuration("JobStalenessMonitor silent_after must be positive")
 
+        if OTHER_KIND_LABEL in self.kinds:
+            # The catch-all is appended to whatever is declared, so a kind by that name
+            # publishes two series under one label value — the scrape double-counts it and
+            # anything summing the label is wrong by however much that kind is stuck.
+            raise exc.configuration(
+                f"{OTHER_KIND_LABEL!r} is the label of the catch-all bucket, not a job kind: "
+                "declaring it reports one label value twice. Rename the kind.",
+                code="progress_kind_reserved",
+            )
+
     # ....................... #
 
     @property
