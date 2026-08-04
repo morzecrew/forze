@@ -40,6 +40,7 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
+from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.realtime import RealtimeSignal
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind, exc
@@ -91,6 +92,23 @@ def _merge_key(status: JobStatus, at: datetime, seq: int) -> tuple[int, datetime
     """The total order events are merged by (see the module docstring)."""
 
     return (int(status.is_terminal), at, seq, _STATUS_RANK[status])
+
+
+# ....................... #
+
+
+def _stalled_filters(silent_since: datetime, kind: str | None) -> QueryFilterExpression:
+    """The started-but-silent filter — shared by the page and the count."""
+
+    values: dict[str, Any] = {
+        "status": {"$in": [status.value for status in _ACTIVE_STATUSES]},
+        "heartbeat_at": {"$lt": silent_since},
+    }
+
+    if kind is not None:
+        values["kind"] = kind
+
+    return {"$values": values}
 
 
 # ....................... #
@@ -215,23 +233,30 @@ class JobProgressProjector:
         :func:`~.record.job_record_spec`'s own rule) and returns the quietest first, so a
         dashboard or an alarm can page a fixed number of the worst offenders whatever the
         collection's size.
+
+        The result is **capped by *limit***, so never read ``len(...)`` as "how many jobs
+        are stuck" — a metric built that way saturates at the page size and reads calmest
+        exactly when things are worst. :meth:`count_stalled` answers that question.
         """
 
-        values: dict[str, Any] = {
-            "status": {"$in": [status.value for status in _ACTIVE_STATUSES]},
-            "heartbeat_at": {"$lt": silent_since},
-        }
-
-        if kind is not None:
-            values["kind"] = kind
-
         page = await self.query.find_many(
-            filters={"$values": values},
+            filters=_stalled_filters(silent_since, kind),
             sorts={"heartbeat_at": "asc"},
             pagination={"limit": limit},
         )
 
         return page.hits
+
+    # ....................... #
+
+    async def count_stalled(self, *, silent_since: datetime, kind: str | None = None) -> int:
+        """How many jobs are stuck — the whole number, not a page of them.
+
+        Same filter as :meth:`find_stalled` (one function, so the count can never describe a
+        different set than the page next to it), answered by the same index.
+        """
+
+        return await self.query.count(_stalled_filters(silent_since, kind))
 
     # ....................... #
 

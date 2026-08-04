@@ -246,12 +246,51 @@ stalled = await projector.find_stalled(
 )
 ```
 
-It returns started-but-unfinished jobs, quietest first, so an alarm can page a
-bounded number of the worst offenders whatever the collection's size. A finished
+It returns started-but-unfinished jobs, quietest first, so an operator can look at
+a bounded number of the worst offenders whatever the collection's size. A finished
 job is never stuck, however long ago it finished; a `waiting` one still counts —
 a task paused on a human answer that nobody answers is exactly what you want to
-hear about. Feed the count into the probes described in
-[Observability](observability.md) and alarm on it there.
+hear about. The page is capped, so never read `len(...)` as "how many are stuck":
+`count_stalled(...)` is that question.
+
+Nothing in the request path is going to notice a job that stopped reporting four
+hours ago, so the plane sweeps for you and exports the answer:
+
+```python
+from forze_kits.integrations.progress import (
+    instrument_job_progress,
+    job_staleness_lifecycle_step,
+)
+
+step, monitor = job_staleness_lifecycle_step(silent_after=timedelta(minutes=15))
+instrument_job_progress(monitor)          # gauges, via the global OTel meter
+lifecycle_steps.append(step)
+```
+
+Three gauges, and the third is the one that is easy to leave out:
+
+| Metric | Says |
+|---|---|
+| `forze.jobs.stalled` | how many jobs are started, unfinished, and silent |
+| `forze.jobs.stalled.oldest_silence` | how long the quietest one has been silent (seconds) |
+| `forze.jobs.staleness.scan_age` | how old that answer is (seconds; `-1` = never swept) |
+
+An OTel callback is synchronous and the staleness query is not, so the gauges read
+the last sweep's answer — the *sweep* interval, not the scrape interval, is this
+signal's resolution. Which means a sweep loop that dies leaves the first two frozen
+at their last value, almost always zero, and every dashboard built on them alone
+goes green at the moment it stops knowing anything. **Alert on stuck jobs or a scan
+age that stops moving**, never on the count by itself.
+
+`silent_after` has no default: it must be comfortably longer than how often the
+work in question reports, or every healthy job reads as stuck. Pass `kinds=(...)`
+to break the gauges out per job kind — declared up front, because `kind` is your
+vocabulary and labelling by whatever the collection happens to hold makes metric
+cardinality a function of runtime data. The tenant is never a label; a
+`tenants=` sweep sums into one number and the record answers *which*.
+
+The panels and alert rules keyed to these names ship with the rest of the
+reference dashboards — see [Observability](observability.md).
 
 ## What stays out
 
