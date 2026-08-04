@@ -463,3 +463,24 @@ async def test_secrets_substore_must_be_a_dict() -> None:
     with pytest.raises(CoreException) as ei:
         await port.resolve_str(SecretRef(path="k"))
     assert ei.value.kind is ExceptionKind.INTERNAL
+
+
+def test_simple_stubs_are_built_with_and_without_shared_state() -> None:
+    """Both tenancy keys are ``SimpleDepPort`` s, so their stubs take ``(ctx)`` alone.
+
+    A ``(ctx, spec)`` factory here raises the moment anything resolves them — which is how
+    the arity mismatch survived: nothing did.
+    """
+
+    from forze_mock.execution.factories import ConstantSimpleMockFactory, route_simple_stubs
+
+    state = MockState()
+    shared = route_simple_stubs(MockTenantResolverPort, ["main", "other"], state=state)
+    standalone = route_simple_stubs(MockAuthzScopePort, ["main"])
+
+    assert sorted(shared) == ["main", "other"]
+    assert all(isinstance(factory, ConstantSimpleMockFactory) for factory in shared.values())
+    # Resolved with the context alone, and the same port every time.
+    assert shared["main"](None) is shared["main"](None)
+    assert shared["main"](None).state is state
+    assert standalone["main"](None) is not None

@@ -15,6 +15,61 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 
+def _fresh_default(instance: Any, default: Any) -> Any:
+    """A field's declared default, rebuilt if it is a factory.
+
+    ``takes_self`` factories are used elsewhere in this codebase, so calling every factory
+    bare would crash a reset the day one appears on this class rather than silently doing
+    the wrong thing later.
+    """
+
+    factory = getattr(default, "factory", None)
+
+    if factory is None:
+        return default
+
+    return factory(instance) if getattr(default, "takes_self", False) else factory()
+
+
+# ....................... #
+
+
+def _emptied_in_place(current: Any, fresh: Any) -> bool:
+    """Reset *current* to *fresh* without replacing the container; ``False`` if it cannot.
+
+    Identity is the point: an adapter that captured one of these stores keeps writing into
+    the object it holds, so replacing it would strand those writes where nothing reads them.
+    Refilled rather than merely emptied, because a factory can produce a populated default
+    (the identity plane ships its four sub-stores).
+    """
+
+    if type(current) is not type(fresh):
+        return False
+
+    if isinstance(current, dict) and isinstance(fresh, dict):
+        current.clear()  # pyright: ignore[reportUnknownMemberType]
+        current.update(fresh)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+
+        return True
+
+    if isinstance(current, set) and isinstance(fresh, set):
+        current.clear()  # pyright: ignore[reportUnknownMemberType]
+        current.update(fresh)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+
+        return True
+
+    if isinstance(current, list) and isinstance(fresh, list):
+        current.clear()  # pyright: ignore[reportUnknownMemberType]
+        current.extend(fresh)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+
+        return True
+
+    return False
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True)
 class MockTxSnapshot:
@@ -299,6 +354,54 @@ class MockState:
             self.__seq += 1
 
             return f"{prefix}-{self.__seq}"
+
+    # ....................... #
+
+    def clear(self) -> None:
+        """Empty every store, in place.
+
+        In place because the adapters hold *this* object: rebinding a fresh
+        :class:`MockState` would leave every resolved port writing to the old one. Derived
+        from the field definitions rather than a written-out list, so a store added later is
+        cleared too — a hand-maintained list is exactly the kind that silently goes stale.
+
+        Every public field is restored to its declared default, **including scalar ones**
+        like the MVCC commit counter. Skipping those would have left the derivation covering
+        only factory-defaulted fields, which is the same silent gap a written-out list has:
+        the next counter someone adds would quietly survive a reset.
+
+        **Synchronisation primitives are the exception, and it is not cosmetic.** A striped
+        lock table is machinery, not data: replacing it while a caller waits on one of its
+        locks hands the next caller a *different* lock and silently breaks single-flight.
+        Detected by type rather than by name, so a second lock table added later is exempt
+        without anyone remembering to say so.
+
+        The lock, the transaction serializer and the id sequence are private and survive for
+        the same reason: a reset empties the data, it does not rebuild the state's machinery
+        mid-flight.
+
+        **Containers are emptied in place, not replaced.** Adapters and open transactions
+        hold references to these stores, and :meth:`restore_tx_stores` already works this
+        way — replacing a container here would leave a rollback writing into a store nothing
+        can read any more. What this cannot do is coordinate: a transaction that snapshotted
+        before a reset still restores its own rows afterwards, because a reset is a developer
+        action against a running server and not a transaction participant.
+        """
+
+        with self.__lock:
+            for field in attrs.fields(type(self)):
+                if field.name.startswith("_") or field.default is attrs.NOTHING:
+                    continue
+
+                current = getattr(self, field.name, None)
+
+                if isinstance(current, StripedAsyncLocks):
+                    continue
+
+                fresh = _fresh_default(self, field.default)
+
+                if not _emptied_in_place(current, fresh):
+                    setattr(self, field.name, fresh)
 
     # ....................... #
 

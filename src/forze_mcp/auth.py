@@ -92,6 +92,7 @@ def _split_api_key(raw: str) -> ApiKeyCredentials:
 async def _resolve_tenant(
     ctx: ExecutionContext,
     result: AuthnResult,
+    route: str | None = None,
 ) -> TenantIdentity | None:
     """Resolve the tenant for an authenticated principal (mirrors the HTTP edge).
 
@@ -101,7 +102,7 @@ async def _resolve_tenant(
     """
 
     requested = parse_tenant_hint(result.issuer_tenant_hint)
-    resolver = ctx.tenancy.resolver()
+    resolver = ctx.tenancy.resolver(route)
 
     if resolver is not None:
         return await resolver.resolve_from_principal(
@@ -164,7 +165,7 @@ class ForzeApiKeyVerifier(TokenVerifier):
         if result is None:  # pyright: ignore[reportUnnecessaryComparison]
             return None
 
-        tenant = await _resolve_tenant(ctx, result)
+        tenant = await _resolve_tenant(ctx, result, str(self.authn_spec.name))
         claims: dict[str, object] = {}
 
         if tenant is not None:

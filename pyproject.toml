@@ -168,6 +168,10 @@ inference-sagemaker = [
 mcp = ["fastmcp>=3.0.0", "mcp>=1.27.0"]
 dst = ["polyfactory>=3.3.0", "hypothesis>=6.153.0"]
 cli = ["typer>=0.12.0"]
+# The served mock: routing + a server for the control plane, and polyfactory for seeding.
+# Listed concretely rather than referencing the 'dst' extra — extras that depend on extras
+# resolve unpredictably across installers.
+mock-server = ["polyfactory>=3.3.0", "starlette>=0.52.1", "uvicorn[standard]>=0.42.0"]
 zstd = ["zstandard>=0.23.0"]
 
 # ....................... #
@@ -829,6 +833,50 @@ ignore_missing_imports = true
 implicit_reexport = true
 
 # ....................... #
+# Mock-server catalog gate
+#
+# Every operation in the driving example's catalog must resolve, and must answer against
+# seeded data. A plane the seeder cannot fill therefore fails CI instead of shipping green.
+# The exemptions below are operations that cannot be driven blind — not planes that are
+# unsupported — and the table is checked BOTH ways: an exemption whose operation starts
+# passing must be deleted, so it can only ever shrink.
+
+[tool.mock_gate]
+app = "examples.recipes.mock_workspace.served:mock_app"
+
+[[tool.mock_gate.exempt]]
+op = "attachments.complete_upload"
+reason = "needs a live multipart session id; a seed has no way to leave one open"
+
+[[tool.mock_gate.exempt]]
+op = "attachments.list_parts"
+reason = "needs a live multipart session id; a seed has no way to leave one open"
+
+[[tool.mock_gate.exempt]]
+op = "attachments.download"
+reason = "the catalog carries no input type for this operation, so a blind sweep has nothing to author"
+
+[[tool.mock_gate.exempt]]
+op = "attachments.head"
+reason = "the catalog carries no input type for this operation, so a blind sweep has nothing to author"
+
+[[tool.mock_gate.exempt]]
+op = "attachments.download_stream"
+reason = "the catalog carries no input type for this operation, so a blind sweep has nothing to author"
+
+[[tool.mock_gate.exempt]]
+op = "attachments.download_range"
+reason = "a byte range only means something against a known object length; the sweep has no size to range over"
+
+[[tool.mock_gate.exempt]]
+op = "projects.agg_list"
+reason = "an aggregate request names functions and fields the caller chooses; a blind sweep cannot author one"
+
+[[tool.mock_gate.exempt]]
+op = "tasks.agg_list"
+reason = "an aggregate request names functions and fields the caller chooses; a blind sweep cannot author one"
+
+# ....................... #
 # Import contracts
 
 [tool.importlinter]
@@ -986,6 +1034,22 @@ protected_modules = [
 ]
 allowed_importers = ["forze_cli"]
 as_packages = true
+
+[[tool.importlinter.contracts]]
+name = "forze_mock never imports a sibling integration package"
+type = "forbidden"
+source_modules = ["forze_mock"]
+forbidden_modules = [
+    "forze_fastapi",
+    "forze_identity",
+    "forze_kits",
+    "forze_dst",
+    "forze_mcp",
+]
+# The mock is a leaf provider: every consumer of it depends on that. A submodule reaching
+# for a transport's route attachers or the identity plane's verifiers would invert the
+# layering for all of them — and would let a mock server mint its own principal, which is
+# the one thing it must never be able to do.
 
 # ....................... #
 # Dead code

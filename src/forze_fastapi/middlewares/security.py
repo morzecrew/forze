@@ -89,8 +89,15 @@ class SecurityContextMiddleware:
         self,
         request: Request,
         ctx: ExecutionContext,
-    ) -> AuthnResult | None:
-        results: list[AuthnResult] = []
+    ) -> tuple[AuthnResult, str] | None:
+        """The winning credential, and the authn route it came in on.
+
+        The route travels with the result because tenancy resolution needs it: the
+        resolver is registered per route, and a credential's tenancy belongs to the same
+        profile the credential authenticated against.
+        """
+
+        results: list[tuple[AuthnResult, str]] = []
 
         for x in self.authn.ingress:
             res = await resolve_authn_ingress(x, request=request, ctx=ctx)
@@ -98,10 +105,10 @@ class SecurityContextMiddleware:
             if res is None:
                 continue
 
-            results.append(res)
+            results.append((res, str(x.authn_spec.name)))
 
             if self.when_multiple_credentials == "first_in_order":
-                return res
+                return results[-1]
 
         if not results:
             return None
@@ -133,13 +140,15 @@ class SecurityContextMiddleware:
         ctx = self.ctx_dep()
 
         try:
-            authn_res = await self._resolve_authn(request, ctx)
+            resolved = await self._resolve_authn(request, ctx)
+            authn_res, authn_route = resolved if resolved is not None else (None, None)
             authn = authn_res.identity if authn_res is not None else None
             tenant = await resolve_tenant_identity(
                 authn_res,
                 request=request,
                 ctx=ctx,
                 trust_tenant_header=self.trust_tenant_header,
+                tenancy_route=authn_route,
             )
 
         except CoreException as error:

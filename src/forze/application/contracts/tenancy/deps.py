@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from forze.base.exceptions import exc
+from forze.base.primitives import StrKey
 
 from ..deps import ConvenientDeps, DepKey, SimpleDepPort
 from .ports import TenantManagementPort, TenantResolverPort
@@ -29,19 +30,32 @@ TenantManagementDepKey = DepKey[TenantManagementDepPort]("tenant_management")
 class TenancyDeps(ConvenientDeps):
     """Convenience wrapper for tenacy dependencies."""
 
-    def resolver(self) -> TenantResolverPort | None:
-        """Resolve a tenant resolver port."""
+    def resolver(self, route: StrKey | None = None) -> TenantResolverPort | None:
+        """Resolve a tenant resolver port for *route*, falling back to a plain registration.
+
+        *route* is the tenancy route — conventionally the authn spec's name, since a
+        credential and the tenancy it resolves through belong to the same profile. It is
+        not optional in practice: :class:`~forze_identity.tenancy.TenancyDepsModule`
+        registers this key **routed**, so a route-less lookup finds nothing and the caller
+        silently behaves as if no tenancy plane were wired — no tenant bound, and every
+        tenant-aware adapter then failing closed on a request that was correctly
+        authenticated. Passing ``None`` keeps the plain-only lookup for wiring that
+        registers it that way.
+        """
 
         ctx = self._require_ctx()
+        registered = ctx.deps.exists(TenantResolverDepKey, route=route) or (
+            route is not None and ctx.deps.exists(TenantResolverDepKey)
+        )
 
-        if not ctx.deps.exists(TenantResolverDepKey):
+        if not registered:
             return None
 
-        return self._resolve_simple(TenantResolverDepKey)
+        return self._resolve_simple(TenantResolverDepKey, route=route)
 
     # ....................... #
 
-    def require_resolver(self) -> TenantResolverPort:
+    def require_resolver(self, route: StrKey | None = None) -> TenantResolverPort:
         """Return the tenant resolver port, raising when none is registered.
 
         Raising variant of :meth:`resolver` (mirroring :meth:`require_current_id`)
@@ -49,7 +63,7 @@ class TenancyDeps(ConvenientDeps):
         a feature toggle.
         """
 
-        resolver = self.resolver()
+        resolver = self.resolver(route)
 
         if resolver is None:
             raise exc.configuration(
@@ -60,26 +74,33 @@ class TenancyDeps(ConvenientDeps):
 
     # ....................... #
 
-    def manager(self) -> TenantManagementPort | None:
-        """Resolve a tenant management port."""
+    def manager(self, route: StrKey | None = None) -> TenantManagementPort | None:
+        """Resolve a tenant management port for *route* — see :meth:`resolver`.
+
+        Registered routed by ``TenancyDepsModule`` for the same reason, and route-less
+        here for the same historical one.
+        """
 
         ctx = self._require_ctx()
+        registered = ctx.deps.exists(TenantManagementDepKey, route=route) or (
+            route is not None and ctx.deps.exists(TenantManagementDepKey)
+        )
 
-        if not ctx.deps.exists(TenantManagementDepKey):
+        if not registered:
             return None
 
-        return self._resolve_simple(TenantManagementDepKey)
+        return self._resolve_simple(TenantManagementDepKey, route=route)
 
     # ....................... #
 
-    def require_manager(self) -> TenantManagementPort:
+    def require_manager(self, route: StrKey | None = None) -> TenantManagementPort:
         """Return the tenant management port, raising when none is registered.
 
         Raising variant of :meth:`manager` for callers that treat a missing manager as a
         wiring error rather than a feature toggle.
         """
 
-        manager = self.manager()
+        manager = self.manager(route)
 
         if manager is None:
             raise exc.configuration(

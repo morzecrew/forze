@@ -1,0 +1,36 @@
+set shell := ["bash", "-cu"]
+
+# Serve the app on in-memory backends at http://localhost:8000 — no infra, no compose file.
+run:
+    uv run --directory ../../.. python -m examples.recipes.mock_server.app
+
+# The same app through the CLI, with the /_mock control plane mounted beside it.
+serve:
+    FORZE_MOCK_SERVER=1 uv run --directory ../../.. \
+        forze mock serve examples.recipes.mock_server.served:mock_app
+
+# Build and run the container a frontend team would use — no Python toolchain required.
+up:
+    docker compose up --build -d --wait
+    @echo "mock API on http://localhost:8000 — control plane at /_mock"
+
+down:
+    docker compose down
+
+# Arm a real 409 on the next product create, then show what is armed.
+fault:
+    curl -sS -X POST localhost:8000/_mock/fault \
+        -H 'content-type: application/json' \
+        -d '{"route": "products", "op": "create", "kind": "conflict", "times": 1}'
+    curl -sS localhost:8000/_mock/health
+
+# The seeded catalog, through the generated list route.
+smoke:
+    curl -sS -X POST localhost:8000/products/list \
+        -H 'X-API-Key: dev-key' -H 'content-type: application/json' -d '{}'
+
+# Export the OpenAPI document — the handoff for consumers with no Python (see the docs page).
+openapi:
+    uv run --directory ../../.. python -c \
+        "import json; from examples.recipes.mock_server.app import build_server; \
+         print(json.dumps(build_server().openapi(), indent=2))"
