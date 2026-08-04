@@ -42,9 +42,11 @@ from forze_mock.seeding import (
     infer_links,
     load_fixtures,
     seed_order,
+    seed_plan,
     singularize,
     spec_seed,
 )
+from forze_mock.seeding.values import split_row_id
 
 pytestmark = pytest.mark.unit
 
@@ -324,6 +326,50 @@ class TestReferentialIntegrity:
         with pytest.raises(CoreException, match="first row of a self-reference"):
             await apply_seed(ctx, plan)
 
+    def test_an_override_targeting_an_unseeded_spec_is_refused(self) -> None:
+        seeds = (spec_seed(_tasks(), count=1),)
+
+        with pytest.raises(CoreException, match="targets 'ghosts', which is not seeded"):
+            infer_links(seeds, overrides={"tasks": {"project_id": "ghosts"}})
+
+    def test_an_override_naming_a_field_the_command_lacks_is_refused(self) -> None:
+        # The typo case: an override that matches no field would otherwise be inert, and a
+        # link the author believes they declared is worse than one they know is missing.
+        seeds = (spec_seed(_tasks(), count=1), spec_seed(_projects(), count=1))
+
+        with pytest.raises(CoreException, match="does not create: projekt_id"):
+            infer_links(seeds, overrides={"tasks": {"projekt_id": "projects"}})
+
+    def test_bookkeeping_fields_are_never_read_as_references(self) -> None:
+        # A spec literally named `keys` makes `_key` a matching stem, so `last_update_at`
+        # and friends are excluded by name rather than by luck of the suffix list.
+        class _BookkeepingCreate(CreateDocumentCmd):
+            id: UUID | None = None
+            rev: int = 0
+            created_at: str = ""
+            last_update_at: str = ""
+
+        spec = DocumentSpec(
+            name="records",
+            read=_ProjectRead,
+            write=DocumentWriteTypes(
+                domain=_Project, create_cmd=_BookkeepingCreate, update_cmd=_ProjectUpdate
+            ),
+        )
+
+        assert infer_links((spec_seed(spec, count=1), spec_seed(_projects(), count=1))) == {}
+
+    def test_a_plan_refuses_link_overrides_for_specs_it_does_not_seed(self) -> None:
+        with pytest.raises(CoreException, match="name specs that are not seeded: ghosts"):
+            SeedPlan(specs=(spec_seed(_projects(), count=1),), links={"ghosts": {"x": None}})
+
+    def test_the_convenience_constructors_build_the_same_plan(self) -> None:
+        one = seed_plan(spec_seed(_projects(), count=2), rng_seed=9)
+        two = SeedPlan(specs=(), rng_seed=9).with_specs(spec_seed(_projects(), count=2))
+
+        assert one.rng_seed == 9
+        assert [seed.spec.name for seed in one.specs] == [seed.spec.name for seed in two.specs]
+
     def test_a_cycle_between_specs_is_refused_with_the_way_out(self) -> None:
         class _ProjectWithLead(CreateDocumentCmd):
             task_id: UUID | None = None
@@ -420,6 +466,37 @@ class TestPlausibility:
         )
 
         assert load_fixtures(source) == tuple(rows)
+
+    def test_a_missing_fixture_file_is_named(self, tmp_path: Path) -> None:
+        with pytest.raises(CoreException, match="Fixture file not found"):
+            load_fixtures(tmp_path / "absent.json")
+
+    @pytest.mark.asyncio
+    async def test_a_fixture_id_may_be_a_uuid_object_or_its_text(self) -> None:
+        # Both spellings reach a plan: JSON gives text, a Python-declared plan gives a UUID.
+        ctx = context_from_modules(MockDepsModule())
+        as_object = UUID("22222222-2222-2222-2222-222222222222")
+        as_text = "33333333-3333-3333-3333-333333333333"
+
+        result = await apply_seed(
+            ctx,
+            SeedPlan(
+                specs=(
+                    spec_seed(
+                        _projects(),
+                        fixtures=[{"id": as_object, "name": "a"}, {"id": as_text, "name": "b"}],
+                    ),
+                )
+            ),
+        )
+
+        assert result["projects"] == (as_object, UUID(as_text))
+
+    def test_a_fixture_id_that_is_not_a_uuid_is_refused_by_value(self) -> None:
+        seed = spec_seed(_projects(), fixtures=[{"id": "not-a-uuid", "name": "a"}])
+
+        with pytest.raises(CoreException, match="Fixture 'id' is not a UUID"):
+            split_row_id(seed.fixtures[0])
 
     def test_a_fixture_file_that_is_not_a_list_of_rows_is_refused(self, tmp_path: Path) -> None:
         source = tmp_path / "bad.json"
@@ -587,6 +664,17 @@ class TestEveryPlaneGoesThroughItsOwnWritePath:
         assert result.indexed["notes_index"] == ("a",)
 
     @pytest.mark.asyncio
+    async def test_an_empty_search_seed_touches_the_index_not_at_all(self) -> None:
+        # No documents means no upsert — an empty write is not the same as no write, and a
+        # plane declared but unfilled should report nothing rather than an empty batch.
+        ctx = context_from_modules(MockDepsModule())
+
+        result = await apply_seed(ctx, SeedPlan(search=(SearchSeed(spec=_INDEX),)))
+
+        assert result.indexed == {"notes_index": ()}
+        assert result.total_all_planes == 0
+
+    @pytest.mark.asyncio
     async def test_search_ids_follow_a_seeded_document_spec(self) -> None:
         # An index whose ids name nothing is an index every hit of which 404s when the
         # client fetches the row behind it.
@@ -729,6 +817,25 @@ class TestStateResetIsTotal:
                 "outlives POST /_mock/reset"
             )
 
+    def test_a_store_someone_is_holding_is_emptied_not_swapped_out(self) -> None:
+        # Adapters and open transactions hold these containers directly — and
+        # `restore_tx_stores` already resets in place, so a `clear()` that swapped them would
+        # leave a rollback writing into a store nothing can read.
+        state = MockState()
+        held = state.documents
+        held_identity = state.identity
+        state.documents["notes"] = {"a": {"id": "a"}}
+        state.identity["authn"]["key"] = "value"
+
+        state.clear()
+
+        assert state.documents is held, "the container was replaced, not emptied"
+        assert held == {}
+        # A populated default is refilled, not merely emptied.
+        assert state.identity is held_identity
+        assert sorted(held_identity) == ["authn", "authz", "secrets", "tenants"]
+        assert held_identity["authn"] == {}
+
     def test_a_takes_self_factory_is_rebuilt_rather_than_crashing_the_reset(self) -> None:
         # `takes_self=True` factories are used across this codebase, so calling every factory
         # bare would turn the day one lands on MockState into a broken `POST /_mock/reset`.
@@ -747,6 +854,15 @@ class TestStateResetIsTotal:
         field = attrs.fields(_Holder).items
 
         assert _fresh_default(holder, field.default) == [0, 0, 0]
+
+    def test_a_field_whose_type_changed_is_replaced_rather_than_emptied(self) -> None:
+        from forze_mock.state import _emptied_in_place
+
+        # Nothing to empty in place when the two are not the same container — the caller
+        # falls back to assignment rather than half-resetting.
+        assert _emptied_in_place(57, 0) is False
+        assert _emptied_in_place(None, {}) is False
+        assert _emptied_in_place({"a": 1}, {}) is True
 
     def test_the_machinery_survives_because_callers_may_be_waiting_on_it(self) -> None:
         # Rebuilding a striped lock table mid-flight hands the next caller a *different*

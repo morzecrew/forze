@@ -55,6 +55,21 @@ class TestMockServe:
         assert result.exception is None or isinstance(result.exception, SystemExit)
         assert "zero-argument callable" in result.output
 
+    def test_serving_does_not_require_the_seed_generator(self, monkeypatch) -> None:
+        # A MockApp with no seed plan never imports `forze_mock.seeding`, so gating every
+        # served app on the generator refuses apps over a dependency they do not use.
+        import forze_cli._compat as compat
+
+        seen: list[str] = []
+        monkeypatch.setattr(
+            compat, "find_spec", lambda name: seen.append(name) or object()  # type: ignore[func-returns-value]
+        )
+
+        compat.require_mock_server()
+
+        assert "polyfactory" not in seen
+        assert seen == ["starlette", "uvicorn"]
+
     def test_the_command_is_registered_with_its_own_help(self) -> None:
         result = runner.invoke(app, ["mock", "--help"])
 

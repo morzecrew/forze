@@ -40,6 +40,8 @@ from forze_mock import MockDepsModule, MockState
 from forze_mock.execution.configs import MockRouteConfig
 from forze_mock.seeding import SeedPlan, spec_seed
 from forze_mock.server import ControlPlane, MockApp, MockSession, build_mock_server, serve
+from forze_mock.server.clock import ControlledTimeSource
+from forze_mock.server import control
 from forze_mock.server.control import _INSPECTABLE_STORES
 from forze_mock.server.faults import ArmedFault, FaultBoard
 from forze_mock.server.runner import _is_loopback
@@ -105,6 +107,37 @@ def _mock_app(**overrides) -> MockApp:
 def client() -> Iterator[TestClient]:
     with TestClient(build_mock_server(_mock_app())) as running:
         yield running
+
+
+def _stub_serving(monkeypatch) -> tuple[list[Any], list[str]]:
+    """Arm ``serve`` for inspection: uvicorn stubbed, warnings recorded.
+
+    The warnings are taken from the module's own logger rather than from captured output —
+    logging configuration is process-global here, so reading stdout makes the assertion
+    depend on whichever test configured structlog last.
+    """
+
+    import uvicorn
+
+    from forze_mock.server import runner
+
+    served: list[Any] = []
+    warnings: list[str] = []
+
+    class _Recorder:
+        """Stands in for the module logger — the real one is frozen and cannot be patched."""
+
+        def warning(self, message: str, *args: Any, **_kwargs: Any) -> None:
+            warnings.append(message % args if args else message)
+
+        def info(self, message: str, *args: Any, **_kwargs: Any) -> None:
+            _ = message, args
+
+    monkeypatch.setenv("FORZE_MOCK_SERVER", "1")
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: served.append((app, kwargs)))
+    monkeypatch.setattr(runner, "logger", _Recorder())
+
+    return served, warnings
 
 
 def _elapsed(call: Callable[[], object]) -> float:
@@ -227,6 +260,22 @@ class TestItRefusesToServeSomethingReal:
         with pytest.raises(CoreException, match="on_emit must be callable"):
             MockApp(build_app=_build_app, on_emit="not a hook")  # type: ignore[arg-type]
 
+    def test_an_uncallable_app_factory_is_refused_at_declaration(self) -> None:
+        with pytest.raises(CoreException, match="build_app must be callable"):
+            MockApp(build_app="myapp:create")  # type: ignore[arg-type]
+
+    def test_a_relative_control_prefix_is_refused(self) -> None:
+        with pytest.raises(CoreException, match="must start with '/'"):
+            ControlPlane(prefix="_mock")
+
+    def test_a_disabled_control_plane_does_not_police_its_prefix(self) -> None:
+        # Nothing is mounted, so there is nothing for the prefix to be wrong about.
+        assert ControlPlane(enabled=False, prefix="whatever").prefix == "whatever"
+
+    def test_state_and_a_prebuilt_mock_module_together_are_refused(self) -> None:
+        with pytest.raises(CoreException, match="not both"):
+            MockApp(build_app=_build_app, state=MockState(), mock=MockDepsModule())
+
     def test_a_session_cannot_be_minted_outside_the_builder(self) -> None:
         # Decision 9: the control plane takes a type, not a flag, so it cannot be switched
         # on for a production runtime by configuration.
@@ -238,6 +287,36 @@ class TestItRefusesToServeSomethingReal:
                 board=None,  # type: ignore[arg-type]
                 clock=None,  # type: ignore[arg-type]
             )
+
+    def test_serving_warns_about_the_open_control_plane_only_off_loopback(
+        self, monkeypatch
+    ) -> None:
+        # `serve` is otherwise untestable end to end — it binds a port — so the run itself is
+        # stubbed and what is asserted is the pair of warnings and the app handed to uvicorn.
+        served, warnings = _stub_serving(monkeypatch)
+
+        serve(_mock_app(), host="0.0.0.0", port=9999)  # noqa: S104 - the case under test
+
+        assert served, "uvicorn.run was never reached"
+        assert served[0][1]["port"] == 9999
+        assert any("IN-MEMORY MOCK" in message for message in warnings)
+        assert any("UNAUTHENTICATED" in message for message in warnings)
+
+        warnings.clear()
+        serve(_mock_app(), host="127.0.0.1")
+
+        assert not any("UNAUTHENTICATED" in message for message in warnings)
+
+    def test_serving_with_the_control_plane_off_says_so_and_stays_quiet(self, monkeypatch) -> None:
+        _, warnings = _stub_serving(monkeypatch)
+
+        serve(
+            MockApp(build_app=_build_app, control=ControlPlane(enabled=False)),
+            host="0.0.0.0",  # noqa: S104 - off-loopback, but nothing is exposed
+        )
+
+        assert any("control plane=disabled" in message for message in warnings)
+        assert not any("UNAUTHENTICATED" in message for message in warnings)
 
     @pytest.mark.parametrize(
         ("host", "loopback"),
@@ -374,6 +453,106 @@ class TestTheControlPlane:
         assert created["created_at"].startswith("2030-01-01T01:00")
 
         assert client.post("/_mock/time", json={"action": "resume"}).json()["frozen"] is False
+
+    def test_seeding_again_without_a_reset_explains_the_collision(
+        self, client: TestClient
+    ) -> None:
+        # Determinism makes this the expected outcome: the same plan mints the same ids, so
+        # "onto the current state" lands on the rows the first application wrote. No body at
+        # all, because "seed again" is the natural request and the route tolerates one.
+        again = client.post("/_mock/seed")
+
+        assert again.status_code == 400, again.text
+        assert '{"reset": true}' in again.json()["error"]
+        assert len(_titles(client)) == 3, "the failed re-seed must not have half-written rows"
+
+    def test_a_seed_failing_for_any_other_reason_is_not_dressed_up_as_a_collision(
+        self, client: TestClient
+    ) -> None:
+        # Only a conflict gets the "send reset" advice — anything else has to reach the
+        # caller as itself, or the route would explain every failure the same wrong way.
+        armed = client.post(
+            "/_mock/fault", json={"route": "notes", "op": "create", "kind": "throttled"}
+        )
+        assert armed.status_code == 201
+
+        response = client.post("/_mock/seed", json={"reset": True})
+
+        assert "seeded" not in response.json(), response.text
+        assert "Injected by the mock control plane" in response.json()["error"]
+        assert "reset" not in response.json()["error"], "a throttle is not a collision"
+
+    def test_seed_can_clear_first(self, client: TestClient) -> None:
+        client.post("/notes", json={"title": "transient"})
+
+        assert client.post("/_mock/seed", json={"reset": True}).json() == {"seeded": 3}
+        assert "transient" not in _titles(client)
+        assert len(_titles(client)) == 3
+
+    def test_a_server_with_no_plan_resets_to_nothing_rather_than_failing(self) -> None:
+        with TestClient(build_mock_server(MockApp(build_app=_build_app))) as client:
+            reset = client.post("/_mock/reset")
+
+            assert reset.json() == {"reset": True, "seeded": 0}
+            assert client.get("/_mock/health").json()["seeded"] is False
+
+    def test_a_store_that_drifted_off_the_state_is_reported_not_answered(
+        self, client: TestClient, monkeypatch
+    ) -> None:
+        # The guard behind the `outbox`/`outbox_rows` bug: allowlisted but absent must say
+        # so, because `null` reads as "the store is empty".
+        monkeypatch.setattr(control, "_INSPECTABLE_STORES", ("documents", "ghost_store"))
+
+        response = client.get("/_mock/state/ghost_store")
+
+        assert response.status_code == 500
+        assert "allowlist has drifted" in response.json()["error"]
+
+    def test_a_store_rendering_bytes_says_how_many_rather_than_dumping_them(self) -> None:
+        rendered = control._jsonable(
+            {"blob": b"12345", "tags": {"a"}, "rows": [1, "two", None], "when": datetime.now(UTC)}
+        )
+
+        assert rendered["blob"] == "<5 bytes>"
+        assert rendered["tags"] == ["a"]
+        assert rendered["rows"] == [1, "two", None]
+        assert isinstance(rendered["when"], str)
+
+    @pytest.mark.parametrize(
+        ("path", "body", "expected"),
+        [
+            pytest.param("/_mock/fault", {"route": "notes"}, "needs a 'kind'", id="fault-no-kind"),
+            pytest.param(
+                "/_mock/latency", {"seconds": -1}, "must not be negative", id="latency-negative"
+            ),
+            pytest.param(
+                "/_mock/time", {"action": "sideways"}, "Unknown time action", id="time-action"
+            ),
+        ],
+    )
+    def test_a_missing_or_impossible_instruction_is_named(
+        self, client: TestClient, path: str, body: dict[str, object], expected: str
+    ) -> None:
+        response = client.post(path, json=body)
+
+        assert response.status_code == 422, response.text
+        assert expected in response.json()["error"]
+
+    def test_a_body_that_is_not_an_object_is_refused(self, client: TestClient) -> None:
+        response = client.post("/_mock/fault", json=["conflict"])
+
+        assert response.status_code == 422
+        assert "must be JSON objects" in response.json()["error"]
+
+    def test_freezing_without_an_instant_stops_the_clock_where_it_is(
+        self, client: TestClient
+    ) -> None:
+        frozen = client.post("/_mock/time", json={"action": "freeze"})
+
+        assert frozen.json()["frozen"] is True
+        assert client.post("/_mock/time", json={"action": "freeze"}).json()["now"] == (
+            frozen.json()["now"]
+        )
 
     def test_freezing_at_a_naive_instant_reads_it_as_utc(self, client: TestClient) -> None:
         # Naive in, aware out. Storing it naive would poison every later read: `now()` would
@@ -512,6 +691,55 @@ class TestAMalformedControlRequestIsRefusedNotCrashed:
         statuses = [client.post("/notes/list", json={}).status_code for _ in range(3)]
 
         assert statuses == [409, 409, 200]
+
+
+class TestTheControlledClockItself:
+    """The time source's own contract, below the route that drives it."""
+
+    def test_freezing_without_an_instant_stops_at_now(self) -> None:
+        clock = ControlledTimeSource()
+
+        stopped = clock.freeze()
+
+        assert clock.frozen_at == stopped
+        assert clock.now() == stopped
+
+    def test_a_running_clock_advances_by_offset_and_keeps_running(self) -> None:
+        clock = ControlledTimeSource()
+
+        moved = clock.advance(timedelta(hours=1))
+
+        assert clock.frozen_at is None
+        assert clock.offset == timedelta(hours=1)
+        assert moved - datetime.now(UTC) > timedelta(minutes=59)
+
+    def test_resuming_a_clock_that_never_stopped_changes_nothing(self) -> None:
+        clock = ControlledTimeSource()
+
+        assert clock.resume() is not None
+        assert clock.frozen_at is None
+        assert clock.offset == timedelta()
+
+    def test_the_clock_refuses_to_run_backwards(self) -> None:
+        # The route answers 422 before reaching this, but the source is the contract.
+        with pytest.raises(CoreException, match="only advances forward"):
+            ControlledTimeSource().advance(timedelta(seconds=-1))
+
+    def test_monotonic_keeps_elapsing_while_the_wall_clock_is_frozen(self) -> None:
+        # Only the wall clock is controlled, so a frozen server still times out.
+        clock = ControlledTimeSource()
+        clock.freeze(datetime(2030, 1, 1, tzinfo=UTC))
+
+        assert clock.monotonic() <= clock.monotonic()
+
+    def test_a_fault_that_does_not_match_is_stepped_over(self) -> None:
+        board = FaultBoard()
+        board.arm_fault(
+            ArmedFault(selector=PortSelector(route="elsewhere"), kind=ExceptionKind.CONFLICT)
+        )
+
+        assert board.take_fault(PortCall(surface=None, route="notes", op="create")) is None
+        assert len(board.faults) == 1, "a non-matching fault must stay armed"
 
 
 class TestPaginationIsReal:

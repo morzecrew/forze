@@ -243,7 +243,21 @@ def build_control_app(session: MockSession) -> Starlette:
         if payload.get("reset", False):
             session.state.clear()
 
-        seeded = await _apply_seed(session)
+        try:
+            seeded = await _apply_seed(session)
+
+        # Determinism makes this the *expected* outcome, not an edge case: a plan with a
+        # pinned instant mints the same ids on every run, so a second application lands on
+        # the rows the first one wrote. Saying so beats a bare "Unique violation".
+        except CoreException as error:
+            if error.kind is not ExceptionKind.CONFLICT:
+                raise
+
+            raise exc.precondition(
+                "Re-applying the seed collided with rows already present: a plan with a "
+                'pinned instant mints the same ids every run. Send {"reset": true} to '
+                "seed a clean state, or declare the plan with instant=None"
+            ) from error
 
         return JSONResponse({"seeded": seeded})
 

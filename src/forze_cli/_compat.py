@@ -31,11 +31,13 @@ def require_dst() -> None:
 def require_mock_server() -> None:
     """Exit with a clear message when the ``mock-server`` extra is missing.
 
-    Serving needs routing, a server and the seeding generator; those live in the
-    ``mock-server`` extra, not ``cli``.
+    Only what *serving* needs. The generator behind ``forze_mock.seeding`` is in the same
+    extra for convenience, but a ``MockApp`` with no seed plan — or one carrying hand-written
+    fixtures — never imports it, and refusing to serve that app over a dependency it does not
+    use would be a gate on the wrong thing. ``require_seeding()`` covers the case that does.
     """
 
-    missing = [name for name in ("starlette", "uvicorn", "polyfactory") if find_spec(name) is None]
+    missing = [name for name in ("starlette", "uvicorn") if find_spec(name) is None]
 
     if missing:
         typer.echo(

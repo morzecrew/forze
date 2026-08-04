@@ -34,6 +34,42 @@ def _fresh_default(instance: Any, default: Any) -> Any:
 # ....................... #
 
 
+def _emptied_in_place(current: Any, fresh: Any) -> bool:
+    """Reset *current* to *fresh* without replacing the container; ``False`` if it cannot.
+
+    Identity is the point: an adapter that captured one of these stores keeps writing into
+    the object it holds, so replacing it would strand those writes where nothing reads them.
+    Refilled rather than merely emptied, because a factory can produce a populated default
+    (the identity plane ships its four sub-stores).
+    """
+
+    if type(current) is not type(fresh):
+        return False
+
+    if isinstance(current, dict) and isinstance(fresh, dict):
+        current.clear()  # pyright: ignore[reportUnknownMemberType]
+        current.update(fresh)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+
+        return True
+
+    if isinstance(current, set) and isinstance(fresh, set):
+        current.clear()  # pyright: ignore[reportUnknownMemberType]
+        current.update(fresh)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+
+        return True
+
+    if isinstance(current, list) and isinstance(fresh, list):
+        current.clear()  # pyright: ignore[reportUnknownMemberType]
+        current.extend(fresh)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+
+        return True
+
+    return False
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True)
 class MockTxSnapshot:
@@ -343,6 +379,13 @@ class MockState:
         The lock, the transaction serializer and the id sequence are private and survive for
         the same reason: a reset empties the data, it does not rebuild the state's machinery
         mid-flight.
+
+        **Containers are emptied in place, not replaced.** Adapters and open transactions
+        hold references to these stores, and :meth:`restore_tx_stores` already works this
+        way — replacing a container here would leave a rollback writing into a store nothing
+        can read any more. What this cannot do is coordinate: a transaction that snapshotted
+        before a reset still restores its own rows afterwards, because a reset is a developer
+        action against a running server and not a transaction participant.
         """
 
         with self.__lock:
@@ -350,10 +393,15 @@ class MockState:
                 if field.name.startswith("_") or field.default is attrs.NOTHING:
                     continue
 
-                if isinstance(getattr(self, field.name, None), StripedAsyncLocks):
+                current = getattr(self, field.name, None)
+
+                if isinstance(current, StripedAsyncLocks):
                     continue
 
-                setattr(self, field.name, _fresh_default(self, field.default))
+                fresh = _fresh_default(self, field.default)
+
+                if not _emptied_in_place(current, fresh):
+                    setattr(self, field.name, fresh)
 
     # ....................... #
 
