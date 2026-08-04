@@ -193,7 +193,8 @@ class ArchiveExporter:
 
         # One unit per (section, spec) plus one for the manifest, so the bar cannot sit at
         # 100% while the export is still writing the file that makes the archive readable.
-        units = len(sections) * len(plan.documents + plan.storage + plan.graph + plan.counters) + 1
+        per_section = len(plan.documents) + len(plan.storage) + len(plan.graph) + len(plan.counters)
+        units = len(sections) * per_section + 1
         done = 0
 
         for section in sections:

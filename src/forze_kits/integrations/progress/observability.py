@@ -19,7 +19,9 @@ gauges. Two shapes are forced on this by what the pieces are:
 Per the observability doctrine, no metric here is labelled by tenant. A per-tenant sweep
 aggregates into one number instead (see :class:`JobStalenessMonitor`), and the only optional
 label is the job ``kind`` — declared up front, so its cardinality is a wiring decision rather
-than a function of what an application happens to run.
+than a function of what an application happens to run. Whatever was not declared is swept
+together under :data:`OTHER_KIND_LABEL`: bounded label sets are worth having, blind spots are
+not.
 """
 
 from __future__ import annotations
@@ -48,6 +50,15 @@ if TYPE_CHECKING:
 JOBS_STALLED_GAUGE = "forze.jobs.stalled"
 JOBS_OLDEST_SILENCE_GAUGE = "forze.jobs.stalled.oldest_silence"
 JOBS_SCAN_AGE_GAUGE = "forze.jobs.staleness.scan_age"
+
+OTHER_KIND_LABEL = "__other__"
+"""The bucket every job kind nobody declared falls into. Alarm on it like any other.
+
+A monitor with declared *kinds* would otherwise report on those and nothing else, so a kind
+that was added later — or misspelled at the call site — would be stuck, counted nowhere, and
+read as a healthy zero. The buckets partition the collection (each declared kind, then
+everything else), so summing across the label is still the fleet-wide total.
+"""
 
 _KIND_ATTRIBUTE = "forze.job.kind"
 
@@ -123,6 +134,9 @@ class JobStalenessMonitor:
     Declared rather than discovered: ``kind`` is application vocabulary, so labelling by
     whatever the collection happens to contain makes metric cardinality a function of
     runtime data. Naming the kinds you watch bounds it at wiring time.
+
+    Declaring them does not narrow what is *watched*, only what is labelled separately:
+    everything else is swept together under :data:`OTHER_KIND_LABEL`.
     """
 
     tenants: Callable[[], Sequence[UUID]] | None = None
@@ -148,9 +162,13 @@ class JobStalenessMonitor:
 
     @property
     def keys(self) -> tuple[str | None, ...]:
-        """The label values this monitor reports — the declared kinds, or one unlabelled set."""
+        """The label values this monitor reports — the declared kinds, or one unlabelled set.
 
-        return self.kinds if self.kinds else (None,)
+        Declared kinds are always followed by :data:`OTHER_KIND_LABEL`, so the set of buckets
+        covers the whole collection rather than only the vocabulary somebody remembered.
+        """
+
+        return (*self.kinds, OTHER_KIND_LABEL) if self.kinds else (None,)
 
     # ....................... #
 
@@ -253,19 +271,26 @@ class JobStalenessMonitor:
 
     # ....................... #
 
-    async def _measure(
-        self, projector: JobProgressProjector, kind: str | None
-    ) -> JobStalenessStats:
+    async def _measure(self, projector: JobProgressProjector, key: str | None) -> JobStalenessStats:
         cutoff = utcnow() - self.silent_after
 
-        stalled = await projector.count_stalled(silent_since=cutoff, kind=kind)
+        # The catch-all bucket asks for the complement of the declared kinds, so the buckets
+        # partition the collection instead of leaving an undeclared kind unwatched.
+        kind = None if key == OTHER_KIND_LABEL else key
+        exclude = self.kinds if key == OTHER_KIND_LABEL else ()
+
+        stalled = await projector.count_stalled(
+            silent_since=cutoff, kind=kind, exclude_kinds=exclude
+        )
 
         if not stalled:
             return JobStalenessStats()
 
         # The quietest row only — the count already came from the index, and this is asking
         # a different question ("how bad") that one row answers.
-        quietest = await projector.find_stalled(silent_since=cutoff, kind=kind, limit=1)
+        quietest = await projector.find_stalled(
+            silent_since=cutoff, kind=kind, exclude_kinds=exclude, limit=1
+        )
 
         return JobStalenessStats(
             stalled=stalled,

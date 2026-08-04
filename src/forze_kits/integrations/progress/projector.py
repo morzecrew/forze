@@ -97,7 +97,9 @@ def _merge_key(status: JobStatus, at: datetime, seq: int) -> tuple[int, datetime
 # ....................... #
 
 
-def _stalled_filters(silent_since: datetime, kind: str | None) -> QueryFilterExpression:
+def _stalled_filters(
+    silent_since: datetime, kind: str | None, exclude_kinds: Sequence[str] = ()
+) -> QueryFilterExpression:
     """The started-but-silent filter — shared by the page and the count."""
 
     values: dict[str, Any] = {
@@ -107,6 +109,9 @@ def _stalled_filters(silent_since: datetime, kind: str | None) -> QueryFilterExp
 
     if kind is not None:
         values["kind"] = kind
+
+    elif exclude_kinds:
+        values["kind"] = {"$nin": list(exclude_kinds)}
 
     return {"$values": values}
 
@@ -224,6 +229,7 @@ class JobProgressProjector:
         *,
         silent_since: datetime,
         kind: str | None = None,
+        exclude_kinds: Sequence[str] = (),
         limit: int = 100,
     ) -> Sequence[JobRecord]:
         """Jobs that started, have not finished, and have not reported since *silent_since*.
@@ -237,10 +243,16 @@ class JobProgressProjector:
         The result is **capped by *limit***, so never read ``len(...)`` as "how many jobs
         are stuck" — a metric built that way saturates at the page size and reads calmest
         exactly when things are worst. :meth:`count_stalled` answers that question.
+
+        *exclude_kinds* asks the complement — everything **but** those kinds — and applies
+        only when *kind* is not given. It exists so a monitor that watches a named set of
+        kinds can still see the ones nobody named (see :class:`~.observability.
+        JobStalenessMonitor`); the two together partition the collection, so their counts
+        add up to the whole.
         """
 
         page = await self.query.find_many(
-            filters=_stalled_filters(silent_since, kind),
+            filters=_stalled_filters(silent_since, kind, exclude_kinds),
             sorts={"heartbeat_at": "asc"},
             pagination={"limit": limit},
         )
@@ -249,14 +261,20 @@ class JobProgressProjector:
 
     # ....................... #
 
-    async def count_stalled(self, *, silent_since: datetime, kind: str | None = None) -> int:
+    async def count_stalled(
+        self,
+        *,
+        silent_since: datetime,
+        kind: str | None = None,
+        exclude_kinds: Sequence[str] = (),
+    ) -> int:
         """How many jobs are stuck — the whole number, not a page of them.
 
         Same filter as :meth:`find_stalled` (one function, so the count can never describe a
         different set than the page next to it), answered by the same index.
         """
 
-        return await self.query.count(_stalled_filters(silent_since, kind))
+        return await self.query.count(_stalled_filters(silent_since, kind, exclude_kinds))
 
     # ....................... #
 

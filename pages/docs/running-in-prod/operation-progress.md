@@ -333,8 +333,12 @@ never on the count by itself.
 work in question reports, or every healthy job reads as stuck. Pass `kinds=(...)`
 to break the gauges out per job kind — declared up front, because `kind` is your
 vocabulary and labelling by whatever the collection happens to hold makes metric
-cardinality a function of runtime data. The tenant is never a label; a
-`tenants=` sweep sums into one number and the record answers *which*.
+cardinality a function of runtime data. Declaring kinds narrows what is *labelled*,
+never what is watched: everything you did not name is swept together under
+`forze.job.kind="__other__"`, so a kind added later still shows up, and the buckets
+partition the collection so the label still sums to the fleet-wide total. The tenant
+is never a label; a `tenants=` sweep sums into one number and the record answers
+*which*.
 
 The panels and alert rules keyed to these names ship with the rest of the
 reference dashboards — see [Observability](observability.md).

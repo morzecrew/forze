@@ -31,6 +31,7 @@ from forze_kits.integrations.progress import (
     JobStalenessMonitor,
     JobStalenessStats,
     JobStatus,
+    OTHER_KIND_LABEL,
     build_job_progress_projector,
     instrument_job_progress,
     job_record_spec,
@@ -249,9 +250,16 @@ class TestWhatTheSweepCounts:
 
         assert monitor.stats("export").stalled == 1
         assert monitor.stats("reencrypt").stalled == 2
-        # An undeclared kind is not counted anywhere — cardinality is a wiring decision, so
-        # a kind nobody named is invisible rather than silently added to a label set.
+
+        # An undeclared kind gets no label of its own — cardinality stays a wiring decision —
+        # but it is still *watched*: it lands in the catch-all rather than nowhere. Declaring
+        # kinds otherwise means a kind added later, or misspelled at the call site, is stuck
+        # and reads as a healthy zero.
         assert monitor.stats("snapshot").stalled == 0
+        assert monitor.stats(OTHER_KIND_LABEL).stalled == 1
+
+        # And the buckets partition the collection, so the label can still be summed.
+        assert sum(monitor.stats(key).stalled for key in monitor.keys) == 4
 
     def test_a_window_of_zero_is_refused(self) -> None:
         with pytest.raises(CoreException) as err:
@@ -277,16 +285,23 @@ class TestTheGauges:
 
                 # Before the first sweep: nothing known, and the scan age says so rather
                 # than claiming a fresh zero.
-                assert meter.scrape(JOBS_STALLED_GAUGE) == [(0.0, {"forze.job.kind": "export"})]
+                assert meter.scrape(JOBS_STALLED_GAUGE) == [
+                    (0.0, {"forze.job.kind": "export"}),
+                    (0.0, {"forze.job.kind": OTHER_KIND_LABEL}),
+                ]
                 assert meter.scrape(JOBS_SCAN_AGE_GAUGE) == [(-1.0, {})]
 
                 await _report(ctx, kind="export", status=JobStatus.RUNNING, at=_T0)
                 clock.advance(hours=1)
                 await monitor.sweep(ctx)
 
-                assert meter.scrape(JOBS_STALLED_GAUGE) == [(1.0, {"forze.job.kind": "export"})]
+                assert meter.scrape(JOBS_STALLED_GAUGE) == [
+                    (1.0, {"forze.job.kind": "export"}),
+                    (0.0, {"forze.job.kind": OTHER_KIND_LABEL}),
+                ]
                 assert meter.scrape(JOBS_OLDEST_SILENCE_GAUGE) == [
-                    (timedelta(hours=1).total_seconds(), {"forze.job.kind": "export"})
+                    (timedelta(hours=1).total_seconds(), {"forze.job.kind": "export"}),
+                    (0.0, {"forze.job.kind": OTHER_KIND_LABEL}),
                 ]
                 assert meter.scrape(JOBS_SCAN_AGE_GAUGE) == [(0.0, {})]
 
@@ -294,7 +309,8 @@ class TestTheGauges:
                 clock.advance(hours=2)
 
                 assert meter.scrape(JOBS_OLDEST_SILENCE_GAUGE) == [
-                    (timedelta(hours=3).total_seconds(), {"forze.job.kind": "export"})
+                    (timedelta(hours=3).total_seconds(), {"forze.job.kind": "export"}),
+                    (0.0, {"forze.job.kind": OTHER_KIND_LABEL}),
                 ]
 
     async def test_a_dead_sweep_is_visible_in_the_scan_age(self) -> None:
@@ -325,7 +341,7 @@ class TestTheGauges:
         meter = _CapturingMeter()
         instrument_job_progress(monitor, meter=meter)  # type: ignore[arg-type]
 
-        assert len(meter.scrape(JOBS_STALLED_GAUGE)) == 3
+        assert len(meter.scrape(JOBS_STALLED_GAUGE)) == 4  # three kinds, plus the catch-all
         assert len(meter.scrape(JOBS_SCAN_AGE_GAUGE)) == 1
 
 

@@ -139,10 +139,11 @@ def _event(
     progress: float | None = None,
     message: str | None = None,
     error: str | None = None,
+    kind: str = "export",
 ) -> JobProgress:
     return JobProgress(
         job_id=job_id,
-        kind="export",
+        kind=kind,
         status=status,
         at=_T0 + timedelta(seconds=seconds),
         seq=seq,
@@ -325,3 +326,32 @@ async def test_staleness_is_answered_by_the_index_on_postgres(
         stalled = await projector.find_stalled(silent_since=_T0 + timedelta(seconds=60))
 
         assert [row.id for row in stalled] == [stuck]
+
+
+@pytest.mark.asyncio
+async def test_the_catch_all_bucket_asks_the_complement_on_postgres(
+    pg_ctx: ExecutionContext,
+) -> None:
+    # The monitor's ``__other__`` bucket is a `$nin` on kind — a filter shape no other
+    # progress query uses, so this is the only place it meets a real renderer. The buckets
+    # must also *partition*: what the named kinds counted plus what the complement counted
+    # is the whole, or the fleet-wide sum quietly under- or double-counts.
+    with pg_ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
+        projector = build_job_progress_projector(pg_ctx)
+        exports, other = uuid4(), uuid4()
+        cutoff = _T0 + timedelta(seconds=60)
+
+        await projector.apply(_event(exports, JobStatus.RUNNING, seconds=0, seq=1))
+        await projector.apply(
+            _event(other, JobStatus.RUNNING, seconds=0, seq=1, kind="reencrypt")
+        )
+
+        named = await projector.count_stalled(silent_since=cutoff, kind="export")
+        rest = await projector.count_stalled(silent_since=cutoff, exclude_kinds=("export",))
+        quietest = await projector.find_stalled(
+            silent_since=cutoff, exclude_kinds=("export",), limit=1
+        )
+
+        assert (named, rest) == (1, 1)
+        assert [row.id for row in quietest] == [other]
+        assert named + rest == await projector.count_stalled(silent_since=cutoff)
