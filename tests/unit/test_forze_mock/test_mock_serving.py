@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
@@ -834,6 +834,36 @@ class TestTheControlledClockItself:
             clock.advance(timedelta(days=2))
 
         assert clock.now() == datetime(9999, 12, 31, tzinfo=UTC), "a refused advance moved it"
+
+    @pytest.mark.parametrize(
+        "instant",
+        [
+            pytest.param(
+                datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=14))), id="below-the-floor"
+            ),
+            pytest.param(
+                datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone(timedelta(hours=-14))),
+                id="above-the-ceiling",
+            ),
+        ],
+    )
+    def test_an_instant_with_no_utc_equivalent_is_refused(self, instant: datetime) -> None:
+        # Representable exactly as written, and not once anything normalizes it — which is
+        # everything: subtracting two instants, or taking a timestamp() to mint an id. The
+        # headroom check cannot see this, because it never converts.
+        with pytest.raises(CoreException, match="no representable UTC equivalent"):
+            ControlledTimeSource().freeze(instant)
+
+    def test_an_ordinary_offset_is_normalised_rather_than_refused(self) -> None:
+        clock = ControlledTimeSource()
+
+        stopped = clock.freeze(datetime(2030, 6, 1, 12, tzinfo=timezone(timedelta(hours=5, minutes=30))))
+
+        assert stopped == datetime(2030, 6, 1, 6, 30, tzinfo=UTC)
+        assert stopped.tzinfo is UTC, "the stored instant must be UTC, not the caller's offset"
+        # ...and the operations that normalize internally now have nothing left to trip on.
+        assert clock.uuid() is not None
+        assert clock.resume() is not None
 
     @pytest.mark.parametrize(
         "leave_it_running",

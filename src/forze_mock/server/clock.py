@@ -128,13 +128,30 @@ class ControlledTimeSource:
         A naive *instant* is read as UTC rather than as local time. Storing it naive would
         poison every later read: ``now()`` would return a naive datetime, and the first
         comparison against an aware one — a TTL, an expiry — raises instead of answering.
+
+        An aware one is **converted** to UTC rather than kept at its own offset, and refused
+        when it has no UTC equivalent. Every later operation normalizes to UTC anyway —
+        subtracting two instants, taking a ``timestamp()`` for an id — so an offset-aware
+        instant near either end of the range is representable exactly as written and
+        overflows the moment anything does arithmetic with it. Normalizing here is what makes
+        one stored instant safe for all of them, instead of each one guarding separately.
         """
 
         if instant is None:
             self.frozen_at = self.now()
 
-        else:
-            self.frozen_at = instant if instant.tzinfo is not None else instant.replace(tzinfo=UTC)
+            return self.frozen_at
+
+        aware = instant if instant.tzinfo is not None else instant.replace(tzinfo=UTC)
+
+        try:
+            self.frozen_at = aware.astimezone(UTC)
+
+        except (OverflowError, OSError, ValueError) as error:
+            raise exc.validation(
+                f"{instant.isoformat()} has no representable UTC equivalent, so a clock "
+                "stopped there could not be read"
+            ) from error
 
         return self.frozen_at
 
