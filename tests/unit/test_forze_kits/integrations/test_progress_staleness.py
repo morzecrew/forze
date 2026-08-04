@@ -173,12 +173,36 @@ class TestWhatTheSweepCounts:
                 clock.advance(minutes=30)
                 await monitor.sweep(ctx)
 
-        stats = monitor.stats()
+            stats = monitor.stats()
 
-        # Two stuck jobs, and one of them has been silent for three and a half hours — the
-        # count alone cannot tell that from two jobs a minute past the threshold.
-        assert stats.stalled == 2
-        assert stats.oldest_silence == pytest.approx(timedelta(hours=3.5).total_seconds())
+            # Two stuck jobs, and one of them has been silent for three and a half hours —
+            # the count alone cannot tell that from two jobs a minute past the threshold.
+            assert stats.stalled == 2
+            assert stats.silence() == pytest.approx(timedelta(hours=3.5).total_seconds())
+
+    async def test_the_silence_keeps_climbing_between_sweeps(self) -> None:
+        # An age computed at sweep time and read at scrape time stops moving: a job going
+        # from one hour silent to five would hold a flat line until the next sweep, and the
+        # only way to read it correctly would be to add the scan age to it, which no
+        # dashboard does. The sweep stores the *instant*; the age is computed when asked.
+        clock = _Clock()
+        runtime = _runtime()
+        monitor = JobStalenessMonitor(silent_after=_WINDOW, spec=_SPEC)
+
+        with bind_time_source(clock):
+            async with runtime.scope():
+                ctx = runtime.get_context()
+
+                await _report(ctx, kind="export", status=JobStatus.RUNNING, at=_T0)
+                clock.advance(hours=1)
+                await monitor.sweep(ctx)
+
+                assert monitor.stats().silence() == pytest.approx(3600.0)
+
+                clock.advance(hours=4)  # no sweep in between
+
+                assert monitor.stats().silence() == pytest.approx(5 * 3600.0)
+                assert monitor.stats().stalled == 1  # the count is still the sweep's
 
     async def test_a_quiet_collection_reports_zero_not_stale_numbers(self) -> None:
         clock = _Clock()
@@ -264,6 +288,13 @@ class TestTheGauges:
                     (timedelta(hours=1).total_seconds(), {"forze.job.kind": "export"})
                 ]
                 assert meter.scrape(JOBS_SCAN_AGE_GAUGE) == [(0.0, {})]
+
+                # The scrape, not the sweep, is when the age is computed.
+                clock.advance(hours=2)
+
+                assert meter.scrape(JOBS_OLDEST_SILENCE_GAUGE) == [
+                    (timedelta(hours=3).total_seconds(), {"forze.job.kind": "export"})
+                ]
 
     async def test_a_dead_sweep_is_visible_in_the_scan_age(self) -> None:
         # The failure this signal exists for: the loop dies, the stalled gauge freezes at

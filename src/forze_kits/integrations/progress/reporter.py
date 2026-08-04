@@ -311,13 +311,29 @@ class ProgressReporter:
 
     @asynccontextmanager
     async def track(self, message: str | None = None) -> AsyncIterator["ProgressReporter"]:
-        """Run a block as this job: ``running`` on entry, terminal on exit, always.
+        """Run a block as this job: ``running`` on entry, and an outcome on exit — unless the
+        block already stated one.
 
         The lifecycle is the part callers forget, and forgetting it is not a missing
         message — it is a job that shows as running on every dashboard for the rest of the
         deployment's life, because the only thing that could have said otherwise was an
         exception on its way up. The failure is recorded and then re-raised: the job's
         record is an observation, never a handler of the error.
+
+        **It closes a job it opened, never one the block already spoke for.** Two cases,
+        and both are ordinary rather than exotic:
+
+        - the block **paused** the job (:meth:`wait`) — a terminate-and-resume run ends
+          cleanly *because* it succeeded at producing a question, and finishing the job here
+          would report the task as completed, which is precisely the lie ``waiting`` exists
+          to prevent;
+        - the block **finished or failed** the job itself — a second transition would raise
+          ``progress_job_terminal`` out of the ``async with``, punishing the caller who was
+          most explicit.
+
+        An exception still records a failure even from ``waiting`` (a run that died on its
+        way to handing off did not hand off), which is the RFC's rule that terminal beats a
+        pause. A block that already reached terminal keeps its own word.
         """
 
         await self.start(message)
@@ -326,6 +342,20 @@ class ProgressReporter:
             yield self
 
         except BaseException as error:
+            if self._status.is_terminal:
+                if self._status is JobStatus.SUCCEEDED:
+                    # Worth saying out loud: the job claims success and the block raised
+                    # anyway. Both facts are real, and only one of them is in the record.
+                    logger.warning(
+                        "A tracked block raised after reporting success; the job keeps the "
+                        "outcome it stated",
+                        job_id=str(self.job_id),
+                        kind=self.kind,
+                        error=f"{type(error).__name__}: {error}",
+                    )
+
+                raise
+
             # `BaseException`: a cancelled sweep (deploy, deadline, shutdown) is exactly
             # the case where a job otherwise stays "running" forever, and cancellation is
             # not a `CoreException`.
@@ -346,7 +376,8 @@ class ProgressReporter:
 
             raise
 
-        await self.finish()
+        if self._status is JobStatus.RUNNING:
+            await self.finish()
 
     # ....................... #
 

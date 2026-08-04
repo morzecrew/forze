@@ -705,6 +705,73 @@ class TestTransportSplit:
 
         assert err.value.code == "progress_reporter_shared_outbox"
 
+    async def test_track_leaves_a_paused_job_paused(self) -> None:
+        # The headline pattern: a terminate-and-resume run ends *cleanly* because it
+        # succeeded at producing a question. A `track()` that finished the job here would
+        # report the task as completed — the exact lie `waiting` exists to prevent, and the
+        # one this plane was built to stop.
+        sink = _RecordingSink()
+        reporter = _reporter(sink)
+
+        async with reporter.track("thinking"):
+            await reporter.report(0.4, "needs a human answer")
+            await reporter.wait("waiting on the operator")
+
+        assert reporter.status is JobStatus.WAITING
+        assert [event.status for event in sink.transitions] == [
+            JobStatus.RUNNING,
+            JobStatus.WAITING,
+        ]
+        assert sink.transitions[-1].message == "waiting on the operator"
+
+    async def test_track_does_not_overwrite_an_outcome_the_block_stated(self) -> None:
+        # A second transition would raise `progress_job_terminal` out of the `async with`,
+        # punishing the caller who was most explicit about what happened.
+        sink = _RecordingSink()
+        reporter = _reporter(sink)
+
+        async with reporter.track():
+            await reporter.finish("done, explicitly")
+
+        assert [event.status for event in sink.transitions] == [
+            JobStatus.RUNNING,
+            JobStatus.SUCCEEDED,
+        ]
+        assert sink.transitions[-1].message == "done, explicitly"
+
+    async def test_track_keeps_the_failure_the_block_recorded(self) -> None:
+        sink = _RecordingSink()
+        reporter = _reporter(sink)
+
+        with pytest.raises(RuntimeError):
+            async with reporter.track():
+                await reporter.fail("the disk filled up")
+
+                raise RuntimeError("and then it propagated")
+
+        # One failure, with the caller's own error text — not a second one describing the
+        # exception that carried it out.
+        assert [event.status for event in sink.transitions] == [
+            JobStatus.RUNNING,
+            JobStatus.FAILED,
+        ]
+        assert sink.transitions[-1].error == "the disk filled up"
+
+    async def test_a_paused_job_that_then_raises_still_records_the_failure(self) -> None:
+        # Terminal beats a pause (the projector's rule 5): a run that died on its way to
+        # handing off did not hand off, and leaving it `waiting` would show a healthy pause.
+        sink = _RecordingSink()
+        reporter = _reporter(sink)
+
+        with pytest.raises(RuntimeError):
+            async with reporter.track():
+                await reporter.wait("asking")
+
+                raise RuntimeError("the question never got delivered")
+
+        assert sink.transitions[-1].status is JobStatus.FAILED
+        assert "the question never got delivered" in (sink.transitions[-1].error or "")
+
     async def test_a_failure_to_record_a_failure_never_replaces_it(self) -> None:
         # `track()` records the work's error on the way out, and that write can itself fail
         # — a cancelled sweep is cancelled at its first await, including this one. The

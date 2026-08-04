@@ -59,6 +59,12 @@ async with reporter.track("exporting"):
     await export_archive(runtime, destination, scope=scope, progress=reporter)
 ```
 
+`track()` closes a job it opened, never one the block already spoke for: a block
+that paused the job (`wait()`) leaves it paused — a terminate-and-resume run ends
+cleanly *because* it produced a question — and a block that finished or failed the
+job keeps its own outcome. An exception still records a failure, even from
+`waiting`: a run that died on its way to handing off did not hand off.
+
 `start()` / `wait()` / `finish()` / `fail()` are the transitions; `report()`,
 `advance(done, total)` and `heartbeat()` are the ticks. `advance(0, 0)` is
 indeterminate rather than an error — "0 of 0" is what a sweep legitimately knows
@@ -303,15 +309,19 @@ Three gauges, and the third is the one that is easy to leave out:
 | Metric | Says |
 |---|---|
 | `forze.jobs.stalled` | how many jobs are started, unfinished, and silent |
-| `forze.jobs.stalled.oldest_silence` | how long the quietest one has been silent (seconds) |
+| `forze.jobs.stalled.oldest_silence` | how long the quietest one has been silent (seconds, computed at scrape) |
 | `forze.jobs.staleness.scan_age` | how old that answer is (seconds; `-1` = never swept) |
 
-An OTel callback is synchronous and the staleness query is not, so the gauges read
-the last sweep's answer — the *sweep* interval, not the scrape interval, is this
-signal's resolution. Which means a sweep loop that dies leaves the first two frozen
-at their last value, almost always zero, and every dashboard built on them alone
-goes green at the moment it stops knowing anything. **Alert on stuck jobs or a scan
-age that stops moving**, never on the count by itself.
+An OTel callback is synchronous and the staleness query is not, so the *count*
+reads the last sweep's answer — the sweep interval, not the scrape interval, is
+its resolution. The silence is the exception: the sweep stores *when* the quietest
+job reported, so its age keeps climbing between sweeps instead of holding whatever
+it was when the sweep ran.
+
+Which means a sweep loop that dies leaves the count frozen at its last value,
+almost always zero, and a dashboard built on it alone goes green at the moment it
+stops knowing anything. **Alert on stuck jobs or a scan age that stops moving**,
+never on the count by itself.
 
 `silent_after` has no default: it must be comfortably longer than how often the
 work in question reports, or every healthy job reads as stuck. Pass `kinds=(...)`

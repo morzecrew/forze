@@ -4,9 +4,12 @@
 schedule and keeps the answer; :func:`instrument_job_progress` exports it as OpenTelemetry
 gauges. Two shapes are forced on this by what the pieces are:
 
-- **The gauges read a cache, not the store.** An OTel observable callback is synchronous and
-  the staleness query is not, so the value a scrape sees is the last sweep's, and the
-  *sweep* interval — not the scrape interval — is this signal's resolution.
+- **The counts read a cache, not the store.** An OTel observable callback is synchronous and
+  the staleness query is not, so the count a scrape sees is the last sweep's, and the
+  *sweep* interval — not the scrape interval — is its resolution. The one number that must
+  not be cached is the *age* of the worst offender: stored as an age it would hold a flat
+  line while a job got steadily worse, so the sweep stores the instant and the gauge
+  subtracts at scrape.
 - **A cache that stops being refreshed reads exactly like good news.** A dead sweep loop
   leaves the stalled gauge frozen at whatever it last saw, most likely zero, which is the
   quietest possible failure. So the freshness of the answer is itself exported
@@ -62,12 +65,31 @@ class JobStalenessStats:
     the page size and looks calmest exactly when things are worst.
     """
 
-    oldest_silence: float = 0.0
-    """Seconds since the quietest stuck job last reported; ``0`` when nothing is stuck.
+    oldest_heartbeat_at: datetime | None = None
+    """When the quietest stuck job last reported; ``None`` when nothing is stuck.
 
-    The count says how many, this says how bad — and it is the one that distinguishes a
-    handful of jobs a minute past the threshold from one that died overnight.
+    Stored as the **instant**, not as an age, because an age computed at sweep time and read
+    at scrape time is a number that stops moving: a job going from one hour silent to five
+    would hold a flat line between sweeps, and the only way to read it correctly would be to
+    add :meth:`JobStalenessMonitor.scan_age` to it, which no dashboard does. Kept as a
+    timestamp, :meth:`silence` gives the true age at whatever moment asks.
     """
+
+    # ....................... #
+
+    def silence(self, *, now: datetime | None = None) -> float:
+        """Seconds since the quietest stuck job reported, as of *now*; ``0`` when none is.
+
+        The count says how many, this says how bad — and it is the one that distinguishes a
+        handful of jobs a minute past the threshold from one that died overnight.
+        """
+
+        if self.oldest_heartbeat_at is None:
+            return 0.0
+
+        return max(
+            0.0, ((now if now is not None else utcnow()) - self.oldest_heartbeat_at).total_seconds()
+        )
 
 
 # ....................... #
@@ -183,17 +205,27 @@ class JobStalenessMonitor:
         # The quietest row only — the count already came from the index, and this is asking
         # a different question ("how bad") that one row answers.
         quietest = await projector.find_stalled(silent_since=cutoff, kind=kind, limit=1)
-        silence = (utcnow() - quietest[0].heartbeat_at).total_seconds() if quietest else 0.0
 
-        return JobStalenessStats(stalled=stalled, oldest_silence=max(0.0, silence))
+        return JobStalenessStats(
+            stalled=stalled,
+            oldest_heartbeat_at=quietest[0].heartbeat_at if quietest else None,
+        )
 
 
 def _merged(left: JobStalenessStats, right: JobStalenessStats) -> JobStalenessStats:
-    """Fold one tenant's answer into the shard's: counts add, the worst silence wins."""
+    """Fold one tenant's answer into the shard's: counts add, the quietest job wins.
+
+    "Worst" is the **earliest** heartbeat across the shard — the min, since these are
+    instants now rather than ages.
+    """
+
+    heartbeats = [
+        at for at in (left.oldest_heartbeat_at, right.oldest_heartbeat_at) if at is not None
+    ]
 
     return JobStalenessStats(
         stalled=left.stalled + right.stalled,
-        oldest_silence=max(left.oldest_silence, right.oldest_silence),
+        oldest_heartbeat_at=min(heartbeats) if heartbeats else None,
     )
 
 
@@ -211,10 +243,12 @@ def instrument_job_progress(
     lazily, so this module costs an uninstrumented application nothing at import.
 
     - ``forze.jobs.stalled`` — started, unfinished, and silent past the window.
-    - ``forze.jobs.stalled.oldest_silence`` — seconds since the quietest one reported.
+    - ``forze.jobs.stalled.oldest_silence`` — seconds since the quietest one reported,
+      computed **at scrape time** from the stored heartbeat, so it keeps climbing between
+      sweeps instead of holding the age it had when the sweep ran.
     - ``forze.jobs.staleness.scan_age`` — seconds since the last sweep (``-1`` = never).
 
-    **Alarm on the third one too.** The first two are a cache; if the sweep loop dies they
+    **Alarm on the third one too.** The counts are a cache; if the sweep loop dies they
     freeze at their last value — almost always zero — and a dashboard built on them alone
     goes green at the moment it stops knowing anything.
     """
@@ -248,7 +282,9 @@ def instrument_job_progress(
     )
     _gauge(
         JOBS_OLDEST_SILENCE_GAUGE,
-        lambda kind: monitor.stats(kind).oldest_silence,
+        # Computed here, at scrape: the sweep stores *when* the quietest job reported, so a
+        # job going from one hour silent to five shows it without waiting for a sweep.
+        lambda kind: monitor.stats(kind).silence(),
         "Seconds since the quietest stuck job last reported (0 when nothing is stuck).",
         unit="s",
     )
