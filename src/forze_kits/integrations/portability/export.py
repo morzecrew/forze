@@ -23,6 +23,7 @@ from forze.application.execution import ExecutionRuntime
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze_kits.integrations._logger import logger
+from forze_kits.integrations.progress import ProgressReporter
 from forze_kits.integrations.quiesce import QuiesceReport
 
 from ._core import (
@@ -46,6 +47,31 @@ from .report import CounterExport, DocumentExport, ExportReport, GraphExport, St
 from .scope import ExportScope, TenantScope
 
 # ----------------------- #
+
+
+async def _report(
+    progress: ProgressReporter | None,
+    done: int,
+    units: int,
+    section: ScopeSection,
+    name: str,
+) -> int:
+    """Count one finished (section, spec) unit and report it; return the new count.
+
+    Returns the count rather than mutating a closure variable so the walk's four loops share
+    one rule — a plane that forgot to advance would show a bar that stalls on exactly the
+    plane it was walking.
+    """
+
+    done += 1
+
+    if progress is not None:
+        await progress.advance(done, units, section_label(section, name))
+
+    return done
+
+
+# ....................... #
 
 
 @attrs.frozen(kw_only=True)
@@ -118,6 +144,7 @@ class ArchiveExporter:
         dest: Path,
         *,
         scope: ExportScope,
+        progress: ProgressReporter | None = None,
     ) -> ExportReport:
         """Export *registry*'s carryable planes under *scope* into the archive directory *dest*.
 
@@ -127,6 +154,14 @@ class ArchiveExporter:
         declared the deployment untenanted), and embeds its quiesce attestation — refusing to
         stamp ``consistency: quiesced`` from a report that did not attest, unless
         :attr:`allow_fuzzy` opts into a ``fuzzy`` one.
+
+        Pass a *progress* reporter to make the walk watchable — the plan is the denominator, so
+        the fraction is (section, spec) pairs finished rather than rows written: an export's row
+        count is not knowable without walking it, and a bar that jumped from 0 to 1 when the last
+        collection happened to be the big one would be worse than honest coarse-grained ticks.
+        The job's own ``start``/``finish``/``fail`` stay with the caller (see
+        ``ProgressReporter.track()``): a migration legitimately runs an export and an import
+        under one job.
         """
 
         # A per-tenant export omits identity/credential specs unless the caller opts in; a
@@ -156,6 +191,11 @@ class ArchiveExporter:
         graphs: list[GraphExport] = []
         counters: list[CounterExport] = []
 
+        # One unit per (section, spec) plus one for the manifest, so the bar cannot sit at
+        # 100% while the export is still writing the file that makes the archive readable.
+        units = len(sections) * len(plan.documents + plan.storage + plan.graph + plan.counters) + 1
+        done = 0
+
         for section in sections:
             with section_binding(ctx, section):
                 for entry in plan.documents:
@@ -164,6 +204,7 @@ class ArchiveExporter:
                     )
                     files.append(archive_file)
                     docs.append(outcome)
+                    done = await _report(progress, done, units, section, entry.name)
 
                 for entry in plan.storage:
                     index_file, blob_outcome = await self._export_storage(
@@ -171,6 +212,7 @@ class ArchiveExporter:
                     )
                     files.append(index_file)
                     blobs.append(blob_outcome)
+                    done = await _report(progress, done, units, section, entry.name)
 
                 for entry in plan.graph:
                     graph_files, graph_outcome = await self._export_graph(
@@ -178,6 +220,7 @@ class ArchiveExporter:
                     )
                     files.extend(graph_files)
                     graphs.append(graph_outcome)
+                    done = await _report(progress, done, units, section, entry.name)
 
                 for entry in plan.counters:
                     counter_file, counter_outcome = await self._export_counter(
@@ -185,6 +228,7 @@ class ArchiveExporter:
                     )
                     files.append(counter_file)
                     counters.append(counter_outcome)
+                    done = await _report(progress, done, units, section, entry.name)
 
         for entry in (*plan.documents, *plan.storage, *plan.graph, *plan.counters):
             _write_spec_shape(dest, entry)
@@ -199,6 +243,9 @@ class ArchiveExporter:
             identity_included=not exclude_identity,
             encryption=encryption,
         )
+
+        if progress is not None:
+            await progress.advance(units, units, "manifest written")
 
         logger.info(
             "Export complete",
@@ -534,6 +581,7 @@ async def export_archive(
     include_identity: bool = False,
     sealer: ArchiveSealer | None = None,
     acknowledge_plaintext: bool = False,
+    progress: ProgressReporter | None = None,
 ) -> ExportReport:
     """Convenience over :class:`ArchiveExporter`: pull the registry and the active context off
     *runtime* and export.
@@ -560,7 +608,7 @@ async def export_archive(
         include_identity=include_identity,
         sealer=sealer,
         acknowledge_plaintext=acknowledge_plaintext,
-    )(runtime.get_context(), registry, dest, scope=scope)
+    )(runtime.get_context(), registry, dest, scope=scope, progress=progress)
 
 
 # ....................... #

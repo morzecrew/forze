@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Conformance manifest** (`[tool.conformance_manifest]`, `just conformance`) — every `DepKey` is claimed by exactly one plane, legs carry `@pytest.mark.conformance(plane=…, engine=…)`, and a manifested leg that ran on no shard fails CI. `test_forze_inference` and `test_portability` join the CI matrix. New `forze_dst.conformance` scenarios and `forze_kits.integrations.realtime.conformance`.
 - **Mock catalog gate** (`[tool.mock_gate]`) — every operation in the driving example's catalog must resolve and answer against seeded data, and every plane it serves must be one the seed plan fills.
 
+**Operation progress** — long-running work gets an observable shape, kit-level (`forze_kits.integrations.progress`), no core-contract changes:
+
+- `job_record_spec()` (one `JobRecord` per job — status, fraction, message, `heartbeat_at`, `durable_run_id`; DDL documented), the declared `job.progress` realtime event, `ProgressReporter` (coalescing window, monotonic clamp, `track()`), and `JobProgressProjector`, which owns the out-of-order merge and `find_stalled(silent_since=…)`. Ticks ride the ephemeral lane, status transitions a dedicated outbox route (`progress_outbox_spec()`, relayed to the realtime stream); a job is task-grained and spans many durable runs (`waiting` is non-terminal).
+- `ArchiveExporter`/`export_archive` and `rebuild_search_index` take an optional `progress=` reporter.
+
 **Cross-backend conformance** — shared batteries for the counter, graph, storage, inference, search, idempotency, field-encryption and realtime-cursor planes; each change below holds on every backend of its plane:
 
 - **Counters** are signed 64-bit: new `COUNTER_MIN_VALUE`/`COUNTER_MAX_VALUE` and `validate_counter_value`; an out-of-range `reset` raises `counter_value_out_of_range`.

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from forze.application.contracts.document import DocumentQueryPort, DocumentSpec
     from forze.application.contracts.querying import QueryFilterExpression
     from forze.application.contracts.search import SearchCommandPort, SearchSpec
+    from forze_kits.integrations.progress import ProgressReporter
 
 # ----------------------- #
 
@@ -69,6 +70,7 @@ async def rebuild_search_index(
     search: SearchSpec[Any],
     filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
     chunk_size: int = 500,
+    progress: ProgressReporter | None = None,
 ) -> SearchRebuildReport:
     """Stream *document*'s rows into *search*, applying the index-sync rule to each.
 
@@ -100,6 +102,13 @@ async def rebuild_search_index(
     Tenancy rides on the ambient identity exactly as the ports do: both ports are already
     bound to a tenant when the caller resolved them, so a per-tenant rebuild is this call
     under ``bind_identity(tenant=…)``, once per tenant.
+
+    Pass a *progress* reporter and the sweep becomes watchable: it counts the matching rows
+    once up front so the fraction is real rather than a spinner (one extra count against a
+    collection this call is about to read in full), then reports after each chunk. It
+    reports **only progress** — the job's ``start``/``finish``/``fail`` belong to whoever
+    created the job, because one job legitimately covers several sweeps (an index per
+    aggregate, a tenant per pass). ``ProgressReporter.track()`` is that caller's one-liner.
     """
 
     # The sweep feeds the index the document's *decrypted* read model, so it is one more seam
@@ -110,6 +119,12 @@ async def rebuild_search_index(
 
     indexed = 0
     removed = 0
+    # A rebuild's *point* is that nobody knows how far along it is, so the denominator is
+    # worth one query: without it the caller gets a spinner for the whole sweep, which is
+    # what they already had. Counted after the parity gate, so a refused rebuild costs
+    # nothing, and read once — a live collection's count drifts under the sweep, and a bar
+    # whose denominator moves is worse than a slightly stale one.
+    total = await query.count(filters) if progress is not None else 0
 
     async for batch in query.find_stream(filters, chunk_size=chunk_size):
         live: list[Any] = []
@@ -129,5 +144,9 @@ async def rebuild_search_index(
         if deleted_ids:
             await command.delete(deleted_ids)
             removed += len(deleted_ids)
+
+        if progress is not None:
+            scanned = indexed + removed
+            await progress.advance(scanned, total, f"{scanned} of {total} rows")
 
     return SearchRebuildReport(indexed=indexed, removed=removed)

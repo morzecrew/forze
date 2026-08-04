@@ -81,6 +81,7 @@ nav = [
             "running-in-prod/shutdown-and-fleets.md",
             "running-in-prod/credential-rotation.md",
             "running-in-prod/portability.md",
+            "running-in-prod/operation-progress.md",
             "running-in-prod/observability.md",
         ] },
         { "Testing" = [
