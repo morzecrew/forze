@@ -98,10 +98,22 @@ def infer_links(
 
     Only fields whose *stem* matches a seeded spec are linked — a reference to something
     outside the plan cannot be satisfied and is left to generation.
+
+    Every way an override can be wrong is refused by name: a source spec that is not seeded
+    (here), a field the create command does not have, and a target that is not seeded. An
+    override keyed by a spec outside *seeds* is never looked up, so leaving it unchecked
+    would make a typo indistinguishable from a link the author believes they declared.
     """
 
-    by_singular = _singular_index(seeds)
     seeded = {seed.spec.name for seed in seeds}
+    strays = sorted(set(overrides or {}) - seeded)
+
+    if strays:
+        raise exc.configuration(
+            f"Link overrides name specs that are not seeded: {', '.join(strays)}"
+        )
+
+    by_singular = _singular_index(seeds)
     resolved: dict[str, dict[str, str]] = {}
 
     for seed in seeds:

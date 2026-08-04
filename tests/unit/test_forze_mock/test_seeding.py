@@ -332,6 +332,15 @@ class TestReferentialIntegrity:
         with pytest.raises(CoreException, match="targets 'ghosts', which is not seeded"):
             infer_links(seeds, overrides={"tasks": {"project_id": "ghosts"}})
 
+    def test_an_override_keyed_by_an_unseeded_spec_is_refused(self) -> None:
+        # A key outside `seeds` is never looked up, so an unchecked one makes a typo
+        # indistinguishable from a link the author believes they declared. `SeedPlan` catches
+        # it at declaration; `infer_links` is public and has to catch it too.
+        seeds = (spec_seed(_tasks(), count=1), spec_seed(_projects(), count=1))
+
+        with pytest.raises(CoreException, match="name specs that are not seeded: taks"):
+            infer_links(seeds, overrides={"taks": {"project_id": "projects"}})
+
     def test_an_override_naming_a_field_the_command_lacks_is_refused(self) -> None:
         # The typo case: an override that matches no field would otherwise be inert, and a
         # link the author believes they declared is worse than one they know is missing.
