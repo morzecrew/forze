@@ -35,7 +35,8 @@
         ".coderabbit.yaml": true,
         "coverage.json": true,
         ".pre-commit-config.yaml": true,
-        "**/.hypothesis": true
+        "**/.hypothesis": true,
+        "dst-campaigns*.jsonl": true,
     },
     "cursorpyright.analysis.diagnosticMode": "workspace",
     "cursorpyright.analysis.typeCheckingMode": "strict",
