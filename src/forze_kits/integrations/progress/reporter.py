@@ -32,6 +32,7 @@ from uuid import UUID
 
 import attrs
 
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.durable.function import current_durable_run
 from forze.application.contracts.outbox import (
     OutboxCommandPort,
@@ -41,6 +42,7 @@ from forze.application.contracts.outbox import (
 )
 from forze.application.contracts.realtime import Audience, RealtimeSignal
 from forze.application.contracts.stream import StreamSpec
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import monotonic, utcnow
@@ -166,6 +168,57 @@ class RecordProgressSink:
 
     async def emit(self, event: JobProgress, *, durable: bool) -> None:
         await self.projector.apply(event)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class BoundIdentitySink:
+    """Emit through *inner* under the identity that opened the job, not the ambient one.
+
+    A job belongs to one tenant, decided when it was created. Every port underneath a sink
+    decides where a write lands by reading the tenant from the ambient context *at write
+    time*. Those two facts disagree whenever the work reports from inside a binding of its
+    own — and the shapes that do are the ordinary ones: a full-system export walks one bound
+    section per tenant, a per-tenant reindex is the same call under each tenant in turn. The
+    disagreement is silent and produces the worst possible record: one job scattered into a
+    row per partition, each frozen at whatever status was ambient when that partition was
+    last touched, and none of them the job.
+
+    Coalescing widens it, because a held tick is emitted by whatever comes *next*: a value
+    captured under one tenant is written under whichever one happens to be bound when the
+    window closes.
+
+    So the identity is captured once, at build, and restored around every emit — including
+    ``authn``, so a sink that logs or authorizes sees the actor that started the job rather
+    than whoever the ambient context belongs to by then. :func:`build_progress_reporter`
+    wraps every sink in one; hand-assembled reporters that report across bindings want the
+    same.
+    """
+
+    inner: ProgressSink
+    """The sink doing the actual work."""
+
+    ctx: ExecutionContext
+    """Only for its invocation context — this is where the binding is restored."""
+
+    authn: AuthnIdentity | None = None
+    """The actor bound when the job was opened."""
+
+    tenant: TenantIdentity | None = None
+    """The tenant bound when the job was opened; ``None`` pins *unbound*, deliberately.
+
+    An unbound job on a tenant-aware collection then fails loudly at its first write instead
+    of quietly filing itself under whichever tenant's work it was watching at the time.
+    """
+
+    # ....................... #
+
+    async def emit(self, event: JobProgress, *, durable: bool) -> None:
+        with self.ctx.inv_ctx.bind_identity(authn=self.authn, tenant=self.tenant):
+            await self.inner.emit(event, durable=durable)
 
 
 # ....................... #
@@ -492,9 +545,29 @@ class ProgressReporter:
         # transition that follows it in the same instant.
         await self.flush()
 
+        was_status, was_emit = self._status, self._last_emit
+
         self._status = status
         self._last_emit = monotonic()
-        await self._emit(self._event(message=message, error=error), durable=True)
+
+        try:
+            await self._emit(self._event(message=message, error=error), durable=True)
+
+        except BaseException:
+            # Local state is a claim about what the record says, and a durable emit that
+            # raised may have reached no sink at all. Committing it anyway strands the
+            # reporter: the terminal guard above would refuse the retry, so a caller who
+            # handled the failure could never state the outcome again and the job would
+            # show as running for the rest of the deployment's life — the exact failure
+            # this plane exists to prevent, arrived at by way of reporting it.
+            #
+            # The *sequence* is deliberately not rolled back. A fan-out can fail partway,
+            # so that number may already be on an event some sink accepted, and two
+            # different events sharing one seq would break the merge's tie-break. A retry
+            # mints a later one, which merges onto the same row as the same status.
+            self._status = was_status
+            self._last_emit = was_emit
+            raise
 
     # ....................... #
 
@@ -674,10 +747,23 @@ def build_progress_reporter(
 
     run = current_durable_run()
 
+    # Captured here, restored at every emit: the work this job watches may run under
+    # bindings of its own, and the record belongs to the identity that opened the job rather
+    # than to whichever tenant's data the sweep had reached (see :class:`BoundIdentitySink`).
+    bound: tuple[ProgressSink, ...] = tuple(
+        BoundIdentitySink(
+            inner=sink,
+            ctx=ctx,
+            authn=ctx.inv_ctx.get_authn(),
+            tenant=ctx.inv_ctx.get_tenant(),
+        )
+        for sink in sinks
+    )
+
     return ProgressReporter(
         job_id=job_id,
         kind=kind,
-        sinks=tuple(sinks),
+        sinks=bound,
         subject=subject,
         durable_run_id=run.run_id if run is not None else None,
         min_interval=min_interval,

@@ -202,6 +202,12 @@ the stored row rather than writing what it received:
    look stale.
 5. **An unknown job id creates its row.** A dashboard started mid-sweep, a
    consumer replaying from an offset — a late joiner gets a record, not an error.
+6. **`pending` is where a job begins, not somewhere it returns to.** The report
+   that queues a job and the report that starts it come from two processes with
+   two clocks, so a queueing service running slightly ahead would otherwise take a
+   running job back to pending — and `pending` is not in the staleness sweep's
+   active set, so the job would stop being watched exactly when it became able to
+   hang. A non-pending report beats a pending one whenever either arrives.
 
 Together these make the projection order-independent: any arrival order of one
 job's reports lands on the same record.
@@ -247,6 +253,13 @@ CREATE INDEX jobs_staleness ON jobs (tenant_id, status, heartbeat_at);
 Use `double precision`, not `real`: the merge compares the fraction the store
 handed back, and a narrowed column returns a different number than the one that
 was written.
+
+On a tenant-aware collection, the job lands in the tenant bound when you *built*
+the reporter, and stays there. That is deliberate: the work a job watches often
+runs under bindings of its own — a full-system export walks one bound section per
+tenant — and a record that followed the ambient tenant would scatter one job into
+a row per partition. Build the reporter where the job belongs, and let it report
+from wherever the work goes.
 
 Neither the collection nor the transitions route is a spec you wrote, so both are
 exactly what inventory reconciliation exists to catch — bound at runtime,

@@ -94,6 +94,33 @@ def _merge_key(status: JobStatus, at: datetime, seq: int) -> tuple[int, datetime
     return (int(status.is_terminal), at, seq, _STATUS_RANK[status])
 
 
+def _accepts_status(row: JobRecord, event: JobProgress) -> bool:
+    """Whether *event*'s status supersedes the one on *row*.
+
+    The merge key answers this for every pair but one. ``pending`` is where a job begins,
+    not somewhere it returns to: the report that declares a job queued and the report that
+    says it is running come from two processes with two clocks, so a queueing service whose
+    clock runs a little ahead stamps a ``pending`` that outranks the worker's ``running`` —
+    and the row goes back to pending on a job that is demonstrably executing. That is not a
+    cosmetic wrong status: ``pending`` is not in the staleness sweep's active set, so the
+    job also stops being watched at the moment it starts being able to hang.
+
+    Stated as a fact about the merged *set* rather than about arrival order — a non-pending
+    report always beats a pending one, whenever either shows up — so the projection stays
+    order-independent, which is the property everything else here is built on.
+    """
+
+    if event.status is JobStatus.PENDING and row.status is not JobStatus.PENDING:
+        return False
+
+    if event.status is not JobStatus.PENDING and row.status is JobStatus.PENDING:
+        return True
+
+    return _merge_key(event.status, event.at, event.seq) > _merge_key(
+        row.status, row.event_at, row.event_seq
+    )
+
+
 # ....................... #
 
 
@@ -166,13 +193,17 @@ class JobProgressProjector:
 
     # ....................... #
 
-    async def apply(self, event: JobProgress) -> JobRecord | None:
-        """Merge *event* into its job's row; return the row, or ``None`` if it was dropped.
+    async def apply(self, event: JobProgress) -> JobRecord:
+        """Merge *event* into its job's row and return that row — merged, or as it stood.
 
-        ``None`` means the event changed nothing — the only case is a non-terminal report
-        for a job that has already finished, which is dropped whole (it does not even
-        refresh the heartbeat: a finished job is not stuck, and its last-heard-from time
-        belongs to the run that finished it).
+        Always the row, including when the event changed nothing: a non-terminal report for
+        a job that has already finished is dropped whole (it does not even refresh the
+        heartbeat — a finished job is not stuck, and its last-heard-from time belongs to the
+        run that finished it), and a duplicate that repeats what the row already says is a
+        no-op. Handing back the current state in those cases is what lets a consumer render
+        one, and ``rev`` is what says whether anything moved: a caller suppressing a
+        downstream side effect on an absorbed event compares the ``rev`` it got against the
+        one it had, rather than testing for a ``None`` that would also hide the state.
         """
 
         for _ in range(_MAX_MERGE_ATTEMPTS):
@@ -375,9 +406,7 @@ def _merged_update(row: JobRecord, event: JobProgress) -> JobUpdate | None:
     ):
         patch["started_at"] = event.at
 
-    if _merge_key(event.status, event.at, event.seq) > _merge_key(
-        row.status, row.event_at, row.event_seq
-    ):
+    if _accepts_status(row, event):
         patch["status"] = event.status
         patch["message"] = event.message
         patch["error"] = event.error

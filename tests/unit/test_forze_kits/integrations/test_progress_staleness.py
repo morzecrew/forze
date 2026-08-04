@@ -14,6 +14,7 @@ freshness of the answer is exported alongside it and asserted here.
 from __future__ import annotations
 
 import asyncio
+import sys
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 from uuid import UUID, uuid4
@@ -261,6 +262,30 @@ class TestWhatTheSweepCounts:
         # And the buckets partition the collection, so the label can still be summed.
         assert sum(monitor.stats(key).stalled for key in monitor.keys) == 4
 
+    async def test_a_sweep_never_publishes_half_of_each_snapshot(self, mocker: Any) -> None:
+        # Two reads against a live collection: the count comes back, the jobs it counted
+        # report in, and the page of the quietest one comes back empty. Published as they
+        # arrived, that pair says "five jobs are stuck, the worst of them for zero seconds"
+        # — a contradiction between two panels that costs an operator a morning.
+        class _VanishingProjector:
+            async def count_stalled(self, **_kwargs: Any) -> int:
+                return 5
+
+            async def find_stalled(self, **_kwargs: Any) -> list[Any]:
+                return []
+
+        runtime = _runtime()
+        monitor = JobStalenessMonitor(silent_after=_WINDOW, spec=_SPEC)
+        mocker.patch.object(
+            observability, "build_job_progress_projector", return_value=_VanishingProjector()
+        )
+
+        async with runtime.scope():
+            await monitor.sweep(runtime.get_context())
+
+        # The empty page is the later, truer answer — so both numbers say so.
+        assert monitor.stats() == JobStalenessStats()
+
     def test_a_window_of_zero_is_refused(self) -> None:
         with pytest.raises(CoreException) as err:
             JobStalenessMonitor(silent_after=timedelta(0), spec=_SPEC)
@@ -330,9 +355,7 @@ class TestTheGauges:
             clock.advance(hours=6)  # nothing sweeps again
 
             assert meter.scrape(JOBS_STALLED_GAUGE) == [(0.0, {})]  # reassuring, and stale
-            assert meter.scrape(JOBS_SCAN_AGE_GAUGE) == [
-                (timedelta(hours=6).total_seconds(), {})
-            ]
+            assert meter.scrape(JOBS_SCAN_AGE_GAUGE) == [(timedelta(hours=6).total_seconds(), {})]
 
     async def test_the_scan_age_is_reported_once_not_once_per_kind(self) -> None:
         # One sweep answers for every kind, so labelling this by kind would report the same
@@ -410,7 +433,9 @@ class TestTheLifecycleStep:
             await monitor.sweep(ctx)  # a minute later, and the next, and the next
 
         empty_warnings = [
-            call for call in logger.warning.call_args_list if "no tenants to examine" in call.args[0]
+            call
+            for call in logger.warning.call_args_list
+            if "no tenants to examine" in call.args[0]
         ]
 
         # Said once, not once per tick — at a one-minute interval the second form would bury
@@ -418,6 +443,25 @@ class TestTheLifecycleStep:
         assert len(empty_warnings) == 1
         # And the answer is still fresh: an empty shard really has nothing stuck.
         assert monitor.scan_age() >= 0.0
+
+    def test_a_registration_that_never_happened_does_not_consume_the_monitor(
+        self, mocker: Any
+    ) -> None:
+        # The refusal above is what makes this one matter: taking the claim before the work
+        # succeeds means an application missing the OTel extra burns its one set of gauges
+        # on an attempt that registered nothing, and assembly cannot retry with a meter it
+        # does supply.
+        monitor = JobStalenessMonitor(silent_after=_WINDOW, spec=_SPEC)
+        mocker.patch.dict(sys.modules, {"opentelemetry": None})
+
+        with pytest.raises(ImportError):
+            instrument_job_progress(monitor)
+
+        mocker.stopall()
+        meter = _CapturingMeter()
+        instrument_job_progress(monitor, meter=meter)  # type: ignore[arg-type]
+
+        assert JOBS_STALLED_GAUGE in meter.gauges
 
     def test_a_nonsense_schedule_is_refused(self) -> None:
         with pytest.raises(CoreException):

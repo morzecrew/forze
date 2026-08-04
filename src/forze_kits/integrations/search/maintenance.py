@@ -105,7 +105,9 @@ async def rebuild_search_index(
 
     Pass a *progress* reporter and the sweep becomes watchable: it counts the matching rows
     once up front so the fraction is real rather than a spinner (one extra count against a
-    collection this call is about to read in full), then reports after each chunk. It
+    collection this call is about to read in full), then reports after each chunk — holding
+    short of ``1.0`` until the stream actually ends, because the denominator is a snapshot
+    and a bar that completes early is a bar that lies about the one thing it is for. It
     reports **only progress** — the job's ``start``/``finish``/``fail`` belong to whoever
     created the job, because one job legitimately covers several sweeps (an index per
     aggregate, a tenant per pass). ``ProgressReporter.track()`` is that caller's one-liner.
@@ -147,6 +149,19 @@ async def rebuild_search_index(
 
         if progress is not None:
             scanned = indexed + removed
-            await progress.advance(scanned, total, f"{scanned} of {total} rows")
+            # Held one row short of the end while the stream is live. The denominator was
+            # read once and the collection is not frozen, so a sweep that meets more rows
+            # than it counted would otherwise sit at a completed bar with work still to do —
+            # and ``1.0`` is the one value that has to mean "the scan is over".
+            await progress.advance(
+                min(scanned, max(total - 1, 0)), total, f"{scanned} of {total} rows"
+            )
+
+    if progress is not None:
+        # Which the stream ending is what earns. Against what was actually scanned, so a
+        # collection that grew under the sweep still ends on a true 1.0 rather than on a 1.4
+        # clamped down to one.
+        scanned = indexed + removed
+        await progress.advance(scanned, scanned, f"{scanned} of {scanned} rows")
 
     return SearchRebuildReport(indexed=indexed, removed=removed)

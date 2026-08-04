@@ -368,9 +368,7 @@ async def test_notification_consumer_dedupes_redelivery() -> None:
         .register(
             "project.created",
             lambda e: [
-                EmailNotification(
-                    to="ops@example.com", subject="New", body=e.payload.project_id
-                )
+                EmailNotification(to="ops@example.com", subject="New", body=e.payload.project_id)
             ],
         )
         .freeze()

@@ -11,11 +11,10 @@ The payload is also the projector's input, so it carries everything the record n
 starts a dashboard mid-sweep gets a row, not a warning about an id nobody has seen.
 """
 
-from datetime import datetime
 from typing import Final
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, model_validator
 
 from forze.application.contracts.realtime import RealtimeEvent
 
@@ -44,12 +43,19 @@ class JobProgress(BaseModel):
     status: JobStatus
     """The job's status as the reporter sees it."""
 
-    at: datetime
+    at: AwareDatetime
     """When the reporter produced this event (its own clock, via the time seam).
 
     The merge orders by this rather than by arrival: the transport for ticks is
     at-most-once and unordered, and resumed work re-reports from wherever it restarted, so
     arrival order carries no information about what is newer.
+
+    **Aware, and refused if not.** This instant is compared against the record's stored ones
+    on every merge, and Python raises on a naive-vs-aware comparison — so a producer that
+    serialized a local timestamp without an offset (another language, a hand-built payload)
+    would not merge wrong, it would raise ``TypeError`` out of the middle of the projector
+    and leave the job unprojected. Refusing it here makes that a validation error at the
+    boundary, where the payload is still identifiable.
     """
 
     seq: int = 0
@@ -74,6 +80,27 @@ class JobProgress(BaseModel):
 
     error: str | None = None
     """Why the job failed — set only on a :attr:`JobStatus.FAILED` report."""
+
+    # ....................... #
+
+    @model_validator(mode="after")
+    def _error_belongs_to_a_failure(self) -> "JobProgress":
+        """Keep "set only on a failed report" a rule rather than a comment.
+
+        The projector copies ``error`` onto the record with every status it accepts, so a
+        report that carries one without failing produces a row that says ``running`` and
+        explains why it failed — and, once the job succeeds, a success with a reason. The
+        record cannot repair that (the reason is genuine input, and dropping it silently
+        would lose the only evidence of a broken producer), so the payload refuses it.
+        """
+
+        if self.error is not None and self.status is not JobStatus.FAILED:
+            raise ValueError(
+                f"A progress report for job {self.job_id} carries an error but reports "
+                f"{self.status.value!r}; error belongs to a failed report only."
+            )
+
+        return self
 
 
 # ....................... #

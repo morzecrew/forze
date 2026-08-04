@@ -45,9 +45,7 @@ class TestStoredFileStages:
         assert ready.status == StoredFileStatus.READY
         assert ready.storage_key is not None
 
-        downloaded = await stub_ctx.storage.query(kit.resolved_storage).download(
-            ready.storage_key
-        )
+        downloaded = await stub_ctx.storage.query(kit.resolved_storage).download(ready.storage_key)
         assert downloaded.data == b"payload"
 
     @pytest.mark.asyncio
@@ -74,6 +72,4 @@ class TestStoredFileStages:
         await purge(None, deleted)
 
         with pytest.raises(CoreException):
-            await stub_ctx.storage.query(kit.resolved_storage).download(
-                ready.storage_key
-            )
+            await stub_ctx.storage.query(kit.resolved_storage).download(ready.storage_key)

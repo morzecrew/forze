@@ -34,6 +34,7 @@ from forze_kits.integrations.progress import (
     JobRecord,
     JobStatus,
     build_job_progress_projector,
+    build_progress_reporter,
     job_record_spec,
 )
 from forze_mock import MockDepsModule
@@ -157,9 +158,7 @@ def _observable(row: JobRecord) -> dict[str, Any]:
     return row.model_dump(exclude={"id", "rev", "created_at", "last_update_at"})
 
 
-async def _project(
-    projector: JobProgressProjector, events: list[JobProgress]
-) -> dict[str, Any]:
+async def _project(projector: JobProgressProjector, events: list[JobProgress]) -> dict[str, Any]:
     for event in events:
         await projector.apply(event)
 
@@ -237,12 +236,8 @@ async def test_a_tick_after_the_end_changes_nothing_on_both(
         ):
             job_id = uuid4()
 
-            await projector.apply(
-                _event(job_id, JobStatus.RUNNING, seconds=0, seq=1, progress=0.5)
-            )
-            await projector.apply(
-                _event(job_id, JobStatus.FAILED, seconds=1, seq=2, error="boom")
-            )
+            await projector.apply(_event(job_id, JobStatus.RUNNING, seconds=0, seq=1, progress=0.5))
+            await projector.apply(_event(job_id, JobStatus.FAILED, seconds=1, seq=2, error="boom"))
             before = _observable(
                 await projector.query.find({"$values": {"id": job_id}})  # type: ignore[arg-type]
             )
@@ -329,6 +324,47 @@ async def test_staleness_is_answered_by_the_index_on_postgres(
 
 
 @pytest.mark.asyncio
+async def test_a_job_stays_in_its_own_tenant_while_the_work_moves_on(
+    pg_ctx: ExecutionContext,
+) -> None:
+    # Only a real tenant-partitioned table can show this one. The work a job watches runs
+    # under bindings of its own — a full-system export walks one bound section per tenant —
+    # and every write here decides its partition from the ambient tenant at write time. The
+    # reporter captures the identity that opened the job and restores it per emit; without
+    # that, one job scatters a row into every partition its work touched.
+    other = UUID("22222222-2222-2222-2222-222222222222")
+    job_id = uuid4()
+
+    with pg_ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
+        reporter = build_progress_reporter(
+            pg_ctx,
+            job_id=job_id,
+            kind="export",
+            projector=build_job_progress_projector(pg_ctx),
+            min_interval=0.0,
+        )
+        await reporter.start("walking the first tenant")
+
+    with pg_ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=other)):
+        await reporter.report(0.5, "walking the second")
+        await reporter.finish("done")
+
+        # Nothing of this job was filed under the tenant whose data it happened to be
+        # reading when it reported.
+        assert (
+            await build_job_progress_projector(pg_ctx).query.count({"$values": {"id": job_id}}) == 0
+        )
+
+    with pg_ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
+        row = await build_job_progress_projector(pg_ctx).query.find({"$values": {"id": job_id}})
+
+    assert row is not None
+    assert row.status is JobStatus.SUCCEEDED
+    assert row.progress == 1.0
+    assert row.message == "done"
+
+
+@pytest.mark.asyncio
 async def test_the_catch_all_bucket_asks_the_complement_on_postgres(
     pg_ctx: ExecutionContext,
 ) -> None:
@@ -342,9 +378,7 @@ async def test_the_catch_all_bucket_asks_the_complement_on_postgres(
         cutoff = _T0 + timedelta(seconds=60)
 
         await projector.apply(_event(exports, JobStatus.RUNNING, seconds=0, seq=1))
-        await projector.apply(
-            _event(other, JobStatus.RUNNING, seconds=0, seq=1, kind="reencrypt")
-        )
+        await projector.apply(_event(other, JobStatus.RUNNING, seconds=0, seq=1, kind="reencrypt"))
 
         named = await projector.count_stalled(silent_since=cutoff, kind="export")
         rest = await projector.count_stalled(silent_since=cutoff, exclude_kinds=("export",))

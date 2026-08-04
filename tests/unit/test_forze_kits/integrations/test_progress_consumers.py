@@ -99,6 +99,17 @@ class _CountingQuery:
         return self.inner.find_stream(*args, **kwargs)
 
 
+class _UndercountingQuery(_CountingQuery):
+    """A collection that grew under the sweep: the count is a snapshot, the stream is live."""
+
+    def __init__(self, inner: Any, *, understate: int) -> None:
+        super().__init__(inner)
+        self.understate = understate
+
+    async def count(self, *args: Any, **kwargs: Any) -> int:
+        return max(await super().count(*args, **kwargs) - self.understate, 0)
+
+
 async def _seed_notes(runtime: ExecutionRuntime, tenant: Any, count: int) -> None:
     async with runtime.scope():
         ctx = runtime.get_context()
@@ -152,7 +163,9 @@ class TestArchiveExport:
 
             async with reporter.track("exporting"):
                 report = await export_archive(
-                    runtime, tmp_path / "archive", scope=TenantScope(tenant_id=tenant),
+                    runtime,
+                    tmp_path / "archive",
+                    scope=TenantScope(tenant_id=tenant),
                     progress=reporter,
                 )
 
@@ -189,7 +202,9 @@ class TestArchiveExport:
             with pytest.raises(RuntimeError):
                 async with reporter.track():
                     await export_archive(
-                        runtime, tmp_path / "a", scope=TenantScope(tenant_id=tenant),
+                        runtime,
+                        tmp_path / "a",
+                        scope=TenantScope(tenant_id=tenant),
                         progress=reporter,
                     )
 
@@ -280,6 +295,44 @@ class TestSearchRebuild:
         assert report.indexed == 0
         assert row.status is JobStatus.SUCCEEDED
         assert row.progress == 1.0  # finishing completes the bar even with nothing to do
+
+    async def test_the_bar_completes_when_the_scan_does_not_before(self) -> None:
+        # The denominator is a snapshot and the collection is live, so a sweep routinely
+        # meets more rows than it counted. Clamped, that reads as a finished bar with work
+        # still going — and 1.0 is the one value that has to mean "the scan is over", which
+        # is what a watcher waits on before touching the index.
+        tenant = uuid4()
+        runtime = _runtime()
+        await _seed_notes(runtime, tenant, count=6)
+        trace = _Trace()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+                reporter = build_progress_reporter(
+                    ctx,
+                    job_id=uuid4(),
+                    kind="search_rebuild",
+                    projector=build_job_progress_projector(ctx),
+                    min_interval=0.0,
+                )
+                reporter.sinks = (*reporter.sinks, trace)
+
+                await rebuild_search_index(
+                    _UndercountingQuery(ctx.document.query(NOTE_SPEC), understate=4),
+                    ctx.search.command(NOTE_INDEX),
+                    document=NOTE_SPEC,
+                    search=NOTE_INDEX,
+                    chunk_size=2,
+                    progress=reporter,
+                )
+
+        # Six rows walked against a count of two: every tick but the last stays short of the
+        # end, and the end is what the stream running out earns.
+        assert trace.fractions[-1] == 1.0
+        assert all(fraction != 1.0 for fraction in trace.fractions[:-1])
+        assert _is_monotone(trace.fractions)
 
     async def test_a_rebuild_without_a_reporter_costs_no_count_query(self) -> None:
         # The denominator is worth one query only when someone is watching; a sweep with no

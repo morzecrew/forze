@@ -234,7 +234,9 @@ async def test_group_ensure_step_honours_an_explicit_start_id() -> None:
         ctx = runtime.get_context()
         cmd = ctx.deps.resolve_configurable(ctx, StreamCommandDepKey, spec, route=spec.name)
 
-        id_a = await cmd.append(str(spec.name), RealtimeSignal.of(Audience.topic("a"), "e", {"x": 1}))
+        id_a = await cmd.append(
+            str(spec.name), RealtimeSignal.of(Audience.topic("a"), "e", {"x": 1})
+        )
         await cmd.append(str(spec.name), RealtimeSignal.of(Audience.topic("b"), "e", {"x": 2}))
 
         # create the group at an explicit cursor — strictly after signal A (not "$"/"0")

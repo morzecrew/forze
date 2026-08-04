@@ -292,10 +292,15 @@ class JobStalenessMonitor:
             silent_since=cutoff, kind=kind, exclude_kinds=exclude, limit=1
         )
 
-        return JobStalenessStats(
-            stalled=stalled,
-            oldest_heartbeat_at=quietest[0].heartbeat_at if quietest else None,
-        )
+        if not quietest:
+            # Two reads, one live collection: the set can empty between them, and the pair
+            # "five jobs are stuck, the worst for zero seconds" is a contradiction an
+            # operator has to spend a morning on. An empty page is the later, truer answer —
+            # the jobs that were stuck reported in — so this sweep says so with both numbers
+            # instead of publishing half of each snapshot.
+            return JobStalenessStats()
+
+        return JobStalenessStats(stalled=stalled, oldest_heartbeat_at=quietest[0].heartbeat_at)
 
 
 def _merged(left: JobStalenessStats, right: JobStalenessStats) -> JobStalenessStats:
@@ -339,11 +344,16 @@ def instrument_job_progress(
     goes green at the moment it stops knowing anything.
     """
 
-    monitor.claim_instrumentation()
-
+    # Imported and resolved *before* the monitor is claimed: an application without the OTel
+    # extra fails here, and a claim taken first would consume the monitor on the way out —
+    # leaving assembly unable to retry with a meter it does supply, for a failure that never
+    # registered anything. Once registration begins the claim stands, because a partial set
+    # of gauges cannot be rolled back out of a meter and retrying would double the rest.
     from opentelemetry import metrics
 
     resolved = meter or metrics.get_meter("forze")
+
+    monitor.claim_instrumentation()
 
     def _gauge(
         name: str,

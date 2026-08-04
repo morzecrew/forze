@@ -24,6 +24,7 @@ from typing import Any, Final
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from forze.application.contracts.durable.function import DurableRunContext, bind_durable_run
 from forze.application.contracts.inventory import (
@@ -34,6 +35,7 @@ from forze.application.contracts.inventory import (
 )
 from forze.application.contracts.realtime import Audience, RealtimeSignal
 from forze.application.contracts.stream import StreamQueryDepKey
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import FrozenTimeSource, bind_time_source, uuid7
@@ -106,6 +108,20 @@ class _RecordingSink:
     @property
     def transitions(self) -> list[JobProgress]:
         return [event for event, durable in self.emitted if durable]
+
+
+class _FlakySink(_RecordingSink):
+    """A sink that can be taken away and brought back — a broker blip, mid-job."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.down = False
+
+    async def emit(self, event: JobProgress, *, durable: bool) -> None:
+        if self.down:
+            raise exc.infrastructure("sink unavailable")
+
+        await super().emit(event, durable=durable)
 
 
 class _RefusingSink:
@@ -232,9 +248,7 @@ class TestAdversarialOrdering:
             projector = build_job_progress_projector(runtime.get_context())
             job_id = uuid4()
 
-            await projector.apply(
-                _event(job_id, JobStatus.RUNNING, seconds=0, seq=1, progress=0.5)
-            )
+            await projector.apply(_event(job_id, JobStatus.RUNNING, seconds=0, seq=1, progress=0.5))
             failed = await projector.apply(
                 _event(job_id, JobStatus.FAILED, seconds=1, seq=2, error="boom")
             )
@@ -300,7 +314,9 @@ class TestAdversarialOrdering:
                     _event(job_id, JobStatus.SUCCEEDED, seconds=1, seq=1),
                     _event(job_id, JobStatus.FAILED, seconds=2, seq=1, error="late failure"),
                 ]
-                outcomes.append(_observable(await _apply_all(projector, [events[i] for i in order])))
+                outcomes.append(
+                    _observable(await _apply_all(projector, [events[i] for i in order]))
+                )
 
             assert outcomes[0] == outcomes[1]
             assert outcomes[0]["status"] is JobStatus.FAILED
@@ -331,9 +347,7 @@ class TestAdversarialOrdering:
             projector = build_job_progress_projector(runtime.get_context())
             job_id = uuid4()
 
-            await projector.apply(
-                _event(job_id, JobStatus.WAITING, seconds=0, seq=7, progress=0.6)
-            )
+            await projector.apply(_event(job_id, JobStatus.WAITING, seconds=0, seq=7, progress=0.6))
             row = await projector.apply(
                 _event(job_id, JobStatus.RUNNING, seconds=60, seq=1, progress=None)
             )
@@ -349,9 +363,7 @@ class TestAdversarialOrdering:
             projector = build_job_progress_projector(runtime.get_context())
             job_id = uuid4()
 
-            await projector.apply(
-                _event(job_id, JobStatus.RUNNING, seconds=0, seq=1, progress=0.4)
-            )
+            await projector.apply(_event(job_id, JobStatus.RUNNING, seconds=0, seq=1, progress=0.4))
             # A NaN compares false against everything: accepted as the high-water mark it
             # would make every later comparison false and disable the monotonic rule.
             await projector.apply(
@@ -398,6 +410,82 @@ class TestLateJoiner:
             assert row.status is JobStatus.RUNNING
             assert row.progress == 0.5
             assert row.started_at == _T0 + timedelta(seconds=5)
+
+    async def test_a_pending_report_never_un_starts_a_running_job(self) -> None:
+        # Two processes, two clocks: whoever queues the job stamps `pending`, whoever runs it
+        # stamps `running`, and a queueing service running a few seconds ahead produces a
+        # `pending` that is *newer* than the report proving the job is executing. Taking the
+        # newer one back would not merely show a wrong status — `pending` is not in the
+        # staleness sweep's active set, so the job would also stop being watched at exactly
+        # the moment it became able to hang.
+        runtime = _runtime()
+
+        async with runtime.scope():
+            projector = build_job_progress_projector(runtime.get_context())
+            job_id = uuid4()
+
+            await projector.apply(_event(job_id, JobStatus.RUNNING, seconds=0, seq=1))
+            row = await projector.apply(_event(job_id, JobStatus.PENDING, seconds=30, seq=1))
+
+            assert row.status is JobStatus.RUNNING
+            assert row.started_at == _T0
+            # It is still a report, so the job is still heard from — only its *status* is
+            # refused.
+            assert row.heartbeat_at == _T0 + timedelta(seconds=30)
+
+    async def test_a_late_running_report_supersedes_a_newer_pending_one(self) -> None:
+        # The same pair the other way round, which is what keeps the rule order-independent:
+        # a `running` that arrives after a newer `pending` must win too, or the two arrival
+        # orders would disagree about a job that plainly started.
+        runtime = _runtime()
+
+        async with runtime.scope():
+            projector = build_job_progress_projector(runtime.get_context())
+            job_id = uuid4()
+
+            await projector.apply(_event(job_id, JobStatus.PENDING, seconds=30, seq=1))
+            row = await projector.apply(_event(job_id, JobStatus.RUNNING, seconds=0, seq=1))
+
+            assert row.status is JobStatus.RUNNING
+            assert row.started_at == _T0
+
+    async def test_every_order_of_a_queued_job_converges(self) -> None:
+        # The rule above is a *second* way for a status to lose, so it is a second way for
+        # the projection to become order-dependent — the property everything else here rests
+        # on. Same job, no terminal to absorb the disagreement, and the declaration stamped
+        # by the clock that runs ahead: whichever order these arrive in, the record has to
+        # be the same one.
+        script = [
+            (JobStatus.PENDING, 3.0, 1),
+            (JobStatus.RUNNING, 0.0, 1),
+            (JobStatus.WAITING, 2.0, 2),
+        ]
+
+        runtime = _runtime()
+        results: list[dict[str, Any]] = []
+
+        async with runtime.scope():
+            projector = build_job_progress_projector(runtime.get_context())
+
+            for order in permutations(range(len(script))):
+                job_id = uuid4()
+                results.append(
+                    _observable(
+                        await _apply_all(
+                            projector,
+                            [
+                                _event(job_id, script[i][0], seconds=script[i][1], seq=script[i][2])
+                                for i in order
+                            ],
+                        )
+                    )
+                )
+
+        assert all(result == results[0] for result in results)
+        assert results[0]["status"] is JobStatus.WAITING
+        assert results[0]["started_at"] == _T0
+        # Refused as a status, still counted as a report.
+        assert results[0]["heartbeat_at"] == _T0 + timedelta(seconds=3)
 
     async def test_a_terminal_event_for_an_unknown_job_lands_finished(self) -> None:
         runtime = _runtime()
@@ -944,13 +1032,145 @@ class TestRelayCrashRecovery:
 # ....................... #
 
 
+class TestThePayloadBoundary:
+    """What the projector is allowed to assume, enforced where a foreign payload arrives."""
+
+    def test_a_naive_instant_is_refused(self) -> None:
+        # The merge compares this against the record's stored instants, and Python raises on
+        # naive-vs-aware. A producer in another language that serialized a local timestamp
+        # without an offset would not merge wrong — it would raise `TypeError` out of the
+        # middle of the projector and leave the job unprojected, with the payload long gone
+        # from the traceback. Refused here, where it is still identifiable.
+        with pytest.raises(ValidationError):
+            JobProgress(
+                job_id=uuid4(),
+                kind="export",
+                status=JobStatus.RUNNING,
+                at=datetime(2026, 8, 4, 12, 0, 0),  # noqa: DTZ001 — the point of the test
+                seq=1,
+            )
+
+    def test_an_error_without_a_failure_is_refused(self) -> None:
+        # The projector copies `error` onto the record with every status it accepts, so this
+        # would otherwise produce a row that says `running` and explains why it failed —
+        # and, once the job succeeded, a success with a reason.
+        with pytest.raises(ValidationError):
+            JobProgress(
+                job_id=uuid4(),
+                kind="export",
+                status=JobStatus.SUCCEEDED,
+                at=_T0,
+                seq=1,
+                error="but it worked",
+            )
+
+    def test_a_failure_carries_its_reason(self) -> None:
+        event = JobProgress(
+            job_id=uuid4(),
+            kind="export",
+            status=JobStatus.FAILED,
+            at=_T0,
+            seq=1,
+            error="the disk filled up",
+        )
+
+        assert event.error == "the disk filled up"
+
+
+# ....................... #
+
+
+class _IdentityWatchingProjector:
+    """Records the tenant that was ambient when the record was actually written.
+
+    Handed to :func:`build_progress_reporter` as the merger, so what it sees is what the
+    *wiring* produced — a sink wrapped by hand would only prove the wrapper works.
+    """
+
+    def __init__(self, ctx: ExecutionContext) -> None:
+        self.ctx = ctx
+        self.seen: list[UUID | None] = []
+
+    async def apply(self, event: JobProgress) -> object:
+        tenant = self.ctx.inv_ctx.get_tenant()
+        self.seen.append(tenant.tenant_id if tenant is not None else None)
+
+        return None
+
+
+class TestTheJobsIdentity:
+    """A job belongs to the identity that opened it, not to whatever is ambient at emit."""
+
+    async def test_a_tick_is_written_under_the_identity_that_opened_the_job(self) -> None:
+        # The failure this closes is silent and produces the worst possible record. The work
+        # a job watches routinely runs under bindings of its own — a full-system export
+        # walks one bound section per tenant, a per-tenant reindex is the same call under
+        # each — and every port under a sink decides where a write lands by reading the
+        # ambient tenant *at write time*. Unbound, one job scatters a row into every
+        # partition its work touched, each stuck at whatever status was ambient there.
+        opener = uuid4()
+        elsewhere = uuid4()
+        runtime = _runtime()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            watching = _IdentityWatchingProjector(ctx)
+
+            with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=opener)):
+                reporter = build_progress_reporter(
+                    ctx,
+                    job_id=uuid4(),
+                    kind="export",
+                    projector=watching,
+                    min_interval=0.0,
+                )
+                await reporter.start()
+
+            # The work moves on to another tenant's data — the export's next section.
+            with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=elsewhere)):
+                await reporter.report(0.5, "halfway")
+                await reporter.finish("done")
+
+        assert watching.seen == [opener, opener, opener]
+
+    async def test_a_held_tick_is_written_under_the_job_not_the_flusher(self) -> None:
+        # Coalescing widens the same crack: a value captured under one binding is emitted by
+        # whatever comes *next*, which can be under another one entirely.
+        opener = uuid4()
+        elsewhere = uuid4()
+        clock = _ManualTime()
+        runtime = _runtime()
+
+        with bind_time_source(clock):
+            async with runtime.scope():
+                ctx = runtime.get_context()
+                watching = _IdentityWatchingProjector(ctx)
+
+                with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=opener)):
+                    reporter = build_progress_reporter(
+                        ctx,
+                        job_id=uuid4(),
+                        kind="export",
+                        projector=watching,
+                        min_interval=5.0,
+                    )
+                    await reporter.start()
+                    await reporter.report(0.5, "held by the window")
+
+                with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=elsewhere)):
+                    await reporter.flush()
+
+        assert watching.seen == [opener, opener]
+
+
+# ....................... #
+
+
 class TestSpecContributions:
     """The inventory half — both progress specs are ones no application author wrote."""
 
     def test_both_halves_are_catalogued_as_the_kit_s(self) -> None:
-        entries = progress_spec_contributions(
-            spec=_SPEC, outbox_spec=_PROGRESS_OUTBOX
-        ).freeze()
+        entries = progress_spec_contributions(spec=_SPEC, outbox_spec=_PROGRESS_OUTBOX).freeze()
         by_plane = {
             entry.plane: (entry.name, entry.disposition, entry.source) for entry in entries.entries
         }
@@ -1170,6 +1390,73 @@ class TestInlineRecording:
         assert row.subject == "acme"
         assert row.started_at is not None
         assert row.finished_at is not None
+
+    async def test_a_failed_terminal_can_be_stated_again(self) -> None:
+        # The strand this closes: the local status was committed before the durable emit
+        # that publishes it, so an outbox that was down for one call left a reporter that
+        # believed the job had finished and a record that never heard — and the terminal
+        # guard then refused every retry. A job stuck at `running` forever, arrived at by
+        # way of reporting that it wasn't.
+        runtime = _runtime()
+        refusing = _RefusingSink()
+        recording = _RecordingSink()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            projector = build_job_progress_projector(ctx)
+            job_id = uuid4()
+            reporter = build_progress_reporter(
+                ctx,
+                job_id=job_id,
+                kind="export",
+                projector=projector,
+                min_interval=0.0,
+            )
+            await reporter.start()
+
+            # The sink goes away *after* the job is running — the shape a real outage has.
+            reporter.sinks = (*reporter.sinks, refusing)
+
+            with pytest.raises(CoreException):
+                await reporter.finish("done")
+
+            # Not stranded: the sink comes back and the caller states the outcome again.
+            reporter.sinks = (*reporter.sinks[:-1], recording)
+            await reporter.finish("done, on the second attempt")
+
+            row = await _find_job(ctx, job_id)
+
+        assert row.status is JobStatus.SUCCEEDED
+        assert row.message == "done, on the second attempt"
+        # A fresh sequence for the retry: the first event may have reached some sink, and
+        # two different events sharing one number would break the merge's tie-break.
+        assert [event.seq for event in recording.transitions] == [3]
+
+    async def test_a_terminal_nothing_accepted_leaves_the_job_reportable(self) -> None:
+        # The other half, with one sink so nothing partially succeeded: a transition that
+        # reached nobody must leave the reporter exactly as it was. A committed status would
+        # have raised `progress_job_terminal` on the very next tick — taking down the work
+        # that was still running, over a report about it.
+        flaky = _FlakySink()
+        reporter = _reporter(flaky, min_interval=0.0)
+
+        await reporter.start()
+        flaky.down = True
+
+        with pytest.raises(CoreException):
+            await reporter.fail("the disk filled up")
+
+        assert reporter.status is JobStatus.RUNNING
+
+        flaky.down = False
+        await reporter.report(0.5, "still going")
+        await reporter.finish("done after all")
+
+        assert [event.status for event in flaky.transitions] == [
+            JobStatus.RUNNING,
+            JobStatus.SUCCEEDED,
+        ]
+        assert flaky.ticks[-1].progress == 0.5
 
     async def test_the_clock_is_the_seam_the_record_is_stamped_from(self) -> None:
         # DST-safety: nothing in the reporter or the projector reads the system clock, so a

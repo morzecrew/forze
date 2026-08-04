@@ -43,6 +43,7 @@ from .record import (
 from .reporter import (
     DEFAULT_MIN_INTERVAL,
     DEFAULT_PROGRESS_ROUTE,
+    BoundIdentitySink,
     JobProgressMerger,
     ProgressReporter,
     ProgressSink,
@@ -65,6 +66,7 @@ __all__ = [
     "JOBS_STALLED_GAUGE",
     "JOB_PROGRESS_EVENT",
     "JOB_PROGRESS_EVENT_NAME",
+    "BoundIdentitySink",
     "JobDocumentSpec",
     "JobProgress",
     "JobProgressMerger",

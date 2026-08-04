@@ -52,12 +52,18 @@ async def test_second_ack_advances_the_same_row_not_a_duplicate() -> None:
         query = ctx.document.query(_SPEC)
         cursors = DocumentMailboxCursors(command=ctx.document.command(_SPEC), query=query)
 
-        await cursors.advance(principal="u1", client_key="dev", up_to=HlcTimestamp(physical_ms=3, logical=0))
-        await cursors.advance(principal="u1", client_key="dev", up_to=HlcTimestamp(physical_ms=9, logical=0))
+        await cursors.advance(
+            principal="u1", client_key="dev", up_to=HlcTimestamp(physical_ms=3, logical=0)
+        )
+        await cursors.advance(
+            principal="u1", client_key="dev", up_to=HlcTimestamp(physical_ms=9, logical=0)
+        )
 
         rows = await query.find_many(filters={"$values": {"principal": "u1", "client_key": "dev"}})
         assert len(rows.hits) == 1
-        assert await cursors.get(principal="u1", client_key="dev") == HlcTimestamp(physical_ms=9, logical=0)
+        assert await cursors.get(principal="u1", client_key="dev") == HlcTimestamp(
+            physical_ms=9, logical=0
+        )
 
 
 async def test_concurrent_first_acks_keep_the_higher_position() -> None:
@@ -71,13 +77,19 @@ async def test_concurrent_first_acks_keep_the_higher_position() -> None:
         cursors = DocumentMailboxCursors(command=ctx.document.command(_SPEC), query=query)
 
         await asyncio.gather(
-            cursors.advance(principal="u1", client_key="dev", up_to=HlcTimestamp(physical_ms=3, logical=0)),
-            cursors.advance(principal="u1", client_key="dev", up_to=HlcTimestamp(physical_ms=9, logical=0)),
+            cursors.advance(
+                principal="u1", client_key="dev", up_to=HlcTimestamp(physical_ms=3, logical=0)
+            ),
+            cursors.advance(
+                principal="u1", client_key="dev", up_to=HlcTimestamp(physical_ms=9, logical=0)
+            ),
         )
 
         rows = await query.find_many(filters={"$values": {"principal": "u1", "client_key": "dev"}})
         assert len(rows.hits) == 1  # converged on the deterministic id, never duplicated
-        assert await cursors.get(principal="u1", client_key="dev") == HlcTimestamp(physical_ms=9, logical=0)
+        assert await cursors.get(principal="u1", client_key="dev") == HlcTimestamp(
+            physical_ms=9, logical=0
+        )
 
 
 def test_cursor_id_includes_the_tenant() -> None:
