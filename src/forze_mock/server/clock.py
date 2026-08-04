@@ -118,6 +118,11 @@ class ControlledTimeSource:
         Forward only. A backwards step would hand out ids whose sortable prefix goes back on
         itself, and it buys nothing: :meth:`freeze` already sets any instant, earlier ones
         included, which is the honest way to ask for an earlier clock.
+
+        The *destination* is what gets checked, not the step: a representable ``timedelta``
+        added to a clock already frozen near ``datetime.max`` still lands outside the range,
+        and computing it before mutating is what keeps a refused advance from leaving the
+        clock in a state whose next read raises.
         """
 
         if delta < timedelta():
@@ -126,8 +131,17 @@ class ControlledTimeSource:
                 "Use freeze(instant) to set an earlier moment"
             )
 
+        try:
+            moved = self.now() + delta
+
+        except OverflowError as error:
+            raise exc.validation(
+                f"Advancing by {delta} from {self.now().isoformat()} leaves the range of "
+                "representable dates"
+            ) from error
+
         if self.frozen_at is not None:
-            self.frozen_at += delta
+            self.frozen_at = moved
 
         else:
             self.offset += delta

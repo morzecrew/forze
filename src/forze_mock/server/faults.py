@@ -63,6 +63,15 @@ class FaultBoard:
     faults: list[ArmedFault] = attrs.field(factory=list)
     latencies: list[ArmedLatency] = attrs.field(factory=list)
 
+    fired: int = attrs.field(default=0, init=False)
+    """How many faults this board has ever handed out.
+
+    What is armed cannot answer "did *that* call fail because of an injection?" — a one-shot
+    fault is consumed and removed before the exception it produces reaches the caller, and a
+    fault armed elsewhere stays armed through a failure it had nothing to do with. A
+    monotonic count answers it exactly, by comparison across the call. Never reset, including
+    by :meth:`clear`: a counter that can go backwards would make that comparison lie."""
+
     # ....................... #
 
     def arm_fault(self, fault: ArmedFault) -> None:
@@ -94,6 +103,8 @@ class FaultBoard:
                 continue
 
             if fault.remaining is None:
+                self.fired += 1
+
                 return fault
 
             # A count already at zero is spent, not owed one more: `remaining` says how many
@@ -109,6 +120,8 @@ class FaultBoard:
 
             else:
                 self.faults[index] = attrs.evolve(fault, remaining=fault.remaining - 1)
+
+            self.fired += 1
 
             return fault
 

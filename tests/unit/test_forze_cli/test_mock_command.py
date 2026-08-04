@@ -72,6 +72,33 @@ class TestMockServe:
         assert "the factory itself is broken" in str(result.exception)
         assert "zero-argument callable" not in result.output
 
+    def test_an_unusable_signature_object_does_not_become_argument_guidance(
+        self, monkeypatch
+    ) -> None:
+        # Acquiring a signature and binding it fail for different reasons. Only the second
+        # means "this needs arguments"; a callable whose `__signature__` is itself broken
+        # says nothing about the call, and must not be reported as though it did.
+        import forze_cli.mock as mock_command
+
+        class _BadSignature:
+            # Raising `TypeError` specifically: a `__signature__` that is merely the wrong
+            # *type* surfaces as ValueError, which the old single-`try` already handled — so
+            # only this variant tells the two failure modes apart.
+            @property
+            def __signature__(self) -> object:
+                raise TypeError("computing the signature blew up")
+
+            def __call__(self) -> object:
+                raise RuntimeError("reached the call, which is the point")
+
+        monkeypatch.setenv("FORZE_MOCK_SERVER", "1")
+        monkeypatch.setattr(mock_command, "load_object", lambda _ref: _BadSignature())
+
+        result = runner.invoke(app, ["mock", "serve", "anything:at_all"])
+
+        assert "cannot be called without arguments" not in result.output
+        assert isinstance(result.exception, RuntimeError), result.output
+
     def test_a_target_with_no_introspectable_signature_is_still_called(self, monkeypatch) -> None:
         # Some builtins have no signature to bind against. The check cannot conclude anything
         # there, so it must stand aside rather than refuse a target that would have worked.

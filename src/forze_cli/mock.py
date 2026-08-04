@@ -36,7 +36,17 @@ def _refuse_unless_callable_bare(target: object, ref: str) -> None:
     import inspect
 
     try:
-        inspect.signature(target).bind()  # type: ignore[arg-type]
+        signature = inspect.signature(target)  # type: ignore[arg-type]
+
+    # Nothing to check — a builtin with no signature, or a callable whose ``__signature__``
+    # is itself unusable. Acquiring the signature and binding it are separate steps because
+    # only the second one means "this needs arguments"; failing the first says nothing about
+    # the call, so it must not be reported as though it did.
+    except (TypeError, ValueError):
+        return
+
+    try:
+        signature.bind()
 
     except TypeError as error:
         typer.echo(
@@ -45,10 +55,6 @@ def _refuse_unless_callable_bare(target: object, ref: str) -> None:
             err=True,
         )
         raise typer.Exit(code=1) from error
-
-    except ValueError:
-        # No introspectable signature (some builtins). Nothing to check — let the call speak.
-        return
 
 
 # ....................... #

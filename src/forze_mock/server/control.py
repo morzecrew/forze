@@ -262,16 +262,22 @@ def build_control_app(session: MockSession) -> Starlette:
         if payload.get("reset", False):
             session.state.clear()
 
+        # What the board *holds* cannot answer whether this seed's failure was injected: a
+        # one-shot fault is consumed and removed before its exception arrives here, and a
+        # fault armed on another route stays armed through a failure it caused nothing of.
+        # The count of faults actually handed out answers it exactly.
+        fired_before = session.board.fired
+
         try:
             seeded = await _apply_seed(session)
 
         # Determinism makes this the *expected* outcome, not an edge case: a plan with a
         # pinned instant mints the same ids on every run, so a second application lands on
         # the rows the first one wrote. Saying so beats a bare "Unique violation" — but only
-        # for a conflict nobody asked for. With a fault armed, the developer requested a
-        # failure and has to see theirs, not advice about a collision that never happened.
+        # for a conflict nobody asked for. An injected one is the developer's own request,
+        # and has to reach them as itself.
         except CoreException as error:
-            if error.kind is not ExceptionKind.CONFLICT or session.board.faults:
+            if error.kind is not ExceptionKind.CONFLICT or session.board.fired != fired_before:
                 raise
 
             raise exc.precondition(

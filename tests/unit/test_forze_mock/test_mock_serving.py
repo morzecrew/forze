@@ -482,18 +482,38 @@ class TestTheControlPlane:
         assert "Injected by the mock control plane" in response.json()["error"]
         assert "reset" not in response.json()["error"], "a throttle is not a collision"
 
+    @pytest.mark.parametrize("times", [None, 1, 3], ids=["persistent", "one-shot", "counted"])
     def test_an_armed_conflict_reaches_the_caller_instead_of_collision_advice(
-        self, client: TestClient
+        self, client: TestClient, times: int | None
     ) -> None:
         # The collision rewrite matches on kind, and `conflict` is a kind a developer can
-        # arm — so without the armed-board check the control plane would answer a requested
-        # failure with advice about a duplicate seed that never happened.
-        client.post("/_mock/fault", json={"route": "notes", "op": "create", "kind": "conflict"})
+        # arm — so the control plane must not answer a requested failure with advice about a
+        # duplicate seed that never happened. `times: 1` is the case that breaks a check
+        # based on "is anything still armed": the board consumes a one-shot fault *before*
+        # the exception it raises reaches this handler, leaving the board empty.
+        body: dict[str, object] = {"route": "notes", "op": "create", "kind": "conflict"}
+
+        if times is not None:
+            body["times"] = times
+
+        client.post("/_mock/fault", json=body)
 
         response = client.post("/_mock/seed", json={"reset": True})
 
         assert "Injected by the mock control plane" in response.json()["error"]
         assert "reset" not in response.json()["error"]
+
+    def test_a_fault_armed_elsewhere_does_not_suppress_the_collision_advice(
+        self, client: TestClient
+    ) -> None:
+        # The other direction of the same mistake: a fault armed on an unrelated route is
+        # still armed during a genuine collision, and must not withhold the explanation.
+        client.post("/_mock/fault", json={"route": "somewhere-else", "kind": "conflict"})
+
+        response = client.post("/_mock/seed")
+
+        assert response.status_code == 400, response.text
+        assert '{"reset": true}' in response.json()["error"]
 
     def test_seed_can_clear_first(self, client: TestClient) -> None:
         client.post("/notes", json={"title": "transient"})
@@ -685,6 +705,14 @@ class TestAMalformedControlRequestIsRefusedNotCrashed:
         assert response.status_code == 422, response.text
         assert "whole number" in response.json()["error"]
 
+    def test_advancing_off_the_end_of_time_answers_422_not_500(self, client: TestClient) -> None:
+        client.post("/_mock/time", json={"action": "freeze", "instant": "9999-12-31T00:00:00Z"})
+
+        response = client.post("/_mock/time", json={"action": "advance", "seconds": 86_400 * 2})
+
+        assert response.status_code == 422, response.text
+        assert "representable dates" in response.json()["error"]
+
     def test_a_representable_advance_is_still_allowed(self, client: TestClient) -> None:
         # The bound has to leave real clock tests alone: a decade is an ordinary TTL step.
         client.post("/_mock/time", json={"action": "freeze", "instant": "2030-01-01T00:00:00Z"})
@@ -766,6 +794,17 @@ class TestTheControlledClockItself:
         assert clock.resume() is not None
         assert clock.frozen_at is None
         assert clock.offset == timedelta()
+
+    def test_advancing_past_the_end_of_time_is_refused_without_breaking_the_clock(self) -> None:
+        # A representable step can still land outside the representable *range*. Checking the
+        # destination rather than the step is also what leaves the clock usable afterwards.
+        clock = ControlledTimeSource()
+        clock.freeze(datetime(9999, 12, 31, tzinfo=UTC))
+
+        with pytest.raises(CoreException, match="representable dates"):
+            clock.advance(timedelta(days=2))
+
+        assert clock.now() == datetime(9999, 12, 31, tzinfo=UTC), "a refused advance moved it"
 
     def test_the_clock_refuses_to_run_backwards(self) -> None:
         # The route answers 422 before reaching this, but the source is the contract.
