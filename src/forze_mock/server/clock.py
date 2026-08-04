@@ -15,12 +15,13 @@ import attrs
 @final
 @attrs.define(slots=True)
 class ClockMiddleware:
-    """Bind the controlled clock for the duration of each request.
+    """Bind the server's one controlled clock into the context of each request.
 
     Per request, not once at startup: a ``TimeSource`` lives in a ContextVar, and a value
     bound inside the lifespan task is *not* visible to the tasks the server spawns per
     request — they copy the context that existed before it. Binding at startup looks right,
-    passes a naive read, and leaves every handler on the system clock.
+    passes a naive read, and leaves every handler on the system clock. The source itself is
+    long-lived and shared, so what the control plane changes, every request sees.
     """
 
     app: Any
@@ -43,9 +44,10 @@ class ClockMiddleware:
 class ControlledTimeSource:
     """The system clock until someone freezes it, then whatever the control plane says.
 
-    Bound once for the server's lifetime rather than per request: a ``TimeSource`` lives in a
-    ContextVar, and a value set inside one request's task would not be visible to the next.
-    Mutating one long-lived source is what makes ``POST /_mock/time`` affect the whole server.
+    One long-lived instance, bound into each request's context by :class:`ClockMiddleware`.
+    The binding has to be per request (a ``TimeSource`` lives in a ContextVar), but the
+    *state* is shared, and that is what makes ``POST /_mock/time`` affect the whole server
+    rather than only the request that asked for it.
     """
 
     frozen_at: datetime | None = None
@@ -91,9 +93,18 @@ class ControlledTimeSource:
     # ....................... #
 
     def freeze(self, instant: datetime | None = None) -> datetime:
-        """Stop the clock at *instant* (default: now). Returns the instant it stopped at."""
+        """Stop the clock at *instant* (default: now). Returns the instant it stopped at.
 
-        self.frozen_at = instant or self.now()
+        A naive *instant* is read as UTC rather than as local time. Storing it naive would
+        poison every later read: ``now()`` would return a naive datetime, and the first
+        comparison against an aware one — a TTL, an expiry — raises instead of answering.
+        """
+
+        if instant is None:
+            self.frozen_at = self.now()
+
+        else:
+            self.frozen_at = instant if instant.tzinfo is not None else instant.replace(tzinfo=UTC)
 
         return self.frozen_at
 

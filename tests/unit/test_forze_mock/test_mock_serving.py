@@ -39,6 +39,8 @@ from forze_mock import MockDepsModule, MockState
 from forze_mock.execution.configs import MockRouteConfig
 from forze_mock.seeding import SeedPlan, spec_seed
 from forze_mock.server import ControlPlane, MockApp, MockSession, build_mock_server, serve
+from forze_mock.server.control import _INSPECTABLE_STORES
+from forze_mock.server.runner import _is_loopback
 
 pytestmark = pytest.mark.unit
 
@@ -225,6 +227,22 @@ class TestItRefusesToServeSomethingReal:
                 clock=None,  # type: ignore[arg-type]
             )
 
+    @pytest.mark.parametrize(
+        ("host", "loopback"),
+        [
+            ("127.0.0.1", True),
+            ("localhost", True),
+            ("::1", True),
+            ("0.0.0.0", False),  # noqa: S104 - the case the warning exists for
+            ("10.0.0.5", False),
+            ("mock.internal", False),
+        ],
+    )
+    def test_a_bind_beyond_this_machine_is_recognised_as_one(self, host: str, loopback) -> None:
+        # The control plane is deliberately unauthenticated, so which binds are loopback is
+        # the whole basis of the extra warning — including "a name I cannot resolve is not".
+        assert _is_loopback(host) is loopback
+
     def test_an_app_factory_that_returns_a_bare_asgi_app_is_refused(self) -> None:
         async def bare(scope, receive, send) -> None: ...  # pragma: no cover - never called
 
@@ -319,6 +337,15 @@ class TestTheControlPlane:
         unknown = client.get("/_mock/state/lock")
         assert unknown.status_code == 404
 
+    def test_every_allowlisted_store_is_a_field_of_the_state(self, client: TestClient) -> None:
+        # An allowlisted name that MockState does not carry used to answer `null`, which
+        # reads as "that store is empty" — the one answer a debugging aid must not invent.
+        for store in _INSPECTABLE_STORES:
+            response = client.get(f"/_mock/state/{store}")
+
+            assert response.status_code == 200, f"{store}: {response.text}"
+            assert response.json()[store] is not None, f"{store} is allowlisted but absent"
+
     def test_time_freezes_advances_and_resumes(self, client: TestClient) -> None:
         instant = datetime(2030, 1, 1, tzinfo=UTC)
 
@@ -335,6 +362,18 @@ class TestTheControlPlane:
         assert created["created_at"].startswith("2030-01-01T01:00")
 
         assert client.post("/_mock/time", json={"action": "resume"}).json()["frozen"] is False
+
+    def test_freezing_at_a_naive_instant_reads_it_as_utc(self, client: TestClient) -> None:
+        # Naive in, aware out. Storing it naive would poison every later read: `now()` would
+        # return a naive datetime and the first comparison against an aware one — a TTL, an
+        # expiry — raises instead of answering.
+        frozen = client.post(
+            "/_mock/time", json={"action": "freeze", "instant": "2030-01-01T00:00:00"}
+        )
+
+        assert frozen.json()["now"] == "2030-01-01T00:00:00+00:00"
+        # ...and the app still writes, which a naive clock breaks on its first comparison.
+        assert client.post("/notes", json={"title": "naive"}).status_code in (200, 201)
 
     def test_emit_refuses_when_the_app_supplied_no_egress(self, client: TestClient) -> None:
         # The placement rule again: the realtime egress plane lives above forze_mock, so the
@@ -371,6 +410,66 @@ class TestTheControlPlane:
 
         assert response.status_code == 202
         assert [signal.event for signal in delivered] == ["order.placed"]
+
+
+class TestAMalformedControlRequestIsRefusedNotCrashed:
+    """Every way a control-plane body can be wrong has to answer 4xx.
+
+    A 500 here says the *server* broke, which sends a frontend developer looking in exactly
+    the wrong place — the control plane is the tool they debug the app with.
+    """
+
+    @pytest.mark.parametrize(
+        ("path", "body"),
+        [
+            pytest.param("/_mock/fault", {"kind": "conflict", "times": "soon"}, id="times-text"),
+            pytest.param("/_mock/fault", {"kind": "conflict", "times": 0}, id="times-zero"),
+            pytest.param("/_mock/latency", {"seconds": "a while"}, id="latency-text"),
+            pytest.param("/_mock/time", {"action": "advance", "seconds": {}}, id="advance-object"),
+            pytest.param("/_mock/time", {"action": "freeze", "instant": "soon"}, id="instant-text"),
+        ],
+    )
+    def test_an_unusable_value_answers_422(
+        self, client: TestClient, path: str, body: dict[str, object]
+    ) -> None:
+        response = client.post(path, json=body)
+
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]
+
+    def test_a_body_that_is_not_json_answers_422(self, client: TestClient) -> None:
+        response = client.post(
+            "/_mock/fault",
+            content=b'{"kind": "conflict"',
+            headers={"content-type": "application/json"},
+        )
+
+        assert response.status_code == 422, response.text
+        assert "not valid JSON" in response.json()["error"]
+
+    def test_an_unusable_signal_answers_422_with_the_offending_fields(self) -> None:
+        async def on_emit(_ctx, _signal: RealtimeSignal) -> None:  # pragma: no cover - unreached
+            raise AssertionError("an invalid signal must never reach the app")
+
+        with TestClient(build_mock_server(_mock_app(on_emit=on_emit))) as client:
+            response = client.post("/_mock/emit", json={"event": "no audience"})
+
+        assert response.status_code == 422, response.text
+        assert response.json()["details"]["errors"]
+
+    def test_a_fault_armed_for_a_count_still_fires_that_many_times(
+        self, client: TestClient
+    ) -> None:
+        # The other half of validating `times`: refusing junk must not have broken the
+        # value the field exists for.
+        client.post(
+            "/_mock/fault",
+            json={"route": "notes", "op": "find_page", "kind": "conflict", "times": 2},
+        )
+
+        statuses = [client.post("/notes/list", json={}).status_code for _ in range(3)]
+
+        assert statuses == [409, 409, 200]
 
 
 class TestPaginationIsReal:

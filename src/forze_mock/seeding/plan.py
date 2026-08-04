@@ -19,6 +19,20 @@ from forze.base.primitives import JsonDict
 
 # ----------------------- #
 
+
+def _require_countable(count: int, what: str) -> None:
+    """Refuse a negative generation count, on any plane.
+
+    A negative count is not a smaller seed — ``range(-1)`` is empty, so it silently means
+    "generate nothing" and a plan that asked for rows quietly produces none.
+    """
+
+    if count < 0:
+        raise exc.configuration(f"Seed count for '{what}' must not be negative")
+
+
+# ....................... #
+
 DEFAULT_SEED_INSTANT = datetime(2026, 1, 1, tzinfo=UTC)
 """The clock a seed runs under by default.
 
@@ -62,8 +76,7 @@ class SpecSeed:
                 "write path, so the spec needs a create command"
             )
 
-        if self.count < 0:
-            raise exc.configuration(f"Seed count for '{self.spec.name}' must not be negative")
+        _require_countable(self.count, self.spec.name)
 
     # ....................... #
 
@@ -112,6 +125,11 @@ class SearchSeed:
     spec in :attr:`SeedPlan.specs`; generated rows beyond that pool keep their own ids.
     """
 
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        _require_countable(self.count, str(self.spec.name))
+
 
 # ....................... #
 
@@ -132,6 +150,11 @@ class StorageSeed:
 
     prefix: str | None = None
     """Key prefix applied to generated objects (explicit ones may carry their own)."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        _require_countable(self.count, str(self.spec.name))
 
 
 # ....................... #
@@ -156,6 +179,11 @@ class QueueSeed:
 
     overrides: Mapping[str, Any] = attrs.field(factory=dict[str, Any])
     """Field values forced on every payload."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        _require_countable(self.count, f"{self.spec.name}/{self.channel}")
 
 
 # ....................... #

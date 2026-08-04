@@ -51,7 +51,19 @@ def serve(
     target = load_object(ref)
 
     if callable(target) and not isinstance(target, MockApp):  # pyright: ignore[reportUnnecessaryIsInstance]
-        target = target()
+        try:
+            target = target()
+
+        # The `MockApp` class itself, or a factory that takes arguments: both are callable and
+        # both are the same user mistake as pointing at the wrong attribute, so they get the
+        # same guidance rather than a traceback.
+        except TypeError as error:
+            typer.echo(
+                f"Calling {ref!r} to get a MockApp failed: {error}. Expose a MockApp "
+                "instance, or a zero-argument callable returning one.",
+                err=True,
+            )
+            raise typer.Exit(code=1) from error
 
     if not isinstance(target, MockApp):
         typer.echo(

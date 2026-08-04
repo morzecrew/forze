@@ -13,8 +13,10 @@ the mock), so the control plane owns third-party routing and nothing of the app'
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from json import JSONDecodeError
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError as PydanticValidationError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -22,6 +24,7 @@ from starlette.routing import Route
 
 from forze.application.contracts.interception import PortSelector
 from forze.base.exceptions import CoreException, ExceptionKind, exc
+from forze.base.exceptions.mapping import map_pydantic
 
 from .faults import ArmedFault, ArmedLatency
 
@@ -39,7 +42,7 @@ _INSPECTABLE_STORES = (
     "cache_kv",
     "counters",
     "inbox",
-    "outbox",
+    "outbox_rows",
     "identity",
     "analytics_ingest_log",
 )
@@ -71,14 +74,22 @@ def _jsonable(value: Any) -> Any:
 
 
 async def _body(request: Request) -> dict[str, Any]:
-    """Parse a JSON object body, tolerating an empty one."""
+    """Parse a JSON object body, tolerating an empty one.
+
+    Every way a body can be wrong answers 422. A malformed one reaching the client as a 500
+    would say the *server* broke, which sends a frontend developer looking in the wrong place.
+    """
 
     raw = await request.body()
 
     if not raw:
         return {}
 
-    payload = await request.json()
+    try:
+        payload = await request.json()
+
+    except JSONDecodeError as error:
+        raise exc.validation(f"Control-plane body is not valid JSON: {error}") from error
 
     if not isinstance(payload, dict):
         raise exc.validation("Control-plane bodies must be JSON objects")
@@ -123,6 +134,62 @@ def _kind(payload: dict[str, Any]) -> ExceptionKind:
         raise exc.validation(
             f"Unknown exception kind {raw!r}; expected one of: {allowed}"
         ) from error
+
+
+# ....................... #
+
+
+def _seconds(raw: Any, *, field: str = "seconds") -> float:
+    """A duration in seconds, refused by value rather than blowing up on conversion."""
+
+    try:
+        return float(raw)
+
+    except (TypeError, ValueError) as error:
+        raise exc.validation(f"{field.capitalize()} must be a number, got {raw!r}") from error
+
+
+# ....................... #
+
+
+def _times(raw: Any) -> int | None:
+    """How many calls a fault fires on — ``None`` meaning "until disarmed".
+
+    Refused here rather than at the call it would fire on: an unusable ``times`` stored now
+    raises inside the *app's* port chain later, which reads as an app bug.
+    """
+
+    if raw is None:
+        return None
+
+    try:
+        times = int(raw)
+
+    except (TypeError, ValueError) as error:
+        raise exc.validation(f"A fault's 'times' must be an integer, got {raw!r}") from error
+
+    if times < 1:
+        raise exc.validation(f"A fault's 'times' must be at least 1, got {times}")
+
+    return times
+
+
+# ....................... #
+
+
+def _instant(raw: Any) -> datetime | None:
+    """Parse an ISO-8601 instant, reading a naive one as UTC (never as local time)."""
+
+    if raw is None:
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(str(raw))
+
+    except ValueError as error:
+        raise exc.validation(f"Not an ISO-8601 instant: {raw!r}") from error
+
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 # ....................... #
@@ -177,7 +244,17 @@ def build_control_app(session: MockSession) -> Starlette:
                 f"Unknown store {store!r}; inspectable: {', '.join(_INSPECTABLE_STORES)}"
             )
 
-        return JSONResponse({store: _jsonable(getattr(session.state, store, None))})
+        # Strict, not `getattr(..., None)`: an allowlisted name that is not a field of
+        # MockState means the allowlist has drifted from the state object, and answering
+        # `null` would read as "that store is empty" — the one answer a debugging aid must
+        # never invent.
+        if not hasattr(session.state, store):
+            raise exc.configuration(
+                f"Store {store!r} is inspectable but is not a field of MockState — "
+                "the allowlist has drifted from the state object"
+            )
+
+        return JSONResponse({store: _jsonable(getattr(session.state, store))})
 
     async def fault(request: Request) -> JSONResponse:
         payload = await _body(request)
@@ -186,7 +263,7 @@ def build_control_app(session: MockSession) -> Starlette:
             kind=_kind(payload),
             summary=str(payload.get("summary", "Injected by the mock control plane")),
             code=payload.get("code"),
-            remaining=payload.get("times"),
+            remaining=_times(payload.get("times")),
         )
         session.board.arm_fault(armed)
 
@@ -194,7 +271,7 @@ def build_control_app(session: MockSession) -> Starlette:
 
     async def latency(request: Request) -> JSONResponse:
         payload = await _body(request)
-        seconds = float(payload.get("seconds", 0))
+        seconds = _seconds(payload.get("seconds", 0))
 
         if seconds < 0:
             raise exc.validation("Latency seconds must not be negative")
@@ -215,12 +292,10 @@ def build_control_app(session: MockSession) -> Starlette:
         action = str(payload.get("action", "freeze"))
 
         if action == "freeze":
-            raw = payload.get("instant")
-            instant = datetime.fromisoformat(str(raw)).astimezone(UTC) if raw else None
-            now = session.clock.freeze(instant)
+            now = session.clock.freeze(_instant(payload.get("instant") or None))
 
         elif action == "advance":
-            now = session.clock.advance(timedelta(seconds=float(payload.get("seconds", 0))))
+            now = session.clock.advance(timedelta(seconds=_seconds(payload.get("seconds", 0))))
 
         elif action == "resume":
             now = session.clock.resume()
@@ -262,6 +337,7 @@ def build_control_app(session: MockSession) -> Starlette:
 
     control = Starlette(routes=routes)
     control.add_exception_handler(CoreException, _core_exception_response)
+    control.add_exception_handler(PydanticValidationError, _pydantic_validation_response)
 
     return control
 
@@ -308,4 +384,29 @@ def _core_exception_response(_request: Request, error: Exception) -> JSONRespons
         ExceptionKind.CONFIGURATION: 500,
     }.get(error.kind, 400)
 
-    return JSONResponse({"error": error.summary, "code": error.code}, status_code=status)
+    body: dict[str, Any] = {"error": error.summary, "code": error.code}
+
+    if error.details:
+        body["details"] = error.details
+
+    return JSONResponse(body, status_code=status)
+
+
+# ....................... #
+
+
+def _pydantic_validation_response(request: Request, error: Exception) -> JSONResponse:
+    """Answer a malformed control-plane model with the 422 the body deserves.
+
+    A route that hands a raw payload to ``model_validate`` raises pydantic's own error, which
+    is not a :class:`CoreException` and would otherwise surface as a 500. Mapped through the
+    framework's own mapper, so the field details are scrubbed the same way they are anywhere
+    else rather than echoed back raw.
+    """
+
+    mapped = map_pydantic(error, site="forze_mock.server.control")
+
+    if mapped is None:  # pragma: no cover - registered for PydanticValidationError
+        raise error
+
+    return _core_exception_response(request, mapped)

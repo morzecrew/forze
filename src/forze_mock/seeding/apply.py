@@ -9,6 +9,7 @@ from uuid import UUID
 
 from forze.application.contracts.queue import QueueCommandDepKey
 from forze.application.contracts.storage import UploadedObject
+from forze.base.exceptions import exc
 from forze.base.primitives import (
     FrozenTimeSource,
     SeededEntropySource,
@@ -49,8 +50,10 @@ def _linked(
 
     A self-reference draws from the rows already created for this spec, so a seeded tree
     gets real parents. The first row has nothing to point at: it becomes a root when the
-    field is nullable, and only when it is not does the generated value stand — a dangling
-    reference being strictly worse than none, since a client that follows it 404s.
+    field is nullable, and the seed is refused when it is not — a dangling reference is
+    strictly worse than none, since a client that follows it 404s, and letting the generated
+    value stand would ship exactly that. The way out is an explicit ``links`` entry: naming
+    a target that gets seeded, or ``None`` to opt the field out of linking entirely.
     """
 
     for field, target in targets.items():
@@ -61,6 +64,14 @@ def _linked(
 
         elif _accepts_none(seed.create_cmd, field):
             row[field] = None
+
+        else:
+            raise exc.configuration(
+                f"Cannot link '{seed.spec.name}.{field}' to '{target}': no rows to point at "
+                f"({'the first row of a self-reference' if target == seed.spec.name else 'that spec seeds nothing'}), "
+                f"and the field is not nullable. Seed '{target}' first, make the field "
+                f"optional, or opt out with links={{'{seed.spec.name}': {{'{field}': None}}}}"
+            )
 
     return row
 
@@ -106,18 +117,20 @@ async def apply_seed(ctx: ExecutionContext, plan: SeedPlan) -> SeedResult:
             command = ctx.doc.command(seed.spec)
             ids: list[UUID] = []
             created[name] = ids
+            written: list[dict[str, Any]] = []
 
             for row in rows:
                 explicit_id, payload = split_row_id(row)
                 linked = _linked(payload, seed=seed, targets=targets, created=created, rng=rng)
-                document = await command.create(
-                    seed.create_cmd(**linked),
-                    id=explicit_id,
-                    return_new=True,
-                )
+                created_cmd = seed.create_cmd(**linked)
+                document = await command.create(created_cmd, id=explicit_id, return_new=True)
                 ids.append(document.id)
+                # The *validated command*, not the row it came from: the row still carries the
+                # reserved `id` key the create command never sees, and its reference fields are
+                # the generated ones, from before linking resolved them.
+                written.append(created_cmd.model_dump(mode="json"))
 
-            payloads[name] = tuple(rows)
+            payloads[name] = tuple(written)
 
         indexed = await _apply_search(ctx, plan, created, rng)
         stored = await _apply_storage(ctx, plan)

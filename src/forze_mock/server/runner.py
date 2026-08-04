@@ -185,14 +185,14 @@ def serve(
     around is worse than none.
     """
 
-    import uvicorn
-
     if os.environ.get(SERVE_ENV_GATE, "").strip().lower() not in _TRUTHY:
         raise exc.configuration(
             f"Refusing to serve the mock: set {SERVE_ENV_GATE}=1 to confirm this is a "
             "development environment. This server keeps all data in memory and enforces "
             "none of the guarantees a real backend does"
         )
+
+    import uvicorn
 
     app = build_mock_server(mock_app)
 
@@ -205,4 +205,35 @@ def serve(
         mock_app.control.prefix if mock_app.control.enabled else "disabled",
     )
 
+    if not _is_loopback(host) and mock_app.control.enabled:
+        # Said separately from the banner above, because it is a different fact: the control
+        # plane is deliberately unauthenticated, so binding off loopback hands anyone who can
+        # reach the port the ability to reset the data and arm faults.
+        logger.warning(
+            "The %s control plane is UNAUTHENTICATED and %s is not a loopback address — "
+            "anyone who can reach this port can reset, seed and inject faults",
+            mock_app.control.prefix,
+            host,
+        )
+
     uvicorn.run(app, host=host, port=port, log_level=log_level)
+
+
+# ....................... #
+
+
+def _is_loopback(host: str) -> bool:
+    """Whether *host* binds only to this machine."""
+
+    from ipaddress import ip_address
+
+    if host in {"localhost", ""}:
+        return True
+
+    try:
+        return ip_address(host.strip("[]")).is_loopback
+
+    except ValueError:
+        # A hostname this function cannot resolve: assume it reaches further than loopback,
+        # since the warning is cheap and the silence is not.
+        return False

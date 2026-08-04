@@ -42,6 +42,19 @@ class TestMockServe:
         assert result.exit_code == 1
         assert "is not a MockApp" in result.output
 
+    def test_a_callable_that_cannot_be_called_bare_is_guidance_not_a_traceback(
+        self, monkeypatch
+    ) -> None:
+        # `MockApp` itself, and any factory taking arguments, are both callable — so both
+        # reach `target()` and both are the same user mistake as naming the wrong attribute.
+        monkeypatch.setenv("FORZE_MOCK_SERVER", "1")
+
+        result = runner.invoke(app, ["mock", "serve", "forze_mock.server:MockApp"])
+
+        assert result.exit_code == 1
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+        assert "zero-argument callable" in result.output
+
     def test_the_command_is_registered_with_its_own_help(self) -> None:
         result = runner.invoke(app, ["mock", "--help"])
 

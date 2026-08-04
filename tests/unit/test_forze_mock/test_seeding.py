@@ -109,6 +109,22 @@ def _tasks(name: str = "tasks") -> DocumentSpec:
     )
 
 
+class _RequiredRefCreate(CreateDocumentCmd):
+    project_id: UUID
+
+
+def _required_ref(name: str = "referrers") -> DocumentSpec:
+    """A spec whose reference field cannot be null — so it cannot be rooted."""
+
+    return DocumentSpec(
+        name=name,
+        read=_ProjectRead,
+        write=DocumentWriteTypes(
+            domain=_Project, create_cmd=_RequiredRefCreate, update_cmd=_ProjectUpdate
+        ),
+    )
+
+
 async def _hits(ctx, spec: DocumentSpec) -> list[BaseModel]:
     page = await ctx.doc.query(spec).find_many()
 
@@ -132,6 +148,29 @@ class TestSeedsGoThroughTheWritePath:
         assert {row.rev for row in rows} == {1}
         assert all(row.created_at is not None for row in rows)
         assert {row.id for row in rows} == set(result["projects"])
+
+    @pytest.mark.asyncio
+    async def test_the_recorded_rows_are_the_payloads_the_write_path_received(self) -> None:
+        # `SeedResult.rows` says "as created", so it has to be the validated create command:
+        # the row it came from still carries the reserved `id` key the command never sees,
+        # and its reference fields still hold the generated values, from before linking.
+        ctx = context_from_modules(MockDepsModule())
+        fixed = UUID("11111111-1111-1111-1111-111111111111")
+        result = await apply_seed(
+            ctx,
+            SeedPlan(
+                specs=(
+                    spec_seed(_tasks(), count=3),
+                    spec_seed(_projects(), fixtures=[{"id": str(fixed), "name": "Apollo"}]),
+                )
+            ),
+        )
+
+        project_row = result.rows["projects"][0]
+
+        assert "id" not in project_row, "the reserved fixture key is not a create-command field"
+        assert project_row["name"] == "Apollo"
+        assert {row["project_id"] for row in result.rows["tasks"]} == {str(fixed)}
 
     @pytest.mark.asyncio
     async def test_a_sealed_field_is_encrypted_at_rest_like_any_other_write(self) -> None:
@@ -260,6 +299,30 @@ class TestReferentialIntegrity:
         # a task this seed created (the first row has nothing to point at).
         assert parents
         assert parents <= seeded
+
+    @pytest.mark.asyncio
+    async def test_a_required_reference_with_nothing_to_point_at_is_refused(self) -> None:
+        # The residual hole the nullable case leaves: a non-nullable reference cannot become
+        # a root, so letting the generated UUID stand would seed a row whose reference 404s.
+        ctx = context_from_modules(MockDepsModule())
+        plan = SeedPlan(
+            specs=(spec_seed(_required_ref(), count=2), spec_seed(_projects(), count=0)),
+        )
+
+        with pytest.raises(CoreException, match="that spec seeds nothing"):
+            await apply_seed(ctx, plan)
+
+    @pytest.mark.asyncio
+    async def test_a_required_self_reference_is_refused_rather_than_dangling(self) -> None:
+        # Same rule, the other population: the *first* row of a self-link has no earlier row.
+        ctx = context_from_modules(MockDepsModule())
+        plan = SeedPlan(
+            specs=(spec_seed(_required_ref(name="projects"), count=2),),
+            links={"projects": {"project_id": "projects"}},
+        )
+
+        with pytest.raises(CoreException, match="first row of a self-reference"):
+            await apply_seed(ctx, plan)
 
     def test_a_cycle_between_specs_is_refused_with_the_way_out(self) -> None:
         class _ProjectWithLead(CreateDocumentCmd):
@@ -432,6 +495,21 @@ class TestEveryPlaneGoesThroughItsOwnWritePath:
     """§9 wants "a new plane the seeder cannot fill" to fail CI, which only means something
     once the seeder fills planes rather than document specs. Each of these asserts through the
     plane's *read* path, so a seeder that wrote into ``MockState`` directly would not pass."""
+
+    @pytest.mark.parametrize(
+        "seed",
+        [
+            pytest.param(lambda: spec_seed(_projects(), count=-1), id="documents"),
+            pytest.param(lambda: SearchSeed(spec=_INDEX, count=-1), id="search"),
+            pytest.param(lambda: StorageSeed(spec=_BLOBS, count=-1), id="storage"),
+            pytest.param(lambda: QueueSeed(spec=_QUEUE, channel="jobs", count=-1), id="queues"),
+        ],
+    )
+    def test_a_negative_count_is_refused_on_every_plane(self, seed) -> None:
+        # `range(-1)` is empty, so a negative count silently means "generate nothing" — a
+        # plan that asked for rows would produce none and say nothing about it.
+        with pytest.raises(CoreException, match="must not be negative"):
+            seed()
 
     @pytest.mark.asyncio
     async def test_search_documents_are_upserted_and_searchable(self) -> None:
