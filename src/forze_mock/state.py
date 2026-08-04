@@ -15,6 +15,25 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 
+def _fresh_default(instance: Any, default: Any) -> Any:
+    """A field's declared default, rebuilt if it is a factory.
+
+    ``takes_self`` factories are used elsewhere in this codebase, so calling every factory
+    bare would crash a reset the day one appears on this class rather than silently doing
+    the wrong thing later.
+    """
+
+    factory = getattr(default, "factory", None)
+
+    if factory is None:
+        return default
+
+    return factory(instance) if getattr(default, "takes_self", False) else factory()
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True)
 class MockTxSnapshot:
@@ -334,12 +353,7 @@ class MockState:
                 if isinstance(getattr(self, field.name, None), StripedAsyncLocks):
                     continue
 
-                default: Any = field.default
-                setattr(
-                    self,
-                    field.name,
-                    default.factory() if isinstance(default, attrs.Factory) else default,  # type: ignore[arg-type]
-                )
+                setattr(self, field.name, _fresh_default(self, field.default))
 
     # ....................... #
 

@@ -22,10 +22,11 @@ from fastapi.testclient import TestClient
 
 from forze.application.contracts.authn import AuthnSpec
 from forze.application.contracts.deps import Deps
+from forze.application.contracts.interception import PortCall, PortSelector
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.realtime import RealtimeSignal
 from forze.application.execution import DepsRegistry, ExecutionRuntime
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_fastapi.exceptions import register_exception_handlers
 from forze_fastapi.lifespan import runtime_lifespan
@@ -40,6 +41,7 @@ from forze_mock.execution.configs import MockRouteConfig
 from forze_mock.seeding import SeedPlan, spec_seed
 from forze_mock.server import ControlPlane, MockApp, MockSession, build_mock_server, serve
 from forze_mock.server.control import _INSPECTABLE_STORES
+from forze_mock.server.faults import ArmedFault, FaultBoard
 from forze_mock.server.runner import _is_loopback
 
 pytestmark = pytest.mark.unit
@@ -214,6 +216,16 @@ class TestItRefusesToServeSomethingReal:
 
         with pytest.raises(CoreException, match="no fallback-marked mock module"):
             build_mock_server(real_only)
+
+    def test_a_control_prefix_at_the_root_is_refused(self) -> None:
+        # Mounted first, so a root prefix matches every path and the served app vanishes —
+        # which presents as a totally broken server rather than as a bad prefix.
+        with pytest.raises(CoreException, match="swallow every route"):
+            ControlPlane(prefix="/")
+
+    def test_an_uncallable_emit_hook_is_refused_at_declaration(self) -> None:
+        with pytest.raises(CoreException, match="on_emit must be callable"):
+            MockApp(build_app=_build_app, on_emit="not a hook")  # type: ignore[arg-type]
 
     def test_a_session_cannot_be_minted_outside_the_builder(self) -> None:
         # Decision 9: the control plane takes a type, not a flag, so it cannot be switched
@@ -425,6 +437,12 @@ class TestAMalformedControlRequestIsRefusedNotCrashed:
             pytest.param("/_mock/fault", {"kind": "conflict", "times": "soon"}, id="times-text"),
             pytest.param("/_mock/fault", {"kind": "conflict", "times": 0}, id="times-zero"),
             pytest.param("/_mock/latency", {"seconds": "a while"}, id="latency-text"),
+            pytest.param("/_mock/latency", {"seconds": "inf"}, id="latency-infinite"),
+            pytest.param("/_mock/latency", {"seconds": "nan"}, id="latency-nan"),
+            pytest.param(
+                "/_mock/time", {"action": "advance", "seconds": "inf"}, id="advance-infinite"
+            ),
+            pytest.param("/_mock/time", {"action": "advance", "seconds": -1}, id="advance-back"),
             pytest.param("/_mock/time", {"action": "advance", "seconds": {}}, id="advance-object"),
             pytest.param("/_mock/time", {"action": "freeze", "instant": "soon"}, id="instant-text"),
         ],
@@ -436,6 +454,18 @@ class TestAMalformedControlRequestIsRefusedNotCrashed:
 
         assert response.status_code == 422, response.text
         assert response.json()["error"]
+
+    def test_a_literal_that_overflows_to_infinity_answers_422(self, client: TestClient) -> None:
+        # `1e400` is a perfectly valid JSON number that Python parses to `inf` — so the
+        # finiteness check cannot live in the string branch alone.
+        response = client.post(
+            "/_mock/latency",
+            content=b'{"seconds": 1e400}',
+            headers={"content-type": "application/json"},
+        )
+
+        assert response.status_code == 422, response.text
+        assert "finite" in response.json()["error"]
 
     def test_a_body_that_is_not_json_answers_422(self, client: TestClient) -> None:
         response = client.post(
@@ -456,6 +486,18 @@ class TestAMalformedControlRequestIsRefusedNotCrashed:
 
         assert response.status_code == 422, response.text
         assert response.json()["details"]["errors"]
+
+    def test_a_spent_fault_does_not_owe_one_more_firing(self) -> None:
+        # `remaining` is how many firings are *left*, so zero means none. The control plane
+        # refuses `times: 0`, but the board is the thing that defines the counter.
+        call = PortCall(surface="document_command", route="notes", op="create")
+        board = FaultBoard()
+        board.arm_fault(
+            ArmedFault(selector=PortSelector(), kind=ExceptionKind.CONFLICT, remaining=0)
+        )
+
+        assert board.take_fault(call) is None
+        assert not board.faults, "the spent fault should have been dropped, not kept"
 
     def test_a_fault_armed_for_a_count_still_fires_that_many_times(
         self, client: TestClient

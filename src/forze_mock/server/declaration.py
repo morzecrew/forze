@@ -42,8 +42,20 @@ class ControlPlane:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.enabled and not self.prefix.startswith("/"):
+        if not self.enabled:
+            return
+
+        if not self.prefix.startswith("/"):
             raise exc.configuration(f"Control plane prefix must start with '/': {self.prefix!r}")
+
+        # The control plane is mounted *before* the app, so a root prefix matches every path
+        # and the served app becomes unreachable — a config footgun that presents as a
+        # totally broken server rather than as a bad prefix.
+        if self.prefix == "/":
+            raise exc.configuration(
+                "Control plane prefix must not be '/': mounted at the root it would swallow "
+                "every route of the served app. Use a distinct prefix, or enabled=False"
+            )
 
 
 # ....................... #
@@ -107,6 +119,11 @@ class MockApp:
     def __attrs_post_init__(self) -> None:
         if not callable(self.build_app):
             raise exc.configuration("MockApp.build_app must be callable")
+
+        # Same fail-fast path as build_app: unchecked, a non-callable hook surfaces as an
+        # internal error on the one request that tries to emit, long after the mistake.
+        if self.on_emit is not None and not callable(self.on_emit):
+            raise exc.configuration("MockApp.on_emit must be callable")
 
         if self.state is not None and self.mock is not None:
             raise exc.configuration(

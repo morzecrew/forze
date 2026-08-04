@@ -60,6 +60,35 @@ def _referenced_stem(field: str) -> str | None:
 # ....................... #
 
 
+def _singular_index(seeds: Sequence[SpecSeed]) -> dict[str, str]:
+    """Map each seeded spec's singular stem back to its name, refusing a tie.
+
+    Two specs sharing a stem (``boxes`` and ``box``) would otherwise have the later one
+    silently win every reference field, and which one that is depends on plan order — the
+    field would link to a spec the author never named.
+    """
+
+    index: dict[str, str] = {}
+
+    for seed in seeds:
+        stem = singularize(seed.spec.name)
+        clashes = index.get(stem)
+
+        if clashes is not None:
+            raise exc.configuration(
+                f"Specs '{clashes}' and '{seed.spec.name}' both reduce to '{stem}', so a "
+                f"'{stem}_id' field cannot be linked unambiguously. Name the target "
+                "explicitly with SeedPlan.links"
+            )
+
+        index[stem] = seed.spec.name
+
+    return index
+
+
+# ....................... #
+
+
 def infer_links(
     seeds: Sequence[SpecSeed],
     *,
@@ -71,7 +100,7 @@ def infer_links(
     outside the plan cannot be satisfied and is left to generation.
     """
 
-    by_singular = {singularize(seed.spec.name): seed.spec.name for seed in seeds}
+    by_singular = _singular_index(seeds)
     seeded = {seed.spec.name for seed in seeds}
     resolved: dict[str, dict[str, str]] = {}
 

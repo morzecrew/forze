@@ -96,7 +96,15 @@ class FaultBoard:
             if fault.remaining is None:
                 return fault
 
-            if fault.remaining <= 1:
+            # A count already at zero is spent, not owed one more: `remaining` says how many
+            # firings are *left*, so honouring one here would fire a fault the board reports
+            # as having none.
+            if fault.remaining <= 0:
+                del self.faults[index]
+
+                return self.take_fault(call)
+
+            if fault.remaining == 1:
                 del self.faults[index]
 
             else:

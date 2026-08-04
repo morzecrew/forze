@@ -153,7 +153,9 @@ def validate_rows(seed: SpecSeed, rows: Sequence[Mapping[str, Any]]) -> None:
     known = set(seed.create_cmd.model_fields) | {ROW_ID}
 
     for index, row in enumerate(rows):
-        unknown = sorted(set(row) - known)
+        # Sorted as text: a YAML fixture can carry a non-string key, and comparing one
+        # against a string raises a TypeError that buries the configuration error below.
+        unknown = sorted(str(field) for field in set(row) - known)
 
         if unknown:
             raise exc.configuration(

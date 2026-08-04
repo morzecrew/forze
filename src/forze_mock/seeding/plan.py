@@ -33,6 +33,18 @@ def _require_countable(count: int, what: str) -> None:
 
 # ....................... #
 
+
+def _refuse_duplicates(what: str, names: Sequence[str]) -> None:
+    """Refuse two seeds for the same target on one plane."""
+
+    duplicated = sorted({name for name in names if names.count(name) > 1})
+
+    if duplicated:
+        raise exc.configuration(f"{what} seeded more than once: {', '.join(duplicated)}")
+
+
+# ....................... #
+
 DEFAULT_SEED_INSTANT = datetime(2026, 1, 1, tzinfo=UTC)
 """The clock a seed runs under by default.
 
@@ -228,10 +240,15 @@ class SeedPlan:
     def __attrs_post_init__(self) -> None:
         names = [seed.spec.name for seed in self.specs]
 
-        if len(set(names)) != len(names):
-            duplicated = ", ".join(sorted({name for name in names if names.count(name) > 1}))
-
-            raise exc.configuration(f"Spec seeded more than once: {duplicated}")
+        _refuse_duplicates("Spec", names)
+        # Every plane's result map is keyed by the same name, so a second seed for one target
+        # does not add to the report — it replaces it, and `total_all_planes` undercounts
+        # rows that really were written.
+        _refuse_duplicates("Search index", [str(seed.spec.name) for seed in self.search])
+        _refuse_duplicates("Storage spec", [str(seed.spec.name) for seed in self.storage])
+        _refuse_duplicates(
+            "Queue channel", [f"{seed.spec.name}/{seed.channel}" for seed in self.queues]
+        )
 
         unknown = sorted(set(self.links) - set(names))
 

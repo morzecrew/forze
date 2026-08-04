@@ -347,6 +347,14 @@ class TestReferentialIntegrity:
     def test_singularize(self, plural: str, expected: str) -> None:
         assert singularize(plural) == expected
 
+    def test_two_specs_reducing_to_one_stem_are_refused_rather_than_ordered(self) -> None:
+        # `projects` and `project` share a stem, so `project_id` could mean either — and
+        # which one won depended on plan order, linking to a spec the author never named.
+        seeds = (spec_seed(_projects("projects"), count=1), spec_seed(_projects("project"), count=1))
+
+        with pytest.raises(CoreException, match="both reduce to 'project'"):
+            infer_links(seeds)
+
 
 class TestPlausibility:
     @pytest.mark.asyncio
@@ -384,6 +392,16 @@ class TestPlausibility:
         await apply_seed(ctx, plan)
 
         assert {row.name for row in await _hits(ctx, _projects())} == {"forced"}
+
+    @pytest.mark.asyncio
+    async def test_a_non_string_fixture_key_is_still_a_configuration_error(self) -> None:
+        # A YAML fixture can carry a non-string key. Sorting it against the string field
+        # names raises a TypeError that buries the configuration error the author needs.
+        ctx = context_from_modules(MockDepsModule())
+        plan = SeedPlan(specs=(spec_seed(_projects(), fixtures=[{7: "seven", "nope": 1}]),))
+
+        with pytest.raises(CoreException, match="does not accept: 7, nope"):
+            await apply_seed(ctx, plan)
 
     @pytest.mark.asyncio
     async def test_an_unknown_fixture_field_is_named_once_not_buried_in_a_row_error(self) -> None:
@@ -510,6 +528,47 @@ class TestEveryPlaneGoesThroughItsOwnWritePath:
         # plan that asked for rows would produce none and say nothing about it.
         with pytest.raises(CoreException, match="must not be negative"):
             seed()
+
+    @pytest.mark.parametrize(
+        ("plan", "expected"),
+        [
+            pytest.param(
+                lambda: SeedPlan(search=(SearchSeed(spec=_INDEX), SearchSeed(spec=_INDEX))),
+                "Search index seeded more than once: notes_index",
+                id="search",
+            ),
+            pytest.param(
+                lambda: SeedPlan(storage=(StorageSeed(spec=_BLOBS), StorageSeed(spec=_BLOBS))),
+                "Storage spec seeded more than once: attachments",
+                id="storage",
+            ),
+            pytest.param(
+                lambda: SeedPlan(
+                    queues=(
+                        QueueSeed(spec=_QUEUE, channel="jobs"),
+                        QueueSeed(spec=_QUEUE, channel="jobs"),
+                    )
+                ),
+                "Queue channel seeded more than once: jobs/jobs",
+                id="queues",
+            ),
+        ],
+    )
+    def test_two_seeds_for_one_target_are_refused(self, plan, expected: str) -> None:
+        # Every plane's result map is keyed by the target's name, so a second seed does not
+        # add to the report — it replaces it, and `total_all_planes` undercounts real rows.
+        with pytest.raises(CoreException, match=expected):
+            plan()
+
+    def test_two_queue_channels_on_one_spec_are_still_fine(self) -> None:
+        plan = SeedPlan(
+            queues=(
+                QueueSeed(spec=_QUEUE, channel="jobs"),
+                QueueSeed(spec=_QUEUE, channel="retries"),
+            )
+        )
+
+        assert len(plan.queues) == 2
 
     @pytest.mark.asyncio
     async def test_search_documents_are_upserted_and_searchable(self) -> None:
@@ -669,6 +728,25 @@ class TestStateResetIsTotal:
                 f"{field.name} survived a reset — a store the derivation skips is data that "
                 "outlives POST /_mock/reset"
             )
+
+    def test_a_takes_self_factory_is_rebuilt_rather_than_crashing_the_reset(self) -> None:
+        # `takes_self=True` factories are used across this codebase, so calling every factory
+        # bare would turn the day one lands on MockState into a broken `POST /_mock/reset`.
+        import attrs
+
+        from forze_mock.state import _fresh_default
+
+        @attrs.define(slots=True)
+        class _Holder:
+            size: int = 3
+            items: list[int] = attrs.field(
+                default=attrs.Factory(lambda self: [0] * self.size, takes_self=True)
+            )
+
+        holder = _Holder()
+        field = attrs.fields(_Holder).items
+
+        assert _fresh_default(holder, field.default) == [0, 0, 0]
 
     def test_the_machinery_survives_because_callers_may_be_waiting_on_it(self) -> None:
         # Rebuilding a striped lock table mid-flight hands the next caller a *different*

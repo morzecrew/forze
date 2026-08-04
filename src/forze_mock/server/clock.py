@@ -9,6 +9,8 @@ from uuid import UUID
 
 import attrs
 
+from forze.base.exceptions import exc
+
 # ----------------------- #
 
 
@@ -111,7 +113,18 @@ class ControlledTimeSource:
     # ....................... #
 
     def advance(self, delta: timedelta) -> datetime:
-        """Move the clock forward, frozen or running."""
+        """Move the clock forward, frozen or running.
+
+        Forward only. A backwards step would hand out ids whose sortable prefix goes back on
+        itself, and it buys nothing: :meth:`freeze` already sets any instant, earlier ones
+        included, which is the honest way to ask for an earlier clock.
+        """
+
+        if delta < timedelta():
+            raise exc.configuration(
+                f"The controlled clock only advances forward; got {delta}. "
+                "Use freeze(instant) to set an earlier moment"
+            )
 
         if self.frozen_at is not None:
             self.frozen_at += delta

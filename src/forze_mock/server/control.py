@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from json import JSONDecodeError
+from math import isfinite
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError as PydanticValidationError
@@ -140,13 +141,23 @@ def _kind(payload: dict[str, Any]) -> ExceptionKind:
 
 
 def _seconds(raw: Any, *, field: str = "seconds") -> float:
-    """A duration in seconds, refused by value rather than blowing up on conversion."""
+    """A **finite** duration in seconds, refused by value rather than blowing up on use.
+
+    ``float("inf")`` clears a ``< 0`` check and then hangs the server forever inside
+    ``asyncio.sleep``, and ``timedelta(seconds=inf)`` raises. On an unauthenticated control
+    plane that is a body away, so finiteness is checked here rather than at the sleep.
+    """
 
     try:
-        return float(raw)
+        seconds = float(raw)
 
     except (TypeError, ValueError) as error:
         raise exc.validation(f"{field.capitalize()} must be a number, got {raw!r}") from error
+
+    if not isfinite(seconds):
+        raise exc.validation(f"{field.capitalize()} must be a finite number, got {raw!r}")
+
+    return seconds
 
 
 # ....................... #
@@ -295,7 +306,17 @@ def build_control_app(session: MockSession) -> Starlette:
             now = session.clock.freeze(_instant(payload.get("instant") or None))
 
         elif action == "advance":
-            now = session.clock.advance(timedelta(seconds=_seconds(payload.get("seconds", 0))))
+            seconds = _seconds(payload.get("seconds", 0))
+
+            # Caller error, so 422 rather than the clock's own configuration refusal: the
+            # control plane is where a bad body is diagnosed.
+            if seconds < 0:
+                raise exc.validation(
+                    f"The clock only advances forward; got {seconds}. Freeze at an instant "
+                    "to set an earlier moment"
+                )
+
+            now = session.clock.advance(timedelta(seconds=seconds))
 
         elif action == "resume":
             now = session.clock.resume()
