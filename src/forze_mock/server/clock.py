@@ -129,6 +129,12 @@ class ControlledTimeSource:
         poison every later read: ``now()`` would return a naive datetime, and the first
         comparison against an aware one — a TTL, an expiry — raises instead of answering.
 
+        "Naive" here is Python's own test, ``utcoffset() is not None``, and not the presence
+        of a ``tzinfo``: an attached zone that declines to state an offset leaves the datetime
+        naive, and ``astimezone`` reads a naive one as **local** time. Getting that wrong
+        stops the clock at a different instant on every host — precisely what a deterministic
+        clock exists to prevent.
+
         An aware one is **converted** to UTC rather than kept at its own offset, and refused
         when it has no UTC equivalent. Every later operation normalizes to UTC anyway —
         subtracting two instants, taking a ``timestamp()`` for an id — so an offset-aware
@@ -142,7 +148,7 @@ class ControlledTimeSource:
 
             return self.frozen_at
 
-        aware = instant if instant.tzinfo is not None else instant.replace(tzinfo=UTC)
+        aware = instant if instant.utcoffset() is not None else instant.replace(tzinfo=UTC)
 
         try:
             self.frozen_at = aware.astimezone(UTC)

@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from uuid import UUID
 
 import pytest
@@ -853,6 +853,35 @@ class TestTheControlledClockItself:
         # headroom check cannot see this, because it never converts.
         with pytest.raises(CoreException, match="no representable UTC equivalent"):
             ControlledTimeSource().freeze(instant)
+
+    def test_a_zone_that_states_no_offset_is_read_as_utc_not_as_local_time(
+        self, monkeypatch
+    ) -> None:
+        # Python calls a datetime naive when `utcoffset()` returns None, *however* its
+        # `tzinfo` looks — and `astimezone` reads a naive one as local time. Testing for the
+        # presence of a tzinfo instead stops the clock at a different instant on every host,
+        # which is the one thing a deterministic clock must not do.
+        class _UnknownOffset(tzinfo):
+            def utcoffset(self, _dt: datetime | None) -> timedelta | None:
+                return None
+
+            def dst(self, _dt: datetime | None) -> timedelta | None:
+                return None
+
+        declared = datetime(2030, 1, 1, tzinfo=_UnknownOffset())
+
+        assert declared.tzinfo is not None, "the naive test under scrutiny would pass here"
+        assert declared.utcoffset() is None, "...and Python still calls this datetime naive"
+
+        monkeypatch.setenv("TZ", "America/New_York")
+        time.tzset()
+
+        try:
+            assert ControlledTimeSource().freeze(declared) == datetime(2030, 1, 1, tzinfo=UTC)
+
+        finally:
+            monkeypatch.delenv("TZ", raising=False)
+            time.tzset()
 
     def test_an_ordinary_offset_is_normalised_rather_than_refused(self) -> None:
         clock = ControlledTimeSource()
