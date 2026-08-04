@@ -402,13 +402,38 @@ class TestReferentialIntegrity:
     def test_singularize(self, plural: str, expected: str) -> None:
         assert singularize(plural) == expected
 
-    def test_two_specs_reducing_to_one_stem_are_refused_rather_than_ordered(self) -> None:
-        # `projects` and `project` share a stem, so `project_id` could mean either — and
-        # which one won depended on plan order, linking to a spec the author never named.
-        seeds = (spec_seed(_projects("projects"), count=1), spec_seed(_projects("project"), count=1))
+    def test_an_ambiguous_stem_is_refused_where_inference_would_have_to_guess(self) -> None:
+        # `projects` and `project` share a stem, so `tasks.project_id` could mean either —
+        # and which one won depended on plan order, linking to a spec the author never named.
+        seeds = (
+            spec_seed(_tasks(), count=1),
+            spec_seed(_projects("projects"), count=1),
+            spec_seed(_projects("project"), count=1),
+        )
 
-        with pytest.raises(CoreException, match="both reduce to 'project'"):
+        with pytest.raises(CoreException, match="could link to project or projects"):
             infer_links(seeds)
+
+    def test_an_explicit_override_resolves_the_ambiguity_it_is_advertised_to_resolve(
+        self,
+    ) -> None:
+        # The error above says to name the target explicitly; that advice has to work, so
+        # the collision cannot be refused before the overrides are read.
+        seeds = (
+            spec_seed(_tasks(), count=1),
+            spec_seed(_projects("projects"), count=1),
+            spec_seed(_projects("project"), count=1),
+        )
+
+        resolved = infer_links(seeds, overrides={"tasks": {"project_id": "projects"}})
+
+        assert resolved == {"tasks": {"project_id": "projects"}}
+
+    def test_an_ambiguous_stem_nothing_references_is_not_a_problem(self) -> None:
+        # Two specs may share a stem all they like when no field asks inference to choose.
+        assert infer_links(
+            (spec_seed(_projects("projects"), count=1), spec_seed(_projects("project"), count=1))
+        ) == {}
 
 
 class TestPlausibility:

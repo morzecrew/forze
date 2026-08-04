@@ -25,6 +25,35 @@ mock_app_cli = typer.Typer(
 # ....................... #
 
 
+def _refuse_unless_callable_bare(target: object, ref: str) -> None:
+    """Exit with guidance when *target* cannot be called with no arguments.
+
+    Asked of the signature rather than by calling and catching: a factory that raises
+    ``TypeError`` on the inside is a real bug, and swallowing it into "expose a MockApp"
+    would hide the traceback that explains it.
+    """
+
+    import inspect
+
+    try:
+        inspect.signature(target).bind()  # type: ignore[arg-type]
+
+    except TypeError as error:
+        typer.echo(
+            f"{ref!r} cannot be called without arguments ({error}). Expose a MockApp "
+            "instance, or a zero-argument callable returning one.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from error
+
+    except ValueError:
+        # No introspectable signature (some builtins). Nothing to check — let the call speak.
+        return
+
+
+# ....................... #
+
+
 @mock_app_cli.command("serve")
 def serve(
     ref: str = typer.Argument(
@@ -51,19 +80,12 @@ def serve(
     target = load_object(ref)
 
     if callable(target) and not isinstance(target, MockApp):  # pyright: ignore[reportUnnecessaryIsInstance]
-        try:
-            target = target()
-
-        # The `MockApp` class itself, or a factory that takes arguments: both are callable and
-        # both are the same user mistake as pointing at the wrong attribute, so they get the
-        # same guidance rather than a traceback.
-        except TypeError as error:
-            typer.echo(
-                f"Calling {ref!r} to get a MockApp failed: {error}. Expose a MockApp "
-                "instance, or a zero-argument callable returning one.",
-                err=True,
-            )
-            raise typer.Exit(code=1) from error
+        # The signature is checked *before* the call, not by catching TypeError around it:
+        # the `MockApp` class itself and a factory needing arguments are both callable and
+        # both are the same user mistake, but a factory that raises TypeError internally is
+        # a real bug and has to keep its traceback.
+        _refuse_unless_callable_bare(target, ref)
+        target = target()
 
     if not isinstance(target, MockApp):
         typer.echo(

@@ -482,6 +482,19 @@ class TestTheControlPlane:
         assert "Injected by the mock control plane" in response.json()["error"]
         assert "reset" not in response.json()["error"], "a throttle is not a collision"
 
+    def test_an_armed_conflict_reaches_the_caller_instead_of_collision_advice(
+        self, client: TestClient
+    ) -> None:
+        # The collision rewrite matches on kind, and `conflict` is a kind a developer can
+        # arm — so without the armed-board check the control plane would answer a requested
+        # failure with advice about a duplicate seed that never happened.
+        client.post("/_mock/fault", json={"route": "notes", "op": "create", "kind": "conflict"})
+
+        response = client.post("/_mock/seed", json={"reset": True})
+
+        assert "Injected by the mock control plane" in response.json()["error"]
+        assert "reset" not in response.json()["error"]
+
     def test_seed_can_clear_first(self, client: TestClient) -> None:
         client.post("/notes", json={"title": "transient"})
 
@@ -617,6 +630,11 @@ class TestAMalformedControlRequestIsRefusedNotCrashed:
             pytest.param("/_mock/fault", {"kind": "conflict", "times": 0}, id="times-zero"),
             pytest.param("/_mock/latency", {"seconds": "a while"}, id="latency-text"),
             pytest.param("/_mock/latency", {"seconds": "inf"}, id="latency-infinite"),
+            pytest.param("/_mock/latency", {"seconds": 1e12}, id="latency-huge-but-finite"),
+            pytest.param(
+                "/_mock/time", {"action": "advance", "seconds": 1e300}, id="advance-unrepresentable"
+            ),
+            pytest.param("/_mock/fault", {"kind": "conflict", "times": 1.5}, id="times-fractional"),
             pytest.param("/_mock/latency", {"seconds": "nan"}, id="latency-nan"),
             pytest.param(
                 "/_mock/time", {"action": "advance", "seconds": "inf"}, id="advance-infinite"
@@ -645,6 +663,35 @@ class TestAMalformedControlRequestIsRefusedNotCrashed:
 
         assert response.status_code == 422, response.text
         assert "finite" in response.json()["error"]
+
+    def test_a_body_that_is_not_utf8_answers_422(self, client: TestClient) -> None:
+        # Decoding runs before parsing, so this never reaches the JSON error at all.
+        response = client.post(
+            "/_mock/fault",
+            content=b'{"kind": "\xff\xfe"}',
+            headers={"content-type": "application/json"},
+        )
+
+        assert response.status_code == 422, response.text
+        assert "not valid JSON" in response.json()["error"]
+
+    def test_an_overflowing_fault_count_answers_422(self, client: TestClient) -> None:
+        response = client.post(
+            "/_mock/fault",
+            content=b'{"kind": "conflict", "times": 1e400}',
+            headers={"content-type": "application/json"},
+        )
+
+        assert response.status_code == 422, response.text
+        assert "whole number" in response.json()["error"]
+
+    def test_a_representable_advance_is_still_allowed(self, client: TestClient) -> None:
+        # The bound has to leave real clock tests alone: a decade is an ordinary TTL step.
+        client.post("/_mock/time", json={"action": "freeze", "instant": "2030-01-01T00:00:00Z"})
+        moved = client.post("/_mock/time", json={"action": "advance", "seconds": 86_400 * 3650})
+
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["now"].startswith("2039-")
 
     def test_a_body_that_is_not_json_answers_422(self, client: TestClient) -> None:
         response = client.post(

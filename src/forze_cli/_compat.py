@@ -31,10 +31,11 @@ def require_dst() -> None:
 def require_mock_server() -> None:
     """Exit with a clear message when the ``mock-server`` extra is missing.
 
-    Only what *serving* needs. The generator behind ``forze_mock.seeding`` is in the same
-    extra for convenience, but a ``MockApp`` with no seed plan — or one carrying hand-written
-    fixtures — never imports it, and refusing to serve that app over a dependency it does not
-    use would be a gate on the wrong thing. ``require_seeding()`` covers the case that does.
+    Only what *serving* needs. A ``MockApp`` with **no seed plan** never imports
+    ``forze_mock.seeding``, so refusing to serve it over the generator would be a gate on the
+    wrong thing. Any plan at all does import it — fixtures-only included, because the gate
+    there is on the module rather than on the call — and ``require_seeding()`` is what says
+    so, at the point where it is true.
     """
 
     missing = [name for name in ("starlette", "uvicorn") if find_spec(name) is None]

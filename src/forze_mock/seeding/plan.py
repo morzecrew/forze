@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, final
@@ -37,7 +38,7 @@ def _require_countable(count: int, what: str) -> None:
 def _refuse_duplicates(what: str, names: Sequence[str]) -> None:
     """Refuse two seeds for the same target on one plane."""
 
-    duplicated = sorted({name for name in names if names.count(name) > 1})
+    duplicated = sorted(name for name, seen in Counter(names).items() if seen > 1)
 
     if duplicated:
         raise exc.configuration(f"{what} seeded more than once: {', '.join(duplicated)}")

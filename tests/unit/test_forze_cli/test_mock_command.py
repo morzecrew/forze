@@ -55,6 +55,38 @@ class TestMockServe:
         assert result.exception is None or isinstance(result.exception, SystemExit)
         assert "zero-argument callable" in result.output
 
+    def test_a_factory_that_fails_on_the_inside_keeps_its_traceback(self, monkeypatch) -> None:
+        # The signature is checked before the call precisely so this stays a real error: a
+        # factory raising TypeError internally is a bug, not "expose a MockApp".
+        import forze_cli.mock as mock_command
+
+        def _broken_factory() -> object:
+            raise TypeError("the factory itself is broken")
+
+        monkeypatch.setenv("FORZE_MOCK_SERVER", "1")
+        monkeypatch.setattr(mock_command, "load_object", lambda _ref: _broken_factory)
+
+        result = runner.invoke(app, ["mock", "serve", "anything:at_all"])
+
+        assert isinstance(result.exception, TypeError)
+        assert "the factory itself is broken" in str(result.exception)
+        assert "zero-argument callable" not in result.output
+
+    def test_a_target_with_no_introspectable_signature_is_still_called(self, monkeypatch) -> None:
+        # Some builtins have no signature to bind against. The check cannot conclude anything
+        # there, so it must stand aside rather than refuse a target that would have worked.
+        import forze_cli.mock as mock_command
+
+        monkeypatch.setenv("FORZE_MOCK_SERVER", "1")
+        # `range` is a builtin with no introspectable signature, and calling it bare raises —
+        # so a guard that did not stand aside would answer with its own message instead.
+        monkeypatch.setattr(mock_command, "load_object", lambda _ref: range)
+
+        result = runner.invoke(app, ["mock", "serve", "anything:at_all"])
+
+        assert "cannot be called without arguments" not in result.output
+        assert isinstance(result.exception, TypeError), result.output
+
     def test_serving_does_not_require_the_seed_generator(self, monkeypatch) -> None:
         # A MockApp with no seed plan never imports `forze_mock.seeding`, so gating every
         # served app on the generator refuses apps over a dependency they do not use.

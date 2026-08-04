@@ -60,28 +60,20 @@ def _referenced_stem(field: str) -> str | None:
 # ....................... #
 
 
-def _singular_index(seeds: Sequence[SpecSeed]) -> dict[str, str]:
-    """Map each seeded spec's singular stem back to its name, refusing a tie.
+def _singular_index(seeds: Sequence[SpecSeed]) -> dict[str, list[str]]:
+    """Map each singular stem to **every** seeded spec that reduces to it.
 
-    Two specs sharing a stem (``boxes`` and ``box``) would otherwise have the later one
-    silently win every reference field, and which one that is depends on plan order — the
-    field would link to a spec the author never named.
+    A list rather than a winner, because a tie is only a problem where inference is actually
+    consulted: two specs sharing a stem (``projects`` and ``project``) matter for a field
+    that has no override, and not at all for one the author named explicitly. Collapsing to
+    a winner here would let plan order decide silently — and refusing here would reject the
+    very ``SeedPlan.links`` entry that resolves it.
     """
 
-    index: dict[str, str] = {}
+    index: dict[str, list[str]] = {}
 
     for seed in seeds:
-        stem = singularize(seed.spec.name)
-        clashes = index.get(stem)
-
-        if clashes is not None:
-            raise exc.configuration(
-                f"Specs '{clashes}' and '{seed.spec.name}' both reduce to '{stem}', so a "
-                f"'{stem}_id' field cannot be linked unambiguously. Name the target "
-                "explicitly with SeedPlan.links"
-            )
-
-        index[stem] = seed.spec.name
+        index.setdefault(singularize(seed.spec.name), []).append(seed.spec.name)
 
     return index
 
@@ -137,10 +129,20 @@ def infer_links(
                 continue
 
             stem = _referenced_stem(field)
-            target_name = by_singular.get(singularize(stem)) if stem else None
+            candidates = by_singular.get(singularize(stem), ()) if stem else ()
 
-            if target_name is not None:
-                fields[field] = target_name
+            # Ambiguity is refused where it is *used*, not where it exists: this field has no
+            # override, so inference would have to pick, and which one it picked would depend
+            # on plan order. A field the author named explicitly never reaches here.
+            if len(candidates) > 1:
+                raise exc.configuration(
+                    f"'{name}.{field}' could link to {' or '.join(sorted(candidates))} — they "
+                    f"both reduce to '{singularize(stem or '')}'. Name the target explicitly "
+                    f"with links={{'{name}': {{'{field}': '<spec>'}}}}"
+                )
+
+            if len(candidates) == 1:
+                fields[field] = candidates[0]
 
         if forced:
             unknown = ", ".join(sorted(forced))

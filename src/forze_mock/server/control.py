@@ -50,6 +50,13 @@ _INSPECTABLE_STORES = (
 """Stores worth a debugging peek. An allowlist, not ``getattr`` on anything named: the state
 object holds locks and byte payloads that neither render nor belong in a response."""
 
+MAX_LATENCY_SECONDS = 3600.0
+"""Longest armed delay. Past an hour a "delay" is a hung server, not a spinner test."""
+
+MAX_ADVANCE_SECONDS = 86_400.0 * 365 * 1000
+"""Longest single clock step — a millennium, and comfortably inside ``timedelta``'s range,
+which a merely finite value is not (``timedelta(seconds=1e308)`` raises)."""
+
 # ....................... #
 
 
@@ -89,7 +96,8 @@ async def _body(request: Request) -> dict[str, Any]:
     try:
         payload = await request.json()
 
-    except JSONDecodeError as error:
+    # Decoding runs before parsing, so invalid UTF-8 never reaches the JSON error.
+    except (JSONDecodeError, UnicodeDecodeError) as error:
         raise exc.validation(f"Control-plane body is not valid JSON: {error}") from error
 
     if not isinstance(payload, dict):
@@ -140,22 +148,27 @@ def _kind(payload: dict[str, Any]) -> ExceptionKind:
 # ....................... #
 
 
-def _seconds(raw: Any, *, field: str = "seconds") -> float:
-    """A **finite** duration in seconds, refused by value rather than blowing up on use.
+def _seconds(raw: Any, *, field: str = "seconds", maximum: float) -> float:
+    """A duration in seconds, bounded — refused by value rather than blowing up on use.
 
-    ``float("inf")`` clears a ``< 0`` check and then hangs the server forever inside
-    ``asyncio.sleep``, and ``timedelta(seconds=inf)`` raises. On an unauthenticated control
-    plane that is a body away, so finiteness is checked here rather than at the sleep.
+    Finiteness alone is not enough. ``float("inf")`` clears a ``< 0`` check and then hangs
+    the server forever inside ``asyncio.sleep``; a merely *huge* finite value does the same,
+    and ``timedelta(seconds=1e308)`` raises ``OverflowError``. Both arrive in a body on an
+    unauthenticated plane, so each caller states the largest value that means anything for
+    what it is about to do.
     """
 
     try:
         seconds = float(raw)
 
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, OverflowError) as error:
         raise exc.validation(f"{field.capitalize()} must be a number, got {raw!r}") from error
 
     if not isfinite(seconds):
         raise exc.validation(f"{field.capitalize()} must be a finite number, got {raw!r}")
+
+    if seconds > maximum:
+        raise exc.validation(f"{field.capitalize()} must not exceed {maximum:g}, got {seconds:g}")
 
     return seconds
 
@@ -168,15 +181,21 @@ def _times(raw: Any) -> int | None:
 
     Refused here rather than at the call it would fire on: an unusable ``times`` stored now
     raises inside the *app's* port chain later, which reads as an app bug.
+
+    Whole numbers only, and said so rather than rounded: ``int(1.5)`` is a silent ``1``, and
+    a caller who asked for one and a half firings has a misunderstanding worth surfacing.
     """
 
     if raw is None:
         return None
 
+    if isinstance(raw, float) and not (isfinite(raw) and raw.is_integer()):
+        raise exc.validation(f"A fault's 'times' must be a whole number, got {raw!r}")
+
     try:
         times = int(raw)
 
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, OverflowError) as error:
         raise exc.validation(f"A fault's 'times' must be an integer, got {raw!r}") from error
 
     if times < 1:
@@ -248,9 +267,11 @@ def build_control_app(session: MockSession) -> Starlette:
 
         # Determinism makes this the *expected* outcome, not an edge case: a plan with a
         # pinned instant mints the same ids on every run, so a second application lands on
-        # the rows the first one wrote. Saying so beats a bare "Unique violation".
+        # the rows the first one wrote. Saying so beats a bare "Unique violation" — but only
+        # for a conflict nobody asked for. With a fault armed, the developer requested a
+        # failure and has to see theirs, not advice about a collision that never happened.
         except CoreException as error:
-            if error.kind is not ExceptionKind.CONFLICT:
+            if error.kind is not ExceptionKind.CONFLICT or session.board.faults:
                 raise
 
             raise exc.precondition(
@@ -296,7 +317,7 @@ def build_control_app(session: MockSession) -> Starlette:
 
     async def latency(request: Request) -> JSONResponse:
         payload = await _body(request)
-        seconds = _seconds(payload.get("seconds", 0))
+        seconds = _seconds(payload.get("seconds", 0), maximum=MAX_LATENCY_SECONDS)
 
         if seconds < 0:
             raise exc.validation("Latency seconds must not be negative")
@@ -320,7 +341,7 @@ def build_control_app(session: MockSession) -> Starlette:
             now = session.clock.freeze(_instant(payload.get("instant") or None))
 
         elif action == "advance":
-            seconds = _seconds(payload.get("seconds", 0))
+            seconds = _seconds(payload.get("seconds", 0), maximum=MAX_ADVANCE_SECONDS)
 
             # Caller error, so 422 rather than the clock's own configuration refusal: the
             # control plane is where a bad body is diagnosed.
