@@ -256,6 +256,9 @@
         <loc>https://morzecrew.github.io/forze/dev/recipes/expose-an-aggregate-over-mcp/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/mock-server/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/recipes/add-idempotency/</loc>
       </url>
       <url>

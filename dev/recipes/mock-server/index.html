@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/recipes/authn-authz-tenancy-fastapi/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/recipes/mock-server/">
       
       
-        <link rel="prev" href="../offload-cpu-work/">
+        <link rel="prev" href="../expose-an-aggregate-over-mcp/">
       
       
-        <link rel="next" href="../provision-identity-postgres/">
+        <link rel="next" href="../add-idempotency/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Authn, authz & tenancy - Forze</title>
+        <title>Serve your app on the mock - Forze</title>
       
     
     
@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#install-the-middleware" class="md-skip">
+        <a href="#the-swap" class="md-skip">
           Skip to content
         </a>
       
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Authn, authz & tenancy
+              Serve your app on the mock
             
           </span>
         </div>
@@ -3893,6 +3893,8 @@
                 
   
   
+    
+  
   
   
     
@@ -3908,11 +3910,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_1" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_1" checked>
         
           
           <label class="md-nav__link" for="__nav_6_1" id="__nav_6_1_label" tabindex="">
@@ -3932,7 +3934,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_1_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_1_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_6_1">
             <span class="md-nav__icon md-icon"></span>
             
@@ -4120,10 +4122,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../mock-server/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-server-cog" viewBox="0 0 24 24"><path d="m10.852 14.772-.383.923M13.148 14.772a3 3 0 1 0-2.296-5.544l-.383-.923M13.148 9.228l.383-.923"/><path d="m13.53 15.696-.382-.924a3 3 0 1 1-2.296-5.544M14.772 10.852l.923-.383M14.772 13.148l.923.383"/><path d="M4.5 10H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-.5M4.5 14H4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2h-.5M6 18h.01M6 6h.01M9.228 10.852l-.923-.383M9.228 13.148l-.923.383"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Serve your app on the mock
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -4140,6 +4168,163 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-swap" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The swap
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-app-is-unchanged" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The app is unchanged
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#seed-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Seed it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Run it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#serve-it-with-the-cli-and-drive-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Serve it with the CLI, and drive it
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Serve it with the CLI, and drive it">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-control-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The control plane
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#in-a-container" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        In a container
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multi-tenant-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Multi-tenant data
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-you-get-that-a-schema-mock-cannot-give-you" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What you get that a schema mock cannot give you
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-a-schema-mock-is-still-the-right-answer" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When a schema mock is still the right answer
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Limits
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        See also
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4305,8 +4490,6 @@
                 
   
   
-    
-  
   
   
     
@@ -4322,11 +4505,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_3" >
         
           
           <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="">
@@ -4346,7 +4529,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_6_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -4360,36 +4543,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Authn, authz & tenancy
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../authn-authz-tenancy-fastapi/" class="md-nav__link">
         
   
   
@@ -4406,102 +4563,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#install-the-middleware" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Install the middleware
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#wire-the-planes" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Wire the planes
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#enforce-on-operations" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Enforce on operations
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#http-login-endpoints" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        HTTP login endpoints
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#self-service-password-reset" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Self-service password reset
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#multiple-organizations" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Multiple organizations
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Notes
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -6007,10 +6068,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#install-the-middleware" class="md-nav__link">
+  <a href="#the-swap" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Install the middleware
+        The swap
       </span>
     </span>
   </a>
@@ -6018,10 +6079,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#wire-the-planes" class="md-nav__link">
+  <a href="#the-app-is-unchanged" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Wire the planes
+        The app is unchanged
       </span>
     </span>
   </a>
@@ -6029,10 +6090,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#enforce-on-operations" class="md-nav__link">
+  <a href="#seed-it" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Enforce on operations
+        Seed it
       </span>
     </span>
   </a>
@@ -6040,10 +6101,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#http-login-endpoints" class="md-nav__link">
+  <a href="#run-it" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        HTTP login endpoints
+        Run it
       </span>
     </span>
   </a>
@@ -6051,10 +6112,49 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#self-service-password-reset" class="md-nav__link">
+  <a href="#serve-it-with-the-cli-and-drive-it" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Self-service password reset
+        Serve it with the CLI, and drive it
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Serve it with the CLI, and drive it">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-control-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The control plane
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#in-a-container" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        In a container
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multi-tenant-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Multi-tenant data
       </span>
     </span>
   </a>
@@ -6062,10 +6162,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#multiple-organizations" class="md-nav__link">
+  <a href="#what-you-get-that-a-schema-mock-cannot-give-you" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Multiple organizations
+        What you get that a schema mock cannot give you
       </span>
     </span>
   </a>
@@ -6073,10 +6173,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
+  <a href="#when-a-schema-mock-is-still-the-right-answer" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Notes
+        When a schema mock is still the right answer
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Limits
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        See also
       </span>
     </span>
   </a>
@@ -6163,11 +6285,11 @@
     
     
       <li class="md-path__item">
-        <a href="././" class="md-path__link">
+        <a href="../crud-fastapi-postgres/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Identity
+    Data
   </span>
 
         </a>
@@ -6187,166 +6309,290 @@
   
 
 
-  <h1 id="__skip">Authn, authz & tenancy</h1>
+  <h1 id="__skip">Serve your app on the mock</h1>
 
-<p>Three distinct concerns, three distinct seams:</p>
-<ul>
-<li><strong>Authentication</strong> — <em>who is calling</em> — happens at the HTTP boundary, in
-  middleware.</li>
-<li><strong>Tenancy</strong> — <em>whose data</em> — is resolved at the boundary and bound into the
-  context.</li>
-<li><strong>Authorization</strong> — <em>may they do this</em> — is enforced per-operation, inside the
-  application.</li>
-</ul>
-<p>Forze keeps them separate, and the conceptual model is in
-<a href="../../identity-tenancy-enc/identity/">Identity &amp; access</a> — this recipe is the
-wiring. One shape to keep in mind: there is <strong>no <code>Depends(...)</code> for the current
-user</strong>. <code>SecurityContextMiddleware</code> binds the principal and tenant into the
-execution context (<code>ctx.inv_ctx</code>); your operation's <strong>hooks</strong> read that binding
-and enforce, raising <code>exc.authentication</code> / <code>exc.authorization</code> that the exception
-handlers map to <code>401</code> / <code>403</code>.</p>
-<h2 id="install-the-middleware">Install the middleware<a class="headerlink" href="#install-the-middleware" title="Permanent link">&para;</a></h2>
-<p><code>SecurityContextMiddleware</code> authenticates; <code>InvocationMetadataMiddleware</code> binds
-request ids and the idempotency key. Both take a <code>ctx_dep</code> that returns the
-per-scope context:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnSpec</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.exceptions</span><span class="w"> </span><span class="kn">import</span> <span class="n">register_exception_handlers</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.middlewares</span><span class="w"> </span><span class="kn">import</span> <span class="n">InvocationMetadataMiddleware</span><span class="p">,</span> <span class="n">SecurityContextMiddleware</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.security</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnRequirement</span><span class="p">,</span> <span class="n">HeaderTokenAuthn</span>
+<p>A frontend team is blocked on a backend that isn't ready. The usual answer is a schema
+mock: point a tool at the OpenAPI document and let it synthesize responses. That gets you
+a stateless fake — <code>POST /products</code> returns something, and the list route never shows it.</p>
+<p>A forze app has a better option. The in-memory mock is a faithful backend for every port:
+documents with real filters, sort, cursors and <code>rev</code>, transactions, storage, search,
+queues. So instead of faking the API, <strong>serve the real one on the mock</strong> — the same routes,
+handlers, middleware and identity plane, with <code>MockDepsModule</code> where the backend modules
+would be.</p>
+<p>The property that makes this worth doing: <strong>contract drift is structurally impossible</strong>.
+There is no second artifact to keep in sync, because the routes are generated from the
+same frozen registry production serves.</p>
+<h2 id="the-swap">The swap<a class="headerlink" href="#the-swap" title="Permanent link">&para;</a></h2>
+<p>Everything below is an ordinary app. The only mock-specific line is the deps module:</p>
+<div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">build_runtime</span><span class="p">(</span><span class="n">identity</span><span class="p">:</span> <span class="n">LocalIdentityConfig</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExecutionRuntime</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The only thing a mock server changes: which modules answer the ports.</span>
 
-<span class="n">API</span> <span class="o">=</span> <span class="n">AuthnSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;api&quot;</span><span class="p">,</span> <span class="n">enabled_methods</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;token&quot;</span><span class="p">}))</span>
+<span class="sd">    `MockDepsModule` registers every port as a *fallback* (RFC 0022), so the app&#39;s real</span>
+<span class="sd">    identity wiring composes on top of it in one registry — the local API-key verifier and</span>
+<span class="sd">    tenant resolver win their routes, the mock keeps the other ~45 planes. Before that,</span>
+<span class="sd">    this pairing raised at freeze and a mock context could not carry real identity at all.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
 
-<span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">()</span>
-<span class="n">register_exception_handlers</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>  <span class="c1"># exc.authentication → 401, exc.authorization → 403</span>
+    <span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span><span class="n">MockDepsModule</span><span class="p">(</span><span class="n">state</span><span class="o">=</span><span class="n">MockState</span><span class="p">()))</span><span class="o">.</span><span class="n">with_deps</span><span class="p">(</span>
+        <span class="n">local_identity_deps</span><span class="p">(</span><span class="n">identity</span><span class="p">,</span> <span class="n">authn_route</span><span class="o">=</span><span class="n">AUTHN</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">tenancy_route</span><span class="o">=</span><span class="n">AUTHN</span><span class="o">.</span><span class="n">name</span><span class="p">),</span>
+    <span class="p">)</span>
 
-<span class="n">app</span><span class="o">.</span><span class="n">add_middleware</span><span class="p">(</span>
-    <span class="n">SecurityContextMiddleware</span><span class="p">,</span>
-    <span class="n">ctx_dep</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">(),</span>
-    <span class="n">authn</span><span class="o">=</span><span class="n">AuthnRequirement</span><span class="p">(</span>
-        <span class="n">ingress</span><span class="o">=</span><span class="p">(</span><span class="n">HeaderTokenAuthn</span><span class="p">(</span><span class="n">authn_spec</span><span class="o">=</span><span class="n">API</span><span class="p">,</span> <span class="n">header_name</span><span class="o">=</span><span class="s2">&quot;Authorization&quot;</span><span class="p">),),</span>
+    <span class="k">return</span> <span class="n">ExecutionRuntime</span><span class="p">(</span><span class="n">deps</span><span class="o">=</span><span class="n">deps</span><span class="o">.</span><span class="n">freeze</span><span class="p">())</span>
+</code></pre></div>
+<p><code>MockDepsModule</code> registers every port as a <em>fallback</em> (see
+<a href="../../testing/overview/#hybrid-contexts-one-real-backend-mock-for-the-rest">hybrid contexts</a>),
+so your real identity wiring composes on top of it in one registry — the local API-key
+verifier and tenant resolver win their routes, the mock keeps the other planes. The same
+mechanism lets you keep one real backend and mock the rest: add <code>PostgresDepsModule(...)</code>
+to the list and documents go to Postgres while search, queues and storage stay in memory.</p>
+<h2 id="the-app-is-unchanged">The app is unchanged<a class="headerlink" href="#the-app-is-unchanged" title="Permanent link">&para;</a></h2>
+<p>The factory is the production one, parameterized by runtime:</p>
+<div class="highlight"><pre><span></span><code><span class="n">registry</span> <span class="o">=</span> <span class="n">build_document_registry</span><span class="p">(</span><span class="n">product_spec</span><span class="p">)</span><span class="o">.</span><span class="n">freeze</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">build_app</span><span class="p">(</span>
+    <span class="n">runtime</span><span class="p">:</span> <span class="n">ExecutionRuntime</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">lifespan</span><span class="p">:</span> <span class="n">Lifespan</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FastAPI</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The app&#39;s own factory — production writes exactly this and passes a real runtime.</span>
+
+<span class="sd">    Keeping the factory parameterized by runtime is what makes the swap total: routes,</span>
+<span class="sd">    middleware, exception handlers and identity ingress are shared verbatim between the</span>
+<span class="sd">    served mock and the deployed service. *lifespan* defaults to the production one</span>
+<span class="sd">    (`runtime_lifespan`); the mock server passes a variant that seeds once the scope is</span>
+<span class="sd">    open, which is the only seam it needs — the routes below never learn about it.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">ctx</span> <span class="o">=</span> <span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span>
+
+    <span class="n">router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;/products&quot;</span><span class="p">)</span>
+    <span class="c1"># Generated from the operation catalog — one route per registered kernel operation,</span>
+    <span class="c1"># `operation_id` equal to the operation key (`products.get`, `products.list`, …).</span>
+    <span class="n">attach_document_routes</span><span class="p">(</span>
+        <span class="n">router</span><span class="p">,</span>
+        <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span>
+        <span class="n">ns</span><span class="o">=</span><span class="n">product_spec</span><span class="o">.</span><span class="n">default_namespace</span><span class="p">,</span>
+        <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx</span><span class="p">,</span>
+        <span class="n">style</span><span class="o">=</span><span class="s2">&quot;rest&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span>
+        <span class="n">title</span><span class="o">=</span><span class="s2">&quot;Products API (mock)&quot;</span><span class="p">,</span>
+        <span class="n">lifespan</span><span class="o">=</span><span class="n">lifespan</span> <span class="ow">or</span> <span class="n">runtime_lifespan</span><span class="p">(</span><span class="n">runtime</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">app</span><span class="o">.</span><span class="n">include_router</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
+    <span class="n">register_exception_handlers</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>  <span class="c1"># CoreException → HTTP: not_found → 404, conflict → 409</span>
+    <span class="n">app</span><span class="o">.</span><span class="n">add_middleware</span><span class="p">(</span><span class="n">InvocationMetadataMiddleware</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx</span><span class="p">)</span>
+    <span class="n">app</span><span class="o">.</span><span class="n">add_middleware</span><span class="p">(</span>
+        <span class="n">SecurityContextMiddleware</span><span class="p">,</span>
+        <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx</span><span class="p">,</span>
+        <span class="n">authn</span><span class="o">=</span><span class="n">AuthnRequirement</span><span class="p">(</span>
+            <span class="n">ingress</span><span class="o">=</span><span class="p">(</span><span class="n">HeaderApiKeyAuthn</span><span class="p">(</span><span class="n">authn_spec</span><span class="o">=</span><span class="n">AUTHN</span><span class="p">,</span> <span class="n">header_name</span><span class="o">=</span><span class="s2">&quot;X-API-Key&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">),),</span>
+        <span class="p">),</span>
+        <span class="n">when_multiple_credentials</span><span class="o">=</span><span class="s2">&quot;first_in_order&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">app</span>
+</code></pre></div>
+<p>Routes come from the operation catalog, so <code>operationId</code> is the operation key
+(<code>products.get</code>, <code>products.list</code>) and the served contract is the app's own. Identity is
+your wiring too — here <a href="../local-identity/">local identity</a> reading a JSON key file. That is
+deliberate: the mock server has no way to mint a principal, so there is no dev-only auth
+bypass to accidentally ship.</p>
+<h2 id="seed-it">Seed it<a class="headerlink" href="#seed-it" title="Permanent link">&para;</a></h2>
+<p>An API that answers <code>[]</code> is one no frontend can build against:</p>
+<div class="highlight"><pre><span></span><code><span class="n">_CATALOG</span> <span class="o">=</span> <span class="p">((</span><span class="s2">&quot;Espresso&quot;</span><span class="p">,</span> <span class="mi">250</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;Cortado&quot;</span><span class="p">,</span> <span class="mi">320</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;Filter&quot;</span><span class="p">,</span> <span class="mi">280</span><span class="p">))</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">seed</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Fill the empty store — an API that answers `[]` is one no frontend can build against.</span>
+
+<span class="sd">    Seeds go through the **write path**, never into `MockState` directly, so `rev`,</span>
+<span class="sd">    timestamps, materialized fields and field encryption are produced by the same code</span>
+<span class="sd">    that serves the reads.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># The app&#39;s own eligibility gate reads a `policy_principal` document, so the dev key</span>
+    <span class="c1"># needs one or authentication fails with &quot;Principal not found&quot;. It has to be this</span>
+    <span class="c1"># document write: the mock&#39;s `PrincipalRegistryPort.ensure_principal` is a no-op that</span>
+    <span class="c1"># returns a ref without storing anything the real gate can then read.</span>
+    <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">doc</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">policy_principal_spec</span><span class="p">)</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+        <span class="n">CreatePolicyPrincipalCmd</span><span class="p">(</span><span class="n">kind</span><span class="o">=</span><span class="s2">&quot;user&quot;</span><span class="p">),</span>
+        <span class="nb">id</span><span class="o">=</span><span class="n">DEV_PRINCIPAL</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">price</span> <span class="ow">in</span> <span class="n">_CATALOG</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">doc</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">product_spec</span><span class="p">)</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">ProductCreate</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span> <span class="n">price</span><span class="o">=</span><span class="n">price</span><span class="p">))</span>
+</code></pre></div>
+<p>Seeds go through the <strong>write path</strong>, never into <code>MockState</code> directly, so <code>rev</code>, timestamps,
+materialized fields and field encryption come from the same code that serves the reads.</p>
+<p>Three hand-written rows is the right size for a recipe and the wrong size for a real screen.
+<code>forze_mock.seeding</code> fills specs from a plan instead — generated rows for volume, fixtures
+for the rows a demo actually shows, and references that point at documents the seed created:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_mock.seeding</span><span class="w"> </span><span class="kn">import</span> <span class="n">SeedPlan</span><span class="p">,</span> <span class="n">apply_seed</span><span class="p">,</span> <span class="n">load_fixtures</span><span class="p">,</span> <span class="n">spec_seed</span>
+
+<span class="n">plan</span> <span class="o">=</span> <span class="n">SeedPlan</span><span class="p">(</span>
+    <span class="n">specs</span><span class="o">=</span><span class="p">(</span>
+        <span class="n">spec_seed</span><span class="p">(</span><span class="n">project_spec</span><span class="p">,</span> <span class="n">count</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>
+        <span class="n">spec_seed</span><span class="p">(</span><span class="n">task_spec</span><span class="p">,</span> <span class="n">count</span><span class="o">=</span><span class="mi">40</span><span class="p">,</span> <span class="n">fixtures</span><span class="o">=</span><span class="n">load_fixtures</span><span class="p">(</span><span class="s2">&quot;tasks.json&quot;</span><span class="p">)),</span>
     <span class="p">),</span>
-    <span class="n">when_multiple_credentials</span><span class="o">=</span><span class="s2">&quot;first_in_order&quot;</span><span class="p">,</span>
+    <span class="n">rng_seed</span><span class="o">=</span><span class="mi">7</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="n">app</span><span class="o">.</span><span class="n">add_middleware</span><span class="p">(</span><span class="n">InvocationMetadataMiddleware</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">())</span>
+<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">apply_seed</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">plan</span><span class="p">)</span>   <span class="c1"># result[&quot;tasks&quot;] -&gt; the created ids</span>
 </code></pre></div>
-<p>Ingress options are <code>HeaderTokenAuthn</code>, <code>HeaderApiKeyAuthn</code> (<code>header_name</code>), and
-<code>CookieTokenAuthn</code> (<code>cookie_name</code>) — each carries the <code>AuthnSpec</code> whose <code>name</code>
-selects the route's verifier and resolver.</p>
-<h2 id="wire-the-planes">Wire the planes<a class="headerlink" href="#wire-the-planes" title="Permanent link">&para;</a></h2>
-<p>Three sibling deps modules. <code>AuthnDepsModule</code> registers the verify-then-resolve
-stack; <code>AuthzDepsModule</code> the decision + scope ports; <code>TenancyDepsModule</code> the
-tenant resolver. The <code>"api"</code> route name is the same string across all three:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnDepsModule</span><span class="p">,</span> <span class="n">AuthnKernelConfig</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.authz</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthzDepsModule</span><span class="p">,</span> <span class="n">AuthzKernelConfig</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.tenancy</span><span class="w"> </span><span class="kn">import</span> <span class="n">TenancyDepsModule</span>
-
-<span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
-    <span class="n">AuthnDepsModule</span><span class="p">(</span>
-        <span class="n">kernel</span><span class="o">=</span><span class="n">AuthnKernelConfig</span><span class="p">(</span><span class="n">access_token_secret</span><span class="o">=</span><span class="n">secret</span><span class="p">),</span>  <span class="c1"># bytes, ≥ 32</span>
-        <span class="n">authn</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;api&quot;</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;token&quot;</span><span class="p">})},</span>
-    <span class="p">),</span>
-    <span class="n">AuthzDepsModule</span><span class="p">(</span><span class="n">kernel</span><span class="o">=</span><span class="n">AuthzKernelConfig</span><span class="p">(),</span> <span class="n">decision</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;api&quot;</span><span class="p">},</span> <span class="n">scope</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;api&quot;</span><span class="p">}),</span>
-    <span class="n">TenancyDepsModule</span><span class="p">(</span><span class="n">tenant_resolver</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;api&quot;</span><span class="p">}),</span>
-<span class="p">)</span>
+<p>A seeded <code>Task.project_id</code> names a seeded project — inferred from the field and spec names,
+corrected by <code>SeedPlan.links</code> where the names don't line up. The plan is reproducible: one
+<code>rng_seed</code> fixes the values, and <code>SeedPlan.instant</code> pins the clock the write path mints ids
+and timestamps from, so two processes running the plan produce byte-identical documents.
+Seeding needs <code>polyfactory</code> (it ships with the <code>dst</code> extra).</p>
+<div class="admonition warning">
+<p class="admonition-title">Identity needs a principal document</p>
+<p>The default eligibility gate reads a <code>policy_principal</code> document, so a dev key whose
+principal has no document fails authentication with <code>Principal not found</code>. Seed it as
+above — and note it must be the document write: the mock's
+<code>PrincipalRegistryPort.ensure_principal</code> is a no-op that returns a ref without storing
+anything the gate can read.</p>
+</div>
+<h2 id="run-it">Run it<a class="headerlink" href="#run-it" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>examples/recipes/mock_server
+just<span class="w"> </span>run<span class="w">                    </span><span class="c1"># http://localhost:8000 — no compose file, no containers</span>
+just<span class="w"> </span>smoke<span class="w">                  </span><span class="c1"># the seeded catalog through the generated list route</span>
 </code></pre></div>
-<p>The authn stack is <strong>document-backed</strong> — the account/session stores are document
-specs you wire to a database (see the <a href="../../integrations/authn/">authn integration</a>).</p>
-<h2 id="enforce-on-operations">Enforce on operations<a class="headerlink" href="#enforce-on-operations" title="Permanent link">&para;</a></h2>
-<p>Attach hooks to the operations that need them, using the same registry-binding
-chain as <a href="../add-idempotency/">idempotency</a>. <code>AuthnRequired</code> and <code>TenantRequired</code>
-are <strong>before-hooks</strong> (<code>.before</code>); the authz scope filter is a <strong>wrap</strong>
-(<code>.wrap</code>):</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.authz</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthzSpec</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.hooks.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnRequired</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.hooks.authz</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthzBeforeAuthorize</span><span class="p">,</span> <span class="n">AuthzDocumentScopeWrap</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.hooks.tenancy</span><span class="w"> </span><span class="kn">import</span> <span class="n">TenantRequired</span>
-
-<span class="n">AUTHZ</span> <span class="o">=</span> <span class="n">AuthzSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;api&quot;</span><span class="p">)</span>
-<span class="n">CREATE</span> <span class="o">=</span> <span class="n">ORDER_SPEC</span><span class="o">.</span><span class="n">default_namespace</span><span class="o">.</span><span class="n">key</span><span class="p">(</span><span class="n">DocumentKernelOp</span><span class="o">.</span><span class="n">CREATE</span><span class="p">)</span>
-<span class="n">LIST</span> <span class="o">=</span> <span class="n">ORDER_SPEC</span><span class="o">.</span><span class="n">default_namespace</span><span class="o">.</span><span class="n">key</span><span class="p">(</span><span class="n">DocumentKernelOp</span><span class="o">.</span><span class="n">FIND_MANY</span><span class="p">)</span>
-
-<span class="n">registry</span> <span class="o">=</span> <span class="p">(</span>
-    <span class="n">build_document_registry</span><span class="p">(</span><span class="n">ORDER_SPEC</span><span class="p">,</span> <span class="n">DocumentDTOs</span><span class="p">(</span><span class="n">read</span><span class="o">=</span><span class="n">ReadOrder</span><span class="p">,</span> <span class="n">create</span><span class="o">=</span><span class="n">CreateOrder</span><span class="p">))</span>
-    <span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">CREATE</span><span class="p">)</span>
-        <span class="o">.</span><span class="n">bind_outer</span><span class="p">()</span>
-        <span class="o">.</span><span class="n">before</span><span class="p">(</span>
-            <span class="n">AuthnRequired</span><span class="p">()</span><span class="o">.</span><span class="n">to_step</span><span class="p">(),</span>                                  <span class="c1"># step_id &quot;authn.principal&quot;</span>
-            <span class="n">TenantRequired</span><span class="p">()</span><span class="o">.</span><span class="n">to_step</span><span class="p">(</span><span class="n">step_id</span><span class="o">=</span><span class="s2">&quot;tenant.required&quot;</span><span class="p">),</span>
-            <span class="n">AuthzBeforeAuthorize</span><span class="p">(</span><span class="n">spec</span><span class="o">=</span><span class="n">AUTHZ</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s2">&quot;orders:create&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to_step</span><span class="p">(</span><span class="n">step_id</span><span class="o">=</span><span class="s2">&quot;authz.create&quot;</span><span class="p">),</span>
-        <span class="p">)</span>
-        <span class="o">.</span><span class="n">finish</span><span class="p">(</span><span class="n">deep</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">LIST</span><span class="p">)</span>
-        <span class="o">.</span><span class="n">bind_outer</span><span class="p">()</span>
-        <span class="o">.</span><span class="n">before</span><span class="p">(</span><span class="n">AuthnRequired</span><span class="p">()</span><span class="o">.</span><span class="n">to_step</span><span class="p">(),</span> <span class="n">TenantRequired</span><span class="p">()</span><span class="o">.</span><span class="n">to_step</span><span class="p">(</span><span class="n">step_id</span><span class="o">=</span><span class="s2">&quot;tenant.required&quot;</span><span class="p">))</span>
-        <span class="o">.</span><span class="n">wrap</span><span class="p">(</span><span class="n">AuthzDocumentScopeWrap</span><span class="p">(</span><span class="n">spec</span><span class="o">=</span><span class="n">AUTHZ</span><span class="p">,</span> <span class="n">document_name</span><span class="o">=</span><span class="s2">&quot;orders&quot;</span><span class="p">,</span> <span class="n">operation</span><span class="o">=</span><span class="s2">&quot;find_many&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to_step</span><span class="p">(</span><span class="n">step_id</span><span class="o">=</span><span class="s2">&quot;authz.scope&quot;</span><span class="p">))</span>
-        <span class="o">.</span><span class="n">finish</span><span class="p">(</span><span class="n">deep</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">freeze</span><span class="p">()</span>
+<h2 id="serve-it-with-the-cli-and-drive-it">Serve it with the CLI, and drive it<a class="headerlink" href="#serve-it-with-the-cli-and-drive-it" title="Permanent link">&para;</a></h2>
+<p>Composing the runtime by hand is fine for one app. <code>MockApp</code> is the declaration form — it
+says which real modules to keep, what to seed, and nothing about the app itself:</p>
+<div class="highlight"><pre><span></span><code><span class="n">mock_app</span> <span class="o">=</span> <span class="n">MockApp</span><span class="p">(</span>
+    <span class="n">build_app</span><span class="o">=</span><span class="n">build_app</span><span class="p">,</span>
+    <span class="c1"># Real modules would go in `modules=`; the mock composes under them as a fallback, so</span>
+    <span class="c1"># &quot;real Postgres for documents, mock for the rest&quot; is this list and nothing else.</span>
+    <span class="n">deps</span><span class="o">=</span><span class="p">(</span><span class="n">local_identity_deps</span><span class="p">(</span><span class="n">from_json_path</span><span class="p">(</span><span class="n">KEY_FILE</span><span class="p">),</span> <span class="n">authn_route</span><span class="o">=</span><span class="n">AUTHN</span><span class="o">.</span><span class="n">name</span><span class="p">),),</span>
+    <span class="n">seed</span><span class="o">=</span><span class="n">seed_plan</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="nv">FORZE_MOCK_SERVER</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>forze<span class="w"> </span>mock<span class="w"> </span>serve<span class="w"> </span>examples.recipes.mock_server.served:mock_app
+</code></pre></div>
+<p>The gate is not decoration: <code>serve</code> refuses without it, and refuses a composition whose deps
+contain no fallback-marked mock module — so a real runtime cannot be served here, and can
+never grow the routes below. Install with the <code>mock-server</code> extra.</p>
+<h3 id="the-control-plane">The control plane<a class="headerlink" href="#the-control-plane" title="Permanent link">&para;</a></h3>
+<p>A frontend developer needs to <em>provoke</em> states, not wait for them. <code>/_mock</code> does that, and
+it sits beside your app rather than inside it, so your own auth does not lock you out of it:</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST /_mock/reset</code></td>
+<td>Back to the pristine seed — state cleared, faults disarmed</td>
+</tr>
+<tr>
+<td><code>POST /_mock/seed</code></td>
+<td>Re-apply the plan (<code>{"reset": true}</code> to wipe first)</td>
+</tr>
+<tr>
+<td><code>GET /_mock/state/{store}</code></td>
+<td>Peek at a mock store (<code>documents</code>, <code>queues</code>, <code>storage</code>, …)</td>
+</tr>
+<tr>
+<td><code>POST /_mock/fault</code></td>
+<td>Arm a failure for matching port calls</td>
+</tr>
+<tr>
+<td><code>POST /_mock/latency</code></td>
+<td>Delay matching calls — spinners and timeouts</td>
+</tr>
+<tr>
+<td><code>POST /_mock/disarm</code></td>
+<td>Clear every armed fault and delay</td>
+</tr>
+<tr>
+<td><code>POST /_mock/time</code></td>
+<td><code>freeze</code> / <code>advance</code> / <code>resume</code> the server clock</td>
+</tr>
+<tr>
+<td><code>POST /_mock/emit</code></td>
+<td>Fire one realtime signal at one audience (needs <code>MockApp(on_emit=...)</code>)</td>
+</tr>
+<tr>
+<td><code>GET /_mock/health</code></td>
+<td>Readiness, the clock, and the loud "this is a mock"</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="c1"># every products call fails as a real 409, once</span>
+curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>localhost:8000/_mock/fault<span class="w"> </span><span class="se">\</span>
+<span class="w">     </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;route&quot;: &quot;products&quot;, &quot;op&quot;: &quot;create&quot;, &quot;kind&quot;: &quot;conflict&quot;, &quot;times&quot;: 1}&#39;</span>
+
+<span class="c1"># the expiry screen, without waiting a day</span>
+curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>localhost:8000/_mock/time<span class="w"> </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;action&quot;: &quot;advance&quot;, &quot;seconds&quot;: 86400}&#39;</span>
+</code></pre></div>
+<p>The fault's <code>kind</code> is a <strong>real</strong> <code>exc</code> kind, so your own exception handlers turn it into the
+real status and error envelope — an armed <code>conflict</code> reaches the client exactly as a genuine
+optimistic-concurrency failure would. A control plane that invented its own error shape
+would be teaching the frontend a lie.</p>
+<p><code>route</code> is the spec name and <code>op</code> is the <strong>port method</strong> (<code>create</code>, <code>update</code>, <code>find_page</code>,
+<code>get</code>, …) — omit <code>op</code> to match every call on that spec, which is usually what you want.</p>
+<p><code>emit</code> is where a notification badge gets built: one signal, at one principal, on demand —
+which is what a traffic generator cannot give you. The realtime egress plane lives above
+<code>forze_mock</code>, so the server hands the signal to your <code>on_emit</code> and your own mailbox decides
+who receives it; see <code>examples/recipes/realtime_sse/served.py</code>. Note that <code>/_mock/reset</code>
+clears the mock's stores and <strong>not</strong> state your app holds itself, like that mailbox.</p>
+<div class="admonition warning">
+<p class="admonition-title">The control plane is unauthenticated</p>
+<p>Anyone who can reach the port can reset your data and arm faults. That is correct for a
+laptop and for CI, and unacceptable anywhere else — which is the same reason <code>serve</code>
+demands <code>FORZE_MOCK_SERVER=1</code>. Bind it to localhost; never expose it.</p>
+</div>
+<h3 id="in-a-container">In a container<a class="headerlink" href="#in-a-container" title="Permanent link">&para;</a></h3>
+<p>A frontend team should not need a Python toolchain to run your backend:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>examples/recipes/mock_server
+just<span class="w"> </span>up<span class="w">            </span><span class="c1"># docker compose up --build, health-checked</span>
+just<span class="w"> </span>down
+</code></pre></div>
+<p>The recipe's <code>Dockerfile</code> and <code>compose.yaml</code> build from the repo root and serve
+<code>$MOCK_APP</code> — point that at your own declaration to serve your app. The image sets
+<code>FORZE_MOCK_SERVER=1</code> deliberately: the container <em>is</em> the mock, so running it is the
+opt-in. The port is published on <code>127.0.0.1</code> for the reason above.</p>
+<h2 id="multi-tenant-data">Multi-tenant data<a class="headerlink" href="#multi-tenant-data" title="Permanent link">&para;</a></h2>
+<p>If your specs are tenant-aware, the served mock partitions them the way a real relation's
+tenant <code>WHERE</code> clause does. Two API keys on two tenants, one server, disjoint data — the
+tenant comes from your identity wiring, so nothing about the app changes:</p>
+<div class="highlight"><pre><span></span><code><span class="n">mock</span> <span class="o">=</span> <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">routes</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;notes&quot;</span><span class="p">:</span> <span class="n">MockRouteConfig</span><span class="p">(</span><span class="n">tenant_aware</span><span class="o">=</span><span class="kc">True</span><span class="p">)})</span>
+</code></pre></div>
+<p>An unauthenticated request binds no tenant and is refused rather than shown everything.</p>
+<h2 id="what-you-get-that-a-schema-mock-cannot-give-you">What you get that a schema mock cannot give you<a class="headerlink" href="#what-you-get-that-a-schema-mock-cannot-give-you" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>AuthnRequired</code></strong> demands a principal; <strong><code>TenantRequired</code></strong> demands a bound
-  tenant — both raise <code>401</code> when missing.</li>
-<li><strong><code>AuthzBeforeAuthorize</code></strong> asks the decision port whether the subject may
-  perform <code>action</code>; a deny raises <code>403</code>.</li>
-<li><strong><code>AuthzDocumentScopeWrap</code></strong> asks the scope port for a row filter and <strong>merges
-  it into the query</strong> ($and) before the list runs — so a caller only ever sees
-  rows they're entitled to. Authorization scoping <em>is</em> <a href="../../reference/query-syntax/">query-DSL</a>
-  filter injection.</li>
+<li><code>create</code> → <code>list</code> → <code>get</code> coherence, so a form, a table and a detail screen all work.</li>
+<li>Pagination cursors that terminate, because they are the real cursors.</li>
+<li>A stale <code>rev</code> that fails the way production fails — <code>revision_mismatch</code>, from the same
+  gateway logic the real adapters run.</li>
+<li>Real error envelopes and status mapping, because <code>register_exception_handlers</code> is yours.</li>
 </ul>
-<h2 id="http-login-endpoints">HTTP login endpoints<a class="headerlink" href="#http-login-endpoints" title="Permanent link">&para;</a></h2>
-<p>The login flows themselves come for free: <code>build_authn_registry</code> registers the
-password-login, refresh, logout, change-password, password-reset, and
-deactivate operations, and <code>attach_authn_routes</code> projects them onto a router —
-<code>POST /auth/login</code>, <code>/auth/refresh</code>, <code>/auth/logout</code>, <code>/auth/change-password</code>,
-<code>/auth/password-reset/request</code>, <code>/auth/password-reset/confirm</code>,
-<code>/auth/deactivate</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">APIRouter</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_authn_routes</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.aggregates.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_authn_registry</span>
-
-<span class="n">AUTH</span> <span class="o">=</span> <span class="n">AuthnSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;api&quot;</span><span class="p">,</span> <span class="n">enabled_methods</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;password&quot;</span><span class="p">,</span> <span class="s2">&quot;token&quot;</span><span class="p">}))</span>
-
-<span class="n">auth_router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;/auth&quot;</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;auth&quot;</span><span class="p">])</span>
-<span class="n">attach_authn_routes</span><span class="p">(</span>
-    <span class="n">auth_router</span><span class="p">,</span>
-    <span class="n">registry</span><span class="o">=</span><span class="n">build_authn_registry</span><span class="p">(</span><span class="n">AUTH</span><span class="p">)</span><span class="o">.</span><span class="n">freeze</span><span class="p">(),</span>
-    <span class="n">ns</span><span class="o">=</span><span class="n">AUTH</span><span class="o">.</span><span class="n">default_namespace</span><span class="p">,</span>
-    <span class="n">ctx_dep</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">(),</span>
-<span class="p">)</span>
-<span class="n">app</span><span class="o">.</span><span class="n">include_router</span><span class="p">(</span><span class="n">auth_router</span><span class="p">)</span>
+<h2 id="when-a-schema-mock-is-still-the-right-answer">When a schema mock is still the right answer<a class="headerlink" href="#when-a-schema-mock-is-still-the-right-answer" title="Permanent link">&para;</a></h2>
+<p>If the consumer has no Python and no access to your app — an external partner, a public
+demo — export the document and hand it to the mature tooling:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>examples/recipes/mock_server<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>just<span class="w"> </span>openapi<span class="w"> </span>&gt;<span class="w"> </span>openapi.json
+npx<span class="w"> </span>@stoplight/prism-cli<span class="w"> </span>mock<span class="w"> </span>openapi.json<span class="w">      </span><span class="c1"># or MSW, orval, openapi-typescript</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>/auth/login<span class="w"> </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;login&quot;: &quot;alice&quot;, &quot;password&quot;: &quot;…&quot;}&#39;</span>
-<span class="c1"># → {&quot;access_token&quot;: &quot;…&quot;, &quot;refresh_token&quot;: &quot;…&quot;, &quot;access_token_type&quot;: &quot;Bearer&quot;, …}</span>
-curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>/auth/logout<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer &lt;access_token&gt;&quot;</span><span class="w">   </span><span class="c1"># → 204</span>
-</code></pre></div>
-<p><code>/login</code> and <code>/refresh</code> are deliberately reachable <strong>without</strong> a bearer token —
-the operations authenticate via their request bodies. <code>/logout</code> and
-<code>/change-password</code> answer <code>401</code> on their own when the middleware bound no
-identity. <code>/deactivate</code> (<code>deactivate_principal</code>) is the exception: it ships
-<strong>unguarded</strong> — bind <code>AuthnRequired</code> plus an <code>AuthzBeforeAuthorize</code> on that
-operation (the same chain as <a href="#enforce-on-operations">above</a>) before exposing
-it, or keep it off the router with <code>include=</code>.</p>
-<h2 id="self-service-password-reset">Self-service password reset<a class="headerlink" href="#self-service-password-reset" title="Permanent link">&para;</a></h2>
-<p>Request → deliver → confirm is a separate route set on the same registry: add the reset
-pepper and <code>password_reset={"api"}</code>, then deliver the token out of band (it is never
-returned in the response). The full flow — wiring, the outbox delivery seam, and the
-token-handling caveats — is the <a href="../password-reset/">password-reset recipe</a>.</p>
-<h2 id="multiple-organizations">Multiple organizations<a class="headerlink" href="#multiple-organizations" title="Permanent link">&para;</a></h2>
-<p>When a principal belongs to several tenants, the self-service org-switcher (list,
-activate, leave) and the privileged tenant-admin plane (create orgs, manage
-members) are projector-driven route sets that build on this wiring — see
-<a href="../tenant-selector-and-admin/">Tenant selector &amp; administration</a>.</p>
-<h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
+<p>You lose statefulness and get schema-shaped responses; for a consumer who cannot run your
+app, that is the correct trade.</p>
+<h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
+<p><strong>Never serve this in production.</strong> <code>MockDepsModule</code> keeps everything in memory and
+enforces none of the durability, isolation or capability limits a real backend does. It is
+a laptop and CI tool.</p>
+<p>And the mock is <em>not the specification</em> — the conformance battery is. A behaviour your
+frontend depends on should be one the <a href="../../dst/overview/">adapter conformance suite</a> pins
+across real backends, not one you discovered against the in-memory store.</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Tenant binding.</strong> The tenant comes from the verified credential's issuer hint
-  or, with <code>trust_tenant_header=True</code>, an <code>X-Tenant-Id</code> header. A bound tenant
-  flows into every authz check via the operation's scope.</li>
-<li><strong>Ordering is enforced.</strong> <code>AuthzBeforeAuthorize</code> declares
-  <code>requires=("authn.principal",)</code>, so the principal is always resolved before the
-  authorization decision.</li>
-<li>This is the foundation the other identity recipes build on — see
-  <a href="../local-identity/">Local identity</a>, <a href="../external-bootstrap-forze-jwt/">External bootstrap → Forze JWT</a>,
-  and <a href="../social-sign-in/">Social sign-in</a>.</li>
+<li><a href="../../testing/overview/">Testing</a> — the mock in unit tests, and hybrid contexts</li>
+<li><a href="../local-identity/">Local identity</a> — the API-key file this recipe authenticates with</li>
+<li><a href="../crud-fastapi-postgres/">CRUD over Postgres</a> — the same shape with a real backend</li>
 </ul>
 
 
@@ -6388,7 +6634,7 @@ members) are projector-driven route sets that build on this wiring — see
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../offload-cpu-work/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Offload heavy CPU work">
+          <a href="../expose-an-aggregate-over-mcp/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Expose an aggregate over MCP">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -6398,20 +6644,20 @@ members) are projector-driven route sets that build on this wiring — see
                 Previous
               </span>
               <div class="md-ellipsis">
-                Offload heavy CPU work
+                Expose an aggregate over MCP
               </div>
             </div>
           </a>
         
         
           
-          <a href="../provision-identity-postgres/" class="md-footer__link md-footer__link--next" aria-label="Next: Provision identity tables on Postgres">
+          <a href="../add-idempotency/" class="md-footer__link md-footer__link--next" aria-label="Next: Add idempotency">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Provision identity tables on Postgres
+                Add idempotency
               </div>
             </div>
             <div class="md-footer__button md-icon">
