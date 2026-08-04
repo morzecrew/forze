@@ -641,6 +641,52 @@ class TestTransportSplit:
 
         assert relayed.published == 2
 
+    async def test_transitions_can_be_relayed_to_a_queue_for_a_remote_projector(self) -> None:
+        # The out-of-process recipe: the same dedicated route, pointed at a queue a consumer
+        # runner drains. Which is a fork, not a tweak — transitions then reach the projector
+        # and *not* the stream, so a UI on the stream sees ticks only.
+        to_queue = progress_outbox_spec(queue="jobs")
+        published: list[RealtimeSignal] = []
+        runtime = _runtime()
+
+        async def _deliver(claim: object, payload: object) -> None:
+            assert isinstance(payload, RealtimeSignal)
+            published.append(payload)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            reporter = build_progress_reporter(
+                ctx,
+                job_id=uuid4(),
+                kind="export",
+                stream_spec=_STREAM,
+                outbox_spec=to_queue,
+                min_interval=0.0,
+            )
+
+            await reporter.start()
+            await reporter.report(0.5)
+            await reporter.finish()
+
+            relayed = await relay_outbox_claims(
+                ctx, outbox_spec=to_queue, publish_one=_deliver, reclaim_stale_after=None
+            )
+
+            projector = build_job_progress_projector(ctx)
+
+            for signal in published:
+                await projector.apply_signal(signal)
+
+            row = await _find_job(ctx, reporter.job_id)
+
+        assert to_queue.destination is not None
+        assert to_queue.destination.kind == "queue"
+        assert relayed.published == 2
+        assert row.status is JobStatus.SUCCEEDED
+        # The bar is the price: only transitions took this lane, so the record went from
+        # nothing to done with the 0.5 tick nowhere in it.
+        assert [signal.payload["progress"] for signal in published] == [None, 1.0]
+
     async def test_the_realtime_channel_s_own_outbox_route_is_refused(self) -> None:
         # `build_realtime_transport()` names its outbox route after the channel, so this is
         # the shape of handing over the application's shared route. Progress flushes after

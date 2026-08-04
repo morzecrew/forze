@@ -35,6 +35,7 @@ import attrs
 from forze.application.contracts.durable.function import current_durable_run
 from forze.application.contracts.outbox import (
     OutboxCommandPort,
+    OutboxDestination,
     OutboxSpec,
     OutboxStagingContext,
 )
@@ -500,6 +501,7 @@ def progress_outbox_spec(
     name: str = DEFAULT_PROGRESS_ROUTE,
     *,
     stream: str = DEFAULT_REALTIME_CHANNEL,
+    queue: str | None = None,
 ) -> OutboxSpec[RealtimeSignal]:
     """The outbox route progress transitions are staged on, relayed to *stream*.
 
@@ -510,9 +512,21 @@ def progress_outbox_spec(
         realtime_relay_lifecycle_step(
             outbox_spec=progress_outbox_spec(), stream_spec=transport.stream_spec
         )
+
+    Pass *queue* to relay transitions to a **queue** instead, which is the out-of-process
+    projector's shape: a consumer runner drains it and applies each signal to the record.
+    That is a fork, not a tweak — transitions then reach the projector and *not* the stream,
+    so a live UI on the stream sees ticks only and must read the record for status. Choose
+    it when the record is what the UI reads; keep the stream when the UI follows signals.
     """
 
-    return realtime_outbox_spec(name, stream=stream)
+    if queue is None:
+        return realtime_outbox_spec(name, stream=stream)
+
+    return attrs.evolve(
+        realtime_outbox_spec(name, stream=stream),
+        destination=OutboxDestination.queue(route=queue, channel=queue),
+    )
 
 
 # ....................... #

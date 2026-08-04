@@ -139,6 +139,37 @@ from forze_kits.integrations.progress import JOB_PROGRESS_EVENT
 catalog = RealtimeEventCatalog.of(JOB_PROGRESS_EVENT, *your_events)
 ```
 
+### When the work and the store are in different processes
+
+The reporter writes the record inline because that is where nearly all long work
+runs: a sweep that can reach the job collection should just write to it. A worker
+that *cannot* — an external process with no database access — publishes instead,
+and something on the other side projects. That something is the same projector,
+fed through `apply_signal`:
+
+```python
+# transitions relayed to a queue instead of the realtime stream
+transitions = progress_outbox_spec(queue="jobs")
+
+async def _project(message):
+    await build_job_progress_projector(ctx).apply_signal(message.payload)
+
+steps.append(
+    queue_consumer_background_lifecycle_step(
+        queue="jobs",
+        queue_spec=jobs_queue_spec,
+        handler=_project,
+        inbox_spec=jobs_inbox_spec,
+        tx_route="default",
+    )
+)
+```
+
+That gets you inbox dedup, poison parking and a tx-scoped write for free. What it
+does **not** get you is the bar: only transitions are staged, so a record
+projected this way moves 0 → 1 with nothing between. The ticks are still on the
+stream for a live UI to read; they just do not reach a consumer fed by the outbox.
+
 ## The merge rules
 
 The projector is the only place these live, and it applies every event against
