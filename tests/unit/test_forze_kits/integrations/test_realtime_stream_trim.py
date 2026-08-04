@@ -115,9 +115,7 @@ async def test_step_trims_each_assigned_tenant() -> None:
 
         async def _empty(tenant: UUID) -> bool:
             with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
-                query = ctx.deps.resolve_configurable(
-                    ctx, StreamQueryDepKey, spec, route=spec.name
-                )
+                query = ctx.deps.resolve_configurable(ctx, StreamQueryDepKey, spec, route=spec.name)
                 return not await query.read({str(spec.name): "0"})
 
         waited = 0.0

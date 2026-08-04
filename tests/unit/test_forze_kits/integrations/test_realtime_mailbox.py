@@ -76,7 +76,9 @@ async def test_store_read_since_ordered_and_idempotent() -> None:
             mb = build_realtime_mailbox(ctx, retention=UNSWEPT)
             await mb.store(principal="u1", event_id=_eid(2), hlc=_hlc(2), signal=_signal("b"))
             await mb.store(principal="u1", event_id=_eid(1), hlc=_hlc(1), signal=_signal("a"))
-            await mb.store(principal="u1", event_id=_eid(1), hlc=_hlc(1), signal=_signal("a"))  # idempotent
+            await mb.store(
+                principal="u1", event_id=_eid(1), hlc=_hlc(1), signal=_signal("a")
+            )  # idempotent
 
             everything = await mb.read_since(principal="u1", since=None)
             after_e1 = await mb.read_since(principal="u1", since=_hlc(1))
@@ -97,12 +99,8 @@ async def test_replay_since_streams_in_order_across_pages() -> None:
                     principal="u1", event_id=_eid(n), hlc=_hlc(n), signal=_signal(f"s{n}")
                 )
 
-            streamed = [
-                e.event_id async for e in mb.replay_since(principal="u1", since=None)
-            ]
-            after = [
-                e.event_id async for e in mb.replay_since(principal="u1", since=_hlc(3))
-            ]
+            streamed = [e.event_id async for e in mb.replay_since(principal="u1", since=None)]
+            after = [e.event_id async for e in mb.replay_since(principal="u1", since=_hlc(3))]
 
     # 5 entries streamed oldest-first across 3 keyset pages of size 2.
     assert streamed == [_eid(1), _eid(2), _eid(3), _eid(4), _eid(5)]
@@ -121,9 +119,7 @@ async def test_replay_since_bounded_by_cap_keeps_newest_window() -> None:
                     principal="u1", event_id=_eid(n), hlc=_hlc(n), signal=_signal(f"s{n}")
                 )
 
-            streamed = [
-                e.event_id async for e in mb.replay_since(principal="u1", since=None)
-            ]
+            streamed = [e.event_id async for e in mb.replay_since(principal="u1", since=None)]
 
     # The cap is a newest-first retention bound: an overflowing backlog loses its
     # OLDEST entries and the stream is a complete suffix — never a truncated prefix,
@@ -189,7 +185,9 @@ async def test_position_of_and_trim() -> None:
         with _bind(ctx):
             mb = build_realtime_mailbox(ctx, retention=UNSWEPT)
             for i in (1, 2, 3):
-                await mb.store(principal="u1", event_id=_eid(i), hlc=_hlc(i), signal=_signal(str(i)))
+                await mb.store(
+                    principal="u1", event_id=_eid(i), hlc=_hlc(i), signal=_signal(str(i))
+                )
 
             assert await mb.position_of(principal="u1", event_id=_eid(2)) == _hlc(2)
             assert await mb.position_of(principal="u1", event_id=str(UUID(int=999))) is None
@@ -345,9 +343,7 @@ def test_retention_step_refuses_incoherent_windows() -> None:
         )
 
     with pytest.raises(CoreException, match="interval must be positive"):
-        realtime_mailbox_retention_lifecycle_step(
-            max_age=timedelta(hours=1), interval=timedelta(0)
-        )
+        realtime_mailbox_retention_lifecycle_step(max_age=timedelta(hours=1), interval=timedelta(0))
 
 
 # ----------------------- #
@@ -467,9 +463,7 @@ class TestRetentionIsPaired:
         async with runtime.scope():
             ctx = runtime.get_context()
             with _bind(ctx), pytest.raises(CoreException) as ei:
-                build_realtime_mailbox(
-                    ctx, retention=MailboxRetention(max_age=timedelta(days=7))
-                )
+                build_realtime_mailbox(ctx, retention=MailboxRetention(max_age=timedelta(days=7)))
 
         assert ei.value.code == "realtime_mailbox_retention_unwired"
 
@@ -602,9 +596,7 @@ class TestRetentionIsPaired:
         from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
 
         window = timedelta(days=3)
-        step = realtime_mailbox_retention_lifecycle_step(
-            max_age=window, cursor_max_age=window
-        )
+        step = realtime_mailbox_retention_lifecycle_step(max_age=window, cursor_max_age=window)
         runtime = _runtime()
 
         async with runtime.scope():
@@ -613,9 +605,7 @@ class TestRetentionIsPaired:
 
             try:
                 with _bind(ctx):
-                    assert build_realtime_mailbox(
-                        ctx, retention=MailboxRetention(max_age=window)
-                    )
+                    assert build_realtime_mailbox(ctx, retention=MailboxRetention(max_age=window))
             finally:
                 await step.shutdown(ctx)
 

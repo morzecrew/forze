@@ -24,6 +24,7 @@ from tests.support.realtime_cursor_conformance import (
 
 # ----------------------- #
 
+
 @pytest_asyncio.fixture
 async def harness() -> AsyncIterator[CursorReplayHarness]:
     # Both collections are tenant-aware: the adapter scopes every row by the bound
@@ -37,9 +38,7 @@ async def harness() -> AsyncIterator[CursorReplayHarness]:
     )
 
     async with runtime.scope():
-        yield CursorReplayHarness(
-            scoped=tenant_scoped(runtime.get_context()), backend="mock"
-        )
+        yield CursorReplayHarness(scoped=tenant_scoped(runtime.get_context()), backend="mock")
 
 
 @pytest.mark.conformance(plane="realtime_cursor", engine="mock")
