@@ -333,6 +333,9 @@ class TestSearchRebuild:
         assert trace.fractions[-1] == 1.0
         assert all(fraction != 1.0 for fraction in trace.fractions[:-1])
         assert _is_monotone(trace.fractions)
+        # And no report claims an impossible ratio on the way: the count is written as the
+        # estimate it is until the stream ends and makes it a fact.
+        assert trace.messages[-3:] == ["4 of ~2 rows", "6 of ~2 rows", "6 of 6 rows"]
 
     async def test_a_rebuild_without_a_reporter_costs_no_count_query(self) -> None:
         # The denominator is worth one query only when someone is watching; a sweep with no
