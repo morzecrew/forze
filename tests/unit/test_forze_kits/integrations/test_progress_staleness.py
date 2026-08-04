@@ -36,6 +36,7 @@ from forze_kits.integrations.progress import (
     job_record_spec,
     job_staleness_lifecycle_step,
 )
+from forze_kits.integrations.progress import observability
 from forze_mock import MockDepsModule
 
 # ----------------------- #
@@ -366,6 +367,41 @@ class TestTheLifecycleStep:
 
         assert step.id == "job_staleness"
         assert monitor.silent_after == _WINDOW
+
+    def test_instrumenting_the_same_monitor_twice_is_refused(self) -> None:
+        # Instruments register per name, so a second set of gauges over one sweep reports
+        # every kind twice and doubles anything built on a rate.
+        monitor = JobStalenessMonitor(silent_after=_WINDOW, spec=_SPEC)
+        instrument_job_progress(monitor, meter=_CapturingMeter())  # type: ignore[arg-type]
+
+        with pytest.raises(CoreException) as err:
+            instrument_job_progress(monitor, meter=_CapturingMeter())  # type: ignore[arg-type]
+
+        assert err.value.code == "progress_monitor_instrumented_twice"
+
+    async def test_a_shard_with_no_tenants_says_so_once(self, mocker: Any) -> None:
+        # "Examined nothing" and "examined everything and found nothing" both publish a
+        # zero. A tenant provider returning an empty list by mistake would otherwise be
+        # indistinguishable from a healthy, idle fleet.
+        runtime = _runtime()
+        monitor = JobStalenessMonitor(silent_after=_WINDOW, spec=_SPEC, tenants=lambda: [])
+        logger = mocker.patch.object(observability, "logger")
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            await monitor.sweep(ctx)
+            await monitor.sweep(ctx)  # a minute later, and the next, and the next
+
+        empty_warnings = [
+            call for call in logger.warning.call_args_list if "no tenants to examine" in call.args[0]
+        ]
+
+        # Said once, not once per tick — at a one-minute interval the second form would bury
+        # the log of a legitimately idle replica.
+        assert len(empty_warnings) == 1
+        # And the answer is still fresh: an empty shard really has nothing stuck.
+        assert monitor.scan_age() >= 0.0
 
     def test_a_nonsense_schedule_is_refused(self) -> None:
         with pytest.raises(CoreException):

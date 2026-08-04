@@ -524,6 +524,23 @@ class ProgressReporter:
                     error=str(error),
                 )
 
+            except Exception:
+                # Anything a sink raises that is *not* a framework exception is a defect in
+                # that sink — an unmapped client error, a bug in a custom one. It is still
+                # not worth a six-hour export, so a tick absorbs it too; logged with its
+                # traceback rather than a one-liner, because unlike a refused transport this
+                # is nobody's expected failure mode. `BaseException` stays uncaught:
+                # cancellation is the runtime asking this task to stop, not a sink failing.
+                if durable:
+                    raise
+
+                logger.exception(
+                    "A progress sink raised on a tick; dropping it",
+                    job_id=str(self.job_id),
+                    kind=self.kind,
+                    sink=type(sink).__name__,
+                )
+
 
 # ....................... #
 
@@ -569,6 +586,13 @@ def job_topic(job_id: UUID) -> Audience:
     A topic rather than a principal because a job is watched by whoever opened the page:
     the operator who started it, a colleague, a dashboard. Addressing the *starter* would
     make progress invisible to everyone else and would put ticks in their offline mailbox.
+
+    **A topic is a room, and the framework does not decide who may join one** — the gateway
+    does, from the connection's identity, exactly as for every other topic. So a job's
+    ``message`` and ``subject`` are visible to whoever your gateway lets into
+    ``job:<id>``. The id is unguessable, which is not the same as authorized: for work whose
+    progress text carries anything a bystander should not read, either keep the detail out
+    of ``message`` or address a principal instead.
     """
 
     return Audience.topic(f"job:{job_id}")

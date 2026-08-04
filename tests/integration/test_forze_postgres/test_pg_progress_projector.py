@@ -263,6 +263,33 @@ async def test_a_tick_after_the_end_changes_nothing_on_both(
 
 
 @pytest.mark.asyncio
+async def test_clearing_a_message_clears_it_on_both(
+    pg_ctx: ExecutionContext, mock_ctx: ExecutionContext
+) -> None:
+    # The merge sets `message` on every accepted transition, `None` included — a job that
+    # finishes without one must not keep narrating whatever it last said. That rides on the
+    # update payload applying by *set field* rather than by non-``None`` value, which is one
+    # shared mixin today and two adapters that could drift tomorrow.
+    with pg_ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=_TENANT)):
+        for projector in (
+            build_job_progress_projector(pg_ctx),
+            build_job_progress_projector(mock_ctx),
+        ):
+            job_id = uuid4()
+
+            await projector.apply(
+                _event(job_id, JobStatus.RUNNING, seconds=0, seq=1, message="halfway through")
+            )
+            row = await projector.apply(
+                _event(job_id, JobStatus.SUCCEEDED, seconds=1, seq=2, message=None)
+            )
+
+            assert row is not None
+            assert row.message is None
+            assert row.error is None
+
+
+@pytest.mark.asyncio
 async def test_a_fraction_survives_the_float_column(pg_ctx: ExecutionContext) -> None:
     # The max-merge compares what the store gave back, so a fraction that does not survive
     # the round-trip would make the bar stutter — accepted, re-read smaller, accepted again.

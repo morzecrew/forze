@@ -133,6 +133,12 @@ steps = [
 ]
 ```
 
+A job's signals go to a **topic** (`job:<id>` by default), and who may join a topic
+is your gateway's decision from the connection's identity — the framework does not
+authorize room membership. The id is unguessable, which is not the same as
+authorized: if a job's `message` or `subject` carries anything a bystander should
+not read, keep it out of the text or address a principal instead.
+
 There is one declared event for every kind of job. Consumers filter on the
 payload's `kind`; there is no `export.progress` and no `reencrypt.progress`,
 because a per-kind event name makes the realtime egress surface a function of how

@@ -35,8 +35,9 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
+from forze_kits.integrations._logger import logger
 
-from .projector import build_job_progress_projector
+from .projector import JobProgressProjector, build_job_progress_projector
 from .record import JobDocumentSpec, job_record_spec
 
 if TYPE_CHECKING:
@@ -134,6 +135,8 @@ class JobStalenessMonitor:
 
     _stats: dict[str | None, JobStalenessStats] = attrs.field(factory=dict, init=False)
     _swept_at: datetime | None = attrs.field(default=None, init=False)
+    _empty_shard_logged: bool = attrs.field(default=False, init=False)
+    _instrumented: bool = attrs.field(default=False, init=False)
 
     # ....................... #
 
@@ -158,6 +161,27 @@ class JobStalenessMonitor:
 
     # ....................... #
 
+    def claim_instrumentation(self) -> None:
+        """Take this monitor's one set of gauges, or refuse.
+
+        Instruments are registered per name, not per registrar, so a second
+        :func:`instrument_job_progress` over the same monitor publishes each job kind twice
+        and quietly doubles anything built on a rate. Assembly-time mistake, assembly-time
+        refusal.
+        """
+
+        if self._instrumented:
+            raise exc.configuration(
+                "This JobStalenessMonitor is already instrumented; a second set of gauges "
+                "over the same sweep reports every job kind twice. Call "
+                "instrument_job_progress() once, at assembly.",
+                code="progress_monitor_instrumented_twice",
+            )
+
+        self._instrumented = True
+
+    # ....................... #
+
     def scan_age(self) -> float:
         """Seconds since the last successful sweep; ``-1`` before the first one.
 
@@ -179,22 +203,59 @@ class JobStalenessMonitor:
         answers = {key: JobStalenessStats() for key in self.keys}
 
         if self.tenants is None:
+            # Ports resolve once per sweep, not once per kind — the publisher pattern. Under
+            # tenancy they resolve once per *binding* instead, because a tenant-aware or
+            # routed adapter resolves against the ambient tenant.
+            projector = build_job_progress_projector(ctx, spec=self.spec)
+
             for key in self.keys:
-                answers[key] = await self._measure(ctx, key)
+                answers[key] = await self._measure(projector, key)
 
         else:
-            for tenant in self.tenants():
+            tenants = list(self.tenants())
+            self._note_empty_shard(tenants)
+
+            for tenant in tenants:
                 with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+                    projector = build_job_progress_projector(ctx, spec=self.spec)
+
                     for key in self.keys:
-                        answers[key] = _merged(answers[key], await self._measure(ctx, key))
+                        answers[key] = _merged(answers[key], await self._measure(projector, key))
 
         self._stats = answers
         self._swept_at = utcnow()
 
     # ....................... #
 
-    async def _measure(self, ctx: ExecutionContext, kind: str | None) -> JobStalenessStats:
-        projector = build_job_progress_projector(ctx, spec=self.spec)
+    def _note_empty_shard(self, tenants: Sequence[UUID]) -> None:
+        """Say once when a sweep has no tenants to examine.
+
+        A shard assigned no tenants is legitimate (more replicas than tenants), so this does
+        not hold back ``_swept_at`` — the answer really is current. But "examined nothing"
+        and "examined everything and found nothing" both publish a zero, and a tenant
+        provider that returns an empty list by mistake would otherwise be indistinguishable
+        from a healthy fleet. Once per streak, not per tick: at a one-minute interval a
+        per-tick warning would bury the log of a legitimately idle replica.
+        """
+
+        if tenants:
+            self._empty_shard_logged = False
+
+            return
+
+        if not self._empty_shard_logged:
+            logger.warning(
+                "Job staleness sweep has no tenants to examine; the gauges will report zero "
+                "because nothing was looked at, not because nothing is stuck",
+                kind_count=len(self.keys),
+            )
+            self._empty_shard_logged = True
+
+    # ....................... #
+
+    async def _measure(
+        self, projector: JobProgressProjector, kind: str | None
+    ) -> JobStalenessStats:
         cutoff = utcnow() - self.silent_after
 
         stalled = await projector.count_stalled(silent_since=cutoff, kind=kind)
@@ -252,6 +313,8 @@ def instrument_job_progress(
     freeze at their last value — almost always zero — and a dashboard built on them alone
     goes green at the moment it stops knowing anything.
     """
+
+    monitor.claim_instrumentation()
 
     from opentelemetry import metrics
 

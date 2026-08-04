@@ -787,6 +787,26 @@ class TestTransportSplit:
             async with reporter.track():
                 raise RuntimeError("the disk filled up")
 
+    async def test_a_sink_that_raises_something_unexpected_still_does_not_kill_the_work(
+        self,
+    ) -> None:
+        # A sink raising a plain `TypeError` is a defect in that sink — and still not worth
+        # a six-hour export. The rule is about the lane, not about which exception type the
+        # sink happened to pick.
+        class _Buggy:
+            async def emit(self, event: JobProgress, *, durable: bool) -> None:
+                raise TypeError("a bug in somebody's sink")
+
+        recorder = _RecordingSink()
+        reporter = _reporter(_Buggy(), recorder)
+
+        await reporter.report(0.5)  # absorbed; the healthy sink still gets it
+
+        with pytest.raises(TypeError):
+            await reporter.finish()  # the transition is not absorbed
+
+        assert [tick.progress for tick in recorder.ticks] == [0.5]
+
     async def test_a_refusing_sink_drops_ticks_but_fails_transitions(self) -> None:
         # Observability must not kill the work it observes — but the event whose loss
         # leaves a job wrong forever is not one to swallow.
