@@ -9,6 +9,7 @@ without giving it a controller:
 - :data:`JOB_PROGRESS_EVENT` — the one declared realtime event (``job.progress``).
 - :class:`ProgressReporter` — the write side, with coalescing and a monotonic clamp.
 - :class:`JobProgressProjector` — the read side, owning the out-of-order merge rules.
+- :func:`progress_spec_contributions` — what to merge into the application's inventory.
 
 A job record only ever *watches*: nothing here cancels, schedules, retries or aggregates,
 and a job's status vocabulary is deliberately its own rather than a durable run's. A job is
@@ -18,6 +19,7 @@ is waiting on a human as finished.
 """
 
 from .events import JOB_PROGRESS_EVENT, JOB_PROGRESS_EVENT_NAME, JobProgress
+from .inventory import progress_spec_contributions
 from .projector import JobProgressProjector, build_job_progress_projector
 from .record import (
     DEFAULT_JOB_COLLECTION,
@@ -62,4 +64,5 @@ __all__ = [
     "job_record_spec",
     "job_topic",
     "progress_outbox_spec",
+    "progress_spec_contributions",
 ]

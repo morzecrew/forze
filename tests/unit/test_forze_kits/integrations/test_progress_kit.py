@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from itertools import permutations
 from typing import Any, Final
 from uuid import UUID, uuid4
@@ -25,11 +26,17 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.application.contracts.durable.function import DurableRunContext, bind_durable_run
+from forze.application.contracts.inventory import (
+    PlaneDisposition,
+    SpecPlane,
+    SpecRegistry,
+    SpecSource,
+)
 from forze.application.contracts.realtime import Audience, RealtimeSignal
 from forze.application.contracts.stream import StreamQueryDepKey
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import bind_time_source, uuid7
+from forze.base.primitives import FrozenTimeSource, bind_time_source, uuid7
 from forze_kits.integrations.progress import (
     JOB_PROGRESS_EVENT_NAME,
     JobProgress,
@@ -42,8 +49,10 @@ from forze_kits.integrations.progress import (
     job_record_spec,
     job_topic,
     progress_outbox_spec,
+    progress_spec_contributions,
 )
 from forze_kits.integrations.outbox import OutboxRelay
+from forze_kits.integrations.outbox._relay_core import relay_outbox_claims
 from forze_kits.integrations.realtime import realtime_outbox_spec, realtime_stream_spec
 from forze_mock import MockDepsModule
 
@@ -146,6 +155,13 @@ def _observable(row: JobRecord) -> dict[str, Any]:
     """The record's meaning, without the fields write *order* legitimately moves."""
 
     return row.model_dump(exclude={"id", "rev", "created_at", "last_update_at"})
+
+
+async def _find_job(ctx: ExecutionContext, job_id: UUID) -> JobRecord:
+    row = await ctx.document.query(_SPEC).find({"$values": {"id": job_id}})
+    assert row is not None
+
+    return row
 
 
 async def _apply_all(projector: JobProgressProjector, events: list[JobProgress]) -> JobRecord:
@@ -700,6 +716,152 @@ class TestTransportSplit:
 
             assert row is not None
             assert row.progress == 0.5
+
+
+# ....................... #
+
+
+class TestRelayCrashRecovery:
+    """Kill the relay mid-run: ticks may vanish, transitions must not.
+
+    This is the half of the ephemeral/durable split that cannot be checked on the happy path.
+    A relay pass that publishes nothing because the broker is down is the same state a worker
+    that simply died leaves behind — rows claimed, nothing delivered — and what has to be true
+    afterwards is that the *record* is still reachable from the durable half alone.
+    """
+
+    async def test_transitions_survive_a_dead_broker_and_need_no_tick(self) -> None:
+        delivered: list[RealtimeSignal] = []
+        runtime = _runtime()
+
+        async def _broker_is_down(claim: object, payload: object) -> None:
+            raise RuntimeError("broker unreachable")
+
+        async def _record_delivery(claim: object, payload: object) -> None:
+            assert isinstance(payload, RealtimeSignal)
+            delivered.append(payload)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            job_id = uuid4()
+            reporter = build_progress_reporter(
+                ctx,
+                job_id=job_id,
+                kind="export",
+                stream_spec=_STREAM,
+                outbox_spec=_PROGRESS_OUTBOX,
+                min_interval=0.0,
+            )
+            relay = partial(
+                relay_outbox_claims,
+                ctx,
+                outbox_spec=_PROGRESS_OUTBOX,
+                reclaim_stale_after=None,
+                retry_base_delay=timedelta(seconds=1),
+                retry_max_backoff=timedelta(seconds=60),
+            )
+
+            with bind_time_source(FrozenTimeSource(instant=_T0)):
+                await reporter.start("go")
+                await reporter.report(0.5, "half")  # ephemeral — never staged
+                await reporter.finish("done")
+
+                crashed = await relay(publish_one=_broker_is_down)
+
+            # Nothing was delivered, and nothing was lost: the transitions are still owed.
+            assert crashed.published == 0
+            assert crashed.retried == 2
+
+            with bind_time_source(FrozenTimeSource(instant=_T0 + timedelta(minutes=5))):
+                recovered = await relay(publish_one=_record_delivery)
+
+            assert recovered.published == 2
+
+            # Only transitions took this lane; the tick is not in it and never will be.
+            assert [signal.payload["status"] for signal in delivered] == [
+                JobStatus.RUNNING,
+                JobStatus.SUCCEEDED,
+            ]
+
+            projector = build_job_progress_projector(ctx)
+
+            for signal in delivered:
+                await projector.apply_signal(signal)
+
+            once = _observable(await _find_job(ctx, job_id))
+
+            # At-least-once: a relay that died between publishing and marking republishes on
+            # recovery, so the consumer sees every transition twice. The merge key makes that
+            # a no-op rather than a second, contradictory story about the same job.
+            for signal in delivered:
+                await projector.apply_signal(signal)
+
+            twice = _observable(await _find_job(ctx, job_id))
+
+        # The record is complete from the durable half alone — no tick survived, and none had
+        # to: losing every one of them costs the bar's intermediate values, nothing else.
+        assert once["status"] is JobStatus.SUCCEEDED
+        assert once["progress"] == 1.0
+        assert once["message"] == "done"
+        assert once["started_at"] == _T0
+        assert once["finished_at"] == _T0
+        assert twice == once
+
+
+# ....................... #
+
+
+class TestSpecContributions:
+    """The inventory half — both progress specs are ones no application author wrote."""
+
+    def test_both_halves_are_catalogued_as_the_kit_s(self) -> None:
+        entries = progress_spec_contributions(
+            spec=_SPEC, outbox_spec=_PROGRESS_OUTBOX
+        ).freeze()
+        by_plane = {
+            entry.plane: (entry.name, entry.disposition, entry.source) for entry in entries.entries
+        }
+
+        # The job collection is system of record — nothing recomputes the history of what ran
+        # — while the transitions route is in-flight work a quiesce drains like any outbox.
+        assert by_plane[SpecPlane.DOCUMENT] == (
+            str(_SPEC.name),
+            PlaneDisposition.EXPORTABLE,
+            SpecSource.KIT,
+        )
+        assert by_plane[SpecPlane.OUTBOX] == (
+            str(_PROGRESS_OUTBOX.name),
+            PlaneDisposition.DRAINED,
+            SpecSource.KIT,
+        )
+
+    def test_only_the_half_you_wired_is_catalogued(self) -> None:
+        # A catalogued route nothing binds fails startup, so an application that keeps the
+        # record without the realtime lane must not have the outbox route registered for it.
+        entries = progress_spec_contributions(spec=_SPEC).freeze()
+
+        assert [entry.plane for entry in entries.entries] == [SpecPlane.DOCUMENT]
+
+    def test_contributing_nothing_is_refused(self) -> None:
+        with pytest.raises(CoreException) as err:
+            progress_spec_contributions()
+
+        assert err.value.code == "progress_spec_contributions_empty"
+
+    def test_the_contribution_merges_into_an_application_s_inventory(self) -> None:
+        # The assembly-time shape: the app's own specs plus the kit's, under one registry.
+        registry = (
+            SpecRegistry()
+            .register(realtime_stream_spec())
+            .merge(progress_spec_contributions(spec=_SPEC, outbox_spec=_PROGRESS_OUTBOX))
+            .freeze()
+        )
+
+        assert {entry.name for entry in registry.entries} == {
+            str(_STREAM.name),
+            str(_SPEC.name),
+            str(_PROGRESS_OUTBOX.name),
+        }
 
 
 # ....................... #

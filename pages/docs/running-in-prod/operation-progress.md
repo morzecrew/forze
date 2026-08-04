@@ -205,6 +205,25 @@ Use `double precision`, not `real`: the merge compares the fraction the store
 handed back, and a narrowed column returns a different number than the one that
 was written.
 
+Neither the collection nor the transitions route is a spec you wrote, so both are
+exactly what inventory reconciliation exists to catch — bound at runtime,
+catalogued nowhere, and invisible to an export. Merge the contribution at
+assembly, passing the halves this deployment actually wires (a catalogued route
+nothing binds fails startup):
+
+```python
+from forze_kits.integrations.progress import progress_spec_contributions
+
+registry = SpecRegistry().register(*my_specs).merge(
+    progress_spec_contributions(
+        spec=job_record_spec(), outbox_spec=progress_outbox_spec()
+    )
+)
+```
+
+The job collection is catalogued **exportable** — nothing recomputes the history
+of what ran — while the transitions route is drained like any other outbox.
+
 Pass `encryption=` to seal `message`, `subject` or `error` — the fields that carry
 business meaning. Sealing the query surface (`kind`, `status`, `progress`,
 `heartbeat_at`, `event_at`, `event_seq`) is refused at build: the projector merges
