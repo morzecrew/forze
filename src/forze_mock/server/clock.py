@@ -13,6 +13,34 @@ from forze.base.exceptions import exc
 
 # ----------------------- #
 
+_RUNNING_HEADROOM = timedelta(days=1)
+"""How much room a **running** clock must keep below the end of representable time.
+
+A running clock holds a fixed offset while the wall clock keeps moving, so an instant that is
+merely representable at the moment of the call goes out of range on the next read. That
+matters more than it sounds: ``now()`` is what every request calls through the bound time
+source, so the failure lands on all of them rather than on the call that caused it. A frozen
+clock needs no headroom — it does not advance on its own.
+"""
+
+# ....................... #
+
+
+def _refuse_unrunnable(instant: datetime) -> None:
+    """Refuse to leave the clock *running* at an instant with no room left to run."""
+
+    try:
+        _ = instant + _RUNNING_HEADROOM
+
+    except OverflowError as error:
+        raise exc.validation(
+            f"A running clock must stay at least {_RUNNING_HEADROOM} below the end of "
+            f"representable time, and {instant.isoformat()} does not. Freeze there instead"
+        ) from error
+
+
+# ....................... #
+
 
 @final
 @attrs.define(slots=True)
@@ -122,7 +150,8 @@ class ControlledTimeSource:
         The *destination* is what gets checked, not the step: a representable ``timedelta``
         added to a clock already frozen near ``datetime.max`` still lands outside the range,
         and computing it before mutating is what keeps a refused advance from leaving the
-        clock in a state whose next read raises.
+        clock in a state whose next read raises. A destination the clock will keep *running*
+        from needs more than that — see :data:`_RUNNING_HEADROOM`.
         """
 
         if delta < timedelta():
@@ -144,6 +173,7 @@ class ControlledTimeSource:
             self.frozen_at = moved
 
         else:
+            _refuse_unrunnable(moved)
             self.offset += delta
 
         return self.now()
@@ -151,9 +181,15 @@ class ControlledTimeSource:
     # ....................... #
 
     def resume(self) -> datetime:
-        """Let the clock run again, keeping whatever offset it has accumulated."""
+        """Let the clock run again, keeping whatever offset it has accumulated.
+
+        Refused, and the clock left frozen, when there is no room to run from where it
+        stopped: a frozen instant near ``datetime.max`` is perfectly readable, and becomes
+        unreadable the moment the wall clock is allowed to carry it forward.
+        """
 
         if self.frozen_at is not None:
+            _refuse_unrunnable(self.frozen_at)
             self.offset = self.frozen_at - datetime.now(UTC)
             self.frozen_at = None
 

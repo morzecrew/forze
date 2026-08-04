@@ -806,6 +806,38 @@ class TestTheControlledClockItself:
 
         assert clock.now() == datetime(9999, 12, 31, tzinfo=UTC), "a refused advance moved it"
 
+    @pytest.mark.parametrize(
+        "leave_it_running",
+        [
+            pytest.param(
+                lambda clock: clock.advance(
+                    datetime.max.replace(tzinfo=UTC) - clock.now() - timedelta(milliseconds=5)
+                ),
+                id="advance",
+            ),
+            pytest.param(
+                lambda clock: (
+                    clock.freeze(datetime.max.replace(tzinfo=UTC) - timedelta(milliseconds=5)),
+                    clock.resume(),
+                ),
+                id="resume",
+            ),
+        ],
+    )
+    def test_a_running_clock_is_never_left_without_room_to_run(self, leave_it_running) -> None:
+        # Checking the destination is not enough for a clock that keeps *moving*: its offset
+        # is fixed while the wall clock advances, so an instant that is representable at the
+        # moment of the call is not representable on the next read. And `now()` is what every
+        # request calls, so the failure would land on all of them, not on the call at fault.
+        clock = ControlledTimeSource()
+
+        with pytest.raises(CoreException, match="must stay at least"):
+            leave_it_running(clock)
+
+        time.sleep(0.02)
+
+        assert clock.now() is not None, "the clock was left in a state its next read cannot use"
+
     def test_the_clock_refuses_to_run_backwards(self) -> None:
         # The route answers 422 before reaching this, but the source is the contract.
         with pytest.raises(CoreException, match="only advances forward"):
