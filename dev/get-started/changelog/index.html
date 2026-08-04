@@ -3121,6 +3121,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/operation-progress/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-loader" viewBox="0 0 24 24"><path d="M12 2v4M16.2 7.8l2.9-2.9M18 12h4M16.2 16.2l2.9 2.9M12 18v4M4.9 19.1l2.9-2.9M2 12h4M4.9 4.9l2.9 2.9"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Operation progress
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/observability/" class="md-nav__link">
         
   
@@ -8082,6 +8111,11 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><strong>Docs floors</strong> (<code>[tool.docs_floors]</code>, <code>just docs-check</code>) — every public <code>DepKey</code>/<code>*Spec</code> under <code>contracts/</code> must be mentioned in <code>pages/docs</code>, the nav must resolve both ways, and every relative doc link must land. New <code>reference/spec-registry.md</code>.</li>
 <li><strong>Conformance manifest</strong> (<code>[tool.conformance_manifest]</code>, <code>just conformance</code>) — every <code>DepKey</code> is claimed by exactly one plane, legs carry <code>@pytest.mark.conformance(plane=…, engine=…)</code>, and a manifested leg that ran on no shard fails CI. <code>test_forze_inference</code> and <code>test_portability</code> join the CI matrix. New <code>forze_dst.conformance</code> scenarios and <code>forze_kits.integrations.realtime.conformance</code>.</li>
 <li><strong>Mock catalog gate</strong> (<code>[tool.mock_gate]</code>) — every operation in the driving example's catalog must resolve and answer against seeded data, and every plane it serves must be one the seed plan fills.</li>
+</ul>
+<p><strong>Operation progress</strong> — long-running work gets an observable shape, kit-level (<code>forze_kits.integrations.progress</code>), no core-contract changes:</p>
+<ul>
+<li><code>job_record_spec()</code> (one <code>JobRecord</code> per job — status, fraction, message, <code>heartbeat_at</code>, <code>durable_run_id</code>; DDL documented), the declared <code>job.progress</code> realtime event, <code>ProgressReporter</code> (coalescing window, monotonic clamp, <code>track()</code>), <code>JobProgressProjector</code> (out-of-order merge, <code>find_stalled</code>/<code>count_stalled</code>) and <code>progress_spec_contributions()</code> for the inventory. <code>job_staleness_lifecycle_step()</code> + <code>instrument_job_progress()</code> export <code>forze.jobs.stalled</code>, <code>forze.jobs.stalled.oldest_silence</code> and <code>forze.jobs.staleness.scan_age</code>. Ticks ride the ephemeral lane, status transitions a dedicated outbox route (<code>progress_outbox_spec()</code>, relayed to the realtime stream); a job is task-grained and spans many durable runs (<code>waiting</code> is non-terminal).</li>
+<li><code>ArchiveExporter</code>/<code>export_archive</code> and <code>rebuild_search_index</code> take an optional <code>progress=</code> reporter.</li>
 </ul>
 <p><strong>Cross-backend conformance</strong> — shared batteries for the counter, graph, storage, inference, search, idempotency, field-encryption and realtime-cursor planes; each change below holds on every backend of its plane:</p>
 <ul>
