@@ -27,7 +27,7 @@ from forze.application.contracts.interception import PortSelector
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.exceptions.mapping import map_pydantic
 
-from .faults import ArmedFault, ArmedLatency
+from .faults import ArmedFault, ArmedLatency, counting_fired
 
 if TYPE_CHECKING:
     from .session import MockSession
@@ -265,26 +265,27 @@ def build_control_app(session: MockSession) -> Starlette:
         # What the board *holds* cannot answer whether this seed's failure was injected: a
         # one-shot fault is consumed and removed before its exception arrives here, and a
         # fault armed on another route stays armed through a failure it caused nothing of.
-        # The count of faults actually handed out answers it exactly.
-        fired_before = session.board.fired
+        # Nor can the board's running total — it counts every request's firings, so a
+        # concurrent one would answer for this seed. Only this task's own tally is the
+        # question actually being asked.
+        with counting_fired() as fired_here:
+            try:
+                seeded = await _apply_seed(session)
 
-        try:
-            seeded = await _apply_seed(session)
+            # Determinism makes this the *expected* outcome, not an edge case: a plan with a
+            # pinned instant mints the same ids on every run, so a second application lands
+            # on the rows the first one wrote. Saying so beats a bare "Unique violation" —
+            # but only for a conflict nobody asked for. An injected one is the developer's
+            # own request, and has to reach them as itself.
+            except CoreException as error:
+                if error.kind is not ExceptionKind.CONFLICT or fired_here():
+                    raise
 
-        # Determinism makes this the *expected* outcome, not an edge case: a plan with a
-        # pinned instant mints the same ids on every run, so a second application lands on
-        # the rows the first one wrote. Saying so beats a bare "Unique violation" — but only
-        # for a conflict nobody asked for. An injected one is the developer's own request,
-        # and has to reach them as itself.
-        except CoreException as error:
-            if error.kind is not ExceptionKind.CONFLICT or session.board.fired != fired_before:
-                raise
-
-            raise exc.precondition(
-                "Re-applying the seed collided with rows already present: a plan with a "
-                'pinned instant mints the same ids every run. Send {"reset": true} to '
-                "seed a clean state, or declare the plan with instant=None"
-            ) from error
+                raise exc.precondition(
+                    "Re-applying the seed collided with rows already present: a plan with a "
+                    'pinned instant mints the same ids every run. Send {"reset": true} to '
+                    "seed a clean state, or declare the plan with instant=None"
+                ) from error
 
         return JSONResponse({"seeded": seeded})
 

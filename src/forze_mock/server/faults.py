@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, final
 
 import attrs
@@ -11,6 +14,31 @@ from forze.application.contracts.interception import PortCall, PortNext, PortSel
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 
 # ----------------------- #
+
+_fired_here: ContextVar[list[int] | None] = ContextVar("forze_mock_faults_fired", default=None)
+"""Faults consumed by *this* task, when someone is counting."""
+
+# ....................... #
+
+
+@contextmanager
+def counting_fired() -> Iterator[Callable[[], int]]:
+    """Count the faults consumed by the work done inside this block, and nothing else.
+
+    The board is shared by every request, so its running total cannot answer "did *my* call
+    fail because of an injection?" — a fault fired by a concurrent request lands in the same
+    number. A ContextVar scopes the tally to the calling task: awaited work inherits it,
+    other requests each carry their own, and the answer stops depending on who else is busy.
+    """
+
+    tally = [0]
+    token = _fired_here.set(tally)
+
+    try:
+        yield lambda: tally[0]
+
+    finally:
+        _fired_here.reset(token)
 
 
 @final
@@ -64,13 +92,13 @@ class FaultBoard:
     latencies: list[ArmedLatency] = attrs.field(factory=list)
 
     fired: int = attrs.field(default=0, init=False)
-    """How many faults this board has ever handed out.
+    """How many faults this board has ever handed out, across every request.
 
     What is armed cannot answer "did *that* call fail because of an injection?" — a one-shot
     fault is consumed and removed before the exception it produces reaches the caller, and a
-    fault armed elsewhere stays armed through a failure it had nothing to do with. A
-    monotonic count answers it exactly, by comparison across the call. Never reset, including
-    by :meth:`clear`: a counter that can go backwards would make that comparison lie."""
+    fault armed elsewhere stays armed through a failure it had nothing to do with. This total
+    is the honest observation of the board as a whole; attributing a firing to one call is
+    what :func:`counting_fired` is for. Never reset, including by :meth:`clear`."""
 
     # ....................... #
 
@@ -103,7 +131,7 @@ class FaultBoard:
                 continue
 
             if fault.remaining is None:
-                self.fired += 1
+                self._record_firing()
 
                 return fault
 
@@ -121,11 +149,22 @@ class FaultBoard:
             else:
                 self.faults[index] = attrs.evolve(fault, remaining=fault.remaining - 1)
 
-            self.fired += 1
+            self._record_firing()
 
             return fault
 
         return None
+
+    # ....................... #
+
+    def _record_firing(self) -> None:
+        """Count one consumed fault, on the board and for whoever is counting this task."""
+
+        self.fired += 1
+        tally = _fired_here.get()
+
+        if tally is not None:
+            tally[0] += 1
 
 
 # ....................... #

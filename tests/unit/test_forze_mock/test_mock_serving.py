@@ -7,6 +7,7 @@ that an armed fault produces the *asserted kind* rather than merely an error.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
@@ -43,7 +44,7 @@ from forze_mock.server import ControlPlane, MockApp, MockSession, build_mock_ser
 from forze_mock.server.clock import ControlledTimeSource
 from forze_mock.server import control
 from forze_mock.server.control import _INSPECTABLE_STORES
-from forze_mock.server.faults import ArmedFault, FaultBoard
+from forze_mock.server.faults import ArmedFault, FaultBoard, counting_fired
 from forze_mock.server.runner import _is_loopback
 
 pytestmark = pytest.mark.unit
@@ -503,6 +504,34 @@ class TestTheControlPlane:
         assert "Injected by the mock control plane" in response.json()["error"]
         assert "reset" not in response.json()["error"]
 
+    def test_a_fault_fired_by_another_request_does_not_speak_for_this_seed(
+        self, client: TestClient, monkeypatch
+    ) -> None:
+        # The board's running total counts every request's firings, so a concurrent one
+        # landing inside this seed's `await` would answer in its place. The stub stands in
+        # for that request — created in a *fresh* context, exactly as the server creates a
+        # request task, so it cannot be mistaken for work this call awaited.
+        import contextvars
+
+        async def _another_request(board) -> None:
+            board.take_fault(PortCall(surface=None, route="elsewhere", op="create"))
+
+        async def _colliding_seed(session) -> int:
+            task = asyncio.get_running_loop().create_task(
+                _another_request(session.board), context=contextvars.Context()
+            )
+            await task
+
+            raise CoreException.conflict("Unique violation.", details={"id": "seeded"})
+
+        client.post("/_mock/fault", json={"route": "elsewhere", "kind": "conflict"})
+        monkeypatch.setattr(control, "_apply_seed", _colliding_seed)
+
+        response = client.post("/_mock/seed")
+
+        assert response.status_code == 400, response.text
+        assert '{"reset": true}' in response.json()["error"]
+
     def test_a_fault_armed_elsewhere_does_not_suppress_the_collision_advice(
         self, client: TestClient
     ) -> None:
@@ -849,6 +878,31 @@ class TestTheControlledClockItself:
         clock.freeze(datetime(2030, 1, 1, tzinfo=UTC))
 
         assert clock.monotonic() <= clock.monotonic()
+
+    @pytest.mark.asyncio
+    async def test_a_tally_counts_its_own_task_and_not_a_concurrent_one(self) -> None:
+        """The board is shared, so its running total answers for whoever fired last.
+
+        A caller asking "did *my* work trip an injection?" has to be told about its own work.
+        Both tasks below fire a fault; each tally must see exactly one.
+        """
+
+        board = FaultBoard()
+        board.arm_fault(ArmedFault(selector=PortSelector(), kind=ExceptionKind.CONFLICT))
+        call = PortCall(surface=None, route="notes", op="create")
+
+        async def counted(label: str, results: dict[str, int]) -> None:
+            with counting_fired() as fired_here:
+                await asyncio.sleep(0)  # yield, so the two tasks genuinely interleave
+                board.take_fault(call)
+                await asyncio.sleep(0)
+                results[label] = fired_here()
+
+        results: dict[str, int] = {}
+        await asyncio.gather(counted("a", results), counted("b", results))
+
+        assert results == {"a": 1, "b": 1}, "one task's firing leaked into the other's tally"
+        assert board.fired == 2, "the board's own total still counts everything"
 
     def test_a_fault_that_does_not_match_is_stepped_over(self) -> None:
         board = FaultBoard()
