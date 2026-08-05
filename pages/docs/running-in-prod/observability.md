@@ -278,12 +278,57 @@ adapter machinery shared across integrations logs under `forze.integrations.<dom
 (`forze.integrations.cache`, `forze.integrations.document`) — filter the whole group
 with `forze.integrations.*`, or a single domain on its own.
 
-## Bring your own exporter
+## One-call SDK setup
 
-Forze emits to the global tracer and meter providers; your application owns the
-SDK and exporter choice — OTLP, Prometheus, console, whatever your backend
-speaks. The OTel API and SDK ship with Forze, so you add only the exporter
-package and the few lines of standard OTel setup that point the providers at it.
+Everything above emits through the **global** OTel providers. Somebody still has to
+install those providers and point them at a collector — and that is the fifteen lines
+every deployment hand-writes and gets wrong in the same four ways. `bootstrap_telemetry`
+is the `bootstrap_logging` twin that owns them:
+
+```python
+from forze.base.logging import bootstrap_logging
+from forze.base.telemetry import bootstrap_telemetry
+
+bootstrap_logging(render_mode="json", otel_config={"enable": True})
+
+telemetry = bootstrap_telemetry(
+    service_name="orders-api",
+    service_version=APP_VERSION,
+)
+
+# ... assemble: instrument_operations / with_otel_port_spans / instrument_* ...
+
+await telemetry.shutdown()   # flush is part of drain, not an afterthought
+```
+
+Endpoint, headers and the head sampler come from the standard `OTEL_EXPORTER_OTLP_*` /
+`OTEL_TRACES_SAMPLER` environment variables — no parallel vocabulary. Install the exporter
+with the `observability` extra (`uv add "forze[observability]"`); it is OTLP
+**http/protobuf**, so no grpc.
+
+Four things it gets right that hand-written setup usually does not:
+
+| | Why it matters |
+|---|---|
+| a fresh `service.instance.id` per process | without it, every worker's cumulative counters collide into one series and `rate()` flaps |
+| millisecond histogram views | the SDK's default buckets are second-oriented; Forze records ms |
+| `shutdown()` wired into drain | otherwise the last export interval of every deploy dies with the pod |
+| defers to an existing provider | an application that owns its SDK keeps it, untouched |
+
+Call it **before assembly**. The API's proxies do late-bind instruments created earlier
+(pinned by test, not assumed), but ordering it this way stops the first spans of a slow
+startup being dropped.
+
+Bringing your own SDK is still fine and still supported — `bootstrap_telemetry` never
+replaces a provider you installed; pass `on_existing_provider="error"` if you would rather
+find out loudly than have it quietly do nothing.
+
+## Where the signals go
+
+[The Grafana stack](grafana-stack.md) is the prescriptive other half: one
+`docker compose up` for Alloy + Prometheus + Loki + Tempo + Grafana, four provisioned
+dashboards, a starter alert pack, and the label discipline that keeps both indexes
+affordable. Every metric is listed in the [metric catalog](../reference/metrics.md).
 
 The signals you watch in production are also what you assert against before
 shipping — see [Testing](../testing/overview.md).

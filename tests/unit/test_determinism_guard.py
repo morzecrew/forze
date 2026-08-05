@@ -223,7 +223,16 @@ _OFFLOAD_GUARDED_PREFIXES: tuple[str, ...] = (
 )
 
 # The CPU-offload seam itself owns the one legitimate run_in_executor.
-_OFFLOAD_ALLOWLIST: frozenset[str] = frozenset({"forze/base/primitives/cpu.py"})
+_OFFLOAD_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "forze/base/primitives/cpu.py",
+        # Telemetry flush/shutdown. Not CPU work, so ``run_cpu`` is the wrong seam — it is
+        # the OTel exporter's blocking HTTP round-trip, and the alternative is stalling the
+        # event loop for the flush timeout in the middle of drain. Never reached under
+        # simulation either: nothing bootstraps a real SDK with a real exporter there.
+        "forze/base/telemetry/handle.py",
+    }
+)
 
 
 def _offload_violations_in(path: Path) -> list[str]:

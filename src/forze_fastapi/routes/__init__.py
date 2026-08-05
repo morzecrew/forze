@@ -5,7 +5,7 @@ from .aggregate import attach_aggregate_routes
 from .asyncapi import attach_asyncapi_route
 from .authn import attach_authn_routes
 from .document import attach_document_routes
-from .health import attach_readiness_route
+from .health import attach_liveness_route, attach_metrics_route, attach_readiness_route
 from .jwks import attach_jwks_route
 from .search import attach_search_routes
 from .storage import DEFAULT_MAX_UPLOAD_SIZE, attach_storage_routes
@@ -21,6 +21,8 @@ __all__ = [
     "attach_asyncapi_route",
     "attach_authn_routes",
     "attach_readiness_route",
+    "attach_liveness_route",
+    "attach_metrics_route",
     "attach_jwks_route",
     "attach_document_routes",
     "attach_search_routes",
