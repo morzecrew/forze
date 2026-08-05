@@ -283,6 +283,9 @@ def _build_tracer_provider(
     return provider
 
 
+# ....................... #
+
+
 def _publish_tracer_provider(provider: TracerProvider) -> None:
     from opentelemetry import trace
 
@@ -343,13 +346,16 @@ def _build_meter_provider(
         # may well be handing the same one to a provider they build themselves.
         for reader in owned:
             with suppress(Exception):
-                reader.shutdown()
+                reader.shutdown()  # pyright: ignore[reportUnknownMemberType]
 
         if unowned_exporter is not None:
             with suppress(Exception):
-                unowned_exporter.shutdown()
+                unowned_exporter.shutdown()  # pyright: ignore[reportUnknownMemberType]
 
         raise
+
+
+# ....................... #
 
 
 def _publish_meter_provider(provider: MeterProvider) -> None:
@@ -383,7 +389,9 @@ def _meter_provider_installed() -> bool:
     """
 
     from opentelemetry import metrics
-    from opentelemetry.metrics._internal import _ProxyMeterProvider
+    from opentelemetry.metrics._internal import (
+        _ProxyMeterProvider,  # pyright: ignore[reportPrivateUsage]
+    )
 
     return not isinstance(metrics.get_meter_provider(), _ProxyMeterProvider)
 
