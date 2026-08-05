@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import threading
+from collections.abc import Callable
 from typing import TYPE_CHECKING, final
 
 import attrs
 
 from forze.base._logger import logger
+from forze.base.primitives import monotonic
 
 if TYPE_CHECKING:
     from opentelemetry.sdk.metrics import MeterProvider
@@ -16,6 +17,27 @@ if TYPE_CHECKING:
     from opentelemetry.sdk.trace import TracerProvider
 
 # ----------------------- #
+
+_TRACER_SHUTDOWN_IS_UNBOUNDED = (
+    "SDK limitation: TracerProvider.shutdown() takes no timeout and joins its batch "
+    "worker on the SDK's own 30s budget"
+)
+
+
+@final
+@attrs.define(slots=True, eq=False)
+class _ShutdownGate:
+    """Single-flight state for :meth:`TelemetryHandle.shutdown`.
+
+    Mutable, and deliberately not part of the handle's own frozen value: "has this been
+    shut down" is lifecycle, not identity.
+    """
+
+    lock: asyncio.Lock = attrs.field(factory=asyncio.Lock)
+    """Serializes concurrent shutdowns. An ``asyncio.Lock`` binds to no event loop until
+    it is first awaited, so building it here is safe."""
+
+    done: bool = False
 
 
 @final
@@ -43,15 +65,12 @@ class TelemetryHandle:
     resource: Resource | None = None
     """The resource identity both providers were built with; ``None`` when both deferred."""
 
-    _closed: threading.Event = attrs.field(
-        factory=threading.Event,
+    _gate: _ShutdownGate = attrs.field(
+        factory=_ShutdownGate,
         init=False,
         repr=False,
         eq=False,
     )
-    """Latches on the first :meth:`shutdown`, so a lifecycle that shuts down twice — the
-    runner's own hook plus a wrapping ``finally`` — does not trip the SDK's
-    "shutdown can only be called once" warning or block a second time on a dead exporter."""
 
     # ....................... #
 
@@ -59,18 +78,22 @@ class TelemetryHandle:
         """Force-export everything buffered, without ending the providers' lives.
 
         Blocking SDK work (the batch processor's handoff, the exporter's HTTP round trip)
-        runs off the event loop. An incomplete flush is logged, not raised: a telemetry
-        stall must not fail the operation that asked for the flush.
+        runs off the event loop. Failures are logged, never raised — including the ones the
+        SDK signals by *raising*: ``MeterProvider.force_flush`` throws when a reader times
+        out rather than returning ``False``, and a telemetry stall must not become the
+        exception that fails whatever asked for the flush.
 
-        :param timeout: Budget in seconds, shared by both signals.
+        :param timeout: Budget in seconds, genuinely shared: both signals flush against one
+            deadline, so a slow span export eats into what metrics get rather than doubling
+            the wall clock.
         """
 
-        await asyncio.to_thread(self._flush_blocking, timeout)
+        await asyncio.to_thread(self._flush_blocking, monotonic() + max(0.0, timeout))
 
     # ....................... #
 
     async def shutdown(self, timeout: float = 5.0) -> None:
-        """Flush, then shut both providers down. Idempotent.
+        """Flush, then shut both providers down. Idempotent and single-flight.
 
         This is the contract half of "flush is part of drain": wire it into the FastAPI
         lifespan or the runner's shutdown, *after* the drain gate flips, so the last metric
@@ -78,45 +101,97 @@ class TelemetryHandle:
         ``atexit`` hook stays registered until this runs, as a best-effort backstop for
         processes that exit without draining.
 
-        :param timeout: Budget in seconds, shared by flush and shutdown across both signals.
+        Concurrent callers — a runner's own hook plus a wrapping ``finally`` — all wait for
+        the *same* shutdown to finish. Returning early on a second call would tell that
+        caller the providers were closed while the first call was still flushing, and it
+        would go on to dispose the very clients the final collection is reading.
+
+        :param timeout: Budget in seconds for the flush and the meter provider's teardown.
+            It does **not** bound the tracer provider's own teardown: the SDK's
+            ``TracerProvider.shutdown()`` takes no timeout and joins its batch worker on
+            its own 30s budget. In practice the flush above has already drained the queue,
+            so that join returns immediately unless the exporter itself is wedged.
         """
 
-        if self._closed.is_set():
-            return
+        gate = self._gate
 
-        self._closed.set()
+        async with gate.lock:
+            if gate.done:
+                return
 
-        await asyncio.to_thread(self._shutdown_blocking, timeout)
+            try:
+                await asyncio.to_thread(self._shutdown_blocking, timeout)
+
+            finally:
+                gate.done = True
 
     # ....................... #
 
-    def _flush_blocking(self, timeout: float) -> None:
-        millis = max(0.0, timeout) * 1000.0
+    def _flush_blocking(self, deadline: float) -> None:
+        if self.tracer_provider is not None:
+            self._guarded(
+                "span flush",
+                lambda: self.tracer_provider.force_flush(int(_remaining_millis(deadline))),  # type: ignore[union-attr]
+            )
 
-        if self.tracer_provider is not None and not self.tracer_provider.force_flush(int(millis)):
-            logger.warning("Telemetry span flush did not complete within %.1fs", timeout)
-
-        if self.meter_provider is not None and not self.meter_provider.force_flush(millis):
-            logger.warning("Telemetry metric flush did not complete within %.1fs", timeout)
+        if self.meter_provider is not None:
+            self._guarded(
+                "metric flush",
+                lambda: self.meter_provider.force_flush(_remaining_millis(deadline)),  # type: ignore[union-attr]
+            )
 
     # ....................... #
 
     def _shutdown_blocking(self, timeout: float) -> None:
-        self._flush_blocking(timeout)
+        deadline = monotonic() + max(0.0, timeout)
+
+        # Flushing first is what guarantees the tail batch under a bounded budget; the
+        # providers' own teardown drains again, but only on the SDK's terms.
+        self._flush_blocking(deadline)
 
         # Each provider is torn down independently: a metric reader that fails to stop must
         # not leave the span processor running (and vice versa), because the process is on
         # its way out and nobody will get a second chance to close either one.
         if self.tracer_provider is not None:
-            try:
-                self.tracer_provider.shutdown()
-
-            except Exception:
-                logger.warning("Telemetry tracer provider shutdown failed", exc_info=True)
+            self._guarded("tracer provider shutdown", self.tracer_provider.shutdown)
 
         if self.meter_provider is not None:
-            try:
-                self.meter_provider.shutdown(timeout_millis=max(0.0, timeout) * 1000.0)
+            self._guarded(
+                "meter provider shutdown",
+                lambda: self.meter_provider.shutdown(  # type: ignore[union-attr]
+                    timeout_millis=_remaining_millis(deadline)
+                ),
+            )
 
-            except Exception:
-                logger.warning("Telemetry meter provider shutdown failed", exc_info=True)
+    # ....................... #
+
+    @staticmethod
+    def _guarded(step: str, call: Callable[[], object]) -> None:
+        """Run one teardown step, absorbing whatever it does on the way out.
+
+        Both shapes of failure are absorbed: a ``False`` return (the documented "did not
+        finish in time") and an exception (what the metrics SDK actually raises — its
+        ``force_flush`` throws on a reader timeout and never returns ``False``). Every step
+        after this one still has to run: the process is leaving, and a provider left
+        running because an earlier one threw is a thread that outlives its own telemetry.
+        """
+
+        try:
+            if call() is False:
+                logger.warning("Telemetry %s did not complete within its budget", step)
+
+        except Exception:
+            logger.warning("Telemetry %s failed", step, exc_info=True)
+
+
+# ....................... #
+
+
+def _remaining_millis(deadline: float) -> float:
+    """Milliseconds left before *deadline*, never negative.
+
+    Zero is a meaningful value to hand the SDK: it means "you are already out of budget",
+    and every call site treats it as an immediate timeout rather than as "no limit".
+    """
+
+    return max(0.0, deadline - monotonic()) * 1000.0

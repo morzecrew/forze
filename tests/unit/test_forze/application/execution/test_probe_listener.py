@@ -206,6 +206,47 @@ class TestProbeListener:
     # ....................... #
 
     @pytest.mark.asyncio
+    async def test_an_idle_connection_does_not_hold_the_graceful_stop_open(self) -> None:
+        """``wait_closed()`` waits for every handler, and an idle one waits out the read
+        timeout. Left connected, a single parked socket would stall the stop for seconds —
+        past the drain budget — and produce a "did not close" warning about a listener with
+        nothing left to do.
+        """
+
+        port = _free_port()
+        runtime = ExecutionRuntime(drain_timeout=timedelta(0))
+        step = probe_listener_step(runtime, host="127.0.0.1", port=port)
+
+        assert step.startup is not None
+
+        async with runtime.scope():
+            await step.startup(runtime.get_context())
+
+            _, idle = await asyncio.open_connection("127.0.0.1", port)
+            # The handler for this socket is now parked in readline() for _READ_TIMEOUT.
+            await asyncio.sleep(0.05)
+
+            clock = asyncio.get_running_loop()
+            started = clock.time()
+
+            stopped = await asyncio.wait_for(
+                step.startup.stop(deadline=clock.time() + 30.0),  # type: ignore[attr-defined]
+                timeout=10.0,
+            )
+
+            elapsed = clock.time() - started
+
+            idle.close()
+
+            with suppress(OSError):
+                await idle.wait_closed()
+
+        assert stopped is True
+        assert elapsed < 1.0, f"graceful stop waited {elapsed:.1f}s on an idle connection"
+
+    # ....................... #
+
+    @pytest.mark.asyncio
     async def test_readiness_is_unavailable_while_the_watched_runtime_has_no_scope(
         self,
     ) -> None:

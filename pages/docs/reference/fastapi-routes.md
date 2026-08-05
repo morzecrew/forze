@@ -326,9 +326,10 @@ transaction route the deps module registers.
 - `attach_liveness_route(router, *, path="/livez")` — 200 unconditionally; reaching
   the handler is the check. Deliberately blind to drain, so a draining pod reads as
   alive-but-not-ready instead of dead. Excluded from the schema.
-- `attach_metrics_route(router, reader, *, path="/metrics", registry=None)` — a
-  Prometheus pull endpoint over an already-registered `PrometheusMetricReader`
-  (needs `opentelemetry-exporter-prometheus`; any other reader is refused).
+- `attach_metrics_route(router, reader, *, path="/metrics")` — a Prometheus pull
+  endpoint over an already-registered `PrometheusMetricReader` (needs
+  `opentelemetry-exporter-prometheus`; any other reader is refused). Renders off
+  the event loop, since collection runs every observable callback in the process.
   **Single-process deployments only** — see [The Grafana
   stack](../running-in-prod/grafana-stack.md#pull-metrics-and-why-not).
 

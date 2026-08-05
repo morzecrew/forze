@@ -8,6 +8,7 @@ require_fastapi()
 
 # ....................... #
 
+import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -92,7 +93,6 @@ def attach_metrics_route(
     reader: MetricReader,
     *,
     path: str = "/metrics",
-    registry: CollectorRegistry | None = None,
 ) -> APIRouter:
     """Attach a Prometheus **pull** endpoint over an already-registered metric reader.
 
@@ -113,24 +113,26 @@ def attach_metrics_route(
     blessed push path has no use for it. Install ``opentelemetry-exporter-prometheus``
     yourself if you want this route.
 
-    :param registry: Collector registry to render. Defaults to ``prometheus_client``'s
-        global one, which is where ``PrometheusMetricReader`` registers itself on
-        construction — so pass this **only** if you registered *reader*'s collector into
-        that registry yourself. A registry the reader is not in renders the same
-        permanently-empty page this route otherwise refuses to serve.
+    The registry is not configurable, deliberately: ``PrometheusMetricReader`` registers
+    its collector into ``prometheus_client``'s global one at construction, so rendering
+    anything else would serve a perfectly healthy, permanently empty page — the exact
+    failure the reader check above exists to prevent.
 
     :raises CoreException: ``configuration`` — the Prometheus exporter is not installed, or
         *reader* is not a ``PrometheusMetricReader``.
     """
 
-    generate_latest, default_registry = _prometheus_renderer(reader)
-    target = registry if registry is not None else default_registry
+    generate_latest, registry = _prometheus_renderer(reader)
 
     @router.get(path, include_in_schema=False)
     async def metrics() -> Response:  # pyright: ignore[reportUnusedFunction]
-        # Rendering the registry is what drives collection: the exporter's collector calls
-        # back into the reader, which collects from the meter provider on the spot.
-        return Response(content=generate_latest(target), media_type=PROMETHEUS_CONTENT_TYPE)
+        # Off the event loop: rendering the registry is what drives collection, and that
+        # runs every observable callback in the process — pool stats, keyring stats, L1
+        # stats, bulkhead depths. On the loop, each scrape would stall every other
+        # coroutine for as long as the whole collection takes.
+        rendered = await asyncio.to_thread(generate_latest, registry)
+
+        return Response(content=rendered, media_type=PROMETHEUS_CONTENT_TYPE)
 
     return router
 

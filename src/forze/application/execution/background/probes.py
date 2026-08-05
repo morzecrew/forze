@@ -74,6 +74,15 @@ class _ProbeListenerStartup(LifecycleHook):
 
     server: asyncio.Server | None = attrs.field(default=None, init=False, repr=False)
 
+    connections: set[asyncio.StreamWriter] = attrs.field(factory=set, init=False, repr=False)
+    """Live client transports, so shutdown can hang up on them.
+
+    ``Server.wait_closed()`` waits for every handler to finish, and a handler sitting in
+    ``readline`` waits out the full read timeout. Without this, one idle socket — a port
+    scanner, a half-open load-balancer check — would hold the graceful stop open past the
+    drain budget and log a "did not close" warning about a listener that had no work left.
+    """
+
     # ....................... #
 
     @property
@@ -100,6 +109,12 @@ class _ProbeListenerStartup(LifecycleHook):
 
         self.server = None
         server.close()
+
+        # Closing the listening socket only stops *new* connections. Existing ones are
+        # hung up on here: a probe response is a single write with no state behind it, so
+        # there is nothing in flight worth waiting for.
+        for writer in tuple(self.connections):
+            writer.close()
 
         clock = asyncio.get_running_loop()
         budget = max(0.0, deadline - clock.time())
@@ -135,6 +150,8 @@ class _ProbeListenerStartup(LifecycleHook):
     # ....................... #
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        self.connections.add(writer)
+
         try:
             method, (status, payload) = await self._answer(reader)
             # HEAD carries the headers of the equivalent GET and none of its body.
@@ -150,6 +167,7 @@ class _ProbeListenerStartup(LifecycleHook):
             logger.warning("Probe listener request failed", exc_info=True)
 
         finally:
+            self.connections.discard(writer)
             writer.close()
 
             with suppress(ConnectionError, OSError):

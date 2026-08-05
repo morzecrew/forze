@@ -7,7 +7,6 @@ from fastapi import APIRouter, FastAPI
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
-from prometheus_client import CollectorRegistry
 from starlette.testclient import TestClient
 
 from forze.application.execution.runtime import ExecutionRuntime
@@ -79,20 +78,27 @@ class TestLivenessRoute:
 
 class TestMetricsRoute:
     def test_renders_the_metrics_the_reader_collected(self) -> None:
-        registry = CollectorRegistry()
+        # ``PrometheusMetricReader`` registers its collector into prometheus_client's
+        # global registry on construction, and the route renders exactly that — there is
+        # no seam between them to point somewhere else, on purpose.
         reader = PrometheusMetricReader()
-        registry.register(reader._collector)  # noqa: SLF001 - the exporter exposes no accessor
-
         provider = MeterProvider(metric_readers=[reader])
-        provider.get_meter("forze").create_counter("forze.test.pull").add(2)
 
-        router = APIRouter()
-        attach_metrics_route(router, reader, registry=registry)
+        try:
+            provider.get_meter("forze").create_counter("forze.test.pull").add(2)
 
-        response = _client(router).get("/metrics")
+            router = APIRouter()
+            attach_metrics_route(router, reader)
 
-        assert response.status_code == 200
-        assert "forze_test_pull" in response.text
+            response = _client(router).get("/metrics")
+
+            assert response.status_code == 200
+            assert "forze_test_pull" in response.text
+
+        finally:
+            # Unregisters the collector from the global registry, which is also what keeps
+            # the provider's own atexit hook from failing on an already-clean registry.
+            provider.shutdown()
 
     # ....................... #
 

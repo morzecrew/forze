@@ -169,24 +169,45 @@ def bootstrap_telemetry(
         if deferred:
             _report_existing(signal, on_existing_provider)
 
+    # Build first, publish second. Construction is where the failures live — a missing
+    # exporter package, a malformed View, a reader that will not start — and publishing is
+    # irreversible. Interleaving them would let a meter that fails to build strand an
+    # already-published tracer provider: unreachable through the handle the caller never
+    # receives, unreplaceable because OpenTelemetry's slot is set-once, and still holding
+    # buffered spans nothing will flush.
     tracer_provider = (
-        _install_tracer_provider(resource=resource, exporter=exporter)
+        _build_tracer_provider(resource=resource, exporter=exporter)
         if traces and not defer_traces
         else None
     )
 
-    meter_provider = (
-        _install_meter_provider(
-            resource=resource,
-            exporter=exporter,
-            metric_export_interval=metric_export_interval,
-            exponential_histograms=exponential_histograms,
-            histogram_views=histogram_views,
-            extra_metric_readers=extra_metric_readers,
+    try:
+        meter_provider = (
+            _build_meter_provider(
+                resource=resource,
+                exporter=exporter,
+                metric_export_interval=metric_export_interval,
+                exponential_histograms=exponential_histograms,
+                histogram_views=histogram_views,
+                extra_metric_readers=extra_metric_readers,
+            )
+            if metrics and not defer_metrics
+            else None
         )
-        if metrics and not defer_metrics
-        else None
-    )
+
+    except Exception:
+        if tracer_provider is not None:
+            # Built but never published, so nothing can reach it — including its own batch
+            # worker thread and the atexit hook it registered on construction.
+            tracer_provider.shutdown()
+
+        raise
+
+    if tracer_provider is not None:
+        _publish_tracer_provider(tracer_provider)
+
+    if meter_provider is not None:
+        _publish_meter_provider(meter_provider)
 
     return TelemetryHandle(
         tracer_provider=tracer_provider,
@@ -243,12 +264,11 @@ def _forze_version() -> str:
 # ....................... #
 
 
-def _install_tracer_provider(
+def _build_tracer_provider(
     *,
     resource: Resource,
     exporter: ExporterChoice,
 ) -> TracerProvider:
-    from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
 
     provider = TracerProvider(resource=resource)
@@ -259,15 +279,19 @@ def _install_tracer_provider(
 
         provider.add_span_processor(BatchSpanProcessor(span_exporter))
 
-    trace.set_tracer_provider(provider)
-
     return provider
+
+
+def _publish_tracer_provider(provider: TracerProvider) -> None:
+    from opentelemetry import trace
+
+    trace.set_tracer_provider(provider)
 
 
 # ....................... #
 
 
-def _install_meter_provider(
+def _build_meter_provider(
     *,
     resource: Resource,
     exporter: ExporterChoice,
@@ -276,7 +300,6 @@ def _install_meter_provider(
     histogram_views: Sequence[View] | None,
     extra_metric_readers: Sequence[MetricReader] | None,
 ) -> MeterProvider:
-    from opentelemetry import metrics
     from opentelemetry.sdk.metrics import MeterProvider
 
     readers: list[MetricReader] = []
@@ -300,10 +323,13 @@ def _install_meter_provider(
         else tuple(histogram_views)
     )
 
-    provider = MeterProvider(metric_readers=readers, resource=resource, views=views)
-    metrics.set_meter_provider(provider)
+    return MeterProvider(metric_readers=readers, resource=resource, views=views)
 
-    return provider
+
+def _publish_meter_provider(provider: MeterProvider) -> None:
+    from opentelemetry import metrics
+
+    metrics.set_meter_provider(provider)
 
 
 # ....................... #

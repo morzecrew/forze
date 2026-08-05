@@ -7,7 +7,9 @@ the framework's millisecond bucket ladder lands on exactly the two histograms it
 
 from __future__ import annotations
 
+import asyncio
 import sys
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -229,6 +231,36 @@ class TestProviderInstallation:
 
         assert isinstance(trace.get_tracer_provider(), trace.ProxyTracerProvider), (
             "a failed bootstrap must not leave a provider nothing owns"
+        )
+
+    # ....................... #
+
+    def test_a_meter_that_fails_to_build_leaves_no_tracer_provider_behind(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Construction failures must not be half-applied either.
+
+        The meter provider is built after the tracer one, and building is where the
+        failures live — a malformed view, an exporter package that is not installed.
+        Publishing the tracer first would strand it: the caller gets an exception instead
+        of a handle, and the set-once slot cannot be reclaimed to try again.
+        """
+
+        import opentelemetry.sdk.metrics as sdk_metrics
+
+        def _explode(*_args: Any, **_kwargs: Any) -> MeterProvider:
+            raise RuntimeError("meter provider is unbuildable")
+
+        # Patched at the module the bootstrap imports it from, so the failure lands where
+        # a real one would: inside the build step, after the tracer provider exists.
+        monkeypatch.setattr(sdk_metrics, "MeterProvider", _explode)
+
+        with pytest.raises(RuntimeError, match="unbuildable"):
+            bootstrap_telemetry(service_name="orders-api", exporter="none")
+
+        assert isinstance(trace.get_tracer_provider(), trace.ProxyTracerProvider), (
+            "the tracer provider must not be published when the meter build fails"
         )
 
     # ....................... #
@@ -588,6 +620,141 @@ class TestHandleLifecycle:
 
         await handle.flush()
         await handle.shutdown()
+
+
+# ----------------------- #
+
+
+class _SlowShutdownExporter(_RecordingSpanExporter):
+    """Makes the shutdown window wide enough for a second caller to race into it."""
+
+    def __init__(self, delay: float = 0.3) -> None:
+        super().__init__()
+        self._delay = delay
+        self.finished = False
+
+    def shutdown(self) -> None:
+        time.sleep(self._delay)
+        super().shutdown()
+        self.finished = True
+
+
+class _RaisingFlushMetricExporter(_RecordingMetricExporter):
+    """The failure mode the metrics SDK actually has.
+
+    ``MeterProvider.force_flush`` collects its readers' errors and **raises** — it never
+    returns ``False``, so the "log a warning on a falsy result" branch is not the path that
+    matters. The span side is not usable for this: a batch processor's ``force_flush``
+    drains its own queue without ever calling the exporter's.
+    """
+
+    def force_flush(self, timeout_millis: float = 10_000) -> bool:
+        raise RuntimeError("collector unreachable")
+
+
+def _handle_with(exporter: SpanExporter) -> TelemetryHandle:
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+    handle = bootstrap_telemetry(service_name="orders-api", exporter="none", metrics=False)
+
+    assert handle.tracer_provider is not None
+    handle.tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
+
+    return handle
+
+
+def _handle_with_metric_exporter(exporter: MetricExporter) -> TelemetryHandle:
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+
+    return bootstrap_telemetry(
+        service_name="orders-api",
+        exporter="none",
+        traces=False,
+        extra_metric_readers=[
+            PeriodicExportingMetricReader(exporter, export_interval_millis=600_000)
+        ],
+    )
+
+
+class TestShutdownIsHostileToCallers:
+    """The three ways a naive drain hook gets this wrong."""
+
+    async def test_a_second_caller_waits_for_the_first_to_finish(self) -> None:
+        """Not merely "returns once" — *returns only when the work is done*.
+
+        A latch claimed up front would let the second caller believe the providers were
+        closed while the first was still flushing. That caller then goes on to dispose the
+        clients whose stats the final collection is in the middle of reading.
+        """
+
+        exporter = _SlowShutdownExporter()
+        handle = _handle_with(exporter)
+
+        observed: list[bool] = []
+
+        async def _drain() -> None:
+            await handle.shutdown()
+            observed.append(exporter.finished)
+
+        await asyncio.gather(_drain(), _drain())
+
+        assert observed == [True, True], "a caller returned before shutdown had finished"
+        assert exporter.shutdowns == 1, "the work itself must still happen exactly once"
+
+    # ....................... #
+
+    async def test_a_raising_flush_does_not_strand_the_providers(self) -> None:
+        """The SDK signals a failed flush by *raising*, not by returning ``False``.
+
+        Unguarded, that exception escapes shutdown with the latch already claimed — so the
+        providers are never closed and a retry is a no-op. The process leaves with its
+        exporter threads still running.
+        """
+
+        exporter = _RaisingFlushMetricExporter()
+        handle = _handle_with_metric_exporter(exporter)
+
+        await handle.shutdown()
+
+        assert exporter.shutdowns == 1, "teardown must survive a failed flush"
+
+    # ....................... #
+
+    async def test_flush_never_raises_at_the_caller(self) -> None:
+        """`flush()` documents "logged, not raised", and the drain path depends on it."""
+
+        handle = _handle_with_metric_exporter(_RaisingFlushMetricExporter())
+
+        await handle.flush()
+
+    # ....................... #
+
+    async def test_an_exhausted_budget_still_tears_everything_down(self) -> None:
+        """Steps now run against one deadline, so later ones can find it already spent.
+
+        A spent budget has to mean "you are out of time", not a negative timeout handed to
+        an SDK that never agreed to receive one — and every remaining step still has to
+        run, because the process is on its way out.
+        """
+
+        exporter = _RecordingSpanExporter()
+        reader = InMemoryMetricReader()
+
+        handle = bootstrap_telemetry(
+            service_name="orders-api",
+            exporter="none",
+            extra_metric_readers=[reader],
+        )
+        assert handle.tracer_provider is not None
+
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        handle.tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
+
+        await handle.shutdown(timeout=0.0)
+
+        assert exporter.shutdowns == 1
+        assert handle.meter_provider is not None
 
 
 # ----------------------- #
