@@ -130,6 +130,9 @@
         <loc>https://morzecrew.github.io/forze/dev/running-in-prod/observability/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/grafana-stack/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/testing/overview/</loc>
       </url>
       <url>
@@ -386,5 +389,8 @@
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/reference/resilience-tuning/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/metrics/</loc>
       </url>
 </urlset>

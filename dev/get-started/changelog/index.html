@@ -3172,6 +3172,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../running-in-prod/grafana-stack/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-layout-dashboard" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  The Grafana stack
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -6934,6 +6963,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/metrics/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Metric catalog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -8116,6 +8174,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li><code>job_record_spec()</code> (one <code>JobRecord</code> per job — status, fraction, message, <code>heartbeat_at</code>, <code>durable_run_id</code>; DDL documented), the declared <code>job.progress</code> realtime event, <code>ProgressReporter</code> (coalescing window, monotonic clamp, <code>track()</code>), <code>JobProgressProjector</code> (out-of-order merge, <code>find_stalled</code>/<code>count_stalled</code>) and <code>progress_spec_contributions()</code> for the inventory. <code>job_staleness_lifecycle_step()</code> + <code>instrument_job_progress()</code> export <code>forze.jobs.stalled</code>, <code>forze.jobs.stalled.oldest_silence</code> and <code>forze.jobs.staleness.scan_age</code>. Ticks ride the ephemeral lane, status transitions a dedicated outbox route (<code>progress_outbox_spec()</code>, relayed to the realtime stream); a job is task-grained and spans many durable runs (<code>waiting</code> is non-terminal).</li>
 <li><code>ArchiveExporter</code>/<code>export_archive</code> and <code>rebuild_search_index</code> take an optional <code>progress=</code> reporter.</li>
+</ul>
+<p><strong>Observability last mile</strong> — SDK setup, probes, and a deployable Grafana stack; no instrumentation change (no metric added or renamed):</p>
+<ul>
+<li><strong><code>bootstrap_telemetry()</code></strong> (new <code>forze.base.telemetry</code>, new <code>observability</code> extra) — resource identity with a per-process <code>service.instance.id</code>, OTLP http/protobuf exporters, millisecond views on <code>forze.operation.duration</code>/<code>forze.durable.run.duration</code>, and a <code>TelemetryHandle</code> with <code>flush()</code>/<code>shutdown()</code> for the drain path. Defers per signal to an application-installed provider (<code>on_existing_provider="error"</code> to refuse instead); config stays on the standard <code>OTEL_*</code> variables. Plus <code>millisecond_histogram_views()</code>.</li>
+<li><strong>Probes</strong> — <code>attach_liveness_route</code> (<code>/livez</code>, drain-blind by design) beside <code>/readyz</code>; <code>probe_listener_step(runtime, port=…)</code> serves both from any non-HTTP process on stdlib <code>asyncio</code>; <code>attach_metrics_route(router, reader)</code> for single-process pull scrapes (needs <code>opentelemetry-exporter-prometheus</code>; refuses a non-<code>PrometheusMetricReader</code>).</li>
+<li><strong>Docs and assets</strong> — new <em>The Grafana stack</em> recipe (compose + <code>config.alloy</code> + label/sampling/bucket doctrine + K8s probe mapping), four provisioned dashboards, a Prometheus alert pack, and a new <code>reference/metrics.md</code>. Parity-tested against <code>src/</code> in both directions, expressions included.</li>
 </ul>
 <p><strong>Cross-backend conformance</strong> — shared batteries for the counter, graph, storage, inference, search, idempotency, field-encryption and realtime-cursor planes; each change below holds on every backend of its plane:</p>
 <ul>

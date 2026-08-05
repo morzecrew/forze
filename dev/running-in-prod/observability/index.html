@@ -18,7 +18,7 @@
         <link rel="prev" href="../operation-progress/">
       
       
-        <link rel="next" href="../../testing/overview/">
+        <link rel="next" href="../grafana-stack/">
       
       
         
@@ -2272,10 +2272,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#bring-your-own-exporter" class="md-nav__link">
+  <a href="#one-call-sdk-setup" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Bring your own exporter
+        One-call SDK setup
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-the-signals-go" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Where the signals go
       </span>
     </span>
   </a>
@@ -2286,6 +2297,35 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../grafana-stack/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-layout-dashboard" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  The Grafana stack
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -6056,6 +6096,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/metrics/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Metric catalog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -6240,10 +6309,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#bring-your-own-exporter" class="md-nav__link">
+  <a href="#one-call-sdk-setup" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Bring your own exporter
+        One-call SDK setup
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-the-signals-go" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Where the signals go
       </span>
     </span>
   </a>
@@ -6658,11 +6738,67 @@ own <code>forze_&lt;name&gt;.*</code> (<code>forze_postgres.adapters</code>, <co
 adapter machinery shared across integrations logs under <code>forze.integrations.&lt;domain&gt;</code>
 (<code>forze.integrations.cache</code>, <code>forze.integrations.document</code>) — filter the whole group
 with <code>forze.integrations.*</code>, or a single domain on its own.</p>
-<h2 id="bring-your-own-exporter">Bring your own exporter<a class="headerlink" href="#bring-your-own-exporter" title="Permanent link">&para;</a></h2>
-<p>Forze emits to the global tracer and meter providers; your application owns the
-SDK and exporter choice — OTLP, Prometheus, console, whatever your backend
-speaks. The <abbr title="OpenTelemetry">OTel</abbr> API and SDK ship with Forze, so you add only the exporter
-package and the few lines of standard <abbr title="OpenTelemetry">OTel</abbr> setup that point the providers at it.</p>
+<h2 id="one-call-sdk-setup">One-call SDK setup<a class="headerlink" href="#one-call-sdk-setup" title="Permanent link">&para;</a></h2>
+<p>Everything above emits through the <strong>global</strong> <abbr title="OpenTelemetry">OTel</abbr> providers. Somebody still has to
+install those providers and point them at a collector — and that is the fifteen lines
+every deployment hand-writes and gets wrong in the same four ways. <code>bootstrap_telemetry</code>
+is the <code>bootstrap_logging</code> twin that owns them:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">bootstrap_logging</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.telemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">bootstrap_telemetry</span>
+
+<span class="n">bootstrap_logging</span><span class="p">(</span><span class="n">render_mode</span><span class="o">=</span><span class="s2">&quot;json&quot;</span><span class="p">,</span> <span class="n">otel_config</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;enable&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">})</span>
+
+<span class="n">telemetry</span> <span class="o">=</span> <span class="n">bootstrap_telemetry</span><span class="p">(</span>
+    <span class="n">service_name</span><span class="o">=</span><span class="s2">&quot;orders-api&quot;</span><span class="p">,</span>
+    <span class="n">service_version</span><span class="o">=</span><span class="n">APP_VERSION</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># ... assemble: instrument_operations / with_otel_port_spans / instrument_* ...</span>
+
+<span class="k">await</span> <span class="n">telemetry</span><span class="o">.</span><span class="n">shutdown</span><span class="p">()</span>   <span class="c1"># flush is part of drain, not an afterthought</span>
+</code></pre></div>
+<p>Endpoint, headers and the head sampler come from the standard <code>OTEL_EXPORTER_OTLP_*</code> /
+<code>OTEL_TRACES_SAMPLER</code> environment variables — no parallel vocabulary. Install the exporter
+with the <code>observability</code> extra (<code>uv add "forze[observability]"</code>); it is OTLP
+<strong>http/protobuf</strong>, so no grpc.</p>
+<p>Four things it gets right that hand-written setup usually does not:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Why it matters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>a fresh <code>service.instance.id</code> per process</td>
+<td>without it, every worker's cumulative counters collide into one series and <code>rate()</code> flaps</td>
+</tr>
+<tr>
+<td>millisecond histogram views</td>
+<td>the SDK's default buckets are second-oriented; Forze records ms</td>
+</tr>
+<tr>
+<td><code>shutdown()</code> wired into drain</td>
+<td>otherwise the last export interval of every deploy dies with the pod</td>
+</tr>
+<tr>
+<td>defers to an existing provider</td>
+<td>an application that owns its SDK keeps it, untouched</td>
+</tr>
+</tbody>
+</table>
+<p>Call it <strong>before assembly</strong>. The API's proxies do late-bind instruments created earlier
+(pinned by test, not assumed), but ordering it this way stops the first spans of a slow
+startup being dropped.</p>
+<p>Bringing your own SDK is still fine and still supported — <code>bootstrap_telemetry</code> never
+replaces a provider you installed; pass <code>on_existing_provider="error"</code> if you would rather
+find out loudly than have it quietly do nothing.</p>
+<h2 id="where-the-signals-go">Where the signals go<a class="headerlink" href="#where-the-signals-go" title="Permanent link">&para;</a></h2>
+<p><a href="../grafana-stack/">The Grafana stack</a> is the prescriptive other half: one
+<code>docker compose up</code> for Alloy + Prometheus + Loki + Tempo + Grafana, four provisioned
+dashboards, a starter alert pack, and the label discipline that keeps both indexes
+affordable. Every metric is listed in the <a href="../../reference/metrics/">metric catalog</a>.</p>
 <p>The signals you watch in production are also what you assert against before
 shipping — see <a href="../../testing/overview/">Testing</a>.</p>
 
@@ -6722,13 +6858,13 @@ shipping — see <a href="../../testing/overview/">Testing</a>.</p>
         
         
           
-          <a href="../../testing/overview/" class="md-footer__link md-footer__link--next" aria-label="Next: Testing">
+          <a href="../grafana-stack/" class="md-footer__link md-footer__link--next" aria-label="Next: The Grafana stack">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Testing
+                The Grafana stack
               </div>
             </div>
             <div class="md-footer__button md-icon">

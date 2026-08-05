@@ -2079,6 +2079,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../running-in-prod/grafana-stack/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-layout-dashboard" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  The Grafana stack
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -6066,6 +6095,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../metrics/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Metric catalog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -6680,6 +6738,15 @@ transaction route the deps module registers.</p>
   OpenAPI schema.</li>
 <li><code>attach_readiness_route(router, runtime, *, path="/readyz")</code> — 200 while the
   runtime is active and not draining, 503 otherwise; excluded from the schema.</li>
+<li><code>attach_liveness_route(router, *, path="/livez")</code> — 200 unconditionally; reaching
+  the handler is the check. Deliberately blind to drain, so a draining pod reads as
+  alive-but-not-ready instead of dead. Excluded from the schema.</li>
+<li><code>attach_metrics_route(router, reader, *, path="/metrics")</code> — a Prometheus pull
+  endpoint over an already-registered <code>PrometheusMetricReader</code> (needs
+  <code>opentelemetry-exporter-prometheus</code>; any other reader is refused). Renders off
+  the event loop, since collection runs every observable callback in the process.
+  <strong>Single-process deployments only</strong> — see <a href="../../running-in-prod/grafana-stack/#pull-metrics-and-why-not">The Grafana
+  stack</a>.</li>
 </ul>
 <h2 id="document-auth-in-openapi">Document auth in OpenAPI<a class="headerlink" href="#document-auth-in-openapi" title="Permanent link">&para;</a></h2>
 <p><code>SecurityContextMiddleware</code> extracts identity; it doesn't tell the schema. By

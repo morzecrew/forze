@@ -2203,6 +2203,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../grafana-stack/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-layout-dashboard" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  The Grafana stack
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -5968,6 +5997,35 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/metrics/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Metric catalog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -6217,6 +6275,19 @@ FastAPI integration turns it into a probe:</p>
 flips the gate, <code>503 unavailable</code> before the scope exists. Point your
 orchestrator's readiness check here and the rollout sequence takes care of
 itself: routing stops, in-flight work drains, teardown runs.</p>
+<p>Point <em>liveness</em> somewhere else — at <code>attach_liveness_route(router)</code>, which answers
+<code>200</code> unconditionally. A draining pod is alive but not ready; one endpoint answering
+both questions gets the pod killed mid-drain instead of letting it finish.</p>
+<p>Processes that are not HTTP servers — the outbox relay, inbox and commit-stream
+consumers, the socket.io gateway, durable runners — get both probes from one
+lifecycle step:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution.background</span><span class="w"> </span><span class="kn">import</span> <span class="n">probe_listener_step</span>
+
+<span class="n">lifecycle_steps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">probe_listener_step</span><span class="p">(</span><span class="n">runtime</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">8079</span><span class="p">))</span>
+</code></pre></div>
+<p>Stdlib <code>asyncio</code>, no HTTP framework, same runtime state, same drain semantics: it
+reports <code>draining</code> for the whole window and closes only after. See
+<a href="../grafana-stack/#probes">The Grafana stack</a> for the Kubernetes mapping.</p>
 <h2 id="declare-the-fleet-posture">Declare the fleet posture<a class="headerlink" href="#declare-the-fleet-posture" title="Permanent link">&para;</a></h2>
 <p>Some startup work is safe in one process and a stampede in twenty — N replicas
 all running <code>CREATE INDEX</code> or a data migration at the same moment. Declaring
