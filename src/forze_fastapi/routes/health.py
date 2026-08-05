@@ -113,24 +113,29 @@ def attach_metrics_route(
     blessed push path has no use for it. Install ``opentelemetry-exporter-prometheus``
     yourself if you want this route.
 
-    The registry is not configurable, deliberately: ``PrometheusMetricReader`` registers
-    its collector into ``prometheus_client``'s global one at construction, so rendering
-    anything else would serve a perfectly healthy, permanently empty page — the exact
-    failure the reader check above exists to prevent.
+    The registry is taken **from the reader**, not from a parameter and not from the global
+    default: ``PrometheusMetricReader(registry=...)`` is a supported configuration, and a
+    route rendering any other registry would serve a perfectly healthy, permanently empty
+    page — the same failure the reader check above exists to prevent.
 
     :raises CoreException: ``configuration`` — the Prometheus exporter is not installed, or
         *reader* is not a ``PrometheusMetricReader``.
     """
 
     generate_latest, registry = _prometheus_renderer(reader)
+    scrape = asyncio.Lock()
 
     @router.get(path, include_in_schema=False)
     async def metrics() -> Response:  # pyright: ignore[reportUnusedFunction]
-        # Off the event loop: rendering the registry is what drives collection, and that
-        # runs every observable callback in the process — pool stats, keyring stats, L1
-        # stats, bulkhead depths. On the loop, each scrape would stall every other
-        # coroutine for as long as the whole collection takes.
-        rendered = await asyncio.to_thread(generate_latest, registry)
+        # One scrape at a time. The exporter's collector drains a plain unsynchronized
+        # deque: two concurrent renders each trigger a collection, then race to pop each
+        # other's data, and one of them answers 200 with an empty or partial body. On the
+        # event loop this was serialized by accident; off it, it has to be on purpose.
+        async with scrape:
+            # Off the loop, because rendering *is* collection: it runs every observable
+            # callback in the process — pool stats, keyring stats, L1 stats, bulkhead
+            # depths — and on the loop each scrape would stall every other coroutine.
+            rendered = await asyncio.to_thread(generate_latest, registry)
 
         return Response(content=rendered, media_type=PROMETHEUS_CONTENT_TYPE)
 
@@ -161,4 +166,9 @@ def _prometheus_renderer(
             f"endpoint permanently empty"
         )
 
-    return generate_latest, REGISTRY
+    # The reader keeps the registry it registered its collector into — the global one by
+    # default, a caller-supplied one when ``PrometheusMetricReader(registry=...)`` was
+    # used. Reading it back is what keeps the route and the reader from ever disagreeing;
+    # the exporter exposes no public accessor, and the fallback covers older releases that
+    # predate the constructor argument.
+    return generate_latest, getattr(reader, "_registry", REGISTRY)

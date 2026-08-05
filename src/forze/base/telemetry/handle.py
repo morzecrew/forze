@@ -18,11 +18,6 @@ if TYPE_CHECKING:
 
 # ----------------------- #
 
-_TRACER_SHUTDOWN_IS_UNBOUNDED = (
-    "SDK limitation: TracerProvider.shutdown() takes no timeout and joins its batch "
-    "worker on the SDK's own 30s budget"
-)
-
 
 @final
 @attrs.define(slots=True, eq=False)
@@ -34,10 +29,19 @@ class _ShutdownGate:
     """
 
     lock: asyncio.Lock = attrs.field(factory=asyncio.Lock)
-    """Serializes concurrent shutdowns. An ``asyncio.Lock`` binds to no event loop until
-    it is first awaited, so building it here is safe."""
+    """Serializes entry. An ``asyncio.Lock`` binds to no event loop until it is first
+    awaited, so building it here is safe."""
+
+    task: asyncio.Future[None] | None = None
+    """The one teardown in flight, shared by every caller.
+
+    Held rather than awaited inline because the work runs in a thread and cannot be
+    cancelled: if the caller that started it goes away, the thread keeps closing providers
+    regardless, so the next caller has to be able to find that work and wait for *it*.
+    """
 
     done: bool = False
+    """Set only once the teardown has actually finished — never on the way in."""
 
 
 @final
@@ -106,6 +110,11 @@ class TelemetryHandle:
         caller the providers were closed while the first call was still flushing, and it
         would go on to dispose the very clients the final collection is reading.
 
+        That holds under cancellation too. The teardown runs in a thread, which nothing can
+        cancel, so a cancelled caller leaves it running: the completion flag is set by the
+        work finishing, never by a caller walking away from it. A retry after a cancelled
+        shutdown waits for the original.
+
         :param timeout: Budget in seconds for the flush and the meter provider's teardown.
             It does **not** bound the tracer provider's own teardown: the SDK's
             ``TracerProvider.shutdown()`` takes no timeout and joins its batch worker on
@@ -119,11 +128,18 @@ class TelemetryHandle:
             if gate.done:
                 return
 
-            try:
-                await asyncio.to_thread(self._shutdown_blocking, timeout)
+            if gate.task is None:
+                gate.task = asyncio.ensure_future(
+                    asyncio.to_thread(self._shutdown_blocking, timeout)
+                )
 
-            finally:
-                gate.done = True
+            # Shielded, so a cancelled caller does not cancel the shared teardown out from
+            # under everybody else. ``done`` is set *after* the await returns, so being
+            # cancelled here leaves the gate open and the next caller waits on the same
+            # task rather than being told the providers are closed while they are not.
+            await asyncio.shield(gate.task)
+
+            gate.done = True
 
     # ....................... #
 

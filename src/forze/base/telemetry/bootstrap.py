@@ -13,6 +13,7 @@ instruments that should have used it.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from typing import TYPE_CHECKING, Literal
 
 from forze.base._logger import logger
@@ -302,28 +303,42 @@ def _build_meter_provider(
 ) -> MeterProvider:
     from opentelemetry.sdk.metrics import MeterProvider
 
-    readers: list[MetricReader] = []
+    owned: list[MetricReader] = []
     metric_exporter = _build_metric_exporter(exporter)
 
     if metric_exporter is not None:
         from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
-        readers.append(
+        # A periodic reader starts its ticker thread the moment it is constructed, so from
+        # here on there is something running that a failure below would otherwise orphan.
+        owned.append(
             PeriodicExportingMetricReader(
                 metric_exporter,
                 export_interval_millis=metric_export_interval * 1000.0,
             )
         )
 
-    readers.extend(extra_metric_readers or ())
+    try:
+        views = (
+            millisecond_histogram_views(exponential=exponential_histograms)
+            if histogram_views is None
+            else tuple(histogram_views)
+        )
 
-    views = (
-        millisecond_histogram_views(exponential=exponential_histograms)
-        if histogram_views is None
-        else tuple(histogram_views)
-    )
+        return MeterProvider(
+            metric_readers=[*owned, *(extra_metric_readers or ())],
+            resource=resource,
+            views=views,
+        )
 
-    return MeterProvider(metric_readers=readers, resource=resource, views=views)
+    except Exception:
+        # Only the readers this function created. Ones the caller passed in stay theirs —
+        # they may well be handing the same reader to a provider they build themselves.
+        for reader in owned:
+            with suppress(Exception):
+                reader.shutdown()
+
+        raise
 
 
 def _publish_meter_provider(provider: MeterProvider) -> None:

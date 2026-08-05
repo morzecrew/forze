@@ -265,6 +265,41 @@ class TestProviderInstallation:
 
     # ....................... #
 
+    def test_a_failed_meter_build_shuts_down_the_readers_it_created(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Atomic startup has to cover what the *builder itself* allocated.
+
+        A periodic reader starts its ticker thread on construction, so a failure between
+        that and the provider leaves a thread running against an exporter nobody will ever
+        flush or close.
+        """
+
+        import opentelemetry.sdk.metrics as sdk_metrics
+        import opentelemetry.sdk.metrics.export as sdk_export
+
+        shutdowns: list[str] = []
+
+        class _SpyReader(sdk_export.PeriodicExportingMetricReader):
+            def shutdown(self, timeout_millis: float = 30_000, **kwargs: Any) -> None:
+                shutdowns.append("reader")
+                super().shutdown(timeout_millis=timeout_millis, **kwargs)
+
+        def _explode(*_args: Any, **_kwargs: Any) -> MeterProvider:
+            raise RuntimeError("meter provider is unbuildable")
+
+        monkeypatch.setattr(sdk_export, "PeriodicExportingMetricReader", _SpyReader)
+        monkeypatch.setattr(sdk_metrics, "MeterProvider", _explode)
+
+        with pytest.raises(RuntimeError, match="unbuildable"):
+            # "console" is enough to make the builder create a reader of its own.
+            bootstrap_telemetry(service_name="orders-api", exporter="console")
+
+        assert shutdowns == ["reader"], "the builder must close what the builder opened"
+
+    # ....................... #
+
     @pytest.mark.parametrize(
         ("traces", "metrics_on"),
         [(True, False), (False, True), (False, False)],
@@ -726,6 +761,35 @@ class TestShutdownIsHostileToCallers:
         handle = _handle_with_metric_exporter(_RaisingFlushMetricExporter())
 
         await handle.flush()
+
+    # ....................... #
+
+    async def test_a_cancelled_caller_does_not_mark_the_teardown_complete(self) -> None:
+        """Walking away from a shutdown is not the same as finishing one.
+
+        The work runs in a thread and cannot be cancelled, so a cancelled caller leaves it
+        running. Marking the gate closed on the way out would let the *next* caller return
+        immediately — while providers are still being flushed — and go on to dispose the
+        clients the final collection is reading.
+        """
+
+        exporter = _SlowShutdownExporter(delay=0.4)
+        handle = _handle_with(exporter)
+
+        cancelled = asyncio.ensure_future(handle.shutdown())
+        await asyncio.sleep(0.05)  # let it reach the thread
+        cancelled.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+
+        assert not exporter.finished, "the test needs the teardown to still be in flight"
+
+        # The retry must wait for the original teardown, not sail past it.
+        await handle.shutdown()
+
+        assert exporter.finished
+        assert exporter.shutdowns == 1
 
     # ....................... #
 

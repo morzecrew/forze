@@ -206,6 +206,44 @@ class TestProbeListener:
     # ....................... #
 
     @pytest.mark.asyncio
+    async def test_a_connection_accepted_during_the_stop_is_hung_up_on(self) -> None:
+        """The accept window ``stop()``'s snapshot cannot see.
+
+        ``asyncio`` accepts a socket and *schedules* its handler, so a connection can
+        exist while its handler has not run a line yet — and a stop taken in that instant
+        would miss it, then wait out its read timeout inside ``wait_closed()``. Driven
+        here by latching the flag directly, because the window itself is one loop turn
+        wide and racing it would only test the scheduler.
+        """
+
+        port = _free_port()
+        runtime = ExecutionRuntime(drain_timeout=timedelta(0))
+        step = probe_listener_step(runtime, host="127.0.0.1", port=port)
+
+        assert step.startup is not None
+
+        async with runtime.scope():
+            await step.startup(runtime.get_context())
+
+            step.startup.stopping = True  # type: ignore[attr-defined]
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+
+            try:
+                # Hung up on without being read from, and never registered as a connection
+                # the stop would have to wait for.
+                assert await asyncio.wait_for(reader.read(), timeout=5.0) == b""
+                assert step.startup.connections == set()  # type: ignore[attr-defined]
+
+            finally:
+                writer.close()
+
+                with suppress(OSError):
+                    await writer.wait_closed()
+
+    # ....................... #
+
+    @pytest.mark.asyncio
     async def test_an_idle_connection_does_not_hold_the_graceful_stop_open(self) -> None:
         """``wait_closed()`` waits for every handler, and an idle one waits out the read
         timeout. Left connected, a single parked socket would stall the stop for seconds —

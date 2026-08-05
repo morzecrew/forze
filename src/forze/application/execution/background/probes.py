@@ -74,6 +74,15 @@ class _ProbeListenerStartup(LifecycleHook):
 
     server: asyncio.Server | None = attrs.field(default=None, init=False, repr=False)
 
+    stopping: bool = attrs.field(default=False, init=False, repr=False)
+    """Latched by :meth:`stop` before it hangs up, so connections accepted in the same
+    breath refuse themselves instead of being missed.
+
+    ``asyncio`` accepts a socket and *schedules* its handler, so there is a window where a
+    connection exists but its handler has not run its first line yet — long enough for a
+    stop to snapshot the connection set without it. That socket would then park in
+    ``readline`` for the full read timeout while ``wait_closed()`` waited on it."""
+
     connections: set[asyncio.StreamWriter] = attrs.field(factory=set, init=False, repr=False)
     """Live client transports, so shutdown can hang up on them.
 
@@ -108,11 +117,13 @@ class _ProbeListenerStartup(LifecycleHook):
             return True
 
         self.server = None
+        self.stopping = True
         server.close()
 
         # Closing the listening socket only stops *new* connections. Existing ones are
         # hung up on here: a probe response is a single write with no state behind it, so
-        # there is nothing in flight worth waiting for.
+        # there is nothing in flight worth waiting for. Anything accepted but not yet
+        # started is covered by the flag above rather than by this snapshot.
         for writer in tuple(self.connections):
             writer.close()
 
@@ -137,6 +148,9 @@ class _ProbeListenerStartup(LifecycleHook):
         if self.server is not None:
             return
 
+        # Cleared here, not in ``stop``: a listener that went down stays refusing until it
+        # is deliberately brought back up.
+        self.stopping = False
         self.server = await asyncio.start_server(self._handle, host=self.host, port=self.port)
         ctx.drainables.register(self)
 
@@ -150,6 +164,13 @@ class _ProbeListenerStartup(LifecycleHook):
     # ....................... #
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        if self.stopping:
+            # Accepted just as the listener was going down. Hang up rather than read: this
+            # handler is one of the tasks ``wait_closed()`` is waiting on.
+            writer.close()
+
+            return
+
         self.connections.add(writer)
 
         try:
