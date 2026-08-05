@@ -135,7 +135,9 @@ Leave suffixes on — the collector default — and the same metrics arrive as
 `forze_operations_total` and `forze_operation_duration_milliseconds_bucket`. Both are
 fine; they are just different, and the shipped dashboards and alert rules assume the
 first. A unit test checks every expression in those files against the metric constants in
-`src/`, which is only possible because the mapping is pinned.
+`src/`, which is only possible because the mapping is pinned — and an integration test
+puts a real Alloy in front of a real Prometheus and asserts the names that actually
+arrive, so the pinning is verified rather than assumed.
 
 Attribute names follow the same rule: `forze.outcome` becomes the label `forze_outcome`.
 Alloy also derives `job` from `service.name` and `instance` from `service.instance.id`.
@@ -319,6 +321,7 @@ a "what this means, what to do" is a page nobody can action.
 | Alert | The signal |
 |---|---|
 | `ForzeOperationErrorRateHigh` | genuine faults only — 4xx-class domain failures are excluded by design |
+| `ForzeDurableRecoverySustained` | runs keep being reclaimed from processes that died holding them |
 | `ForzeJobsStalled` | stuck jobs **or** a dead staleness sweep |
 | `ForzeCircuitBreakerOpen` | a route has been shedding for five minutes |
 | `ForzeBulkheadSaturated` | continuous queueing plus rejections |

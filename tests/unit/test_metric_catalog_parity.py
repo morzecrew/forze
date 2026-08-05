@@ -35,6 +35,7 @@ _SRC: Final[Path] = _REPO / "src"
 _CATALOG: Final[Path] = _REPO / "pages" / "docs" / "reference" / "metrics.md"
 _ASSETS: Final[Path] = _REPO / "pages" / "docs" / "running-in-prod" / "assets" / "grafana"
 _DASHBOARDS: Final[Path] = _ASSETS / "dashboards"
+_RECIPE: Final[Path] = _REPO / "pages" / "docs" / "running-in-prod" / "grafana-stack.md"
 
 _INSTRUMENT_SUFFIXES: Final[tuple[str, ...]] = ("_COUNTER", "_GAUGE", "_HISTOGRAM")
 """Every metric name in `src/` is a module-level constant ending in one of these."""
@@ -175,6 +176,16 @@ def _alert_rules() -> list[tuple[str, dict[str, object]]]:
     ]
 
 
+def _alert_names() -> set[str]:
+    return {str(rule["alert"]) for _, rule in _alert_rules()}
+
+
+def _documented_alert_names() -> set[str]:
+    """Backticked ``Forze*`` rule names from the recipe's alert table."""
+
+    return set(re.findall(r"`(Forze[A-Za-z]+)`", _RECIPE.read_text(encoding="utf-8")))
+
+
 # ----------------------- #
 
 
@@ -220,6 +231,58 @@ class TestCatalogPage:
         documented = _documented_metric_names()
 
         assert len(documented) == len(set(documented))
+
+
+# ----------------------- #
+
+
+class TestAlertPackIsDocumented:
+    """The rules and the table that explains them, kept in step.
+
+    A rule with no row is a page nobody can action — the recipient reads a threshold and
+    an alert name and has nowhere to look up what it means or what to do. A row with no
+    rule is worse: it promises coverage that does not exist.
+    """
+
+    def test_every_shipped_rule_has_a_row_in_the_recipe(self) -> None:
+        undocumented = sorted(_alert_names() - _documented_alert_names())
+
+        assert not undocumented, (
+            f"alerts.yml ships rules the recipe's table never explains: {undocumented}"
+        )
+
+    # ....................... #
+
+    def test_the_recipe_promises_no_rule_that_is_not_shipped(self) -> None:
+        missing = sorted(_documented_alert_names() - _alert_names())
+
+        assert not missing, f"the recipe's table lists rules alerts.yml does not ship: {missing}"
+
+
+# ----------------------- #
+
+
+class TestNameMappingIsPinned:
+    """The assumption everything else in this file rests on.
+
+    Every expression checked here is written against the OTel name with dots turned into
+    underscores. That spelling is only what arrives in Prometheus because the shipped
+    Alloy config turns metric-name suffixes off — with the collector default, the same
+    metrics land as ``forze_operations_total`` and ``forze_operation_duration_milliseconds``,
+    the suffix depending on the *unit*, which the constants in ``src/`` do not carry.
+
+    Flip that setting and every check above still passes while every shipped panel and
+    rule silently matches nothing. So the setting is pinned here, and what it actually
+    produces is proved end-to-end against a real Alloy in the integration suite.
+    """
+
+    def test_the_alloy_config_disables_metric_name_suffixes(self) -> None:
+        config = (_ASSETS / "config.alloy").read_text(encoding="utf-8")
+
+        assert re.search(r"add_metric_suffixes\s*=\s*false", config), (
+            "config.alloy must set add_metric_suffixes = false, or the dashboards and "
+            "alert rules query names that never arrive"
+        )
 
 
 # ----------------------- #
