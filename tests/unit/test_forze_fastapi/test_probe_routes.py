@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
 import time
+from contextlib import suppress
 
 import pytest
 from fastapi import APIRouter, FastAPI
@@ -184,6 +186,72 @@ class TestMetricsRoute:
 
             assert all(response.status_code == 200 for response in responses)
             assert not overlapped, "two scrapes rendered the same registry concurrently"
+
+        finally:
+            provider.shutdown()
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_an_abandoned_scrape_still_blocks_the_next_one(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Cancellation is exactly when a second scrape shows up.
+
+        Prometheus times out a slow scrape, the client disconnects, the handler is
+        cancelled — and the render thread carries on, because nothing can cancel one. A
+        plain lock would release here and let the retry render straight into the
+        collection still in progress, which is the race the serialization exists to stop.
+        """
+
+        import prometheus_client
+
+        live = 0
+        overlapped = False
+        # A threading.Event, because it is set from the render thread: asyncio's is
+        # not safe to set from outside the loop.
+        started = threading.Event()
+
+        def _slow_render(_registry: object) -> bytes:
+            nonlocal live, overlapped
+
+            live += 1
+            overlapped = overlapped or live > 1
+            started.set()
+            time.sleep(0.3)
+            live -= 1
+
+            return b"# rendered\n"
+
+        monkeypatch.setattr(prometheus_client, "generate_latest", _slow_render)
+
+        registry = CollectorRegistry()
+        reader = PrometheusMetricReader(registry=registry)
+        provider = MeterProvider(metric_readers=[reader])
+
+        try:
+            router = APIRouter()
+            attach_metrics_route(router, reader)
+            app = FastAPI()
+            app.include_router(router)
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://probe"
+            ) as client:
+                abandoned = asyncio.ensure_future(client.get("/metrics"))
+
+                assert await asyncio.to_thread(started.wait, 5.0)
+                abandoned.cancel()
+
+                with suppress(asyncio.CancelledError):
+                    await abandoned
+
+                # The retry arrives while the abandoned render is still running.
+                response = await client.get("/metrics")
+
+            assert response.status_code == 200
+            assert not overlapped, "a cancelled scrape let the next one render concurrently"
 
         finally:
             provider.shutdown()

@@ -304,21 +304,28 @@ def _build_meter_provider(
     from opentelemetry.sdk.metrics import MeterProvider
 
     owned: list[MetricReader] = []
-    metric_exporter = _build_metric_exporter(exporter)
+    unowned_exporter: MetricExporter | None = None
 
-    if metric_exporter is not None:
-        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-
-        # A periodic reader starts its ticker thread the moment it is constructed, so from
-        # here on there is something running that a failure below would otherwise orphan.
-        owned.append(
-            PeriodicExportingMetricReader(
-                metric_exporter,
-                export_interval_millis=metric_export_interval * 1000.0,
-            )
-        )
-
+    # Everything allocatable lives inside the rollback, exporter included: a reader whose
+    # constructor raises leaves the exporter it was handed with nobody to close it, and an
+    # OTLP exporter is an open HTTP session, not an inert value.
     try:
+        metric_exporter = _build_metric_exporter(exporter)
+
+        if metric_exporter is not None:
+            from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+
+            # Until the reader exists, closing the exporter is this function's job; once it
+            # does, the reader owns it and shutting both down would close it twice.
+            unowned_exporter = metric_exporter
+            owned.append(
+                PeriodicExportingMetricReader(
+                    metric_exporter,
+                    export_interval_millis=metric_export_interval * 1000.0,
+                )
+            )
+            unowned_exporter = None
+
         views = (
             millisecond_histogram_views(exponential=exponential_histograms)
             if histogram_views is None
@@ -332,11 +339,15 @@ def _build_meter_provider(
         )
 
     except Exception:
-        # Only the readers this function created. Ones the caller passed in stay theirs —
-        # they may well be handing the same reader to a provider they build themselves.
+        # Only what this function created. Readers the caller passed in stay theirs — they
+        # may well be handing the same one to a provider they build themselves.
         for reader in owned:
             with suppress(Exception):
                 reader.shutdown()
+
+        if unowned_exporter is not None:
+            with suppress(Exception):
+                unowned_exporter.shutdown()
 
         raise
 

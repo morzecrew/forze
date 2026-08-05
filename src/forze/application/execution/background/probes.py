@@ -308,6 +308,19 @@ def probe_listener_step(
     if not 1 <= port <= 65_535:
         raise exc.configuration(f"Probe listener port must be in 1..65535, got {port}")
 
+    for name, path in (("path_ready", path_ready), ("path_live", path_live)):
+        # Requests are matched on the path with its query stripped, so a configured path
+        # carrying one can never be reached — and the *other* probe silently answers in
+        # its place. Configure `/readyz?check=1` beside `/livez` and every readiness
+        # request resolves to liveness: a draining pod answers 200 and keeps taking
+        # traffic for the whole drain window, which is the one failure splitting these
+        # two endpoints exists to prevent.
+        if not path.startswith("/") or "?" in path or path.split() != [path]:
+            raise exc.configuration(
+                f"Probe listener {name} must be a plain path starting with '/' and "
+                f"carrying no query string or whitespace, got {path!r}"
+            )
+
     if path_ready == path_live:
         raise exc.configuration(
             "Probe listener paths must differ: a single path cannot answer both liveness "

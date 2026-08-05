@@ -300,6 +300,38 @@ class TestProviderInstallation:
 
     # ....................... #
 
+    def test_a_reader_that_fails_to_construct_does_not_orphan_its_exporter(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The exporter exists before the reader that will own it does.
+
+        An OTLP exporter is an open HTTP session, not an inert value, so a reader whose
+        constructor raises would leave it with nobody left to close it.
+        """
+
+        import opentelemetry.sdk.metrics.export as sdk_export
+
+        closed: list[str] = []
+
+        class _SpyExporter(sdk_export.ConsoleMetricExporter):
+            def shutdown(self, timeout_millis: float = 30_000, **kwargs: Any) -> None:
+                closed.append("exporter")
+                super().shutdown(timeout_millis=timeout_millis, **kwargs)
+
+        def _refuse(*_args: Any, **_kwargs: Any) -> object:
+            raise RuntimeError("reader will not start")
+
+        monkeypatch.setattr(sdk_export, "ConsoleMetricExporter", _SpyExporter)
+        monkeypatch.setattr(sdk_export, "PeriodicExportingMetricReader", _refuse)
+
+        with pytest.raises(RuntimeError, match="will not start"):
+            bootstrap_telemetry(service_name="orders-api", exporter="console")
+
+        assert closed == ["exporter"]
+
+    # ....................... #
+
     def test_a_failed_meter_build_is_safe_when_traces_were_never_asked_for(
         self,
         monkeypatch: pytest.MonkeyPatch,

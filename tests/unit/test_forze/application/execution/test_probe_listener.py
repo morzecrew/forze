@@ -472,6 +472,34 @@ class TestProbeListenerConfiguration:
 
     # ....................... #
 
+    @pytest.mark.parametrize(
+        "paths",
+        [
+            {"path_ready": "/readyz?check=1"},
+            {"path_live": "/livez?probe=kubelet"},
+            {"path_ready": "readyz"},
+            {"path_live": "/live z"},
+        ],
+    )
+    def test_a_path_that_could_never_be_matched_fails_at_wiring(
+        self,
+        paths: dict[str, str],
+    ) -> None:
+        """Requests are matched with the query stripped, so a configured query never matches.
+
+        Worse than never matching: the *other* probe answers in its place. Configure
+        ``path_ready="/readyz?check=1"`` beside ``/livez`` and every readiness request
+        resolves to liveness — so a draining pod answers 200 and keeps taking traffic for
+        the whole drain window, which is the one thing splitting these endpoints prevents.
+        """
+
+        with pytest.raises(CoreException) as caught:
+            probe_listener_step(ExecutionRuntime(), port=8079, **paths)
+
+        assert caught.value.kind == ExceptionKind.CONFIGURATION
+
+    # ....................... #
+
     def test_one_path_cannot_answer_both_questions(self) -> None:
         with pytest.raises(CoreException) as caught:
             probe_listener_step(

@@ -124,18 +124,35 @@ def attach_metrics_route(
 
     generate_latest, registry = _prometheus_renderer(reader)
     scrape = asyncio.Lock()
+    in_flight: asyncio.Future[bytes] | None = None
 
     @router.get(path, include_in_schema=False)
     async def metrics() -> Response:  # pyright: ignore[reportUnusedFunction]
-        # One scrape at a time. The exporter's collector drains a plain unsynchronized
-        # deque: two concurrent renders each trigger a collection, then race to pop each
-        # other's data, and one of them answers 200 with an empty or partial body. On the
-        # event loop this was serialized by accident; off it, it has to be on purpose.
+        nonlocal in_flight
+
+        # Never two renders at once. The exporter's collector drains a plain
+        # unsynchronized deque: two in flight each trigger a collection, then race to pop
+        # each other's data, and one of them answers 200 with an empty or partial body.
+        # On the event loop this was serialized by accident; off it, on purpose.
+        #
+        # A lock alone would not survive cancellation, which is exactly when this happens:
+        # Prometheus times out a slow scrape, the client disconnects, the handler is
+        # cancelled — and the *thread* carries on, because nothing can cancel one. The
+        # lock would release and the retry would render straight into the running
+        # collection. So the render is a shared future rather than a critical section: a
+        # scrape that finds one in flight waits for that one instead of starting another,
+        # and an abandoned render still finishes before anything new begins.
         async with scrape:
-            # Off the loop, because rendering *is* collection: it runs every observable
-            # callback in the process — pool stats, keyring stats, L1 stats, bulkhead
-            # depths — and on the loop each scrape would stall every other coroutine.
-            rendered = await asyncio.to_thread(generate_latest, registry)
+            if in_flight is None or in_flight.done():
+                # Off the loop, because rendering *is* collection: it runs every
+                # observable callback in the process — pool stats, keyring stats, L1
+                # stats, bulkhead depths — and on the loop each scrape would stall every
+                # other coroutine, including the liveness probe.
+                in_flight = asyncio.ensure_future(asyncio.to_thread(generate_latest, registry))
+
+            pending = in_flight
+
+        rendered = await asyncio.shield(pending)
 
         return Response(content=rendered, media_type=PROMETHEUS_CONTENT_TYPE)
 
