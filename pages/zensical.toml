@@ -83,6 +83,7 @@ nav = [
             "running-in-prod/portability.md",
             "running-in-prod/operation-progress.md",
             "running-in-prod/observability.md",
+            "running-in-prod/grafana-stack.md",
         ] },
         { "Testing" = [
             "testing/overview.md",
@@ -213,6 +214,7 @@ nav = [
         { "Operations" = [
             "reference/errors.md",
             "reference/resilience-tuning.md",
+            "reference/metrics.md",
         ] },
     ] },
 ]

@@ -52,6 +52,9 @@ _EXPORTS: dict[str, str] = {
     "get_logger": "forze.base.logging",
     "configure_logging": "forze.base.logging",
     "bootstrap_logging": "forze.base.logging",
+    # telemetry front door — the other half of the same one-call setup
+    "bootstrap_telemetry": "forze.base.telemetry",
+    "TelemetryHandle": "forze.base.telemetry",
 }
 
 __all__ = [
@@ -80,6 +83,8 @@ __all__ = [
     "get_logger",
     "configure_logging",
     "bootstrap_logging",
+    "bootstrap_telemetry",
+    "TelemetryHandle",
 ]
 
 
@@ -109,6 +114,7 @@ if TYPE_CHECKING:
         configure_logging,
         get_logger,
     )
+    from forze.base.telemetry import TelemetryHandle, bootstrap_telemetry
     from forze.domain.models import (
         AggregateRoot,
         BaseDTO,

@@ -51,6 +51,24 @@ flips the gate, `503 unavailable` before the scope exists. Point your
 orchestrator's readiness check here and the rollout sequence takes care of
 itself: routing stops, in-flight work drains, teardown runs.
 
+Point *liveness* somewhere else — at `attach_liveness_route(router)`, which answers
+`200` unconditionally. A draining pod is alive but not ready; one endpoint answering
+both questions gets the pod killed mid-drain instead of letting it finish.
+
+Processes that are not HTTP servers — the outbox relay, inbox and commit-stream
+consumers, the socket.io gateway, durable runners — get both probes from one
+lifecycle step:
+
+```python
+from forze.application.execution.background import probe_listener_step
+
+lifecycle_steps.append(probe_listener_step(runtime, port=8079))
+```
+
+Stdlib `asyncio`, no HTTP framework, same runtime state, same drain semantics: it
+reports `draining` for the whole window and closes only after. See
+[The Grafana stack](grafana-stack.md#probes) for the Kubernetes mapping.
+
 ## Declare the fleet posture
 
 Some startup work is safe in one process and a stampede in twenty — N replicas
