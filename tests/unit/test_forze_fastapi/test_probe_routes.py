@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
 
 import pytest
@@ -197,3 +198,26 @@ class TestMetricsRoute:
 
         assert caught.value.kind == ExceptionKind.CONFIGURATION
         assert "PrometheusMetricReader" in str(caught.value)
+
+    # ....................... #
+
+    def test_a_missing_prometheus_exporter_names_what_to_install(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The package is deliberately outside the ``observability`` extra.
+
+        Someone reaching for this route has not installed it yet by definition, so the
+        error has to say which package — and say that the push path does not need it.
+        """
+
+        # ``None`` in sys.modules is the documented way to make an import raise.
+        monkeypatch.setitem(sys.modules, "opentelemetry.exporter.prometheus", None)
+
+        router = APIRouter()
+
+        with pytest.raises(CoreException) as caught:
+            attach_metrics_route(router, InMemoryMetricReader())
+
+        assert caught.value.kind == ExceptionKind.CONFIGURATION
+        assert "opentelemetry-exporter-prometheus" in str(caught.value)

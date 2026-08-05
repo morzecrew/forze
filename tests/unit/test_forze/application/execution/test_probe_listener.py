@@ -311,6 +311,157 @@ class TestProbeListener:
 # ----------------------- #
 
 
+class TestProbeListenerLifecycle:
+    """The lifecycle surface around the socket: identity, restart, teardown, faults."""
+
+    @pytest.mark.asyncio
+    async def test_it_registers_itself_as_a_drainable_under_a_nameable_identity(
+        self,
+    ) -> None:
+        """The runtime stops registered loops *before* teardown, and names them in logs.
+
+        A listener that never registered would be torn down by scope exit instead of
+        stopped in the drain phase — which is what keeps probes answering ``draining``
+        for the whole window.
+        """
+
+        port = _free_port()
+
+        async with _listening(port) as runtime:
+            names = [loop.loop_name for loop in runtime.get_context().drainables.loops]
+
+            assert f"probe_listener:{port}" in names
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_starting_twice_keeps_the_first_listener(self) -> None:
+        """Startup is idempotent — a second call must not bind the port again."""
+
+        port = _free_port()
+        runtime = ExecutionRuntime(drain_timeout=timedelta(0))
+        step = probe_listener_step(runtime, host="127.0.0.1", port=port)
+
+        assert step.startup is not None
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+            first = step.startup.server  # type: ignore[attr-defined]
+
+            await step.startup(ctx)
+
+            assert step.startup.server is first  # type: ignore[attr-defined]
+            assert await _request(port, "/livez") == (200, '{"status":"alive"}')
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_the_shutdown_hook_stops_the_listener_for_a_hand_driven_lifecycle(
+        self,
+    ) -> None:
+        """Normally a no-op — the runtime stops drainables first — but it has to work."""
+
+        port = _free_port()
+        runtime = ExecutionRuntime(drain_timeout=timedelta(0))
+        step = probe_listener_step(runtime, host="127.0.0.1", port=port)
+
+        assert step.startup is not None
+        assert step.shutdown is not None
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+
+            await step.shutdown(ctx)
+
+            with pytest.raises(OSError):
+                await _request(port, "/livez")
+
+            # Idempotent: the runtime will ask again on its way out.
+            await step.shutdown(ctx)
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_stop_that_overruns_its_deadline_reports_it(self) -> None:
+        """A stop that could not finish must say so rather than claim a clean close.
+
+        The runtime uses the answer to decide whether loops came to rest on their own,
+        and a listener silently reporting success would hide a socket that is still open.
+        """
+
+        port = _free_port()
+        runtime = ExecutionRuntime(drain_timeout=timedelta(0))
+        step = probe_listener_step(runtime, host="127.0.0.1", port=port)
+
+        assert step.startup is not None
+
+        async with runtime.scope():
+            await step.startup(runtime.get_context())
+
+            clock = asyncio.get_running_loop()
+            # A deadline already in the past: no budget at all to close in.
+            stopped = await step.startup.stop(deadline=clock.time() - 1.0)  # type: ignore[attr-defined]
+
+            assert stopped is False
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_one_faulty_request_does_not_take_the_listener_down(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A handler raising must cost that connection and nothing else.
+
+        The listener is the thing a kubelet uses to decide whether to kill the process,
+        so a fault while answering one probe must not stop it answering the next.
+        """
+
+        port = _free_port()
+        runtime = ExecutionRuntime(drain_timeout=timedelta(0))
+        step = probe_listener_step(runtime, host="127.0.0.1", port=port)
+
+        assert step.startup is not None
+
+        async with runtime.scope():
+            await step.startup(runtime.get_context())
+
+            async def _boom(_self: object, _reader: object) -> tuple[str, tuple[int, str]]:
+                raise RuntimeError("handler fault")
+
+            monkeypatch.setattr(type(step.startup), "_answer", _boom)
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            answered = b"pending"
+
+            try:
+                writer.write(b"GET /livez HTTP/1.1\r\nHost: probe\r\n\r\n")
+                await writer.drain()
+
+                # The faulted handler hangs up without writing, which reaches the client
+                # as either a clean EOF or a reset depending on timing. Both are "no
+                # answer"; neither may be a response.
+                with suppress(ConnectionResetError):
+                    answered = await asyncio.wait_for(reader.read(), timeout=5.0)
+
+            finally:
+                writer.close()
+
+                with suppress(OSError):
+                    await writer.wait_closed()
+
+            assert answered in (b"", b"pending")
+
+            monkeypatch.undo()
+
+            assert await _request(port, "/livez") == (200, '{"status":"alive"}')
+
+
+# ----------------------- #
+
+
 class TestProbeListenerConfiguration:
     @pytest.mark.parametrize("port", [0, 70_000, -1])
     def test_an_unusable_port_fails_at_wiring(self, port: int) -> None:

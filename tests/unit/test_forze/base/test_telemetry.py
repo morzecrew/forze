@@ -300,6 +300,64 @@ class TestProviderInstallation:
 
     # ....................... #
 
+    def test_a_failed_meter_build_is_safe_when_traces_were_never_asked_for(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The rollback path with nothing to roll back — metrics-only processes.
+
+        A worker exporting metrics and no traces still has to surface the build failure
+        rather than trip over a tracer provider that was never created.
+        """
+
+        import opentelemetry.sdk.metrics as sdk_metrics
+
+        def _explode(*_args: Any, **_kwargs: Any) -> MeterProvider:
+            raise RuntimeError("meter provider is unbuildable")
+
+        monkeypatch.setattr(sdk_metrics, "MeterProvider", _explode)
+
+        with pytest.raises(RuntimeError, match="unbuildable"):
+            bootstrap_telemetry(service_name="orders-api", exporter="none", traces=False)
+
+        assert isinstance(trace.get_tracer_provider(), trace.ProxyTracerProvider)
+
+    # ....................... #
+
+    async def test_the_otlp_exporters_are_what_the_default_builds(self) -> None:
+        """The blessed path, constructed for real — no endpoint is contacted here.
+
+        Everything else in this file runs on ``exporter="none"``, so without this the
+        default configuration would be exercised only by the integration suite.
+        """
+
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+        handle = bootstrap_telemetry(service_name="orders-api", metric_export_interval=600.0)
+
+        try:
+            assert handle.tracer_provider is not None
+            assert handle.meter_provider is not None
+
+            # Reaching into the SDK's internals is the only way to see which exporter
+            # was wired; there is no public accessor for either.
+            processors = handle.tracer_provider._active_span_processor._span_processors
+            assert any(
+                isinstance(getattr(p, "span_exporter", None), OTLPSpanExporter)
+                for p in processors
+            )
+
+            readers = handle.meter_provider._all_metric_readers
+            assert any(
+                isinstance(getattr(r, "_exporter", None), OTLPMetricExporter) for r in readers
+            )
+
+        finally:
+            await handle.shutdown(timeout=1.0)
+
+    # ....................... #
+
     @pytest.mark.parametrize(
         ("traces", "metrics_on"),
         [(True, False), (False, True), (False, False)],
