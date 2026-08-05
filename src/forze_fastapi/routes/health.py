@@ -113,8 +113,11 @@ def attach_metrics_route(
     blessed push path has no use for it. Install ``opentelemetry-exporter-prometheus``
     yourself if you want this route.
 
-    :param registry: Collector registry to render; defaults to ``prometheus_client``'s
-        global one, which is where ``PrometheusMetricReader`` registers itself.
+    :param registry: Collector registry to render. Defaults to ``prometheus_client``'s
+        global one, which is where ``PrometheusMetricReader`` registers itself on
+        construction — so pass this **only** if you registered *reader*'s collector into
+        that registry yourself. A registry the reader is not in renders the same
+        permanently-empty page this route otherwise refuses to serve.
 
     :raises CoreException: ``configuration`` — the Prometheus exporter is not installed, or
         *reader* is not a ``PrometheusMetricReader``.

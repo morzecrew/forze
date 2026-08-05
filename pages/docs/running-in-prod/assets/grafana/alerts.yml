@@ -54,10 +54,15 @@ groups:
       # gauge reads a cache the sweep fills, so a dead sweep freezes it at its last value —
       # almost always zero — and a rule watching only the count goes green at the exact
       # moment it stops knowing anything.
+      # The third clause is not redundant. `scan_age` reports **-1** when the sweep has
+      # never completed once, and -1 is not > 300 — so a sweep that was never wired up at
+      # all would slip past a rule that only watches for a *large* age, in exactly the
+      # deployment where nothing else is watching either.
       - alert: ForzeJobsStalled
         expr: |
           sum by (job, forze_job_kind) (forze_jobs_stalled) > 0
             or max by (job) (forze_jobs_staleness_scan_age) > 300
+            or max by (job) (forze_jobs_staleness_scan_age) < 0
         for: 10m
         labels:
           severity: ticket
@@ -158,8 +163,13 @@ groups:
   - name: forze-realtime
     interval: 30s
     rules:
+      # Same -1 sentinel trap as the job sweep: a backplane whose probe has *never*
+      # succeeded reports -1, which no "> 60" threshold will ever catch. A channel that
+      # never worked would then be the one thing this rule stays silent about.
       - alert: ForzeRealtimeBackplaneStale
-        expr: max by (job, forze_realtime_channel) (forze_realtime_backplane_seconds_since_ok) > 60
+        expr: |
+          max by (job, forze_realtime_channel) (forze_realtime_backplane_seconds_since_ok) > 60
+            or max by (job, forze_realtime_channel) (forze_realtime_backplane_seconds_since_ok) < 0
         for: 5m
         labels:
           severity: page

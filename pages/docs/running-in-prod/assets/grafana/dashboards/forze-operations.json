@@ -296,7 +296,8 @@
           "editorMode": "code",
           "expr": "sum by (le) (rate(forze_operation_duration_bucket{job=~\"$service\"}[5m]))",
           "legendFormat": "{{le}}",
-          "refId": "A"
+          "refId": "A",
+          "format": "heatmap"
         }
       ],
       "fieldConfig": {

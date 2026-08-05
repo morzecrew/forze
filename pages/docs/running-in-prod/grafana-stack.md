@@ -115,8 +115,10 @@ async def lifespan(app: FastAPI):
     bulkhead depths. Tear the clients down first and the last collection reports numbers
     from a half-disposed object, or raises inside the exporter thread.
 
-Run `examples/order_fulfillment.py` against the stack and the operations dashboard fills
-in within one export interval.
+The dashboards stay empty until something is actually instrumented — `bootstrap_telemetry`
+installs the SDK, it does not emit. Pair it with the `instrument_*` calls from
+[Observability](observability.md), and the operations dashboard fills in within one export
+interval of the first request.
 
 ## Metric names in Prometheus
 
@@ -137,6 +139,15 @@ first. A unit test checks every expression in those files against the metric con
 
 Attribute names follow the same rule: `forze.outcome` becomes the label `forze_outcome`.
 Alloy also derives `job` from `service.name` and `instance` from `service.instance.id`.
+
+!!! warning "Leave the temporality preference alone"
+
+    Every `rate()` in the shipped dashboards and rules assumes **cumulative** temporality,
+    which is the OTLP exporter's default. Setting
+    `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta` makes each export carry the
+    interval's delta instead of a running total, and `rate()` over that is wrong — quietly,
+    with plausible-looking numbers. Delta is the right choice for some backends; it is not
+    the one these assets were written against.
 
 ## Label discipline
 

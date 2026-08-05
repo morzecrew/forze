@@ -158,13 +158,20 @@ def bootstrap_telemetry(
         resource_attributes=resource_attributes,
     )
 
+    # Both signals are inspected *before* either is installed. Deciding per signal as we go
+    # would let the first one be set globally and the second one raise — and a provider set
+    # into OpenTelemetry's set-once slot cannot be taken back, so the caller would be left
+    # holding an exception, no handle, and a live provider nothing will ever flush.
+    defer_traces = traces and _tracer_provider_installed()
+    defer_metrics = metrics and _meter_provider_installed()
+
+    for signal, deferred in (("tracer", defer_traces), ("meter", defer_metrics)):
+        if deferred:
+            _report_existing(signal, on_existing_provider)
+
     tracer_provider = (
-        _install_tracer_provider(
-            resource=resource,
-            exporter=exporter,
-            on_existing_provider=on_existing_provider,
-        )
-        if traces
+        _install_tracer_provider(resource=resource, exporter=exporter)
+        if traces and not defer_traces
         else None
     )
 
@@ -176,9 +183,8 @@ def bootstrap_telemetry(
             exponential_histograms=exponential_histograms,
             histogram_views=histogram_views,
             extra_metric_readers=extra_metric_readers,
-            on_existing_provider=on_existing_provider,
         )
-        if metrics
+        if metrics and not defer_metrics
         else None
     )
 
@@ -241,15 +247,9 @@ def _install_tracer_provider(
     *,
     resource: Resource,
     exporter: ExporterChoice,
-    on_existing_provider: Literal["defer", "error"],
-) -> TracerProvider | None:
+) -> TracerProvider:
     from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
-
-    if _tracer_provider_installed():
-        _report_existing("tracer", on_existing_provider)
-
-        return None
 
     provider = TracerProvider(resource=resource)
     span_exporter = _build_span_exporter(exporter)
@@ -275,15 +275,9 @@ def _install_meter_provider(
     exponential_histograms: bool,
     histogram_views: Sequence[View] | None,
     extra_metric_readers: Sequence[MetricReader] | None,
-    on_existing_provider: Literal["defer", "error"],
-) -> MeterProvider | None:
+) -> MeterProvider:
     from opentelemetry import metrics
     from opentelemetry.sdk.metrics import MeterProvider
-
-    if _meter_provider_installed():
-        _report_existing("meter", on_existing_provider)
-
-        return None
 
     readers: list[MetricReader] = []
     metric_exporter = _build_metric_exporter(exporter)

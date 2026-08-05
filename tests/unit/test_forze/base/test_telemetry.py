@@ -27,7 +27,11 @@ from opentelemetry.sdk.resources import (
     SERVICE_VERSION,
 )
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+from opentelemetry.sdk.trace.export import (
+    SimpleSpanProcessor,
+    SpanExporter,
+    SpanExportResult,
+)
 from opentelemetry.util._once import Once
 
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -180,15 +184,52 @@ class TestProviderInstallation:
 
     # ....................... #
 
-    def test_a_deferred_provider_is_never_shut_down_by_the_handle(self) -> None:
+    async def test_a_deferred_provider_is_never_shut_down_by_the_handle(self) -> None:
+        """Shutting the handle down must leave the application's own SDK working.
+
+        Asserted by exporting a span *after* the shutdown, because a provider that has
+        been shut down still hands out tracers quite happily — it just silently stops
+        exporting, which is precisely the failure this has to rule out.
+        """
+
+        exporter = _RecordingSpanExporter()
         owned = TracerProvider()
+        owned.add_span_processor(SimpleSpanProcessor(exporter))
         trace.set_tracer_provider(owned)
 
         handle, _ = _bootstrap_with_reader()
 
         assert handle.tracer_provider is None
-        # The application's provider is still usable after the handle "shut down".
-        assert owned.get_tracer("app") is not None
+
+        await handle.shutdown()
+
+        owned.get_tracer("app").start_span("after-shutdown").end()
+
+        assert exporter.names == ["after-shutdown"]
+        assert exporter.shutdowns == 0
+
+    # ....................... #
+
+    def test_an_error_on_one_signal_leaves_the_other_uninstalled(self) -> None:
+        """Both signals are inspected before either is installed.
+
+        Installing the tracer provider and only then discovering the meter provider is
+        taken would strand it: OpenTelemetry's slot is set-once, so nothing can reclaim
+        it, and the caller holds an exception rather than a handle that could flush it.
+        """
+
+        metrics.set_meter_provider(MeterProvider())
+
+        with pytest.raises(CoreException):
+            bootstrap_telemetry(
+                service_name="orders-api",
+                exporter="none",
+                on_existing_provider="error",
+            )
+
+        assert isinstance(trace.get_tracer_provider(), trace.ProxyTracerProvider), (
+            "a failed bootstrap must not leave a provider nothing owns"
+        )
 
     # ....................... #
 

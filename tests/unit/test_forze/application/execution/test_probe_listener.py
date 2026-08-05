@@ -120,13 +120,46 @@ class TestProbeListener:
     # ....................... #
 
     @pytest.mark.asyncio
-    async def test_head_is_answered_like_get(self) -> None:
+    async def test_head_answers_with_the_headers_and_no_body(self) -> None:
         port = _free_port()
 
         async with _listening(port):
-            status, _ = await _request(port, "/livez", method="HEAD")
+            status, body = await _request(port, "/livez", method="HEAD")
 
             assert status == 200
+            assert body == ""
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_an_oversized_request_line_is_refused_quietly(self) -> None:
+        """Past the stream's own 64 KiB buffer, ``readline`` raises rather than returning.
+
+        Uncaught, that turns every connection from a port scanner into a logged stack
+        trace in a worker's output.
+        """
+
+        port = _free_port()
+
+        async with _listening(port):
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+
+            try:
+                writer.write(b"GET /" + b"a" * 70_000 + b" HTTP/1.1\r\nHost: probe\r\n\r\n")
+                await writer.drain()
+
+                raw = (await asyncio.wait_for(reader.read(), timeout=5.0)).decode()
+
+            finally:
+                writer.close()
+
+                with suppress(OSError):
+                    await writer.wait_closed()
+
+            assert raw.split()[1] == "400"
+
+            # And the listener is still serving afterwards.
+            assert await _request(port, "/livez") == (200, '{"status":"alive"}')
 
     # ....................... #
 

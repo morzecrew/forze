@@ -136,8 +136,9 @@ class _ProbeListenerStartup(LifecycleHook):
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
-            status, payload = await self._answer(reader)
-            writer.write(_response(status, payload))
+            method, (status, payload) = await self._answer(reader)
+            # HEAD carries the headers of the equivalent GET and none of its body.
+            writer.write(_response(status, payload, body=method != "HEAD"))
             await writer.drain()
 
         except (TimeoutError, ConnectionError, asyncio.IncompleteReadError):
@@ -156,30 +157,40 @@ class _ProbeListenerStartup(LifecycleHook):
 
     # ....................... #
 
-    async def _answer(self, reader: asyncio.StreamReader) -> tuple[int, str]:
-        line = await asyncio.wait_for(reader.readline(), timeout=_READ_TIMEOUT)
+    async def _answer(self, reader: asyncio.StreamReader) -> tuple[str, tuple[int, str]]:
+        """The request's method, and the status/payload to answer it with."""
+
+        try:
+            line = await asyncio.wait_for(reader.readline(), timeout=_READ_TIMEOUT)
+
+        except ValueError:
+            # The stream's own buffer limit (64 KiB) overflowed before our cap could
+            # apply. Still just a malformed request — answering 400 keeps a port scanner
+            # from writing a stack trace into a worker's logs on every connection.
+            return "GET", (400, "bad_request")
 
         if not line or len(line) > _REQUEST_LINE_LIMIT:
-            return 400, "bad_request"
+            return "GET", (400, "bad_request")
 
         parts = line.decode("latin-1", errors="replace").split()
 
         if len(parts) < 2 or parts[0] not in ("GET", "HEAD"):
-            return 400, "bad_request"
+            return "GET", (400, "bad_request")
 
+        method = parts[0]
         path = parts[1].split("?", 1)[0]
 
         if path == self.path_live:
             # Same contract as the FastAPI route: reaching here *is* the check.
-            return 200, "alive"
+            return method, (200, "alive")
 
         if path != self.path_ready:
-            return 404, "not_found"
+            return method, (404, "not_found")
 
         if self.runtime.ready:
-            return 200, "ready"
+            return method, (200, "ready")
 
-        return 503, "draining" if self.runtime.draining else "unavailable"
+        return method, (503, "draining" if self.runtime.draining else "unavailable")
 
 
 # ....................... #
@@ -206,17 +217,18 @@ class _ProbeListenerShutdown(LifecycleHook):
 # ....................... #
 
 
-def _response(status: int, payload: str) -> bytes:
-    body = f'{{"status":"{payload}"}}'.encode()
-
-    return (
+def _response(status: int, payload: str, *, body: bool = True) -> bytes:
+    content = f'{{"status":"{payload}"}}'.encode()
+    head = (
         f"HTTP/1.0 {status} {_STATUS_TEXT[status]}\r\n"
         f"Content-Type: application/json\r\n"
-        f"Content-Length: {len(body)}\r\n"
+        f"Content-Length: {len(content)}\r\n"
         f"Cache-Control: no-store\r\n"
         f"Connection: close\r\n"
         f"\r\n"
-    ).encode() + body
+    ).encode()
+
+    return head + content if body else head
 
 
 # ----------------------- #
