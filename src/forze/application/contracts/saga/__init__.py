@@ -1,6 +1,7 @@
 """Saga (compensation-driven orchestration) contracts."""
 
 from .coordinator import (
+    SAGA_CANCELLED_CODE,
     SAGA_STEP_AMBIGUOUS_CODE,
     SagaProgress,
     saga_step_outcome_unknown,
@@ -12,6 +13,7 @@ from .value_objects import SagaDefinition, SagaStep, SagaStepKind
 # ----------------------- #
 
 __all__ = [
+    "SAGA_CANCELLED_CODE",
     "SAGA_STEP_AMBIGUOUS_CODE",
     "SagaDefinition",
     "SagaExecutorDepKey",

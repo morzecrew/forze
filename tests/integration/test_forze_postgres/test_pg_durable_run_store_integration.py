@@ -55,6 +55,8 @@ async def durable_run_table(pg_client: PostgresClient) -> str:
                 available_at    TIMESTAMPTZ,
                 created_at      TIMESTAMPTZ NOT NULL,
                 updated_at      TIMESTAMPTZ NOT NULL,
+                cancel_requested_at TIMESTAMPTZ,
+                cancel_refused_at   TIMESTAMPTZ,
                 PRIMARY KEY (run_id),
                 UNIQUE (idempotency_key)
             )
@@ -246,10 +248,11 @@ class TestPostgresDurableRunStore:
 
         # Simulate a body that outran its lease, then heartbeats to renew it.
         await _expire_lease(pg_client, durable_run_table, record.run_id)
-        held = await store.renew(
+        renewal = await store.renew(
             record.run_id, lease_for=timedelta(minutes=5), fence=claimed.attempts
         )
-        assert held is True
+        assert renewal.held is True
+        assert renewal.cancel_requested is False  # nobody asked it to stop
 
         # With the lease pushed forward, the recovery scan leaves the running run alone.
         claimed_ids = {
@@ -283,15 +286,13 @@ class TestPostgresDurableRunStore:
             await store.renew(
                 record.run_id, lease_for=timedelta(minutes=5), fence=worker_a.attempts
             )
-            is False
-        )
+        ).held is False
         # Worker B, the current holder, still renews.
         assert (
             await store.renew(
                 record.run_id, lease_for=timedelta(minutes=5), fence=worker_b.attempts
             )
-            is True
-        )
+        ).held is True
 
     async def test_delayed_run_is_not_claimed_until_due(
         self, pg_client: PostgresClient, durable_run_table: str

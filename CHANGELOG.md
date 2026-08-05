@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Durable run control** — cancellation for the self-hosted function tier, cooperative only (no hard kill in the contract):
+
+- `DurableRunAdminPort.request_cancel(run_id)` records an unfenced ask; only the fence-holding runner lands it (`PENDING` stops at once, `RUNNING` at the holder's next lease heartbeat, a dead holder's run at recovery without re-invoking the body). New `DurableRunRecord.cancel_requested_at`/`cancel_refused_at`; `DurableRunStorePort` gains `mark_cancelled`/`mark_timed_out`/`refuse_cancel`. Tenant-scoped like `list_runs`.
+- Sagas decide by the pivot: before it, compensate and land `CANCELLED`; at or after it, refuse and complete forward. New `SAGA_CANCELLED_CODE` / `SagaProgress.step_cancelled_error`.
+- New `DurableRunControlAware`/`DurableRunControlCapabilities`; `DurableFunctionRunner.request_cancel` fails closed without `supports_cancel`.
+
+**Breaking:** `DurableRunStatus` gains `CANCELLED` + `TIMED_OUT`; `max_run_duration` now lands `TIMED_OUT` instead of `FAILED` (same `error` text; telemetry gains both outcome labels). `DurableRunStorePort.renew` returns `DurableLeaseRenewal(held, cancel_requested)`, not `bool`. **Migration:** `ALTER TABLE <durable_run> ADD COLUMN cancel_requested_at timestamptz, ADD COLUMN cancel_refused_at timestamptz;`
+
 **Three CI ratchets**, each with a declared, shrink-only exemption table and wired into `just quality`:
 
 - **Docs floors** (`[tool.docs_floors]`, `just docs-check`) — every public `DepKey`/`*Spec` under `contracts/` must be mentioned in `pages/docs`, the nav must resolve both ways, and every relative doc link must land. New `reference/spec-registry.md`.

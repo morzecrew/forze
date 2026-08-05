@@ -86,10 +86,12 @@ write is **fenced** against a reclaimed lease, so a stalled worker whose lease e
 finish a run the new owner already took over. A still-executing run heartbeats its lease
 alive, so a long body is never reclaimed mid-flight — bounded by the runner's
 `max_run_duration` (default 1 hour): past the cap the body is cancelled while the lease is
-still held (nothing double-executes) and the run lands `FAILED` with the deadline reason, so
-a body hung on a dead peer can't pin a recovery slot forever. Set it above your longest
-body, or `None` to remove the cap; re-enqueue a deadline-failed run to retry it. Run the
-scanner on every replica, or pair it with the singleton lifecycle guard to elect one.
+still held (nothing double-executes) and the run lands `TIMED_OUT` with the deadline reason,
+so a body hung on a dead peer can't pin a recovery slot forever. `TIMED_OUT` is its own
+terminal rather than a flavour of `FAILED` because the two send you to different places —
+`FAILED` to the body's code, `TIMED_OUT` to the cap, the workload's size, or a hung peer. Set
+it above your longest body, or `None` to remove the cap; re-enqueue a timed-out run to retry
+it. Run the scanner on every replica, or pair it with the singleton lifecycle guard to elect one.
 `max_concurrency` bounds how many runs a sweep recovers at once. Enqueue with
 `run_at=<when>` for a **delayed** run — the scan skips it until it's due.
 
@@ -100,9 +102,53 @@ runner re-binds each run's tenant to execute it. On a **namespace** store (a per
 sweep binds every assigned tenant in turn and recovers its table — shard the tenant set across
 instances to parallelize.
 
+### Stopping a run
+
+A "Stop" button on a self-hosted run goes through `request_cancel`:
+
+```python
+await runner.request_cancel(ctx, run_id)      # True if the ask was recorded
+```
+
+**It is cooperative, and the framework will not pretend otherwise.** There is no in-process
+red button in Python: a thread can't be killed, asyncio cancellation lands only at await
+points, and a body blocked inside a C extension notices nothing until it returns. So this
+*requests* a stop. A `PENDING` run lands `CANCELLED` at once — nothing is executing. A
+`RUNNING` one keeps going until its lease holder sees the stamp on the **next heartbeat**
+(`lease_for / heartbeat_divisor`, 100 s at defaults — tune those two if you need tighter),
+at which point the body is cancelled at its next await and the run lands `CANCELLED`. A body
+that never awaits is bounded only by `max_run_duration`; if you need bounded-latency stop,
+structure the body for it (await regularly, `run_cpu` with checkpoints at chunk boundaries).
+True hard kill exists only at process/container granularity and is a deployment concern.
+
+`CANCELLED` is deliberately not `FAILED`: nothing is wrong with the code, so it should not
+page anyone. Completed steps stay journaled, so re-enqueueing a cancelled run replays them
+rather than redoing the work.
+
+The ask is **unfenced** and the landing is **fenced**: anyone may ask, but only the run's
+current claim holder may write the terminal state, so a stalled replica can't cancel a run
+its new owner is midway through. If the holder dies with the stamp down, the recovery scan
+claims the run and lands it *without invoking the body*.
+
+**Cancelling a saga** is decided by the pivot. Before it, compensations run (journaled, as
+always) and the run lands `CANCELLED` — stopping mid-flight is safe precisely because
+compensation exists. At or after it, the request is **refused** and the saga completes
+forward: honouring it there would manufacture a `FORWARD_INCOMPLETE` by operator request.
+The refusal is recorded on the run (`cancel_refused_at`) so the operator who pressed Stop and
+watched it finish anyway gets the reason.
+
+A run **paused waiting on user input** is a different case: its durable run already completed
+cleanly (it succeeded at producing the question), so there is nothing to `request_cancel`.
+Cancelling there is a domain action on your own task record, not a run-control call.
+
+Engine-backed tiers advertise whether they can do any of this
+(`durable_run_control_capabilities(port).supports_cancel`); `runner.request_cancel` fails
+closed against one that can't, rather than accepting a request it would silently drop.
+
 **Observability.** Pass `DurableTelemetry.create()` to the runner and scheduler for
 OpenTelemetry: a `durable.run` span per execution plus `forze.durable.runs` /
-`forze.durable.run.duration` (by name + outcome), `forze.durable.recovered`, and
+`forze.durable.run.duration` (by name + outcome — `completed` / `failed` /
+`forward_incomplete` / `cancelled` / `timed_out` / `reclaimed`), `forze.durable.recovered`, and
 `forze.durable.schedule.fires` metrics. Emits via the global OTel providers — configure the
 SDK in your app.
 

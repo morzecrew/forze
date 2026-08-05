@@ -44,6 +44,7 @@ async def namespaced_tenants(pg_client: PostgresClient) -> tuple[str, UUID, UUID
                     tenant_id uuid, attempts integer NOT NULL DEFAULT 0,
                     leased_until timestamptz, available_at timestamptz,
                     created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
+                    cancel_requested_at timestamptz, cancel_refused_at timestamptz,
                     PRIMARY KEY (run_id), UNIQUE (idempotency_key)
                 )
                 """
@@ -107,3 +108,31 @@ class TestNamespaceTierDurableRecovery:
         # Cross-tenant load misses: A's store cannot see B's run (different schema).
         assert await store_a.load(run_b.run_id) is None
         assert await store_b.load(run_a.run_id) is None
+
+    async def test_cancel_cannot_cross_a_tenant_boundary(
+        self, pg_client: PostgresClient, namespaced_tenants: tuple[str, UUID, UUID]
+    ) -> None:
+        # ``request_cancel`` is the admin port's only mutating verb, so it must scope
+        # exactly like the listing beside it: an operator bound to one tenant must not be
+        # able to stop a run it could not have listed in the first place.
+        table, tenant_a, tenant_b = namespaced_tenants
+        store_a = _store(pg_client, table, tenant_a)
+        store_b = _store(pg_client, table, tenant_b)
+
+        run_b = await store_b.enqueue("fn", input_json={"t": "b"})
+
+        # A asks to cancel B's run: the ask reports that nothing happened...
+        assert await store_a.request_cancel(run_b.run_id) is False
+
+        # ...and B's run is untouched — still claimable, still unstamped.
+        untouched = await store_b.load(run_b.run_id)
+        assert untouched is not None
+        assert untouched.status.value == "pending"
+        assert untouched.cancel_requested_at is None
+
+        # B, the owner, can stop it.
+        assert await store_b.request_cancel(run_b.run_id) is True
+
+        stopped = await store_b.load(run_b.run_id)
+        assert stopped is not None
+        assert stopped.status.value == "cancelled"

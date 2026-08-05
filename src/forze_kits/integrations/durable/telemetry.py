@@ -42,9 +42,14 @@ class DurableTelemetry:
 
     Emits: a ``durable.run`` span per run execution (labelled name / run id / attempt /
     tenant, marked error on failure); ``forze.durable.runs`` (counter) +
-    ``forze.durable.run.duration`` (histogram, ms) by name and outcome
-    (``completed`` / ``failed`` / ``forward_incomplete``); ``forze.durable.recovered``
-    (counter) for reclaimed runs; and ``forze.durable.schedule.fires`` (counter) per fire.
+    ``forze.durable.run.duration`` (histogram, ms) by name and outcome (``completed`` /
+    ``failed`` / ``forward_incomplete`` / ``cancelled`` / ``timed_out`` / ``reclaimed``);
+    ``forze.durable.recovered`` (counter) for reclaimed runs; and
+    ``forze.durable.schedule.fires`` (counter) per fire.
+
+    ``cancelled`` and ``timed_out`` are separate outcome labels rather than shades of
+    ``failed`` on purpose: an alert on the failure rate should not fire because an operator
+    pressed Stop, and a run that outlived its cap is a capacity signal, not a defect.
     """
 
     _tracer: Tracer = attrs.field(alias="tracer")

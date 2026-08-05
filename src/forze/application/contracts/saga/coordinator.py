@@ -27,6 +27,15 @@ the saga into a possible double-execution. Drivers whose retry semantics key on 
 than the kind (the Temporal ``ApplicationError`` mapping) pin this code non-retryable
 explicitly."""
 
+SAGA_CANCELLED_CODE = "saga.cancelled"
+"""Error code of :meth:`SagaProgress.step_cancelled_error` — an operator stopped the saga
+before its pivot and every completed step was compensated.
+
+Domain-kind and deliberately distinct from ``saga.step_failed``: both describe a cleanly
+rolled-back saga, but only this one says *nobody's code misbehaved*. The durable tier reads
+it to land the run ``CANCELLED`` instead of ``FAILED``, which is the difference between a
+dashboard tile an operator expects and one that pages them."""
+
 
 def saga_step_outcome_unknown(error: BaseException) -> bool:
     """Whether a failed step's *commit outcome* is unknown (it may have committed).
@@ -160,6 +169,52 @@ class SagaProgress:
                 "saga": self.saga_name,
                 "step": step_name,
                 "cause": str(error),
+            },
+        )
+
+    # ....................... #
+
+    def step_cancelled_error(
+        self,
+        index: int,
+        comp_errors: Sequence[BaseException],
+    ) -> CoreException:
+        """Build the failure raised when an operator stops the saga *before* the pivot.
+
+        Same shape as :meth:`step_failed_error` — compensations have already run — but the
+        clean case carries :data:`SAGA_CANCELLED_CODE` so the durable tier lands the run
+        ``CANCELLED`` rather than ``FAILED``: nothing is wrong with the code, somebody asked.
+
+        A cancel whose **rollback** failed does *not* get that treatment: it reuses
+        ``saga.compensation_failed``, so the run lands ``FAILED`` and an operator is sent to
+        the inconsistency. Reporting "cancelled, stopped cleanly" over a half-rolled-back
+        saga is the one outcome this must never produce.
+        """
+
+        step_name = self._names[index]
+
+        if comp_errors:
+            return exc.infrastructure(
+                f"Saga {self.saga_name!r} was cancelled at step {step_name!r} and "
+                f"compensation failed for {len(comp_errors)} step(s); manual "
+                "intervention required.",
+                code="saga.compensation_failed",
+                details={
+                    "saga": self.saga_name,
+                    "step": step_name,
+                    "cause": "cancelled by request",
+                    "compensation_errors": [str(e) for e in comp_errors],
+                },
+            )
+
+        # DOMAIN, like ``saga.step_failed``: consistent state, modeled outcome.
+        return exc.domain(
+            f"Saga {self.saga_name!r} was cancelled at step {step_name!r}; completed "
+            "steps were compensated.",
+            code=SAGA_CANCELLED_CODE,
+            details={
+                "saga": self.saga_name,
+                "step": step_name,
             },
         )
 
