@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import sys
 import threading
 import time
 from contextlib import suppress
+from typing import Any
 
 import pytest
 from fastapi import APIRouter, FastAPI
@@ -252,6 +254,119 @@ class TestMetricsRoute:
 
             assert response.status_code == 200
             assert not overlapped, "a cancelled scrape let the next one render concurrently"
+
+        finally:
+            provider.shutdown()
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_an_abandoned_render_that_fails_is_not_reported_as_a_leak(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The two failures compound: a scrape times out, then the render raises.
+
+        Nobody is left to receive that exception, so asyncio logs "Task exception was
+        never retrieved" with a traceback at ERROR — during an incident, reading as a
+        framework fault rather than as the scrape timeout it is.
+        """
+
+        import prometheus_client
+
+        started = threading.Event()
+        renders = 0
+
+        def _render(_registry: object) -> bytes:
+            nonlocal renders
+
+            renders += 1
+            started.set()
+
+            if renders == 1:
+                time.sleep(0.2)
+
+                raise RuntimeError("collector callback exploded")
+
+            return b"# rendered\n"
+
+        monkeypatch.setattr(prometheus_client, "generate_latest", _render)
+
+        reported: list[dict[str, Any]] = []
+        asyncio.get_running_loop().set_exception_handler(
+            lambda _loop, context: reported.append(context)
+        )
+
+        registry = CollectorRegistry()
+        reader = PrometheusMetricReader(registry=registry)
+        provider = MeterProvider(metric_readers=[reader])
+
+        try:
+            router = APIRouter()
+            attach_metrics_route(router, reader)
+            app = FastAPI()
+            app.include_router(router)
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://probe"
+            ) as client:
+                abandoned = asyncio.ensure_future(client.get("/metrics"))
+
+                assert await asyncio.to_thread(started.wait, 5.0)
+                abandoned.cancel()
+
+                with suppress(asyncio.CancelledError):
+                    await abandoned
+
+                await asyncio.sleep(0.4)  # the orphaned render fails here
+
+                # A later scrape replaces the route's reference to the failed render,
+                # which is what finally makes it collectable — and, unhandled, is when
+                # asyncio would report it.
+                assert (await client.get("/metrics")).status_code == 200
+
+            gc.collect()
+            await asyncio.sleep(0)
+
+            leaked = [c for c in reported if "never retrieved" in str(c.get("message", ""))]
+
+            assert not leaked, f"asyncio reported the abandoned render as a leak: {leaked}"
+
+        finally:
+            asyncio.get_running_loop().set_exception_handler(None)
+            provider.shutdown()
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_render_failure_still_reaches_a_waiting_scrape(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Draining the exception must not swallow it for whoever is still listening."""
+
+        import prometheus_client
+
+        def _failing_render(_registry: object) -> bytes:
+            raise RuntimeError("collector callback exploded")
+
+        monkeypatch.setattr(prometheus_client, "generate_latest", _failing_render)
+
+        registry = CollectorRegistry()
+        reader = PrometheusMetricReader(registry=registry)
+        provider = MeterProvider(metric_readers=[reader])
+
+        try:
+            router = APIRouter()
+            attach_metrics_route(router, reader)
+            app = FastAPI()
+            app.include_router(router)
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://probe"
+            ) as client:
+                with pytest.raises(RuntimeError, match="exploded"):
+                    await client.get("/metrics")
 
         finally:
             provider.shutdown()

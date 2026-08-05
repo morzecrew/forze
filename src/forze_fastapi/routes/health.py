@@ -149,6 +149,7 @@ def attach_metrics_route(
                 # stats, bulkhead depths — and on the loop each scrape would stall every
                 # other coroutine, including the liveness probe.
                 in_flight = asyncio.ensure_future(asyncio.to_thread(generate_latest, registry))
+                in_flight.add_done_callback(_absorb_abandoned_failure)
 
             pending = in_flight
 
@@ -157,6 +158,27 @@ def attach_metrics_route(
         return Response(content=rendered, media_type=PROMETHEUS_CONTENT_TYPE)
 
     return router
+
+
+# ....................... #
+
+
+def _absorb_abandoned_failure(render: asyncio.Future[bytes]) -> None:
+    """Retrieve a failed render's exception so asyncio does not report it as a leak.
+
+    A render outlives the scrape that started it — the client disconnects, the handler is
+    cancelled, the thread keeps going. If that render then raises (an observable callback
+    reading a half-disposed client, say) nobody is left to receive it, and asyncio logs
+    ``Task exception was never retrieved`` with a full traceback at ERROR. That fires
+    precisely during an incident, where it reads as a framework fault rather than as the
+    scrape timeout it actually is.
+
+    Retrieving here only clears the leak warning: a scrape still awaiting this render
+    receives the exception exactly as before and answers 500 for it.
+    """
+
+    if not render.cancelled():
+        render.exception()
 
 
 # ....................... #
