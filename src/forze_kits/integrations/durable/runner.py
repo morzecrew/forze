@@ -88,6 +88,32 @@ class _CancelRequested(Exception):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class _Landing:
+    """What an execution decided to write, decided *before* anything is written.
+
+    Splitting the decision from the write is what lets the runner say which of two very
+    different things happened when a drain cancels a run: nothing was attempted, or something
+    was attempted and never acknowledged. While a :class:`_Landing` is being computed no store
+    call has been made yet; once it exists, every remaining step is a write.
+    """
+
+    outcome: str
+    """The telemetry outcome this landing will report *if* its write lands."""
+
+    output: JsonDict | None = None
+    """The body's encoded result, for the ``completed`` landing only."""
+
+    error: BaseException | None = None
+    """What to record on the row. ``None`` only for a run stopped by an operator's ask, which
+    is not a fault and has nothing to report."""
+
+    surface: BaseException | None = None
+    """What a ``reraise`` caller should see, or ``None`` when the caller caused nothing. Kept
+    apart from :attr:`error` because a cancelled run records a note but raises at nobody."""
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class DurableFunctionRunner:
     """Drive durable functions over a :class:`DurableRunStorePort` and the step journal.
 
@@ -358,7 +384,9 @@ class DurableFunctionRunner:
         # without a write, because deciding not to write is what it means.
         #
         # The default stands for "a write was attempted and we never heard back", so every
-        # path that leaves it in place must be one that got as far as trying.
+        # path that leaves it in place must be one that got as far as trying. That is why the
+        # execution below is in two halves: everything before ``_land`` is write-free, so a
+        # cancellation there is ``interrupted`` rather than this.
         outcome = _UNRECORDED_OUTCOME
         span_cm = self.telemetry.run_span(record) if self.telemetry is not None else nullcontext()
 
@@ -383,33 +411,43 @@ class DurableFunctionRunner:
                     return
 
                 try:
-                    outcome, escaped = await self._invoke_and_land(
-                        ctx, store, record, fence, cancel, span
-                    )
+                    landing = await self._invoke(ctx, store, record, fence, cancel, span)
 
                 except asyncio.CancelledError:
-                    # Shutdown reached us before the body finished, so no terminal write was
-                    # ever attempted. That is a different fact from ``unrecorded``, which
-                    # says one *was* attempted and went unacknowledged — and since that label
-                    # is read as "the run store is unreachable", letting an ordinary drain
-                    # fall through to it would report every graceful shutdown as an outage.
+                    # Shutdown reached us before the body finished. ``_invoke`` writes
+                    # nothing, so nothing was attempted — a different fact from
+                    # ``unrecorded``, which says one *was* attempted and went unacknowledged.
+                    # Since that label is read as "the run store is unreachable", letting an
+                    # ordinary drain fall through to it would report every graceful shutdown
+                    # as an outage on the dashboard used to decide whether there is one.
                     outcome = _INTERRUPTED_OUTCOME
 
                     raise
 
-                if escaped is not None and reraise:
-                    raise escaped
+                # Past here every step is a write, so an escape — a store error, a drain
+                # landing mid-write — leaves the ``unrecorded`` default in place, which is
+                # exactly the ambiguity: this worker cannot tell whether the row moved.
+                outcome = await self._land(store, record, fence, landing)
+
+                if landing.surface is not None and reraise:
+                    raise landing.surface
 
         finally:
             reset_durable_cancel_signal(cancel_token)
             reset_durable_run(token)
 
             if cancel.refused and not cancel.refusal_persisted:
-                # The backstop for a refusal the heartbeat did not get to write — it beats
-                # us on any run that lived past another beat, and a run recovered with the
-                # stamp already on its row starts persisted. Only a run that refused and
-                # then finished inside a single interval reaches here, which is why the two
-                # writers share one flag instead of both paying for the stamp.
+                # The backstop for a refusal the heartbeat did not get to write — it beats us
+                # on any run that lived past another beat, and a run recovered with the stamp
+                # already on its row starts persisted, which is why the two writers share one
+                # flag instead of both paying for the stamp. Two runs still reach here: one
+                # that refused and finished inside a single interval, and one that finished
+                # while the heartbeat's own write was in flight — the watcher drain above
+                # tears that write down before it can set the flag. In the second case the
+                # write may already have landed, making this a redundant (idempotent) stamp;
+                # it is written anyway because the alternative reading — assuming a torn-down
+                # write landed — loses the stamp outright when it did not, and a lost refusal
+                # lets recovery land a saga past its pivot in CANCELLED.
                 #
                 # Recorded at the end rather than at observation time: the refusing code is
                 # the saga executor, which holds no run store and no fence. Until this
@@ -436,7 +474,7 @@ class DurableFunctionRunner:
 
     # ....................... #
 
-    async def _invoke_and_land(
+    async def _invoke(
         self,
         ctx: ExecutionContext,
         store: DurableRunStorePort,
@@ -444,13 +482,14 @@ class DurableFunctionRunner:
         fence: int,
         cancel: DurableCancelSignal,
         span: Span | None,
-    ) -> tuple[str, BaseException | None]:
-        """Run the body and write its terminal state; report what was actually recorded.
+    ) -> _Landing:
+        """Run the body and decide its terminal state, **without writing anything**.
 
-        Returns the telemetry outcome plus the exception a ``reraise`` caller should surface,
-        or ``None`` when there is nothing to surface. Handing the exception back rather than
-        letting it fly keeps one rule intact: the outcome label is assigned by whoever knows
-        the write landed, so a caller cannot re-raise past the recording of what happened.
+        Every exit is a :class:`_Landing` rather than an exception, which keeps one rule
+        intact: the outcome label is assigned by whoever knows the write landed, so a caller
+        cannot re-raise past the recording of what happened. Writing nothing here is the other
+        half of that rule — it is what makes a cancellation reaching this method provably
+        write-free, and so reportable as ``interrupted`` rather than as an unreachable store.
         """
 
         try:
@@ -467,15 +506,13 @@ class DurableFunctionRunner:
             # now. Stop without a terminal write (a fenced write would be a no-op anyway) and
             # let the new owner record the outcome — this is the whole point of the
             # heartbeat: not double-executing the body to completion.
-            return "reclaimed", None
+            return _Landing(outcome="reclaimed")
 
         except _CancelRequested:
             # The body stopped because an operator asked. Not an error: no span error mark,
             # and never surfaced, so ``run_now`` hands its caller the CANCELLED record
             # instead of an exception it did not cause.
-            await store.mark_cancelled(record.run_id, fence=fence)
-
-            return "cancelled", None
+            return _Landing(outcome="cancelled")
 
         except CoreException as error:
             landed = self._core_outcome(error)
@@ -486,19 +523,53 @@ class DurableFunctionRunner:
             if landed != "cancelled":
                 self._mark_span_error(span, error)
 
-            await self._record_terminal(store, record.run_id, fence, landed, error)
-
-            return landed, None if landed == "cancelled" else error
+            return _Landing(
+                outcome=landed,
+                error=error,
+                surface=None if landed == "cancelled" else error,
+            )
 
         except Exception as error:
             self._mark_span_error(span, error)
-            await store.fail(record.run_id, error=str(error), fence=fence)
 
-            return "failed", error
+            return _Landing(outcome="failed", error=error, surface=error)
 
-        await store.complete(record.run_id, output_json=output, fence=fence)
+        return _Landing(outcome="completed", output=output)
 
-        return "completed", None
+    # ....................... #
+
+    async def _land(
+        self,
+        store: DurableRunStorePort,
+        record: DurableRunRecord,
+        fence: int,
+        landing: _Landing,
+    ) -> str:
+        """Write *landing* to the run's row and report the outcome now known recorded.
+
+        The return value is the point of the split: it is produced *after* the write, so an
+        exception on the way through — including a drain arriving mid-write — leaves the
+        caller's ``unrecorded`` default standing rather than claiming an outcome the store
+        may never have seen.
+        """
+
+        if landing.outcome == "reclaimed":
+            # The one outcome with no write. The lease is gone, so nothing we send lands;
+            # saying so is the record.
+            return "reclaimed"
+
+        if landing.outcome == "completed":
+            await store.complete(record.run_id, output_json=landing.output, fence=fence)
+
+        elif landing.error is None:
+            # Only an operator's ask lands without a message — it is not a fault, and there
+            # is nothing about it to report beyond the fact of it.
+            await store.mark_cancelled(record.run_id, fence=fence)
+
+        else:
+            await self._record_terminal(store, record.run_id, fence, landing.outcome, landing.error)
+
+        return landing.outcome
 
     # ....................... #
 
@@ -524,7 +595,7 @@ class DurableFunctionRunner:
         run_id: str,
         fence: int,
         outcome: str,
-        error: CoreException,
+        error: BaseException,
     ) -> None:
         if outcome == "forward_incomplete":
             await store.mark_forward_incomplete(run_id, error=str(error), fence=fence)

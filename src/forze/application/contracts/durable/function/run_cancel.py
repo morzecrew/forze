@@ -101,6 +101,11 @@ class DurableCancelSignal:
         the runner's ``finally``, which is the backstop — consult this so the second one
         skips a write the first already made. Without a shared flag the two are unaware of
         each other and every refused run pays for the stamp twice.
+
+        It suppresses the second write whenever the first was **acknowledged**. A write torn
+        down mid-flight (the body finishes, the heartbeat is cancelled) never gets to set
+        this, so the backstop repeats it — deliberately: the repeat is idempotent, whereas
+        assuming an unacknowledged write landed would lose the stamp when it did not.
         """
 
         return self._persisted
