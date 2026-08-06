@@ -219,7 +219,16 @@ class DurableRunAdminPort(Protocol):
         out from under its new owner.
 
         Backends report through :class:`DurableRunControlAware` whether they can honour this
-        at all; check :func:`durable_run_control_capabilities` before offering it, or a
-        request against a tier without a cancellation mechanism is accepted and dropped.
+        at all; check :func:`durable_run_control_capabilities` before offering it — as
+        :meth:`~forze_kits.integrations.durable.DurableFunctionRunner.request_cancel` does,
+        so an operator surface built on the runner is gated for free.
+
+        **Adapter obligation: a backend that cannot deliver a cancel must raise
+        ``configuration``, never return ``False``.** ``False`` is already spoken for — it
+        means *there was nothing to stop* (terminal, unknown, or another tenant's run). An
+        adapter that reuses it for *nothing here will ever stop* makes those two
+        indistinguishable to the caller, and a caller who cannot tell them apart shows a
+        "Stop" button that reports success and does nothing. That is the failure this whole
+        surface exists to avoid, arriving through the return type instead of the behaviour.
         """
         ...  # pragma: no cover
