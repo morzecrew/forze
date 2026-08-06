@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sagas decide by the pivot: before it, compensate and land `CANCELLED`; at or after it, refuse and complete forward. New `SAGA_CANCELLED_CODE` / `SagaProgress.step_cancelled_error`.
 - New `DurableRunControlAware`/`DurableRunControlCapabilities`; `DurableFunctionRunner.request_cancel` fails closed without `supports_cancel`.
 
-**Breaking:** `DurableRunStatus` gains `CANCELLED` + `TIMED_OUT`; `max_run_duration` now lands `TIMED_OUT` instead of `FAILED` (same `error` text; telemetry gains both outcome labels). `DurableRunStorePort.renew` returns `DurableLeaseRenewal(held, cancel_requested)`, not `bool`. **Migration:** `ALTER TABLE <durable_run> ADD COLUMN cancel_requested_at timestamptz, ADD COLUMN cancel_refused_at timestamptz;`
+**Breaking:** `DurableRunStatus` gains `CANCELLED` + `TIMED_OUT`; `max_run_duration` now lands `TIMED_OUT` instead of `FAILED` (same `error` text; telemetry gains both outcome labels). `DurableRunStorePort.renew` returns `DurableLeaseRenewal(held, cancel_requested)`, not `bool`. **Migration, required before deploying:** `ALTER TABLE <durable_run> ADD COLUMN cancel_requested_at timestamptz, ADD COLUMN cancel_refused_at timestamptz;`
 
 **Three CI ratchets**, each with a declared, shrink-only exemption table and wired into `just quality`:
 

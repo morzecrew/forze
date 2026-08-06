@@ -404,6 +404,72 @@ def _list_only_admin_module() -> Deps:
 # ....................... #
 
 
+class TestOrderingAgainstTheDeadline:
+    async def test_an_ask_recorded_before_the_deadline_wins_even_if_unobserved(self) -> None:
+        # The local signal only learns about an ask on a heartbeat *tick*. Here the heartbeat
+        # never gets one — the lease is long, the cap is short — so the ask is recorded, the
+        # deadline fires, and nothing in-process knows a cancel was ever requested. The
+        # contract orders these by when the ask was *recorded*, so the row has to be
+        # consulted; otherwise an operator who pressed Stop sees TIMED_OUT.
+        ctx = context_from_modules(MockDepsModule())
+        store = resolve_durable_run_store(ctx)
+        admin = resolve_durable_run_admin(ctx)
+
+        record = await store.enqueue("fn", input_json=None, idempotency_key="k")
+        registry = DurableFunctionRegistry()
+
+        async def body(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            assert await admin.request_cancel(record.run_id) is True
+            await asyncio.sleep(5.0)
+
+            return {"ok": True}  # pragma: no cover — the deadline stops us first
+
+        registry.register("fn", body)
+
+        runner = DurableFunctionRunner(
+            registry=registry,
+            lease_for=timedelta(seconds=30),  # heartbeat at 15 s: it will never tick
+            heartbeat_divisor=2,
+            max_run_duration=timedelta(milliseconds=100),
+        )
+
+        result = await runner.run_now(ctx, "fn", idempotency_key="k")
+
+        assert result.status is DurableRunStatus.CANCELLED
+        assert result.status is not DurableRunStatus.TIMED_OUT
+        assert result.error is None  # a cancel, not a deadline failure
+
+    async def test_a_deadline_with_no_ask_on_the_record_is_still_a_timeout(self) -> None:
+        # The positive control for the check above: the extra read must not turn every
+        # deadline into a cancellation.
+        ctx = context_from_modules(MockDepsModule())
+        store = resolve_durable_run_store(ctx)
+
+        record = await store.enqueue("fn", input_json=None, idempotency_key="k")
+        registry = DurableFunctionRegistry()
+
+        async def body(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            await asyncio.sleep(5.0)
+
+            return {"ok": True}  # pragma: no cover — the deadline stops us first
+
+        registry.register("fn", body)
+
+        runner = DurableFunctionRunner(
+            registry=registry,
+            lease_for=timedelta(seconds=30),
+            heartbeat_divisor=2,
+            max_run_duration=timedelta(milliseconds=100),
+        )
+
+        with pytest.raises(CoreException, match="max_run_duration"):
+            await runner.run_now(ctx, "fn", idempotency_key="k")
+
+        landed = await store.load(record.run_id)
+        assert landed is not None
+        assert landed.status is DurableRunStatus.TIMED_OUT
+
+
 class TestCapabilityGate:
     async def test_request_cancel_fails_closed_on_a_port_that_cannot_cancel(self) -> None:
         # A backend that cannot reach a running body must say so. Accepting the request and

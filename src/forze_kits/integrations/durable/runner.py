@@ -527,6 +527,20 @@ class DurableFunctionRunner:
                 raise _CancelRequested from None
 
             if expired.is_set():
+                # ``cancel`` only learns about an ask on a heartbeat *tick*, so an ask
+                # recorded since the last one is invisible here — a window of up to one
+                # interval (100 s at stock settings). The contract orders these two causes by
+                # when the ask was **recorded**, not by when this process noticed, so confirm
+                # against the row before calling an earlier ask a timeout.
+                #
+                # Skipped once this run has already refused: that decision lives only in the
+                # in-memory signal until the ``finally`` persists it, so the row would still
+                # read as an unanswered ask and turn a genuine deadline into a cancellation.
+                if not cancel.refused and await self._cancel_pending_on_record(
+                    store, record.run_id
+                ):
+                    raise _CancelRequested from None
+
                 # The body was cancelled while the lease was still held (no lapse, so no
                 # double-execution) and the run lands TIMED_OUT — distinct from FAILED
                 # because it sends you to the cap, not to the body's code. There is no
@@ -558,6 +572,40 @@ class DurableFunctionRunner:
 
                 with suppress(asyncio.CancelledError):
                     await body
+
+    # ....................... #
+
+    async def _cancel_pending_on_record(
+        self,
+        store: DurableRunStorePort,
+        run_id: str,
+    ) -> bool:
+        """Whether the row carries an ask this execution has not already settled.
+
+        One read, only on the deadline path, to close the gap between an ask being recorded
+        and the next heartbeat reading it back. A refused ask does not count: the run decided
+        to keep going, so a later deadline is the deadline's own.
+        """
+
+        try:
+            record = await store.load(run_id)
+
+        except Exception:
+            # Best effort — a read failure here must not turn a real deadline into an error.
+            logger.warning(
+                "Durable run %s could not be re-read to order its deadline against a "
+                "possible cancel request; recording it as a timeout",
+                run_id,
+                exc_info=True,
+            )
+
+            return False
+
+        return (
+            record is not None
+            and record.cancel_requested_at is not None
+            and record.cancel_refused_at is None
+        )
 
     # ....................... #
 

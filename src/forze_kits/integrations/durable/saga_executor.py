@@ -199,6 +199,17 @@ class DurableSagaExecutor:
             progress.record_success(index)
             states[index] = state
 
+        # A refusal is a property of the *outcome* — "an ask was outstanding and this saga
+        # completed forward past its pivot anyway" — not of which code path happened to
+        # observe the cancellation. A step action that catches and suppresses its own
+        # ``CancelledError`` never routes through :meth:`_advance`'s refusal branch, and
+        # without this the run would land COMPLETED carrying an ask with no recorded reason:
+        # the exact "refused or merely lost?" ambiguity ``cancel_refused_at`` exists to end.
+        signal = current_durable_cancel_signal()
+
+        if progress.committed and signal is not None and signal.requested and not signal.refused:
+            signal.refuse()
+
         return state
 
     # ....................... #

@@ -391,6 +391,57 @@ class TestCancelAfterThePivot:
         assert landed.cancel_requested_at is not None
         assert landed.cancel_refused_at is None
 
+    async def test_refusal_is_recorded_even_when_the_step_swallows_the_cancel(self) -> None:
+        # The refusal branch in `_advance` only runs when the CancelledError escapes the step
+        # action. A post-pivot step that catches its own cancellation completes normally, so
+        # the saga goes forward past the pivot with an ask outstanding and — without the
+        # outcome-level check — nothing is stamped. The operator is then left with a record
+        # that says "asked" and completed, unable to tell a refusal from a lost request.
+        ctx = context_from_modules(MockDepsModule())
+        admin = resolve_durable_run_admin(ctx)
+        store = resolve_durable_run_store(ctx)
+
+        effects: list[str] = []
+        holder: dict[str, str] = {}
+
+        async def swallowing_ship(_ctx: ExecutionContext, state: OrderCtx) -> OrderCtx:
+            effects.append("do:ship")
+            assert await admin.request_cancel(holder["run_id"]) is True
+
+            try:
+                await asyncio.sleep(1.0)  # the heartbeat cancels us here...
+
+            except asyncio.CancelledError:
+                effects.append("swallowed")  # ...and the step simply carries on
+
+            return OrderCtx(trail=[*state.trail, "ship"])
+
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                _step("charge", effects, kind=SagaStepKind.PIVOT),
+                SagaStep(
+                    name="ship",
+                    action=swallowing_ship,
+                    compensation=None,
+                    kind=SagaStepKind.RETRYABLE,
+                    tx_route="mock",
+                    idempotent=True,
+                ),
+            ),
+        )
+
+        runner, run_id = await _drive(ctx, saga, holder)
+        result = await runner.run_now(ctx, "order", idempotency_key="k")
+
+        assert effects == ["do:charge", "do:ship", "swallowed"]
+        assert result.status is DurableRunStatus.COMPLETED
+
+        landed = await store.load(run_id)
+        assert landed is not None
+        assert landed.cancel_requested_at is not None
+        assert landed.cancel_refused_at is not None  # the ask was declined, and it says so
+
     async def test_a_refused_run_reclaimed_by_recovery_completes_forward(self) -> None:
         # The ask stays on the row after a refusal. If recovery treated that row the way it
         # treats any other cancel-stamped run — land CANCELLED, never invoke the body — a
