@@ -418,13 +418,22 @@ class DurableSagaExecutor:
         step_port: DurableFunctionStepPort,
     ) -> list[BaseException]:
         errors: list[BaseException] = []
-        pending = progress.steps_to_compensate()
+
+        # Only steps that *have* a compensation are pending rollback. A compensation-less one
+        # has nothing to undo, so counting it would inflate the un-compensated tally in the
+        # interruption message below — a number an operator uses to size the inconsistency,
+        # which must not overstate it.
+        pending = [
+            index
+            for index in progress.steps_to_compensate()
+            if definition.steps[index].compensation is not None
+        ]
 
         for position, index in enumerate(pending):
             step = definition.steps[index]
             compensation = step.compensation
 
-            if compensation is None:
+            if compensation is None:  # pragma: no cover — filtered out above; narrowing only
                 continue
 
             try:

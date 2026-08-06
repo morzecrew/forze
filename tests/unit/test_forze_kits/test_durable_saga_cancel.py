@@ -238,6 +238,65 @@ class TestCancelBeforeThePivot:
         # And the rollback really was cut short — ``reserve`` never undid anything.
         assert "undo:reserve" not in effects
 
+    async def test_the_un_compensated_tally_counts_only_steps_that_have_a_rollback(
+        self,
+    ) -> None:
+        # The interruption message tells an operator how much is left un-rolled-back, so it
+        # must count steps that actually *have* a compensation. ``audit`` completed but has
+        # none, and it sits later in the reverse rollback order — counted naively it would
+        # report two steps outstanding when only one can ever be undone.
+        ctx = context_from_modules(MockDepsModule())
+        admin = resolve_durable_run_admin(ctx)
+
+        effects: list[str] = []
+        holder: dict[str, str] = {}
+
+        async def ask_to_stop() -> None:
+            assert await admin.request_cancel(holder["run_id"]) is True
+
+        async def audit(_ctx: ExecutionContext, state: OrderCtx) -> OrderCtx:
+            effects.append("do:audit")
+            return OrderCtx(trail=[*state.trail, "audit"])
+
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                # Completes first, so it is rolled back *last* — and has nothing to roll back.
+                SagaStep(
+                    name="audit",
+                    action=audit,
+                    compensation=None,
+                    kind=SagaStepKind.COMPENSATABLE,
+                    tx_route="mock",
+                ),
+                _step("reserve", effects, comp_delay=5.0),
+                _step("charge", effects, stop=True, on_stop=ask_to_stop),
+                _step("ship", effects, kind=SagaStepKind.PIVOT),
+            ),
+        )
+
+        registry = DurableFunctionRegistry()
+        registry.register("order", durable_saga_handler(saga, OrderCtx))
+        runner = DurableFunctionRunner(
+            registry=registry,
+            lease_for=_FAST_LEASE,
+            heartbeat_divisor=2,
+            max_run_duration=timedelta(milliseconds=250),
+        )
+
+        store = resolve_durable_run_store(ctx)
+        record = await store.enqueue(
+            "order", input_json=OrderCtx().model_dump(mode="json"), idempotency_key="k"
+        )
+        holder["run_id"] = record.run_id
+
+        with pytest.raises(CoreException, match="compensation failed") as caught:
+            await runner.run_now(ctx, "order", idempotency_key="k")
+
+        reported = " ".join(caught.value.details["compensation_errors"])  # type: ignore[index]
+        assert "1 step(s) are left un-compensated" in reported
+        assert "2 step(s)" not in reported
+
     async def test_a_cancel_whose_rollback_failed_lands_failed_not_cancelled(self) -> None:
         # The branch that only runs when the bad thing happens, and therefore the one most
         # likely to be wrong and never noticed. A cancel is normally a clean, non-alarming
