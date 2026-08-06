@@ -50,6 +50,14 @@ _RUN_TIMED_OUT_CODE = "durable.run_timed_out"
 """A run cancelled by the deadline watchdog. Distinct from an ordinary failure: it sends an
 operator to the cap or the workload's size, not to the body's code."""
 
+_UNRECORDED_OUTCOME = "unrecorded"
+"""Telemetry outcome for an execution whose terminal write never landed.
+
+Not a state a *run* can be in — the row is still ``RUNNING`` and recovery will re-claim it.
+It marks the **attempt**: the body finished, and the store could not be told. Its whole
+purpose is to stop a store outage from being counted as a wave of completions on the one
+dashboard someone is watching during the outage."""
+
 
 @final
 class _LeaseLost(Exception):
@@ -332,7 +340,13 @@ class DurableFunctionRunner:
         cancel_token = bind_durable_cancel_signal(cancel)
 
         started = perf_counter()
-        outcome = "completed"
+
+        # Assigned only once a terminal write has *landed*. A store outage is exactly when
+        # the dashboard is being read, so an outcome recorded ahead of its write would count
+        # a completion that never happened during the incident that stopped it — the run is
+        # in fact still RUNNING and will be reclaimed. ``reclaimed`` is the one outcome set
+        # without a write, because deciding not to write is what it means.
+        outcome = _UNRECORDED_OUTCOME
         span_cm = self.telemetry.run_span(record) if self.telemetry is not None else nullcontext()
 
         try:
@@ -350,8 +364,8 @@ class DurableFunctionRunner:
                     # and abandon it there. Past the pivot the run must be re-invoked and
                     # completed forward — replaying its journal — or land
                     # ``FORWARD_INCOMPLETE`` on its own merits.
-                    outcome = "cancelled"
                     await store.mark_cancelled(record.run_id, fence=fence)
+                    outcome = "cancelled"
 
                     return
 
@@ -379,31 +393,32 @@ class DurableFunctionRunner:
                     # The body stopped because an operator asked. Not an error: no span
                     # error mark, and never re-raised, so ``run_now`` hands its caller the
                     # CANCELLED record instead of an exception it did not cause.
-                    outcome = "cancelled"
                     await store.mark_cancelled(record.run_id, fence=fence)
+                    outcome = "cancelled"
 
                     return
 
                 except CoreException as error:
-                    outcome = self._core_outcome(error)
+                    landed = self._core_outcome(error)
 
                     # A cancelled saga rides in on an exception because that is how the
                     # executor unwinds after compensating — but it is still an operator's
                     # ask, so it is neither marked on the span nor re-raised at the caller.
-                    if outcome != "cancelled":
+                    if landed != "cancelled":
                         self._mark_span_error(span, error)
 
-                    await self._record_terminal(store, record.run_id, fence, outcome, error)
+                    await self._record_terminal(store, record.run_id, fence, landed, error)
+                    outcome = landed
 
-                    if reraise and outcome != "cancelled":
+                    if reraise and landed != "cancelled":
                         raise
 
                     return
 
                 except Exception as error:
-                    outcome = "failed"
                     self._mark_span_error(span, error)
                     await store.fail(record.run_id, error=str(error), fence=fence)
+                    outcome = "failed"
 
                     if reraise:
                         raise
@@ -411,6 +426,7 @@ class DurableFunctionRunner:
                     return
 
                 await store.complete(record.run_id, output_json=output, fence=fence)
+                outcome = "completed"
 
         finally:
             reset_durable_cancel_signal(cancel_token)

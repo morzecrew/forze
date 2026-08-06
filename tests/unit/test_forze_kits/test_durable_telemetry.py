@@ -102,6 +102,36 @@ class TestRunTelemetry:
         ((_, hist),) = _points(reader, DURABLE_RUN_DURATION_HISTOGRAM)
         assert hist.count == 1
 
+    async def test_a_terminal_write_that_never_lands_is_not_counted_as_a_completion(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The outcome label describes what was *recorded*, not what the body returned. A
+        # store outage is exactly when someone is staring at this dashboard, so counting a
+        # completion whose write failed would draw the outage as a wave of successes — while
+        # the run is in fact still RUNNING, waiting to be reclaimed.
+        from forze_mock.adapters.durable import MockDurableRunStore
+
+        tracer, meter, _exporter, reader = _otel()
+        ctx = context_from_modules(MockDepsModule())
+
+        async def boom(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("the run store is unreachable")
+
+        monkeypatch.setattr(MockDurableRunStore, "complete", boom)
+
+        runner = DurableFunctionRunner(
+            registry=_registry(),
+            telemetry=DurableTelemetry.create(tracer=tracer, meter=meter),
+        )
+
+        with pytest.raises(RuntimeError, match="unreachable"):
+            await runner.run_now(ctx, "fn", {"n": 1})
+
+        ((labels, point),) = _points(reader, DURABLE_RUNS_COUNTER)
+        assert labels["forze.durable.outcome"] == "unrecorded"
+        assert labels["forze.durable.outcome"] != "completed"
+        assert point.value == 1
+
     async def test_failure_marks_span_error_and_counts_failed(self) -> None:
         tracer, meter, exporter, reader = _otel()
         ctx = context_from_modules(MockDepsModule())

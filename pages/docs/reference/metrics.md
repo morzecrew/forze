@@ -108,7 +108,7 @@ justifies W-TinyLFU (`L1Spec(store_factory=tiny_lfu_l1_store)`) or a bigger capa
 
 | Metric | Instrument | Unit | Labels | Notes |
 |---|---|---|---|---|
-| `forze.durable.runs` | counter | 1 | `forze.durable.name`, `forze.durable.outcome` | outcome is `completed` / `failed` / `forward_incomplete` / `cancelled` / `timed_out` / `reclaimed` — alert on `failed`, not on the total: `cancelled` means somebody pressed Stop |
+| `forze.durable.runs` | counter | 1 | `forze.durable.name`, `forze.durable.outcome` | outcome is `completed` / `failed` / `forward_incomplete` / `cancelled` / `timed_out` / `reclaimed` / `unrecorded` — alert on `failed`, not on the total: `cancelled` means somebody pressed Stop. `unrecorded` describes the *attempt*, not the run: the body finished but its terminal write never landed, so the run is still `RUNNING` and will be recovered — a sustained rate of it means the run store is unreachable |
 | `forze.durable.run.duration` | histogram | ms | `forze.durable.name`, `forze.durable.outcome` | ms-ladder buckets installed by `bootstrap_telemetry` |
 | `forze.durable.recovered` | counter | 1 | — | runs reclaimed by a recovery sweep |
 | `forze.durable.schedule.fires` | counter | 1 | `forze.durable.name` | one per schedule fire |

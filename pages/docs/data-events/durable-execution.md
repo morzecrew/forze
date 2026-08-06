@@ -148,7 +148,9 @@ closed against one that can't, rather than accepting a request it would silently
 **Observability.** Pass `DurableTelemetry.create()` to the runner and scheduler for
 OpenTelemetry: a `durable.run` span per execution plus `forze.durable.runs` /
 `forze.durable.run.duration` (by name + outcome — `completed` / `failed` /
-`forward_incomplete` / `cancelled` / `timed_out` / `reclaimed`), `forze.durable.recovered`, and
+`forward_incomplete` / `cancelled` / `timed_out` / `reclaimed` / `unrecorded`, the last meaning the
+body finished but its terminal write never landed, leaving the run to be recovered),
+`forze.durable.recovered`, and
 `forze.durable.schedule.fires` metrics. Emits via the global OTel providers — configure the
 SDK in your app.
 
