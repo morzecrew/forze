@@ -371,64 +371,12 @@ class DurableFunctionRunner:
 
                     return
 
-                try:
-                    # Resolved inside the failure-handled region: a run whose name is
-                    # no longer registered (deploy skew, a renamed function, a stale
-                    # schedule) must land in FAILED like any other failing run — the
-                    # scanner claims oldest-first, so letting it escape would strand
-                    # every run co-claimed with it as leased RUNNING, sweep after sweep.
-                    handler = self.registry.get(record.name)
-                    output = await self._run_body_with_heartbeat(
-                        ctx, store, handler, record, fence, cancel
-                    )
+                outcome, escaped = await self._invoke_and_land(
+                    ctx, store, record, fence, cancel, span
+                )
 
-                except _LeaseLost:
-                    # A heartbeat found the lease reclaimed mid-body: another worker owns the
-                    # run now. Stop without a terminal write (a fenced write would be a no-op
-                    # anyway) and let the new owner record the outcome — this is the whole
-                    # point of the heartbeat: not double-executing the body to completion.
-                    outcome = "reclaimed"
-
-                    return
-
-                except _CancelRequested:
-                    # The body stopped because an operator asked. Not an error: no span
-                    # error mark, and never re-raised, so ``run_now`` hands its caller the
-                    # CANCELLED record instead of an exception it did not cause.
-                    await store.mark_cancelled(record.run_id, fence=fence)
-                    outcome = "cancelled"
-
-                    return
-
-                except CoreException as error:
-                    landed = self._core_outcome(error)
-
-                    # A cancelled saga rides in on an exception because that is how the
-                    # executor unwinds after compensating — but it is still an operator's
-                    # ask, so it is neither marked on the span nor re-raised at the caller.
-                    if landed != "cancelled":
-                        self._mark_span_error(span, error)
-
-                    await self._record_terminal(store, record.run_id, fence, landed, error)
-                    outcome = landed
-
-                    if reraise and landed != "cancelled":
-                        raise
-
-                    return
-
-                except Exception as error:
-                    self._mark_span_error(span, error)
-                    await store.fail(record.run_id, error=str(error), fence=fence)
-                    outcome = "failed"
-
-                    if reraise:
-                        raise
-
-                    return
-
-                await store.complete(record.run_id, output_json=output, fence=fence)
-                outcome = "completed"
+                if escaped is not None and reraise:
+                    raise escaped
 
         finally:
             reset_durable_cancel_signal(cancel_token)
@@ -458,6 +406,72 @@ class DurableFunctionRunner:
 
             if self.telemetry is not None:
                 self.telemetry.record_run(record.name, outcome, (perf_counter() - started) * 1000.0)
+
+    # ....................... #
+
+    async def _invoke_and_land(
+        self,
+        ctx: ExecutionContext,
+        store: DurableRunStorePort,
+        record: DurableRunRecord,
+        fence: int,
+        cancel: DurableCancelSignal,
+        span: Span | None,
+    ) -> tuple[str, BaseException | None]:
+        """Run the body and write its terminal state; report what was actually recorded.
+
+        Returns the telemetry outcome plus the exception a ``reraise`` caller should surface,
+        or ``None`` when there is nothing to surface. Handing the exception back rather than
+        letting it fly keeps one rule intact: the outcome label is assigned by whoever knows
+        the write landed, so a caller cannot re-raise past the recording of what happened.
+        """
+
+        try:
+            # Resolved inside the failure-handled region: a run whose name is no longer
+            # registered (deploy skew, a renamed function, a stale schedule) must land in
+            # FAILED like any other failing run — the scanner claims oldest-first, so letting
+            # it escape would strand every run co-claimed with it as leased RUNNING, sweep
+            # after sweep.
+            handler = self.registry.get(record.name)
+            output = await self._run_body_with_heartbeat(ctx, store, handler, record, fence, cancel)
+
+        except _LeaseLost:
+            # A heartbeat found the lease reclaimed mid-body: another worker owns the run
+            # now. Stop without a terminal write (a fenced write would be a no-op anyway) and
+            # let the new owner record the outcome — this is the whole point of the
+            # heartbeat: not double-executing the body to completion.
+            return "reclaimed", None
+
+        except _CancelRequested:
+            # The body stopped because an operator asked. Not an error: no span error mark,
+            # and never surfaced, so ``run_now`` hands its caller the CANCELLED record
+            # instead of an exception it did not cause.
+            await store.mark_cancelled(record.run_id, fence=fence)
+
+            return "cancelled", None
+
+        except CoreException as error:
+            landed = self._core_outcome(error)
+
+            # A cancelled saga rides in on an exception because that is how the executor
+            # unwinds after compensating — but it is still an operator's ask, so it is
+            # neither marked on the span nor surfaced at the caller.
+            if landed != "cancelled":
+                self._mark_span_error(span, error)
+
+            await self._record_terminal(store, record.run_id, fence, landed, error)
+
+            return landed, None if landed == "cancelled" else error
+
+        except Exception as error:
+            self._mark_span_error(span, error)
+            await store.fail(record.run_id, error=str(error), fence=fence)
+
+            return "failed", error
+
+        await store.complete(record.run_id, output_json=output, fence=fence)
+
+        return "completed", None
 
     # ....................... #
 
@@ -520,7 +534,18 @@ class DurableFunctionRunner:
         expired = asyncio.Event()
         watchers = [
             asyncio.ensure_future(
-                self._heartbeat(store, record.run_id, fence, body, reclaimed, cancel)
+                self._heartbeat(
+                    store,
+                    record.run_id,
+                    fence,
+                    body,
+                    reclaimed,
+                    cancel,
+                    # A re-invoked run whose refusal is already on the row needs no rewrite;
+                    # the signal starts spent, so without this the first beat would spend
+                    # part of its budget on an idempotent no-op.
+                    refusal_written=record.cancel_refused_at is not None,
+                )
             )
         ]
 
@@ -666,9 +691,9 @@ class DurableFunctionRunner:
         body: asyncio.Future[JsonDict | None],
         reclaimed: asyncio.Event,
         cancel: DurableCancelSignal,
+        refusal_written: bool = False,
     ) -> None:
         seconds = self._heartbeat_seconds()
-        refusal_written = False
 
         # Time until the *next* renewal. Normally one interval; shortened when extra work in
         # this loop has already eaten into it, so a renewal never drifts past the lease.

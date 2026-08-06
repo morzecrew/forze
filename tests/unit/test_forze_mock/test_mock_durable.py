@@ -317,6 +317,30 @@ class TestMockListRuns:
         assert stopped is not None
         assert stopped.status is DurableRunStatus.CANCELLED
 
+    async def test_renewing_a_run_that_is_not_running_reports_the_lease_lost(self) -> None:
+        # ``renew`` now answers with a verdict object rather than a bool, so the "there is
+        # nothing to renew" arm needs pinning too: a terminal or unknown run must read as
+        # lease lost and must not claim a cancel it cannot have observed.
+        from forze_mock.adapters.durable import MockDurableRunStore
+
+        store = MockDurableRunStore(state=MockState())
+
+        record = await store.enqueue("fn", input_json=None)
+        claimed = await store.begin(record.run_id, lease_for=timedelta(minutes=5))
+        assert claimed is not None
+
+        await store.complete(record.run_id, output_json={"ok": True}, fence=claimed.attempts)
+
+        terminal = await store.renew(
+            record.run_id, lease_for=timedelta(minutes=5), fence=claimed.attempts
+        )
+        assert terminal.held is False
+        assert terminal.cancel_requested is False
+
+        missing = await store.renew("no-such-run", lease_for=timedelta(minutes=5), fence=1)
+        assert missing.held is False
+        assert missing.cancel_requested is False
+
     async def test_refusing_twice_keeps_the_first_refusal_instant(self) -> None:
         # Same idempotency discipline the cancel *ask* already has a test for: a repeated
         # write must not creep the timestamp forward, or "when was this refused" becomes

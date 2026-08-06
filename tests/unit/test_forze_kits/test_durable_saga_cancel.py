@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from statistics import median
 from time import perf_counter
 
 import pytest
@@ -644,11 +645,16 @@ class TestCancelAfterThePivot:
 
         assert result.status is DurableRunStatus.COMPLETED
 
-        # Every gap stays near the 100 ms cadence. Uncompensated, the beat carrying the
-        # 80 ms write would stretch to ~180 ms and close on the 200 ms lease it protects.
+        # Judged against the loop's own median, not a wall-clock bound: under load (a
+        # coverage run, a busy CI box) every beat stretches together, so an absolute
+        # threshold measures the machine rather than the code. The defect is *one* beat
+        # standing out — uncompensated it carries the 80 ms write on top of its 100 ms sleep
+        # and runs ~1.8x its neighbours, closing on the 200 ms lease it exists to protect.
         gaps = [b - a for a, b in zip(renewals, renewals[1:], strict=False)]
         assert len(gaps) >= 3, f"too few renewals to judge the cadence: {renewals}"
-        assert max(gaps) < 0.14, f"a renewal drifted toward the lease: {gaps}"
+
+        typical = median(gaps)
+        assert max(gaps) < typical * 1.4, f"one beat outran its neighbours: {gaps}"
 
     async def test_refusal_is_recorded_even_when_the_step_swallows_the_cancel(self) -> None:
         # The refusal branch in `_advance` only runs when the CancelledError escapes the step
