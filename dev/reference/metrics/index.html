@@ -6623,7 +6623,7 @@ justifies W-TinyLFU (<code>L1Spec(store_factory=tiny_lfu_l1_store)</code>) or a 
 <td>counter</td>
 <td>1</td>
 <td><code>forze.durable.name</code>, <code>forze.durable.outcome</code></td>
-<td>outcome is <code>completed</code> / <code>failed</code> / <code>forward_incomplete</code></td>
+<td>outcome is <code>completed</code> / <code>failed</code> / <code>forward_incomplete</code> / <code>cancelled</code> / <code>timed_out</code> / <code>reclaimed</code> — alert on <code>failed</code>, not on the total: <code>cancelled</code> means somebody pressed Stop</td>
 </tr>
 <tr>
 <td><code>forze.durable.run.duration</code></td>

@@ -5432,6 +5432,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#stopping-a-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Stopping a run
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#implemented-by" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6092,6 +6103,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#stopping-a-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Stopping a run
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#implemented-by" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6310,11 +6332,11 @@ queue's delayed jobs.</p>
 </tr>
 <tr>
 <td><code>DurableRunStoreDepKey</code></td>
-<td>the run store behind the self-hosted tier — enqueue / begin / renew / complete / fail, <code>claim_abandoned</code> recovery</td>
+<td>the run store behind the self-hosted tier — enqueue / begin / renew / complete / fail, <code>claim_abandoned</code> recovery, and the fenced terminal landings <code>mark_cancelled</code> / <code>mark_timed_out</code></td>
 </tr>
 <tr>
 <td><code>DurableRunAdminDepKey</code></td>
-<td>run listing — <code>list_runs(status=None, name=None, limit=50, cursor=None)</code> returns a cursor-paged <code>DurableRunPage</code> of <code>DurableRunRecord</code>s</td>
+<td>run listing and control — <code>list_runs(status=None, name=None, limit=50, cursor=None)</code> returns a cursor-paged <code>DurableRunPage</code>; <code>request_cancel(run_id)</code> asks a run to stop</td>
 </tr>
 <tr>
 <td><code>DurableScheduleStoreDepKey</code></td>
@@ -6323,7 +6345,56 @@ queue's delayed jobs.</p>
 </tbody>
 </table>
 <p>A <code>DurableFunctionEventSpec</code> binds an event channel to its payload codec. A run's status is
-a <code>DurableRunStatus</code> — <code>pending</code> / <code>running</code> / <code>completed</code> / <code>failed</code> / <code>forward_incomplete</code>.</p>
+a <code>DurableRunStatus</code> — <code>pending</code> / <code>running</code> / <code>completed</code> / <code>failed</code> / <code>forward_incomplete</code>
+/ <code>cancelled</code> / <code>timed_out</code>.</p>
+<h2 id="stopping-a-run">Stopping a run<a class="headerlink" href="#stopping-a-run" title="Permanent link">&para;</a></h2>
+<p><code>request_cancel(run_id)</code> is the self-hosted tier's answer to the workflow tier's <code>cancel</code>.
+It is <strong>cooperative and only cooperative</strong>: it records an ask and returns whether the ask was
+recorded, never a promise about when the body notices.</p>
+<table>
+<thead>
+<tr>
+<th>Run state</th>
+<th>What happens</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pending</code></td>
+<td>lands <code>cancelled</code> immediately — nothing is executing</td>
+<td><code>True</code></td>
+</tr>
+<tr>
+<td><code>running</code></td>
+<td>stamps <code>cancel_requested_at</code>; the lease holder lands it on its next heartbeat</td>
+<td><code>True</code></td>
+</tr>
+<tr>
+<td>terminal</td>
+<td>nothing</td>
+<td><code>False</code></td>
+</tr>
+<tr>
+<td>unknown / not visible to the bound tenant</td>
+<td>nothing</td>
+<td><code>False</code></td>
+</tr>
+</tbody>
+</table>
+<p>The ask is <strong>unfenced</strong> (anyone may ask, and asking twice changes nothing) while the landing
+is <strong>fenced</strong>, so a stale worker cannot cancel a run out from under its new owner. If the
+holder dies carrying the stamp, recovery claims the run and lands it <em>without invoking the
+body</em>. Observation latency for a running body is one heartbeat interval
+(<code>lease_for / heartbeat_divisor</code>); a body that never awaits is bounded only by the runner's
+<code>max_run_duration</code>.</p>
+<p>Backends declare whether they can honour this at all through <code>DurableRunControlAware</code>; read
+it with <code>durable_run_control_capabilities(port).supports_cancel</code>. A port that does not report
+is treated as unable, and <code>DurableFunctionRunner.request_cancel</code> refuses rather than
+accepting a request it cannot deliver.</p>
+<p>Two record fields carry the outcome: <code>cancel_requested_at</code> (when it was asked) and
+<code>cancel_refused_at</code> (when the run declined — a durable saga past its pivot must complete
+forward).</p>
 <h2 id="implemented-by">Implemented by<a class="headerlink" href="#implemented-by" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

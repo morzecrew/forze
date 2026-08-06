@@ -8164,6 +8164,13 @@
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<p><strong>Durable run control</strong> — cancellation for the self-hosted function tier, cooperative only (no hard kill in the contract):</p>
+<ul>
+<li><code>DurableRunAdminPort.request_cancel(run_id)</code> records an unfenced ask; only the fence-holding runner lands it (<code>PENDING</code> stops at once, <code>RUNNING</code> at the holder's next lease heartbeat, a dead holder's run at recovery without re-invoking the body). New <code>DurableRunRecord.cancel_requested_at</code>/<code>cancel_refused_at</code>; <code>DurableRunStorePort</code> gains <code>mark_cancelled</code>/<code>mark_timed_out</code>/<code>refuse_cancel</code>. Tenant-scoped like <code>list_runs</code>.</li>
+<li>Sagas decide by the pivot: before it, compensate and land <code>CANCELLED</code>; at or after it, refuse and complete forward. New <code>SAGA_CANCELLED_CODE</code> / <code>SagaProgress.step_cancelled_error</code>.</li>
+<li>New <code>DurableRunControlAware</code>/<code>DurableRunControlCapabilities</code>; <code>DurableFunctionRunner.request_cancel</code> fails closed without <code>supports_cancel</code>.</li>
+</ul>
+<p><strong>Breaking:</strong> <code>DurableRunStatus</code> gains <code>CANCELLED</code> + <code>TIMED_OUT</code>; <code>max_run_duration</code> now lands <code>TIMED_OUT</code> instead of <code>FAILED</code> (same <code>error</code> text; telemetry gains both outcome labels). <code>DurableRunStorePort.renew</code> returns <code>DurableLeaseRenewal(held, cancel_requested)</code>, not <code>bool</code>. <strong>Migration, required before deploying:</strong> <code>ALTER TABLE &lt;durable_run&gt; ADD COLUMN cancel_requested_at timestamptz, ADD COLUMN cancel_refused_at timestamptz;</code></p>
 <p><strong>Three CI ratchets</strong>, each with a declared, shrink-only exemption table and wired into <code>just quality</code>:</p>
 <ul>
 <li><strong>Docs floors</strong> (<code>[tool.docs_floors]</code>, <code>just docs-check</code>) — every public <code>DepKey</code>/<code>*Spec</code> under <code>contracts/</code> must be mentioned in <code>pages/docs</code>, the nav must resolve both ways, and every relative doc link must land. New <code>reference/spec-registry.md</code>.</li>
