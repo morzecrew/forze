@@ -113,6 +113,12 @@
       "sourceType": "github",
       "computedHash": "f011d9018935ae01209f30c0a0f9d2f15f3058867baeb7a8c820bc54c8394645"
     },
+    "reading-isnt-proof": {
+      "source": "morzecrew/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/reading-isnt-proof/SKILL.md",
+      "computedHash": "fe58010a0a415833d05495af8663f72123069afc88847faab89ba8231012f0c4"
+    },
     "self-audit": {
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
