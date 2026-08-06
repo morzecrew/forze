@@ -330,6 +330,19 @@ class TestMockListRuns:
         claimed = await store.begin(record.run_id, lease_for=timedelta(minutes=5))
         assert claimed is not None
 
+        # Nor can a store bound to another tenant, even with a matching fence — this write
+        # has no RUNNING guard, so the tenant predicate is what bounds it.
+        from uuid import uuid4
+
+        from forze.application.contracts.tenancy import TenantIdentity
+
+        other_tenant = MockDurableRunStore(
+            state=state, tenant_provider=lambda: TenantIdentity(tenant_id=uuid4())
+        )
+        await other_tenant.refuse_cancel(record.run_id, fence=claimed.attempts)
+        foreign = await store.load(record.run_id)
+        assert foreign is not None and foreign.cancel_refused_at is None
+
         # A stale worker cannot claim to have refused on the current holder's behalf.
         await store.refuse_cancel(record.run_id, fence=claimed.attempts + 99)
         unstamped = await store.load(record.run_id)

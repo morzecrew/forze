@@ -63,7 +63,13 @@ def resolve_durable_schedule_store(ctx: ExecutionContext) -> DurableScheduleStor
 
 
 def resolve_durable_run_admin(ctx: ExecutionContext) -> DurableRunAdminPort:
-    """Resolve the durable run admin/list port bound in *ctx* (read-only ``list_runs``)."""
+    """Resolve the durable run admin port bound in *ctx* (``list_runs`` + ``request_cancel``).
+
+    The listing half is read-only; ``request_cancel`` is not — it is the control plane's one
+    mutation. Prefer :meth:`~forze_kits.integrations.durable.DurableFunctionRunner.request_cancel`
+    over calling it directly: the runner checks the backend advertises ``supports_cancel``
+    first, so a tier that cannot reach a running body refuses instead of accepting silently.
+    """
 
     return cast(
         "DurableRunAdminPort",

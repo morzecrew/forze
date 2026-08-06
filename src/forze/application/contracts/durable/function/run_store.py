@@ -110,7 +110,12 @@ class DurableRunRecord:
 
     error: str | None = None
     """Failure message, present once :attr:`status` is
-    ``FAILED``/``FORWARD_INCOMPLETE``/``TIMED_OUT``."""
+    ``FAILED``/``FORWARD_INCOMPLETE``/``TIMED_OUT``.
+
+    Also populated on some ``CANCELLED`` runs, where it is an explanatory **note** rather
+    than a failure — a cancelled saga records which step it stopped at and that its completed
+    steps were compensated. So do not read a non-empty ``error`` as "this run failed": read
+    :attr:`status` for that. A plainly cancelled durable function leaves it ``None``."""
 
     tenant_id: UUID | None = None
     """Owning tenant (tagged tier); ``None`` for single-tenant deployments."""

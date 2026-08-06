@@ -407,8 +407,9 @@ class DurableSagaExecutor:
         step_port: DurableFunctionStepPort,
     ) -> list[BaseException]:
         errors: list[BaseException] = []
+        pending = progress.steps_to_compensate()
 
-        for index in progress.steps_to_compensate():
+        for position, index in enumerate(pending):
             step = definition.steps[index]
             compensation = step.compensation
 
@@ -417,6 +418,43 @@ class DurableSagaExecutor:
 
             try:
                 await self._run_compensation(ctx, step, compensation, states[index], step_port)
+
+            except asyncio.CancelledError:
+                # A *second* cancellation, landing while the rollback is already running —
+                # a drain, the deadline watchdog, a lost lease. It is emphatically not the
+                # operator request that sent us here: that one was spent the moment we
+                # decided to compensate. Left to propagate it would escape as a bare
+                # cancellation and the runner, still seeing an unspent request, would record
+                # the run CANCELLED — i.e. "completed steps were compensated" — over a
+                # rollback abandoned partway.
+                #
+                # Absorb it (as the commit-ambiguity path does) so the outcome can still be
+                # written, record what was left undone, and stop: the remaining steps are
+                # un-compensated and no further await would be honoured anyway.
+                task = asyncio.current_task()
+
+                if task is None:  # pragma: no cover — no cancel count to balance
+                    raise
+
+                task.uncancel()
+
+                remaining = len(pending) - position
+                errors.append(
+                    exc.infrastructure(
+                        f"Compensation for step {step.name!r} was interrupted by a "
+                        f"cancellation; {remaining} step(s) are left un-compensated and the "
+                        "rollback is incomplete.",
+                    )
+                )
+                logger.warning(
+                    "Durable saga %s had its rollback interrupted at step %s; "
+                    "%d step(s) left un-compensated",
+                    progress.saga_name,
+                    step.name,
+                    remaining,
+                )
+
+                break
 
             except Exception as comp_error:
                 errors.append(comp_error)

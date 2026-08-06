@@ -464,16 +464,29 @@ class PostgresDurableRunStore(
 
     async def refuse_cancel(self, run_id: str, *, fence: int | None = None) -> None:
         table = await self._table()
+        params: dict[str, object] = {"run_id": run_id}
 
         # Fenced but NOT guarded on ``status = 'running'`` (unlike ``_finish``): a refusal
         # records what happened to the ask, and the run it describes may already have landed
         # by the time the holder writes it down. ``COALESCE`` keeps the first refusal's
         # instant, so a repeated write is a no-op.
-        fence_clause = (
-            sql.SQL(" AND attempts = {fence}").format(fence=sql.Placeholder("fence"))
-            if fence is not None
-            else sql.SQL("")
-        )
+        fence_clause = sql.SQL("")
+
+        if fence is not None:
+            fence_clause = sql.SQL(" AND attempts = %(fence)s")
+            params["fence"] = fence
+
+        # Tenant-scoped like ``request_cancel``. Losing the ``status = 'running'`` guard makes
+        # this the widest write on the port — it can stamp a run in *any* state — and
+        # ``attempts`` is a small integer that collides freely across tenants, so the fence
+        # alone is thin protection here. The ask and the refusal are read together by an
+        # operator, so they get the same isolation.
+        tenant_id = self._tenant_id_for_resolve()
+        tenant_filter = sql.SQL("")
+
+        if tenant_id is not None:
+            tenant_filter = sql.SQL(" AND tenant_id = %(tenant_id)s")
+            params["tenant_id"] = tenant_id
 
         await self.client.execute(
             sql.SQL(
@@ -481,14 +494,15 @@ class PostgresDurableRunStore(
                 UPDATE {table}
                 SET cancel_refused_at = COALESCE(cancel_refused_at, now()),
                     updated_at = now()
-                WHERE run_id = {run_id}{fence_clause}
+                WHERE run_id = {run_id}{fence_clause}{tenant_filter}
                 """
             ).format(
                 table=table.ident(),
                 run_id=sql.Placeholder("run_id"),
                 fence_clause=fence_clause,
+                tenant_filter=tenant_filter,
             ),
-            {"run_id": run_id, **({"fence": fence} if fence is not None else {})},
+            params,
         )
 
     # ....................... #

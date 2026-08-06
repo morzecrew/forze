@@ -231,6 +231,8 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
     # ....................... #
 
     async def refuse_cancel(self, run_id: str, *, fence: int | None = None) -> None:
+        bound_tenant = self._bound_tenant()
+
         with self.state.lock:
             data = self.state.durable_runs.get(run_id)
 
@@ -238,6 +240,11 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
             # happened to the ask, and the run it describes may already have landed by the
             # time the holder gets to write it down.
             if data is None or (fence is not None and data["attempts"] != fence):
+                return
+
+            # Tenant-scoped like ``request_cancel``: losing the RUNNING guard makes this the
+            # widest write on the port, and ``attempts`` collides freely across tenants.
+            if bound_tenant is not None and data["tenant_id"] != bound_tenant:
                 return
 
             if data["cancel_refused_at"] is None:

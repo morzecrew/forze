@@ -1,8 +1,21 @@
-"""Namespace-tier durable recovery on Postgres: per-tenant schemas are fully isolated.
+"""Durable tenancy on Postgres, in both tiers — and they prove different things.
+
+**Namespace tier** (a per-tenant schema): isolation comes from *table resolution*. Each
+store resolves a different relation, so one tenant's statement cannot reach another's row
+whatever its `WHERE` clause says. What these tests prove is that each verb resolves its
+tenant's schema at all — not that any tenant predicate works.
+
+**Tagged tier** (one shared relation with a `tenant_id` column): every tenant's rows live in
+the same table, so isolation rests *entirely* on the predicate each statement carries. This
+is the only tier where a missing `AND tenant_id = …` is observable, and therefore the only
+place a test can hold `request_cancel` / `refuse_cancel` to their documented scoping. A
+cross-tenant test written against the namespace tier passes with the predicate deleted.
 
 # covers: DurableRunStorePort.enqueue
 # covers: DurableRunStorePort.claim_abandoned
 # covers: DurableRunStorePort.load
+# covers: DurableRunAdminPort.request_cancel
+# covers: DurableRunStorePort.refuse_cancel
 """
 
 from __future__ import annotations
@@ -109,22 +122,82 @@ class TestNamespaceTierDurableRecovery:
         assert await store_a.load(run_b.run_id) is None
         assert await store_b.load(run_a.run_id) is None
 
-    async def test_cancel_cannot_cross_a_tenant_boundary(
+    async def test_run_control_verbs_resolve_their_own_tenants_schema(
         self, pg_client: PostgresClient, namespaced_tenants: tuple[str, UUID, UUID]
     ) -> None:
-        # ``request_cancel`` is the admin port's only mutating verb, so it must scope
-        # exactly like the listing beside it: an operator bound to one tenant must not be
-        # able to stop a run it could not have listed in the first place.
+        # What this tier can prove about the cancel verbs: they resolve *a per-tenant table*
+        # rather than a static one. It deliberately does NOT prove the tenant predicate —
+        # A's statement runs against A's schema, so B's row is unreachable with or without
+        # it. The predicate is held to account on the tagged tier below.
         table, tenant_a, tenant_b = namespaced_tenants
         store_a = _store(pg_client, table, tenant_a)
         store_b = _store(pg_client, table, tenant_b)
 
         run_b = await store_b.enqueue("fn", input_json={"t": "b"})
 
-        # A asks to cancel B's run: the ask reports that nothing happened...
+        assert await store_a.request_cancel(run_b.run_id) is False
+        assert await store_b.request_cancel(run_b.run_id) is True
+
+        stopped = await store_b.load(run_b.run_id)
+        assert stopped is not None
+        assert stopped.status.value == "cancelled"
+
+
+@pytest.fixture
+async def tagged_table(pg_client: PostgresClient) -> str:
+    """One shared ``durable_run`` relation — the tier where the tenant predicate is load-bearing."""
+
+    table = f"durable_run_tagged_{uuid4().hex[:8]}"
+    await pg_client.execute(
+        sql.SQL(
+            """
+            CREATE TABLE {table} (
+                run_id text NOT NULL, name text NOT NULL, status text NOT NULL,
+                idempotency_key text, input jsonb, output jsonb, error text,
+                tenant_id uuid, attempts integer NOT NULL DEFAULT 0,
+                leased_until timestamptz, available_at timestamptz,
+                created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
+                cancel_requested_at timestamptz, cancel_refused_at timestamptz,
+                PRIMARY KEY (run_id), UNIQUE (idempotency_key)
+            )
+            """
+        ).format(table=sql.Identifier("public", table))
+    )
+    return table
+
+
+def _tagged_store(
+    pg_client: PostgresClient, table: str, tenant: UUID
+) -> PostgresDurableRunStore:
+    """A store over the *shared* relation, differing from its sibling only by bound tenant."""
+
+    return PostgresDurableRunStore(
+        client=pg_client,
+        config=PostgresDurableRunConfig(relation=("public", table)),
+        tenant_provider=lambda: TenantIdentity(tenant_id=tenant),
+    )
+
+
+# ....................... #
+
+
+class TestTaggedTierRunControlIsolation:
+    async def test_cancel_cannot_cross_a_tenant_boundary(
+        self, pg_client: PostgresClient, tagged_table: str
+    ) -> None:
+        # ``request_cancel`` is the admin port's only mutating verb, so it must scope exactly
+        # like the ``list_runs`` beside it: an operator bound to one tenant must not stop a
+        # run it could not have listed. On a shared table only the predicate enforces that.
+        tenant_a, tenant_b = uuid4(), uuid4()
+        store_a = _tagged_store(pg_client, tagged_table, tenant_a)
+        store_b = _tagged_store(pg_client, tagged_table, tenant_b)
+
+        run_b = await store_b.enqueue("fn", input_json={"t": "b"})
+        assert run_b.tenant_id == tenant_b
+
+        # A asks to cancel B's run — same table, same row visible to the statement.
         assert await store_a.request_cancel(run_b.run_id) is False
 
-        # ...and B's run is untouched — still claimable, still unstamped.
         untouched = await store_b.load(run_b.run_id)
         assert untouched is not None
         assert untouched.status.value == "pending"
@@ -136,3 +209,32 @@ class TestNamespaceTierDurableRecovery:
         stopped = await store_b.load(run_b.run_id)
         assert stopped is not None
         assert stopped.status.value == "cancelled"
+
+    async def test_a_refusal_cannot_cross_a_tenant_boundary(
+        self, pg_client: PostgresClient, tagged_table: str
+    ) -> None:
+        # ``refuse_cancel`` is the one write on this port with no ``status = 'running'``
+        # guard, so it can stamp a run in any state — the widest write here — while
+        # ``attempts`` is a small integer that collides freely across tenants. On a shared
+        # table the fence alone is thin protection; the tenant predicate carries it.
+        tenant_a, tenant_b = uuid4(), uuid4()
+        store_a = _tagged_store(pg_client, tagged_table, tenant_a)
+        store_b = _tagged_store(pg_client, tagged_table, tenant_b)
+
+        run_b = await store_b.enqueue("fn", input_json={"t": "b"})
+        claimed = await store_b.begin(run_b.run_id, lease_for=timedelta(minutes=5))
+        assert claimed is not None
+
+        # A refuses against B's run with a fence that legitimately matches.
+        await store_a.refuse_cancel(run_b.run_id, fence=claimed.attempts)
+
+        untouched = await store_b.load(run_b.run_id)
+        assert untouched is not None
+        assert untouched.cancel_refused_at is None
+
+        # B, the owner, records it.
+        await store_b.refuse_cancel(run_b.run_id, fence=claimed.attempts)
+
+        stamped = await store_b.load(run_b.run_id)
+        assert stamped is not None
+        assert stamped.cancel_refused_at is not None

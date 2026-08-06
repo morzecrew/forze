@@ -64,6 +64,7 @@ def _step(
     stop: bool = False,
     on_stop: object = None,
     delay: float = 0.0,
+    comp_delay: float = 0.0,
 ) -> SagaStep[OrderCtx]:
     """A journaled saga step; with *stop* it asks the run to cancel and then blocks.
 
@@ -87,6 +88,9 @@ def _step(
         return OrderCtx(trail=[*state.trail, name])
 
     async def compensation(_ctx: ExecutionContext, _state: OrderCtx) -> None:
+        if comp_delay:
+            await asyncio.sleep(comp_delay)
+
         effects.append(f"undo:{name}")
 
     return SagaStep(
@@ -176,6 +180,63 @@ class TestCancelBeforeThePivot:
         # rather than re-running an undo.
         assert f"{run_id}:compensate:reserve" in state.durable_step_memo
 
+
+    async def test_a_rollback_cut_short_by_a_second_cancel_is_not_reported_clean(self) -> None:
+        # The operator's ask is *consumed* by the decision to compensate. If it stayed live
+        # through the rollback, a second cancellation arriving mid-compensation (a drain, or
+        # the deadline watchdog here) would still be attributed to it — and the run would be
+        # reported CANCELLED, i.e. "completed steps were compensated", over a rollback that
+        # was abandoned halfway.
+        ctx = context_from_modules(MockDepsModule())
+        admin = resolve_durable_run_admin(ctx)
+        store = resolve_durable_run_store(ctx)
+
+        effects: list[str] = []
+        holder: dict[str, str] = {}
+
+        async def ask_to_stop() -> None:
+            assert await admin.request_cancel(holder["run_id"]) is True
+
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                # Its compensation outlives the deadline below, so the rollback is still
+                # running when the second cancellation lands.
+                _step("reserve", effects, comp_delay=5.0),
+                _step("charge", effects, stop=True, on_stop=ask_to_stop),
+                _step("ship", effects, kind=SagaStepKind.PIVOT),
+            ),
+        )
+
+        registry = DurableFunctionRegistry()
+        registry.register("order", durable_saga_handler(saga, OrderCtx))
+        runner = DurableFunctionRunner(
+            registry=registry,
+            lease_for=_FAST_LEASE,
+            heartbeat_divisor=2,
+            max_run_duration=timedelta(milliseconds=250),
+        )
+
+        record = await store.enqueue(
+            "order", input_json=OrderCtx().model_dump(mode="json"), idempotency_key="k"
+        )
+        holder["run_id"] = record.run_id
+
+        await runner.recover(ctx)
+
+        landed = await store.load(record.run_id)
+        assert landed is not None
+
+        # An interrupted rollback is an operator problem, not a clean stop. The summary names
+        # the failing step and the rollback's state; which compensation was cut short rides
+        # in the error's details and the warning log, as it does for any compensation failure.
+        assert landed.status is not DurableRunStatus.CANCELLED
+        assert landed.status is DurableRunStatus.FAILED
+        assert "compensation failed" in (landed.error or "")
+        assert "manual intervention required" in (landed.error or "")
+
+        # And the rollback really was cut short — ``reserve`` never undid anything.
+        assert "undo:reserve" not in effects
 
     async def test_a_cancel_whose_rollback_failed_lands_failed_not_cancelled(self) -> None:
         # The branch that only runs when the bad thing happens, and therefore the one most
