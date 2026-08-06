@@ -382,11 +382,16 @@ class DurableFunctionRunner:
             reset_durable_cancel_signal(cancel_token)
             reset_durable_run(token)
 
-            if cancel.refused:
-                # A saga past its pivot observed the ask and declined it. Recorded at the end
-                # rather than at observation time: the refusing code is the saga executor,
-                # which holds no run store and no fence. Until this lands, the run reads as
-                # "asked, still running" — which is the truth in the interval.
+            if cancel.refused and not cancel.refusal_persisted:
+                # The backstop for a refusal the heartbeat did not get to write — it beats
+                # us on any run that lived past another beat, and a run recovered with the
+                # stamp already on its row starts persisted. Only a run that refused and
+                # then finished inside a single interval reaches here, which is why the two
+                # writers share one flag instead of both paying for the stamp.
+                #
+                # Recorded at the end rather than at observation time: the refusing code is
+                # the saga executor, which holds no run store and no fence. Until this
+                # lands, the run reads as "asked, still running" — the truth in the interval.
                 #
                 # Swallowed on failure, like the heartbeat's renewal and the recovery
                 # scanner's escape hatch: this runs in a ``finally``, so an error here would
@@ -541,10 +546,6 @@ class DurableFunctionRunner:
                     body,
                     reclaimed,
                     cancel,
-                    # A re-invoked run whose refusal is already on the row needs no rewrite;
-                    # the signal starts spent, so without this the first beat would spend
-                    # part of its budget on an idempotent no-op.
-                    refusal_written=record.cancel_refused_at is not None,
                 )
             )
         ]
@@ -691,7 +692,6 @@ class DurableFunctionRunner:
         body: asyncio.Future[JsonDict | None],
         reclaimed: asyncio.Event,
         cancel: DurableCancelSignal,
-        refusal_written: bool = False,
     ) -> None:
         seconds = self._heartbeat_seconds()
 
@@ -752,7 +752,7 @@ class DurableFunctionRunner:
                 cancel.request()
                 body.cancel()
 
-            if cancel.refused and not refusal_written:
+            if cancel.refused and not cancel.refusal_persisted:
                 # Persist the refusal here rather than waiting for the run to finish. A saga
                 # past its pivot refuses in memory and can then spend minutes completing
                 # forward; if the worker dies in that window the row would carry an ask with
@@ -776,7 +776,7 @@ class DurableFunctionRunner:
                     async with asyncio.timeout(seconds):
                         await store.refuse_cancel(run_id, fence=fence)
 
-                    refusal_written = True
+                    cancel.mark_refusal_persisted()
 
                 except Exception:
                     logger.warning(

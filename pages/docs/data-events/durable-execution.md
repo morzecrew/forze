@@ -149,7 +149,8 @@ closed against one that can't, rather than accepting a request it would silently
 OpenTelemetry: a `durable.run` span per execution plus `forze.durable.runs` /
 `forze.durable.run.duration` (by name + outcome — `completed` / `failed` /
 `forward_incomplete` / `cancelled` / `timed_out` / `reclaimed` / `unrecorded`, the last meaning the
-body finished but its terminal write never landed, leaving the run to be recovered),
+body finished but its terminal write went unacknowledged — the row may already be terminal or may
+still await recovery, and the worker cannot tell),
 `forze.durable.recovered`, and
 `forze.durable.schedule.fires` metrics. Emits via the global OTel providers — configure the
 SDK in your app.

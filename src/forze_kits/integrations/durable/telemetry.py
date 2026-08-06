@@ -52,9 +52,12 @@ class DurableTelemetry:
     pressed Stop, and a run that outlived its cap is a capacity signal, not a defect.
 
     ``unrecorded`` is the odd one out — it describes the *attempt*, not the run. The body
-    finished but its terminal write did not land, so the row is still ``RUNNING`` and
-    recovery will re-claim it. Any sustained rate of it means the run store is unreachable;
-    it is the label that keeps a store outage from being drawn as a wave of completions.
+    finished and the terminal write was **not acknowledged**, which is not the same as not
+    applied: it may have committed and lost its acknowledgement, leaving the row already
+    terminal, or it may never have run, leaving the row ``RUNNING`` for recovery to re-claim.
+    The worker cannot tell, and says so rather than guessing. Any sustained rate of it means
+    the run store is unreachable; it is the label that keeps a store outage from being drawn
+    as a wave of completions.
     """
 
     _tracer: Tracer = attrs.field(alias="tracer")

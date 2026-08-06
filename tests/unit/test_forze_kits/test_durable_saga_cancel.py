@@ -528,6 +528,14 @@ class TestCancelAfterThePivot:
         holder: dict[str, str] = {}
         seen = {"stamped_mid_run": False}
         calls = {"n": 0}
+        writes = {"n": 0}
+
+        real_refuse = MockDurableRunStore.refuse_cancel
+
+        async def counted_refuse(self, run_id, *, fence=None):  # type: ignore[no-untyped-def]
+            writes["n"] += 1
+
+            return await real_refuse(self, run_id, fence=fence)
 
         async def ship(_ctx: ExecutionContext, state: OrderCtx) -> OrderCtx:
             calls["n"] += 1
@@ -560,10 +568,17 @@ class TestCancelAfterThePivot:
         )
 
         runner, run_id = await _drive(ctx, saga, holder)
-        result = await runner.run_now(ctx, "order", idempotency_key="k")
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(MockDurableRunStore, "refuse_cancel", counted_refuse)
+            result = await runner.run_now(ctx, "order", idempotency_key="k")
 
         assert result.status is DurableRunStatus.COMPLETED
         assert seen["stamped_mid_run"] is True  # persisted before the run ended, not after
+
+        # Exactly once: the heartbeat wrote it, so the runner's ``finally`` backstop stands
+        # down. The two writers share one flag rather than both paying for the stamp.
+        assert writes["n"] == 1
 
         landed = await store.load(run_id)
         assert landed is not None
