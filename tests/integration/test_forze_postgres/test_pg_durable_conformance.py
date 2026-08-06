@@ -278,11 +278,35 @@ async def _cancel_scenario(store: DurableRunStorePort) -> dict[str, Any]:
     )
 
     await store.refuse_cancel(refused.run_id, fence=refused_holder.attempts)
+    mid_flight = await store.load(refused.run_id)
+    out["refused_while_running"] = (
+        mid_flight is not None and mid_flight.cancel_refused_at is not None
+    )
+
     await store.complete(refused.run_id, output_json={"forward": True}, fence=refused_holder.attempts)
     completed = await store.load(refused.run_id)
     out["refused_status"] = None if completed is None else completed.status.value
     out["refused_asked"] = completed is not None and completed.cancel_requested_at is not None
     out["refused_stamped"] = completed is not None and completed.cancel_refused_at is not None
+
+    # 7b. Refusing a run that has ALREADY landed — the ordering production actually takes,
+    # and the one the "not guarded on RUNNING" promise exists for. The runner stamps the
+    # refusal from its ``finally``, which runs after the terminal write, so a store that
+    # quietly guarded this write like every other terminal write would drop every real
+    # refusal while passing the mid-flight case above.
+    late = await store.enqueue("cancel-refused-late", input_json=None)
+    late_holder = await store.begin(late.run_id, lease_for=timedelta(minutes=5))
+    assert late_holder is not None
+
+    await admin.request_cancel(late.run_id)
+    await store.complete(late.run_id, output_json={"forward": True}, fence=late_holder.attempts)
+    await store.refuse_cancel(late.run_id, fence=late_holder.attempts)
+
+    landed_late = await store.load(late.run_id)
+    out["late_refusal_status"] = None if landed_late is None else landed_late.status.value
+    out["late_refusal_stamped"] = (
+        landed_late is not None and landed_late.cancel_refused_at is not None
+    )
 
     # 9. The deadline terminal is its own state on both engines.
     expired = await store.enqueue("timed-out", input_json=None)
@@ -431,7 +455,14 @@ class TestDurableMockVsPostgres:
         assert mock_out["late_complete_output"] is None
 
         assert mock_out["refused_status"] == "completed"
+        assert mock_out["refused_while_running"] is True
         assert (mock_out["refused_asked"], mock_out["refused_stamped"]) == (True, True)
+
+        # The refusal survives being written against an already-terminal run: unlike every
+        # other write on this port it is not guarded on RUNNING, and that is exactly the
+        # ordering the runner produces (the stamp goes down in a ``finally``).
+        assert mock_out["late_refusal_status"] == "completed"
+        assert mock_out["late_refusal_stamped"] is True
 
         assert mock_out["timed_out_status"] == "timed_out"
         assert mock_out["timed_out_error"] == "cap exceeded"
