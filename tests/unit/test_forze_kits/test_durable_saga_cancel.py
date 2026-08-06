@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from time import perf_counter
 
 import pytest
 from pydantic import BaseModel
@@ -566,6 +567,88 @@ class TestCancelAfterThePivot:
         landed = await store.load(run_id)
         assert landed is not None
         assert landed.cancel_refused_at is not None
+
+    async def test_a_slow_refusal_write_does_not_stretch_the_renewal_cadence(self) -> None:
+        # The renewal loop has no spare capacity: at ``heartbeat_divisor=2`` one sleep plus
+        # one renewal already spend the whole lease. A refusal write bolted on top would push
+        # the next renewal past expiry — so a still-running post-pivot saga would lose its
+        # lease to a second worker, which is the double-execution the heartbeat exists to
+        # prevent, caused by the bookkeeping added to make cancellation safer.
+        ctx = context_from_modules(MockDepsModule())
+        admin = resolve_durable_run_admin(ctx)
+        store = resolve_durable_run_store(ctx)
+
+        effects: list[str] = []
+        holder: dict[str, str] = {}
+        renewals: list[float] = []
+        calls = {"n": 0}
+
+        real_renew = MockDurableRunStore.renew
+        real_refuse = MockDurableRunStore.refuse_cancel
+
+        async def timed_renew(self, run_id, *, lease_for, fence):  # type: ignore[no-untyped-def]
+            renewals.append(perf_counter())
+
+            return await real_renew(self, run_id, lease_for=lease_for, fence=fence)
+
+        async def slow_refuse(self, run_id, *, fence=None):  # type: ignore[no-untyped-def]
+            # Most of a heartbeat interval, but inside the write's own timeout so it lands.
+            await asyncio.sleep(0.08)
+
+            return await real_refuse(self, run_id, fence=fence)
+
+        async def ship(_ctx: ExecutionContext, state: OrderCtx) -> OrderCtx:
+            calls["n"] += 1
+            effects.append("do:ship")
+
+            if calls["n"] == 1:
+                assert await admin.request_cancel(holder["run_id"]) is True
+                await asyncio.sleep(1.0)  # cancelled; the saga refuses and re-runs us
+
+            await asyncio.sleep(0.6)  # keep going forward across several beats
+
+            return OrderCtx(trail=[*state.trail, "ship"])
+
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                _step("charge", effects, kind=SagaStepKind.PIVOT),
+                SagaStep(
+                    name="ship",
+                    action=ship,
+                    compensation=None,
+                    kind=SagaStepKind.RETRYABLE,
+                    tx_route="mock",
+                    idempotent=True,
+                ),
+            ),
+        )
+
+        registry = DurableFunctionRegistry()
+        registry.register("order", durable_saga_handler(saga, OrderCtx))
+        runner = DurableFunctionRunner(
+            registry=registry,
+            lease_for=timedelta(milliseconds=200),  # heartbeat every 100 ms
+            heartbeat_divisor=2,
+        )
+
+        record = await store.enqueue(
+            "order", input_json=OrderCtx().model_dump(mode="json"), idempotency_key="k"
+        )
+        holder["run_id"] = record.run_id
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(MockDurableRunStore, "renew", timed_renew)
+            patch.setattr(MockDurableRunStore, "refuse_cancel", slow_refuse)
+            result = await runner.run_now(ctx, "order", idempotency_key="k")
+
+        assert result.status is DurableRunStatus.COMPLETED
+
+        # Every gap stays near the 100 ms cadence. Uncompensated, the beat carrying the
+        # 80 ms write would stretch to ~180 ms and close on the 200 ms lease it protects.
+        gaps = [b - a for a, b in zip(renewals, renewals[1:], strict=False)]
+        assert len(gaps) >= 3, f"too few renewals to judge the cadence: {renewals}"
+        assert max(gaps) < 0.14, f"a renewal drifted toward the lease: {gaps}"
 
     async def test_refusal_is_recorded_even_when_the_step_swallows_the_cancel(self) -> None:
         # The refusal branch in `_advance` only runs when the CancelledError escapes the step

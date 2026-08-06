@@ -655,8 +655,13 @@ class DurableFunctionRunner:
         seconds = self._heartbeat_seconds()
         refusal_written = False
 
+        # Time until the *next* renewal. Normally one interval; shortened when extra work in
+        # this loop has already eaten into it, so a renewal never drifts past the lease.
+        delay = seconds
+
         while True:
-            await asyncio.sleep(seconds)
+            await asyncio.sleep(delay)
+            delay = seconds
 
             try:
                 # Bounded by the heartbeat interval: a renewal that cannot complete
@@ -718,6 +723,15 @@ class DurableFunctionRunner:
                 #
                 # Failure is not fatal: the write is retried on the next beat and the
                 # runner's own ``finally`` is the backstop (the stamp is idempotent).
+                #
+                # Charged to the *sleep*, never to the lease. The renewal cadence has no
+                # spare capacity: at ``heartbeat_divisor=2`` one sleep plus one renewal
+                # already spend the whole lease, so a slow write left to run on top of that
+                # would push the next renewal past expiry and hand a still-executing saga to
+                # a second worker — the exact double-execution the heartbeat exists to
+                # prevent, caused by the bookkeeping meant to make cancellation safer.
+                started = perf_counter()
+
                 try:
                     async with asyncio.timeout(seconds):
                         await store.refuse_cancel(run_id, fence=fence)
@@ -731,6 +745,8 @@ class DurableFunctionRunner:
                         run_id,
                         exc_info=True,
                     )
+
+                delay = max(0.0, seconds - (perf_counter() - started))
 
     # ....................... #
 
