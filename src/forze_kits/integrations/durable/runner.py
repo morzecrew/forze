@@ -514,6 +514,23 @@ class DurableFunctionRunner:
         try:
             return await body
 
+        except _LeaseLost:
+            raise
+
+        except Exception:
+            # A body may convert the cancellation we delivered into an exception of its own —
+            # the saga executor turns an interrupted rollback into ``saga.compensation_failed``
+            # so a partial rollback is not reported as a clean stop. That conversion must not
+            # outrank a lease loss: if the heartbeat says we no longer hold the run, the
+            # outcome is not ours to record. Writing it anyway is a no-op when another worker
+            # already claimed the run, but a renewal *error* leaves the fence valid — and then
+            # a transient blip during a rollback would terminally FAIL a run that recovery
+            # should have replayed.
+            if reclaimed.is_set():
+                raise _LeaseLost from None
+
+            raise
+
         except asyncio.CancelledError:
             # Four causes arrive as one exception, so they are told apart by which watcher
             # fired. A reclaim wins outright: without the lease nothing we write lands. An
@@ -575,6 +592,17 @@ class DurableFunctionRunner:
 
     # ....................... #
 
+    def _heartbeat_seconds(self) -> float:
+        """The lease-renewal cadence, and the bound on any store call made alongside a body.
+
+        ``heartbeat_divisor`` is floored at 2 so a renewal always lands before the lease
+        expires; a single missed beat still leaves headroom.
+        """
+
+        return (self.lease_for / max(self.heartbeat_divisor, 2)).total_seconds()
+
+    # ....................... #
+
     async def _cancel_pending_on_record(
         self,
         store: DurableRunStorePort,
@@ -588,7 +616,13 @@ class DurableFunctionRunner:
         """
 
         try:
-            record = await store.load(run_id)
+            # Bounded like the heartbeat's own renewal, and for the same reason turned
+            # inside out: this read runs *after* the deadline fired, on the path whose entire
+            # job is to free the recovery slot. Left unbounded, a hung connection would hold
+            # the run ``RUNNING`` indefinitely — the deadline's guarantee defeated by the
+            # check that decides what to call the deadline.
+            async with asyncio.timeout(self._heartbeat_seconds()):
+                record = await store.load(run_id)
 
         except Exception:
             # Best effort — a read failure here must not turn a real deadline into an error.
@@ -618,8 +652,8 @@ class DurableFunctionRunner:
         reclaimed: asyncio.Event,
         cancel: DurableCancelSignal,
     ) -> None:
-        interval = self.lease_for / max(self.heartbeat_divisor, 2)
-        seconds = interval.total_seconds()
+        seconds = self._heartbeat_seconds()
+        refusal_written = False
 
         while True:
             await asyncio.sleep(seconds)
@@ -672,6 +706,31 @@ class DurableFunctionRunner:
                 logger.info("Durable run %s was asked to stop; cancelling its body", run_id)
                 cancel.request()
                 body.cancel()
+
+            if cancel.refused and not refusal_written:
+                # Persist the refusal here rather than waiting for the run to finish. A saga
+                # past its pivot refuses in memory and can then spend minutes completing
+                # forward; if the worker dies in that window the row would carry an ask with
+                # no refusal, and recovery would read it as an ordinary cancel-stamped run
+                # and land it CANCELLED — abandoning a saga that had already committed at its
+                # point of no return. Writing on the next beat shrinks that window from the
+                # whole forward-completion to a single interval.
+                #
+                # Failure is not fatal: the write is retried on the next beat and the
+                # runner's own ``finally`` is the backstop (the stamp is idempotent).
+                try:
+                    async with asyncio.timeout(seconds):
+                        await store.refuse_cancel(run_id, fence=fence)
+
+                    refusal_written = True
+
+                except Exception:
+                    logger.warning(
+                        "Durable run %s could not record its cancel refusal on this "
+                        "heartbeat; retrying on the next one",
+                        run_id,
+                        exc_info=True,
+                    )
 
     # ....................... #
 

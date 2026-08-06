@@ -238,6 +238,65 @@ class TestCancelBeforeThePivot:
         # And the rollback really was cut short — ``reserve`` never undid anything.
         assert "undo:reserve" not in effects
 
+    async def test_a_lease_lost_during_rollback_leaves_the_run_for_recovery(self) -> None:
+        # Converting an interrupted rollback into ``saga.compensation_failed`` must not
+        # outrank a lease loss. A renewal *error* (a DB blip) is treated as lease loss while
+        # the fence is still valid — so a terminal write would actually land, marking a run
+        # FAILED that recovery should have replayed, with the rollback half-done.
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        store = resolve_durable_run_store(ctx)
+
+        effects: list[str] = []
+        holder: dict[str, str] = {}
+        renewals = {"n": 0}
+
+        real_renew = MockDurableRunStore.renew
+
+        async def flaky_renew(self, run_id, *, lease_for, fence):  # type: ignore[no-untyped-def]
+            renewals["n"] += 1
+
+            if renewals["n"] == 1:
+                # First beat: report the ask, so the saga starts compensating.
+                await self.request_cancel(run_id)
+
+                return await real_renew(self, run_id, lease_for=lease_for, fence=fence)
+
+            raise RuntimeError("the database blinked")  # → treated as lease loss
+
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                _step("reserve", effects, comp_delay=5.0),
+                _step("charge", effects, delay=5.0),
+                _step("ship", effects, kind=SagaStepKind.PIVOT),
+            ),
+        )
+
+        registry = DurableFunctionRegistry()
+        registry.register("order", durable_saga_handler(saga, OrderCtx))
+        runner = DurableFunctionRunner(
+            registry=registry, lease_for=_FAST_LEASE, heartbeat_divisor=2
+        )
+
+        record = await store.enqueue(
+            "order", input_json=OrderCtx().model_dump(mode="json")
+        )
+        holder["run_id"] = record.run_id
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(MockDurableRunStore, "renew", flaky_renew)
+            assert await runner.recover(ctx) == 1
+
+        landed = await store.load(record.run_id)
+        assert landed is not None
+
+        # No terminal write from a holder that cannot prove it still owns the run: it stays
+        # RUNNING for the recovery scan to reclaim and replay.
+        assert landed.status is DurableRunStatus.RUNNING
+        assert landed.status is not DurableRunStatus.FAILED
+        assert landed.error is None
+
     async def test_the_un_compensated_tally_counts_only_steps_that_have_a_rollback(
         self,
     ) -> None:
@@ -449,6 +508,64 @@ class TestCancelAfterThePivot:
         assert landed is not None
         assert landed.cancel_requested_at is not None
         assert landed.cancel_refused_at is None
+
+    async def test_the_refusal_is_persisted_while_the_saga_is_still_going_forward(
+        self,
+    ) -> None:
+        # A refusal written only in the runner's ``finally`` is invisible for as long as the
+        # saga takes to complete forward — minutes, potentially. Die in that window and the
+        # row carries an ask with no refusal, which recovery reads as an ordinary
+        # cancel-stamped run and lands CANCELLED, abandoning a saga past its pivot. So the
+        # heartbeat writes it: here the body itself reads the row mid-flight and must already
+        # see the stamp, long before the run finishes.
+        ctx = context_from_modules(MockDepsModule())
+        admin = resolve_durable_run_admin(ctx)
+        store = resolve_durable_run_store(ctx)
+
+        effects: list[str] = []
+        holder: dict[str, str] = {}
+        seen = {"stamped_mid_run": False}
+        calls = {"n": 0}
+
+        async def ship(_ctx: ExecutionContext, state: OrderCtx) -> OrderCtx:
+            calls["n"] += 1
+            effects.append("do:ship")
+
+            if calls["n"] == 1:
+                assert await admin.request_cancel(holder["run_id"]) is True
+                await asyncio.sleep(1.0)  # cancelled here; the saga refuses and re-runs us
+
+            # Second pass — still going forward. Give the heartbeat a beat, then look.
+            await asyncio.sleep(0.15)
+            mid = await store.load(holder["run_id"])
+            seen["stamped_mid_run"] = mid is not None and mid.cancel_refused_at is not None
+
+            return OrderCtx(trail=[*state.trail, "ship"])
+
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                _step("charge", effects, kind=SagaStepKind.PIVOT),
+                SagaStep(
+                    name="ship",
+                    action=ship,
+                    compensation=None,
+                    kind=SagaStepKind.RETRYABLE,
+                    tx_route="mock",
+                    idempotent=True,
+                ),
+            ),
+        )
+
+        runner, run_id = await _drive(ctx, saga, holder)
+        result = await runner.run_now(ctx, "order", idempotency_key="k")
+
+        assert result.status is DurableRunStatus.COMPLETED
+        assert seen["stamped_mid_run"] is True  # persisted before the run ended, not after
+
+        landed = await store.load(run_id)
+        assert landed is not None
+        assert landed.cancel_refused_at is not None
 
     async def test_refusal_is_recorded_even_when_the_step_swallows_the_cancel(self) -> None:
         # The refusal branch in `_advance` only runs when the CancelledError escapes the step
