@@ -1,6 +1,6 @@
 ---
 name: self-audit
-description: Adversarially audit your own just-finished work — a branch after RFC/feature execution, a fix series, a document set — hunting for defects you introduced, before merge or handoff. Use whenever the user says "do self-audit", "audit your work", "self-audit this branch", "check your own changes", or asks to review what was just built before merging; also applicable to non-code deliverables (docs, configs, infra).
+description: Adversarially audit your own just-finished work — a branch after RFC/feature execution, a fix series, a document set — hunting for defects you introduced, before merge or handoff. Use whenever the user says "do self-audit", "audit your work", "self-audit this branch", "check your own changes", "double-check what you built", "review your own diff", or asks to find the bugs in work you produced before merging or handing it off; also applicable to non-code deliverables (docs, configs, infra).
 ---
 
 # Self-Audit
@@ -48,7 +48,7 @@ Any helper answering "is X a prefix/suffix/subset/match of Y" — or any reduce-
 
 ### 4. Discipline drift against the surroundings
 
-New code must follow the invariants its file already enforces: if every mutation in the file is under a lock, is yours? If every sibling classifies errors before retrying, does yours? Inconsistency here is either a real defect (a race, a swallowed error) or a misleading signal for the next reader — both are findings. For documents: does the new section follow the structure, terminology, and claims discipline of its siblings?
+New code must follow the invariants its file already enforces: if every mutation in the file is under a lock, is yours? If every sibling classifies errors before retrying, does yours? Inconsistency here is either a real defect (a race, a swallowed error) or a misleading signal for the next reader — both are findings. Concurrency and security drift deserve the hardest look because running the code doesn't reveal them: a mutation outside the file's locking discipline, new external input reaching an interpreter or a path join, a permission widened "temporarily", a secret in a log line or test fixture. For documents: does the new section follow the structure, terminology, and claims discipline of its siblings?
 
 ### 5. Failure paths and unreachable branches
 
@@ -58,11 +58,11 @@ Give **cleanup paths** their own pass — `finally` blocks, teardown hooks, defe
 
 ### 6. Duplication you introduced
 
-Executing a multi-part change tempts copy-paste: the same setup block in four test legs, the same classify-or-reraise stanza twice in one file. Find your repeats and extract them — duplication found *now* is cheap; found later it has already diverged.
+Executing a multi-part change tempts copy-paste: the same setup block in four test legs, the same classify-or-reraise stanza twice in one file. Find your repeats and extract them — duplication found *now* is cheap; found later it has already diverged. (The `less-code-same-behavior` skill is this pass at codebase scale, including when the honest verdict is to leave a repeat alone.)
 
 ### 7. Lies in prose
 
-Comments, docstrings, error messages, and docs written during execution drift from what the code finally does. Re-read every prose claim in the diff against the behavior beside it: a comment saying "only a mapping guard" when the code also handles a second case, a doc promising "one-line migration" when the honest claim is a re-encryption sweep. Over-claims and stale claims are defects — the reader trusts prose *more* than code.
+Comments, docstrings, error messages, and docs written during execution drift from what the code finally does. Re-read every prose claim in the diff against the behavior beside it: a comment saying "only a mapping guard" when the code also handles a second case, a doc promising "one-line migration" when the honest claim is a re-encryption sweep. Over-claims and stale claims are defects — the reader trusts prose *more* than code. Names are prose too: a helper named `ensure_x` that sometimes doesn't, a variable named for what it used to hold. A lying name misleads at every call site, not just where it's defined.
 
 ### 8. Your own fixes
 
@@ -74,7 +74,7 @@ Distrust every "tested" and "covered" claim, including your own — reading a te
 
 - **Run the suite** — actually run it, in the audit, and report the real output.
 - **Verified-red:** for each fix, is there a test that demonstrably fails without the fix? If it wasn't run red, you don't know it guards anything.
-- **Sabotage spot-checks:** for load-bearing checks, break the guarded behavior and confirm the check fails. When a sabotage *passes*, don't conclude "blind check" or "fine" — find out **why** (it may be a second, independent guard; it may be a dead assertion). The why is the finding.
+- **Sabotage spot-checks:** for load-bearing checks, break the guarded behavior and confirm the check fails. When a sabotage *passes*, don't conclude "blind check" or "fine" — find out **why** (it may be a second, independent guard; it may be a dead assertion). The why is the finding. This is mutation testing by hand — PIT and Stryker automate the sweep and score it as killed over non-equivalent mutants — and a surviving sabotage is the literature's *equivalent mutant* question: whether a mutation changes behavior at all is undecidable in general, which is why the tool stops at "survived" and the why is yours to find.
 - **Patch coverage:** measure coverage of the new lines specifically, with the full test profile (unit-only can be wildly misleading). The gaps that matter most are **detection branches** — code that only runs when the bug it detects is present, which is exactly the code that must not be dead.
 - **Sabotage and coverage are not substitutes — run both, in that order.** Sabotage only probes the code you thought to mutate, so a clean sweep measures your imagination rather than your tests — and it leaves you *feeling* finished, which is exactly when you stop looking. Coverage finds the branch you never considered at all. When the two disagree, coverage is the one saying something new: a sabotage sweep that passes everything, sitting next to an uncovered detection branch, means that branch is dead — not that it is safe.
 
@@ -88,3 +88,9 @@ The passes generalize: spec fidelity (§1) and prose honesty (§7) apply verbati
 - **Report findings, not activities.** For each finding: where, what's wrong, why it matters (the concrete failure it causes), and its status — fixed or open. Rank by severity.
 - **State the scope and the residue.** What was audited, what wasn't, and what you'd still distrust. "No findings" on a large branch demands an explanation of why the audit is believed thorough rather than shallow.
 - **Distill rules.** When a finding generalizes, record it as a one-line rule ("any suffix/subset helper needs its empty case decided explicitly"; "test a wrapper against every state of the vocabulary it wraps") — these compound across future work. If the project keeps notes or memory, put them there.
+
+## Related skills
+
+- `reading-isnt-proof` — pass 9's discipline expanded into a full method for multi-implementation contracts
+- `fewer-tests-more-proof` — when the audit's real finding is the suite itself: ritual tests, per-backend copies, flake-retry volume
+- `less-code-same-behavior` — pass 6 at codebase scale, with the same NO ACTION discipline

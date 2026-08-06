@@ -1,60 +1,57 @@
 ---
 name: never-nesting
-description: Keep code flat and readable by limiting indentation depth, using guard clauses with early returns, and extracting nested blocks into well-named functions. Use when writing or refactoring code with deep nesting, pyramid-shaped if/else, arrow code, or when the user mentions nesting, indentation, guard clauses, early returns, extracting functions, cyclomatic complexity, or making code more readable.
+description: Flatten deeply nested code using guard clauses, early return/continue, function extraction, and error-handling redesign - and recognize when nesting should stay (symmetric branches, RAII/defer cleanup idioms). Use when writing or refactoring code with deep indentation, pyramid-of-doom or arrow-shaped if/else, nested loops or try/catch blocks, a buried happy path, or when the user mentions nesting, indentation, guard clauses, early returns, flattening or simplifying conditionals, or cyclomatic/cognitive complexity.
 ---
 
 # Never Nesting
 
-A style for keeping code flat instead of letting it drift into ever-deeper inner
-blocks. Each level of indentation forces the reader to hold one more condition in
-their head at once, so reducing depth directly reduces the cognitive load of
-reading a function.
+Each level of indentation is one more condition the reader must hold as true to
+understand the innermost line. SonarSource's cognitive-complexity metric
+formalizes this: every control structure costs +1, **plus +1 for each level of
+nesting it sits under**. Four sequential guard clauses cost 4; the same logic as
+four nested `if`s costs 1+2+3+4 = 10. Nesting doesn't add difficulty linearly —
+it compounds. The Linux kernel style guide puts it bluntly: "if you need more
+than 3 levels of indentation, you're screwed anyway, and should fix your
+program."
 
-The guideline (popularized by the Linux kernel coding style, which famously
-warns that "if you need more than three levels of indentation, you're screwed
-anyway and should fix your program") is to treat **three levels of indentation as
-a soft ceiling**. When a function pushes past that, it is usually a signal to
-restructure rather than to indent further.
-
-There are two complementary techniques for flattening code: **inversion** (guard
-clauses with early returns) and **extraction** (pulling a block into its own
-function). Most messy functions improve by applying both.
+Treat **three levels as a soft ceiling** and a fourth as a refactoring signal,
+not a formatting problem. The moves below flatten code; the last section covers
+the cases where flattening makes code worse.
 
 ## Use this skill when
 
-- Writing a new function that is starting to grow nested `if`/`for`/`try` blocks.
-- Refactoring "arrow code" or pyramid-shaped conditionals (`if { if { if { ... }}}`).
-- The happy path is buried several indents deep while error/edge cases wrap around it.
-- Reviewing code and flagging readability or complexity problems.
-- The user mentions nesting, indentation, guard clauses, early returns, flattening, or extracting functions.
+- Writing a function that is growing nested `if`/`for`/`try` blocks.
+- Refactoring arrow code / pyramid-of-doom conditionals (`if { if { if { ... }}}`).
+- The happy path sits several indents deep with error handling wrapped around it.
+- Reviewing code for readability or a complexity-metric violation.
+- The user mentions nesting, guard clauses, early returns, or flattening conditionals.
 
 ## Do not use this skill when
 
 - The user explicitly wants the existing structure preserved.
-- Flattening would fight a language idiom that genuinely reads better nested (see Nuance).
+- Both branches of a conditional are equally normal behavior (see "When not to flatten").
+- Manual resource cleanup makes early returns leak (see "When not to flatten").
 
-## Why depth hurts
+## The move-set
 
-Counting one level of indentation per open block, a plain function is 1 deep, one
-`if` makes it 2, a loop inside that makes it 3. Every extra level adds another
-condition the reader must keep simultaneously true in their mind to understand the
-innermost line. Flattening lets the reader mentally discard each condition as they
-pass it and focus on the core logic.
+| Move | Use when | Effect |
+| --- | --- | --- |
+| Guard clause (invert + early return) | edge/error cases wrap the happy path | happy path drops to base indent |
+| `continue` / `break` | per-item conditions nest a loop body | loop body flattens |
+| Extract function | a nested block is a coherent, nameable unit | resets nesting to zero; names intent |
+| Define errors out of existence | every caller must check or catch | the error branch disappears entirely |
+| Aggregate error handling | `try`/`catch` wraps each individual call | one handler at one level |
+| Dispatch table / pattern match | nested `if`/`else` selects among cases | branching becomes data |
 
-Flattening is not just cosmetic. The pressure to stay shallow naturally pushes you
-toward small, single-responsibility functions instead of one large function that
-does many things at once.
+## Guard clauses: invert, fail fast, return early
 
-## Technique 1: Inversion (guard clauses + early return)
-
-When the happy path is wrapped in nested conditions, **invert each condition,
-handle the unhappy case first, and return early**. The error/edge cases collect at
-the top as a "gatekeeping" section that declares the function's requirements, and
-the real work drops to the bottom at the lowest indentation.
-
-**Before** — happy path buried, reader holds 3 conditions at once:
+Fowler's "Replace Nested Conditional with Guard Clauses": handle each unusual
+case first with an immediate `return`/`raise`, so the remaining code needs no
+`else` and the real work sits at base indentation. The guards read as a
+declaration of the function's preconditions.
 
 ```python
+# Before: reader holds 3 conditions to understand the core 3 lines
 def save(user, payload):
     if user is not None:
         if user.is_active:
@@ -62,88 +59,70 @@ def save(user, payload):
                 record = build_record(payload)
                 store(record)
                 return record
-
             else:
                 raise InvalidPayload()
-
         else:
             raise InactiveUser()
-
     else:
         raise MissingUser()
-```
 
-**After** — invert the conditions, fail fast, happy path is flat:
-
-```python
+# After: each condition is discharged, then forgotten
 def save(user, payload):
     if user is None:
         raise MissingUser()
-
     if not user.is_active:
         raise InactiveUser()
-
     if not payload.is_valid():
         raise InvalidPayload()
 
     record = build_record(payload)
     store(record)
-
     return record
 ```
 
-The mechanical steps:
-
-1. Flip the outer condition to its negation and `return`/`raise`/`continue` early.
-2. Because the function exits in that branch, the `else` is now redundant — promote
-   its body up one level (delete the `else`).
-3. Repeat for the next condition until the happy path sits at the base indent.
-
-Inside loops the same move uses `continue` (or `break`) instead of `return`:
+Mechanics: (1) negate the outermost condition and exit early in that branch;
+(2) the `else` is now dead — delete it and promote its body one level;
+(3) repeat inward until the happy path is flat. Inside loops, the same inversion
+uses `continue` (or `break`) instead of `return`:
 
 ```python
 for item in items:
     if item.skip:
         continue
-
     process(item)
 ```
 
-## Technique 2: Extraction
+If several guards share the same failure response, one combined condition
+(`if not (a and b and c): raise ...`) can beat three separate guards — choose
+whichever states the requirement most directly.
 
-When a nested block is a coherent unit of work, **pull it into its own
-well-named function**. This removes a level of indentation at the call site and, just
-as importantly, gives the block a name — which often documents intent better than a
-comment would.
+## Extraction: name the block, reset the depth
 
-**Before** — the loop body is a deep, unnamed blob:
+When a nested block does one coherent thing, pull it into a function. This
+removes indentation at the call site, gives the block a name that documents
+intent, and — because complexity metrics assess each function separately —
+resets the nesting count to zero inside the new function.
 
 ```python
+# Before: the interesting logic starts 4 levels deep
 def process_downloads(downloads):
     for d in downloads:
         if d.state == "in_progress":
             result = d.process()
-
             if result.is_error():
                 if result.retriable and d.retries < 3:
                     d.retries += 1
                     d.state = "pending"
-                    
                 else:
                     fail(d)
-```
 
-**After** — extract the per-item handling; the loop reads as a summary:
-
-```python
+# After: the loop is a summary; the extracted function is guard-flat
 def process_downloads(downloads):
     for d in downloads:
         if d.state == "in_progress":
-            process_in_progress(d)
+            handle_result(d, d.process())
 
-
-def process_in_progress(d):
-    result = d.process()
+def handle_result(d, result):
     if not result.is_error():
         return
     if result.retriable and d.retries < 3:
@@ -153,37 +132,66 @@ def process_in_progress(d):
     fail(d)
 ```
 
-Extraction shines on large functions with several distinct phases: lift each phase
-into its own function so the top-level function becomes a readable outline of the
-high-level steps, and any single function you drill into stays concise.
+For a long function with distinct phases, extract each phase so the top level
+reads as an outline. Real refactors alternate the moves: extract to drop a
+level, then invert inside the extraction.
 
-## Combine both
+## Flatten error handling at the source
 
-Real refactors alternate the two: extract a chunk to drop a level, then invert the
-conditions inside the extracted function so its happy path is flat too. Apply
-repeatedly until no function exceeds the ~3-level ceiling and each does one thing.
+Nesting is often not a control-flow problem but an API-design problem. Two
+moves from Ousterhout's *A Philosophy of Software Design*:
 
-## Nuance — don't flatten dogmatically
+- **Define errors out of existence.** Redesign the operation so the "error"
+  case is normal behavior and the branch vanishes for every caller. Deleting a
+  missing key throws → make deletion idempotent (succeed if already absent).
+  Out-of-range substring throws (Java) → clamp to the valid range (Python
+  slicing). One API change deletes a `try`/`except` from every call site.
+- **Aggregate exception handling.** Instead of wrapping each call in its own
+  `try`/`catch` (pyramids of handlers), let exceptions propagate to a single
+  handler at the level that can actually respond — a request-level error
+  handler, a per-item `try` around the loop body, a top-level retry loop.
 
-The three-level rule is a smell detector, not a law. Keep judgment in the loop:
+## Replace conditional trees with data or idioms
 
-- **Don't extract a function used exactly once if the name adds no information** and
-  the block is trivial. A guard clause is often enough on its own.
-- **Don't invert when it inverts the meaning.** If the natural reading is "do X only
-  when all of these hold", a single combined condition (`if a and b and c:`) can be
-  clearer than three separate guards — pick whichever makes intent obvious.
-- **Respect language idioms.** Context managers (`with`), pattern matching, and
-  comprehensions remove nesting more naturally than guard clauses in some languages;
-  reach for those first where they fit.
-- **Early returns vs. single-exit.** Guard-clause early returns are the point of
-  inversion. If a codebase enforces single-exit, prefer extraction over inversion.
+- A nested `if`/`else` chain that maps a value to behavior is a **dispatch
+  table**: `handlers[kind](payload)` — branching becomes a data lookup.
+- Prefer built-in flat forms where the language has them: pattern matching
+  (`match`/`switch` with cases), comprehensions and `filter`/`map` for
+  filter-inside-loop, `with`/`using` for acquire-release nesting.
 
-The goal is reduced cognitive load and clear single-responsibility functions — not a
-zero-indentation contest.
+## When not to flatten
+
+- **Symmetric branches.** A guard clause signals "this branch is not what the
+  function is about." Fowler's rule: use guards when one branch is the unusual
+  case; when **both branches are normal behavior** (`days = 366 if leap else
+  365`, buy vs sell), keep `if`/`else` (or a conditional expression) so both
+  get equal emphasis — a guard would falsely mark one as an error path.
+- **Manual cleanup languages.** Early return is safe only when cleanup runs
+  automatically: RAII destructors (C++/Rust), `defer` (Go), context managers
+  (`with`), `try`/`finally`, `using` (C#). In C-style code with manual
+  `free`/`unlock`, extra returns leak resources; the flat idiom there is a
+  single `goto err` cleanup chain (the Linux kernel's own pattern) — don't
+  graft early returns onto it.
+- **Trivial one-off extraction.** Don't extract a two-line block used once if
+  the name adds nothing; a guard clause alone is often enough. Each extraction
+  also adds a definition the reader may have to chase.
+- **Single-exit codebases.** If the style guide bans early returns, flatten by
+  extraction and dispatch tables instead of inversion.
+
+The goal is fewer conditions held in the reader's head, not a zero-indent
+contest.
 
 ## Quick checklist
 
-- Is any function deeper than ~3 levels? If so, it is a candidate.
-- Can the happy path be moved to the lowest indent by handling edge cases first with early returns?
-- Is there a nested block that forms a coherent, nameable unit? Extract it.
-- After refactoring, does each function read as doing one thing, with a clear name?
+- Any function past ~3 levels? It's a candidate.
+- Can edge cases become guards so the happy path reaches base indent?
+- Is a nested block a nameable unit? Extract it.
+- Is the nesting caused by an API that throws where it could tolerate? Fix the API.
+- Is any branch you're about to guard actually normal behavior? Keep `if`/`else`.
+- Does an early return skip manual cleanup? Use the language's cleanup idiom first.
+
+## Related skills
+
+- `naming-things` — extraction only pays off if the new function's name informs; naming difficulty means the block isn't a coherent unit yet.
+- `self-documenting-code` — guard clauses and extracted functions document intent that comments would otherwise carry.
+- `less-code-same-behavior` — flattening often reveals duplicate branches that can be merged or deleted.
