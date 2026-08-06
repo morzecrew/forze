@@ -44,12 +44,16 @@ class DurableTelemetry:
     tenant, marked error on failure); ``forze.durable.runs`` (counter) +
     ``forze.durable.run.duration`` (histogram, ms) by name and outcome (``completed`` /
     ``failed`` / ``forward_incomplete`` / ``cancelled`` / ``timed_out`` / ``reclaimed`` /
-    ``unrecorded``); ``forze.durable.recovered`` (counter) for reclaimed runs; and
+    ``interrupted`` / ``unrecorded``); ``forze.durable.recovered`` (counter) for reclaimed runs; and
     ``forze.durable.schedule.fires`` (counter) per fire.
 
     ``cancelled`` and ``timed_out`` are separate outcome labels rather than shades of
     ``failed`` on purpose: an alert on the failure rate should not fire because an operator
     pressed Stop, and a run that outlived its cap is a capacity signal, not a defect.
+
+    ``interrupted`` means the body never finished — a drain, a shutdown, an external
+    cancellation — so no terminal write was ever attempted. It is the expected label during
+    a deploy, and is deliberately not folded into ``unrecorded`` below.
 
     ``unrecorded`` is the odd one out — it describes the *attempt*, not the run. The body
     finished and the terminal write was **not acknowledged**, which is not the same as not

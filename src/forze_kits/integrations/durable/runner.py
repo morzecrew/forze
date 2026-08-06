@@ -50,6 +50,14 @@ _RUN_TIMED_OUT_CODE = "durable.run_timed_out"
 """A run cancelled by the deadline watchdog. Distinct from an ordinary failure: it sends an
 operator to the cap or the workload's size, not to the body's code."""
 
+_INTERRUPTED_OUTCOME = "interrupted"
+"""Telemetry outcome for an execution stopped before its body finished.
+
+A drain, a shutdown, an external cancellation — nothing was written because nothing had a
+result to write yet. Kept apart from :data:`_UNRECORDED_OUTCOME` because that one means the
+store could not be reached, and folding a routine restart into it would page someone for an
+outage that is really a deploy."""
+
 _UNRECORDED_OUTCOME = "unrecorded"
 """Telemetry outcome for an execution whose terminal write never landed.
 
@@ -348,6 +356,9 @@ class DurableFunctionRunner:
         # a completion that never happened during the incident that stopped it — the run is
         # in fact still RUNNING and will be reclaimed. ``reclaimed`` is the one outcome set
         # without a write, because deciding not to write is what it means.
+        #
+        # The default stands for "a write was attempted and we never heard back", so every
+        # path that leaves it in place must be one that got as far as trying.
         outcome = _UNRECORDED_OUTCOME
         span_cm = self.telemetry.run_span(record) if self.telemetry is not None else nullcontext()
 
@@ -371,9 +382,20 @@ class DurableFunctionRunner:
 
                     return
 
-                outcome, escaped = await self._invoke_and_land(
-                    ctx, store, record, fence, cancel, span
-                )
+                try:
+                    outcome, escaped = await self._invoke_and_land(
+                        ctx, store, record, fence, cancel, span
+                    )
+
+                except asyncio.CancelledError:
+                    # Shutdown reached us before the body finished, so no terminal write was
+                    # ever attempted. That is a different fact from ``unrecorded``, which
+                    # says one *was* attempted and went unacknowledged — and since that label
+                    # is read as "the run store is unreachable", letting an ordinary drain
+                    # fall through to it would report every graceful shutdown as an outage.
+                    outcome = _INTERRUPTED_OUTCOME
+
+                    raise
 
                 if escaped is not None and reraise:
                     raise escaped

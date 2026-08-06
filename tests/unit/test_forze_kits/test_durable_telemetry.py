@@ -132,6 +132,44 @@ class TestRunTelemetry:
         assert labels["forze.durable.outcome"] != "completed"
         assert point.value == 1
 
+    async def test_a_drained_worker_is_interrupted_not_an_unreachable_store(self) -> None:
+        # An external cancellation stops the body before it has any result, so no terminal
+        # write is even attempted. That must not fall through to `unrecorded`, which reads
+        # as "the run store is unreachable" — otherwise every graceful deploy reports an
+        # outage on the one dashboard used to decide whether there is one.
+        import asyncio
+
+        tracer, meter, _exporter, reader = _otel()
+        ctx = context_from_modules(MockDepsModule())
+
+        registry = DurableFunctionRegistry()
+        running = asyncio.Event()
+
+        async def slow(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            running.set()
+            await asyncio.sleep(5.0)
+
+            return {"ok": True}  # pragma: no cover — the drain stops us first
+
+        registry.register("fn", slow)
+
+        runner = DurableFunctionRunner(
+            registry=registry,
+            telemetry=DurableTelemetry.create(tracer=tracer, meter=meter),
+        )
+
+        task = asyncio.create_task(runner.run_now(ctx, "fn"))
+        await running.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        ((labels, point),) = _points(reader, DURABLE_RUNS_COUNTER)
+        assert labels["forze.durable.outcome"] == "interrupted"
+        assert labels["forze.durable.outcome"] != "unrecorded"
+        assert point.value == 1
+
     async def test_failure_marks_span_error_and_counts_failed(self) -> None:
         tracer, meter, exporter, reader = _otel()
         ctx = context_from_modules(MockDepsModule())
