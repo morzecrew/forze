@@ -1,104 +1,141 @@
 ---
 name: naming-things
-description: Name variables, functions, classes, and modules well by avoiding known anti-patterns - single letters, abbreviations, types baked into names, missing units, "Base"/"Abstract" class names, and "Utils"/"Helper" grab-bags. Use when naming or renaming code, reviewing names in a diff, or when the user mentions naming, identifiers, variable names, readability, or that a name feels off.
+description: Choose clear names for variables, functions, classes, and modules - length proportional to scope, problem-domain vocabulary, honest booleans, units in names or types - and catch the anti-patterns (single letters, abbreviations, Hungarian type prefixes, negated booleans, Base/Abstract, Utils/Helper grab-bags, vague Manager/Handler words). Use when naming or renaming anything in code, reviewing identifiers in a diff, or when the user mentions naming, identifiers, variable names, renames, readability, "what should I call this", or that a name feels off.
 ---
 
 # Naming Things in Code
 
-Good names are hard to invent but easy to get wrong. You can reach roughly 80% of
-good naming just by recognizing and avoiding a handful of anti-patterns — each one,
-when you catch yourself doing it, pushes you toward a clearer name. A name's job is
-to tell the reader what something *is* and *means* at the point they read it,
-without forcing them to jump to its definition.
-
-A recurring theme: when a good name is genuinely hard to find, that difficulty is
-often a signal that the **code structure**, not the name, is the real problem.
+A name is read far more often than its definition. Its job is to tell the
+reader what something *is* and *means* at the point of use, without a jump to
+the declaration. Most good naming is achievable by following a few positive
+rules and refusing a known catalog of anti-patterns — and when a good name
+still won't come, that difficulty is design feedback: the **structure**, not
+the vocabulary, is usually the real problem.
 
 ## Use this skill when
 
 - Naming new variables, functions, classes, types, or modules.
 - Renaming during a refactor or cleanup.
-- Reviewing a diff and a name reads unclear, abbreviated, or generic.
-- The user mentions naming, identifiers, readability, or "what should I call this".
+- Reviewing a diff where a name reads unclear, abbreviated, generic, or misleading.
+- The user mentions naming, identifiers, readability, or asks what to call something.
 
 ## Do not use this skill when
 
 - A name is dictated by an external contract (serialized field, API schema, protocol) you cannot change.
-- A convention is enforced by the language/ecosystem (e.g. `i`/`j` in a tight numeric loop, `T` for a generic type parameter).
+- A convention is enforced by the ecosystem (`i`/`j` in a tight numeric loop, `T` for a generic type parameter, `self`/`this`).
 
-## Anti-patterns to avoid
+## Positive rules
 
-### 1. Single-letter names
+### Name length proportional to scope
 
-`d`, `x`, `t` carry no meaning and force the reader to infer the purpose from
-usage. Prefer a descriptive word. The conventional exceptions are tiny,
-well-understood scopes — a loop counter `i`, a coordinate `x`/`y`, a generic type
-`T` — where the meaning is unambiguous and the scope is a few lines.
+The farther from its declaration a name is used, the more it must explain.
+`i` is fine in a three-line loop where declaration and every use are visible at
+once; a module-level or exported name must carry full meaning on its own
+(`activeSessionCount`, not `cnt`). Code Complete cites Gorla, Benander &
+Benander: debugging effort was lowest with variable names averaging 10–16
+characters — a calibration point, not a quota. Short names aren't wrong;
+short names in **wide scopes** are.
 
-```python
-for d in downloads: ...      # what is d?
-for download in downloads: ...
-```
+### Problem-domain over solution-domain
 
-### 2. Abbreviations
+Name things for what they mean in the problem, not how the program handles
+them: `employeeRoster` not `inputRecord`, `printerReady` not `bitFlag`,
+`overdueInvoices` not `filteredList`. A domain expert reading the code should
+recognize their own vocabulary. Solution-domain names describe plumbing that
+the reader can already see; problem-domain names carry the intent they can't.
 
-Abbreviations save a few keystrokes and cost every future reader a moment of
-decoding. Spell words out: `cnt` → `count`, `usr` → `user`, `calcAmt` →
-`calculate_amount`. Editors autocomplete; brains do not.
+### Boolean names assert a fact
 
-### 3. Type baked into the name
-
-Don't encode the type in the identifier (`users_array`, `name_str`,
-`is_valid_bool`). The type system or the value already tells you that, and the name
-goes stale the moment the type changes. Name by *role*, not representation:
-`users`, `name`, `is_valid`.
-
-### 4. Missing units (the opposite rule — DO add these)
-
-Where a number carries a unit, the unit belongs **in the name**. `delay`, `size`,
-`weight` are ambiguous; `delay_ms`, `size_bytes`, `weight_kg` are not. This removes
-a whole class of bugs (seconds vs milliseconds) without a comment.
+Name booleans so `if <name>` reads as a true/false claim: `is_active`,
+`has_children`, `can_retry`, `should_flush`, or bare truth words (`done`,
+`found`, `error`). Keep the positive form — negated names force double
+negatives at the use site:
 
 ```python
-sleep(delay)        # seconds? milliseconds?
-sleep(delay_ms)
+if not user.is_not_verified: ...   # brain-twister
+if user.is_verified: ...
 ```
 
-### 5. Classes named "Base" or "Abstract"
+The same applies to flags: `disable_cache=False` reads worse than
+`enable_cache=True`.
 
-`BaseTruck` / `AbstractTruck` describe the code's mechanics, not the domain — and a
-`BaseTruck` still *is* a truck, so the prefix adds nothing for users of the class.
-If you extract a parent and struggle to name it, that usually means the **child**
-is mis-named: name the general concept `Truck`, and make the specific subclass more
-precise (`TrailerTruck`, `DumpTruck`). When you can't name the parent, rename the
-child instead.
+### Units in the name — or better, the type
 
-### 6. "Utils" / "Helper" grab-bags
+A bare number with an implicit unit is a bug generator (`sleep(delay)` —
+seconds or milliseconds?). Put the unit in the name: `delay_ms`, `size_bytes`,
+`weight_kg`, `timeout_s`. Where the language allows, a dedicated type
+(`Duration`, `Bytes`) is stronger still — the checker enforces what a name only
+suggests.
 
-A `utils` or `helpers` module is where functions go when no one decided where they
-belong. It grows without bound and tells the reader nothing about what is inside.
-Before reaching for it, ask where each function *actually* belongs — most can be
-sorted into modules with real, domain-meaningful names (`time_format`, `currency`,
-`url`). The grab-bag name is a symptom of a missing home.
+### One word per concept, consistent pairs
+
+Pick one verb per concept across the codebase — not `fetchUser`, `getAccount`,
+`retrieveOrder` for the same kind of operation. Keep pairs symmetric:
+`open/close`, `begin/end`, `add/remove`, `create/destroy`. Inconsistency makes
+readers hunt for distinctions that don't exist.
+
+### Names must be honest
+
+The name is a promise. A `get_user()` that creates the user, a `check_quota()`
+that mutates state, an `is_valid()` that performs I/O — each lies, and a lying
+name is worse than a vague one because the reader trusts it. If behavior grows
+beyond the name, rename (`get_or_create_user`) or split.
+
+## Anti-pattern catalog
+
+| Anti-pattern | Example | Fix |
+| --- | --- | --- |
+| Single letter in non-trivial scope | `for d in downloads` | `for download in downloads` |
+| Abbreviations | `cnt`, `usr`, `calcAmt` | `count`, `user`, `calculate_amount` |
+| Type baked into name (Hungarian) | `users_array`, `name_str` | name the role: `users`, `name` |
+| Missing unit | `delay`, `size` | `delay_ms`, `size_bytes` (or a unit type) |
+| Negated boolean | `not_found`, `disable_ssl` | `found`, `enable_ssl` |
+| Vague agent/filler words | `DataManager`, `InfoProcessor`, `RequestHandler2` | say what it does: `SessionCache`, `InvoiceParser` |
+| `Base` / `Abstract` prefix | `BaseTruck` → `Truck` | rename the **child** to be specific instead |
+| `Utils` / `Helpers` grab-bag | `utils.py` with 40 strays | real homes: `currency.py`, `url.py`, `time_format.py` |
+| Numbered variants | `data1`, `data2`, `processV2` | name the difference: `raw_rows`, `deduped_rows` |
+| Near-twin names | `userInfo` vs `userData` in one scope | make the distinction explicit or merge them |
+
+Notes on the subtler entries:
+
+- **Abbreviations** save the writer keystrokes and cost every reader a decode.
+  Editors autocomplete; brains don't. Exceptions: abbreviations more
+  recognizable than the expansion (`id`, `url`, `max`, `db`).
+- **Type-in-name** goes stale the moment the type changes, and the type system
+  already answers that question. Name the role the value plays.
+- **`Base`/`Abstract`** describes mechanics, not domain — a `BaseTruck` is
+  still a truck. If the parent is hard to name, the child is misnamed: let the
+  parent own the general concept (`Truck`) and make children precise
+  (`TrailerTruck`, `DumpTruck`).
+- **Vague words** (`Manager`, `Processor`, `Handler`, `Data`, `Info`,
+  `Object`, `Impl`) are hedges — they admit you haven't decided what the thing
+  is. Kevlin Henney's test: if you delete the word, does the name lose any
+  information? Then the whole name is padding.
+- **`Utils` grab-bags** grow without bound precisely because the name accepts
+  anything. Each function has a real home; the bucket is the symptom of not
+  finding it.
 
 ## Naming as a structural signal
 
-If no good name comes after real effort, resist forcing a bad one. Difficulty
-naming a function often means it does more than one thing (split it); difficulty
-naming a class often means its responsibilities are muddled (reshape it). Use the
-struggle as design feedback, not just a vocabulary problem.
+If no honest, specific name comes after real effort, don't force a mushy one —
+read the difficulty as feedback. A function you can only call
+`process_and_update` does two things: split it. A class you can only call
+`DataManager` has no single responsibility: reshape it. A variable you can
+only call `temp` or `result2` marks a computation that should be its own named
+step or function.
 
 ## Quick checklist
 
-- Any single-letter names outside a tiny conventional scope? Expand them.
-- Any abbreviations a newcomer would have to decode? Spell them out.
-- Any type info encoded in a name? Drop it and name by role.
-- Any unit-bearing number without its unit? Add the unit.
-- Any `Base`/`Abstract` prefix? Rename the child to be specific instead.
-- Any `utils`/`helper` bucket? Find each function's real home.
-- Still can't name it well? Reconsider the structure.
+- Would this name still be clear at its farthest point of use? Scale length to scope.
+- Would a domain expert recognize the vocabulary? Prefer problem-domain words.
+- Does every boolean read as a positive true/false claim at the `if` site?
+- Does every unit-bearing number carry its unit in name or type?
+- Same concept, same word everywhere? Pairs symmetric?
+- Does the name promise exactly what the code does — no hidden creation, mutation, I/O?
+- Any entry from the anti-pattern table? Apply its fix.
+- Still stuck after real effort? Change the structure, not just the name.
 
 ## Related skills
 
-- `never-nesting` — extracting and naming functions to flatten code; naming difficulty often signals a function doing too much.
-- `self-documenting-code` — good names are what make comments redundant.
+- `never-nesting` — extraction creates functions that need names; an unnameable block isn't ready to extract.
+- `self-documenting-code` — precise names are the main tool that makes "what" comments deletable.

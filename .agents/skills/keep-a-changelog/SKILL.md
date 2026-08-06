@@ -1,175 +1,141 @@
 ---
 name: keep-a-changelog
-description: Maintain CHANGELOG.md in Keep a Changelog format by updating Unreleased and version sections with user-relevant changes.
+description: Maintain CHANGELOG.md in Keep a Changelog 1.1.0 format — sort changes into Added/Changed/Deprecated/Removed/Fixed/Security, keep the Unreleased section current, cut version sections, and handle breaking changes, reverts, and yanked releases. Use when asked to "update the changelog", "add to the changelog", "write release notes", "cut/prepare a release section", "bump the version", or when user-facing changes land that CHANGELOG.md should record.
 ---
 
 # Keep a Changelog Assistant
 
-This skill helps keep `CHANGELOG.md` accurate, current, and user-focused following **Keep a Changelog** format.
-
-It is intended for maintaining changelog entries as the product evolves.
-The agent helps update `## [Unreleased]` and, when explicitly asked, prepare version sections in the changelog.
-The human remains responsible for deciding when and how to cut a release.
+Changelogs are for humans, not machines. A good changelog lets a user answer one question fast: "what does upgrading do to me?" This skill keeps `CHANGELOG.md` in [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) format: the agent maintains `## [Unreleased]` and, when explicitly asked, prepares version sections. The human decides when and how to actually cut, tag, and publish a release.
 
 ## Use this skill when
 
-- The user explicitly asks to update or maintain `CHANGELOG.md`
-- The user provides changes and wants them added to `## [Unreleased]`
-- The repository changes imply that `CHANGELOG.md` should be updated
-- The user wants help categorizing changes into `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
-- The user wants to turn accumulated `Unreleased` notes into a versioned changelog section
+- The user asks to update or maintain `CHANGELOG.md`, or says "update the changelog", "add to changelog"
+- Landed changes are user-facing and `CHANGELOG.md` should record them
+- The user wants changes categorized into `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
+- The user asks to turn accumulated `Unreleased` notes into a versioned section ("cut a release", "prepare 1.2.0")
 
 ## Do not use this skill when
 
-- There is no `CHANGELOG.md`
-- `CHANGELOG.md` does not follow **Keep a Changelog** structure
-- The requested changes are purely internal and not relevant to users
-- The user is asking the agent to publish, tag, or perform the release itself
+- There is no `CHANGELOG.md`, or it deliberately follows a different format (e.g. auto-generated release notes)
+- The changes are purely internal and invisible to users — nothing to record
+- The user wants the release itself performed (tagging, publishing) — that stays with the human
+- The user wants commit messages or PR titles — use `gitmoji-conventional`
 
-## Repository Conventions (MUST FOLLOW)
+## The Keep a Changelog spec
 
-### Scope of Changelog Entries
+These rules come from the spec itself and apply in any repository.
 
-The changelog must include **only user-relevant product changes**.
+### Structure
 
-For this repository, that generally means:
+- `## [Unreleased]` at the top — tracks upcoming changes so users can see what's coming, and so release notes are already written when a release is cut
+- One `## [X.Y.Z] - YYYY-MM-DD` section per released version, latest first; every version gets an entry
+- Dates in ISO 8601 (`YYYY-MM-DD`) — unambiguous across locales
+- Link references at the bottom make version headings linkable, conventionally pointing at compare URLs:
 
-- Changes to code inside `src/`
-- Changes affecting public APIs
-- New domain primitives, contracts, or behaviors
-- Behavioral changes in existing modules
-- Packaging changes that affect installation or runtime behavior
+  ```text
+  [unreleased]: https://github.com/org/repo/compare/v1.1.0...HEAD
+  [1.1.0]: https://github.com/org/repo/compare/v1.0.0...v1.1.0
+  [1.0.0]: https://github.com/org/repo/releases/tag/v1.0.0
+  ```
 
-The changelog must NOT include:
+### Categories
 
-- Test changes (`tests/`)
-- CI/CD workflow updates
-- GitHub Actions changes
-- Agent skills or internal tooling
-- Documentation-only changes
-- Formatting or lint-only changes
-- Refactors with no observable behavior impact
-- Internal development tooling adjustments
+The spec defines exactly six change types. Do not invent new ones — every user-facing change fits one of these:
 
-If a change does not affect how users import, use, or install the library,
-it should generally be excluded from the changelog.
+| Category | Use for |
+|---|---|
+| `Added` | new features |
+| `Changed` | changes in existing functionality |
+| `Deprecated` | soon-to-be removed features |
+| `Removed` | now removed features |
+| `Fixed` | any bug fixes |
+| `Security` | in case of vulnerabilities |
 
-### Notability Rule
+Omit empty categories in released versions. Avoid duplicating one change across categories — pick the dominant effect (a rewrite that also fixes a bug is `Changed` if the rewrite is the story, `Fixed` if the fix is).
 
-Only include changes that are meaningful to library consumers.
+### Breaking changes
 
-Do not include:
-
-- trivial renames
-- internal restructuring
-- minor refactors without API impact
-- small code cleanups
-
-### Changelog format
-
-`CHANGELOG.md` must remain in this structure:
-
-- `## [Unreleased]`
-  - `### Added`
-  - `### Changed`
-  - `### Deprecated`
-  - `### Removed`
-  - `### Fixed`
-  - `### Security`
-- Version sections:
-  - `## [X.Y.Z] - YYYY-MM-DD`
-  - same categories inside as needed
-- Reference links at the bottom exist (for example `[unreleased]: ...`, `[0.1.1]: ...`)
-
-The six categories above are the baseline. Additional semantic sections MAY be
-introduced when a change does not fit the basics (for example a dedicated
-`### Security` callout, or another clearly-named category). Add them only when
-they improve clarity; do not invent categories for changes that already fit.
-
-**Important:**
-Do not add or modify bottom reference links unless explicitly asked.
-
-### Entry formatting (MUST FOLLOW)
-
-- **Blank line between entries.** Every list item is separated from the next by
-  one blank line. Never stack bullets directly on adjacent lines.
+Keep a Changelog has no "Breaking" category. Record a breaking change under its natural category (`Changed` for altered behavior, `Removed` for deleted features) and state the break explicitly in the entry so a reader can't miss it:
 
 ```text
-# wrong
-- Something
-- Something 2
+### Changed
+
+- Authentication endpoints now require OAuth2; API-key access no longer works.
 ```
+
+Every commit marked breaking (`!` / `BREAKING CHANGE:` footer, see `gitmoji-conventional`) must produce such an entry, and per SemVer implies a MAJOR version for the next release.
+
+### Reverts
+
+- Revert of a change still sitting in `Unreleased`: delete the original entry. The changelog records net user-visible change, not git history — shipping "added X" and "removed X" in the same release is noise.
+- Revert of a change from an already-released version: add a new entry (usually `Fixed` if the revert cures a regression, otherwise `Changed`/`Removed`) that says what behavior is restored.
+
+### Yanked releases
+
+A version pulled for a serious bug or security issue keeps its section, tagged:
 
 ```text
-# right
-- Something
-
-- Something 2
+## [0.0.5] - 2014-12-13 [YANKED]
 ```
 
-- **Self-contained.** Each entry must stand on its own without referencing other
-  entries, commits, or external context.
-- **Compact.** Up to 3 sentences and at most 320 characters per entry.
-- **Minimal inline code.** Use inline code (`` `like_this` ``) as sparingly as
-  possible — only for an essential identifier such as a symbol or flag. Prefer
-  plain prose.
-- **No structural extras.** Entries must NOT contain tables, migration
-  instructions, upgrade steps, code blocks, or similar. The changelog records
-  what changed, not how to adapt to it.
+Never delete a released version's section — users on that version still need its history.
 
-## Categorization rules
+## What belongs in the changelog
 
-Use these types as defined by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/):
+Only changes meaningful to consumers of the project. The test: does this affect how users install, import, use, or should trust the software? If not, leave it out even when technically substantial.
 
-- **Added**: new features
-- **Changed**: changes in existing functionality
-- **Deprecated**: soon-to-be removed features
-- **Removed**: now removed features
-- **Fixed**: any bug fixes
-- **Security**: in case of vulnerabilities
+Typically in: public API changes, new or changed behavior, packaging/installation changes, deprecations, security fixes.
 
-Additional rules:
+Typically out: test changes, CI/CD and workflow updates, internal tooling and agent skills, docs-only changes, formatting/lint-only changes, refactors with no observable behavior impact, trivial renames.
 
-- Avoid duplicates between categories
-- Keep entries short, neutral, and user-focused
-- Prefer outcome-oriented wording over implementation detail
-- Exclude internal-only changes even if they are technically substantial
+In this repository specifically, "user-relevant" means changes to code inside `src/` — public APIs, domain primitives, contracts, behaviors — plus packaging changes.
 
-## Workflow A — Update `Unreleased`
+## Entry style
 
-When the user says "update changelog", "add to changelog", or provides a list of changes:
+- **Self-contained.** Each entry stands alone — no references to other entries, commit hashes, or context the reader doesn't have.
+- **Outcome-oriented.** Say what changed for the user, not how it was implemented. "Requests retry automatically on timeout", not "refactored HttpClient to wrap RetryPolicy".
+- **Neutral and compact.** No marketing language.
 
-1. Extract notable user-facing changes from the user summary, commits, PR descriptions, or diffs.
-2. Exclude non-user-facing and non-notable changes.
-3. Place each remaining change under the best category in `## [Unreleased]`.
-4. Preserve existing formatting and spacing, and apply the entry formatting rules
-   (blank line between entries, self-contained, ≤ 3 sentences / 320 characters,
-   minimal inline code, no tables or migration steps).
-5. Output:
-   - a patch/diff, or
-   - the updated `## [Unreleased]` block
+### House rules (this repository)
 
-## Workflow B — Create a version section in `CHANGELOG.md`
+These are deliberate local conventions, not part of the spec. In another repository, follow that repository's existing formatting instead.
 
-When the user explicitly asks to convert current changelog notes into a versioned section:
+- **Blank line between bullets.** Never stack entries on adjacent lines:
 
-1. Use the target version `X.Y.Z`.
-2. Use today's date in `YYYY-MM-DD` using the user's timezone.
-3. Create a new section directly under `Unreleased`:
+  ```text
+  # wrong
+  - Something
+  - Something 2
 
-   `## [X.Y.Z] - YYYY-MM-DD`
+  # right
+  - Something
 
-4. Move content from `## [Unreleased]` into that new version section:
-   - Keep the same category headings
-   - Omit empty categories
-5. Reset `## [Unreleased]` categories back to placeholder state (`- ...`)
-6. Do **not** edit reference links at the bottom unless explicitly asked
-7. Output the proposed changelog edits as a diff or updated blocks
+  - Something 2
+  ```
 
-## Output format (always)
+- **Length cap:** at most 3 sentences and 320 characters per entry.
+- **Minimal inline code:** only for an essential identifier (a symbol, a flag); prefer prose.
+- **No structural extras:** no tables, code blocks, migration steps, or upgrade guides inside entries — the changelog records what changed, not how to adapt.
+- **Empty `Unreleased` categories** keep a `- ...` placeholder.
+- **Do not add or modify the bottom reference links unless explicitly asked** — but when cutting a release, remind the user those links need updating.
 
-When updating the changelog, always produce:
+## Workflow A — update `Unreleased`
 
-1. Proposed `CHANGELOG.md` changes (diff or updated sections)
-2. Any assumptions or TBDs (if applicable)
-3. A short note that release decisions and tagging are handled by the human, while the agent only helps keep `CHANGELOG.md` current
+1. Extract user-facing changes from the user's summary, commits, PR descriptions, or diffs.
+2. Drop everything that fails the "what belongs" test above.
+3. Place each survivor under the best of the six categories in `## [Unreleased]`, applying the entry style and any house rules.
+4. Output a diff or the updated `## [Unreleased]` block.
+
+## Workflow B — cut a version section
+
+Only when explicitly asked to convert `Unreleased` into a version:
+
+1. Insert `## [X.Y.Z] - YYYY-MM-DD` directly under `## [Unreleased]`, using the target version and today's date in the user's timezone. Sanity-check the version against the content: breaking entries imply MAJOR, `Added` implies at least MINOR.
+2. Move the `Unreleased` content into it, keeping category headings and omitting empty categories.
+3. Reset `## [Unreleased]` to its empty state (in this repository: placeholder `- ...` under each category).
+4. Leave the bottom reference links alone unless asked; note to the user that `[unreleased]` and the new version link should be updated.
+5. Output the edits as a diff or updated blocks, plus any assumptions, and a reminder that tagging and publishing remain the human's job.
+
+## Related skills
+
+- `gitmoji-conventional` — commit messages and PR titles; its breaking-change markers (`💥`, `!`, `BREAKING CHANGE:`) are the signal that a changelog entry must call out a break.

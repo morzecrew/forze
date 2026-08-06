@@ -1,6 +1,6 @@
 ---
 name: altitude-docs
-description: Write, polish, review, or align documentation pages to a consistent, production-grade standard using the altitude model (a deliberate high-level to low-level descent), Diátaxis-based page contracts, a shared consistency layer, and a ship rubric. Use when creating, revising, reviewing, or aligning documentation pages, or when deciding where new doc content belongs.
+description: Write, polish, review, or align documentation pages to a production-grade standard using the altitude model (a deliberate high-level to low-level descent), Diátaxis-based page contracts, a shared consistency layer, and a ship rubric. Use when writing or restructuring any docs page — tutorial, quickstart, how-to guide, reference, explanation, concept page, landing page — when reviewing docs for consistency or flow, when deciding whether content is a tutorial vs a how-to or where a new page belongs, when a page mixes teaching with lookup and needs splitting, or when the user mentions documentation structure, docs review, Diátaxis, or "this docs page feels off".
 ---
 
 # Altitude docs
@@ -26,6 +26,17 @@ of truth in the current repository (see Accuracy).
 - Polishing or reviewing an existing page for consistency, depth, or flow.
 - Aligning a whole archetype directory (e.g. all tutorials) to one standard.
 - Deciding which archetype — and therefore which directory — new content belongs in.
+
+## Do not use this skill when
+
+- Writing docstrings inside code — use `python-google-docstrings` or
+  `python-rest-docstrings`; this skill governs the pages, not the API comments
+  they may be generated from.
+- Writing a design proposal or RFC — use `rfc-writer`; design docs argue for a
+  decision, documentation pages serve a reader's need.
+- Maintaining a changelog — use `keep-a-changelog`.
+- Writing marketing copy outside the docs tree — the appeal layer below covers
+  docs front doors only.
 
 Two modes:
 
@@ -87,12 +98,33 @@ required band on the way down.
 5. **Edge & operational detail** — caveats, failure modes, tuning, exhaustive
    lookup. The reader resolves a specific question.
 
-Diátaxis fit (one page = one job; never mix two jobs on a page):
+### Diátaxis fit — the compass
 
-- **Tutorial** → learning, study, practical.
-- **How-to** → a task, work, practical.
-- **Explanation** → understanding, study, theoretical.
-- **Reference** → information, work, theoretical.
+Diátaxis generates the four archetypes from two questions. This is the Diátaxis
+compass; use it to place new content *and* to course-correct an existing page
+that feels off:
+
+1. **Action or cognition?** — does the content inform *doing* (practical steps)
+   or *knowing* (facts, theory)?
+2. **Acquisition or application?** — is the reader *studying* (building skill)
+   or *working* (applying skill they have)?
+
+| Informs | Serves | Archetype |
+|---|---|---|
+| action | acquisition (study) | **Tutorial** — learning-oriented |
+| action | application (work) | **How-to** — task-oriented |
+| cognition | application (work) | **Reference** — information-oriented |
+| cognition | acquisition (study) | **Explanation** — understanding-oriented |
+
+One page = one job — never mix two jobs on a page. A draft that answers two of
+these questions is two pages, cross-linked.
+
+The single most common conflation in software docs is tutorial vs how-to. A
+tutorial is a *lesson*: the author owns the reader's success, controls the
+environment, walks one reliable path. A how-to guide is *directions*: the
+reader is competent, owns the outcome, works in the real world — so the guide
+may fork and branch. A "tutorial" that assumes competence and branches is a
+mislabeled how-to; fix the label or the page.
 
 ### Altitude range per archetype
 
@@ -127,6 +159,9 @@ Universal, every page:
 - *Skeleton:* Orientation → Prerequisites → numbered Steps → "What you just did"
   (a band-2 retro that names the concepts they just used) → handoff.
 - *Floor:* band 3, one controlled dip to 4. *Handoff:* cards into deeper learning.
+- *Path:* single and reliable — no forks, no "alternatively", no choices; every
+  step must work as written. Explicit about basics; theory gets one line and a
+  link to its explanation page, never a mid-step lecture.
 - *Code:* heavy, but every block is preceded by a one-line "why".
 
 ### Explanation (and deep explanation)
@@ -149,6 +184,9 @@ Universal, every page:
 - *Skeleton:* narrative task steps (problem → model → wire → invoke → Notes).
 - *Floor:* band 4. *Code:* include from the example where possible, never scratch
   code when a tested example exists.
+- *Assumptions:* the reader is competent — basics stay implicit. Unlike a
+  tutorial, a how-to may fork ("if you use X, do Y") to cover real-world
+  variation; keep each branch one line and don't multiply them.
 - *Handoff:* end at the task's natural close (commonly `## Notes` or `## Run it`),
   and add a forward inline cross-link where a genuine next task exists. A
   `## Where next` card is optional — use it only for a hub page that heads a clear
@@ -170,9 +208,8 @@ Integration/setup pages that are mostly lookup with a little wiring.
 - *Skeleton:* bespoke per page (glossary, taxonomy, syntax) — this is correct.
 - *Components:* tables. No diagrams, no narrative progression, no footer.
 
-When unsure which archetype new content is, ask: is the reader *studying* or
-*working*, and do they want *understanding* or *information/steps*? That places
-it. If a draft wants to both teach a concept and give steps, it is two pages.
+When unsure which archetype new content is, run the compass (Part 1): action or
+cognition, acquisition or application.
 
 ### Front-door pages (the appeal layer)
 
@@ -196,15 +233,18 @@ These pages must pass both.
 ## The consistency layer
 
 - **Voice:** second person, present tense, active voice; conversational but
-  precise. ("You wire the module", not "The module is wired".)
+  precise. ("You wire the module", not "The module is wired".) Never promise
+  ease — cut "simply", "easily", "just": the word insults the reader the moment
+  the step fails.
+- **Instructions:** one action per numbered step, imperative verb first. State
+  the condition before the instruction ("If you use X, set Y" — not "Set Y if
+  you use X"), so readers can skip inapplicable steps without reading them; put
+  the goal before the action when it isn't obvious ("To enable retries, set…").
 - **Opening contract:** explanation and how-to require a lead paragraph; reference
   and integration require a one-line orienter. No page opens cold on a heading.
-- **Handoff contract (one rule per archetype, no ad-hoc mixing):** cards for
-  tutorials (a linear journey); how-to pages end at the task's natural close, with
-  an optional `## Where next` card only for a hub page that heads a chain; an
-  inline forward cross-link woven into a closing sentence for explanation, or a
-  short `## See also` list when 3+ pages are related; nothing for reference and
-  integration pages (end at last content).
+- **Handoff contract:** exactly the per-archetype rule from Part 2 — cards for
+  tutorials, natural close for how-to, inline link or `## See also` for
+  explanation, nothing for reference and integration. No ad-hoc mixing.
 - **Component discipline — the earns-its-place test:** keep a tab/card/admonition/
   diagram only if removing it loses information. If removing it loses only
   decoration, cut it. No patchwork of components; no walls of unbroken prose. Use
@@ -296,3 +336,9 @@ than to a frozen template — a living page drifts less. Pick one exemplar per
 archetype (one explanation, one how-to, one reference-practical, etc.) and treat
 it as the reference others are measured against. If an exemplar itself drifts out
 of contract, fix the exemplar first.
+
+## Related skills
+
+- `rfc-writer` — design proposals and RFCs; they argue for decisions, docs pages serve readers.
+- `keep-a-changelog` — the changelog has its own format; don't fold release notes into docs pages.
+- `python-google-docstrings` / `python-rest-docstrings` — the docstrings that reference pages are often generated from.

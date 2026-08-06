@@ -1,109 +1,153 @@
 ---
 name: self-documenting-code
-description: Make code explain itself instead of relying on comments - name sub-expressions, extract complex conditions into well-named functions, lean on the type system, and reserve comments for the "why" the code cannot express. Use when writing or reviewing comments, refactoring hard-to-read logic, deciding whether a comment is needed, or when the user mentions comments, self-documenting code, or code readability.
+description: Decide when to refactor a comment away and when a comment is required - express the "what" through names, extracted predicates, constants, and types, and reserve comments for what code cannot say - intent, invariants, units, ranges, and interface contracts. Use when writing or reviewing comments, deciding whether a comment is needed, deleting or fixing stale or redundant comments, refactoring hard-to-follow logic, or when the user mentions comments, docstrings, self-documenting code, code clarity, or readability.
 ---
 
 # Self-Documenting Code
 
-Prefer code that explains itself over comments that explain the code. The guiding
-test: **if a piece of code is complex enough to need a comment, first try to
-refactor the code so the comment becomes unnecessary.** Most "what" comments are a
-missed opportunity to make the code itself clearer.
+The test for any comment: **does it say something at the same level of
+abstraction as the code next to it?** If yes, it duplicates the code — refactor
+so the code says it, then delete the comment. If it operates at a *different*
+level — more precise (units, ranges, invariants) or more abstract (intent,
+contract, rationale) — it carries information code cannot, and it stays.
 
-This is not "never write comments." It's a priority order — make the code human
-first, and keep the comments that carry information the code genuinely cannot.
+This is not "never comment." Ousterhout's *A Philosophy of Software Design* is
+the sharp counterpoint to comment-minimalism: "comments should describe things
+that aren't obvious from the code" — and for interfaces, plenty isn't. The
+skill is telling redundant comments from load-bearing ones.
 
 ## Use this skill when
 
 - Writing or reviewing comments in a diff.
-- A comment is needed to explain *what* a line or condition does.
+- A comment seems needed to explain what a line or condition does.
+- Deciding whether to keep, delete, or rewrite an existing comment.
 - Refactoring dense logic that is hard to follow.
-- The user mentions comments, self-documenting code, or readability.
+- The user mentions comments, docstrings, self-documenting code, or readability.
 
 ## Do not use this skill when
 
 - The user explicitly wants explanatory/teaching comments (tutorials, examples, learning codebases).
-- A comment documents *why* (rationale, trade-off, workaround) — those are valuable; keep them.
+- You'd delete a comment because it's *inconvenient* rather than redundant — a wrong comment gets fixed, not removed.
 
-## Techniques to make code self-documenting
+## Refactor the "what" into the code
 
-### 1. Name sub-expressions with variables
+### 1. Name sub-expressions
 
-A condition that needs a comment to decode can usually be rewritten so it reads
-like that comment.
+A condition that needs a comment to decode can be rewritten to read like the
+comment:
 
 ```python
-# user can check out only if active and cart isn't empty and not banned
-if user.active and len(cart.items) > 0 and not user.banned:
-    ...
+# user can check out only if active, cart non-empty, not banned
+if user.active and len(cart.items) > 0 and not user.banned: ...
 ```
 
 ```python
-is_active = user.active
 has_items = len(cart.items) > 0
-can_check_out = is_active and has_items and not user.banned
-if can_check_out:
-    ...
+can_check_out = user.active and has_items and not user.banned
+if can_check_out: ...
 ```
 
-### 2. Extract a complex condition into a function
+### 2. Extract a predicate
 
-When the expression is large or reused, give it a name by moving it into a
-predicate function. The call site now reads as plain intent.
+When the expression is large or reused, move it into a function whose name is
+the comment. The call site becomes plain intent, and the name — unlike the
+comment — can't be skipped by the next editor:
 
 ```python
 def can_check_out(user, cart):
     return user.active and len(cart.items) > 0 and not user.banned
-
-if can_check_out(user, cart):
-    ...
 ```
 
-### 3. Let types carry the information
+### 3. Name magic values
 
-A type can state a fact a comment would otherwise assert — ownership, nullability,
-units, allowed values. Encode it in the type and the reader can trust it, because
-unlike a comment the compiler/checker keeps it honest. (For unit-bearing values,
-also put the unit in the name — see `naming-things`.)
+```python
+if attempts > 5: ...          # why 5? (comment coming...)
 
-## Why lean away from comments
+MAX_LOGIN_ATTEMPTS = 5
+if attempts > MAX_LOGIN_ATTEMPTS: ...
+```
 
-Comments are not checked by anything, so they drift: people change the code and
-forget the comment, and now it actively misleads. **Comments can lie; code cannot.**
-A "what" comment duplicates the code and creates a second thing to keep in sync.
+### 4. Let types state the fact
 
-## Comments vs. documentation
+Nullability, ownership, allowed values, units — encode them in the type
+(`Optional[User]`, an enum, `Duration`) and the checker keeps the claim honest.
+A comment asserting the same thing is unenforced. (Unit-bearing names:
+see `naming-things`.)
 
-These are different and the distinction matters:
+## Why redundant comments are worse than none
 
-- **Comments** describe the *internals* — how a block works. These are the ones to
-  minimize by improving the code.
-- **Documentation** describes the *external usage* of a public API for its callers.
-  This is worth writing — and the better and simpler your API, the more concise and
-  accurate the docs can be. (See the docstring skills for format.)
+Nothing checks a comment, so it drifts: the code changes, the comment doesn't,
+and now it actively misleads a reader who trusted it. A comment that repeats
+the adjacent code adds no information today and a maintenance liability
+forever. Ousterhout's first red flag is exactly this: *comment repeats code* —
+if a reader could write the comment from the code alone, delete it.
 
-## When a comment IS the right tool
+## The comments code cannot replace
 
-Some intent cannot be expressed in code, and there a comment earns its place:
+Two directions, per Ousterhout — both are legitimately about "what," and both
+survive the refactor-first test because no rewrite of the code can express
+them:
 
-- **Why, not what** — the rationale, constraint, or trade-off behind a decision.
-- **Non-obvious performance** — code that looks strange because it's tuned for speed; explain why it looks that way.
-- **Workarounds** — "this odd line works around bug X in library Y", ideally with a link.
+**More precise than the code** — pin down what the declaration leaves open:
 
-The rule of thumb: if you reach for human language to describe *what* the code does,
-try to make the code more human instead; if you reach for it to capture *why*, write
-the comment.
+```python
+retry_interval = 200   # what does 200 mean? is it fixed?
+
+# Milliseconds. Doubles per attempt, capped at 30_000.
+# Invariant: > 0; 0 would spin-loop the scheduler.
+retry_interval_ms = 200
+```
+
+Units (when the type can't carry them), inclusive vs exclusive bounds, null
+semantics, ownership and lifetime, invariants, thread-safety expectations.
+
+**More abstract than the code** — interface comments. A caller should
+understand what a function does, its parameters' meaning, side effects, and
+error behavior *without reading its body*. That summary is "what"
+documentation and it is required for any non-trivial public interface — this
+is where "comments only explain why" tips from principle into dogma. Keep
+interface comments free of implementation detail (Ousterhout's second red
+flag: implementation contaminating the interface); the docstring skills cover
+format.
+
+**Why-comments** — always code-inexpressible:
+
+- Rationale and trade-offs: why this approach over the obvious one.
+- Performance oddities: code that looks wrong because it's tuned; say so, with the measurement.
+- Workarounds: "sidesteps bug X in library Y", with a link.
+- Cross-module obligations: "if you change this, update Z."
+
+## Comment-first as a design probe
+
+When you do write an interface comment, try writing it *before* the body. If
+the comment comes out long, conditional, or hedged ("does X, but also Y if
+flag Z..."), the abstraction is muddy — fix the interface, not the wording.
+A clean one-sentence comment is evidence of a clean abstraction.
+
+## Decision table
+
+| Comment says... | Verdict |
+| --- | --- |
+| What the next line visibly does | Delete; refactor code if it wasn't visible |
+| What a complex condition means | Extract predicate / name sub-expressions |
+| What a literal means | Named constant |
+| A fact a type could enforce | Move into the type |
+| Units, ranges, invariants, null/ownership semantics | Keep — precision the code lacks |
+| What a public function does for callers | Keep — interface contract |
+| Why this design / workaround / tuning | Keep — rationale |
+| Corrects a misleading name | Fix the name, then delete |
 
 ## Quick checklist
 
-- Does a comment restate what the next line does? Try to delete it by clarifying the code.
-- Is there a commented complex condition? Name its parts or extract a predicate.
-- Could a type state the fact the comment asserts? Encode it in the type.
-- Does the comment explain *why* / a workaround / a perf hack? Keep it.
-- Is it public API usage? Prefer real documentation over an inline comment.
+- Could a reader reconstruct this comment from the code alone? Delete it (refactor first if needed).
+- Commented condition or literal? Extract a predicate / name the constant.
+- Could a type enforce the claim? Encode it there.
+- Does the declaration leave units, bounds, or invariants open? Add the precision comment.
+- Public interface without a caller-level summary? Write one, free of implementation detail.
+- Hard to write that summary in a sentence? Suspect the abstraction, not the prose.
 
 ## Related skills
 
-- `naming-things` — clear names are the foundation that makes comments redundant.
-- `never-nesting` — extracting named functions both flattens code and documents intent.
-- `python-rest-docstrings` / `python-google-docstrings` — how to write the API documentation this skill says to keep.
+- `naming-things` — precise names are the primary mechanism for deleting "what" comments.
+- `never-nesting` — extracted, well-named functions document structure that comments would otherwise narrate.
+- `python-google-docstrings` / `python-rest-docstrings` — formats for the interface documentation this skill says to keep.

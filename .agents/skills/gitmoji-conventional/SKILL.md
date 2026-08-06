@@ -1,100 +1,103 @@
 ---
 name: gitmoji-conventional
-description: Format git commit messages and Pull Request titles using Conventional Commits with a deterministic gitmoji prefix. Use when generating or suggesting commit messages, PR titles, or when the user says "commit this", "create PR", "write a commit", "prepare PR", or similar.
+description: Format git commit messages and Pull Request titles as Conventional Commits 1.0.0 with a deterministic gitmoji prefix, including breaking changes (💥 + ! + BREAKING CHANGE footer) and reverts. Use whenever generating or suggesting a commit message or PR title — "commit this", "write a commit", "commit message", "create PR", "open PR", "draft PR", "PR title", "squash and merge", "release commit" — even if the user never mentions gitmoji or Conventional Commits.
 ---
 
 # Gitmoji + Conventional Commits
 
-Format git commits and Pull Request titles as:
+Format every commit message and PR title as:
 
 `<gitmoji> <type>[optional scope][!]: <description>`
 
-Examples:
+The part after the emoji is plain [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) — machine-parseable, so tooling can derive SemVer bumps and changelogs. The gitmoji prefix is a house extension that makes `git log` scannable by eye. The mapping is deterministic so two agents describing the same change produce the same subject.
 
 ```text
 ✨ feat(api): add OAuth login support
-🔥 refactor(cache): remove deprecated cache layer
-🚑 fix(auth): patch token validation vulnerability
+🐛 fix(auth): handle expired refresh tokens
+♻️ refactor(cache): extract eviction policy
 ```
 
-## When to Apply
+## Use this skill when
 
-This skill MUST be applied when the assistant:
+- Generating or suggesting a git commit message, for any prompt like "commit this", "write a commit", "commit message"
+- Generating or suggesting a Pull Request title — "create PR", "open PR", "draft PR", "what should the title be"
+- Preparing a release plan or PR summary that includes a commit message or title
 
-- generates or suggests a **git commit message**
-- generates or suggests a **Pull Request title**
-- prepares a release plan that includes a commit message
-- prepares a PR summary where a title is needed
-- responds to prompts like: "commit this", "write a commit", "create PR", "open PR", "prepare PR", "draft PR", "what should the PR title be", or similar
+Apply it even when the user mentions neither gitmoji nor Conventional Commits.
 
-Apply it even if the user does not explicitly mention Conventional Commits or gitmoji.
+## Do not use this skill when
 
-## Deterministic Rule
+- The repository enforces a conflicting convention (commitlint config, CONTRIBUTING.md) — follow the repository
+- The user dictates the exact message verbatim
+- Writing changelog entries — use `keep-a-changelog`
 
-1. Choose the **gitmoji first**
-2. Use the **type mapped to that gitmoji**
-3. NEVER invent new gitmoji
-4. NEVER invent new commit/PR types
+## Deterministic choice
 
-**Gitmoji mapping:** See [references/gitmoji-mapping.md](references/gitmoji-mapping.md) for the full Gitmoji → Conventional Commit type table. Load it when choosing a gitmoji.
+1. Identify the dominant change (see below).
+2. Pick the gitmoji for it from [references/gitmoji-mapping.md](references/gitmoji-mapping.md) — load it when choosing.
+3. Use the type mapped to that gitmoji. Never invent gitmoji or types.
 
-## Choosing the Gitmoji
+Common pairs: ✨ feat, 🐛 fix, ♻️ refactor, ⚡️ perf, 📝 docs, ✅ test, 👷 ci, 📦️ build, 🔧 chore, ⏪️ revert, 💥 breaking.
 
-Choose the gitmoji that **best represents the main change**.
+### Mixed changes: pick the dominant type
 
-If multiple changes exist, priority order: fix > feat > perf > refactor > build > docs > test > chore
+One commit, one semantic story. When a change spans types, choose the type that would headline the release notes; everything else is supporting detail for the body. Tie-breaker priority, reflecting user impact:
 
-For PRs with mixed changes, pick one primary semantic category. Do NOT describe all changes in the title.
+`fix > feat > perf > refactor > build > docs > test > chore`
+
+Incidental edits don't count: a feature commit that also touches its tests is `✨ feat`, not `✅ test` — the tests exist because of the feature. If two changes are genuinely independent, suggest splitting the commit instead of blending the subject.
 
 ## Scope
 
-Use scope when it improves clarity. Common scopes: auth, api, core, cli, ui, deps, build, ci, db.
+Optional; a noun naming the affected area of the codebase, in parentheses: `feat(parser):`. Use it when it adds clarity (common: auth, api, core, cli, ui, deps, ci, db); omit it when the change is cross-cutting or the scope is not obvious. Never guess.
 
-If scope is not obvious, omit it.
+## Description
 
-## Description Rules
+- Imperative mood ("add", not "added" or "adds") — reads as "this commit will *add X*"
+- Single line, ≤ 72 characters when possible
+- No trailing period, no leading list markers
 
-The description MUST:
+| Wrong | Right |
+|---|---|
+| `✨ feat(api): Added OAuth login support.` | `✨ feat(api): add OAuth login support` |
+| `- 🐛 fix: fixes bug` | `🐛 fix(auth): reject expired tokens` |
 
-- be imperative
-- be a single line
-- be concise
-- be ≤ 72 characters when possible
-- not end with a period
-- not start with list markers
+## Breaking changes — end to end
 
-Correct: `✨ feat(api): add OAuth login support`
+A breaking change carries three coordinated signals, so no consumer of the log misses it:
 
-Incorrect: `✨ feat(api): Added OAuth login support.` or `- ✨ feat(api): add OAuth login support`
-
----
-
-## Git Commits
-
-### Breaking Changes
-
-If the commit introduces a breaking change, use `<gitmoji> <type>[optional scope][!]: <description>` with a footer `BREAKING CHANGE: <details>`.
-
-Example:
+1. **Gitmoji `💥`** — the type stays whatever the change is (`feat`, `fix`, `refactor`…); `💥` replaces that type's usual emoji.
+2. **`!` immediately before the colon** — `feat(api)!:`. Per the spec this alone marks the commit breaking; the description then carries the what.
+3. **`BREAKING CHANGE:` footer** — add it whenever the break needs more detail than the subject holds (what broke, what to do instead). MUST be uppercase; `BREAKING-CHANGE:` is an accepted synonym.
 
 ```text
 💥 feat(api)!: redesign authentication API
 
-BREAKING CHANGE: authentication endpoints changed to OAuth2
+BREAKING CHANGE: authentication endpoints now require OAuth2;
+API-key access is removed.
 ```
 
-### Commit Body (optional)
+A breaking commit means MAJOR in the next release and must produce a changelog entry that names the break (`keep-a-changelog`).
 
-Use when context is helpful: 2+ meaningful changes, subject needs context, or bullet-style change notes.
+## Reverts
 
-- Blank line after the subject
-- Short paragraph (optional)
-- Bullet list using "-" only
-- Keep bullets concise and action-oriented
-- At most 4 bullets; if there are more changes, group or summarize them
-- Each bullet is at most 80 characters
+The spec deliberately leaves revert behavior open; use its recommended pattern — type `revert` with `⏪️`, subject naming what is undone, and a `Refs:` footer with the reverted SHA(s):
 
-Example:
+```text
+⏪️ revert: add OAuth login support
+
+Reverts the OAuth rollout; provider quota blocks production logins.
+
+Refs: 676104e
+```
+
+## Body and footers (optional)
+
+Add a body when the subject alone can't carry the context: multiple meaningful changes, non-obvious motivation, or bullet-style notes.
+
+- Blank line after the subject (and again before footers)
+- Bullets use `-` only; at most 4, each ≤ 80 characters, action-oriented — group or summarize beyond that
+- Footers follow the git trailer convention: `Token: value` or `Token #value`, multi-word tokens hyphenated. Supported here: `BREAKING CHANGE:`, `Closes #123`, `Refs #123`, `Refs: <sha>`
 
 ```text
 ✨ feat(auth): add OAuth login
@@ -104,35 +107,32 @@ Example:
 - store refresh tokens securely
 ```
 
-### Footer (optional)
+## SemVer signal
 
-Supported footers: `BREAKING CHANGE: ...`, `Closes #123`, `Refs #123`
+The type is what release tooling reads:
 
-### Output
+| Commit | Release impact |
+|---|---|
+| `fix` | PATCH |
+| `feat` | MINOR |
+| any type with `!` or `BREAKING CHANGE:` | MAJOR |
+| other types | none by themselves |
 
-- Output ONLY the commit message
-- No explanations
-- No alternatives unless requested
+Mislabeling a feature as `chore` hides it from the release; mislabeling a refactor as `feat` inflates the version. Choose the type for what the change does, not for how it felt to write.
 
----
+## Pull Request titles
 
-## Pull Request Titles
+Same format, tighter constraints — the title must drop into GitHub unedited:
 
-### Constraints
+- Exactly one line: no body, bullets, or footers
+- No issue references unless the user explicitly asks
+- Mixed-change PRs get one primary semantic category, not an enumeration
+- Breaking PRs use `!` in the title; migration notes go in the PR description, never the title
 
-A PR title MUST:
+## Output
 
-- be exactly one line
-- contain no body, bullets, or footer
-- contain no issue references unless the user explicitly asks
-- be directly usable as a GitHub PR title without editing
+Output only the commit message or PR title — no explanations, no alternatives unless requested.
 
-### Breaking Changes
+## Related skills
 
-If the PR introduces a breaking change, use `<gitmoji> <type>[optional scope][!]: <description>`. Do NOT include footers or migration notes in the title.
-
-### Output
-
-- Output ONLY the PR title
-- No explanations
-- No alternatives unless requested
+- `keep-a-changelog` — turning the same changes into user-facing CHANGELOG.md entries; breaking commits here require explicit break entries there.

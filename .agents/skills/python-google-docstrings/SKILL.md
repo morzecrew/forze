@@ -1,350 +1,217 @@
 ---
 name: python-google-docstrings
-description: Write consistent Python docstrings in Google style with typed sections. Use when writing or updating docstrings, documenting Python code, or when the user mentions docstrings, Google style, Napoleon, or API documentation.
+description: Write Google-style Python docstrings — Args/Returns/Raises/Attributes sections that render under Sphinx Napoleon and read well in IDE tooltips. Use whenever writing, editing, or reviewing Python docstrings or API documentation, documenting functions, classes, modules, or constants, or when the user mentions docstrings, Google style, Napoleon, or asks to "document this code".
 ---
 
-# Python Docstring Writer (Google Style)
+# Python Docstrings — Google Style
 
-Write **consistent, high-signal docstrings** in **Google style** with typed sections. Optimize for: fast scanning in IDE/tooltips, Napoleon/Sphinx compatibility, minimal redundancy with type hints, and explaining **why/behavior** rather than restating types.
+A docstring earns its place by saying what type hints cannot: meaning, constraints,
+side effects, and failure conditions. Google style expresses those as indented
+sections (`Args:`, `Returns:`, `Raises:`) that Sphinx Napoleon compiles into the same
+field lists reST uses — so write for two readers at once: a human scanning a tooltip
+and Sphinx rendering API docs.
 
-Target format (this is the canonical shape):
+## Use this skill when
 
-```python
-def make_duplicate_error(kind: str, keys: set[str]) -> CoreException:
-    """Construct a configuration exception for duplicate registry entries.
+- Writing or editing Python docstrings in a project that uses Google style (`Args:` sections)
+- Documenting new Python functions, classes, methods, modules, or constants
+- Reviewing or fixing docstrings for Sphinx Napoleon rendering
+- Standardizing drifting or mixed docstring conventions toward one consistent style
 
-    Args:
-        kind (str): Category of duplicate entries (e.g. ``'handler factories'``,
-            ``'operation plans'``).
-        keys (set[str]): Operation keys that are duplicated.
+## Do not use this skill when
 
-    Returns:
-        CoreException: A configuration exception describing the conflict.
-    """
-```
+- The project writes reST field lists (`:param x:`) — use python-rest-docstrings instead
+- The project uses NumPy style (section names underlined with dashes)
+- Writing READMEs, guides, or comments — docstrings state API contracts, not narratives
 
-## Core Conventions
-
-- **Section keyword:** Use `Args:` for arguments (the canonical Google keyword; Napoleon also accepts `Parameters:` as a synonym, but prefer `Args:` and use it consistently).
-- **Typed entries:** Each parameter, attribute, or key is written as `name (type): description`. The `(type)` is encouraged even when annotations exist, because it renders inline in the docstring and aids tooltips.
-- **Summary first:** One imperative-or-descriptive line, ending with a period, on the line right after `"""`.
-- **Blank line** between the summary and any section block.
-- **Indentation:** Section bodies indent one level (4 spaces) under the keyword; continuation lines indent one further level (8 spaces).
-- **Cross-references:** Use double backticks for literals/values (e.g. ``None``, ``'tuple'``) and Sphinx roles where useful (e.g. ``:class:`Foo```), but plain readable names are acceptable in Google style.
-
-## Supported Sections
-
-| Section | Use for |
-|---------|--------|
-| `Args:` | Function/method arguments (alias: `Parameters:`) |
-| `Returns:` | Return value and its meaning |
-| `Yields:` | Values produced by a generator |
-| `Raises:` | Exceptions raised and the conditions |
-| `Attributes:` | Public attributes documented on a class |
-| `Examples:` | Usage examples (doctest-friendly) |
-| `Note:` | Important caveats |
-| `Warning:` | Dangerous or surprising behavior |
-
-Only include sections that add information. Omit empty or trivially-obvious ones.
-
----
-
-## 1. Type aliases / constants
-
-Docstring immediately after the assignment. One line when possible. Use double backticks for literals. Prefer meaning and effects over restating the type.
-
-```python
-RowFactory = Literal["tuple", "dict"]
-"""Row format for fetch methods: ``"tuple"`` for sequences, ``"dict"`` for column-keyed dicts."""
-
-IsolationLevel = Literal["repeatable read", "serializable"]
-"""Supported transaction isolation levels."""
-```
-
----
-
-## 2. Classes
-
-First line: short noun phrase. Then lifecycle, concurrency/transaction semantics, and invariants. Document public attributes in an `Attributes:` section. Add exactly one blank line between the docstring and the class body.
-
-```python
-@attrs.define(slots=True)
-class PostgresClient:
-    """Async Postgres client with connection pooling and context-bound transactions.
-
-    Must be initialized with a DSN via :meth:`initialize` before use. Uses context
-    variables to share a single connection per logical request, so nested
-    :meth:`transaction` blocks reuse the same connection via savepoints.
-
-    Attributes:
-        min_size (int): Minimum number of connections kept in the pool.
-        max_size (int): Maximum number of connections the pool may open.
-    """
-```
-
-Prefer the class-level `Attributes:` section for public fields. Reserve trailing attribute docstrings (section 6) for private/subtle fields or when the attribute needs more room than a one-liner.
-
----
-
-## 2.1. typing.Protocol
-
-For `typing.Protocol` interfaces:
-
-- Document the **contract and semantics** (what implementers must guarantee), not implementation details.
-- Prefer documenting **when** methods are called, expected side effects, idempotency, ordering, and concurrency guarantees.
-- Do **not** document `Raises:` unless an exception is a required part of the contract.
-- Add an ellipsis below the docstring for protocol methods, otherwise the method is treated as a broken stub.
-
-```python
-from typing import Protocol, AsyncContextManager
-
-class AppRuntimePort(Protocol):
-    """Application runtime contract for transactional execution.
-
-    Implementations provide a transaction boundary for usecases. Nested
-    transactions may be supported via savepoints; callers should not assume a
-    specific strategy unless explicitly documented by the implementation.
-    """
-
-    def transaction(self) -> AsyncContextManager[None]:
-        """Return an async context manager that scopes a transaction.
-
-        The context manager starts a transaction on entry and commits or rolls
-        back on exit according to implementation policy.
-
-        Returns:
-            AsyncContextManager[None]: Scope that brackets a single transaction.
-        """
-        ...
-```
-
----
-
-## 3. Methods and functions
-
-Brief summary + behavioral details. Use typed sections for parameters, returns, and meaningful errors. Explain what it does, what it returns, and edge cases. Document errors only when meaningful. Add exactly one blank line between the docstring and the body.
+## Canonical shape
 
 ```python
 async def fetch_one(self, query: str, *args: Any) -> Mapping[str, Any] | None:
-    """Execute a query and return a single row.
-
-    Returns ``None`` when no rows match.
+    """Executes a query and returns the first matching row.
 
     Args:
-        query (str): SQL query text.
-        *args (Any): Positional query parameters bound to placeholders.
+        query (str): SQL query text with numbered placeholders.
+        *args (Any): Positional parameters bound to the placeholders.
 
     Returns:
-        Mapping[str, Any] | None: The first row as a mapping, or ``None`` if empty.
+        Mapping[str, Any] | None: The first row as a mapping, or ``None``
+            when no rows match.
 
     Raises:
         QueryError: If the query is malformed or the connection is closed.
     """
 ```
 
-Generators use `Yields:` instead of `Returns:`:
+- Section order: `Args:` → `Returns:`/`Yields:` → `Raises:` → `Attributes:`/`Examples:`/`Note:`.
+- Entries are `name (type): description`; continuation lines indent one extra level.
+- List varargs with their stars: `*args`, `**kwargs`.
+- Google requires the `(type)` marker only when a parameter lacks an annotation.
+  Keep it anyway: Napoleon renders it inline, and the docstring stays self-contained
+  in tooltips and diffs that hide the signature.
+
+## Summary line
+
+- One line directly after `"""`, ending with `.`, `?`, or `!`; blank line before
+  anything else. State what the caller gets — never "This function ...".
+- Google accepts descriptive mood ("Fetches rows.") or imperative ("Fetch rows.")
+  but requires consistency within a file. Default to descriptive — it matches the
+  style guide's own examples; if the file already uses imperative, follow the file.
+
+## Sections
+
+| Section | Use for |
+|---|---|
+| `Args:` | Parameters, including `*args` / `**kwargs` |
+| `Returns:` | Meaning of the return value; skip for functions returning `None` |
+| `Yields:` | Generator output — replaces `Returns:` |
+| `Raises:` | Exceptions relevant to the interface, with their conditions |
+| `Attributes:` | Public class attributes, excluding properties |
+| `Examples:` | Doctest-friendly usage |
+| `Note:` / `Warning:` | Caveats / dangerous or surprising behavior |
+
+Napoleon treats `Args`, `Arguments`, and `Parameters` as aliases — standardize on
+`Args:` so grep and review stay trivial. Include only sections that add information;
+an empty or restating section is noise.
+
+## Cross-references and literals
+
+Plain names are acceptable in Google style, but because Napoleon converts docstrings
+to reST before Sphinx parses them, Sphinx roles work inside any description and
+produce real links: `:class:`, `:meth:`, `:func:`, `:attr:`, `:exc:`, `:data:`.
+Prefix a target with `~` to render only its last component:
+
+```text
+:meth:`initialize`          -> link "initialize" (resolved within the class)
+:class:`pkg.mod.Foo`        -> link "pkg.mod.Foo" (cross-module: fully qualify)
+:meth:`~queue.Queue.get`    -> link rendered as just "get"
+```
+
+Use double backticks for literal values — ``None``, ``'tuple'``, SQL fragments,
+flags, environment variables — so they render as code, not prose.
+
+## Raises: discipline
+
+- Document only exceptions relevant to the caller's interface, each with its
+  trigger condition — a bare exception name tells the caller nothing actionable.
+- Never document exceptions raised because the caller violated the documented
+  contract: per the style guide, that would paradoxically make behavior under
+  violation of the API part of the API.
+- On protocols and other interfaces, add `Raises:` only when raising is a required
+  part of the contract, not a detail of one implementation.
+
+## Generators
+
+Use `Yields:` in place of `Returns:`; describe one yielded item and any ordering
+guarantee.
 
 ```python
 async def stream_rows(self, query: str) -> AsyncIterator[Mapping[str, Any]]:
-    """Stream query results one row at a time.
-
-    Args:
-        query (str): SQL query text.
+    """Streams query results one row at a time.
 
     Yields:
         Mapping[str, Any]: Each matching row, in result order.
     """
 ```
 
----
+## Classes, attributes, properties
 
-## 3.1. @overload
-
-For overloaded callables, docstrings should reflect the **semantic differences between overload variants**, not just duplicate a shared description.
-
-Many IDEs display the docstring of the **selected overload signature**. If an overload stub lacks a docstring, callers may see no documentation at all. Therefore, each `@overload` should have a docstring.
-
-**Rules:**
-
-- Each `@overload` stub must have a docstring.
-- Prefer documenting the **behavior specific to that signature** (return shape, mutation vs new instance, sentinel handling, narrowing).
-- Avoid repeating the entire shared description unless necessary.
-- If overload semantics cannot be meaningfully distinguished, duplicate the shared docstring verbatim as a fallback.
-- The implementation may carry a general docstring, but overload docstrings are the primary source of truth for per-signature guarantees.
-- Add an ellipsis below each overload docstring, otherwise the stub is treated as broken.
+- Class summary is a noun phrase; the body covers lifecycle, invariants, and
+  concurrency — what a caller cannot recover from the signature.
+- Document public attributes (excluding properties) in `Attributes:`, in the same
+  `name (type): description` shape as `Args:`.
+- Document a property on its getter, worded like an attribute:
+  `"""The Bigtable path."""`, never `"""Returns the Bigtable path."""`.
+- Use a trailing docstring under the assignment for private or subtle fields that
+  need more room than a one-line entry.
 
 ```python
-from typing import overload, Literal, Self
+class PostgresClient:
+    """Async Postgres client with pooling and context-bound transactions.
 
-@overload
-def register(self, op: str, *, inplace: Literal[True]) -> None:
-    """Register an operation factory and mutate the registry in place.
+    Must be initialized with a DSN via :meth:`initialize` before use. Nested
+    :meth:`transaction` blocks reuse one connection via savepoints.
 
-    Args:
-        op (str): Unique operation key.
-        inplace (Literal[True]): Mutate this registry; no value is returned.
-
-    Raises:
-        CoreError: If ``op`` is already registered.
-    """
-    ...
-
-@overload
-def register(self, op: str, *, inplace: Literal[False] = False) -> Self:
-    """Register an operation factory and return a new registry.
-
-    Args:
-        op (str): Unique operation key.
-        inplace (Literal[False]): Leave this registry unchanged.
-
-    Returns:
-        Self: A new registry that includes ``op``.
-
-    Raises:
-        CoreError: If ``op`` is already registered.
-    """
-    ...
-
-def register(self, op: str, *, inplace: bool = False) -> Self | None:
-    """Register an operation factory.
-
-    Dispatches to the appropriate overload behavior based on ``inplace``.
+    Attributes:
+        min_size (int): Minimum number of pooled connections.
+        max_size (int): Maximum number of connections the pool may open.
     """
 ```
 
-Fallback (no meaningful semantic difference):
+## Type aliases, constants, TypedDict
+
+- Constants and aliases take a trailing one-line docstring right after the
+  assignment, explaining meaning and effect — the type is already on the line above.
+- TypedDict: the class docstring says what the dict configures; document keys in
+  `Attributes:`. For `total=False` keys, always state what absence means.
 
 ```python
-@overload
-def normalize(value: int) -> int:
-    """Normalize a value without changing its meaning."""
-    ...
+RowFactory = Literal["tuple", "dict"]
+"""Row format for fetch methods: ``"tuple"`` for sequences, ``"dict"`` for dicts."""
 
-@overload
-def normalize(value: str) -> str:
-    """Normalize a value without changing its meaning."""
-    ...
-
-def normalize(value: int | str) -> int | str:
-    """Normalize a value without changing its meaning."""
-    ...
-```
-
----
-
-## 4. Attributes / fields
-
-Prefer the class-level `Attributes:` section (section 2). Use a trailing docstring when a field is private, subtle, or needs more explanation than a one-line entry.
-
-```python
-min_size: int = 2
-"""Minimum number of connections kept in the pool."""
-
-_ctx_depth: ContextVar[int] = ...
-"""Transaction nesting depth used to manage savepoints."""
-```
-
----
-
-## 5. TypedDict keys
-
-Class docstring: what the dict represents and where it is used. Document keys in an `Attributes:` section (Napoleon renders `TypedDict` keys as attributes). If a key is optional (e.g. `total=False`), note what happens when absent.
-
-```python
 class TransactionOptions(TypedDict, total=False):
     """Options for :meth:`PostgresClient.transaction`.
 
     Attributes:
-        read_only (bool): If true, the transaction is read-only. Defaults to
-            ``False`` when absent.
-        isolation (IsolationLevel): Transaction isolation level (e.g.
-            ``"repeatable read"``, ``"serializable"``). Uses the server default
+        read_only (bool): Run the transaction read-only. Defaults to ``False``
             when absent.
+        isolation (IsolationLevel): Isolation level; server default when absent.
     """
-
-    read_only: bool
-    isolation: IsolationLevel
 ```
 
----
+## Stubs: @overload and Protocol
 
-## Description length (be concise)
+- Give every `@overload` stub its own docstring — IDEs show the docstring of the
+  selected overload, so an undocumented stub shows the caller nothing.
+- Document what differs per signature: return shape, mutation vs new instance,
+  sentinel handling. If nothing meaningfully differs, duplicate the shared summary
+  verbatim. Keep a general docstring on the implementation.
+- Protocol methods document the contract — when they are called, idempotency,
+  ordering, side effects — never one implementation's details.
+- End each stub body with `...` after the docstring. A docstring alone is a valid
+  body; the `...` marks the stub as intentional, not unfinished.
 
-The description explains intent and non-obvious behavior — it is not a place for prose. This budget applies to the **summary and body**, not to `Args:`/`Returns:`/`Raises:` entries (size those to the actual API surface).
+```python
+@overload
+def register(self, op: str, *, inplace: Literal[True]) -> None:
+    """Registers an operation in place; returns nothing."""
+    ...
 
-- **Default to the one-line summary.** For simple or self-explanatory APIs, the summary is the whole docstring; do not add a body.
-- **Add a body only when it earns its place** — non-obvious behavior, side effects, invariants, edge cases, or "why". Keep it to ~1–3 sentences.
-- **Scale with complexity, not by default.** Reserve longer explanations for genuinely complex or tricky code (concurrency, transactions, subtle contracts). Even then, prefer the shortest correct explanation.
+@overload
+def register(self, op: str, *, inplace: Literal[False] = False) -> Self:
+    """Registers an operation on a new registry, leaving this one unchanged."""
+    ...
 
----
+def register(self, op: str, *, inplace: bool = False) -> Self | None:
+    """Registers an operation factory.
 
-## Formatting (hard requirements)
+    Raises:
+        CoreError: If ``op`` is already registered.
+    """
+```
 
-- **Sentence-cased** summary, ending with a period. One blank line between summary and the first section.
-- **Present tense** ("Returns …", "Acquires …").
-- Each typed entry follows `name (type): description`; wrap continuation lines with an extra indent level.
-- Double backticks for literal values, SQL fragments, flags, and env vars.
-- ~88 chars line length when reasonable.
-- **Do not merely repeat type hints** in prose. The `(type)` marker is fine; the description should add semantics, invariants, side effects, concurrency, or performance caveats.
-- Keep section order: `Args:` → `Returns:`/`Yields:` → `Raises:` → others.
+## Length and formatting
 
----
+- Default docstring is the summary line alone. Add a body only when it earns its
+  place — non-obvious behavior, side effects, invariants, "why" — in 1–3 sentences.
+  Size `Args:`/`Returns:`/`Raises:` to the real API surface.
+- Never restate the type in prose. The `(type)` marker carries the type; the
+  description adds semantics: units, constraints, defaults on absence.
+- Section bodies indent 4 spaces under the keyword; continuations 8.
+- Wrap near 88 columns; the summary must stay on one physical line.
 
 ## Anti-patterns
 
-**Parameter** — Bad (repeats type, no meaning): `count (int): An integer.`
-Good: `count (int): Number of retries before giving up; ``0`` disables retrying.`
+| Wrong | Right |
+|---|---|
+| `count (int): An integer.` | `count (int): Retries before giving up; 0 disables retrying.` |
+| `Returns: The result.` | `Returns: bool: True if the row was inserted.` |
+| Property: `"""Returns the path."""` | `"""The Bigtable path."""` — properties read as attributes |
+| `Raises: ValueError:` for arguments the contract already forbids | Omit — contract violations are not interface behavior |
+| Mixing `Args:` and `Parameters:` across a project | `Args:` everywhere |
 
-**Returns** — Bad (no info): `Returns: The result.`
-Good: `Returns: Mapping[str, Any] | None: The first row, or ``None`` if empty.`
+## Related skills
 
-**Section keyword drift** — Bad: mixing `Args:` and `Parameters:` within one project.
-Good: standardize on `Args:` and use it everywhere.
-
-**Empty sections** — Bad: a `Raises:` block listing exceptions the function never raises.
-Good: omit sections that add nothing.
-
----
-
-## Checklist before writing
-
-1. **User-facing?** → Document behavior and edge cases.
-2. **Type hint already clear?** → Description adds semantics, not just the type.
-3. **Correctness-sensitive?** (transactions, concurrency, caching, idempotency) → Must document.
-4. **Generator?** → Use `Yields:` instead of `Returns:`.
-5. **Raises meaningful errors?** → Add a `Raises:` section with conditions.
-6. `@overload`? → Each overload stub must have a docstring; document semantic differences per signature.
-7. `typing.Protocol`? → Document contract/semantics; avoid `Raises:` unless mandated.
-
----
-
-## Minimal templates
-
-**Type alias / constant:**
-`Thing = ...` → `"""What it represents and how callers should interpret it."""`
-
-**Class:**
-One-line summary, then key behaviors, lifecycle, invariants, and an `Attributes:` section for public fields.
-
-**Function / method:**
-
-```python
-"""One-line summary.
-
-Args:
-    name (Type): Meaning and constraints.
-
-Returns:
-    Type: Meaning of the value.
-
-Raises:
-    SomeError: When the failure condition occurs.
-"""
-```
-
-**Field:**
-`field: Type = default` → `"""Meaning, units, constraints, or why it exists."""`
-
----
-
-Compatible with PEP 257, the Google Python Style Guide, and Sphinx Napoleon. Keep typed `(type)` markers even in annotated code; they render in tooltips and keep docstrings self-contained.
+- python-rest-docstrings — the same rules expressed as reST field lists, for projects not using Napoleon
+- self-documenting-code — better names and structure shrink what docstrings must explain
+- altitude-docs — deciding what belongs in docstrings vs higher-level documentation

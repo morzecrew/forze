@@ -1,6 +1,6 @@
 ---
 name: reading-isnt-proof
-description: Never close a test gap in a multi-implementation contract on the strength of a code read - when one contract has two or more implementations and you are about to say "nothing tests X", write the shared battery and run it, even when you believe there is no defect. Use when auditing ports/interfaces/adapters with several backends, comparing a mock or fake against a real implementation, reporting a test gap, or when the user mentions conformance, parity, differential testing, or cross-backend behavior.
+description: Never close a test gap in a multi-implementation contract on the strength of a code read - when one contract has two or more implementations and you are about to say "nothing tests X", write the shared conformance battery and run it, even when you believe there is no defect. Use when auditing ports/interfaces/adapters with several backends, verifying a mock or fake against the real implementation it stands in for, reporting a test gap, or when the user mentions conformance, parity, differential testing, "do they behave the same", or cross-backend behavior.
 ---
 
 # Reading Isn't Proof
@@ -108,7 +108,9 @@ Promise language (step 1) tells you *what* to test. This tells you *where from*.
 
 At least one check must establish the state that makes the interesting check
 observable. If the battery would still be green with the feature ripped out, it is
-measuring nothing.
+measuring nothing. Run that as a literal experiment on the highest-stakes check —
+rip the behavior out, watch for red. That is mutation testing by hand, and a
+battery that cannot kill the ripped-out mutant scores zero.
 
 Concretely: to prove "release leaves a claim it doesn't own alone", you need a
 check that a held claim *is* refused. Without it, "still refused afterwards" could
@@ -169,8 +171,12 @@ State three things: what the battery covers, what it found, and what you changed
 
 ## Related skills
 
+- `fewer-tests-more-proof` — the suite-wide economics: battery-ifying a
+  multi-implementation contract is one of its consolidation moves; this skill
+  owns the battery craft.
+- `self-audit` — its verification-honesty pass is where this rule fires during a
+  branch audit.
 - `self-documenting-code`, `naming-things` — check names are the battery's
   documentation; each one states its claim.
-- `python-testing-patterns` — parametrisation and fixture mechanics.
 - `rfc-writer` — when the battery surfaces a contract question too big to settle
   in the fix.
