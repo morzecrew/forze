@@ -85,6 +85,25 @@ backend was wired.
 Label every assertion with the implementation under test (`assert ..., h.backend`)
 so a failure names which one disagreed.
 
+## Exercise the discriminating state
+
+Asserting the right detail is only half of it — the check must also run in the state
+where the promise could actually break. A leg that sets up whatever state is
+convenient can assert the discriminating detail perfectly and still be blind, because
+the divergence lives in a state it never reaches.
+
+The tell is a mismatch between the battery's setup and the **production caller's**
+ordering. Ask of each promise: *which state does the real caller put this in, and is
+that the state I set up?*
+
+Concretely: a store method documented "unlike the other writes, this one is **not**
+guarded on `RUNNING`" was exercised only against `RUNNING` runs — the single state in
+which a spurious guard is invisible. The real caller writes it from a `finally`,
+always *after* the terminal write. Adding a guard to one backend left the battery
+green; adding the after-terminal leg made the two implementations disagree at once.
+
+Promise language (step 1) tells you *what* to test. This tells you *where from*.
+
 ## Positive control
 
 At least one check must establish the state that makes the interesting check
@@ -143,6 +162,7 @@ State three things: what the battery covers, what it found, and what you changed
 - [ ] Am I about to report a gap without running anything?
 - [ ] Is there one shared module, parametrised over all implementations?
 - [ ] Does every check assert a discriminating detail (kind, state, value)?
+- [ ] Does each check run in the state the production caller actually produces?
 - [ ] Is there a positive control that makes the key check observable?
 - [ ] Can each check fail for a reason I can name out loud?
 - [ ] Did I run it *before* concluding whether a defect exists?

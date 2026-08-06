@@ -54,6 +54,8 @@ New code must follow the invariants its file already enforces: if every mutation
 
 Happy paths get exercised by development itself; failure paths only run when things go wrong, so they are where untested behavior hides. Trace them explicitly: What happens on misconfiguration — does it fail loudly once, or spin in a retry loop warning forever? Can an error raised inside a loop reach the branch that's supposed to handle it, or does an inner catch-all swallow it, making the outer handler unreachable? Is anything silently dropped where it should refuse?
 
+Give **cleanup paths** their own pass — `finally` blocks, teardown hooks, deferred writes. Anything there that can fail will replace the outcome propagating through it and skip everything after it, so a blip in bookkeeping destroys the real result: the exception the caller needed, the metric that records what happened. Ask of every cleanup statement, "if this raises, what did it just outrank?" An advisory write must never be able to outrank the outcome it trails.
+
 ### 6. Duplication you introduced
 
 Executing a multi-part change tempts copy-paste: the same setup block in four test legs, the same classify-or-reraise stanza twice in one file. Find your repeats and extract them — duplication found *now* is cheap; found later it has already diverged.
@@ -74,6 +76,7 @@ Distrust every "tested" and "covered" claim, including your own — reading a te
 - **Verified-red:** for each fix, is there a test that demonstrably fails without the fix? If it wasn't run red, you don't know it guards anything.
 - **Sabotage spot-checks:** for load-bearing checks, break the guarded behavior and confirm the check fails. When a sabotage *passes*, don't conclude "blind check" or "fine" — find out **why** (it may be a second, independent guard; it may be a dead assertion). The why is the finding.
 - **Patch coverage:** measure coverage of the new lines specifically, with the full test profile (unit-only can be wildly misleading). The gaps that matter most are **detection branches** — code that only runs when the bug it detects is present, which is exactly the code that must not be dead.
+- **Sabotage and coverage are not substitutes — run both, in that order.** Sabotage only probes the code you thought to mutate, so a clean sweep measures your imagination rather than your tests — and it leaves you *feeling* finished, which is exactly when you stop looking. Coverage finds the branch you never considered at all. When the two disagree, coverage is the one saying something new: a sabotage sweep that passes everything, sitting next to an uncovered detection branch, means that branch is dead — not that it is safe.
 
 ## Translating to non-code work
 
