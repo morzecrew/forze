@@ -1,9 +1,13 @@
-"""Durable-run admin / query plane: read-only listing for operator surfaces.
+"""Durable-run admin / control plane: listing and run control for operator surfaces.
 
 Kept **separate** from the operational :class:`DurableRunStorePort` (enqueue / claim /
-complete) — mirroring the framework's management/data split — so a read-only handler (e.g. a
-CQRS ``QUERY``) can list runs for an ops dashboard without acquiring the claim/write store.
-Backed by the same ``durable_run`` relation; listing never mutates a run.
+complete) — mirroring the framework's management/data split — so a handler driving an ops
+dashboard never acquires the claim/write store. Backed by the same ``durable_run`` relation.
+
+Two verbs live here, both operator-shaped. :meth:`DurableRunAdminPort.list_runs` never
+mutates a run. :meth:`DurableRunAdminPort.request_cancel` records an *ask* — deliberately
+the only operator verb that writes, and deliberately not on the data-plane store: anyone may
+ask a run to stop, but only the fence-holding runner may land the terminal state.
 """
 
 from __future__ import annotations
@@ -105,13 +109,66 @@ def build_run_page(records: Sequence[DurableRunRecord], limit: int) -> DurableRu
 # ....................... #
 
 
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class DurableRunControlCapabilities:
+    """Run-control features a :class:`DurableRunAdminPort` backend supports.
+
+    Reported through the opt-in :class:`DurableRunControlAware` protocol. Defaults to
+    ``False``: a port that cannot report its capabilities has none, so a cancel against it
+    **fails closed** rather than being accepted and silently ignored. That matters more here
+    than elsewhere — a "Stop" button that returns success and does nothing is worse than one
+    that says it is unavailable.
+    """
+
+    supports_cancel: bool = False
+    """Can :meth:`DurableRunAdminPort.request_cancel` actually reach the executing run?
+
+    True for the self-hosted tier (mock, Postgres), where the runner observes the stamp on
+    its lease heartbeat. An engine-backed tier sets it only when the engine exposes a
+    cancellation mechanism the adapter maps onto."""
+
+
+# ....................... #
+
+
+@runtime_checkable
+class DurableRunControlAware(Protocol):
+    """Opt-in extension for durable-run admin ports that report their control capabilities.
+
+    Kept off :class:`DurableRunAdminPort` so a backend opts in only when it can genuinely
+    stop a run — mirroring
+    :class:`~forze.application.contracts.graph.GraphStreamingAware`.
+    """
+
+    def control_capabilities(self) -> DurableRunControlCapabilities:
+        """Report the run-control features this backend supports."""
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+def durable_run_control_capabilities(port: object) -> DurableRunControlCapabilities:
+    """Report *port*'s run-control capabilities, treating a silent port as having none."""
+
+    if isinstance(port, DurableRunControlAware):
+        return port.control_capabilities()
+
+    return DurableRunControlCapabilities()
+
+
+# ....................... #
+
+
 @runtime_checkable
 class DurableRunAdminPort(Protocol):
-    """Read-only listing over persisted durable runs (ops / operator surfaces).
+    """Listing and run control over persisted durable runs (ops / operator surfaces).
 
     Newest-first keyset pagination over the same ``durable_run`` relation the store writes.
     Tenant scoping mirrors recovery: scoped to the bound tenant when one is bound, and spans
-    every tenant when unbound (an operator view over a tagged shared table).
+    every tenant when unbound (an operator view over a tagged shared table) — and that
+    applies to :meth:`request_cancel` too, so an operator bound to one tenant cannot stop a
+    run it could not have listed.
     """
 
     def list_runs(
@@ -128,5 +185,50 @@ class DurableRunAdminPort(Protocol):
         same-instant tie in creation order). *limit* caps the page; pass the returned
         :attr:`DurableRunPage.next_cursor` back as *cursor* for the next (older) page. A
         malformed *cursor* is rejected with a ``validation`` error.
+        """
+        ...  # pragma: no cover
+
+    def request_cancel(self, run_id: str) -> Awaitable[bool]:
+        """Ask a run to stop; return whether the ask was recorded.
+
+        **Cooperative, and only cooperative.** There is no in-process red button in Python: a
+        thread cannot be killed, asyncio cancellation lands only at await points, and a body
+        blocked inside a C extension observes nothing until it returns. This method therefore
+        *requests* a stop and never guarantees when — or whether — the body notices. A body
+        that needs bounded-latency stop must be structured for it (await regularly; use
+        ``run_cpu`` with checkpoints at chunk boundaries). Hard kill exists only at
+        process/container granularity and is a deployment concern, not a contract this port
+        can honour.
+
+        By state:
+
+        - ``PENDING`` — transitions to ``CANCELLED`` immediately (nothing is executing, so
+          there is no holder to wait for); the recovery scanner never claims it. Returns
+          ``True``.
+        - ``RUNNING`` — stamps :attr:`DurableRunRecord.cancel_requested_at` and returns
+          ``True``. The terminal transition happens when the current lease holder observes
+          the stamp on its next heartbeat, or — if the holder died — when recovery claims the
+          run and lands it without invoking the body.
+        - terminal — no-op, returns ``False``.
+        - unknown, or owned by another tenant while one is bound — no-op, returns ``False``
+          (indistinguishable on purpose: an operator scoped to one tenant learns nothing
+          about the existence of another's runs).
+
+        The ask is **unfenced**: anyone may ask, and asking twice changes nothing. Only the
+        fence-holding runner may land ``CANCELLED``, so a stale worker cannot cancel a run
+        out from under its new owner.
+
+        Backends report through :class:`DurableRunControlAware` whether they can honour this
+        at all; check :func:`durable_run_control_capabilities` before offering it — as
+        :meth:`~forze_kits.integrations.durable.DurableFunctionRunner.request_cancel` does,
+        so an operator surface built on the runner is gated for free.
+
+        **Adapter obligation: a backend that cannot deliver a cancel must raise
+        ``configuration``, never return ``False``.** ``False`` is already spoken for — it
+        means *there was nothing to stop* (terminal, unknown, or another tenant's run). An
+        adapter that reuses it for *nothing here will ever stop* makes those two
+        indistinguishable to the caller, and a caller who cannot tell them apart shows a
+        "Stop" button that reports success and does nothing. That is the failure this whole
+        surface exists to avoid, arriving through the return type instead of the behaviour.
         """
         ...  # pragma: no cover

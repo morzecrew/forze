@@ -13,7 +13,10 @@ from psycopg.types.json import Jsonb
 
 from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.durable.function import (
+    DurableLeaseRenewal,
     DurableRunAdminPort,
+    DurableRunControlAware,
+    DurableRunControlCapabilities,
     DurableRunPage,
     DurableRunRecord,
     DurableRunStatus,
@@ -38,13 +41,14 @@ from forze_postgres.kernel.relation import resolve_postgres_qname
 
 _COLUMNS = (
     "run_id, name, status, idempotency_key, input, output, error, tenant_id, "
-    "attempts, available_at, created_at"
+    "attempts, available_at, created_at, cancel_requested_at, cancel_refused_at"
 )
 """Row projection for plain single-table SELECTs."""
 
 _T_COLUMNS = (
     "t.run_id, t.name, t.status, t.idempotency_key, t.input, t.output, "
-    "t.error, t.tenant_id, t.attempts, t.available_at, t.created_at"
+    "t.error, t.tenant_id, t.attempts, t.available_at, t.created_at, "
+    "t.cancel_requested_at, t.cancel_refused_at"
 )
 """Row projection for RETURNING out of an ``UPDATE ... FROM picked`` join (qualified to
 resolve the ``run_id`` shared with the ``picked`` CTE); column names stay unqualified."""
@@ -78,7 +82,12 @@ def _unscope_idem(stored: str | None, tenant_id: UUID | None) -> str | None:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort, DurableRunAdminPort):
+class PostgresDurableRunStore(
+    TenancyMixin,
+    DurableRunStorePort,
+    DurableRunAdminPort,
+    DurableRunControlAware,
+):
     """Postgres-backed durable-run store.
 
     Records run instances and hands out claims for execution and crash recovery. A crashed
@@ -97,22 +106,37 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort, DurableRunAdmin
     application; expected schema::
 
         CREATE TABLE <relation> (
-            run_id          text        NOT NULL,
-            name            text        NOT NULL,
-            status          text        NOT NULL,
-            idempotency_key text,
-            input           jsonb,
-            output          jsonb,
-            error           text,
-            tenant_id       uuid,
-            attempts        integer     NOT NULL DEFAULT 0,
-            leased_until    timestamptz,
-            available_at    timestamptz,
-            created_at      timestamptz NOT NULL,
-            updated_at      timestamptz NOT NULL,
+            run_id              text        NOT NULL,
+            name                text        NOT NULL,
+            status              text        NOT NULL,
+            idempotency_key     text,
+            input               jsonb,
+            output              jsonb,
+            error               text,
+            tenant_id           uuid,
+            attempts            integer     NOT NULL DEFAULT 0,
+            leased_until        timestamptz,
+            available_at        timestamptz,
+            created_at          timestamptz NOT NULL,
+            updated_at          timestamptz NOT NULL,
+            cancel_requested_at timestamptz,
+            cancel_refused_at   timestamptz,
             PRIMARY KEY (run_id),
             UNIQUE (idempotency_key)
         );
+
+        -- Both cancel columns are nullable with no default, so an existing deployment
+        -- migrates with two plain ADD COLUMNs and no table rewrite:
+        --   ALTER TABLE <relation> ADD COLUMN cancel_requested_at timestamptz,
+        --                          ADD COLUMN cancel_refused_at   timestamptz;
+        --
+        -- RUN THE MIGRATION BEFORE DEPLOYING THIS CODE. Every read here projects both
+        -- columns and `renew` returns `cancel_requested_at IS NOT NULL`, so against the old
+        -- schema each one raises `UndefinedColumn`. That is worst for the heartbeat, which
+        -- treats a failed renewal as lease loss: instead of a loud startup error, every
+        -- in-flight body is torn down as if it had been reclaimed, and the runs are left for
+        -- the recovery scan to pick up and tear down again. Migrate first and the deploy is
+        -- uneventful; migrate second and the tier looks like it is silently losing leases.
 
         -- Recommended: back the recovery scan (claim_abandoned), which filters on
         -- status/available_at/leased_until and orders by created_at under
@@ -277,19 +301,23 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort, DurableRunAdmin
         *,
         lease_for: timedelta,
         fence: int,
-    ) -> bool:
+    ) -> DurableLeaseRenewal:
         table = await self._table()
 
         # Fenced on ``attempts = fence`` (and ``status = 'running'``), mirroring ``_finish``:
         # the lease is pushed forward only while this worker is still the current claim
         # holder. If a recovery scan reclaimed the run its ``attempts`` advanced, no row
-        # matches, the row count is 0, and the caller learns it must stop.
-        updated = await self.client.execute(
+        # matches, nothing is returned, and the caller learns it must stop.
+        #
+        # The cancel stamp rides back on the same RETURNING, so observing a cancel request
+        # costs the heartbeat it already makes rather than a second polling loop.
+        row = await self.client.fetch_one(
             sql.SQL(
                 """
                 UPDATE {table}
                 SET leased_until = now() + {lease}, updated_at = now()
                 WHERE run_id = {run_id} AND status = 'running' AND attempts = {fence}
+                RETURNING (cancel_requested_at IS NOT NULL) AS cancel_requested
                 """
             ).format(
                 table=table.ident(),
@@ -298,10 +326,12 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort, DurableRunAdmin
                 fence=sql.Placeholder("fence"),
             ),
             {"lease": lease_for, "run_id": run_id, "fence": fence},
-            return_rowcount=True,
         )
 
-        return updated > 0
+        if row is None:
+            return DurableLeaseRenewal(held=False)
+
+        return DurableLeaseRenewal(held=True, cancel_requested=bool(row["cancel_requested"]))
 
     # ....................... #
 
@@ -405,6 +435,124 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort, DurableRunAdmin
             error=error,
             fence=fence,
         )
+
+    # ....................... #
+
+    async def mark_cancelled(
+        self, run_id: str, *, error: str | None = None, fence: int | None = None
+    ) -> None:
+        await self._finish(
+            run_id,
+            status=DurableRunStatus.CANCELLED,
+            output=None,
+            error=error,
+            fence=fence,
+        )
+
+    # ....................... #
+
+    async def mark_timed_out(self, run_id: str, *, error: str, fence: int | None = None) -> None:
+        await self._finish(
+            run_id,
+            status=DurableRunStatus.TIMED_OUT,
+            output=None,
+            error=error,
+            fence=fence,
+        )
+
+    # ....................... #
+
+    async def refuse_cancel(self, run_id: str, *, fence: int | None = None) -> None:
+        table = await self._table()
+        params: dict[str, object] = {"run_id": run_id}
+
+        # Fenced but NOT guarded on ``status = 'running'`` (unlike ``_finish``): a refusal
+        # records what happened to the ask, and the run it describes may already have landed
+        # by the time the holder writes it down. ``COALESCE`` keeps the first refusal's
+        # instant, so a repeated write is a no-op.
+        fence_clause = sql.SQL("")
+
+        if fence is not None:
+            fence_clause = sql.SQL(" AND attempts = %(fence)s")
+            params["fence"] = fence
+
+        # Tenant-scoped like ``request_cancel``. Losing the ``status = 'running'`` guard makes
+        # this the widest write on the port — it can stamp a run in *any* state — and
+        # ``attempts`` is a small integer that collides freely across tenants, so the fence
+        # alone is thin protection here. The ask and the refusal are read together by an
+        # operator, so they get the same isolation.
+        tenant_id = self._tenant_id_for_resolve()
+        tenant_filter = sql.SQL("")
+
+        if tenant_id is not None:
+            tenant_filter = sql.SQL(" AND tenant_id = %(tenant_id)s")
+            params["tenant_id"] = tenant_id
+
+        await self.client.execute(
+            sql.SQL(
+                """
+                UPDATE {table}
+                SET cancel_refused_at = COALESCE(cancel_refused_at, now()),
+                    updated_at = now()
+                WHERE run_id = {run_id}{fence_clause}{tenant_filter}
+                """
+            ).format(
+                table=table.ident(),
+                run_id=sql.Placeholder("run_id"),
+                fence_clause=fence_clause,
+                tenant_filter=tenant_filter,
+            ),
+            params,
+        )
+
+    # ....................... #
+
+    async def request_cancel(self, run_id: str) -> bool:
+        table = await self._table()
+        params: dict[str, object] = {"run_id": run_id}
+
+        # Scoped like ``list_runs``: an operator bound to one tenant must not stop a run it
+        # could not have listed. On a namespace table the resolved table is already
+        # per-tenant, so the filter is a redundant no-op.
+        tenant_id = self._tenant_id_for_resolve()
+        tenant_filter = sql.SQL("")
+
+        if tenant_id is not None:
+            tenant_filter = sql.SQL(" AND tenant_id = %(tenant_id)s")
+            params["tenant_id"] = tenant_id
+
+        # One statement covers both live states. A PENDING run has no holder to wait for and
+        # no fence to respect, so it lands CANCELLED here and the recovery scan never picks
+        # it up; a RUNNING run only gets the stamp, and its holder lands the terminal state
+        # under its fence. ``COALESCE`` makes a repeated ask keep the first instant. A
+        # terminal run matches no row and the caller is told nothing happened.
+        row = await self.client.fetch_one(
+            sql.SQL(
+                """
+                UPDATE {table}
+                SET status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END,
+                    leased_until = CASE WHEN status = 'pending' THEN NULL ELSE leased_until END,
+                    cancel_requested_at = COALESCE(cancel_requested_at, now()),
+                    updated_at = now()
+                WHERE run_id = {run_id}
+                  AND status IN ('pending', 'running'){tenant_filter}
+                RETURNING run_id
+                """
+            ).format(
+                table=table.ident(),
+                run_id=sql.Placeholder("run_id"),
+                tenant_filter=tenant_filter,
+            ),
+            params,
+            row_factory="tuple",
+        )
+
+        return row is not None
+
+    # ....................... #
+
+    def control_capabilities(self) -> DurableRunControlCapabilities:
+        return DurableRunControlCapabilities(supports_cancel=True)
 
     # ....................... #
 
@@ -576,6 +724,8 @@ class PostgresDurableRunStore(TenancyMixin, DurableRunStorePort, DurableRunAdmin
             attempts=row["attempts"],
             available_at=row["available_at"],
             created_at=row["created_at"],
+            cancel_requested_at=row["cancel_requested_at"],
+            cancel_refused_at=row["cancel_refused_at"],
         )
 
     # ....................... #

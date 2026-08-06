@@ -1,10 +1,17 @@
 """Execution deadline: a hung body (stuck awaiting a dead peer, no deadline of its own) is
 cancelled at ``max_run_duration`` instead of heartbeating its lease alive forever — the run
-lands FAILED with the deadline reason, its recovery slot frees so the scanner keeps draining,
-and nothing double-executes (the body was cancelled before any lease lapse).
+lands TIMED_OUT with the deadline reason, its recovery slot frees so the scanner keeps
+draining, and nothing double-executes (the body was cancelled before any lease lapse).
+
+TIMED_OUT is a terminal of its own, not a flavour of FAILED, and the two are asserted
+*mutually exclusive* here: a body that raises must never land TIMED_OUT and a body that
+outlives its cap must never land FAILED. Collapsing them would leave "hung past the cap"
+and "the code threw" indistinguishable through `list_runs` — the same tile, two completely
+different investigations.
 
 # covers: DurableFunctionRunner.run_now
 # covers: DurableFunctionRunner.recover
+# covers: DurableRunStorePort.mark_timed_out
 """
 
 from __future__ import annotations
@@ -20,6 +27,7 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
     DurableFunctionRunner,
+    resolve_durable_run_admin,
     resolve_durable_run_store,
 )
 from forze_mock import MockDepsModule
@@ -47,7 +55,7 @@ def _register_hung(
 
 
 class TestRunDeadline:
-    async def test_hung_body_lands_failed_with_deadline_reason(self) -> None:
+    async def test_hung_body_lands_timed_out_with_deadline_reason(self) -> None:
         ctx = context_from_modules(MockDepsModule())
         store = resolve_durable_run_store(ctx)
 
@@ -74,11 +82,11 @@ class TestRunDeadline:
         # The body was cancelled (its ``finally`` ran) — not left hanging detached.
         assert unwound["body"] is True
 
-        # FAILED with the deadline reason: the body was cancelled before any lease lapse,
+        # TIMED_OUT with the deadline reason: the body was cancelled before any lease lapse,
         # so no double-execution; there is no retry machinery — an operator re-enqueues.
         reloaded = await store.load(record.run_id)
         assert reloaded is not None
-        assert reloaded.status is DurableRunStatus.FAILED
+        assert reloaded.status is DurableRunStatus.TIMED_OUT
         assert "max_run_duration" in (reloaded.error or "")
 
         # Heartbeat, watchdog, and body are all torn down — no lingering task keeps
@@ -115,10 +123,10 @@ class TestRunDeadline:
         claimed = await runner.recover(ctx)
         assert claimed == 2
 
-        failed = await store.load(hung.run_id)
-        assert failed is not None
-        assert failed.status is DurableRunStatus.FAILED
-        assert "max_run_duration" in (failed.error or "")
+        expired = await store.load(hung.run_id)
+        assert expired is not None
+        assert expired.status is DurableRunStatus.TIMED_OUT
+        assert "max_run_duration" in (expired.error or "")
 
         completed = await store.load(valid.run_id)
         assert completed is not None
@@ -174,6 +182,36 @@ class TestRunDeadline:
 
         record = await runner.run_now(ctx, "quick")
         assert record.status is DurableRunStatus.COMPLETED
+
+    async def test_timed_out_and_failed_are_distinguishable_through_list_runs(self) -> None:
+        # The point of a separate terminal: an operator filtering an ops dashboard can tell
+        # "hung past the cap" from "the body raised" without parsing an error string. A
+        # raising body must never be reported TIMED_OUT, and a hung one never FAILED.
+        ctx = context_from_modules(MockDepsModule())
+        admin = resolve_durable_run_admin(ctx)
+
+        registry = DurableFunctionRegistry()
+        _register_hung(registry, {"body": False})
+
+        async def raises(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            raise ValueError("the body raised")
+
+        registry.register("raises", raises)
+
+        runner = DurableFunctionRunner(
+            registry=registry,
+            max_run_duration=timedelta(milliseconds=50),
+        )
+
+        await runner.enqueue(ctx, "hung")
+        await runner.enqueue(ctx, "raises")
+        await runner.recover(ctx)
+
+        timed_out = await admin.list_runs(status=DurableRunStatus.TIMED_OUT, limit=10)
+        failed = await admin.list_runs(status=DurableRunStatus.FAILED, limit=10)
+
+        assert [r.name for r in timed_out.records] == ["hung"]
+        assert [r.name for r in failed.records] == ["raises"]
 
     async def test_non_positive_max_run_duration_rejected(self) -> None:
         with pytest.raises(CoreException, match="positive"):

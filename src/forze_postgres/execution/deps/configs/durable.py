@@ -49,11 +49,17 @@ class PostgresDurableRunConfig(TenantAwareIntegrationConfig):
     """
 
     admin: bool = False
-    """Also expose the read-only :class:`DurableRunAdminPort` (``list_runs``) over this table.
+    """Also expose the :class:`DurableRunAdminPort` (ops control plane) over this table.
 
-    Opt-in so a deployment publishes the ops read-plane explicitly. When ``True`` the module
+    Opt-in so a deployment publishes the ops plane explicitly. When ``True`` the module
     registers ``DurableRunAdminDepKey`` alongside the run store — a CQRS ``QUERY`` handler can
-    list runs without acquiring the claim/write store.
+    ``list_runs`` without acquiring the claim/write store.
+
+    **Not read-only.** The port also carries ``request_cancel``, which mutates run state: it
+    lands a ``PENDING`` run in ``CANCELLED`` outright and stamps a ``RUNNING`` one for its
+    holder to stop. Enabling this therefore grants run *control*, not just visibility — the
+    ask is tenant-scoped and unfenced, so anyone who can resolve this key can stop any run
+    their tenant can list. Wire it where that is intended.
     """
 
 

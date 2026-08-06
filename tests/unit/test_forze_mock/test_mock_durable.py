@@ -276,3 +276,83 @@ class TestMockListRuns:
         # Unbound → spans every tenant's runs (operator view).
         spanning = await writer.list_runs(limit=10)
         assert {r.name for r in spanning.records} == {"a", "b"}
+
+    async def test_request_cancel_is_scoped_to_the_bound_tenant(self) -> None:
+        # ``request_cancel`` is the admin port's only mutating verb, so it must scope exactly
+        # like the ``list_runs`` beside it — an operator bound to one tenant must not stop a
+        # run it could not have listed. Proven on real Postgres too, but the *mock* is what
+        # DST simulates against: a mock more permissive than the engine on a tenant boundary
+        # would make every simulation blind to a cross-tenant cancel.
+        from uuid import uuid4
+
+        from forze.application.contracts.durable.function import DurableRunStatus
+        from forze.application.contracts.tenancy import TenantIdentity
+        from forze_mock.adapters.durable import MockDurableRunStore
+
+        t1, t2 = uuid4(), uuid4()
+        state = MockState()
+
+        writer = MockDurableRunStore(state=state)
+        theirs = await writer.enqueue("b", input_json=None, tenant_id=t2)
+
+        bound_to_t1 = MockDurableRunStore(
+            state=state, tenant_provider=lambda: TenantIdentity(tenant_id=t1)
+        )
+
+        # The ask reports that nothing happened, and nothing did.
+        assert await bound_to_t1.request_cancel(theirs.run_id) is False
+
+        untouched = await writer.load(theirs.run_id)
+        assert untouched is not None
+        assert untouched.status is DurableRunStatus.PENDING
+        assert untouched.cancel_requested_at is None
+
+        # The owning tenant can stop it.
+        bound_to_t2 = MockDurableRunStore(
+            state=state, tenant_provider=lambda: TenantIdentity(tenant_id=t2)
+        )
+        assert await bound_to_t2.request_cancel(theirs.run_id) is True
+
+        stopped = await writer.load(theirs.run_id)
+        assert stopped is not None
+        assert stopped.status is DurableRunStatus.CANCELLED
+
+    async def test_refusing_twice_keeps_the_first_refusal_instant(self) -> None:
+        # Same idempotency discipline the cancel *ask* already has a test for: a repeated
+        # write must not creep the timestamp forward, or "when was this refused" becomes
+        # "when did the run last finish".
+        from forze_mock.adapters.durable import MockDurableRunStore
+
+        state = MockState()
+        store = MockDurableRunStore(state=state)
+
+        record = await store.enqueue("fn", input_json=None)
+        claimed = await store.begin(record.run_id, lease_for=timedelta(minutes=5))
+        assert claimed is not None
+
+        # Nor can a store bound to another tenant, even with a matching fence — this write
+        # has no RUNNING guard, so the tenant predicate is what bounds it.
+        from uuid import uuid4
+
+        from forze.application.contracts.tenancy import TenantIdentity
+
+        other_tenant = MockDurableRunStore(
+            state=state, tenant_provider=lambda: TenantIdentity(tenant_id=uuid4())
+        )
+        await other_tenant.refuse_cancel(record.run_id, fence=claimed.attempts)
+        foreign = await store.load(record.run_id)
+        assert foreign is not None and foreign.cancel_refused_at is None
+
+        # A stale worker cannot claim to have refused on the current holder's behalf.
+        await store.refuse_cancel(record.run_id, fence=claimed.attempts + 99)
+        unstamped = await store.load(record.run_id)
+        assert unstamped is not None and unstamped.cancel_refused_at is None
+
+        await store.refuse_cancel(record.run_id, fence=claimed.attempts)
+        first = await store.load(record.run_id)
+        assert first is not None and first.cancel_refused_at is not None
+
+        await store.refuse_cancel(record.run_id, fence=claimed.attempts)
+        second = await store.load(record.run_id)
+        assert second is not None
+        assert second.cancel_refused_at == first.cancel_refused_at

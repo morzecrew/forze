@@ -22,7 +22,10 @@ from typing import TYPE_CHECKING, cast, final
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.durable.function import require_durable_run
+from forze.application.contracts.durable.function import (
+    current_durable_cancel_signal,
+    require_durable_run,
+)
 from forze.application.contracts.saga import (
     SagaDefinition,
     SagaProgress,
@@ -61,6 +64,17 @@ replayed failure decides differently than the live one did. Today that is the
 ``commit_ambiguous`` code: flattened to a bare message, an ambiguous step commit would
 re-raise as an ordinary failure, be compensated around a possibly-committed effect, and
 journal DOMAIN ``saga.step_failed`` as a consistent rollback — permanently."""
+
+
+@final
+class _CancelBeforePivot(Exception):
+    """An operator's cancel observed before the saga's pivot committed.
+
+    Signals :meth:`DurableSagaExecutor.run` to do what a step failure at this position does —
+    compensate the completed steps — and then land the run ``CANCELLED`` rather than
+    ``FAILED``. Stopping mid-flight is safe here precisely *because* compensation exists;
+    that is the whole bargain a saga makes.
+    """
 
 
 @final
@@ -156,8 +170,16 @@ class DurableSagaExecutor:
             try:
                 state = cast(
                     "Ctx",
-                    await self._run_step(ctx, step, state, step_port, ctx_model),
+                    await self._advance(ctx, step, state, step_port, ctx_model, progress),
                 )
+
+            except _CancelBeforePivot:
+                # An operator asked, and nothing irreversible has committed: roll back the
+                # completed steps exactly as a failure here would, then land CANCELLED —
+                # a distinct outcome from FAILED, because nothing misbehaved.
+                comp_errors = await self._compensate(ctx, definition, progress, states, step_port)
+
+                raise progress.step_cancelled_error(index, comp_errors) from None
 
             except Exception as error:
                 # An ambiguous step commit (a drain-timeout cancel at the commit) is
@@ -177,7 +199,77 @@ class DurableSagaExecutor:
             progress.record_success(index)
             states[index] = state
 
+        # A refusal is a property of the *outcome* — "an ask was outstanding and this saga
+        # completed forward past its pivot anyway" — not of which code path happened to
+        # observe the cancellation. A step action that catches and suppresses its own
+        # ``CancelledError`` never routes through :meth:`_advance`'s refusal branch, and
+        # without this the run would land COMPLETED carrying an ask with no recorded reason:
+        # the exact "refused or merely lost?" ambiguity ``cancel_refused_at`` exists to end.
+        signal = current_durable_cancel_signal()
+
+        if progress.committed and signal is not None and signal.requested and not signal.refused:
+            signal.refuse()
+
         return state
+
+    # ....................... #
+
+    async def _advance[Ctx](
+        self,
+        ctx: ExecutionContext,
+        step: SagaStep[Ctx],
+        state: Ctx,
+        step_port: DurableFunctionStepPort,
+        ctx_model: type[BaseModel],
+        progress: SagaProgress,
+    ) -> BaseModel:
+        """Run one step, deciding what an operator's cancel means at this position.
+
+        A ``CancelledError`` reaching here is pre-commit — the step port converts an
+        at-or-after-commit one into journaled ambiguity before it can escape — so nothing
+        irreversible is at stake and the saga is free to choose. It chooses by the pivot,
+        the only line that matters:
+
+        - **before it** — compensation exists, so stopping is safe: raise
+          :class:`_CancelBeforePivot` and let the caller roll back.
+        - **at or after it** — forward steps *must* complete; that is what committing at a
+          pivot means. The ask is refused, and the interrupted step is simply re-run (it
+          journaled nothing, so this is the same replay a crash would have caused).
+
+        Any other cancellation — a drain, a deadline, an external kill — is crash-shaped and
+        propagates untouched, which is what every non-operator stop has always done.
+        """
+
+        while True:
+            try:
+                return await self._run_step(ctx, step, state, step_port, ctx_model)
+
+            except asyncio.CancelledError:
+                signal = current_durable_cancel_signal()
+                task = asyncio.current_task()
+
+                # ``task is None`` folds into the re-raise, as the commit-ambiguity path
+                # does: outside a task there is no cancel count to balance.
+                if task is None or signal is None or not signal.requested or signal.refused:
+                    raise
+
+                # Absorb the cancellation: every branch below needs to await (compensating,
+                # or re-running the step), and a task still carrying a delivered cancel
+                # cannot. Balancing the count mirrors the tx scope's own conversion.
+                task.uncancel()
+
+                if not progress.committed:
+                    raise _CancelBeforePivot from None
+
+                # Refusing also *spends* the ask, so a later drain or deadline is not
+                # mistaken for this operator's request and swallowed too.
+                signal.refuse()
+                logger.warning(
+                    "Saga %s was asked to stop at step %s but has committed at its pivot; "
+                    "refusing the request and completing forward",
+                    progress.saga_name,
+                    step.name,
+                )
 
     # ....................... #
 
@@ -327,15 +419,62 @@ class DurableSagaExecutor:
     ) -> list[BaseException]:
         errors: list[BaseException] = []
 
-        for index in progress.steps_to_compensate():
+        # Only steps that *have* a compensation are pending rollback. A compensation-less one
+        # has nothing to undo, so counting it would inflate the un-compensated tally in the
+        # interruption message below — a number an operator uses to size the inconsistency,
+        # which must not overstate it.
+        pending = [
+            index
+            for index in progress.steps_to_compensate()
+            if definition.steps[index].compensation is not None
+        ]
+
+        for position, index in enumerate(pending):
             step = definition.steps[index]
             compensation = step.compensation
 
-            if compensation is None:
+            if compensation is None:  # pragma: no cover — filtered out above; narrowing only
                 continue
 
             try:
                 await self._run_compensation(ctx, step, compensation, states[index], step_port)
+
+            except asyncio.CancelledError:
+                # A *second* cancellation, landing while the rollback is already running —
+                # a drain, the deadline watchdog, a lost lease. It is emphatically not the
+                # operator request that sent us here: that one was spent the moment we
+                # decided to compensate. Left to propagate it would escape as a bare
+                # cancellation and the runner, still seeing an unspent request, would record
+                # the run CANCELLED — i.e. "completed steps were compensated" — over a
+                # rollback abandoned partway.
+                #
+                # Absorb it (as the commit-ambiguity path does) so the outcome can still be
+                # written, record what was left undone, and stop: the remaining steps are
+                # un-compensated and no further await would be honoured anyway.
+                task = asyncio.current_task()
+
+                if task is None:  # pragma: no cover — no cancel count to balance
+                    raise
+
+                task.uncancel()
+
+                remaining = len(pending) - position
+                errors.append(
+                    exc.infrastructure(
+                        f"Compensation for step {step.name!r} was interrupted by a "
+                        f"cancellation; {remaining} step(s) are left un-compensated and the "
+                        "rollback is incomplete.",
+                    )
+                )
+                logger.warning(
+                    "Durable saga %s had its rollback interrupted at step %s; "
+                    "%d step(s) left un-compensated",
+                    progress.saga_name,
+                    step.name,
+                    remaining,
+                )
+
+                break
 
             except Exception as comp_error:
                 errors.append(comp_error)

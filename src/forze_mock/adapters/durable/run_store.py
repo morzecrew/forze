@@ -10,7 +10,10 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.durable.function import (
+    DurableLeaseRenewal,
     DurableRunAdminPort,
+    DurableRunControlAware,
+    DurableRunControlCapabilities,
     DurableRunPage,
     DurableRunRecord,
     DurableRunStatus,
@@ -28,13 +31,14 @@ from forze_mock.state import MockState
 
 @final
 @attrs.define(slots=True, kw_only=True)
-class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort):
+class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunControlAware):
     """Back durable runs with :attr:`MockState.durable_runs`.
 
     Same lifecycle and lease/claim semantics as the Postgres store (``PENDING`` →
-    ``RUNNING`` under a lease, abandoned reclaim, idempotency-key convergence), in memory.
-    A bound tenant scopes ``enqueue``/``claim_abandoned`` to that tenant (per-tenant
-    recovery); unbound, the scan spans every tenant.
+    ``RUNNING`` under a lease, abandoned reclaim, idempotency-key convergence, the cancel
+    ask/land split), in memory. A bound tenant scopes ``enqueue``/``claim_abandoned``/
+    ``request_cancel`` to that tenant (per-tenant recovery and control); unbound, the scan
+    spans every tenant.
     """
 
     state: MockState
@@ -89,6 +93,8 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort):
                 "leased_until": None,
                 "available_at": available_at,
                 "created_at": utcnow(),
+                "cancel_requested_at": None,
+                "cancel_refused_at": None,
             }
             self.state.durable_runs[run_id] = data
 
@@ -120,7 +126,7 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort):
         *,
         lease_for: timedelta,
         fence: int,
-    ) -> bool:
+    ) -> DurableLeaseRenewal:
         with self.state.lock:
             data = self.state.durable_runs.get(run_id)
 
@@ -129,14 +135,19 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort):
             # reclaim advanced ``attempts``, so the fence no longer matches and the caller is
             # told to stop.
             if data is None or data["status"] != DurableRunStatus.RUNNING.value:
-                return False
+                return DurableLeaseRenewal(held=False)
 
             if data["attempts"] != fence:
-                return False
+                return DurableLeaseRenewal(held=False)
 
             data["leased_until"] = utcnow() + lease_for
 
-            return True
+            # The cancel stamp rides back on the renewal the holder was making anyway, so
+            # observation costs no extra round trip and no second polling loop.
+            return DurableLeaseRenewal(
+                held=True,
+                cancel_requested=data["cancel_requested_at"] is not None,
+            )
 
     # ....................... #
 
@@ -194,6 +205,89 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort):
             error=error,
             fence=fence,
         )
+
+    # ....................... #
+
+    async def mark_cancelled(
+        self, run_id: str, *, error: str | None = None, fence: int | None = None
+    ) -> None:
+        self._finish(
+            run_id,
+            status=DurableRunStatus.CANCELLED,
+            error=error,
+            fence=fence,
+        )
+
+    # ....................... #
+
+    async def mark_timed_out(self, run_id: str, *, error: str, fence: int | None = None) -> None:
+        self._finish(
+            run_id,
+            status=DurableRunStatus.TIMED_OUT,
+            error=error,
+            fence=fence,
+        )
+
+    # ....................... #
+
+    async def refuse_cancel(self, run_id: str, *, fence: int | None = None) -> None:
+        bound_tenant = self._bound_tenant()
+
+        with self.state.lock:
+            data = self.state.durable_runs.get(run_id)
+
+            # Fenced but NOT guarded on RUNNING (unlike ``_finish``): a refusal records what
+            # happened to the ask, and the run it describes may already have landed by the
+            # time the holder gets to write it down.
+            if data is None or (fence is not None and data["attempts"] != fence):
+                return
+
+            # Tenant-scoped like ``request_cancel``: losing the RUNNING guard makes this the
+            # widest write on the port, and ``attempts`` collides freely across tenants.
+            if bound_tenant is not None and data["tenant_id"] != bound_tenant:
+                return
+
+            if data["cancel_refused_at"] is None:
+                data["cancel_refused_at"] = utcnow()
+
+    # ....................... #
+
+    async def request_cancel(self, run_id: str) -> bool:
+        bound_tenant = self._bound_tenant()
+
+        with self.state.lock:
+            data = self.state.durable_runs.get(run_id)
+
+            if data is None:
+                return False
+
+            # Scoped like ``list_runs``: an operator bound to one tenant must not stop a run
+            # it could not have listed.
+            if bound_tenant is not None and data["tenant_id"] != bound_tenant:
+                return False
+
+            status = data["status"]
+
+            if status not in (DurableRunStatus.PENDING.value, DurableRunStatus.RUNNING.value):
+                return False  # terminal: nothing to stop, and nothing to overwrite
+
+            # ``COALESCE``-style: asking twice keeps the first ask's instant, so a repeated
+            # request is a genuine no-op rather than a moving timestamp.
+            if data["cancel_requested_at"] is None:
+                data["cancel_requested_at"] = utcnow()
+
+            if status == DurableRunStatus.PENDING.value:
+                # Nothing is executing, so there is no holder to wait for and no fence to
+                # respect — land it here and the recovery scan never picks it up.
+                data["status"] = DurableRunStatus.CANCELLED.value
+                data["leased_until"] = None
+
+            return True
+
+    # ....................... #
+
+    def control_capabilities(self) -> DurableRunControlCapabilities:
+        return DurableRunControlCapabilities(supports_cancel=True)
 
     # ....................... #
 
@@ -313,4 +407,6 @@ def _to_record(data: dict[str, Any]) -> DurableRunRecord:
         attempts=data["attempts"],
         available_at=data["available_at"],
         created_at=data["created_at"],
+        cancel_requested_at=data["cancel_requested_at"],
+        cancel_refused_at=data["cancel_refused_at"],
     )

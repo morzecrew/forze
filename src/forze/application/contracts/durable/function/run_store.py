@@ -40,6 +40,47 @@ class DurableRunStatus(StrEnum):
     FORWARD_INCOMPLETE = "forward_incomplete"
     """A saga committed at its pivot but could not complete forward (manual intervention)."""
 
+    CANCELLED = "cancelled"
+    """An operator asked the run to stop and it did. Deliberately distinct from ``FAILED``:
+    nothing is wrong with the code, so a dashboard must not page anyone for it."""
+
+    TIMED_OUT = "timed_out"
+    """The run outlived the runner's ``max_run_duration`` cap and its body was cancelled.
+
+    Distinct from ``FAILED`` because the two demand different responses: ``FAILED`` sends you
+    to the body's code, ``TIMED_OUT`` sends you to the cap, the workload's size, or a hung
+    peer. :attr:`DurableRunRecord.error` still carries the human-readable deadline reason."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DurableLeaseRenewal:
+    """The verdict of one heartbeat renewal, plus what the store saw while answering it.
+
+    A heartbeat is the one round-trip a running body already makes on a fixed cadence, so the
+    cancel stamp rides back on it rather than costing a second polling loop. Observation
+    latency for a cancel request is therefore one heartbeat interval
+    (``lease_for / heartbeat_divisor``).
+    """
+
+    held: bool
+    """Whether the lease was extended — i.e. whether this worker is still the claim holder.
+
+    ``False`` means another worker reclaimed the run (a newer claim advanced ``attempts``),
+    so the caller must stop before its body double-executes the new owner's work."""
+
+    cancel_requested: bool = False
+    """Whether an operator has asked this run to stop (see
+    :meth:`~forze.application.contracts.durable.function.DurableRunAdminPort.request_cancel`).
+
+    Advisory and unfenced — anyone may *ask*. Only the fence-holding runner may land
+    ``CANCELLED``, so a stale worker reading this cannot cancel a run out from under the
+    new owner. Always ``False`` when :attr:`held` is ``False`` (a store that no longer
+    recognises the caller as holder reports no state about the run)."""
+
 
 # ....................... #
 
@@ -68,7 +109,13 @@ class DurableRunRecord:
     """Encoded result, present once :attr:`status` is ``COMPLETED``."""
 
     error: str | None = None
-    """Failure message, present once :attr:`status` is ``FAILED``/``FORWARD_INCOMPLETE``."""
+    """Failure message, present once :attr:`status` is
+    ``FAILED``/``FORWARD_INCOMPLETE``/``TIMED_OUT``.
+
+    Also populated on some ``CANCELLED`` runs, where it is an explanatory **note** rather
+    than a failure — a cancelled saga records which step it stopped at and that its completed
+    steps were compensated. So do not read a non-empty ``error`` as "this run failed": read
+    :attr:`status` for that. A plainly cancelled durable function leaves it ``None``."""
 
     tenant_id: UUID | None = None
     """Owning tenant (tagged tier); ``None`` for single-tenant deployments."""
@@ -89,6 +136,21 @@ class DurableRunRecord:
     """When the run was first enqueued. Populated by the store on read; ``None`` on a record
     built before persistence. Runs are ordered newest-first on ``(created_at, run_id)`` by
     :meth:`~forze.application.contracts.durable.function.DurableRunAdminPort.list_runs`."""
+
+    cancel_requested_at: datetime | None = None
+    """When an operator asked this run to stop, or ``None`` if nobody has.
+
+    Set on the *ask*, not the landing: a ``RUNNING`` run keeps running until its lease holder
+    observes the stamp, so a run can carry it while still ``RUNNING``. ``PENDING`` runs skip
+    the interval — nothing is executing, so they land ``CANCELLED`` at once."""
+
+    cancel_refused_at: datetime | None = None
+    """When the run refused an observed cancel request, or ``None``.
+
+    The one case that refuses is a durable saga past its **pivot**: forward steps must
+    complete (that is what a pivot means), so the ask is recorded and declined rather than
+    manufacturing a ``FORWARD_INCOMPLETE`` by operator request. A run carrying both stamps
+    was asked to stop, kept going, and landed on its own merits."""
 
 
 # ....................... #
@@ -155,16 +217,20 @@ class DurableRunStorePort(Protocol):
         *,
         lease_for: timedelta,
         fence: int,
-    ) -> Awaitable[bool]:
+    ) -> Awaitable[DurableLeaseRenewal]:
         """Extend a running run's lease, but only while the caller still holds it.
 
         A long-running body calls this periodically (a heartbeat) so ``leased_until`` stays
         ahead of the recovery scanner and the run is not reclaimed while it is still
         executing. The extension applies only when the run is still ``RUNNING`` and *fence*
         (the claimed run's :attr:`DurableRunRecord.attempts`) still matches — i.e. the caller
-        is the current lease holder. Returns whether the lease was extended: ``False`` means
-        another worker reclaimed the run (a newer claim advanced ``attempts``), so the caller
-        no longer owns it and must stop before its body double-executes the new owner's work.
+        is the current lease holder. :attr:`DurableLeaseRenewal.held` reports the verdict:
+        ``False`` means another worker reclaimed the run (a newer claim advanced
+        ``attempts``), so the caller no longer owns it and must stop before its body
+        double-executes the new owner's work.
+
+        The renewal also carries :attr:`DurableLeaseRenewal.cancel_requested`, so the holder
+        learns about a cancel request on the round-trip it was making anyway.
         """
         ...  # pragma: no cover
 
@@ -201,6 +267,53 @@ class DurableRunStorePort(Protocol):
         fence: int | None = None,
     ) -> Awaitable[None]:
         """Mark a running run ``FORWARD_INCOMPLETE`` (pivot committed, forward step failed)."""
+        ...  # pragma: no cover
+
+    def mark_cancelled(
+        self,
+        run_id: str,
+        *,
+        error: str | None = None,
+        fence: int | None = None,
+    ) -> Awaitable[None]:
+        """Land a running run in ``CANCELLED`` — an operator asked, and it stopped.
+
+        The **landing** half of cancellation: :meth:`DurableRunAdminPort.request_cancel`
+        records the unfenced *ask*, and only the current lease holder (or the recovery claim
+        that inherits the run from a dead holder) turns it into a terminal state, fenced on
+        *fence* like every other terminal write. *error* carries an optional note — e.g. a
+        compensation that failed while the saga rolled back — not a failure message.
+        """
+        ...  # pragma: no cover
+
+    def mark_timed_out(
+        self,
+        run_id: str,
+        *,
+        error: str,
+        fence: int | None = None,
+    ) -> Awaitable[None]:
+        """Mark a running run ``TIMED_OUT`` — it outlived its deadline (fenced when given).
+
+        Kept distinct from :meth:`fail` because "hung past its cap" and "the body raised"
+        send an operator to different places; *error* holds the deadline reason.
+        """
+        ...  # pragma: no cover
+
+    def refuse_cancel(
+        self,
+        run_id: str,
+        *,
+        fence: int | None = None,
+    ) -> Awaitable[None]:
+        """Record that an observed cancel request was declined (see
+        :attr:`DurableRunRecord.cancel_refused_at`).
+
+        Unlike the terminal writes this is **not** guarded on ``RUNNING``: a refusal is a fact
+        about the ask, not a lifecycle transition, so it is stamped whatever the run's state
+        by the time it is recorded. Still fenced, so only the run's current holder can claim
+        to have refused on its behalf.
+        """
         ...  # pragma: no cover
 
     def load(

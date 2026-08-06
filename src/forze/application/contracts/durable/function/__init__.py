@@ -13,10 +13,19 @@ from .deps import (
 from .ports import DurableFunctionEventCommandPort, DurableFunctionStepPort
 from .run_admin import (
     DurableRunAdminPort,
+    DurableRunControlAware,
+    DurableRunControlCapabilities,
     DurableRunPage,
     build_run_page,
     decode_run_cursor,
+    durable_run_control_capabilities,
     encode_run_cursor,
+)
+from .run_cancel import (
+    DurableCancelSignal,
+    bind_durable_cancel_signal,
+    current_durable_cancel_signal,
+    reset_durable_cancel_signal,
 )
 from .run_context import (
     DurableRunContext,
@@ -26,6 +35,7 @@ from .run_context import (
     reset_durable_run,
 )
 from .run_store import (
+    DurableLeaseRenewal,
     DurableRunRecord,
     DurableRunStatus,
     DurableRunStorePort,
@@ -46,6 +56,7 @@ from .specs import (
 # ----------------------- #
 
 __all__ = [
+    "DurableCancelSignal",
     "DurableFunctionCronTrigger",
     "DurableFunctionEventCommandDepKey",
     "DurableFunctionEventCommandDepPort",
@@ -58,10 +69,13 @@ __all__ = [
     "DurableFunctionStepDepPort",
     "DurableFunctionStepPort",
     "DurableFunctionTrigger",
+    "DurableLeaseRenewal",
     "DurableRunAdminDepKey",
     "DurableRunAdminDepPort",
     "DurableRunAdminPort",
     "DurableRunContext",
+    "DurableRunControlAware",
+    "DurableRunControlCapabilities",
     "DurableRunPage",
     "DurableRunRecord",
     "DurableRunStatus",
@@ -72,11 +86,15 @@ __all__ = [
     "DurableScheduleStoreDepKey",
     "DurableScheduleStoreDepPort",
     "DurableScheduleStorePort",
+    "bind_durable_cancel_signal",
     "bind_durable_run",
     "build_run_page",
+    "current_durable_cancel_signal",
     "current_durable_run",
     "decode_run_cursor",
+    "durable_run_control_capabilities",
     "encode_run_cursor",
     "require_durable_run",
+    "reset_durable_cancel_signal",
     "reset_durable_run",
 ]

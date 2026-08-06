@@ -41,10 +41,11 @@ class TestStoreRenew:
 
         # The short lease is already effectively expired; a renew by the current holder
         # pushes ``leased_until`` far into the future.
-        held = await store.renew(
+        renewal = await store.renew(
             record.run_id, lease_for=timedelta(minutes=5), fence=claimed.attempts
         )
-        assert held is True
+        assert renewal.held is True
+        assert renewal.cancel_requested is False  # nobody asked it to stop
 
         # With the lease live again the recovery scanner finds nothing to reclaim, so the
         # run is not stolen out from under the still-executing worker.
@@ -76,16 +77,16 @@ class TestStoreRenew:
 
         # Worker A's heartbeat can no longer renew: its fence is stale, so it learns it must
         # stop rather than extend a lease it no longer owns.
-        held = await store.renew(
+        stale = await store.renew(
             record.run_id, lease_for=timedelta(minutes=5), fence=worker_a.attempts
         )
-        assert held is False
+        assert stale.held is False
 
         # Worker B, the current holder, still renews successfully.
-        held_b = await store.renew(
+        current = await store.renew(
             record.run_id, lease_for=timedelta(minutes=5), fence=worker_b.attempts
         )
-        assert held_b is True
+        assert current.held is True
 
 
 class TestRunnerHeartbeat:

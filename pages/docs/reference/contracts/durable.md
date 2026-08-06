@@ -55,12 +55,42 @@ queue's delayed jobs.
 |---------|------|
 | `DurableFunctionEventCommandDepKey` | emit events that trigger functions |
 | `DurableFunctionStepDepKey` | run memoized, individually-retried steps inside a function |
-| `DurableRunStoreDepKey` | the run store behind the self-hosted tier — enqueue / begin / renew / complete / fail, `claim_abandoned` recovery |
-| `DurableRunAdminDepKey` | run listing — `list_runs(status=None, name=None, limit=50, cursor=None)` returns a cursor-paged `DurableRunPage` of `DurableRunRecord`s |
+| `DurableRunStoreDepKey` | the run store behind the self-hosted tier — enqueue / begin / renew / complete / fail, `claim_abandoned` recovery, and the fenced terminal landings `mark_cancelled` / `mark_timed_out` |
+| `DurableRunAdminDepKey` | run listing and control — `list_runs(status=None, name=None, limit=50, cursor=None)` returns a cursor-paged `DurableRunPage`; `request_cancel(run_id)` asks a run to stop |
 | `DurableScheduleStoreDepKey` | the cron schedule store — put / claim_due / advance / load / delete |
 
 A `DurableFunctionEventSpec` binds an event channel to its payload codec. A run's status is
-a `DurableRunStatus` — `pending` / `running` / `completed` / `failed` / `forward_incomplete`.
+a `DurableRunStatus` — `pending` / `running` / `completed` / `failed` / `forward_incomplete`
+/ `cancelled` / `timed_out`.
+
+## Stopping a run
+
+`request_cancel(run_id)` is the self-hosted tier's answer to the workflow tier's `cancel`.
+It is **cooperative and only cooperative**: it records an ask and returns whether the ask was
+recorded, never a promise about when the body notices.
+
+| Run state | What happens | Returns |
+|-----------|--------------|---------|
+| `pending` | lands `cancelled` immediately — nothing is executing | `True` |
+| `running` | stamps `cancel_requested_at`; the lease holder lands it on its next heartbeat | `True` |
+| terminal | nothing | `False` |
+| unknown / not visible to the bound tenant | nothing | `False` |
+
+The ask is **unfenced** (anyone may ask, and asking twice changes nothing) while the landing
+is **fenced**, so a stale worker cannot cancel a run out from under its new owner. If the
+holder dies carrying the stamp, recovery claims the run and lands it *without invoking the
+body*. Observation latency for a running body is one heartbeat interval
+(`lease_for / heartbeat_divisor`); a body that never awaits is bounded only by the runner's
+`max_run_duration`.
+
+Backends declare whether they can honour this at all through `DurableRunControlAware`; read
+it with `durable_run_control_capabilities(port).supports_cancel`. A port that does not report
+is treated as unable, and `DurableFunctionRunner.request_cancel` refuses rather than
+accepting a request it cannot deliver.
+
+Two record fields carry the outcome: `cancel_requested_at` (when it was asked) and
+`cancel_refused_at` (when the run declined — a durable saga past its pivot must complete
+forward).
 
 ## Implemented by
 
