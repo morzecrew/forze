@@ -439,6 +439,50 @@ class TestOrderingAgainstTheDeadline:
         assert result.status is not DurableRunStatus.TIMED_OUT
         assert result.error is None  # a cancel, not a deadline failure
 
+    async def test_a_failed_re_read_still_lands_a_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The re-read is best effort, and its failure path only runs when the store is
+        # unreachable — the moment it must not make things worse. If it let the read error
+        # escape, a store blip during a deadline would replace TIMED_OUT with an unrelated
+        # infrastructure error and leave the run's terminal state unwritten.
+        from forze_mock.adapters.durable import MockDurableRunStore
+
+        ctx = context_from_modules(MockDepsModule())
+        store = resolve_durable_run_store(ctx)
+
+        registry = DurableFunctionRegistry()
+
+        async def body(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            await asyncio.sleep(5.0)
+
+            return {"ok": True}  # pragma: no cover — the deadline stops us first
+
+        registry.register("fn", body)
+
+        runner = DurableFunctionRunner(
+            registry=registry,
+            lease_for=timedelta(seconds=30),  # the heartbeat never ticks
+            heartbeat_divisor=2,
+            max_run_duration=timedelta(milliseconds=100),
+        )
+
+        record = await store.enqueue("fn", input_json=None)
+
+        async def unreachable(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("the run store is unreachable")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(MockDurableRunStore, "load", unreachable)
+            # ``recover`` records the outcome itself, so the read failure has to be absorbed
+            # inside the deadline path rather than surfacing here.
+            assert await runner.recover(ctx) == 1
+
+        landed = await store.load(record.run_id)
+        assert landed is not None
+        assert landed.status is DurableRunStatus.TIMED_OUT
+        assert "max_run_duration" in (landed.error or "")
+
     async def test_a_deadline_with_no_ask_on_the_record_is_still_a_timeout(self) -> None:
         # The positive control for the check above: the extra read must not turn every
         # deadline into a cancellation.

@@ -53,10 +53,12 @@ operator to the cap or the workload's size, not to the body's code."""
 _UNRECORDED_OUTCOME = "unrecorded"
 """Telemetry outcome for an execution whose terminal write never landed.
 
-Not a state a *run* can be in — the row is still ``RUNNING`` and recovery will re-claim it.
-It marks the **attempt**: the body finished, and the store could not be told. Its whole
-purpose is to stop a store outage from being counted as a wave of completions on the one
-dashboard someone is watching during the outage."""
+Not a state a *run* can be in. It marks the **attempt**: the body finished, and the store
+could not be told, so the row is normally still ``RUNNING`` and recovery will re-claim it.
+"Normally", because a write that committed and then lost its acknowledgement looks identical
+from here — which is the point. The label reports what this worker *knows was recorded*, not
+what it hopes happened, and its whole purpose is to stop a store outage from being drawn as
+a wave of completions on the one dashboard someone is watching during the outage."""
 
 
 @final
@@ -529,9 +531,6 @@ class DurableFunctionRunner:
 
         try:
             return await body
-
-        except _LeaseLost:
-            raise
 
         except Exception:
             # A body may convert the cancellation we delivered into an exception of its own —
