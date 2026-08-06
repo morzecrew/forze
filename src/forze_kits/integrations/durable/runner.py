@@ -53,10 +53,11 @@ operator to the cap or the workload's size, not to the body's code."""
 _INTERRUPTED_OUTCOME = "interrupted"
 """Telemetry outcome for an execution stopped before its body finished.
 
-A drain, a shutdown, an external cancellation — nothing was written because nothing had a
-result to write yet. Kept apart from :data:`_UNRECORDED_OUTCOME` because that one means the
-store could not be reached, and folding a routine restart into it would page someone for an
-outage that is really a deploy."""
+A drain, a shutdown, an external cancellation — no terminal state was written because the
+body had no result to write yet (the lease was still being renewed underneath it, which is
+not a record of how the run ended). Kept apart from :data:`_UNRECORDED_OUTCOME` because that
+one means the store could not be reached, and folding a routine restart into it would page
+someone for an outage that is really a deploy."""
 
 _UNRECORDED_OUTCOME = "unrecorded"
 """Telemetry outcome for an execution whose terminal write never landed.
@@ -89,12 +90,17 @@ class _CancelRequested(Exception):
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class _Landing:
-    """What an execution decided to write, decided *before* anything is written.
+    """A run's terminal state, decided *before* it is written.
 
     Splitting the decision from the write is what lets the runner say which of two very
-    different things happened when a drain cancels a run: nothing was attempted, or something
-    was attempted and never acknowledged. While a :class:`_Landing` is being computed no store
-    call has been made yet; once it exists, every remaining step is a write.
+    different things happened when a drain cancels a run: no terminal write was attempted, or
+    one was attempted and never acknowledged. Producing a :class:`_Landing` touches no
+    terminal state; once it exists, every remaining step writes one.
+
+    The run's row is not otherwise untouched while a landing is decided — the heartbeat is
+    renewing the lease alongside the body, and may be stamping a refusal. Those are
+    bookkeeping: they are retried, they are idempotent, and none of them decides how the run
+    ended, which is the only thing this type and its outcome label are about.
     """
 
     outcome: str
@@ -385,8 +391,8 @@ class DurableFunctionRunner:
         #
         # The default stands for "a write was attempted and we never heard back", so every
         # path that leaves it in place must be one that got as far as trying. That is why the
-        # execution below is in two halves: everything before ``_land`` is write-free, so a
-        # cancellation there is ``interrupted`` rather than this.
+        # execution below is in two halves: nothing before ``_land`` writes a *terminal*
+        # state, so a cancellation there is ``interrupted`` rather than this.
         outcome = _UNRECORDED_OUTCOME
         span_cm = self.telemetry.run_span(record) if self.telemetry is not None else nullcontext()
 
@@ -414,8 +420,8 @@ class DurableFunctionRunner:
                     landing = await self._invoke(ctx, store, record, fence, cancel, span)
 
                 except asyncio.CancelledError:
-                    # Shutdown reached us before the body finished. ``_invoke`` writes
-                    # nothing, so nothing was attempted — a different fact from
+                    # Shutdown reached us before the body finished. ``_invoke`` writes no
+                    # terminal state, so none was attempted — a different fact from
                     # ``unrecorded``, which says one *was* attempted and went unacknowledged.
                     # Since that label is read as "the run store is unreachable", letting an
                     # ordinary drain fall through to it would report every graceful shutdown
@@ -483,13 +489,19 @@ class DurableFunctionRunner:
         cancel: DurableCancelSignal,
         span: Span | None,
     ) -> _Landing:
-        """Run the body and decide its terminal state, **without writing anything**.
+        """Run the body and decide its terminal state, **without writing that state**.
 
         Every exit is a :class:`_Landing` rather than an exception, which keeps one rule
         intact: the outcome label is assigned by whoever knows the write landed, so a caller
-        cannot re-raise past the recording of what happened. Writing nothing here is the other
-        half of that rule — it is what makes a cancellation reaching this method provably
-        write-free, and so reportable as ``interrupted`` rather than as an unreachable store.
+        cannot re-raise past the recording of what happened. Deciding without writing is the
+        other half of that rule — it is what makes a cancellation reaching this method
+        provably free of a *terminal* write, and so reportable as ``interrupted`` rather than
+        as an unreachable store.
+
+        Not free of store traffic, though: the heartbeat renews the lease throughout the
+        body's execution and may stamp a refusal (see :meth:`_heartbeat`). Neither records how
+        the run ended, so neither can be mistaken for the write this method is careful not to
+        make.
         """
 
         try:
