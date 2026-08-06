@@ -40,6 +40,7 @@ from forze_kits.integrations.durable import (
     resolve_durable_run_store,
 )
 from forze_mock import MockDepsModule, MockState
+from forze_mock.adapters.durable import MockDurableRunStore
 
 # ----------------------- #
 
@@ -169,6 +170,62 @@ class TestCancelBeforeThePivot:
         assert f"{run_id}:compensate:reserve" in state.durable_step_memo
 
 
+    async def test_a_cancel_whose_rollback_failed_lands_failed_not_cancelled(self) -> None:
+        # The branch that only runs when the bad thing happens, and therefore the one most
+        # likely to be wrong and never noticed. A cancel is normally a clean, non-alarming
+        # outcome — but if the *compensation* fails, the system may be inconsistent, and
+        # reporting "cancelled, completed steps were compensated" over a half-rolled-back
+        # saga would tell an operator the exact opposite of the truth.
+        ctx = context_from_modules(MockDepsModule())
+        admin = resolve_durable_run_admin(ctx)
+        store = resolve_durable_run_store(ctx)
+
+        effects: list[str] = []
+        holder: dict[str, str] = {}
+
+        async def ask_to_stop() -> None:
+            assert await admin.request_cancel(holder["run_id"]) is True
+
+        async def reserve(_ctx: ExecutionContext, state: OrderCtx) -> OrderCtx:
+            effects.append("do:reserve")
+            return OrderCtx(trail=[*state.trail, "reserve"])
+
+        async def failing_undo(_ctx: ExecutionContext, _state: OrderCtx) -> None:
+            effects.append("undo:reserve:failed")
+            raise RuntimeError("the refund gateway is down")
+
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                SagaStep(
+                    name="reserve",
+                    action=reserve,
+                    compensation=failing_undo,
+                    kind=SagaStepKind.COMPENSATABLE,
+                    tx_route="mock",
+                ),
+                _step("charge", effects, stop=True, on_stop=ask_to_stop),
+            ),
+        )
+
+        runner, run_id = await _drive(ctx, saga, holder)
+
+        # A failed rollback is a genuine error, so it reaches the caller — unlike a clean
+        # cancel, which returns the record.
+        with pytest.raises(CoreException, match="compensation failed") as caught:
+            await runner.run_now(ctx, "order", idempotency_key="k")
+
+        assert caught.value.code == "saga.compensation_failed"
+        assert caught.value.kind is ExceptionKind.INFRASTRUCTURE
+        assert effects == ["do:reserve", "do:charge", "undo:reserve:failed"]
+
+        landed = await store.load(run_id)
+        assert landed is not None
+        assert landed.status is DurableRunStatus.FAILED
+        assert landed.status is not DurableRunStatus.CANCELLED  # the whole point
+        assert "compensation failed" in (landed.error or "")
+
+
 class TestCancelAfterThePivot:
     async def test_the_ask_is_refused_and_the_saga_completes_forward(self) -> None:
         ctx = context_from_modules(MockDepsModule())
@@ -213,6 +270,58 @@ class TestCancelAfterThePivot:
         # operator unable to tell a refusal from a request that was silently lost.
         assert result.cancel_requested_at is not None
         assert result.cancel_refused_at is not None
+
+    async def test_a_failed_refusal_stamp_cannot_destroy_the_runs_real_outcome(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The refusal stamp is written in the runner's ``finally``, which makes it dangerous
+        # out of proportion to its importance: an error there would replace whatever outcome
+        # is propagating and skip the telemetry after it. The stamp is *advisory* — losing it
+        # costs an operator one piece of context; losing the run's actual result costs them
+        # the incident.
+        ctx = context_from_modules(MockDepsModule())
+        admin = resolve_durable_run_admin(ctx)
+        store = resolve_durable_run_store(ctx)
+
+        async def boom(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("the run store is having a bad day")
+
+        monkeypatch.setattr(MockDurableRunStore, "refuse_cancel", boom)
+
+        effects: list[str] = []
+        holder: dict[str, str] = {}
+
+        async def ask_to_stop() -> None:
+            await admin.request_cancel(holder["run_id"])
+
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                _step("charge", effects, kind=SagaStepKind.PIVOT),
+                _step(
+                    "ship",
+                    effects,
+                    kind=SagaStepKind.RETRYABLE,
+                    stop=True,
+                    on_stop=ask_to_stop,
+                ),
+            ),
+        )
+
+        runner, run_id = await _drive(ctx, saga, holder)
+
+        # The saga still completes forward and the caller still gets its record — the
+        # bookkeeping failure is swallowed, not promoted into the run's result.
+        result = await runner.run_now(ctx, "order", idempotency_key="k")
+
+        assert result.status is DurableRunStatus.COMPLETED
+        assert result.output_json == {"trail": ["charge", "ship"]}
+
+        # Only the advisory stamp is lost, and the ask itself is still on the record.
+        landed = await store.load(run_id)
+        assert landed is not None
+        assert landed.cancel_requested_at is not None
+        assert landed.cancel_refused_at is None
 
     async def test_a_refusal_spends_the_ask_so_a_later_stop_is_not_swallowed(self) -> None:
         # The hazard in absorbing a cancellation: if the ask stayed "live" after being

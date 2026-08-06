@@ -406,7 +406,22 @@ class DurableFunctionRunner:
                 # rather than at observation time: the refusing code is the saga executor,
                 # which holds no run store and no fence. Until this lands, the run reads as
                 # "asked, still running" — which is the truth in the interval.
-                await store.refuse_cancel(record.run_id, fence=fence)
+                #
+                # Swallowed on failure, like the heartbeat's renewal and the recovery
+                # scanner's escape hatch: this runs in a ``finally``, so an error here would
+                # replace whatever outcome is propagating (a body's real exception, for a
+                # ``reraise`` caller) and skip the telemetry below — destroying the run's
+                # actual result to report a stamp that is only advisory.
+                try:
+                    await store.refuse_cancel(record.run_id, fence=fence)
+
+                except Exception:
+                    logger.warning(
+                        "Durable run %s refused a cancel request but the refusal could not "
+                        "be recorded; the run's outcome stands and is reported normally",
+                        record.run_id,
+                        exc_info=True,
+                    )
 
             if self.telemetry is not None:
                 self.telemetry.record_run(record.name, outcome, (perf_counter() - started) * 1000.0)

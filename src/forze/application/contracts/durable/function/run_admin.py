@@ -210,6 +210,9 @@ class DurableRunAdminPort(Protocol):
           the stamp on its next heartbeat, or — if the holder died — when recovery claims the
           run and lands it without invoking the body.
         - terminal — no-op, returns ``False``.
+        - unknown, or owned by another tenant while one is bound — no-op, returns ``False``
+          (indistinguishable on purpose: an operator scoped to one tenant learns nothing
+          about the existence of another's runs).
 
         The ask is **unfenced**: anyone may ask, and asking twice changes nothing. Only the
         fence-holding runner may land ``CANCELLED``, so a stale worker cannot cancel a run

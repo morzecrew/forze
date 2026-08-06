@@ -74,6 +74,7 @@ recorded, never a promise about when the body notices.
 | `pending` | lands `cancelled` immediately — nothing is executing | `True` |
 | `running` | stamps `cancel_requested_at`; the lease holder lands it on its next heartbeat | `True` |
 | terminal | nothing | `False` |
+| unknown / not visible to the bound tenant | nothing | `False` |
 
 The ask is **unfenced** (anyone may ask, and asking twice changes nothing) while the landing
 is **fenced**, so a stale worker cannot cancel a run out from under its new owner. If the
