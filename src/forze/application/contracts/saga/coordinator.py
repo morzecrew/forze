@@ -27,6 +27,15 @@ the saga into a possible double-execution. Drivers whose retry semantics key on 
 than the kind (the Temporal ``ApplicationError`` mapping) pin this code non-retryable
 explicitly."""
 
+_COMPENSATION_FAILED_CODE = "saga.compensation_failed"
+"""A saga whose **rollback** failed: the system may be inconsistent and an operator must act.
+
+Raised from two places — an ordinary pre-pivot failure and a pre-pivot *cancellation* — that
+must agree exactly, because the difference between them is precisely what callers are not
+supposed to care about once compensation has broken. Module-private, unlike the two exported
+codes below: nothing outside this module branches on it, and a name is warranted here only to
+keep the two builders from drifting."""
+
 SAGA_CANCELLED_CODE = "saga.cancelled"
 """Error code of :meth:`SagaProgress.step_cancelled_error` — an operator stopped the saga
 before its pivot and every completed step was compensated.
@@ -151,7 +160,7 @@ class SagaProgress:
                 f"Saga {self.saga_name!r} failed at step {step_name!r} and "
                 f"compensation failed for {len(comp_errors)} step(s); manual "
                 "intervention required.",
-                code="saga.compensation_failed",
+                code=_COMPENSATION_FAILED_CODE,
                 details={
                     "saga": self.saga_name,
                     "step": step_name,
@@ -198,7 +207,7 @@ class SagaProgress:
                 f"Saga {self.saga_name!r} was cancelled at step {step_name!r} and "
                 f"compensation failed for {len(comp_errors)} step(s); manual "
                 "intervention required.",
-                code="saga.compensation_failed",
+                code=_COMPENSATION_FAILED_CODE,
                 details={
                     "saga": self.saga_name,
                     "step": step_name,

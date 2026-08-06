@@ -19,7 +19,7 @@ runtime already delivered is not that.
 """
 
 from contextvars import ContextVar, Token
-from typing import final
+from typing import Self, final
 
 # ----------------------- #
 
@@ -39,6 +39,26 @@ class DurableCancelSignal:
     def __init__(self) -> None:
         self._requested = False
         self._refused = False
+
+    # ....................... #
+
+    @classmethod
+    def already_refused(cls) -> Self:
+        """A signal for a run that recorded a refusal in an **earlier** execution.
+
+        Re-invoking such a run (recovery after its holder died mid-forward-completion)
+        must not replay the cancellation: the request is on the record, so the heartbeat
+        would read it back and tear the body down again, and the saga would spend a round
+        re-refusing something it already refused. Starting spent — requested *and* refused —
+        makes the persisted ask inert for this attempt, which is what "the refusal stands"
+        means across a restart.
+        """
+
+        signal = cls()
+        signal._requested = True
+        signal._refused = True
+
+        return signal
 
     # ....................... #
 

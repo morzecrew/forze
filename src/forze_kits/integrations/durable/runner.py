@@ -320,7 +320,15 @@ class DurableFunctionRunner:
         # One signal per execution, shared by reference with the body's task: the heartbeat
         # writes to it, the saga executor reads it to tell an operator's cancel apart from a
         # drain, and this method reads back whatever the run decided.
-        cancel = DurableCancelSignal()
+        #
+        # A record that already carries a refusal starts the signal **spent**: the ask is
+        # still on the row, so the heartbeat would otherwise read it back and cancel the
+        # body all over again on every recovery attempt.
+        cancel = (
+            DurableCancelSignal.already_refused()
+            if record.cancel_refused_at is not None
+            else DurableCancelSignal()
+        )
         cancel_token = bind_durable_cancel_signal(cancel)
 
         started = perf_counter()
@@ -329,12 +337,19 @@ class DurableFunctionRunner:
 
         try:
             with span_cm as span:
-                if record.cancel_requested_at is not None:
+                if record.cancel_requested_at is not None and record.cancel_refused_at is None:
                     # The ask was already on the record when this claim took it: either the
                     # previous holder died with the stamp down, or the run was cancelled
                     # between enqueue and pickup. Land it without invoking the body —
                     # re-running work an operator already stopped is the one thing recovery
                     # must not do.
+                    #
+                    # A **refused** ask is excluded, and the exclusion is load-bearing: only a
+                    # saga past its pivot refuses, so short-circuiting one would mark a run
+                    # that committed at its point of no return as "cancelled, nothing wrong"
+                    # and abandon it there. Past the pivot the run must be re-invoked and
+                    # completed forward — replaying its journal — or land
+                    # ``FORWARD_INCOMPLETE`` on its own merits.
                     outcome = "cancelled"
                     await store.mark_cancelled(record.run_id, fence=fence)
 

@@ -31,6 +31,7 @@ from forze.application.contracts.durable.function import DurableRunStatus
 from forze.application.contracts.saga import SagaDefinition, SagaStep, SagaStepKind
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import utcnow
 from forze.testing import context_from_modules
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
@@ -62,6 +63,7 @@ def _step(
     kind: SagaStepKind = SagaStepKind.COMPENSATABLE,
     stop: bool = False,
     on_stop: object = None,
+    delay: float = 0.0,
 ) -> SagaStep[OrderCtx]:
     """A journaled saga step; with *stop* it asks the run to cancel and then blocks.
 
@@ -76,6 +78,11 @@ def _step(
         if stop:
             await on_stop()  # type: ignore[operator]
             await asyncio.sleep(1.0)  # the heartbeat tears us down here
+
+        if delay:
+            # Outlive at least one heartbeat, so a tick that *would* misread a persisted
+            # cancel stamp gets the chance to.
+            await asyncio.sleep(delay)
 
         return OrderCtx(trail=[*state.trail, name])
 
@@ -322,6 +329,59 @@ class TestCancelAfterThePivot:
         assert landed is not None
         assert landed.cancel_requested_at is not None
         assert landed.cancel_refused_at is None
+
+    async def test_a_refused_run_reclaimed_by_recovery_completes_forward(self) -> None:
+        # The ask stays on the row after a refusal. If recovery treated that row the way it
+        # treats any other cancel-stamped run — land CANCELLED, never invoke the body — a
+        # saga that had already committed at its pivot would be abandoned there and reported
+        # as "cancelled, nothing wrong". Past the pivot the only legal outcomes are forward
+        # completion or FORWARD_INCOMPLETE; cancellation is not among them.
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        admin = resolve_durable_run_admin(ctx)
+        store = resolve_durable_run_store(ctx)
+
+        effects: list[str] = []
+        registry = DurableFunctionRegistry()
+
+        saga: SagaDefinition[OrderCtx] = SagaDefinition(
+            name="order",
+            steps=(
+                _step("charge", effects, kind=SagaStepKind.PIVOT),
+                # Slow enough to outlive a heartbeat tick: the ask is still on the row, so a
+                # runner that did not start this attempt's signal spent would read it back,
+                # cancel the body, and re-run the step — visible below as a duplicate effect.
+                _step("ship", effects, kind=SagaStepKind.RETRYABLE, delay=0.1),
+            ),
+        )
+        registry.register("order", durable_saga_handler(saga, OrderCtx))
+        runner = DurableFunctionRunner(
+            registry=registry, lease_for=_FAST_LEASE, heartbeat_divisor=2
+        )
+
+        # A previous attempt got past the pivot, was asked to stop, refused — and then lost
+        # its worker before it could finish going forward.
+        record = await store.enqueue(
+            "order", input_json=OrderCtx().model_dump(mode="json")
+        )
+        claimed = await store.begin(record.run_id, lease_for=_FAST_LEASE)
+        assert claimed is not None
+
+        assert await admin.request_cancel(record.run_id) is True
+        await store.refuse_cancel(record.run_id, fence=claimed.attempts)
+        state.durable_runs[record.run_id]["leased_until"] = utcnow() - timedelta(hours=1)
+
+        assert await runner.recover(ctx) == 1
+
+        # The body ran and the saga finished going forward, rather than being landed
+        # CANCELLED on the strength of a stamp it had already declined.
+        assert effects == ["do:charge", "do:ship"]
+
+        landed = await store.load(record.run_id)
+        assert landed is not None
+        assert landed.status is DurableRunStatus.COMPLETED
+        assert landed.status is not DurableRunStatus.CANCELLED
+        assert landed.cancel_refused_at is not None  # the refusal still stands on the record
 
     async def test_a_refusal_spends_the_ask_so_a_later_stop_is_not_swallowed(self) -> None:
         # The hazard in absorbing a cancellation: if the ask stayed "live" after being
