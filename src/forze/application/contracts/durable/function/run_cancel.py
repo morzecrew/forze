@@ -34,11 +34,12 @@ class DurableCancelSignal:
     :meth:`request` and the body's own task sets :meth:`refuse`, both on one event loop.
     """
 
-    __slots__ = ("_refused", "_requested")
+    __slots__ = ("_persisted", "_refused", "_requested")
 
     def __init__(self) -> None:
         self._requested = False
         self._refused = False
+        self._persisted = False
 
     # ....................... #
 
@@ -51,12 +52,14 @@ class DurableCancelSignal:
         would read it back and tear the body down again, and the saga would spend a round
         re-refusing something it already refused. Starting spent — requested *and* refused —
         makes the persisted ask inert for this attempt, which is what "the refusal stands"
-        means across a restart.
+        means across a restart. The refusal is already on the row, so it also starts
+        :attr:`refusal_persisted`.
         """
 
         signal = cls()
         signal._requested = True
         signal._refused = True
+        signal._persisted = True
 
         return signal
 
@@ -87,6 +90,32 @@ class DurableCancelSignal:
         """Whether the run observed the request and declined it (a saga past its pivot)."""
 
         return self._refused
+
+    # ....................... #
+
+    @property
+    def refusal_persisted(self) -> bool:
+        """Whether the refusal has already been written to the run's row.
+
+        Both places that can record it — the heartbeat, which writes on its next beat, and
+        the runner's ``finally``, which is the backstop — consult this so the second one
+        skips a write the first already made. Without a shared flag the two are unaware of
+        each other and every refused run pays for the stamp twice.
+
+        It suppresses the second write whenever the first was **acknowledged**. A write torn
+        down mid-flight (the body finishes, the heartbeat is cancelled) never gets to set
+        this, so the backstop repeats it — deliberately: the repeat is idempotent, whereas
+        assuming an unacknowledged write landed would lose the stamp when it did not.
+        """
+
+        return self._persisted
+
+    # ....................... #
+
+    def mark_refusal_persisted(self) -> None:
+        """Record that the refusal is now on the row, so the other writer can stand down."""
+
+        self._persisted = True
 
     # ....................... #
 

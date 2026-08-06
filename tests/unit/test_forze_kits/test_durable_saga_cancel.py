@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from statistics import median
 from time import perf_counter
 
 import pytest
@@ -527,6 +528,14 @@ class TestCancelAfterThePivot:
         holder: dict[str, str] = {}
         seen = {"stamped_mid_run": False}
         calls = {"n": 0}
+        writes = {"n": 0}
+
+        real_refuse = MockDurableRunStore.refuse_cancel
+
+        async def counted_refuse(self, run_id, *, fence=None):  # type: ignore[no-untyped-def]
+            writes["n"] += 1
+
+            return await real_refuse(self, run_id, fence=fence)
 
         async def ship(_ctx: ExecutionContext, state: OrderCtx) -> OrderCtx:
             calls["n"] += 1
@@ -559,10 +568,17 @@ class TestCancelAfterThePivot:
         )
 
         runner, run_id = await _drive(ctx, saga, holder)
-        result = await runner.run_now(ctx, "order", idempotency_key="k")
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(MockDurableRunStore, "refuse_cancel", counted_refuse)
+            result = await runner.run_now(ctx, "order", idempotency_key="k")
 
         assert result.status is DurableRunStatus.COMPLETED
         assert seen["stamped_mid_run"] is True  # persisted before the run ended, not after
+
+        # Exactly once: the heartbeat wrote it, so the runner's ``finally`` backstop stands
+        # down. The two writers share one flag rather than both paying for the stamp.
+        assert writes["n"] == 1
 
         landed = await store.load(run_id)
         assert landed is not None
@@ -644,11 +660,16 @@ class TestCancelAfterThePivot:
 
         assert result.status is DurableRunStatus.COMPLETED
 
-        # Every gap stays near the 100 ms cadence. Uncompensated, the beat carrying the
-        # 80 ms write would stretch to ~180 ms and close on the 200 ms lease it protects.
+        # Judged against the loop's own median, not a wall-clock bound: under load (a
+        # coverage run, a busy CI box) every beat stretches together, so an absolute
+        # threshold measures the machine rather than the code. The defect is *one* beat
+        # standing out — uncompensated it carries the 80 ms write on top of its 100 ms sleep
+        # and runs ~1.8x its neighbours, closing on the 200 ms lease it exists to protect.
         gaps = [b - a for a, b in zip(renewals, renewals[1:], strict=False)]
         assert len(gaps) >= 3, f"too few renewals to judge the cadence: {renewals}"
-        assert max(gaps) < 0.14, f"a renewal drifted toward the lease: {gaps}"
+
+        typical = median(gaps)
+        assert max(gaps) < typical * 1.4, f"one beat outran its neighbours: {gaps}"
 
     async def test_refusal_is_recorded_even_when_the_step_swallows_the_cancel(self) -> None:
         # The refusal branch in `_advance` only runs when the CancelledError escapes the step

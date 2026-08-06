@@ -50,6 +50,25 @@ _RUN_TIMED_OUT_CODE = "durable.run_timed_out"
 """A run cancelled by the deadline watchdog. Distinct from an ordinary failure: it sends an
 operator to the cap or the workload's size, not to the body's code."""
 
+_INTERRUPTED_OUTCOME = "interrupted"
+"""Telemetry outcome for an execution stopped before its body finished.
+
+A drain, a shutdown, an external cancellation — no terminal state was written because the
+body had no result to write yet (the lease was still being renewed underneath it, which is
+not a record of how the run ended). Kept apart from :data:`_UNRECORDED_OUTCOME` because that
+one means the store could not be reached, and folding a routine restart into it would page
+someone for an outage that is really a deploy."""
+
+_UNRECORDED_OUTCOME = "unrecorded"
+"""Telemetry outcome for an execution whose terminal write never landed.
+
+Not a state a *run* can be in. It marks the **attempt**: the body finished, and the store
+could not be told, so the row is normally still ``RUNNING`` and recovery will re-claim it.
+"Normally", because a write that committed and then lost its acknowledgement looks identical
+from here — which is the point. The label reports what this worker *knows was recorded*, not
+what it hopes happened, and its whole purpose is to stop a store outage from being drawn as
+a wave of completions on the one dashboard someone is watching during the outage."""
+
 
 @final
 class _LeaseLost(Exception):
@@ -66,6 +85,37 @@ class _CancelRequested(Exception):
     runner's translation of "that cancel was the one *we* caused" into the terminal write.
     Not an error — no ``reraise`` and no span error mark — so ``run_now`` returns the
     ``CANCELLED`` record rather than raising at its caller."""
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _Landing:
+    """A run's terminal state, decided *before* it is written.
+
+    Splitting the decision from the write is what lets the runner say which of two very
+    different things happened when a drain cancels a run: no terminal write was attempted, or
+    one was attempted and never acknowledged. Producing a :class:`_Landing` touches no
+    terminal state; once it exists, every remaining step writes one.
+
+    The run's row is not otherwise untouched while a landing is decided — the heartbeat is
+    renewing the lease alongside the body, and may be stamping a refusal. Those are
+    bookkeeping: they are retried, they are idempotent, and none of them decides how the run
+    ended, which is the only thing this type and its outcome label are about.
+    """
+
+    outcome: str
+    """The telemetry outcome this landing will report *if* its write lands."""
+
+    output: JsonDict | None = None
+    """The body's encoded result, for the ``completed`` landing only."""
+
+    error: BaseException | None = None
+    """What to record on the row. ``None`` only for a run stopped by an operator's ask, which
+    is not a fault and has nothing to report."""
+
+    surface: BaseException | None = None
+    """What a ``reraise`` caller should see, or ``None`` when the caller caused nothing. Kept
+    apart from :attr:`error` because a cancelled run records a note but raises at nobody."""
 
 
 @final
@@ -332,7 +382,18 @@ class DurableFunctionRunner:
         cancel_token = bind_durable_cancel_signal(cancel)
 
         started = perf_counter()
-        outcome = "completed"
+
+        # Assigned only once a terminal write has *landed*. A store outage is exactly when
+        # the dashboard is being read, so an outcome recorded ahead of its write would count
+        # a completion that never happened during the incident that stopped it — the run is
+        # in fact still RUNNING and will be reclaimed. ``reclaimed`` is the one outcome set
+        # without a write, because deciding not to write is what it means.
+        #
+        # The default stands for "a write was attempted and we never heard back", so every
+        # path that leaves it in place must be one that got as far as trying. That is why the
+        # execution below is in two halves: nothing before ``_land`` writes a *terminal*
+        # state, so a cancellation there is ``interrupted`` rather than this.
+        outcome = _UNRECORDED_OUTCOME
         span_cm = self.telemetry.run_span(record) if self.telemetry is not None else nullcontext()
 
         try:
@@ -350,77 +411,53 @@ class DurableFunctionRunner:
                     # and abandon it there. Past the pivot the run must be re-invoked and
                     # completed forward — replaying its journal — or land
                     # ``FORWARD_INCOMPLETE`` on its own merits.
-                    outcome = "cancelled"
                     await store.mark_cancelled(record.run_id, fence=fence)
+                    outcome = "cancelled"
 
                     return
 
                 try:
-                    # Resolved inside the failure-handled region: a run whose name is
-                    # no longer registered (deploy skew, a renamed function, a stale
-                    # schedule) must land in FAILED like any other failing run — the
-                    # scanner claims oldest-first, so letting it escape would strand
-                    # every run co-claimed with it as leased RUNNING, sweep after sweep.
-                    handler = self.registry.get(record.name)
-                    output = await self._run_body_with_heartbeat(
-                        ctx, store, handler, record, fence, cancel
-                    )
+                    landing = await self._invoke(ctx, store, record, fence, cancel, span)
 
-                except _LeaseLost:
-                    # A heartbeat found the lease reclaimed mid-body: another worker owns the
-                    # run now. Stop without a terminal write (a fenced write would be a no-op
-                    # anyway) and let the new owner record the outcome — this is the whole
-                    # point of the heartbeat: not double-executing the body to completion.
-                    outcome = "reclaimed"
+                except asyncio.CancelledError:
+                    # Shutdown reached us before the body finished. ``_invoke`` writes no
+                    # terminal state, so none was attempted — a different fact from
+                    # ``unrecorded``, which says one *was* attempted and went unacknowledged.
+                    # Since that label is read as "the run store is unreachable", letting an
+                    # ordinary drain fall through to it would report every graceful shutdown
+                    # as an outage on the dashboard used to decide whether there is one.
+                    outcome = _INTERRUPTED_OUTCOME
 
-                    return
+                    raise
 
-                except _CancelRequested:
-                    # The body stopped because an operator asked. Not an error: no span
-                    # error mark, and never re-raised, so ``run_now`` hands its caller the
-                    # CANCELLED record instead of an exception it did not cause.
-                    outcome = "cancelled"
-                    await store.mark_cancelled(record.run_id, fence=fence)
+                # Past here every step is a write, so an escape — a store error, a drain
+                # landing mid-write — leaves the ``unrecorded`` default in place, which is
+                # exactly the ambiguity: this worker cannot tell whether the row moved.
+                outcome = await self._land(store, record, fence, landing)
 
-                    return
-
-                except CoreException as error:
-                    outcome = self._core_outcome(error)
-
-                    # A cancelled saga rides in on an exception because that is how the
-                    # executor unwinds after compensating — but it is still an operator's
-                    # ask, so it is neither marked on the span nor re-raised at the caller.
-                    if outcome != "cancelled":
-                        self._mark_span_error(span, error)
-
-                    await self._record_terminal(store, record.run_id, fence, outcome, error)
-
-                    if reraise and outcome != "cancelled":
-                        raise
-
-                    return
-
-                except Exception as error:
-                    outcome = "failed"
-                    self._mark_span_error(span, error)
-                    await store.fail(record.run_id, error=str(error), fence=fence)
-
-                    if reraise:
-                        raise
-
-                    return
-
-                await store.complete(record.run_id, output_json=output, fence=fence)
+                if landing.surface is not None and reraise:
+                    raise landing.surface
 
         finally:
             reset_durable_cancel_signal(cancel_token)
             reset_durable_run(token)
 
-            if cancel.refused:
-                # A saga past its pivot observed the ask and declined it. Recorded at the end
-                # rather than at observation time: the refusing code is the saga executor,
-                # which holds no run store and no fence. Until this lands, the run reads as
-                # "asked, still running" — which is the truth in the interval.
+            if cancel.refused and not cancel.refusal_persisted:
+                # The backstop for a refusal the heartbeat did not get to write — it beats us
+                # on any run that lived past another beat, and a run recovered with the stamp
+                # already on its row starts persisted, which is why the two writers share one
+                # flag instead of both paying for the stamp. Two runs still reach here: one
+                # that refused and finished inside a single interval, and one that finished
+                # while the heartbeat's own write was in flight — the watcher drain above
+                # tears that write down before it can set the flag. In the second case the
+                # write may already have landed, making this a redundant (idempotent) stamp;
+                # it is written anyway because the alternative reading — assuming a torn-down
+                # write landed — loses the stamp outright when it did not, and a lost refusal
+                # lets recovery land a saga past its pivot in CANCELLED.
+                #
+                # Recorded at the end rather than at observation time: the refusing code is
+                # the saga executor, which holds no run store and no fence. Until this
+                # lands, the run reads as "asked, still running" — the truth in the interval.
                 #
                 # Swallowed on failure, like the heartbeat's renewal and the recovery
                 # scanner's escape hatch: this runs in a ``finally``, so an error here would
@@ -440,6 +477,111 @@ class DurableFunctionRunner:
 
             if self.telemetry is not None:
                 self.telemetry.record_run(record.name, outcome, (perf_counter() - started) * 1000.0)
+
+    # ....................... #
+
+    async def _invoke(
+        self,
+        ctx: ExecutionContext,
+        store: DurableRunStorePort,
+        record: DurableRunRecord,
+        fence: int,
+        cancel: DurableCancelSignal,
+        span: Span | None,
+    ) -> _Landing:
+        """Run the body and decide its terminal state, **without writing that state**.
+
+        Every exit is a :class:`_Landing` rather than an exception, which keeps one rule
+        intact: the outcome label is assigned by whoever knows the write landed, so a caller
+        cannot re-raise past the recording of what happened. Deciding without writing is the
+        other half of that rule — it is what makes a cancellation reaching this method
+        provably free of a *terminal* write, and so reportable as ``interrupted`` rather than
+        as an unreachable store.
+
+        Not free of store traffic, though: the heartbeat renews the lease throughout the
+        body's execution and may stamp a refusal (see :meth:`_heartbeat`). Neither records how
+        the run ended, so neither can be mistaken for the write this method is careful not to
+        make.
+        """
+
+        try:
+            # Resolved inside the failure-handled region: a run whose name is no longer
+            # registered (deploy skew, a renamed function, a stale schedule) must land in
+            # FAILED like any other failing run — the scanner claims oldest-first, so letting
+            # it escape would strand every run co-claimed with it as leased RUNNING, sweep
+            # after sweep.
+            handler = self.registry.get(record.name)
+            output = await self._run_body_with_heartbeat(ctx, store, handler, record, fence, cancel)
+
+        except _LeaseLost:
+            # A heartbeat found the lease reclaimed mid-body: another worker owns the run
+            # now. Stop without a terminal write (a fenced write would be a no-op anyway) and
+            # let the new owner record the outcome — this is the whole point of the
+            # heartbeat: not double-executing the body to completion.
+            return _Landing(outcome="reclaimed")
+
+        except _CancelRequested:
+            # The body stopped because an operator asked. Not an error: no span error mark,
+            # and never surfaced, so ``run_now`` hands its caller the CANCELLED record
+            # instead of an exception it did not cause.
+            return _Landing(outcome="cancelled")
+
+        except CoreException as error:
+            landed = self._core_outcome(error)
+
+            # A cancelled saga rides in on an exception because that is how the executor
+            # unwinds after compensating — but it is still an operator's ask, so it is
+            # neither marked on the span nor surfaced at the caller.
+            if landed != "cancelled":
+                self._mark_span_error(span, error)
+
+            return _Landing(
+                outcome=landed,
+                error=error,
+                surface=None if landed == "cancelled" else error,
+            )
+
+        except Exception as error:
+            self._mark_span_error(span, error)
+
+            return _Landing(outcome="failed", error=error, surface=error)
+
+        return _Landing(outcome="completed", output=output)
+
+    # ....................... #
+
+    async def _land(
+        self,
+        store: DurableRunStorePort,
+        record: DurableRunRecord,
+        fence: int,
+        landing: _Landing,
+    ) -> str:
+        """Write *landing* to the run's row and report the outcome now known recorded.
+
+        The return value is the point of the split: it is produced *after* the write, so an
+        exception on the way through — including a drain arriving mid-write — leaves the
+        caller's ``unrecorded`` default standing rather than claiming an outcome the store
+        may never have seen.
+        """
+
+        if landing.outcome == "reclaimed":
+            # The one outcome with no write. The lease is gone, so nothing we send lands;
+            # saying so is the record.
+            return "reclaimed"
+
+        if landing.outcome == "completed":
+            await store.complete(record.run_id, output_json=landing.output, fence=fence)
+
+        elif landing.error is None:
+            # Only an operator's ask lands without a message — it is not a fault, and there
+            # is nothing about it to report beyond the fact of it.
+            await store.mark_cancelled(record.run_id, fence=fence)
+
+        else:
+            await self._record_terminal(store, record.run_id, fence, landing.outcome, landing.error)
+
+        return landing.outcome
 
     # ....................... #
 
@@ -465,7 +607,7 @@ class DurableFunctionRunner:
         run_id: str,
         fence: int,
         outcome: str,
-        error: CoreException,
+        error: BaseException,
     ) -> None:
         if outcome == "forward_incomplete":
             await store.mark_forward_incomplete(run_id, error=str(error), fence=fence)
@@ -502,7 +644,14 @@ class DurableFunctionRunner:
         expired = asyncio.Event()
         watchers = [
             asyncio.ensure_future(
-                self._heartbeat(store, record.run_id, fence, body, reclaimed, cancel)
+                self._heartbeat(
+                    store,
+                    record.run_id,
+                    fence,
+                    body,
+                    reclaimed,
+                    cancel,
+                )
             )
         ]
 
@@ -513,9 +662,6 @@ class DurableFunctionRunner:
 
         try:
             return await body
-
-        except _LeaseLost:
-            raise
 
         except Exception:
             # A body may convert the cancellation we delivered into an exception of its own —
@@ -653,7 +799,6 @@ class DurableFunctionRunner:
         cancel: DurableCancelSignal,
     ) -> None:
         seconds = self._heartbeat_seconds()
-        refusal_written = False
 
         # Time until the *next* renewal. Normally one interval; shortened when extra work in
         # this loop has already eaten into it, so a renewal never drifts past the lease.
@@ -712,7 +857,7 @@ class DurableFunctionRunner:
                 cancel.request()
                 body.cancel()
 
-            if cancel.refused and not refusal_written:
+            if cancel.refused and not cancel.refusal_persisted:
                 # Persist the refusal here rather than waiting for the run to finish. A saga
                 # past its pivot refuses in memory and can then spend minutes completing
                 # forward; if the worker dies in that window the row would carry an ask with
@@ -736,7 +881,7 @@ class DurableFunctionRunner:
                     async with asyncio.timeout(seconds):
                         await store.refuse_cancel(run_id, fence=fence)
 
-                    refusal_written = True
+                    cancel.mark_refusal_persisted()
 
                 except Exception:
                     logger.warning(

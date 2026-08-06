@@ -43,13 +43,25 @@ class DurableTelemetry:
     Emits: a ``durable.run`` span per run execution (labelled name / run id / attempt /
     tenant, marked error on failure); ``forze.durable.runs`` (counter) +
     ``forze.durable.run.duration`` (histogram, ms) by name and outcome (``completed`` /
-    ``failed`` / ``forward_incomplete`` / ``cancelled`` / ``timed_out`` / ``reclaimed``);
-    ``forze.durable.recovered`` (counter) for reclaimed runs; and
+    ``failed`` / ``forward_incomplete`` / ``cancelled`` / ``timed_out`` / ``reclaimed`` /
+    ``interrupted`` / ``unrecorded``); ``forze.durable.recovered`` (counter) for reclaimed runs; and
     ``forze.durable.schedule.fires`` (counter) per fire.
 
     ``cancelled`` and ``timed_out`` are separate outcome labels rather than shades of
     ``failed`` on purpose: an alert on the failure rate should not fire because an operator
     pressed Stop, and a run that outlived its cap is a capacity signal, not a defect.
+
+    ``interrupted`` means the body never finished — a drain, a shutdown, an external
+    cancellation — so no terminal write was ever attempted. It is the expected label during
+    a deploy, and is deliberately not folded into ``unrecorded`` below.
+
+    ``unrecorded`` is the odd one out — it describes the *attempt*, not the run. The body
+    finished and the terminal write was **not acknowledged**, which is not the same as not
+    applied: it may have committed and lost its acknowledgement, leaving the row already
+    terminal, or it may never have run, leaving the row ``RUNNING`` for recovery to re-claim.
+    The worker cannot tell, and says so rather than guessing. Any sustained rate of it means
+    the run store is unreachable; it is the label that keeps a store outage from being drawn
+    as a wave of completions.
     """
 
     _tracer: Tracer = attrs.field(alias="tracer")

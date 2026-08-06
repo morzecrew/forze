@@ -102,6 +102,112 @@ class TestRunTelemetry:
         ((_, hist),) = _points(reader, DURABLE_RUN_DURATION_HISTOGRAM)
         assert hist.count == 1
 
+    async def test_a_terminal_write_that_never_lands_is_not_counted_as_a_completion(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The outcome label describes what was *recorded*, not what the body returned. A
+        # store outage is exactly when someone is staring at this dashboard, so counting a
+        # completion whose write failed would draw the outage as a wave of successes — while
+        # the run is in fact still RUNNING, waiting to be reclaimed.
+        from forze_mock.adapters.durable import MockDurableRunStore
+
+        tracer, meter, _exporter, reader = _otel()
+        ctx = context_from_modules(MockDepsModule())
+
+        async def boom(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("the run store is unreachable")
+
+        monkeypatch.setattr(MockDurableRunStore, "complete", boom)
+
+        runner = DurableFunctionRunner(
+            registry=_registry(),
+            telemetry=DurableTelemetry.create(tracer=tracer, meter=meter),
+        )
+
+        with pytest.raises(RuntimeError, match="unreachable"):
+            await runner.run_now(ctx, "fn", {"n": 1})
+
+        ((labels, point),) = _points(reader, DURABLE_RUNS_COUNTER)
+        assert labels["forze.durable.outcome"] == "unrecorded"
+        assert labels["forze.durable.outcome"] != "completed"
+        assert point.value == 1
+
+    async def test_a_drained_worker_is_interrupted_not_an_unreachable_store(self) -> None:
+        # An external cancellation stops the body before it has any result, so no terminal
+        # write is even attempted. That must not fall through to `unrecorded`, which reads
+        # as "the run store is unreachable" — otherwise every graceful deploy reports an
+        # outage on the one dashboard used to decide whether there is one.
+        import asyncio
+
+        tracer, meter, _exporter, reader = _otel()
+        ctx = context_from_modules(MockDepsModule())
+
+        registry = DurableFunctionRegistry()
+        running = asyncio.Event()
+
+        async def slow(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            running.set()
+            await asyncio.sleep(5.0)
+
+            return {"ok": True}  # pragma: no cover — the drain stops us first
+
+        registry.register("fn", slow)
+
+        runner = DurableFunctionRunner(
+            registry=registry,
+            telemetry=DurableTelemetry.create(tracer=tracer, meter=meter),
+        )
+
+        task = asyncio.create_task(runner.run_now(ctx, "fn"))
+        await running.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        ((labels, point),) = _points(reader, DURABLE_RUNS_COUNTER)
+        assert labels["forze.durable.outcome"] == "interrupted"
+        assert labels["forze.durable.outcome"] != "unrecorded"
+        assert point.value == 1
+
+    async def test_a_drain_during_the_terminal_write_stays_write_ambiguous(self) -> None:
+        # The mirror of the test above: here the body *did* finish and the terminal write was
+        # in flight when the drain arrived, so the worker cannot say whether the row moved.
+        # That is `unrecorded` — reporting it as `interrupted` would claim nothing was
+        # attempted, sending an operator looking for a RUNNING row that may be COMPLETED.
+        import asyncio
+
+        from forze_mock.adapters.durable import MockDurableRunStore
+
+        tracer, meter, _exporter, reader = _otel()
+        ctx = context_from_modules(MockDepsModule())
+
+        writing = asyncio.Event()
+
+        async def slow_complete(*_args: Any, **_kwargs: Any) -> None:
+            writing.set()
+            await asyncio.sleep(5.0)
+
+        runner = DurableFunctionRunner(
+            registry=_registry(),
+            telemetry=DurableTelemetry.create(tracer=tracer, meter=meter),
+        )
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(MockDurableRunStore, "complete", slow_complete)
+
+            task = asyncio.create_task(runner.run_now(ctx, "fn", {"n": 1}))
+            await writing.wait()
+            task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        ((labels, point),) = _points(reader, DURABLE_RUNS_COUNTER)
+        assert labels["forze.durable.outcome"] == "unrecorded"
+        assert labels["forze.durable.outcome"] != "interrupted"
+        assert point.value == 1
+
     async def test_failure_marks_span_error_and_counts_failed(self) -> None:
         tracer, meter, exporter, reader = _otel()
         ctx = context_from_modules(MockDepsModule())
