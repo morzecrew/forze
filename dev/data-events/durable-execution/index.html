@@ -6411,7 +6411,11 @@ closed against one that can't, rather than accepting a request it would silently
 <p><strong>Observability.</strong> Pass <code>DurableTelemetry.create()</code> to the runner and scheduler for
 OpenTelemetry: a <code>durable.run</code> span per execution plus <code>forze.durable.runs</code> /
 <code>forze.durable.run.duration</code> (by name + outcome — <code>completed</code> / <code>failed</code> /
-<code>forward_incomplete</code> / <code>cancelled</code> / <code>timed_out</code> / <code>reclaimed</code>), <code>forze.durable.recovered</code>, and
+<code>forward_incomplete</code> / <code>cancelled</code> / <code>timed_out</code> / <code>reclaimed</code> / <code>interrupted</code> (the body never
+finished — a drain or shutdown) / <code>unrecorded</code> (the
+body finished but its terminal write went unacknowledged — the row may already be terminal or may
+still await recovery, and the worker cannot tell),
+<code>forze.durable.recovered</code>, and
 <code>forze.durable.schedule.fires</code> metrics. Emits via the global <abbr title="OpenTelemetry">OTel</abbr> providers — configure the
 SDK in your app.</p>
 <p>The step journal is exactly-once for a step's <strong>recorded result</strong> — a completed step replays

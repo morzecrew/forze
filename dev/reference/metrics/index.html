@@ -6623,7 +6623,7 @@ justifies W-TinyLFU (<code>L1Spec(store_factory=tiny_lfu_l1_store)</code>) or a 
 <td>counter</td>
 <td>1</td>
 <td><code>forze.durable.name</code>, <code>forze.durable.outcome</code></td>
-<td>outcome is <code>completed</code> / <code>failed</code> / <code>forward_incomplete</code> / <code>cancelled</code> / <code>timed_out</code> / <code>reclaimed</code> — alert on <code>failed</code>, not on the total: <code>cancelled</code> means somebody pressed Stop</td>
+<td>outcome is <code>completed</code> / <code>failed</code> / <code>forward_incomplete</code> / <code>cancelled</code> / <code>timed_out</code> / <code>reclaimed</code> / <code>interrupted</code> / <code>unrecorded</code> — alert on <code>failed</code>, not on the total: <code>cancelled</code> means somebody pressed Stop. <code>unrecorded</code> describes the <em>attempt</em>, not the run: the body finished and its terminal write went unacknowledged, so the row is either already terminal (the write committed, the ack was lost) or still <code>RUNNING</code> for recovery — the worker cannot tell. A sustained rate of it means the run store is unreachable. <code>interrupted</code> is the neighbouring case where the body never finished at all (drain, shutdown) and no terminal state was written — expected during a deploy</td>
 </tr>
 <tr>
 <td><code>forze.durable.run.duration</code></td>
