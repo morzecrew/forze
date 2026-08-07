@@ -58,6 +58,15 @@ Two names for one concept across packages, or one name for two concepts. Sometim
 - **Prove dead is dead.** Check every access pattern before deleting: `from`-imports, attribute access (`module.symbol(...)` — a grep for `from..import` alone misreads these as dead), re-export chains, reflection and string-based references, config/serialized references. A "dead shim" that is actually a load-bearing facade is a classic false positive.
 - **Count before you conclude.** Importer counts, call-site counts, external-vs-internal usage splits. Numbers decide between shim-and-move, break-and-migrate, and leave-alone.
 
+`scripts/usage_census.py <symbol>` does both mechanically — it counts every pattern above separately and splits internal from external usage:
+
+```bash
+python3 scripts/usage_census.py run_coverage --root /path/to/repo
+python3 scripts/usage_census.py Helper --internal src/pkg/ --json
+```
+
+Exit 3 means nothing references it (a deletion candidate — the report then names what the tool still cannot see: dynamic dispatch by computed name, generated code, other repositories). The numbers are evidence for a verdict, not the verdict.
+
 ## Placement rules
 
 - Extracted shared code lives in the **lowest layer that every consumer may legally import** — a neutral leaf with minimal dependencies. Shared vocabulary types (value objects used across packages) belong in the contract/shared layer, exported from one canonical location, not re-exported per consumer.

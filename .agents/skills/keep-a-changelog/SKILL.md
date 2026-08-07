@@ -119,6 +119,17 @@ These are deliberate local conventions, not part of the spec. In another reposit
 - **Empty `Unreleased` categories** keep a `- ...` placeholder.
 - **Do not add or modify the bottom reference links unless explicitly asked** — but when cutting a release, remind the user those links need updating.
 
+## Checking the file
+
+`scripts/validate_changelog.py` settles the mechanical rules — Unreleased present, heading and date format, latest-first ordering, the six categories, duplicates, and link references resolving both ways (skipped when the file uses none):
+
+```bash
+python3 scripts/validate_changelog.py CHANGELOG.md                 # spec only
+python3 scripts/validate_changelog.py --house-rules CHANGELOG.md   # + the local conventions above
+```
+
+Run it after editing, and before cutting a version. It never edits — and it cannot judge whether an entry is user-relevant, outcome-oriented, or true, which is the part that matters most.
+
 ## Workflow A — update `Unreleased`
 
 1. Extract user-facing changes from the user's summary, commits, PR descriptions, or diffs.

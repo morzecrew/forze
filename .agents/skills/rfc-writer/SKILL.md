@@ -92,12 +92,23 @@ Read `references/rfc-template.md` before writing a new RFC and start from it. Th
 
 ## Workflows
 
+The bookkeeping — number allocation, file creation from the template, index-row and next-free-number updates, drift detection — is mechanical, and `scripts/rfc_index.py` does it without the collisions hand-allocation produces:
+
+```bash
+python3 scripts/rfc_index.py check          # index vs files, H1 vs filename, statuses, next-free
+python3 scripts/rfc_index.py next           # next free number
+python3 scripts/rfc_index.py new "Title"    # allocate + instantiate template + index row + bump
+python3 scripts/rfc_index.py new "Title" --number 42   # a reserved number, or re-creating a deleted RFC
+```
+
+(Read-only except `new`; `--root` if the repo isn't the cwd.) The thinking — what the design says, what the one-liner claims, when a status changes — is yours.
+
 ### A — Create a new RFC
 
 1. Locate the RFC directory (`rfcs/` or `rfc/`); if none exists, run Workflow D first.
-2. Allocate the next number (index + `ls` cross-check).
-3. Read `references/rfc-template.md`; write `NNNN-kebab-title.md` from it, scaled to the design's weight. Investigate the actual code before writing "Current state" — this is most of the work.
-4. Add the index row (number linked, status 📝, dense one-liner) and bump the next-free number, in the same change.
+2. Allocate the next number and instantiate the file: `rfc_index.py new "Title"` (does steps 2–4's bookkeeping in one shot). By hand: read the next-free number from the index and cross-check against `ls` — numbers collide when minted in parallel.
+3. Fill the file from `references/rfc-template.md`'s shape, scaled to the design's weight. Investigate the actual code before writing "Current state" — this is most of the work.
+4. Replace the placeholder index one-liner with a dense, self-contained summary.
 
 ### B — Update an existing RFC
 
@@ -108,7 +119,7 @@ Read `references/rfc-template.md` before writing a new RFC and start from it. Th
 
 ### C — Maintain the index
 
-When asked to sync or clean up: verify every file in the directory has an index row and vice versa; verify statuses in headers and table agree; verify the next-free number is actually free; fix drift. Report what was out of sync.
+Run `rfc_index.py check` — it reports every file without an index row and vice versa, H1-vs-filename mismatches, header-vs-table status disagreements, duplicate numbers, and a next-free number that isn't free. Fix what it names (the fixes are judgment: which status is true, what the one-liner should say), then re-run until green. Report what was out of sync.
 
 ### D — Initialize an RFC directory
 

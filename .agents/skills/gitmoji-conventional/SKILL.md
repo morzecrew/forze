@@ -129,6 +129,18 @@ Same format, tighter constraints — the title must drop into GitHub unedited:
 - Mixed-change PRs get one primary semantic category, not an enumeration
 - Breaking PRs use `!` in the title; migration notes go in the PR description, never the title
 
+## Checking a message
+
+`scripts/check_commit_msg.py` validates the format — including the emoji↔type pairing, which it reads from `references/gitmoji-mapping.md` rather than restating:
+
+```bash
+python3 scripts/check_commit_msg.py --message "✨ feat(api): add OAuth login"
+python3 scripts/check_commit_msg.py --range main..HEAD    # audit a branch
+python3 scripts/check_commit_msg.py --file "$1"           # commit-msg hook
+```
+
+It catches wrong emoji/type pairs, unofficial gitmoji, the three breaking signals disagreeing, a lowercase or unfolded `BREAKING CHANGE` footer, past-tense descriptions, and a body without its blank line. Subject length is a warning, not a failure — the cap is "when possible". As a `commit-msg` hook it turns this skill from advice into enforcement (see `ratchet-what-you-build`).
+
 ## Output
 
 Output only the commit message or PR title — no explanations, no alternatives unless requested.
