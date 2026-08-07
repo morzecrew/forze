@@ -104,10 +104,10 @@ Note the second-order win: with this in place, `query_dataset`/`query_database` 
 3. `verify` tolerates an undeclared extra column by default; `strict_columns=True` fails on it. *(real)*
 4. `evolve` applies an additive column and leaves data intact; a type change and a physical/`ORDER BY` mismatch both fail closed under `evolve`, with a message naming the rebuild. *(real CH + BQ — the two engines where physical layout is immutable)*
 5. `reconcile="off"` is byte-for-byte today's behavior: no `information_schema` reads, no startup cost, no new failure mode. *(unit — the coexistence clause, pinned)*
-5a. **Observation, on a relation this service never wrote**: a table written by an out-of-band process is observed with a plausible `last_modified_at` and row estimate; the read is metadata-only — asserted by proving no scan-shaped query is issued (statement log / query-count check), because a `COUNT(*)` fallback on a warehouse table is a cost incident, not a slow test. *(real, each engine)*
-5b. Where an engine gives no trustworthy metadata, `source=UNAVAILABLE` with `None` fields — never a fabricated number. *(real)*
-5c. `freshness_column` vs engine metadata **diverge and both are reported**: a rebuild that writes zero new rows advances `last_modified_at` and leaves `watermark` unchanged — the distinction §2.1 claims, given a test. *(real)*
-5d. `max_staleness` exceeded → `on_stale="warn"` records and starts; `"fail"` refuses startup; schema drift still fails regardless of staleness settings. *(unit + real)*
+   - **Observation, on a relation this service never wrote**: a table written by an out-of-band process is observed with a plausible `last_modified_at` and row estimate; the read is metadata-only — asserted by proving no scan-shaped query is issued (statement log / query-count check), because a `COUNT(*)` fallback on a warehouse table is a cost incident, not a slow test. *(real, each engine)*
+   - Where an engine gives no trustworthy metadata, `source=UNAVAILABLE` with `None` fields — never a fabricated number. *(real)*
+   - `freshness_column` vs engine metadata **diverge and both are reported**: a rebuild that writes zero new rows advances `last_modified_at` and leaves `watermark` unchanged — the distinction §2.1 claims, given a test. *(real)*
+   - `max_staleness` exceeded → `on_stale="warn"` records and starts; `"fail"` refuses startup; schema drift still fails regardless of staleness settings. *(unit + real)*
 6. Provisioner: onboarding a new tenant creates the container and every declared relation; re-running is a no-op; a partial failure mid-way is fully recovered by the retry. *(real)*
 7. Provisioner scopes by the **passed** identity, not the ambient tenant — provisioning tenant B while bound as tenant A targets B's container. *(unit + real; the contract's stated trap, given a test)*
 8. `deprovision` refuses without the destructive flag. *(unit)*

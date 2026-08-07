@@ -20,7 +20,7 @@ measurements say otherwise, and they are the reason this RFC has no decision log
   accessor. It lacks a **Dep key** column. This is the single highest-leverage edit in the
   corpus and it is an afternoon.
 - **The one genuine fork was extracted.** Whether doc code should be executable, and how,
-  is RFC 0057. Leaving it inside a "master the docs" RFC would have buried a real design
+  is RFC 0026. Leaving it inside a "master the docs" RFC would have buried a real design
   question under a work plan.
 
 What remains is a backlog with an existing gate to measure it against. The value of writing

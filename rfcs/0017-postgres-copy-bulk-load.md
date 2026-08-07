@@ -82,5 +82,5 @@ Why it stays a different mechanism, and what that means for the design: the curr
 | 4 | All-or-nothing preserved; no skip-bad-rows mode ever; data errors must surface `COPY` line context | locked |
 | 5 | `max_append_rows` re-rationalized as a latency/memory guard (default proposed 100k), not removed — a governed route still refuses surprise mega-calls | proposed |
 | 6 | `append_stream` contract addition demand-gated (no current consumer); `COPY TO` export not built (portability uses JSONL by design) | locked |
-| 8 | **W4 promoted 2026-08-03** — the BigQuery-load-job trigger fired (DWH consumer, RFC 0028–0030). Load jobs get their own capability-gated, visibly-asynchronous surface; never hidden behind `append`; staged via the storage plane; paired with 0030 P2 as its stage step. Storage Write API recorded, no trigger | proposed |
 | 7 | W2 ships only if the interleaved A/B evidence confirms the win — perf claims are measured, never assumed | locked |
+| 8 | **W4 promoted 2026-08-03** — the BigQuery-load-job trigger fired (DWH consumer, RFC 0028–0030). Load jobs get their own capability-gated, visibly-asynchronous surface; never hidden behind `append`; staged via the storage plane; paired with 0030 P2 as its stage step. Storage Write API recorded, no trigger | proposed |

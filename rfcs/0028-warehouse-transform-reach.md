@@ -99,7 +99,7 @@ The fix is small and additive, and deliberately mirrors what BigQuery's read con
 
 Explicitly **not** in scope: changing any default that would alter behavior for existing routes without a version note. Where a new default would newly bound a previously-unbounded route, the changelog says so and the value is chosen generously — a resource policy that surprises a deployment is worse than one adopted a release later.
 
-## 6.2 Engine reach: Snowflake and Databricks SQL (recorded, no trigger)
+### 6.2 Engine reach: Snowflake and Databricks SQL (recorded, no trigger)
 
 The topology audit surfaced a coverage hole neither this RFC nor its siblings can close by editing: **the two most external-shaped warehouse platforms have no adapter at all.** `grep` finds no Snowflake anywhere and Databricks only as a *future* mention in RFC 0020 W4's Delta trigger. `deltalake` and `pyiceberg` in `pyproject.toml` are dev-only fixture writers — Delta and Iceberg are read at runtime through DuckDB extensions, which is a file-path read that uses neither platform's compute nor its access controls.
 

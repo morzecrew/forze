@@ -47,7 +47,7 @@ class DynamicPipelinePort(Protocol):
 Enforcement is necessarily **allowlist-based** — Mongo has no read-only transaction to lean on — so the doctrine inverts RFC 0015's "no parsing" rule *for structured input only* (parsing JSON stages is exact; parsing SQL is not):
 
 - **Fail-closed stage allowlist.** Known-read stages pass (`$match`, `$project`, `$group`, `$sort`, `$limit`, `$skip`, `$unwind`, `$addFields`/`$set`, `$replaceRoot`, `$count`, `$facet`, `$bucket`, `$bucketAuto`, `$sortByCount`, `$densify`, `$setWindowFields`); **unknown stages are refused**, not passed through — a new server version's write stage must not sail through an old allowlist. Named refusals with their own reasons: `$out`/`$merge` (writes), `$where`/`$function`/`$accumulator` (JS execution), `$lookup`/`$graphLookup`/`$unionWith` (**cross-collection — breaks container confinement**; a within-namespace `$lookup` variant is recorded as a follow-up gated on a consumer who needs it and on a resolver-checked target collection).
-- Collection from the route config's `RelationSpec` resolver — never from the pipeline. Tenancy container = collection/database-per-tenant (namespace); tagged refused, same clause as 0045.
+- Collection from the route config's `RelationSpec` resolver — never from the pipeline. Tenancy container = collection/database-per-tenant (namespace); tagged refused, same clause as 0015.
 - `maxTimeMS` from the timeout; row cap by cursor cap+1; `allowDiskUse` a config knob defaulting off.
 - Taxonomy reuse: `dynamic_read_stage_refused` (validation, carries the stage name) joins the family.
 
