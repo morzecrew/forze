@@ -1,4 +1,4 @@
-"""RFC 0017 §2's headline claim, proven: export decrypts through the codec, import re-seals under
+"""The portability headline claim, proven: export decrypts through the codec, import re-seals under
 the **target's** keys — so key migration falls out of data migration (the KEK-brick escape).
 
 # covers: forze_kits.integrations.portability.ArchiveExporter

@@ -1,4 +1,4 @@
-"""RFC 0017 P3: the direct ``migrate`` mode and the ``run_export_import_roundtrip`` family, on
+"""The direct ``migrate`` mode and the ``run_export_import_roundtrip`` family, on
 *real* Postgres and Mongo — plus the datetime-precision divergence the catalog names, pinned.
 
 # covers: forze_kits.integrations.portability.ArchiveMigrator

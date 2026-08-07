@@ -1,4 +1,4 @@
-"""RFC 0017 §2's headline claim on the mock: export decrypts, import re-seals under the
+"""The portability plane's headline claim on the mock: export decrypts, import re-seals under the
 **target's** key — the KEK-brick escape, now provable without a database.
 
 # covers: forze_kits.integrations.portability.export_archive

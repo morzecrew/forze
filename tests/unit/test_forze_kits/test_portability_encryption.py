@@ -1,4 +1,4 @@
-"""Envelope encryption for the archive at rest (RFC 0017 §9).
+"""Envelope encryption for the archive at rest.
 
 # covers: forze_kits.integrations.portability._crypt
 # covers: forze_kits.integrations.portability.export

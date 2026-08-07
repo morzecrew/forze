@@ -106,7 +106,7 @@ AUTHN = AuthnSpec(name="main", enabled_methods=frozenset({"api_key"}))
 def build_runtime(identity: LocalIdentityConfig) -> ExecutionRuntime:
     """The only thing a mock server changes: which modules answer the ports.
 
-    `MockDepsModule` registers every port as a *fallback* (RFC 0022), so the app's real
+    `MockDepsModule` registers every port as a *fallback*, so the app's real
     identity wiring composes on top of it in one registry — the local API-key verifier and
     tenant resolver win their routes, the mock keeps the other ~45 planes. Before that,
     this pairing raised at freeze and a mock context could not carry real identity at all.
@@ -206,7 +206,7 @@ async def seed(ctx: ExecutionContext) -> None:
 def seeding_lifespan(runtime: ExecutionRuntime) -> Lifespan:
     """The production lifespan, plus a seed once the runtime scope is open.
 
-    The one seam a mock server needs. RFC 0055's `MockApp` formalizes this pair —
+    The one seam a mock server needs. `MockApp` formalizes this pair —
     `build_app` and `seed` stay separate so the served app is the production one.
     """
 
