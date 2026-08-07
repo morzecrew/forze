@@ -115,7 +115,7 @@ Note the second-order win: with this in place, `query_dataset`/`query_database` 
 
 ## 7. Phases
 
-- **P1** — `RelationShape` + derivation + `AnalyticsAdminPort` + `verify` mode + **observation and staleness (§2.1)** + drift taxonomy + ClickHouse and BigQuery adapters + battery 1–3, 5, 5a–5d. *(verify-only ships first — it is the highest-value, lowest-blast-radius half, and it is the half that needs no destructive capability at all. Observation ships **with** it, not after: a schema check that cannot say whether the data is stale is half an answer in exactly the topology this mode serves.)*
+- **P1** — `RelationShape` + derivation + `AnalyticsAdminPort` + `verify` mode + **observation and staleness (§2.1)** + drift taxonomy + ClickHouse and BigQuery adapters + battery 1–3 and 5, including its observation and staleness sub-items. *(verify-only ships first — it is the highest-value, lowest-blast-radius half, and it is the half that needs no destructive capability at all. Observation ships **with** it, not after: a schema check that cannot say whether the data is stale is half an answer in exactly the topology this mode serves.)*
 - **P2** — `ensure`/`evolve` + physical config + battery 4.
 - **P3** — `WarehouseTenantProvisioner` + Postgres-analytics adapter + battery 6–9.
 
