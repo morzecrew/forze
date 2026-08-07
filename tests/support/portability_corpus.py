@@ -1,4 +1,4 @@
-"""A governed corpus for the RFC 0017 portability tests — one document spec, one blob route.
+"""A governed corpus for the portability tests — one document spec, one blob route.
 
 Shared by the ``migrate`` tests and the ``run_export_import_roundtrip`` conformance tests so they
 exercise the *same* shapes the file round-trip does. The document carries the types that break the

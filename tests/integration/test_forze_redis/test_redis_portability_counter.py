@@ -1,4 +1,4 @@
-"""RFC 0017: the counter plane round-trips through a *real* Redis, context to context.
+"""The counter plane round-trips through a *real* Redis, context to context.
 
 # covers: forze_kits.integrations.portability (counter plane on real Redis)
 

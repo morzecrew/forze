@@ -1,4 +1,4 @@
-"""RFC 0017 P4: the graph plane round-trips through a *real* Neo4j backend.
+"""The graph plane round-trips through a *real* Neo4j backend.
 
 # covers: forze_kits.integrations.portability (graph plane on real Neo4j)
 # covers: forze_neo4j.adapters.graph.find_edges_export_stream

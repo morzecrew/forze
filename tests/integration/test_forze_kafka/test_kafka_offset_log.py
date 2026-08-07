@@ -1,6 +1,6 @@
 """Real-broker offset-log differential: produce/consume/commit, ordering, replay, lag.
 
-The Kafka-side of RFC 0007's conformance battery — the mock proves the semantics
+The Kafka side of the offset-log conformance battery — the mock proves the semantics
 against itself; this proves the aiokafka adapter agrees with a live broker.
 """
 

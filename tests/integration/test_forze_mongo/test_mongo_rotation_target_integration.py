@@ -4,9 +4,9 @@ The battery holds the claims; this file supplies what it cannot know: how to pro
 user, what a credential value looks like, how to prove one authenticates, and how to stall
 an ``updateUser`` past a minimal ``maxTimeMS``.
 
-That last one is the whole reason MongoDB is admissible as a target at all. RFC 0035 admits
-a backend only if it can *server-side* kill a late apply — a client giving up does not stop
-a write already at the server — so the stall here provokes the real thing and the battery
+That last one is the whole reason MongoDB is admissible as a target at all. The rotation-target
+doctrine admits a backend only if it can *server-side* kill a late apply — a client giving up does
+not stop a write already at the server — so the stall here provokes the real thing and the battery
 asserts the write never lands.
 
 # covers: RotationTargetPort.compose

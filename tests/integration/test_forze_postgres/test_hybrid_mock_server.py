@@ -1,6 +1,6 @@
 """One served app, two backends: real Postgres for documents, the mock for everything else.
 
-The shape RFC 0055 calls the most-requested one, and the reason the fallback merge exists at
+The most-requested mock-server shape, and the reason the fallback merge exists at
 all. It is worth an integration test rather than a unit one because the claim is precisely
 that the *real* adapter answers — which a mock cannot demonstrate about itself.
 """

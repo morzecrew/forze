@@ -1,6 +1,6 @@
 """Both a Postgres and a Mongo backend, in one process — the fixture shape a portability
-round-trip needs (RFC 0017 §8: two backends wired together, export from one, import into the
-other)."""
+round-trip needs: two backends wired together, export from one, import into the
+other."""
 
 from collections.abc import AsyncIterator, Iterator
 from uuid import uuid4

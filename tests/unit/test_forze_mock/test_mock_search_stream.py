@@ -1,4 +1,4 @@
-"""Bounded-memory search streaming — the in-memory reference (RFC 0011)."""
+"""Bounded-memory search streaming — the in-memory reference."""
 
 from __future__ import annotations
 

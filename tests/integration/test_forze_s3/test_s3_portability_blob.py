@@ -1,4 +1,4 @@
-"""The blob half of the RFC 0017 §8 trust story, on *real* object storage (MinIO + floci).
+"""The blob half of the portability trust story, on *real* object storage (MinIO + floci).
 
 # covers: forze_kits.integrations.portability.ArchiveExporter
 # covers: forze_kits.integrations.portability.ArchiveImporter

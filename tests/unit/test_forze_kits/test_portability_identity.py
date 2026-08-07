@@ -1,4 +1,4 @@
-"""RFC 0017 §9 / decision #10: a per-tenant export excludes identity/credential specs by default.
+"""A per-tenant export excludes identity/credential specs by default.
 
 # covers: forze_kits.integrations.portability (identity exclusion)
 

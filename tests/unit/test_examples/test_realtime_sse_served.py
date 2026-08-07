@@ -1,4 +1,4 @@
-"""RFC 0055 §8.7: a commanded signal reaches the matching principal, and only that one.
+"""A commanded signal reaches the matching principal, and only that one.
 
 The control plane's `emit` is the half a traffic generator cannot give you — one signal, at
 one audience, on demand. What has to be true for that to be worth anything is that delivery
