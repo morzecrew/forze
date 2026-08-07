@@ -45,7 +45,7 @@ jobs:
           fetch-tags: true # need every tag to find the newest released minor
 
       - name: Install uv
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.2.0 # zizmor: ignore[cache-poisoning] docs build does not publish runtime artifacts to a release
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v8.2.0 # zizmor: ignore[cache-poisoning] docs build does not publish runtime artifacts to a release
         with:
           enable-cache: true
           cache-dependency-glob: |
