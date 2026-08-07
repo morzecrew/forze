@@ -88,7 +88,7 @@ Typically in: public API changes, new or changed behavior, packaging/installatio
 
 Typically out: test changes, CI/CD and workflow updates, internal tooling and agent skills, docs-only changes, formatting/lint-only changes, refactors with no observable behavior impact, trivial renames.
 
-In this repository specifically, "user-relevant" means changes to code inside `src/` — public APIs, domain primitives, contracts, behaviors — plus packaging changes.
+Read the product-code boundary from the repository's own layout — wherever the shipped code lives (`src/`, `cmd/` + `internal/`, `lib/`, a package directory) — and treat "user-relevant" as changes inside it: public APIs and commands, domain primitives, contracts and schemas, behaviors, plus packaging changes. Never assume one layout's boundary in another repository.
 
 ## Entry style
 

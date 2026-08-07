@@ -70,6 +70,6 @@ Downgrade the claim honestly instead of shipping hope:
 ## Related skills
 
 - `determinism-by-design` — the machinery that turns probabilistic failures into on-demand reproductions
-- `self-audit` — verified-red and fix re-auditing come from its verification-honesty pass
+- `self-audit` — verified-red comes from its verification-honesty pass (9); re-auditing your own fixes is its pass 8
 - `reading-isnt-proof` — assert the discriminating detail in the kept regression test
 - `error-taxonomy` — a bug that surfaced as the wrong error kind gets fixed at the classification, not the message

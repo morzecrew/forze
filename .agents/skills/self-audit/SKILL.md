@@ -7,7 +7,7 @@ description: Adversarially audit your own just-finished work — a branch after 
 
 A self-audit is a deliberate post-execution pass where you become the adversary of your own work. The deliverable is finished — the RFC executed, the fix series written, the document drafted — and before it merges or ships, you re-enter it with one assumption: **it contains defects, and your job is to find them.** Not to confirm correctness, not to summarize what was done — to find what's wrong.
 
-This works because the author's blind spots are systematic, not random. The same few places hide defects every time, so an audit that walks those places deliberately finds real bugs that the writing pass — and often the test suite — missed. On substantial branches (thousands of lines), a competent self-audit that finds *nothing* is evidence of a shallow audit, not a clean branch.
+This works because the author's blind spots are systematic, not random. The same few places hide defects every time, so an audit that walks those places deliberately finds real bugs that the writing pass — and often the test suite — missed. A clean audit is a valid outcome — but on substantial branches (thousands of lines) it is rare, so it must arrive as a report carrying its evidence: the scope walked, the checks actually performed, and what remains uncertain (see Fixing and reporting). Never manufacture a finding to avoid reporting clean.
 
 ## Use this skill when
 
@@ -74,7 +74,7 @@ Distrust every "tested" and "covered" claim, including your own — reading a te
 
 - **Run the suite** — actually run it, in the audit, and report the real output.
 - **Verified-red:** for each fix, is there a test that demonstrably fails without the fix? If it wasn't run red, you don't know it guards anything.
-- **Sabotage spot-checks:** for load-bearing checks, break the guarded behavior and confirm the check fails. When a sabotage *passes*, don't conclude "blind check" or "fine" — find out **why** (it may be a second, independent guard; it may be a dead assertion). The why is the finding. This is mutation testing by hand — PIT and Stryker automate the sweep and score it as killed over non-equivalent mutants — and a surviving sabotage is the literature's *equivalent mutant* question: whether a mutation changes behavior at all is undecidable in general, which is why the tool stops at "survived" and the why is yours to find.
+- **Sabotage spot-checks:** for load-bearing checks, break the guarded behavior and confirm the check fails. When a sabotage *passes*, don't conclude "blind check" or "fine" — find out **why** (it may be a second, independent guard; it may be a dead assertion). The why is the finding. This is mutation testing by hand — PIT and Stryker automate the sweep, reporting killed/detected and surviving mutants — and a surviving sabotage is the literature's *equivalent mutant* question: whether a mutation changes behavior at all is undecidable in general, so the tools stop at "survived" and deciding whether a survivor is an equivalent mutant is separate manual assessment — the why is yours to find.
 - **Patch coverage:** measure coverage of the new lines specifically, with the full test profile (unit-only can be wildly misleading). The gaps that matter most are **detection branches** — code that only runs when the bug it detects is present, which is exactly the code that must not be dead.
 - **Sabotage and coverage are not substitutes — run both, in that order.** Sabotage only probes the code you thought to mutate, so a clean sweep measures your imagination rather than your tests — and it leaves you *feeling* finished, which is exactly when you stop looking. Coverage finds the branch you never considered at all. When the two disagree, coverage is the one saying something new: a sabotage sweep that passes everything, sitting next to an uncovered detection branch, means that branch is dead — not that it is safe.
 
@@ -86,7 +86,7 @@ The passes generalize: spec fidelity (§1) and prose honesty (§7) apply verbati
 
 - **Fix as you find, on the same branch.** The work is your own and unmerged — clear defects get fixed immediately, then re-audited (§8). Leave open only what genuinely needs the user's decision (a spec change, a scope call), and say so.
 - **Report findings, not activities.** For each finding: where, what's wrong, why it matters (the concrete failure it causes), and its status — fixed or open. Rank by severity.
-- **State the scope and the residue.** What was audited, what wasn't, and what you'd still distrust. "No findings" on a large branch demands an explanation of why the audit is believed thorough rather than shallow.
+- **State the scope and the residue.** What was audited, what wasn't, and what you'd still distrust. A no-findings audit is reported the same way: the scope, the checks actually performed, the evidence they produced, and the remaining uncertainty — that report is what lets a reader tell clean from shallow.
 - **Distill rules.** When a finding generalizes, record it as a one-line rule ("any suffix/subset helper needs its empty case decided explicitly"; "test a wrapper against every state of the vocabulary it wraps") — these compound across future work. If the project keeps notes or memory, put them there.
 
 ## Related skills

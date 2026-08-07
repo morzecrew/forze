@@ -5,30 +5,12 @@
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/altitude-docs/SKILL.md",
-      "computedHash": "9107d4a8c08ae925a1d2ed91aeb0c372dbeb2538b7f27b53d4964825be71af8f"
+      "computedHash": "dc3112d5e9b57756fe3987e18443c06ce682ac583bae3623e8c84b6711f18c2c"
     },
     "async-python-patterns": {
       "source": "wshobson/agents",
       "sourceType": "github",
       "computedHash": "e2c6c594828cbbf4f0c181eedcf2bd39a2a49b4f087942b295faf36cdc88c423"
-    },
-    "autofix": {
-      "source": "coderabbitai/skills",
-      "sourceType": "github",
-      "skillPath": "skills/autofix/SKILL.md",
-      "computedHash": "421f9102c20fb1c91d87a10ca9bee2e91c7e632e644dfdd3dc013e53865df6c1"
-    },
-    "check-pr": {
-      "source": "greptileai/skills",
-      "sourceType": "github",
-      "skillPath": "check-pr/SKILL.md",
-      "computedHash": "c25ca1259f825b202949a643aa8aa931bb6bb02ac02ccb4b969a4508c2e146dd"
-    },
-    "code-review": {
-      "source": "coderabbitai/skills",
-      "sourceType": "github",
-      "skillPath": "skills/code-review/SKILL.md",
-      "computedHash": "6d117c3f8797e0c770c6b00a646a07028f3440b5d8042e8f841e88ed1116788f"
     },
     "distill-the-rule": {
       "source": "morzecrew/agent-skills",
@@ -40,13 +22,7 @@
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/gitmoji-conventional/SKILL.md",
-      "computedHash": "1842dca71b2a38eaab197ca18adc06471fc77fb3a1ac123362572f38dab25327"
-    },
-    "greploop": {
-      "source": "greptileai/skills",
-      "sourceType": "github",
-      "skillPath": "greploop/SKILL.md",
-      "computedHash": "13849c1cfc853dd4ebdef9caa05e73ea322355dcee6114df64879fdf37ad6f19"
+      "computedHash": "aceb5716cff3076fce1983c7a6620ccc6e94743664968e8c6c6c978a4a32c49f"
     },
     "karpathy-guidelines": {
       "source": "multica-ai/andrej-karpathy-skills",
@@ -58,7 +34,7 @@
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/keep-a-changelog/SKILL.md",
-      "computedHash": "cf1ca61215c8475a0dccb12bf37997609b34520011cb92f73216b3a0bb9e51c5"
+      "computedHash": "f6e94f1db1dde6eb1cf8bec97fabdeea8f58c7e9c61fdb2221cd369a7aaec7b6"
     },
     "less-code-same-behavior": {
       "source": "morzecrew/agent-skills",
@@ -88,7 +64,7 @@
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/pr-review-loop/SKILL.md",
-      "computedHash": "2dc4ff10927db1ced9a43fdab3009158bf35874c8480d7019b414acb9c908fe3"
+      "computedHash": "760c529d294bcb35fdaa9d582a034bb4ef0359ffa439444f0b74b012ca98d94a"
     },
     "python-background-jobs": {
       "source": "wshobson/agents",
@@ -130,19 +106,25 @@
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/reading-isnt-proof/SKILL.md",
-      "computedHash": "0a1182aa1f0cc4fa6d7ad77f48a693e7a32aa4a9bff0090c65961a1e3f3214ad"
+      "computedHash": "fbbb0d9f4bc984c85ffb4c26eb7eb1f9ef26e90a506a6d08679a4c27add628c2"
     },
     "reproduce-then-fix": {
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/reproduce-then-fix/SKILL.md",
-      "computedHash": "3816969571f19e8eb913f307754fd6ec09147de200d25f45591842e45438ee29"
+      "computedHash": "ba24875d5cad7cd2dc0202574a24e17506787776678e695509f64eba81382c9e"
+    },
+    "rfc-writer": {
+      "source": "morzecrew/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rfc-writer/SKILL.md",
+      "computedHash": "208c61bd6667e63ca4fb2bc0cc3d94de55aadafc1467d35c70539b0dcd8cf632"
     },
     "self-audit": {
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/self-audit/SKILL.md",
-      "computedHash": "e77f1339de34022397fb23859ac5a71d09ed26dcd521a3570ffac3a66e1ec502"
+      "computedHash": "38b933ee8be6d9f65aa19a53d06e51203eb1925cc999cf4be0ad03f4fc0c1c98"
     },
     "self-documenting-code": {
       "source": "morzecrew/agent-skills",

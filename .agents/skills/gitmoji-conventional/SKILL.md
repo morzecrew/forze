@@ -37,7 +37,7 @@ Apply it even when the user mentions neither gitmoji nor Conventional Commits.
 2. Pick the gitmoji for it from [references/gitmoji-mapping.md](references/gitmoji-mapping.md) — load it when choosing.
 3. Use the type mapped to that gitmoji. Never invent gitmoji or types.
 
-Common pairs: ✨ feat, 🐛 fix, ♻️ refactor, ⚡️ perf, 📝 docs, ✅ test, 👷 ci, 📦️ build, 🔧 chore, ⏪️ revert, 💥 breaking.
+Common pairs: ✨ feat, 🐛 fix, ♻️ refactor, ⚡️ perf, 📝 docs, ✅ test, 👷 ci, 📦️ build, 🔧 chore, ⏪️ revert. Breaking is not a type: 💥 rides the underlying type with `!` — `💥 feat!:`, `💥 fix!:` (see Breaking changes below) — so release grouping still reads the `feat`/`fix` underneath.
 
 ### Mixed changes: pick the dominant type
 
@@ -68,13 +68,13 @@ A breaking change carries three coordinated signals, so no consumer of the log m
 
 1. **Gitmoji `💥`** — the type stays whatever the change is (`feat`, `fix`, `refactor`…); `💥` replaces that type's usual emoji.
 2. **`!` immediately before the colon** — `feat(api)!:`. Per the spec this alone marks the commit breaking; the description then carries the what.
-3. **`BREAKING CHANGE:` footer** — add it whenever the break needs more detail than the subject holds (what broke, what to do instead). MUST be uppercase; `BREAKING-CHANGE:` is an accepted synonym.
+3. **`BREAKING CHANGE:` footer** — add it whenever the break needs more detail than the subject holds (what broke, what to do instead). MUST be uppercase; `BREAKING-CHANGE:` is an accepted synonym. A multi-line footer value indents its continuation lines with a leading space (git trailer folding) — an unindented continuation detaches from the token and the parseability is lost.
 
 ```text
 💥 feat(api)!: redesign authentication API
 
 BREAKING CHANGE: authentication endpoints now require OAuth2;
-API-key access is removed.
+ API-key access is removed.
 ```
 
 A breaking commit means MAJOR in the next release and must produce a changelog entry that names the break (`keep-a-changelog`).

@@ -28,7 +28,7 @@ number what each check pins.
 ```python
 """Shared ``IdempotencyPort`` conformance battery: every promise, on every store.
 
-The port's docstrings make eight testable promises, and all three stores honour
+The port's docstrings make nine testable promises, and all three stores honour
 them — but each store was verified against a *different subset*, so the plane had
 no statement that they agree. The gaps were not symmetric: the payload-hash and
 in-progress refusals were pinned on Postgres and Redis but not the oracle, ``fail``

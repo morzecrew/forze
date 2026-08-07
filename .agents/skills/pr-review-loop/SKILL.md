@@ -34,7 +34,7 @@ Concrete `gh`/API incantations for every step live in [references/github-mechani
 
 ### 1. Wait — bounded, not hopeful
 
-Discover which reviewers are actually active on this repo (check runs and past PR comments — don't assume a fixed list), then wait until their checks complete *and* their comments/reviews land. Bound the wait: reviewers stall, and some post nothing when they found nothing — a completed check with no comments is a clean verdict, not a signal to keep waiting. On timeout, proceed with what arrived and say so.
+Discover which reviewers are actually active on this repo (check runs and past PR comments — don't assume a fixed list), then wait until their checks complete *and* their comments/reviews land. Bound the wait: reviewers stall, and some post nothing when they found nothing — a check that concluded **success or neutral** with no comments is a clean verdict, not a signal to keep waiting. A check that concluded any other way (failure, action_required, timed_out, cancelled, skipped, stale) is *not* clean: report its state instead of treating silence as approval. On timeout, proceed with what arrived and say so.
 
 ### 2. Dedup into findings
 
