@@ -1,5 +1,7 @@
 # GitHub mechanics for the PR review loop
 
+**Prefer `scripts/pr_loop.py`** — it wraps everything below with pagination, surface handling, and conclusion bucketing built in. This file documents the raw incantations for environments where the script can't run, and as the reference for what the script does.
+
 Concrete `gh` CLI and API incantations per loop step. All commands assume the PR's repo is the cwd; `$PR` is the PR number, and where GraphQL needs the repo identity:
 
 ```bash
