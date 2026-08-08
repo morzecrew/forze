@@ -26,7 +26,7 @@ This works because the author's blind spots are systematic, not random. The same
 
 Audit a defined body of work, not "the repo":
 
-- **Code on a branch:** diff against the merge base (`git merge-base <base> HEAD`), list the commits, count the lines. State the scope in the report ("whole branch, 8 commits / ~6.5k lines"). Include everything the branch touched: source, tests, docs, config, CI. `scripts/audit_scope.py scope --base main` produces exactly this — commits, per-kind file and line counts, and the scope statement to open the report with.
+- **Code on a branch:** diff against the merge base (`git merge-base <base> HEAD`), list the commits, count the lines. State the scope in the report ("whole branch, 8 commits / ~6.5k lines"). Include everything the branch touched: source, tests, docs, config, CI. `scripts/audit_scope.py scope --base main` produces exactly this — commits, per-kind file and line counts, and the scope statement to open the report with (path relative to this skill's directory; from a repository root it is `skills/self-audit/scripts/audit_scope.py`).
 - **Non-code work:** enumerate the artifacts produced (documents, configs, diagrams, plans) and audit that set.
 - **Re-read the spec first.** Before reading the diff, re-read whatever the work claims to implement — the RFC, the task description, the ticket. The audit's first axis is deliverable-vs-spec, and you can't check fidelity from memory.
 

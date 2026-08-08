@@ -101,12 +101,12 @@ python3 scripts/rfc_index.py new "Title"    # allocate + instantiate template + 
 python3 scripts/rfc_index.py new "Title" --number 42   # a reserved number, or re-creating a deleted RFC
 ```
 
-(Read-only except `new`; `--root` if the repo isn't the cwd.) The thinking — what the design says, what the one-liner claims, when a status changes — is yours.
+(Paths relative to this skill's directory; from a repository root the script is at `skills/rfc-writer/scripts/rfc_index.py`. Read-only except `new`; add `--root DIR` — before or after the subcommand — if the repo isn't the cwd.) The thinking — what the design says, what the one-liner claims, when a status changes — is yours.
 
 ### A — Create a new RFC
 
 1. Locate the RFC directory (`rfcs/` or `rfc/`); if none exists, run Workflow D first.
-2. Allocate the next number and instantiate the file: `rfc_index.py new "Title"` (does steps 2–4's bookkeeping in one shot). By hand: read the next-free number from the index and cross-check against `ls` — numbers collide when minted in parallel.
+2. Allocate the next number and instantiate the file: `rfc_index.py new "Title"` — it mints the number, writes the template, adds the index row, and bumps the next-free claim. Steps 3 and 4 stay yours: it leaves the template unfilled and writes a literal `TODO: one-line summary` in the index. By hand: read the next-free number from the index and cross-check against `ls` — numbers collide when minted in parallel.
 3. Fill the file from `references/rfc-template.md`'s shape, scaled to the design's weight. Investigate the actual code before writing "Current state" — this is most of the work.
 4. Replace the placeholder index one-liner with a dense, self-contained summary.
 

@@ -1,0 +1,7 @@
+{
+  "file_filters": {
+    "config": {
+      "include_files": "src/*.py,tests/*.py,skills/*,rfcs/*"
+    }
+  }
+}

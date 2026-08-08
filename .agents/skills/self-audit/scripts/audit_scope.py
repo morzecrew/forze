@@ -13,7 +13,8 @@ Both are read-only git/XML/text reads; neither edits or runs your tests.
 Coverage inputs: Cobertura XML (coverage.py `-x`, gocover-cobertura) and LCOV
 `.info`. JaCoCo's own XML uses a different element shape and is not read — convert
 it with a cobertura reporter first. Paths are matched by longest common suffix, since report paths
-are relative to whatever root the runner used.
+are relative to whatever root the runner used. An XML report that declares
+entities is refused rather than parsed (see reject_entity_declarations).
 
 Exit codes: 0 ok · 1 usage/git error · 2 patch coverage below --min. Unknown flags exit 2, from argparse itself.
 
@@ -24,15 +25,29 @@ missed, never whether the code is right.
 from __future__ import annotations
 
 import argparse
+import codecs
 import json
 import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+import xml.parsers.expat as expat
 from pathlib import Path
 
-DIFF_HEADER = re.compile(r"^\+\+\+ b/(.*)$")
+# A deleted file's +++ line is /dev/null. Matching only `b/<path>` left the
+# parser pointing at the previous file, so the deletion's hunks — and every
+# hunk after it until the next header — were attributed to the wrong path.
+XML_ENCODING = re.compile(r"\s+encoding\s*=\s*(['\"])[^'\"]*\1")
+
+DIFF_HEADER = re.compile(r"^\+\+\+ (b/.*|/dev/null)$")
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+class EntityDeclared(Exception):
+    """An entity declaration was found in the prolog."""
+
+
+class PrologEnded(Exception):
+    """The root element was reached with no declaration seen."""
 
 TEST_HINTS = ("test", "spec", "conftest", "fixture")
 DOC_SUFFIXES = {".md", ".rst", ".txt", ".adoc"}
@@ -40,7 +55,13 @@ CONFIG_SUFFIXES = {".yml", ".yaml", ".toml", ".json", ".ini", ".cfg", ".conf", "
 
 
 def git(args: list[str], root: Path) -> str:
-    proc = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+    # core.quotePath=false: git otherwise C-quotes any non-ASCII path
+    # ("caf\303\251.py") in diff headers and numstat output, and the quoted name
+    # matches nothing downstream — the file's added lines go uncounted.
+    proc = subprocess.run(
+        ["git", "-C", str(root), "-c", "core.quotePath=false", *args],
+        capture_output=True, text=True,
+    )
     if proc.returncode != 0:
         sys.exit(f"error: git {' '.join(args[:3])} failed: {proc.stderr.strip()[:300]}")
     return proc.stdout
@@ -80,8 +101,12 @@ def added_lines(root: Path, base: str, head: str) -> dict[str, list[int]]:
     for line in diff.splitlines():
         header = DIFF_HEADER.match(line)
         if header:
-            current = header.group(1)
-            added.setdefault(current, [])
+            target = header.group(1)
+            # A deletion contributes no added lines; drop the pointer rather
+            # than leaving it on the file before it.
+            current = None if target == "/dev/null" else target[2:]
+            if current is not None:
+                added.setdefault(current, [])
             continue
         hunk = HUNK.match(line)
         if hunk and current:
@@ -144,8 +169,137 @@ def cmd_scope(root: Path, base: str, head: str, as_json: bool) -> int:
     return 0
 
 
+def is_lcov_report(path: Path, head: bytes) -> bool:
+    """Recognise LCOV by its content, with the extension only as a tiebreak.
+
+    Dispatching on `.info` alone sent coverage.lcov and lcov.dat to the XML
+    parser, which failed with a ParseError traceback rather than a message. The
+    BOM is stripped first: a byte-order mark is whitespace to no one, so a
+    BOM-prefixed Cobertura report named .lcov would otherwise be read as LCOV
+    and come back empty.
+    """
+    head = head[:4096]
+    for bom in (codecs.BOM_UTF8, codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE,
+                codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE):
+        if head.startswith(bom):
+            head = head[len(bom):]
+            break
+    # Drop the NUL padding a UTF-16 or UTF-32 encoding leaves between ASCII
+    # bytes: without this the '<' is never at the front and a wide-encoded
+    # Cobertura report named .lcov was dispatched to the LCOV parser, which
+    # found no coverage at all.
+    compact = head.replace(b"\x00", b"").lstrip()
+    if compact.startswith(b"<"):
+        return False
+    if b"SF:" in compact or b"TN:" in compact:
+        return True
+    return path.suffix.lower() in {".info", ".lcov", ".dat"}
+
+
+def read_head(path: Path, size: int = 4096) -> bytes:
+    """The first `size` bytes, so dispatch does not load the whole report."""
+    try:
+        with path.open("rb") as handle:
+            return handle.read(size)
+    except OSError as exc:
+        sys.exit(f"error: cannot read {path}: {exc}")
+
+
+def reject_entity_declarations(data: bytes, path: Path) -> None:
+    """Refuse a report that declares an XML entity.
+
+    Refusing every DTD would refuse real reports — coverage.py emits a DOCTYPE
+    naming an external DTD, which ElementTree never retrieves. The hazard is an
+    entity *declaration*, which ElementTree does expand: nesting multiplies the
+    text tenfold per level, so a few hundred bytes of declarations become
+    however much memory the author cares to ask for. No coverage writer emits
+    one.
+
+    Expat decides what a declaration is, rather than a regex hunting for the
+    prolog: any comment holding a `<` ended that scan early, and a DOCTYPE
+    after it was never examined at all. Parsing stops at the root element, so
+    the cost is the prolog rather than the document.
+    """
+    parser = expat.ParserCreate()
+
+    def refuse(*_args):
+        raise EntityDeclared()
+
+    def stop(*_args):
+        raise PrologEnded()
+
+    parser.EntityDeclHandler = refuse
+    parser.UnparsedEntityDeclHandler = refuse
+    parser.StartElementHandler = stop
+    try:
+        parser.Parse(data, True)
+    except PrologEnded:
+        return
+    except EntityDeclared:
+        sys.exit(
+            f"error: {path} declares XML entities. Coverage writers do not emit those, "
+            "and expanding them exhausts memory — refusing to parse. Regenerate the "
+            "report from your test runner."
+        )
+    except (expat.ExpatError, ValueError):
+        # Malformed, or an encoding expat refuses outright — it raises
+        # ValueError, not ExpatError, for a multi-byte encoding declaration.
+        # Let the real parse below report it, so the message a user sees for a
+        # report that cannot be read comes from one place.
+        return
+
+
+def wide_encoding(data: bytes) -> str | None:
+    """The UTF-16/32 form of these bytes, by BOM or by the XML spec's own rule.
+
+    Appendix F of the XML spec detects an encoding from the first four bytes,
+    because a conforming document begins with `<`. That covers the BOM-less
+    case, which matters: Python's "utf-32-be" codec writes no BOM at all.
+    """
+    for bom, encoding in (
+        (codecs.BOM_UTF32_LE, "utf-32-le"), (codecs.BOM_UTF32_BE, "utf-32-be"),
+        (codecs.BOM_UTF16_LE, "utf-16-le"), (codecs.BOM_UTF16_BE, "utf-16-be"),
+    ):
+        if data.startswith(bom):
+            return encoding
+    for opener, encoding in (
+        (b"<\x00\x00\x00", "utf-32-le"), (b"\x00\x00\x00<", "utf-32-be"),
+        (b"<\x00", "utf-16-le"), (b"\x00<", "utf-16-be"),
+    ):
+        if data.startswith(opener):
+            return encoding
+    return None
+
+
+def to_parseable_xml(data: bytes) -> bytes:
+    """Re-encode to UTF-8 when the bytes are in a form expat cannot read.
+
+    Expat rejects UTF-32 outright and raises on a multi-byte encoding
+    declaration, so recognising a wide-encoded report and routing it to the XML
+    parser — as the dispatch now does — would only trade "no coverage found"
+    for a parse error. Converting is what recognising it has to mean.
+    """
+    encoding = wide_encoding(data)
+    if encoding is None:
+        return data
+    text = data.decode(encoding, "replace").lstrip("﻿")
+    # Drop the declared encoding: it describes neither these bytes nor what
+    # expat is about to read.
+    return XML_ENCODING.sub("", text, count=1).encode("utf-8")
+
+
 def parse_cobertura(path: Path) -> dict[str, dict[int, int]]:
-    root = ET.parse(path).getroot()
+    data = to_parseable_xml(path.read_bytes())
+    reject_entity_declarations(data, path)
+    try:
+        # Entity declarations are refused above; bare nosec because bandit reads
+        # anything trailing it as further test ids.
+        root = ET.fromstring(data)  # nosec B314
+    except (ET.ParseError, ValueError) as exc:
+        sys.exit(
+            f"error: {path} is not parseable XML ({exc}). Expected a Cobertura report "
+            "or an LCOV file — check that the report is the one your runner wrote."
+        )
     sources = [s.text.strip() for s in root.findall(".//sources/source") if s.text]
     coverage: dict[str, dict[int, int]] = {}
     for cls in root.findall(".//class"):
@@ -198,7 +352,16 @@ def match_path(diff_path: str, coverage: dict[str, dict[int, int]]) -> dict[int,
             tied = True
     # Two report paths can share a longest suffix. Counting one of them would
     # report coverage for a different module, so an ambiguous match is no match.
-    return None if tied or not best_score else best
+    if tied or not best_score:
+        return None
+    # A bare filename match is not identification: src/app.py and other/app.py
+    # share app.py and nothing else, and attributing one's coverage to the other
+    # is a wrong answer wearing a number. Demand either a directory component
+    # too, or that the match account for the whole diff path (a root-level file
+    # legitimately matches on its name alone).
+    if best_score < 2 and best_score != len(diff_parts):
+        return None
+    return best
 
 
 def cmd_patch_coverage(
@@ -206,7 +369,11 @@ def cmd_patch_coverage(
 ) -> int:
     if not report.is_file():
         sys.exit(f"error: {report} not found")
-    coverage = parse_lcov(report) if report.suffix == ".info" else parse_cobertura(report)
+    coverage = (
+        parse_lcov(report)
+        if is_lcov_report(report, read_head(report))
+        else parse_cobertura(report)
+    )
     if not coverage:
         sys.exit(f"error: no coverage data parsed from {report}")
 
@@ -309,7 +476,9 @@ def main() -> int:
             sys.exit(f"error: {root} is not a git repository")
     minimum = getattr(args, "minimum", None)
     if minimum is not None and not (0.0 <= minimum <= 100.0):
-        # nan compares false against everything, so it would clear any gate.
+        # Written as a range test rather than `< 0 or > 100` so that nan, which
+        # compares false against everything, fails it too instead of sailing
+        # through to clear whatever gate --min was meant to enforce.
         sys.exit(f"error: --min must be a percentage between 0 and 100 (got {minimum})")
     base = args.base or detect_base(root)
 

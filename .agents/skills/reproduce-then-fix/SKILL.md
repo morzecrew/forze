@@ -55,7 +55,11 @@ python3 scripts/verified_red.py --test-cmd "pytest tests/test_bug.py" --test-fil
 python3 scripts/verified_red.py --base HEAD~1 --test-cmd "..." --test-file ...   # fix already committed
 ```
 
-The red half runs in a throwaway git worktree at the base commit with only the named test files copied in, so your working tree is never touched and an interrupted run cannot strand your work. Exit 2 means not certified, and says which half broke — a red run that *passes* is the important one: the test does not guard what you fixed.
+The red half runs in a throwaway git worktree at the base commit with only the named test files copied in, so your working tree is never touched and an interrupted run cannot strand your work. Pass `--test-file` for *every* new file the reproduction needs — the conftest, the fixture, the helper — since anything that exists in neither the base commit nor that list makes the red run die on a missing import instead of on the absent fix. That failure is refused rather than counted as red: a false red certifies a test that never ran, which is worse than running no check at all.
+
+Pass `--allow-red-error` only when the import failure *is* the bug you fixed. Either half is killed after `--timeout-seconds` (default 900), and a killed run is not a red result either.
+
+Exit 2 means not certified, and says which half broke — a red run that *passes* is the important one: the test does not guard what you fixed.
 
 ### 6. Keep the reproduction
 

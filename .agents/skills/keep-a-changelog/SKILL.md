@@ -128,7 +128,7 @@ python3 scripts/validate_changelog.py CHANGELOG.md                 # spec only
 python3 scripts/validate_changelog.py --house-rules CHANGELOG.md   # + the local conventions above
 ```
 
-Run it after editing, and before cutting a version. It never edits — and it cannot judge whether an entry is user-relevant, outcome-oriented, or true, which is the part that matters most.
+(Paths relative to this skill's directory; from a repository root the script is at `skills/keep-a-changelog/scripts/validate_changelog.py`.) Run it after editing, and before cutting a version. It never edits — and it cannot judge whether an entry is user-relevant, outcome-oriented, or true, which is the part that matters most.
 
 ## Workflow A — update `Unreleased`
 
