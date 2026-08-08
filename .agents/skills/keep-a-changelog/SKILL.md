@@ -88,7 +88,7 @@ Typically in: public API changes, new or changed behavior, packaging/installatio
 
 Typically out: test changes, CI/CD and workflow updates, internal tooling and agent skills, docs-only changes, formatting/lint-only changes, refactors with no observable behavior impact, trivial renames.
 
-In this repository specifically, "user-relevant" means changes to code inside `src/` — public APIs, domain primitives, contracts, behaviors — plus packaging changes.
+Read the product-code boundary from the repository's own layout — wherever the shipped code lives (`src/`, `cmd/` + `internal/`, `lib/`, a package directory) — and treat "user-relevant" as changes inside it: public APIs and commands, domain primitives, contracts and schemas, behaviors, plus packaging changes. Never assume one layout's boundary in another repository.
 
 ## Entry style
 
@@ -118,6 +118,17 @@ These are deliberate local conventions, not part of the spec. In another reposit
 - **No structural extras:** no tables, code blocks, migration steps, or upgrade guides inside entries — the changelog records what changed, not how to adapt.
 - **Empty `Unreleased` categories** keep a `- ...` placeholder.
 - **Do not add or modify the bottom reference links unless explicitly asked** — but when cutting a release, remind the user those links need updating.
+
+## Checking the file
+
+`scripts/validate_changelog.py` settles the mechanical rules — Unreleased present, heading and date format, latest-first ordering, the six categories, duplicates, and link references resolving both ways (skipped when the file uses none):
+
+```bash
+python3 scripts/validate_changelog.py CHANGELOG.md                 # spec only
+python3 scripts/validate_changelog.py --house-rules CHANGELOG.md   # + the local conventions above
+```
+
+Run it after editing, and before cutting a version. It never edits — and it cannot judge whether an entry is user-relevant, outcome-oriented, or true, which is the part that matters most.
 
 ## Workflow A — update `Unreleased`
 

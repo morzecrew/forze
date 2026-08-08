@@ -1,4 +1,4 @@
-"""The RFC 0017 §8 trust milestone: a portable archive round-trips through *real* infrastructure.
+"""The portability trust milestone: a portable archive round-trips through *real* infrastructure.
 
 # covers: forze_kits.integrations.portability.ArchiveExporter
 # covers: forze_kits.integrations.portability.ArchiveImporter

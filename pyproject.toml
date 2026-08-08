@@ -17,12 +17,12 @@ authors = [{ name = "Lev Litvinov", email = "misery7100@gmail.com" }]
 maintainers = [{ name = "Lev Litvinov", email = "misery7100@gmail.com" }]
 keywords = [
     "architecture",
+    "backend",
     "ddd",
-    "hexagonal",
     "domain-driven-design",
     "hexagonal-architecture",
-    "framework",
-    "kernel",
+    "ports-and-adapters",
+    "pydantic",
 ]
 
 # ....................... #
@@ -177,7 +177,11 @@ cli = ["typer>=0.12.0"]
 # The served mock: routing + a server for the control plane, and polyfactory for seeding.
 # Listed concretely rather than referencing the 'dst' extra — extras that depend on extras
 # resolve unpredictably across installers.
-mock-server = ["polyfactory>=3.3.0", "starlette>=0.52.1", "uvicorn[standard]>=0.42.0"]
+mock-server = [
+    "polyfactory>=3.3.0",
+    "starlette>=0.52.1",
+    "uvicorn[standard]>=0.42.0",
+]
 zstd = ["zstandard>=0.23.0"]
 
 # ....................... #

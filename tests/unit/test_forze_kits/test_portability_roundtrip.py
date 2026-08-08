@@ -1,4 +1,4 @@
-"""The P1 milestone: an export→import round-trip preserves what RFC 0017 §7 promises.
+"""The first milestone: an export→import round-trip preserves what the fidelity contract promises.
 
 # covers: forze_kits.integrations.portability.export_archive
 # covers: forze_kits.integrations.portability.import_archive

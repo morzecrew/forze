@@ -85,7 +85,10 @@ source"), so substitute the project's real names as you go.
 
 Every page descends through these five bands, **in order**. A page may start
 below band 1 and may stop early, but it must never jump back up or skip a
-required band on the way down.
+required band on the way down. One sanctioned exception: a tutorial *closes*
+with a band-2 retro ("What you just did") after its descent is complete — a
+deliberate return to concepts once the doing is done, allowed only as a
+closing section (see the tutorial contract).
 
 1. **Orientation** — why this exists, what problem it removes. Plain language, no
    API names. The reader learns whether they're on the right page.
@@ -157,7 +160,8 @@ Universal, every page:
 
 - *Opening:* lead paragraph naming the outcome ("by the end you have X running").
 - *Skeleton:* Orientation → Prerequisites → numbered Steps → "What you just did"
-  (a band-2 retro that names the concepts they just used) → handoff.
+  (a band-2 retro that names the concepts they just used — the one sanctioned
+  upward move, allowed only here, after the steps are done) → handoff.
 - *Floor:* band 3, one controlled dip to 4. *Handoff:* cards into deeper learning.
 - *Path:* single and reliable — no forks, no "alternatively", no choices; every
   step must work as written. Explicit about basics; theory gets one line and a

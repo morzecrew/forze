@@ -1,4 +1,4 @@
-"""Bounded-memory search streaming loop + mixin wiring (RFC 0011)."""
+"""Bounded-memory search streaming loop + mixin wiring."""
 
 from __future__ import annotations
 

@@ -16,7 +16,7 @@ Three of them cover things the integration legs cannot:
   worthless, and the one no green leg would ever reveal.
 - **The plane that has not landed.** ``supports_async_jobs`` is declared with no ports, no
   gate and no adapter setting it; the tripwire below keeps the oracle from claiming it, and
-  fails when RFC 0023's mock starts serving batch for real.
+  fails when the mock starts serving offline batch for real.
 """
 
 from __future__ import annotations
@@ -167,20 +167,20 @@ async def test_the_async_job_capability_still_has_no_gate() -> None:
 
     ``supports_async_jobs`` names a plane that has not shipped: no ports, no gate, no
     adapter setting it, so unlike the cap and the stream there is nothing for the scenario
-    above to exercise. Its design is locked in RFC 0023 (offline batch inference) and
+    above to exercise. Its design is locked in the offline-batch-inference RFC and
     deliberately **not** on ``InferencePort`` — decision #1 there is "batch = two new
     ports, never methods on ``InferencePort``" — so watching that port's surface, or
     guessing the gate's future name, would watch a door the plane will not come through.
 
     Two things catch the landing properly, and neither is a name:
 
-    - the **conformance manifest**. RFC 0023 §2.1 names the dep keys
+    - the **conformance manifest**. That RFC names the dep keys
       (``inference_batch_command`` / ``inference_batch_query``), and
       ``.github/scripts/conformance_manifest.py`` requires every ``DepKey`` under
       ``contracts/`` to be claimed exactly once by a plane, a declared gap or an
       exemption. The keys cannot land without ``just quality`` failing until someone says
       how the plane is differentially tested.
-    - the **assertion below**. RFC 0023 §4 has the mock implementing batch end-to-end
+    - the **assertion below**. That RFC has the mock implementing batch end-to-end
       (synchronous completion at submit, over ``MockStorage``), at which point it should
       declare the capability — and that is exactly when this fails, putting whoever lands
       the plane in this file to add its case to ``CapabilityGateOutcome``.
@@ -192,7 +192,7 @@ async def test_the_async_job_capability_still_has_no_gate() -> None:
 
     assert not FULL_INFERENCE_CAPABILITIES.supports_async_jobs, (
         "the oracle advertises async jobs again — it has no verb to serve them with. If "
-        "the RFC 0023 batch plane has landed, extend run_capability_gates to drive its "
+        "the offline batch plane has landed, extend run_capability_gates to drive its "
         "ports and add the case to CapabilityGateOutcome in that same change"
     )
 

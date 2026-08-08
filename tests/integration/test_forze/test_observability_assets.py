@@ -18,7 +18,7 @@ compared the assets to themselves.
 So the last test here puts a real Alloy between `bootstrap_telemetry` and a real
 Prometheus and asks Prometheus what the series is called.
 
-The full five-container compose stack stays a manual gate (RFC 0032 §10). What it would
+The full five-container compose stack stays a manual gate. What it would
 add beyond this is mostly proof that Grafana's own provisioning works.
 """
 

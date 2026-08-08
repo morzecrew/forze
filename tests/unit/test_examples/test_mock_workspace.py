@@ -1,12 +1,12 @@
 """The catalog gate: every operation the example registers must be reachable and answer.
 
-RFC 0055 §9. The failure this exists to prevent is a *new plane shipping green* — a spec or
+The failure this exists to prevent is a *new plane shipping green* — a spec or
 a port the seeder cannot fill, which nobody notices because no test drove it. So the sweep is
 over the whole catalog rather than a chosen subset, and the exemption table is read from
 `pyproject.toml` and checked **both ways**: an exemption whose operation starts passing must
 be deleted, so the table can only shrink.
 
-Two halves, per the RFC's decision 15:
+Two halves:
 
 * **reachability** — every operation resolves against the served context (no exemptions; a
   resolution failure is always a wiring bug);

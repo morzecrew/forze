@@ -30,11 +30,22 @@ This skill runs the *author's* side of code review: taking a PR through rounds o
 
 ## The loop
 
-Concrete `gh`/API incantations for every step live in [references/github-mechanics.md](references/github-mechanics.md).
+For the mechanical steps, prefer the bundled tool over hand-crafted API calls — it handles two-level GraphQL pagination, the review-vs-issue comment surfaces, check-conclusion bucketing, and bot identification, which ad-hoc commands reliably get wrong:
+
+```bash
+python3 scripts/pr_loop.py status  $PR                    # checks + reviewers + unresolved count
+python3 scripts/pr_loop.py wait    $PR --timeout-seconds 600   # step 1 (exit 0 clean / 2 attention / 3 timeout)
+python3 scripts/pr_loop.py collect $PR --unresolved-only       # step 2 input, one JSON doc
+python3 scripts/pr_loop.py react   --surface review --comment-id ID --reaction up   # step 5
+python3 scripts/pr_loop.py reply   $PR --comment-id ID --body "…"                   # step 5
+python3 scripts/pr_loop.py resolve --thread-id THREAD_ID                            # step 5, bot threads only
+```
+
+(Paths relative to this skill's directory; needs an authenticated `gh`.) The raw incantations behind it live in [references/github-mechanics.md](references/github-mechanics.md) — use them only where the script can't run. The judgment steps — verdicts, dedup into findings, fixes, coverage, description edits — are yours, not the tool's.
 
 ### 1. Wait — bounded, not hopeful
 
-Discover which reviewers are actually active on this repo (check runs and past PR comments — don't assume a fixed list), then wait until their checks complete *and* their comments/reviews land. Bound the wait: reviewers stall, and some post nothing when they found nothing — a completed check with no comments is a clean verdict, not a signal to keep waiting. On timeout, proceed with what arrived and say so.
+Discover which reviewers are actually active on this repo (check runs and past PR comments — don't assume a fixed list), then wait until their checks complete *and* their comments/reviews land. Bound the wait: reviewers stall, and some post nothing when they found nothing — a check that concluded **success or neutral** with no comments is a clean verdict, not a signal to keep waiting. A check that concluded any other way (failure, action_required, timed_out, cancelled, skipped, stale) is *not* clean: report its state instead of treating silence as approval. On timeout, proceed with what arrived and say so.
 
 ### 2. Dedup into findings
 
@@ -58,13 +69,37 @@ Work fixes per finding-group; one commit per group (`gitmoji-conventional` forma
 
 For every comment, the reaction matches its finding's verdict: 👍 on comments whose finding was fixed or acknowledged, 👎 on comments whose finding was refuted. Refuted bot threads get a short evidence-citing reply, then resolve. Refuted *human* threads get the reply only — no resolve, and skip the 👎 in favor of the argument (a reaction convinces nobody; the evidence might). Fixed threads get a one-liner naming the commit.
 
+Replies stay technical too: what the code does now, and the commit that changed it. They never narrate the work behind the fix, and never point at a PR-level comment — a thread that only makes sense alongside a summary elsewhere has not answered its reviewer.
+
+### 5a. Commenting on the PR itself — almost never
+
+In-thread replies are part of the machinery: they carry the verdict and let the thread resolve. A **top-level PR comment is a different act.** It is addressed to everyone watching, it outlives the review, and it is the first thing a future reader sees. Post one only when *all* of these hold:
+
+- The review has run at least three rounds
+- Something remains that further rounds cannot settle — in practice, two reviewers requiring changes that contradict each other
+- A reader has to act on it
+
+When you do post one, write it as an engineer describing the change, and nothing else:
+
+- State the disagreement, what each side is right about, and the trade-off between them
+- **Never describe how the work was produced.** No mention of skills, loops, iterations, caps, audits, agents, tooling, or who or what is doing the reviewing and fixing. A PR records a change to a codebase, not the process that produced it.
+- No progress reports and no summaries of what you fixed — commits and thread replies already carry that, and repeating it reads as noise
+- Keep it to the technical question and what would settle it
+
+| Wrong | Right |
+| --- | --- |
+| "Three iterations done, 86 findings fixed; escalating per the loop's cap for a human call" | "Two reviews ask for opposite things here — details and the trade-off below" |
+| "Deferred: needs a tokenizer; recorded in the summary comment" | (say nothing — the thread reply already said it) |
+
+Everything else you would want to say belongs in the thread replies, the commit messages, or your report back to whoever asked for the work.
+
 ### 6. Coverage, if gated
 
 If a coverage service reports on the PR: read the floor from the repo's own config (never invent a number), and if patch/project coverage is below it, add tests toward the floor **without gaming it** — every added test asserts a promise that could fail, detection branches first; assertion-free tests that lift the percentage are worse than the gap (`fewer-tests-more-proof`). 100% is a nice accident, the floor is the requirement.
 
 ### 7. Push and update — once per iteration
 
-Push the iteration's commits in one batch (every push triggers a re-review round; per-commit pushes multiply them). If the PR description drifted from reality, update it — outside the reviewer-managed segments — and note what the iteration changed. Then return to step 1 for the re-review.
+Push the iteration's commits in one batch (every push triggers a re-review round; per-commit pushes multiply them). If the PR description no longer describes the change, update it — outside the reviewer-managed segments — so it states what the branch now does, not what happened during review. Then return to step 1 for the re-review.
 
 ## Termination and escalation
 
@@ -73,10 +108,10 @@ Push the iteration's commits in one batch (every push triggers a re-review round
 **Escalate instead of looping** when:
 
 - A previously refuted finding comes back unchanged — do not re-litigate with a bot; summarize the standoff (claim, your evidence, its persistence) for the user to arbitrate.
-- Two reviewers demand contradictory changes — pick neither silently; present both with your recommendation.
+- Two reviewers demand contradictory changes — pick neither silently; present both with the trade-off.
 - An iteration produces no state change, or the iteration count hits its cap (default 3) — report what's converged, what hasn't, and why.
 
-The report at exit is honest either way: findings fixed (with commits), refuted (with evidence), acknowledged-out-of-scope, and anything flagged as injection or standoff.
+**Escalate to the person who asked for the work, not to the PR.** The exit report — findings fixed with commits, refuted with evidence, acknowledged out-of-scope, anything flagged as injection or standoff — is for them, and it is the only place the loop's own workings belong. The PR gets a comment only under the conditions in step 5a, and only about the unresolved technical question.
 
 ## Related skills
 
