@@ -101,7 +101,9 @@ class CompiledSurfaceSpec(BaseSpec):
 
 The caps keep RFC 0015's names *and its values* — one plane, one default, changed in one place if ever.
 
-**A separate spec type, not a subclass of `DynamicReadSpec`.** [`plane_of_spec`](../src/forze/application/contracts/inventory/planes.py) dispatches by `isinstance` over `SPEC_TYPE_PLANES`, so a subclass silently inherits its parent's plane row — a footgun that costs nothing to avoid now and is very hard to see later.
+**A separate spec type, not a subclass of `DynamicReadSpec`.** Two reasons, neither of them inventory-related today. First, **spec identity**: the two are separate routes with separate dep keys and separate fingerprints, and a subclass makes one a substitutable stand-in for the other everywhere a `DynamicReadSpec` is accepted — including the dep resolution that is supposed to keep the capability greppable in wiring (§1). Second, **field coupling**: a subclass inherits the parent's field set by construction, so a cap or knob that later needs to diverge between a bare statement and a verified plan cannot, without either breaking the parent or growing a field the parent does not want.
+
+There is also a *latent* inventory hazard worth naming rather than overstating: [`plane_of_spec`](../src/forze/application/contracts/inventory/planes.py) dispatches by `isinstance` over `SPEC_TYPE_PLANES`, so a subclass would inherit its parent's plane row silently. That cannot bite today — neither spec is inventoried (RFC 0015 §3.5, and §5 below) — but it becomes live the moment either stance changes, which §5 records as a possible future. Cheap to foreclose now; invisible if it ever activates.
 
 ### 3.3 Port
 
@@ -210,7 +212,7 @@ Un-park when: the compiler emits a stable plan shape answering 1 and 3, **or** a
 | 7 | Caps and options are RFC 0015's, by name and by value. A second set of defaults for one concern is how they end up disagreeing | locked |
 | 8 | The port carries `plan_fingerprint` but **does not cache**. A result cache keyed on a fingerprint that omits the namespace is a cross-tenant read; caching is the application's, over the shipped `set_versioned` | locked |
 | 9 | Inventory participation is **edges, not a plane or a disposition** — a compiled surface owns no rows, and `PlaneDisposition` has no member meaning "owns nothing" (§5). A fifth member is the recorded alternative if a second reader plane ever appears | locked |
-| 10 | A separate spec type, not a `DynamicReadSpec` subclass — `plane_of_spec` dispatches by `isinstance` and a subclass would inherit its parent's row silently | locked |
+| 10 | A separate spec type, not a `DynamicReadSpec` subclass — distinct identity and dep key (a subclass would be substitutable wherever the parent is accepted, eroding decision 1's greppability) and no inherited field set to fight when a knob needs to diverge. The `isinstance` plane-dispatch hazard is *latent*, not active: neither spec is inventoried today, and it only becomes live if §5's stance is ever reversed | locked |
 | 11 | Ships no relation-shape concept beyond `RelationRef`; unifying with RFC 0029's `RelationShape` is deferred until that RFC settles, so there is nothing to unwind later beyond a rename | recorded |
 | 12 | Field names are carrier-neutral (`statement`, not `sql`) so a non-SQL compiler reuses the vocabulary rather than forking it | locked |
 | 13 | This RFC is RFC 0015 decision 9's demand gate for pagination; it does not add paging unilaterally, and if that decision opens the methods land in the shared shell once | recorded |

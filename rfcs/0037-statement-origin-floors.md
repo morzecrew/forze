@@ -61,6 +61,13 @@ _ORIGIN_FLOORS: Final[dict[StatementOrigin, TenantIsolationMode]] = {
     "raw": "dedicated",
 }
 
+if frozenset(get_args(StatementOrigin)) != _ORIGIN_FLOORS.keys():
+    raise exc.internal(  # at import — a rung without a floor must never reach a wiring
+        "StatementOrigin and _ORIGIN_FLOORS disagree: every origin needs a floor, and "
+        "the missing one would otherwise default to whatever a KeyError does at call time.",
+        code="origin_floors_incomplete",
+    )
+
 
 def required_isolation_for_origin(origin: StatementOrigin) -> TenantIsolationMode:
     """The weakest isolation tier at which *origin* is safe."""
@@ -77,6 +84,8 @@ def validate_origin_isolation(
 ```
 
 `validate_origin_isolation` delegates the comparison to `isolation_satisfies` — it does not re-implement the ordering, and it does not introduce a second lattice. `TierLattice.validate` already produces the remediation sentence (*"Strengthen the wiring … or lower the declared requirement"*); the origin validator adds one clause naming the origin, so the message says which of the two floors bit.
+
+**The completeness guard is not decoration.** A `dict[StatementOrigin, …]` literal missing a key is *not* a type error — mypy does not check dict-literal completeness against a `Literal` key type — so without the guard a fourth rung added without a floor would sail through every gate and surface as a `KeyError` at call time, which is precisely the failure mode §3's next paragraph forbids. The guard derives the key set from the literal via `get_args`, the shipped pattern in [`querying/guards.py`](../src/forze/application/contracts/querying/guards.py) (`_ELEMENT_QUANTIFIER_KEYS`). It **raises rather than asserts**: `assert` is stripped under `-O`, so an assertion here would silently stop protecting exactly the deployments that run optimized.
 
 **Failure is at freeze, never at call time.** This is the `validate_module_tenancy` moment, alongside `required_isolation`. A route whose origin outruns its isolation must be unwireable, not merely observable — the CQRS read-only-guard defect on record (a guard that fires at call time rather than resolve time) is the evidence for why, not a preference.
 
@@ -105,7 +114,7 @@ The consequence is architectural and belongs in any consumer's own docs: **`comp
 
 ## 6. Acceptance battery
 
-1. `required_isolation_for_origin` returns the floor for each of the three origins; the mapping is total over the literal (a new origin without a floor fails at import, not at wiring). *(unit)*
+1. `required_isolation_for_origin` returns the floor for each of the three origins, and the §3 completeness guard makes a rung-without-a-floor an **import** failure rather than a call-time `KeyError` — asserted by reloading the module with a floor removed and observing the raise, since a dict literal's incompleteness is invisible to mypy and would otherwise be caught by nothing. *(unit)*
 2. A `compiled` route deriving `tagged` fails `validate_module_tenancy` with an actionable message naming the route, the origin, and the tier it needs. *(unit)*
 3. A `compiled` route deriving `namespace` and one deriving `dedicated` both pass. *(unit)*
 4. A `raw` route deriving `namespace` fails; at `dedicated` it passes — the shipped `GraphRawQueryPort` doctrine, now expressed as data rather than as prose. *(unit)*
