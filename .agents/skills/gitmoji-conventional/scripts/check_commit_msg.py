@@ -27,6 +27,8 @@ Merge, fixup!, squash! and revert-generated messages are skipped — git writes
 those, not you.
 
 Exit codes: 0 clean (warnings allowed) · 1 usage/IO error · 2 failures found.
+Unknown flags also exit 2, from argparse itself — check stderr to tell that
+apart from a failing commit message.
 
 Install as a hook (this is the skill at rung 3 — see `ratchet-what-you-build`):
 
@@ -52,7 +54,11 @@ SUBJECT = re.compile(
 MAPPING_ROW = re.compile(r"^\|\s*(\S+)\s*\|\s*`(:[a-z0-9_+-]+:)`\s*\|[^|]*\|\s*([a-z]+)\s*\|", re.M)
 SKIP_PREFIXES = ("Merge ", "Revert ", "fixup! ", "squash! ", "amend! ")
 BREAKING_TOKEN = re.compile(r"^(BREAKING[ -]CHANGE):", re.M)
-BREAKING_WRONG_CASE = re.compile(r"^(breaking[ -]change|Breaking[ -]Change):", re.M | re.I)
+# Every casing, correct or not; the accepted spellings are filtered out at the
+# check. Matching case-insensitively and suppressing on "a correct one exists
+# somewhere" hid a malformed marker sitting beside a well-formed one.
+BREAKING_MARKER = re.compile(r"^(breaking[ -]change):", re.M | re.I)
+ACCEPTED_BREAKING = {"BREAKING CHANGE", "BREAKING-CHANGE"}
 # Real git trailers only. "Also:" opening a final prose paragraph is not a
 # trailer, and treating it as one rejected legitimate messages.
 # Git trailers are `Token: value` with no spaces in the token. Hyphenated keys
@@ -120,6 +126,14 @@ def check_message(message: str, mapping: dict[str, str]) -> list[tuple[str, str]
     if emoji == BOOM:
         if not bang:
             problems.append("C4: 💥 marks a breaking change — the subject needs '!' before the colon")
+        # 💥 carries no type of its own, but the type still has to be a real one:
+        # skipping the check let any invented type through on a breaking commit,
+        # the one commit class most likely to be read later.
+        if commit_type not in set(mapping.values()):
+            problems.append(
+                f"C2: '{commit_type}' is not a conventional commit type "
+                "(see references/gitmoji-mapping.md)"
+            )
     elif emoji not in mapping:
         problems.append(f"C2: {match.group('emoji')} is not an official gitmoji (see references/gitmoji-mapping.md)")
     elif mapping[emoji] != commit_type:
@@ -133,15 +147,16 @@ def check_message(message: str, mapping: dict[str, str]) -> list[tuple[str, str]
     if has_breaking_footer and not bang:
         problems.append("C4: a BREAKING CHANGE footer needs '!' in the subject too")
 
-    wrong_case = BREAKING_WRONG_CASE.search(footer_block)
-    if wrong_case and not BREAKING_TOKEN.search(footer_block):
-        problems.append(f"C5: '{wrong_case.group(1)}:' must be uppercase — 'BREAKING CHANGE:'")
+    # Judge each marker on its own: trailer parsers read one line at a time, so a
+    # correct footer elsewhere does not redeem a mis-cased one beside it.
+    for marker in BREAKING_MARKER.finditer(footer_block):
+        if marker.group(1) not in ACCEPTED_BREAKING:
+            problems.append(f"C5: '{marker.group(1)}:' must be uppercase — 'BREAKING CHANGE:'")
 
     problems.extend(check_footer_folding(lines))
 
     if not description.strip():
         problems.append("C6: description is empty")
-        description = ""
     if description.endswith("."):
         problems.append("C6: description ends with a period")
     words = description.split()

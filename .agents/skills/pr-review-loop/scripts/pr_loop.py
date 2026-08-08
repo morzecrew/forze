@@ -32,6 +32,8 @@ never-merge) stays in SKILL.md — this tool only makes the mechanics reliable.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import hashlib
 import json
 import subprocess
 import sys
@@ -39,6 +41,8 @@ import time
 
 CLEAN_CONCLUSIONS = {"SUCCESS", "NEUTRAL"}
 PER_PAGE = 100
+# Generous for a slow API, short enough that `wait` still honours its deadline.
+GH_TIMEOUT_S = 120
 
 THREADS_QUERY = """
 query($owner: String!, $repo: String!, $pr: Int!, $after: String) {
@@ -88,24 +92,58 @@ mutation($thread: ID!) {
 }
 """
 
-COUNTS_QUERY = """
-query($owner: String!, $repo: String!, $pr: Int!) {
-  repository(owner: $owner, name: $repo) {
-    pullRequest(number: $pr) {
-      reviewThreads(last: 20) { totalCount nodes { comments { totalCount } } }
-      reviews(last: 20) { totalCount nodes { updatedAt } }
-      comments(last: 20) { totalCount nodes { updatedAt } }
-    }
-  }
-}
-"""
+
+
+class GhUnavailable(Exception):
+    """A gh call could not finish inside the time it was allowed."""
+
+
+_deadline: float | None = None
+
+
+@contextlib.contextmanager
+def wait_budget(seconds: float):
+    """Bound every gh call inside this block by the time left overall.
+
+    A fixed per-call cap is not enough on its own: `wait --timeout-seconds 1`
+    would still let the first call run for the full cap, and a paginated
+    fingerprint makes several such calls per poll. Sharing one deadline keeps
+    the bound the caller asked for.
+    """
+    global _deadline
+    previous = _deadline
+    _deadline = time.monotonic() + seconds
+    try:
+        yield
+    finally:
+        _deadline = previous
+
+
+def call_budget() -> float:
+    if _deadline is None:
+        return float(GH_TIMEOUT_S)
+    return max(0.0, min(float(GH_TIMEOUT_S), _deadline - time.monotonic()))
 
 
 def run_gh(args: list[str]) -> str:
+    budget = call_budget()
+    shown = " ".join(args[:4])
+    if budget <= 0:
+        raise GhUnavailable(f"no time left for `gh {shown} …`")
     try:
-        proc = subprocess.run(["gh", *args], capture_output=True, text=True)
+        proc = subprocess.run(
+            ["gh", *args], capture_output=True, text=True, timeout=budget
+        )
     except FileNotFoundError:
         sys.exit("gh CLI not found — install it and run `gh auth login`")
+    except subprocess.TimeoutExpired:
+        # Raised, not exited: `wait` turns this into its documented timeout
+        # result rather than a bare process error, so the caller still learns
+        # what it was waiting on.
+        raise GhUnavailable(
+            f"`gh {shown} …` did not return within {budget:.0f}s — network stall "
+            "or a hung credential helper"
+        ) from None
     if proc.returncode != 0:
         shown = " ".join(args[:4])
         sys.exit(f"`gh {shown} …` failed (rc={proc.returncode}): {proc.stderr.strip()[:600]}")
@@ -275,32 +313,52 @@ def cmd_status(owner: str, repo: str, pr: int) -> dict:
     return snapshot
 
 
+def surface_digest(items: list[dict]) -> tuple:
+    """Identity + last-touched + content, per item, order-independent.
+
+    Counts alone miss edits, and timestamps alone miss the surfaces that expose
+    no edit time (a REST review carries submitted_at, which a body edit leaves
+    untouched). Hashing the body too means any new, edited, or replied-to
+    comment moves the fingerprint.
+    """
+    return tuple(
+        sorted(
+            hashlib.sha256(
+                "|".join(
+                    (
+                        str(item.get("id")),
+                        str(item.get("updated_at") or item.get("submitted_at") or ""),
+                        item.get("body") or "",
+                    )
+                ).encode("utf-8")
+            ).hexdigest()[:16]
+            for item in items
+        )
+    )
+
+
 def comment_fingerprint(owner: str, repo: str, pr: int) -> tuple:
     """Signal that reviewers have stopped writing.
 
-    Counts alone are not enough: editing an existing review or comment — which
-    reviewers do while they refine a summary — leaves every total unchanged, so
-    the latest updatedAt values ride along.
+    Every surface is paginated in full rather than sampled. A windowed query
+    (`last: 20`) cannot see a reply on an older thread: no total changes, no
+    timestamp moves, and `wait` reports settled while comments are still
+    arriving. That stays silent on small PRs and appears exactly when a review
+    has grown big enough that waiting correctly matters most.
+
+    `pulls/{pr}/comments` is the flat list of review comments across every
+    thread, so replies land in it wherever their thread sits.
     """
-    page = graphql(COUNTS_QUERY, {"owner": owner, "repo": repo}, {"pr": pr})
-    node = page["repository"]["pullRequest"]
-    stamps = tuple(
-        sorted(
-            entry["updatedAt"]
-            for surface in ("reviews", "comments")
-            for entry in node[surface]["nodes"]
-        )
-    )
-    # A reply lands inside an existing thread, leaving every total unchanged.
-    thread_sizes = tuple(
-        entry["comments"]["totalCount"] for entry in node["reviewThreads"]["nodes"]
-    )
+    review_comments = rest_paginated(f"repos/{owner}/{repo}/pulls/{pr}/comments")
+    issue_comments = rest_paginated(f"repos/{owner}/{repo}/issues/{pr}/comments")
+    reviews = rest_paginated(f"repos/{owner}/{repo}/pulls/{pr}/reviews")
     return (
-        node["reviewThreads"]["totalCount"],
-        node["reviews"]["totalCount"],
-        node["comments"]["totalCount"],
-        stamps,
-        thread_sizes,
+        len(review_comments),
+        len(issue_comments),
+        len(reviews),
+        surface_digest(review_comments),
+        surface_digest(issue_comments),
+        surface_digest(reviews),
     )
 
 
@@ -332,28 +390,53 @@ def cmd_wait(
     settle_s: int, expect_bots: list[str],
 ) -> int:
     deadline = time.monotonic() + timeout_s
-    previous: tuple[int, int, int] | None = None
+    previous: tuple | None = None
     stable_since: float | None = None
+    fingerprint: tuple = ()
 
+    last_snapshot: dict = {"pending": [], "clean": [], "attention": []}
     while True:
-        snapshot = check_snapshot(owner, repo, pr)
-        fingerprint = comment_fingerprint(owner, repo, pr)
-        now = time.monotonic()
-        state, stable_since = wait_verdict(
-            snapshot, fingerprint, previous, stable_since, now, settle_s
-        )
-        previous = fingerprint
-
         missing: list[str] = []
-        if state == "done" and expect_bots:
-            spoke = {name.lower().removesuffix("[bot]") for name in cmd_status(owner, repo, pr)["reviewers"]["bots"]}
-            missing = [b for b in expect_bots if b.lower().removesuffix("[bot]") not in spoke]
-            if missing:
-                state = "settling"
+        try:
+            # No floor: a positive minimum would start a call with no time left
+            # for it, and the wait would then run past the deadline it was
+            # given. An exhausted budget raises instead.
+            with wait_budget(deadline - time.monotonic()):
+                snapshot = check_snapshot(owner, repo, pr)
+                last_snapshot = snapshot
+                # Skip the fingerprint while checks are still running: the
+                # verdict is "pending" either way, and on a large PR each
+                # fingerprint costs a full pagination of three surfaces.
+                # Nothing is lost — a pending poll resets the settle clock.
+                if not snapshot["pending"]:
+                    fingerprint = comment_fingerprint(owner, repo, pr)
+                now = time.monotonic()
+                state, stable_since = wait_verdict(
+                    snapshot, fingerprint, previous, stable_since, now, settle_s
+                )
+                previous = fingerprint
+                # Inside the budget too: this lookup paginates, and outside it
+                # a stall here would sail past the deadline unbounded.
+                if state == "done" and expect_bots:
+                    spoke = {
+                        name.lower().removesuffix("[bot]")
+                        for name in cmd_status(owner, repo, pr)["reviewers"]["bots"]
+                    }
+                    missing = [b for b in expect_bots if b.lower().removesuffix("[bot]") not in spoke]
+                    if missing:
+                        state = "settling"
+        except GhUnavailable as stalled:
+            # The wait's own contract wins over the individual call's failure:
+            # report what we were waiting on, in the documented shape.
+            last_snapshot["timedOutWaitingFor"] = f"github ({stalled})"
+            print(json.dumps(last_snapshot, indent=2))
+            print(f"gave up after {timeout_s}s: {stalled}", file=sys.stderr)
+            return 3
 
         if state == "done":
             snapshot["commentCounts"] = {
-                "reviewThreads": fingerprint[0], "reviews": fingerprint[1], "issueComments": fingerprint[2]
+                "reviewComments": fingerprint[0], "issueComments": fingerprint[1],
+                "reviews": fingerprint[2],
             }
             print(json.dumps(snapshot, indent=2))
             return 2 if snapshot["attention"] else 0
@@ -380,8 +463,28 @@ def cmd_wait(
 
 
 def cmd_react(owner: str, repo: str, surface: str, comment_id: int, reaction: str) -> dict:
+    """React to a comment. 👎 is bot-only, enforced here rather than documented.
+
+    The skill's rail is that a refuted human gets the argument, not a reaction:
+    a thumbs-down convinces nobody and reads as dismissing a reviewer, which is
+    the behaviour the loop forbids outright. 👍 stays open to everyone — it
+    acknowledges, it does not dismiss.
+    """
     root = "pulls" if surface == "review" else "issues"
     content = "+1" if reaction == "up" else "-1"
+    if content == "-1":
+        comment = gh_json(["api", f"repos/{owner}/{repo}/{root}/comments/{comment_id}"]) or {}
+        author = comment.get("user") or {}
+        if not author:
+            sys.exit(
+                f"error: cannot establish who wrote comment {comment_id} — refusing to post 👎 blind"
+            )
+        if not rest_is_bot(author):
+            sys.exit(
+                f"error: comment {comment_id} was written by {author.get('login')}, a human — "
+                "reply with the evidence instead. Reacting 👎 to a human reviewer is a hard rail "
+                "in SKILL.md."
+            )
     run_gh(["api", "-X", "POST", f"repos/{owner}/{repo}/{root}/comments/{comment_id}/reactions",
             "-f", f"content={content}"])
     return {"reacted": content, "surface": surface, "commentId": comment_id}
@@ -497,4 +600,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except GhUnavailable as stalled:
+        # `wait` handles this itself, so reaching here means a one-shot command
+        # stalled; report it as an ordinary gh failure.
+        sys.exit(f"error: {stalled}")
