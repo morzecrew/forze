@@ -1,6 +1,6 @@
-# RFC 0042 — Skills coverage ratchet: every shipped package reachable from an example
+# RFC 0042 — Skills coverage ratchet: every shipped package triaged, every choice point proven
 
-- **Status:** 📝 Draft — the doctrine and the ratchet are locked; the per-package content work is **triaged, and only the D1 tranche is committed** (§4). Depends on RFC 0040 for the census that measures it and the gate that holds it; composes with RFC 0041 but does not require it — the doctrine applies to 22 skills or to one skill with 48 references equally.
+- **Status:** 📝 Draft — the doctrine and the ratchet are locked; the per-package content work is **triaged, and only the D1 tranche is committed** (§4). Depends on RFC 0040 for the census that measures it and the gate that holds it; composes with RFC 0041 but does not require it — the doctrine applies to 21 skills or to one skill with 48 references equally.
 - **Scope:** Deciding what the published skills corpus must cover, and enforcing that decision mechanically. Triages all 29 shipped wheel packages into coverage doctrines, commits to closing the D1 gap, and converts RFC 0040's report-only census into a non-regressing ratchet so a new integration package cannot ship with zero corpus reach. Does **not** rewrite existing covered content, and does **not** decide corpus structure (RFC 0041).
 - **Related:** RFC 0040 §3.1 (the import gate whose reach this RFC extends) and §3.5 (the census this RFC ratchets). [`pyproject.toml`](../pyproject.toml) `[tool.hatch.build.targets.wheel]` — the authoritative package list, and per [`AGENTS.md`](../AGENTS.md) the thing agents must read instead of maintaining an integration list by hand. RFC 0010 is the shape this RFC borrows: triage every backend into an explicit doctrine so that "not covered" is always a recorded decision rather than an oversight, plus a conformance floor every future member must clear.
 - **Origin:** Running RFC 0040's census for the first time. The headline number is fine — 19 of 29 shipped packages appear in an executable import, and all 236 import pairs resolve. The distribution is not. `forze_postgres` is imported in four skills; **`forze_mongo` in none**, though the same skill's own description advertises "Postgres / Mongo / Firestore / Meilisearch backends". [`forze-graph-contracts`](../skills/forze-graph-contracts/SKILL.md) is a skill *about* the Neo4j integration that never imports `forze_neo4j`. The corpus is Postgres-shaped: the default backend gets code, every alternative gets prose.
@@ -50,7 +50,7 @@ Nine of ten such prose-only symbols spot-checked against the installed packages 
 
 **A named symbol without an import path is not actionable.** [`forze-realtime`](../skills/forze-realtime/SKILL.md) names `attach_realtime_ws_route` in a transport table with no module. Checking it during this RFC's preparation, it was not in `forze_socketio` (where the table's neighbouring row would suggest), not in `forze_fastapi`, and not in `forze_fastapi.routes` — it lives in `forze_fastapi.realtime`, findable only by grepping `src/`. The claim is correct and still cost three wrong guesses *with the repository open*. An agent in a consumer repository has nothing to grep. That is the failure mode: not wrong advice, but advice that cannot be executed.
 
-The corollary is that this RFC's unit of work is mostly **converting prose claims into gate-visible code**, not writing new pages. For eleven of the twelve committed units the fix is a four-line import-plus-wiring block next to a paragraph that already exists.
+The corollary is that this RFC's unit of work is mostly **converting prose claims into gate-visible code**, not writing new pages. §4 commits to **13 units — 10 D1 plus 3 D2** — and for **12 of the 13** the fix is a four-line import-plus-wiring block next to a paragraph that already exists.
 
 `forze_dst` is the single exception and is flagged rather than smoothed over: it has no prose to convert, because it has no coverage at all. Its content is genuinely new writing, carried by RFC 0041 §6 as two reference files. Estimating it alongside the import-block work would understate it by an order of magnitude.
 
@@ -60,7 +60,7 @@ Following RFC 0010's pattern — every member gets an explicit doctrine, so "unc
 
 **D1 — Worked example required.** The package is a backend an application author *chooses* at wiring time, where choosing wrong is expensive and the config surface is not inferable from a sibling. Must have at least one importable block showing its deps module and its config type. This is the coverage floor.
 
-**D2 — Import anchor sufficient.** The package's surface is reached identically to an already-covered sibling and differs only in a config object. One import line plus the config type, no full walkthrough.
+**D2 — Import anchor sufficient.** The unit's surface is reached identically to an already-covered sibling and differs only in a config object. A **gate-resolved** import plus the config type, no full walkthrough. D2 is a smaller *example*, never a weaker *proof*: the import must resolve under RFC 0040 §3.1 exactly as D1's does (§5).
 
 **D3 — Out of app-author scope.** Per [`skills/AUTHORING.md`](../skills/AUTHORING.md), skills target engineers building applications *on* Forze, not contributors to it. Packages that only framework maintainers touch are correctly absent, and the census must record them as intentional rather than counting them as debt.
 
@@ -92,7 +92,15 @@ And the sub-package units §1.1 makes visible, which a package-level census scor
 | `forze_inference.sagemaker` | **D1** | Not an anchor case: SageMaker's endpoint/serialization model differs materially from the covered `forze_inference.http` (KServe-v2 / MLflow), so nothing transfers by analogy. |
 | `forze_identity.authz` | **D1** | Outside the extras rule (no `authz` extra) and triaged on merit: authorization is a decision every application makes, and today it is one sentence with no code. §1.1's worked example of granularity hiding a gap. |
 
-Committed scope: **ten D1 units plus three D2 anchors.** `forze_cli` (D3) is the only recorded exclusion.
+Committed scope: **ten D1 units plus three D2 anchors — 13 in all.** `forze_cli` (D3) is the only recorded exclusion.
+
+### 4.1 The other 19 units — doctrine by observation
+
+§5 requires *every* census unit to carry a doctrine, and the tables above assign one only to the gaps. The 19 units already reached by an executable import (§1) are not thereby exempt; leaving them unassigned would make the no-doctrine-is-an-error rule unimplementable, since the checker cannot tell "covered, therefore fine" from "never triaged".
+
+They are assigned **D1 by observation**: each already meets D1's floor, which is what being reached by a gate-resolved import means. The manifest records them explicitly rather than inferring them, so the doctrine map is **total over the unit list** and the enforcement rule has something to check for every entry.
+
+The distinction that keeps this honest: a unit is D1 because someone decided it must be demonstrable, and *separately* it is currently passing. Recording "D1, satisfied" is a decision plus a measurement; inferring "covered, so no doctrine needed" would let a unit that silently loses its last import slip from covered to untriaged without anything failing.
 
 ## 5. The ratchet
 
@@ -101,8 +109,29 @@ RFC 0040 §3.5 reports the census. This RFC gives it teeth, in the shape the con
 - The checker derives its unit list from `[tool.hatch.build.targets.wheel]` **cross-referenced against `[project.optional-dependencies]`** per §1.1 — both sides derived, neither hand-maintained. This is the failure mode `AGENTS.md` explicitly warns about and the mechanism by which a new integration would otherwise be invisible.
 - Each unit carries its doctrine in a small manifest committed beside the checker.
 - **A unit with no doctrine is an error, not a default.** Adding `src/forze_opensearch/` to the wheel targets — or adding a `kms-azure` extra that subdivides an existing package — fails the build until someone writes down which doctrine it falls under. That is the entire point: a new plane must not be able to ship with zero corpus reach *and* zero decision. Note the extra case specifically: it creates a new census unit **without adding a package**, which a wheel-targets-only ratchet would never notice.
-- D1 units must show an import; D2 must show an import line; D3 and D4 must carry a written rationale, and D4 must carry a trigger.
-- The count of D1 units meeting the floor may not regress.
+- **D1 and D2 both require an import that RFC 0040's import gate resolves.** They differ in how much surrounding material is expected — D1 a worked deps-module-plus-config block, D2 a bare anchor — never in whether the import is *verified*. An earlier draft said D2 needed "an import line", which would have let unresolvable text satisfy the floor and contradicted the consumption rule two bullets down. D3 and D4 require a written rationale, and D4 additionally a trigger.
+- The count of D1 and D2 units meeting the floor may not regress.
+
+### 5.1 Extras do not name import paths
+
+`kms-gcp` and `forze_kms.gcp` are related by a convention, not by a rule, and the checker cannot subdivide a package on a hunch. `kms-gcp` → `forze_kms.gcp` reads obvious; `mock-server` → `forze_mock.server` is a guess; `observability` and `zstd` correspond to no module at all; and nothing prevents a future `kms-azure-gov` whose dashes do not decompose.
+
+So the manifest carries the mapping **explicitly, one line per subdividing extra**, and the checker never derives a submodule name from an extra name:
+
+| Extra | Census unit |
+|---|---|
+| `kms-aws` / `kms-gcp` / `kms-yc` | `forze_kms.aws` / `.gcp` / `.yc` |
+| `inference-http` / `inference-sagemaker` | `forze_inference.http` / `.sagemaker` |
+| `authn` / `oidc` | `forze_identity.authn` / `.oidc` |
+| `mock-server` | *(to be confirmed at execution — the module is not named by the extra)* |
+| `observability`, `zstd` | *(no module; recorded as dependency-only, not a census unit)* |
+
+Two validation rules make the mapping self-checking rather than a table that rots:
+
+1. **Every extra must appear in exactly one row** — mapped to a unit, or explicitly marked dependency-only. An extra in neither category fails the build. This is what makes a newly added extra impossible to ignore.
+2. **Every mapped unit must be importable.** A row naming `forze_kms.gcp` fails if that module does not exist, so a rename in `src/` breaks the manifest loudly instead of silently dropping a unit from the denominator.
+
+The dash-to-dot convention may be used as a *suggestion* when a new extra appears, never as the answer. Rule 2 is what stops a plausible guess from becoming a phantom unit that always reports covered because nothing ever checks it.
 
 **Consumption, not declaration.** A package counts as covered only when a symbol from it appears in a code block that RFC 0040's import gate actually resolves. Naming it in prose, in a table, in a frontmatter description, or in the `skills/README.md` table does not count — that is precisely the condition the corpus is in today and precisely what a declaration-based census would score as green.
 
@@ -120,6 +149,12 @@ Sequencing against RFC 0041 is free in either order — coverage added before th
 
 ## 7. Success criteria
 
-- Every census unit reached by a gate-resolved import, except `forze_cli`, which carries a written doctrine.
-- No unit lacks a doctrine — enforced, not reviewed.
+Stated **by doctrine, not by inventory** — a criterion naming today's exceptions would misjudge the first unit that legitimately lands in D3 or D4 tomorrow:
+
+- **Every D1 and D2 unit** is reached by an import that RFC 0040's gate resolves.
+- **Every D3 unit** carries a written rationale for being out of app-author scope.
+- **Every D4 unit** carries a rationale *and* a trigger that would move it into D1 or D2.
+- **Every unit has a doctrine** — enforced, not reviewed.
+
+Against the current inventory that resolves to: all units gate-resolved except `forze_cli`, with D4 empty. Those are the values today, not the rule.
 - **Injected regression, per RFC 0040 §7, and it must be run twice:** add a stub package to the wheel targets and confirm the census fails until a doctrine is recorded — then add a stub *extra* subdividing an existing covered package and confirm it fails too. The second is the one a naive implementation passes by accident, because the package it subdivides is already green. A ratchet nobody has seen catch anything is not known to work — and the specific trap this one must survive is the conformance census's own lesson: *a census that counts declarations instead of consumption reports green on an empty plane.*

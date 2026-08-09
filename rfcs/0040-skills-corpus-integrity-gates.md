@@ -1,6 +1,6 @@
 # RFC 0040 — Skills corpus integrity gates
 
-- **Status:** 📝 Draft — design locked, ready to execute. **Independent of RFC 0041 and 0042 and deliberately sequenced first**: every gate here is written against the *current* 22-directory layout, so it lands, catches rot, and keeps working whether or not the consolidation ever happens. Nothing in this RFC assumes a restructure.
+- **Status:** 📝 Draft — design locked, ready to execute. **Independent of RFC 0041 and 0042 and deliberately sequenced first**: every gate here is written against the *current* 21-directory layout, so it lands, catches rot, and keeps working whether or not the consolidation ever happens. Nothing in this RFC assumes a restructure.
 - **Scope:** Machine-checkable integrity for the published skills corpus under [`skills/`](../skills/): that its Python examples parse, that every `forze*` symbol they import still exists, that its internal links resolve, that its structure is uniform, and that its published-docs links are alive. Adds a checker plus a `justfile` recipe plus CI wiring. Does **not** change any skill's prose, does not restructure the corpus (RFC 0041), and does not decide what the corpus should cover (RFC 0042).
 - **Related:** [`skills/AUTHORING.md`](../skills/AUTHORING.md) — the maintainer rules this RFC mechanizes; its step 4 (*"Grep: `rg '../../(pages|src|tests)' skills/` should return nothing"*) is already a hand-run gate that nothing enforces. [`justfile`](../justfile) — where `just quality` composes the existing lint/import/dead-code/security gates. [`pyproject.toml`](../pyproject.toml) — `[tool.hatch.build.targets.wheel]`, the authoritative shipped-package set RFC 0042 ratchets against. RFC 0041 consumes this RFC's structure gate to enforce index↔reference parity after consolidation.
 - **Origin:** An assessment of whether to restructure `skills/` along the lines of [`leonardomso/rust-skills`](https://github.com/leonardomso/rust-skills). Measuring the corpus to answer that question turned up something the restructure question had obscured: **the content is currently correct, and nothing whatsoever keeps it that way.** 236 of 236 imported symbols resolve; 94 of 94 published-doc links return 200; and `rg -l 'skills' .github/ justfile` returns nothing. The corpus is 20,329 words of executable claims about a fast-moving API, gated by code review alone. That is the "built the mechanism, not the gate" failure the 7th-edition framework audit named as the current theme, and it is worth fixing on its own merits regardless of what shape the corpus ends up in.
@@ -19,7 +19,7 @@ The measured state, taken on the current `main`:
 
 | Property | Measured | Gate today |
 |---|---|---|
-| Published skills | 22 `SKILL.md` files | — |
+| Published skills | 21 `SKILL.md` files | — |
 | Body content | 20,329 words (≈30k tokens) | none |
 | Python code blocks | 126, of which **1** does not `ast.parse` | none |
 | `from forze* import X` pairs | 236 distinct, **236 resolve** | none |
@@ -27,7 +27,7 @@ The measured state, taken on the current `main`:
 | Cross-skill relative links | 55 | none |
 | Mentions in `.github/` or `justfile` | **0** | — |
 
-Two readings of that table are available and only one is right. The wrong one is *"nothing is broken, so no gate is needed."* The right one is *"nothing is broken **yet**, and the corpus has been maintained by hand across 22 files and 29 shipped packages with no mechanical backstop — the next rename is a coin flip."* A gate written while the corpus is green is also cheap to land: it goes in without a backlog of pre-existing failures to triage, which is exactly the moment such gates are easiest to add and hardest to justify. This RFC is the argument for doing it anyway.
+Two readings of that table are available and only one is right. The wrong one is *"nothing is broken, so no gate is needed."* The right one is *"nothing is broken **yet**, and the corpus has been maintained by hand across 21 files and 29 shipped packages with no mechanical backstop — the next rename is a coin flip."* A gate written while the corpus is green is also cheap to land: it goes in without a backlog of pre-existing failures to triage, which is exactly the moment such gates are easiest to add and hardest to justify. This RFC is the argument for doing it anyway.
 
 ## 2. What is deliberately **not** copied from rust-skills
 
@@ -45,7 +45,20 @@ One checker, `tools/skills_check/`, outside `skills/` so it is never copied into
 
 ### 3.1 Import resolution — the load-bearing one
 
-For every ` ```python ` block in the corpus: `ast.parse`, walk for `ImportFrom` / `Import`, keep every node whose root module starts with `forze`, then `importlib.import_module` the module and `hasattr` the symbol.
+For every ` ```python ` block in the corpus: `ast.parse`, walk the tree, and check each import node against the contract below. The two node types are **not** interchangeable and the gate must treat them separately:
+
+| Node | Example | What is checked |
+|---|---|---|
+| `ast.Import` | `import forze_postgres` | the **module** resolves. There is no symbol to check. |
+| `ast.ImportFrom` | `from forze_postgres import PostgresClient` | the module resolves **and** each name is either an attribute of it or itself an importable submodule (`from forze_kits import aggregates`). |
+
+Three details the one-line version got wrong, each of which would let a broken example through or fail a correct one:
+
+- **Aliases bind the local name, never the source.** For `import forze_postgres as pg` and `from forze_kms import aws as kms_backend`, the gate checks `forze_postgres` and `forze_kms.aws` — `a.name`, not `a.asname`. Checking the alias would look up a symbol that by definition does not exist upstream.
+- **Star imports cannot be verified and are rejected outright.** `from forze_x import *` gives the gate nothing to check, so tolerating it would create a silent hole exactly where the corpus is least specific. Fail the block and require explicit names.
+- **Match on a module boundary, not a string prefix.** The test is `root == "forze" or root.startswith("forze_")`. Bare `startswith("forze")` would also swallow a third-party `forzex`, and — more likely — would silently skip nothing today while misbehaving the first time such a name appears.
+
+Current corpus shape, so the contract is calibrated against reality rather than imagination: **178 `ImportFrom`, 6 `Import`, 0 star imports, 0 aliases.** The alias and star rules are therefore specification-level precision, not live defects — they are written down because the gate outlives the corpus it was measured on, and an under-specified checker acquires these holes the first time someone writes an ordinary `import ... as ...`.
 
 This is the gate that pays for the whole RFC. It is the only mechanical link between the prose and the API it describes, and it fails precisely when a rename or a re-export removal happens — the change class most likely to slip through review, because the reviewer is looking at `src/` and the stale claim is in Markdown.
 
@@ -78,6 +91,8 @@ The 94 unique `morzecrew.github.io/forze/latest/...` URLs, checked for HTTP 200.
 
 **Not a per-PR gate.** This was tested during the assessment and the naive form is actively harmful: sweeping all 94 without rate limiting produced a uniform wall of 502s, including the site root — a false-positive rate of 100% that would train everyone to ignore the check within a week. Rate-limited (~0.4s between requests) all 94 return 200.
 
+**Rate limiting is pacing, not a bound.** The 0.4s delay says nothing about how long any single request may take, and a request with no timeout can hang on a stalled socket until the GitHub Actions job timeout kills it — six hours of a runner to learn nothing. Each request therefore carries an explicit connect **and** read timeout, and a bounded retry budget with backoff; a URL fails only once that budget is exhausted. Retries matter here more than in most gates, because §3.4's whole rationale is that this check's transient-failure rate is high enough to destroy trust — retrying is what separates "the page is gone" from "the CDN hiccuped".
+
 It therefore runs on a **schedule, not on PRs**, and simply fails the scheduled job. Docs links break for reasons outside a given PR's control — a page renamed in `pages/`, a mike alias moved — so the failure belongs on a queue, not in a merge gate; but a red scheduled run is already a queue, and auto-filing an issue would add a second thing to close for every transient network failure. Revisit if the corpus ever has more than one maintainer, where a red job nobody owns goes unnoticed and an issue does not.
 
 ### 3.5 Package census
@@ -109,8 +124,8 @@ Stating the residue is the alternative to a baseline file.
 
 One PR, roughly a day.
 
-1. `tools/skills_check/` with §3.1, §3.2, §3.3, §3.5. Confirm the expected green baseline (236/236 imports, 94/94 links, index parity) so the gate's first run is meaningful rather than a triage session.
-2. Mark the one intentional fragment; make §3.2 zero-tolerance.
+1. **Mark the one intentional fragment first** (§3.2). This has to precede the gate's first run: the corpus contains a block that does not `ast.parse` today, so a syntax gate built before the marker exists cannot produce the green baseline step 2 is supposed to confirm — it would open on a known failure, which is how a tolerated-failure list gets born.
+2. `tools/skills_check/` with §3.1, §3.2 (zero-tolerance), §3.3, §3.5. Confirm the expected green baseline (236/236 imports, 94/94 links, index parity) so the gate's first run is meaningful rather than a triage session.
 3. `just skills-check`, composed into `just quality`.
 4. CI: fast checks into the existing job; §3.4 as a scheduled workflow that simply fails on a dead link.
 5. Replace `AUTHORING.md` step 4's hand-run grep with a pointer to the recipe — the policy stops being a thing maintainers are asked to remember.
