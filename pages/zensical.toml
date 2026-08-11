@@ -3,7 +3,7 @@ site_name = "Forze"
 site_url = "https://morzecrew.github.io/forze/"
 site_description = "Domain-Driven Design and Hexagonal Architecture for backend services"
 site_author = "Lev Litvinov"
-copyright = "&copy; 2026 Lev Litvinov and contributors"
+copyright = "&copy; 2026 Lev Litvinov"
 
 # ....................... #
 # Repo
