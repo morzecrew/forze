@@ -129,6 +129,27 @@ def temporal_dev_target() -> TemporalDevTarget:
         container.stop()
 
 
+async def connected_client(target: str, **config_kwargs) -> TemporalClient:
+    """A framework :class:`TemporalClient` on *target*, configured per test.
+
+    Every worker/escape-hatch leg needs one, and each needs a *different*
+    :class:`TemporalConfig` — an encrypting converter here, a context interceptor there —
+    so the construction is shared and the config stays at the call site where it is the
+    point of the test. Callers own ``close()``.
+    """
+
+    client = TemporalClient()
+    await client.initialize(
+        target,
+        config=TemporalConfig(namespace="default", **config_kwargs),
+    )
+
+    return client
+
+
+# ....................... #
+
+
 @pytest_asyncio.fixture
 async def temporal_dev_env(temporal_dev_target: TemporalDevTarget):
     """Connected Temporal SDK + Forze :class:`TemporalClient` against the dev server."""

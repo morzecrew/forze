@@ -23,9 +23,10 @@ from forze.application.contracts.durable.workflow import DurableWorkflowSpec
 from forze.application.contracts.durable.workflow.specs import DurableWorkflowInvokeSpec
 from forze_temporal import TemporalStartOptions, sandboxed_workflow_runner
 from forze_temporal.adapters.workflow import TemporalWorkflowCommandAdapter
-from forze_temporal.kernel.client import TemporalClient, TemporalConfig
+from forze_temporal.kernel.client import TemporalClient
 
 from ._workflow_defs import EchoIn, EchoOut, ItEchoWorkflow
+from .conftest import connected_client
 
 # ----------------------- #
 
@@ -39,11 +40,7 @@ _SPEC = DurableWorkflowSpec[EchoIn, EchoOut](
 async def echo_client(temporal_dev_target):
     """A framework client on the dev server, with no worker polling by default."""
 
-    client = TemporalClient()
-    await client.initialize(
-        temporal_dev_target.grpc_address,
-        config=TemporalConfig(namespace="default"),
-    )
+    client = await connected_client(temporal_dev_target.grpc_address)
 
     try:
         yield client

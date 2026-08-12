@@ -46,6 +46,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, InvocationMetadata
 from forze.base.primitives import bind_time_source
 
+from ._logger import logger
 from .clock import TemporalWorkflowTimeSource
 from .codecs import TemporalContextBinder, TemporalContextCodec
 
@@ -71,9 +72,10 @@ def heartbeat_interval(
 
     Two cases produce ``None`` rather than a default interval. An activity with **no**
     ``heartbeat_timeout`` has no liveness deadline to miss, so heartbeating it only adds
-    RPCs. A **local** activity runs inside the workflow task and cannot heartbeat at all —
-    calling ``activity.heartbeat()`` there is a no-op the SDK ignores, and pretending
-    otherwise would suggest a liveness guarantee that does not exist.
+    RPCs. A **local** activity has no server-side record to beat against:
+    ``activity.heartbeat()`` returns normally there but the beat lands nowhere, and the
+    SDK core logs a failed heartbeat for each one — so a pump would be noise standing in
+    for a liveness guarantee that does not exist.
     """
 
     if is_local or heartbeat_timeout is None:
@@ -88,15 +90,25 @@ def heartbeat_interval(
 async def _heartbeating(interval: float) -> AsyncGenerator[None]:
     """Beat every *interval* seconds for the duration of the block.
 
-    The pump is torn down in a ``finally`` that swallows only its own cancellation: an
-    activity's result — or its exception — must never be replaced by whatever happened
-    while stopping a bookkeeping task.
+    Nothing the pump does can change what the activity returns. Its own failures are
+    logged and dropped — inside the loop, so one failed beat does not silently end the
+    pump, and again while tearing it down, because an exception raised out of this
+    ``finally`` would *replace* the activity's result or its exception with a bookkeeping
+    error the caller has no way to interpret.
     """
 
     async def _pump() -> None:
         while True:
             await asyncio.sleep(interval)
-            activity.heartbeat()
+
+            try:
+                activity.heartbeat()
+
+            except Exception:
+                # A beat can fail on its own (a completed activity's context, a closing
+                # loop). Keep beating: the next one may well land, and giving up quietly
+                # would let the activity time out for a reason nobody can see.
+                logger.warning("Temporal auto-heartbeat failed", exc_info=True)
 
     task = asyncio.create_task(_pump(), name="temporal-auto-heartbeat")
 
@@ -106,7 +118,10 @@ async def _heartbeating(interval: float) -> AsyncGenerator[None]:
     finally:
         task.cancel()
 
-        with suppress(asyncio.CancelledError):
+        # Both, deliberately: ``await task`` re-raises the pump's cancellation (the
+        # normal path) and anything else it stored, and neither may outrank what the
+        # activity itself returned or raised.
+        with suppress(asyncio.CancelledError, Exception):
             await task
 
 

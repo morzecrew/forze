@@ -76,13 +76,27 @@ on the client covers both sides in the same process.
 ## Shutdown
 
 On shutdown the step stops polling and gives in-flight activities
-`graceful_shutdown` (30 s by default) to finish. The SDK's own default is **zero** —
+`graceful_shutdown` (10 s by default) to finish. The SDK's own default is **zero** —
 activities are cancelled the instant the worker stops — so a hand-rolled worker pays
 for every deploy in retried work.
 
-The runtime's own drain deadline caps that window; past it the worker is cancelled
-outright. Keep `graceful_shutdown` under your orchestrator's termination grace period
-so the pod is not killed mid-drain.
+That window is spent out of the runtime's own drain budget, `shutdown_step_timeout`
+(also 10 s), which every background loop in the process shares. Raising
+`graceful_shutdown` alone buys nothing: the shared deadline still fires first, and when
+it does it cuts *every* loop's shutdown short, not just this one. Raise both together —
+`shutdown_step_timeout` is a runtime field rather than a `build_runtime` argument, so
+evolve it:
+
+```python
+from datetime import timedelta
+
+import attrs
+
+runtime = attrs.evolve(runtime, shutdown_step_timeout=timedelta(seconds=45))
+```
+
+Then keep the pair under your orchestrator's termination grace period, so the pod is not
+killed mid-drain.
 
 ## When a worker dies
 
@@ -96,7 +110,6 @@ temporal_worker_lifecycle_step(
     workflows=[FulfilOrder],
     activities=[reserve_stock, charge_card],
     max_concurrent_activities=50,
-    graceful_shutdown=timedelta(seconds=20),
     restart_backoff=timedelta(seconds=5),
     max_consecutive_crashes=10,
 )

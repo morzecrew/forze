@@ -12,6 +12,7 @@ class ForzeTemporalLogger(StrEnum):
 
     ADAPTERS = "forze_temporal.adapters"
     EXECUTION = "forze_temporal.execution"
+    INTERCEPTORS = "forze_temporal.interceptors"
     KERNEL = "forze_temporal.kernel"
 
 

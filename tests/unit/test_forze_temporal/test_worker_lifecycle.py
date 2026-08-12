@@ -19,7 +19,10 @@ pytest.importorskip("temporalio")
 
 from forze.application.execution import Deps
 from forze.testing import context_from_deps
-from forze_temporal import temporal_worker_lifecycle_step
+from forze_temporal import (
+    DEFAULT_WORKER_GRACEFUL_SHUTDOWN,
+    temporal_worker_lifecycle_step,
+)
 from forze_temporal.kernel.client import TemporalClient
 
 # ----------------------- #
@@ -56,15 +59,34 @@ class _CrashingWorker(_StubWorker):
         raise RuntimeError("poller died")
 
 
+class _FailingShutdownWorker(_StubWorker):
+    """Its shutdown raises — a broken bridge, a connection already gone."""
+
+    async def shutdown(self) -> None:
+        self.is_shutdown = True
+        self._stopped.set()
+
+        raise RuntimeError("shutdown blew up")
+
+
+class _UnbuildableWorker(_StubWorker):
+    """Construction fails, as it does for an undecorated workflow class."""
+
+    def __init__(self, client, **kwargs) -> None:
+        super().__init__(client, **kwargs)
+
+        raise ValueError("Workflow Foo missing attributes, was it decorated?")
+
+
 @pytest.fixture(autouse=True)
 def _reset_stub_workers():
-    _StubWorker.instances = []
-    _CrashingWorker.instances = []
+    for kind in (_StubWorker, _CrashingWorker, _UnbuildableWorker, _FailingShutdownWorker):
+        kind.instances = []
 
     yield
 
-    _StubWorker.instances = []
-    _CrashingWorker.instances = []
+    for kind in (_StubWorker, _CrashingWorker, _UnbuildableWorker, _FailingShutdownWorker):
+        kind.instances = []
 
 
 def _connected_client() -> TemporalClient:
@@ -114,6 +136,20 @@ class TestWiringRefusals:
                 workflows=[_Wf],
                 graceful_shutdown=grace,
             )
+
+    def test_default_window_fits_the_runtime_drain_budget(self) -> None:
+        """The default must be a window the default runtime can actually honour.
+
+        ``stop_all`` gives every drainable loop one shared deadline of
+        ``shutdown_step_timeout``, and cancels them **all** when it fires. A worker
+        window larger than that budget therefore does not merely fail to be honoured —
+        it spends the other loops' shutdown time too. Pinned rather than commented,
+        because the two constants live in different packages and would drift silently.
+        """
+
+        from forze.application.execution import ExecutionRuntime
+
+        assert DEFAULT_WORKER_GRACEFUL_SHUTDOWN <= ExecutionRuntime().shutdown_step_timeout
 
     def test_step_declares_it_needs_a_long_running_host(self) -> None:
         """A serverless profile must refuse this step at assembly, not at 3am."""
@@ -308,6 +344,78 @@ class TestStop:
         assert step.startup.task.done()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
+    async def test_stop_returns_within_its_deadline(self) -> None:
+        """A worker that will not stop must not spend the deadline it was handed.
+
+        The runtime stops every drainable loop against one shared deadline and cancels
+        them **all** when it fires, so a ``stop`` that waits out its own graceful window
+        regardless is charging other loops for its overrun.
+        """
+
+        class _WedgedWorker(_StubWorker):
+            """Shutdown never completes — the activity that will not let go."""
+
+            async def shutdown(self) -> None:
+                self.is_shutdown = True
+                await asyncio.Event().wait()
+
+        step = temporal_worker_lifecycle_step(
+            client=_connected_client(),
+            task_queue="tq",
+            workflows=[_Wf],
+            graceful_shutdown=timedelta(seconds=30),
+        )
+        ctx = _ctx()
+
+        with patch("forze_temporal.execution.lifecycle.worker.Worker", _WedgedWorker):
+            await step.startup(ctx)
+            await asyncio.sleep(0)
+
+            clock = asyncio.get_running_loop()
+            started = clock.time()
+            stopped = await step.startup.stop(deadline=started + 0.2)  # type: ignore[attr-defined]
+            elapsed = clock.time() - started
+
+        assert stopped is False  # it never came to rest on its own
+        assert elapsed < 2.0, f"stop overran its 0.2s deadline by {elapsed:.1f}s"
+
+    @pytest.mark.asyncio
+    async def test_a_failing_worker_shutdown_still_stops_the_loop(self) -> None:
+        """Asking the worker to stop is advisory; bringing the loop down is the outcome.
+
+        A shutdown that raises must not take the rest of the stop sequence with it — the
+        loop would keep running until something else cancelled it — and it must not
+        vanish either.
+        """
+
+        step = temporal_worker_lifecycle_step(
+            client=_connected_client(),
+            task_queue="tq",
+            workflows=[_Wf],
+        )
+        ctx = _ctx()
+
+        recorded = MagicMock()
+
+        with (
+            patch(
+                "forze_temporal.execution.lifecycle.worker.Worker",
+                _FailingShutdownWorker,
+            ),
+            patch("forze_temporal.execution.lifecycle.worker.logger", recorded),
+        ):
+            await step.startup(ctx)
+            await asyncio.sleep(0)
+
+            # Must not raise: the failure is the worker's, not the stop sequence's.
+            await step.shutdown(ctx)
+            await asyncio.sleep(0)
+
+        assert step.startup.task.done()  # type: ignore[attr-defined]
+        assert recorded.error.call_count == 1
+        assert "shutdown failed" in recorded.error.call_args.args[0]
+
+    @pytest.mark.asyncio
     async def test_stop_is_idempotent(self) -> None:
         """The runtime stops loops before teardown, then the step's own hook asks again."""
 
@@ -350,6 +458,31 @@ class TestCrashSupervision:
 
         assert len(_CrashingWorker.instances) == 3
         assert all(worker.run_calls == 1 for worker in _CrashingWorker.instances)
+
+    @pytest.mark.asyncio
+    async def test_a_worker_that_cannot_be_built_is_terminal(self) -> None:
+        """Building a worker is validation, so a failure there never gets better.
+
+        Treated as an ordinary crash it would rebuild-and-fail forever — one critical
+        log per backoff, for the lifetime of a process that will never do any work.
+        """
+
+        step = temporal_worker_lifecycle_step(
+            client=_connected_client(),
+            task_queue="tq",
+            workflows=[_Wf],
+            restart_backoff=timedelta(milliseconds=1),
+        )
+        ctx = _ctx()
+
+        with patch("forze_temporal.execution.lifecycle.worker.Worker", _UnbuildableWorker):
+            await step.startup(ctx)
+            await asyncio.wait_for(step.startup.task, timeout=5)  # type: ignore[attr-defined]
+            await asyncio.sleep(0.05)
+
+        # One attempt, and no ceiling was needed to stop it.
+        assert len(_UnbuildableWorker.instances) == 1
+        assert step.startup.task.done()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     async def test_crash_ceiling_ends_supervision(self) -> None:

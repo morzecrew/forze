@@ -23,7 +23,6 @@ from forze.application.execution import Deps, InvocationMetadata
 from forze.base.primitives import uuid7
 from forze.testing import context_from_deps
 from forze_temporal import ExecutionContextInterceptor, temporal_worker_lifecycle_step
-from forze_temporal.kernel.client import TemporalClient, TemporalConfig
 
 from ._workflow_defs import (
     CTX_BOX,
@@ -33,6 +32,7 @@ from ._workflow_defs import (
     it_read_correlation,
     it_slow_drain,
 )
+from .conftest import connected_client
 
 # ----------------------- #
 
@@ -44,16 +44,6 @@ def _clear_drain_recorder():
     yield
 
     DRAIN_RECORDER.clear()
-
-
-async def _connected(target: str, **config_kwargs) -> TemporalClient:
-    client = TemporalClient()
-    await client.initialize(
-        target,
-        config=TemporalConfig(namespace="default", **config_kwargs),
-    )
-
-    return client
 
 
 async def _await_recorded(marker: str, *, timeout: float = 30.0) -> None:
@@ -85,7 +75,7 @@ async def test_in_flight_activity_completes_within_the_drain_window(
     pays for it in retries.
     """
 
-    client = await _connected(temporal_dev_target.grpc_address)
+    client = await connected_client(temporal_dev_target.grpc_address)
     task_queue = f"drain-tq-{uuid4()}"
     step = temporal_worker_lifecycle_step(
         client=client,
@@ -121,7 +111,7 @@ async def test_in_flight_activity_completes_within_the_drain_window(
 async def test_a_tiny_drain_window_cuts_the_activity_off(temporal_dev_target) -> None:
     """The control for the test above: the window is what saves the activity, not luck."""
 
-    client = await _connected(temporal_dev_target.grpc_address)
+    client = await connected_client(temporal_dev_target.grpc_address)
     task_queue = f"drain-tq-{uuid4()}"
     step = temporal_worker_lifecycle_step(
         client=client,
@@ -165,7 +155,7 @@ async def test_worker_inherits_the_clients_context_interceptor(
     """
 
     exec_ctx = context_from_deps(Deps.plain({}))
-    client = await _connected(
+    client = await connected_client(
         temporal_dev_target.grpc_address,
         interceptors=[ExecutionContextInterceptor(ctx_dep=lambda: exec_ctx)],
     )
@@ -220,4 +210,4 @@ async def test_boot_fails_loudly_against_an_unreachable_server() -> None:
     probe.close()
 
     with pytest.raises(RuntimeError, match="connect"):
-        await _connected(f"127.0.0.1:{dead_port}")
+        await connected_client(f"127.0.0.1:{dead_port}")

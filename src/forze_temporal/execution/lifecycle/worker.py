@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, final
 
@@ -48,14 +49,33 @@ if TYPE_CHECKING:  # pragma: no cover
 
 # ----------------------- #
 
-DEFAULT_WORKER_GRACEFUL_SHUTDOWN = timedelta(seconds=30)
+DEFAULT_WORKER_GRACEFUL_SHUTDOWN = timedelta(seconds=10)
 """How long in-flight activities get to finish once shutdown starts.
 
 The SDK's own default is **zero** — activities are cancelled the moment the worker stops —
-which turns every deploy into lost work that has to be retried. Thirty seconds is long
-enough for an ordinary activity to land and short enough not to wedge a rollout; the
-runtime's drain deadline caps it either way.
+which turns every deploy into lost work that has to be retried.
+
+Ten seconds because that is :attr:`ExecutionRuntime.shutdown_step_timeout`'s default, and
+the runtime hands *that* budget to every drainable loop at once. A window larger than it
+cannot be honoured: the shared deadline fires mid-stop, the run is reported as a loop that
+failed to come to rest, and — since one timeout cancels every loop's stop together — the
+overrun is charged to the other loops too. Raise both together, never this one alone.
 """
+
+
+def _log_shutdown_failure(task: asyncio.Task[None]) -> None:
+    """Retrieve a shutdown task's outcome so a failure is logged, never stray."""
+
+    if task.cancelled():
+        return
+
+    error = task.exception()
+
+    if error is not None:
+        logger.error("Temporal worker shutdown failed", exc_info=error)
+
+
+# ....................... #
 
 
 @final
@@ -118,6 +138,11 @@ class _TemporalWorkerStartup(LifecycleHook):
         down: ``run_supervised`` treats a run that returns without a stop request as a
         fault and restarts it, so shutting the worker down first would race a fresh worker
         into existence during teardown.
+
+        *deadline* is a hard bound, not a hint. The runtime stops every drainable loop
+        against **one** shared deadline, and when it fires it cancels them all — so a
+        worker that waited out its own graceful window regardless would spend other loops'
+        shutdown budget, not just its own.
         """
 
         self.control.request_stop()
@@ -125,7 +150,23 @@ class _TemporalWorkerStartup(LifecycleHook):
         worker = self.worker
 
         if worker is not None and not worker.is_shutdown:
-            await worker.shutdown()
+            clock = asyncio.get_running_loop()
+            budget = max(0.0, deadline - clock.time())
+
+            # Its own task, because ``wait_for`` cancels what it waits on: the SDK is
+            # already draining activities by then, and half-cancelling that is strictly
+            # worse than letting it finish on its own while this call returns on time.
+            # Overrunning leaves the task unawaited, so its outcome is claimed by the
+            # callback rather than surfacing as a stray "exception was never retrieved".
+            draining = asyncio.ensure_future(worker.shutdown())
+            draining.add_done_callback(_log_shutdown_failure)
+
+            # Neither a timeout nor a failed shutdown may skip what follows. Asking the
+            # worker to stop is advisory; bringing the *loop* down is the outcome, and a
+            # broken shutdown that took the stop sequence with it would leave the loop
+            # running until something else cancelled it.
+            with suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(draining), timeout=budget)
 
         return await self.control.stop(deadline=deadline)
 
@@ -174,15 +215,29 @@ class _TemporalWorkerStartup(LifecycleHook):
             # window and is then cancelled mid-task.
             return
 
-        worker = Worker(
-            native,
-            task_queue=self.task_queue,
-            workflows=list(self.workflows),
-            activities=list(self.activities),
-            workflow_runner=self.workflow_runner,
-            max_concurrent_activities=self.max_concurrent_activities,
-            graceful_shutdown_timeout=self.graceful_shutdown,
-        )
+        try:
+            worker = Worker(
+                native,
+                task_queue=self.task_queue,
+                workflows=list(self.workflows),
+                activities=list(self.activities),
+                workflow_runner=self.workflow_runner,
+                max_concurrent_activities=self.max_concurrent_activities,
+                graceful_shutdown_timeout=self.graceful_shutdown,
+            )
+
+        except Exception as error:
+            # Building a worker is pure validation — an undecorated workflow class, a
+            # duplicate activity name, a client the bridge cannot use. None of it gets
+            # better on the next attempt, so raising it as an ordinary crash would
+            # rebuild-and-fail forever, one critical log per backoff. ``CONFIGURATION``
+            # is the framework's marker for a fault retrying cannot clear, and
+            # ``run_supervised`` stops on it.
+            raise exc.configuration(
+                f"Temporal worker {self.name!r} could not be built: {error}",
+                code="core.temporal.worker_wiring",
+            ) from error
+
         self.worker = worker
 
         try:
@@ -261,8 +316,10 @@ def temporal_worker_lifecycle_step(
         )
 
     if not workflows and not activities:
-        # A worker with nothing registered polls a queue and answers nothing, so its tasks
-        # time out and retry forever — a silent outage that looks like a healthy process.
+        # The SDK refuses this too, but only when the worker is *built* — which happens
+        # inside the supervised loop, at startup, in a process that then reports a
+        # configuration fault instead of never having started. Catching it at wiring time
+        # puts the error where the mistake is.
         raise exc.configuration(
             f"Temporal worker {name!r} registers no workflows and no activities",
             code="core.temporal.worker_wiring",

@@ -32,9 +32,9 @@ from forze.application.contracts.crypto import (
 from forze.application.integrations.crypto import Keyring
 from forze_mock import MockKeyManagement
 from forze_temporal import encrypting_data_converter, sandboxed_workflow_runner
-from forze_temporal.kernel.client import TemporalClient, TemporalConfig
 
 from ._workflow_defs import EchoIn, EchoOut, ItEchoWorkflow
+from .conftest import connected_client
 
 # ----------------------- #
 
@@ -86,13 +86,9 @@ async def test_native_writes_are_sealed_and_read_back_through_the_port(
         aead=AesGcmAead(),
         directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
     )
-    forze_client = TemporalClient()
-    await forze_client.initialize(
+    forze_client = await connected_client(
         temporal_dev_target.grpc_address,
-        config=TemporalConfig(
-            namespace="default",
-            data_converter=encrypting_data_converter(keyring),
-        ),
+        data_converter=encrypting_data_converter(keyring),
     )
 
     marker = f"plaintext-marker-{uuid4()}"

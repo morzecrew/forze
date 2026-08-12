@@ -194,7 +194,7 @@ temporal_worker_lifecycle_step(
 )
 ```
 
-Order it after `temporal_lifecycle_step`: the worker rides that client's connection, so it inherits the data converter and the context interceptor. Shutdown gives in-flight activities a graceful window (`graceful_shutdown`, 30 s by default) instead of cancelling them.
+Order it after `temporal_lifecycle_step`: the worker rides that client's connection, so it inherits the data converter and the context interceptor. Shutdown gives in-flight activities a graceful window (`graceful_shutdown`, 10 s by default) instead of cancelling them. That window shares the runtime's `shutdown_step_timeout` budget, so raise both together or neither.
 
 ## Testing
 

@@ -15,15 +15,15 @@ import pytest
 pytest.importorskip("temporalio")
 pytest.importorskip("testcontainers")
 
-from temporalio.exceptions import ActivityError, TimeoutError as TemporalTimeoutError
-from temporalio.exceptions import TimeoutType
+from temporalio.exceptions import ActivityError, TimeoutType
+from temporalio.exceptions import TimeoutError as TemporalTimeoutError
 
 from forze.application.execution import Deps
 from forze.testing import context_from_deps
 from forze_temporal import ExecutionContextInterceptor, temporal_worker_lifecycle_step
-from forze_temporal.kernel.client import TemporalClient, TemporalConfig
 
 from ._workflow_defs import ItHeartbeatWorkflow, it_heartbeat_probe
+from .conftest import connected_client
 
 # ----------------------- #
 
@@ -35,18 +35,14 @@ async def _run_probe(target: str, *, auto_heartbeat: bool):
     """Run one slow activity under a worker whose interceptor has the flag set."""
 
     exec_ctx = context_from_deps(Deps.plain({}))
-    client = TemporalClient()
-    await client.initialize(
+    client = await connected_client(
         target,
-        config=TemporalConfig(
-            namespace="default",
-            interceptors=[
-                ExecutionContextInterceptor(
-                    ctx_dep=lambda: exec_ctx,
-                    auto_heartbeat=auto_heartbeat,
-                ),
-            ],
-        ),
+        interceptors=[
+            ExecutionContextInterceptor(
+                ctx_dep=lambda: exec_ctx,
+                auto_heartbeat=auto_heartbeat,
+            ),
+        ],
     )
     task_queue = f"heartbeat-tq-{uuid4()}"
     step = temporal_worker_lifecycle_step(
@@ -96,7 +92,7 @@ async def test_without_it_the_same_activity_is_timed_out(temporal_dev_target) ->
     ``start_to_close``, which the activity would also have breached eventually.
     """
 
-    with pytest.raises(Exception) as caught:  # noqa: B017 - narrowed below
+    with pytest.raises(Exception) as caught:
         await _run_probe(temporal_dev_target.grpc_address, auto_heartbeat=False)
 
     error = caught.value

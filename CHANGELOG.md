@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `TemporalClientPort.native` returns the configured SDK client (codec, interceptors, rpc metadata included) — the escape hatch the durable contracts' docstrings already promised.
 - `TemporalStartOptions` (retry policy, execution/run/task timeouts, id-reuse policy, memo, search attributes, start delay) on `TemporalWorkflowConfig.start_options`, plus a field-by-field per-call override on the Temporal adapter's `start`. Unset fields are omitted from the SDK call; a non-positive timeout raises `configuration`. `DurableWorkflowCommandPort.start` is unchanged, and schedules do not inherit these.
-- `temporal_worker_lifecycle_step` + `DEFAULT_WORKER_GRACEFUL_SHUTDOWN`: supervised crash restart, optional `max_consecutive_crashes`, drain registration, and a 30 s activity window (the SDK's default is zero). Refuses a worker registering neither workflows nor activities. New *Run a Temporal worker* recipe.
+- `temporal_worker_lifecycle_step` + `DEFAULT_WORKER_GRACEFUL_SHUTDOWN`: supervised crash restart, optional `max_consecutive_crashes`, drain registration, and a 10 s activity window bounded by the runtime's drain deadline (the SDK's default is zero). Refuses a worker registering neither workflows nor activities. New *Run a Temporal worker* recipe.
 - `ExecutionContextInterceptor(auto_heartbeat=True)` beats at a third of each activity's `heartbeat_timeout`; off by default. Details-bearing heartbeats stay raw SDK.
 
 **Durable run control** — cancellation for the self-hosted function tier, cooperative only (no hard kill in the contract):
