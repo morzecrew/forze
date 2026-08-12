@@ -92,8 +92,10 @@ def format_clean_verdict(
     declared: Sequence[str] = (),
     unexercisable: Sequence[str] = (),
     unaccounted: Sequence[str] = (),
+    weakest: tuple[str, int] | None = None,
+    unmeasured_exposure: Sequence[str] = (),
 ) -> str:
-    """The locked one-line verdict a clean run prints instead of a bare "passed".
+    """The locked verdict a clean run prints instead of a bare "passed".
 
     One shared sentence — bound plus scope clause — so every surface (sweep, confidence report,
     coverage report, CLI, pytest summary) states exactly the same claim and never a stronger one.
@@ -104,6 +106,17 @@ def format_clean_verdict(
     (*unexercisable* — the bound does not cover them), and — should the gate ever be bypassed —
     which are unaccounted, so the claim can never silently cover an invariant the harness was
     never shown able to catch.
+
+    The countable clause still divides by one ``runs`` for every invariant it names, and each was
+    only at risk in some ``n_i <= runs`` of them. *weakest* is the narrowest such
+    ``(invariant, n_i)``: it gets its own continuation line carrying **its** bound, because the
+    aggregate is the number a reader will quote. *unmeasured_exposure* names invariants whose read
+    footprint is opaque, so their exposure could not be counted — stated rather than folded into
+    the aggregate at ``n = runs``.
+
+    The aggregate stays, because it answers a real question ("did this sweep catch anything") and
+    removing it would push readers to quote the weakest number as the sweep's result, overstating
+    in the other direction.
     """
 
     bound = detection_upper_bound(runs, confidence=confidence)
@@ -126,11 +139,33 @@ def format_clean_verdict(
         if unaccounted:
             scope += f" (⚠ {len(unaccounted)} UNACCOUNTED: {', '.join(unaccounted)})"
 
-    return (
-        f"0 violations in {runs} {plural} → per-seed detection probability "
-        f"< {_render_probability(bound)} ({_render_confidence(confidence)}, exact) "
-        f"{scope} (independent seeds)"
-    )
+    lines = [
+        (
+            f"0 violations in {runs} {plural} → per-seed detection probability "
+            f"< {_render_probability(bound)} ({_render_confidence(confidence)}, exact) "
+            f"{scope} (independent seeds)"
+        )
+    ]
+
+    if weakest is not None:
+        name, exposed = weakest
+        lines.append(
+            f"    ⚠ weakest coverage: {name} at risk in {exposed}/{runs} runs → "
+            + (
+                f"< {_render_probability(detection_upper_bound(exposed, confidence=confidence))} "
+                "for that invariant alone"
+                if exposed > 0
+                else "the bound above does not cover it at all"
+            )
+        )
+
+    if unmeasured_exposure:
+        lines.append(
+            f"    ⚠ unmeasured exposure: {', '.join(unmeasured_exposure)} — opaque read "
+            "footprint, so how often each was at risk could not be counted"
+        )
+
+    return "\n".join(lines)
 
 
 # ....................... #

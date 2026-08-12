@@ -16,20 +16,25 @@ The footprint probe is dynamic on purpose: invariant predicates are opaque closu
 and record what they read. An invariant that touches ``history.events`` wholesale has an unknown
 footprint and is never flagged (conservative). Both flags are warnings feeding the confidence
 report — they name a hazard to review, not a proven defect.
+
+The same footprint relation, applied **per run** rather than sweep-wide, is also what makes the
+clean-run verdict's denominator honest. Vacuity is only its binary edge — at risk in ≥1 run, or in
+none. The counts in between are what a single sweep-wide ``S`` overstates: an invariant exposed on
+50 of 1000 runs is covered by a sentence quoting the bound for 1000, which is 20× stronger than
+its own evidence supports.
 """
 
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Sequence
 from contextlib import suppress
-from typing import TYPE_CHECKING, cast, final
+from typing import cast, final
 
 import attrs
 
 from forze_dst.oracle.invariants import Invariant, name_of
 from forze_dst.oracle.recorder import Event, History
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 # ----------------------- #
 
@@ -122,6 +127,20 @@ class HorizonAnalysis:
     """``(invariant, blind kinds)`` pairs where the invariant folds handler-emitted markers
     recorded while a transaction scope that later **rolled back** was in flight."""
 
+    runs: int = 0
+    """How many runs were folded — the denominator every :attr:`at_risk` count is out of."""
+
+    at_risk: tuple[tuple[str, int], ...] = ()
+    """``(invariant, runs whose recorded kinds intersected its read footprint)``. Vacuity is the
+    binary edge of this measurement (a count of zero); the counts in between are what a single
+    sweep-wide ``S`` silently overstates — an invariant exposed on 50 of 1000 runs is covered by a
+    verdict quoting the bound for 1000."""
+
+    unmeasured_exposure: tuple[str, ...] = ()
+    """Invariants whose read footprint is opaque (they iterate ``history.events`` wholesale), so
+    how often they were at risk cannot be measured. Reported as such, never folded in at
+    ``n = runs`` — the existing conservative posture on opaque footprints, extended."""
+
 
 # ....................... #
 
@@ -167,15 +186,48 @@ def _rolled_back_windows(history: History) -> list[tuple[float, float]]:
 @attrs.define
 class HorizonProbe:
     """Folds per-run histories into the horizon signals, one history at a time (incremental,
-    like the confidence probe — a sweep never holds every history in memory)."""
+    like the confidence probe — a sweep never holds every history in memory).
+
+    Pass *invariants* to also count, **per run**, which of them were actually at risk. Without it
+    the probe still flags vacuity and marker-blindness from the sweep-wide union of kinds, but
+    every invariant's exposure is reported as unmeasured rather than assumed to be the full sweep.
+    """
+
+    invariants: Sequence[Invariant] = ()
 
     _present: set[str] = attrs.field(factory=set)
     _blind_kinds: set[str] = attrs.field(factory=set)
+    _footprints: dict[str, frozenset[str]] = attrs.field(factory=dict)
+    _opaque: set[str] = attrs.field(factory=set)
+    _at_risk: Counter[str] = attrs.field(factory=Counter)
+    _runs: int = 0
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        """Resolve each declared invariant's read footprint once, before any run is folded.
+
+        The footprint probe runs the predicate against an empty synthetic history, so doing it
+        per run would repeat identical work; doing it once here also means the probe is ready to
+        count from the very first ``observe``. Repeated names collapse to one entry with the
+        union of their footprints, so a run can never be counted twice for one name — the
+        accounting gate is what forbids duplicate names in the first place.
+        """
+
+        for invariant in self.invariants:
+            kinds = read_kinds(invariant)
+            name = name_of(invariant)
+
+            if kinds is None:
+                self._opaque.add(name)
+            else:
+                self._footprints[name] = self._footprints.get(name, frozenset()) | kinds
 
     # ....................... #
 
     def observe(self, history: History) -> None:
-        """Fold one recorded run: which kinds exist, and which markers overlap a rollback.
+        """Fold one recorded run: which kinds exist, which markers overlap a rollback, and which
+        declared invariants this run actually put at risk.
 
         Handler-emitted = recorded before the ``observe`` phase boundary (markers from the
         ``observe`` hook run after the workload over settled state and carry no rollback
@@ -186,9 +238,12 @@ class HorizonProbe:
 
         boundary = _observe_boundary(history)
         rolled_back = _rolled_back_windows(history)
+        kinds_here: set[str] = set()
+        self._runs += 1
 
         for event in history.events:
             self._present.add(event.kind)
+            kinds_here.add(event.kind)
 
             if event.kind in MACHINERY_KINDS:
                 continue
@@ -198,6 +253,12 @@ class HorizonProbe:
             if any(start <= event.at <= end for start, end in rolled_back):
                 self._blind_kinds.add(event.kind)
 
+        # "At risk" is the same relation vacuity uses, applied per run rather than sweep-wide:
+        # this run recorded at least one kind the invariant's predicate reads.
+        for name, footprint in self._footprints.items():
+            if footprint & kinds_here:
+                self._at_risk[name] += 1
+
     # ....................... #
 
     def analyze(self, invariants: Sequence[Invariant]) -> HorizonAnalysis:
@@ -205,13 +266,26 @@ class HorizonProbe:
 
         vacuous: list[tuple[str, tuple[str, ...]]] = []
         blind: list[tuple[str, tuple[str, ...]]] = []
+        at_risk: list[tuple[str, int]] = []
+        unmeasured: list[str] = []
 
         for invariant in invariants:
             kinds = read_kinds(invariant)
-            if kinds is None:
-                continue  # opaque footprint — cannot be decided, so never flagged
-
             name = name_of(invariant)
+
+            if kinds is None:
+                # Opaque footprint — vacuity cannot be decided, and neither can exposure. Named
+                # rather than folded into the aggregate at n = runs, which would be the overclaim
+                # this measurement exists to remove.
+                unmeasured.append(name)
+                continue
+
+            if name in self._footprints:
+                at_risk.append((name, self._at_risk[name]))
+            else:
+                # Counted footprints come from the invariants the probe was *constructed* with;
+                # anything analyzed but not declared there was never measured per run.
+                unmeasured.append(name)
 
             if not kinds & self._present:
                 vacuous.append((name, tuple(sorted(kinds))))
@@ -220,4 +294,10 @@ class HorizonProbe:
             if folded_blind:
                 blind.append((name, tuple(sorted(folded_blind))))
 
-        return HorizonAnalysis(vacuous=tuple(vacuous), marker_blind=tuple(blind))
+        return HorizonAnalysis(
+            vacuous=tuple(vacuous),
+            marker_blind=tuple(blind),
+            runs=self._runs,
+            at_risk=tuple(at_risk),
+            unmeasured_exposure=tuple(unmeasured),
+        )

@@ -113,6 +113,38 @@ class ConfidenceReport:
     """Execution-shape fingerprint → how many of the swept runs produced it. The frequency table
     :attr:`deficit` extrapolates from; empty when the sweep folded no runs."""
 
+    at_risk_runs: tuple[tuple[str, int], ...] = ()
+    """``(invariant, runs that put it at risk)`` — the per-invariant denominators the single
+    sweep-wide ``S`` stands in for. Empty when exposure was not measured."""
+
+    unmeasured_exposure: tuple[str, ...] = ()
+    """Invariants whose read footprint is opaque, so their exposure could not be counted. Named
+    rather than assumed to be the full sweep."""
+
+    # ....................... #
+
+    @property
+    def weakest_exposure(self) -> tuple[str, int] | None:
+        """The invariant the aggregate bound overstates most, or ``None`` when it overstates none.
+
+        Scoped to the invariants the verdict's clause actually names — the accounted-for
+        ``witnessed`` set when accounting is on, every measured invariant otherwise. ``None`` once
+        every one of them was at risk in every run, because then the aggregate is already its own
+        weakest member and the extra line would be noise.
+        """
+
+        covered = {name for name, _ in self.at_risk_runs}
+        if self.accounting is not None:
+            covered &= set(self.accounting.witnessed)
+
+        exposures = [(name, n) for name, n in self.at_risk_runs if name in covered]
+        if not exposures:
+            return None
+
+        weakest = min(exposures, key=lambda pair: (pair[1], pair[0]))
+
+        return weakest if weakest[1] < self.seeds_run else None
+
     # ....................... #
 
     @cached_property
@@ -207,7 +239,11 @@ class ConfidenceReport:
         accounting = self.accounting
 
         if accounting is None:
-            return format_clean_verdict(seeds)
+            return format_clean_verdict(
+                seeds,
+                weakest=self.weakest_exposure,
+                unmeasured_exposure=self.unmeasured_exposure,
+            )
 
         return format_clean_verdict(
             seeds,
@@ -215,6 +251,8 @@ class ConfidenceReport:
             declared=accounting.declared,
             unexercisable=accounting.unexercisable,
             unaccounted=accounting.unaccounted,
+            weakest=self.weakest_exposure,
+            unmeasured_exposure=self.unmeasured_exposure,
         )
 
     # ....................... #
@@ -248,6 +286,13 @@ class ConfidenceReport:
                 line += f" / {len(self.accounting.unexercisable)} unexercisable under this config"
             lines.append(line)
 
+        if self.at_risk_runs:
+            narrowest = min(n for _, n in self.at_risk_runs)
+            lines.append(
+                f"  at risk:      {narrowest}–{max(n for _, n in self.at_risk_runs)} "
+                f"of {self.seeds_run} runs per invariant"
+            )
+
         if self.warnings:
             lines.append("  ⚠ confidence gaps:")
             lines.extend(f"      • {warning}" for warning in self.warnings)
@@ -273,12 +318,25 @@ class ConfidenceProbe:
 
     Incremental by design — the sweep feeds each history in as it runs, so thousands of seeds
     never have to be held in memory at once.
+
+    Declare *invariants* here (not only at :meth:`report`) to have per-run exposure counted:
+    "at risk" is a per-history fact, so it cannot be recovered afterwards from the folded
+    accumulators. Without it the report still names every gap it always did, and simply says the
+    exposure was not measured.
     """
+
+    invariants: Sequence[Invariant] = ()
 
     _ran: set[str] = attrs.field(factory=set)
     _raced: set[str] = attrs.field(factory=set)
     _fired_calls: set[tuple[Any, Any, str]] = attrs.field(factory=set)
-    _horizon: HorizonProbe = attrs.field(factory=HorizonProbe)
+    _horizon: HorizonProbe = attrs.field(
+        init=False,
+        default=attrs.Factory(
+            lambda self: HorizonProbe(invariants=self.invariants),  # type: ignore[misc]
+            takes_self=True,
+        ),
+    )
     _shapes: Counter[str] = attrs.field(factory=Counter)
     _seeds: int = 0
 
@@ -360,6 +418,8 @@ class ConfidenceProbe:
             accounting=accounting,
             data_dependent_stop=data_dependent_stop,
             shape_counts=MappingProxyType(dict(self._shapes)),
+            at_risk_runs=horizon.at_risk,
+            unmeasured_exposure=horizon.unmeasured_exposure,
         )
 
 
@@ -385,7 +445,9 @@ def assess_confidence(
     verdict clause, and the withheld-bound refusal (see :meth:`ConfidenceProbe.report`).
     """
 
-    probe = ConfidenceProbe()
+    # Declared up front, not only at report time: per-run exposure is a per-history fact and
+    # cannot be recovered once the histories are folded away.
+    probe = ConfidenceProbe(invariants=invariants)
     for history in histories:
         probe.observe(history)
 

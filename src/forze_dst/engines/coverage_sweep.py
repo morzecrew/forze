@@ -51,7 +51,9 @@ def run_coverage(
     plateaued = False
     violation: ViolationReport | None = None
     reach_hits: dict[str, int] = dict.fromkeys(config.reachability_targets, 0)
-    probe = ConfidenceProbe()
+    # The invariants are declared to the probe, not just handed to report(): how often each was at
+    # risk is a per-run fact, and the folded accumulators cannot reconstruct it afterwards.
+    probe = ConfidenceProbe(invariants=sim.invariants)
 
     for seed in config.seeds:
         schedule_seed = derive_seed(seed, "schedule") if config.perturb else None
