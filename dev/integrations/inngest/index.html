@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#install" class="md-skip">
+        <a href="#what-this-package-is" class="md-skip">
           Skip to content
         </a>
       
@@ -3435,6 +3435,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#what-this-package-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What this package is
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#install" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3461,6 +3472,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Wire it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-serve-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The serve process
       </span>
     </span>
   </a>
@@ -5024,6 +5046,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../recipes/temporal-worker/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-hard-hat" viewBox="0 0 24 24"><path d="M10 10V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5M14 6a6 6 0 0 1 6 6v3M4 15v-3a6 6 0 0 1 6-6"/><rect width="20" height="4" x="2" y="15" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Run a Temporal worker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../recipes/scheduled-queue-jobs/" class="md-nav__link">
         
   
@@ -6079,6 +6130,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#what-this-package-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What this package is
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#install" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6105,6 +6167,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Wire it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-serve-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The serve process
       </span>
     </span>
   </a>
@@ -6231,6 +6304,15 @@
 <p><code>forze[inngest]</code> implements the durable-function contracts on
 <a href="https://inngest.com">Inngest</a> — emit events that trigger functions, and run
 memoized steps inside them, behind the durable ports.</p>
+<h2 id="what-this-package-is">What this package is<a class="headerlink" href="#what-this-package-is" title="Permanent link">&para;</a></h2>
+<p>The same boundary discipline as <a href="../temporal/#what-this-package-is">Temporal</a>:
+connection and credentials, what rides on the wire, what crosses into execution
+context, registration and lifecycle. Function <em>authoring</em> is the Inngest SDK's, and
+stays that way.</p>
+<p>Here the SDK forces that boundary rather than merely permitting it — its step object is
+handed to your function, so there is no equivalent of Temporal's escape hatch to add:
+the SDK's own objects are already in your hands. Parity between the two packages means
+the same discipline, not the same feature list.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">&#39;forze[inngest]&#39;</span>
 </code></pre></div>
@@ -6258,6 +6340,16 @@ memoized steps inside them, behind the durable ports.</p>
 
 <span class="n">serve</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">inngest</span><span class="p">,</span> <span class="n">bindings</span><span class="p">,</span> <span class="n">ctx_factory</span><span class="o">=</span><span class="k">lambda</span> <span class="n">req</span><span class="p">:</span> <span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">(),</span> <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">)</span>
 </code></pre></div>
+<h2 id="the-serve-process">The serve process<a class="headerlink" href="#the-serve-process" title="Permanent link">&para;</a></h2>
+<p>Inngest's execution model inverts Temporal's: instead of a worker polling a queue, the
+platform calls <strong>you</strong>. So the canonical process here is an ordinary Forze HTTP app —
+runtime, FastAPI, <code>serve(...)</code> on the same router — and there is no worker step,
+because there is no poller to supervise.</p>
+<p>What that costs you is the drain story a poller gets for free: an in-flight function
+call is an in-flight HTTP request, so it drains with your web server, and the platform
+retries a step whose request the deploy cut short. Give the app a termination grace
+period longer than your slowest step for the same reason a worker gets a graceful
+shutdown window.</p>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

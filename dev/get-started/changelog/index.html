@@ -5989,6 +5989,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../recipes/temporal-worker/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-hard-hat" viewBox="0 0 24 24"><path d="M10 10V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5M14 6a6 6 0 0 1 6 6v3M4 15v-3a6 6 0 0 1 6-6"/><rect width="20" height="4" x="2" y="15" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Run a Temporal worker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../recipes/scheduled-queue-jobs/" class="md-nav__link">
         
   
@@ -8164,6 +8193,13 @@
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<p><strong>Temporal, deliberately thin</strong> — package identity fixed at connection, codec, interceptors, schedules and lifecycle (no workflow model, ever):</p>
+<ul>
+<li><code>TemporalClientPort.native</code> returns the configured SDK client (codec, interceptors, rpc metadata included) — the escape hatch the durable contracts' docstrings already promised.</li>
+<li><code>TemporalStartOptions</code> (retry policy, execution/run/task timeouts, id-reuse policy, memo, search attributes, start delay) on <code>TemporalWorkflowConfig.start_options</code>, plus a field-by-field per-call override on the Temporal adapter's <code>start</code>. Unset fields are omitted from the SDK call; a non-positive timeout raises <code>configuration</code>. <code>DurableWorkflowCommandPort.start</code> is unchanged, and schedules do not inherit these.</li>
+<li><code>temporal_worker_lifecycle_step</code> + <code>DEFAULT_WORKER_GRACEFUL_SHUTDOWN</code>: supervised crash restart, optional <code>max_consecutive_crashes</code>, drain registration, and a 10 s activity window bounded by the runtime's drain deadline (the SDK's default is zero). Refuses a worker registering neither workflows nor activities. New <em>Run a Temporal worker</em> recipe.</li>
+<li><code>ExecutionContextInterceptor(auto_heartbeat=True)</code> beats at a third of each activity's <code>heartbeat_timeout</code>; off by default. Details-bearing heartbeats stay raw SDK.</li>
+</ul>
 <p><strong>Durable run control</strong> — cancellation for the self-hosted function tier, cooperative only (no hard kill in the contract):</p>
 <ul>
 <li><code>DurableRunAdminPort.request_cancel(run_id)</code> records an unfenced ask; only the fence-holding runner lands it (<code>PENDING</code> stops at once, <code>RUNNING</code> at the holder's next lease heartbeat, a dead holder's run at recovery without re-invoking the body). New <code>DurableRunRecord.cancel_requested_at</code>/<code>cancel_refused_at</code>; <code>DurableRunStorePort</code> gains <code>mark_cancelled</code>/<code>mark_timed_out</code>/<code>refuse_cancel</code>. Tenant-scoped like <code>list_runs</code>.</li>

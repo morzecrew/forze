@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/running-in-prod/deadlines/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/recipes/temporal-worker/">
       
       
-        <link rel="prev" href="../../identity-tenancy-enc/cursor-tokens/">
+        <link rel="prev" href="../background-workflow/">
       
       
-        <link rel="next" href="../resilience/">
+        <link rel="next" href="../scheduled-queue-jobs/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Deadlines - Forze</title>
+        <title>Run a Temporal worker - Forze</title>
       
     
     
@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#declare-the-budget-on-the-plan" class="md-skip">
+        <a href="#the-entrypoint" class="md-skip">
           Skip to content
         </a>
       
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Deadlines
+              Run a Temporal worker
             
           </span>
         </div>
@@ -268,8 +268,6 @@
   
   
   
-    
-  
   
     
       
@@ -280,15 +278,13 @@
   
   
   
-    
-  
   
     
       
     
     
     
-      <li class="md-tabs__item md-tabs__item--active">
+      <li class="md-tabs__item">
         <a href="../../core-concepts/overview/" class="md-tabs__link">
           
   
@@ -351,15 +347,7 @@
   
   
   
-  
     
-      
-    
-    
-    
-      
-  
-  
   
   
     
@@ -367,8 +355,20 @@
     
     
     
-      <li class="md-tabs__item">
-        <a href="../../recipes/crud-fastapi-postgres/" class="md-tabs__link">
+      
+  
+  
+  
+    
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../crud-fastapi-postgres/" class="md-tabs__link">
           
   
   Recipes
@@ -680,31 +680,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
             
   
   
@@ -721,7 +716,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -744,20 +739,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
         
           
-          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
             
   
   
@@ -1008,20 +1000,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
         
           
-          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
             
   
   
@@ -1301,20 +1290,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
         
           
-          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
             
   
   
@@ -1652,20 +1638,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
         
           
-          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
             
   
   
@@ -1820,31 +1803,26 @@
                 
   
   
-    
   
   
-  
     
     
     
     
       
       
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
         
           
-          
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
             
   
   
@@ -1861,7 +1839,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1875,36 +1853,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-timer" viewBox="0 0 24 24"><path d="M10 2h4M12 14l3-3"/><circle cx="12" cy="14" r="8"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Deadlines
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../running-in-prod/deadlines/" class="md-nav__link">
         
   
   
@@ -1921,91 +1873,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#declare-the-budget-on-the-plan" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Declare the budget on the plan
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#bind-a-caller-budget-at-the-boundary" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Bind a caller budget at the boundary
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-enforcement-looks-like" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        What enforcement looks like
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-budget-is-visible" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The budget is visible
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#budgets-cross-service-boundaries" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Budgets cross service boundaries
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#cancellation-never-skips-committed-work" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Cancellation never skips committed work
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -2018,7 +1885,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../resilience/" class="md-nav__link">
+      <a href="../../running-in-prod/resilience/" class="md-nav__link">
         
   
   
@@ -2047,7 +1914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../load-shedding/" class="md-nav__link">
+      <a href="../../running-in-prod/load-shedding/" class="md-nav__link">
         
   
   
@@ -2076,7 +1943,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shutdown-and-fleets/" class="md-nav__link">
+      <a href="../../running-in-prod/shutdown-and-fleets/" class="md-nav__link">
         
   
   
@@ -2105,7 +1972,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../credential-rotation/" class="md-nav__link">
+      <a href="../../running-in-prod/credential-rotation/" class="md-nav__link">
         
   
   
@@ -2134,7 +2001,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../portability/" class="md-nav__link">
+      <a href="../../running-in-prod/portability/" class="md-nav__link">
         
   
   
@@ -2163,7 +2030,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../operation-progress/" class="md-nav__link">
+      <a href="../../running-in-prod/operation-progress/" class="md-nav__link">
         
   
   
@@ -2192,7 +2059,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../observability/" class="md-nav__link">
+      <a href="../../running-in-prod/observability/" class="md-nav__link">
         
   
   
@@ -2221,7 +2088,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../grafana-stack/" class="md-nav__link">
+      <a href="../../running-in-prod/grafana-stack/" class="md-nav__link">
         
   
   
@@ -2264,20 +2131,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
         
           
-          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
             
   
   
@@ -4032,26 +3896,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
             
   
   
@@ -4068,7 +3937,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -4091,17 +3960,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_1" >
         
           
-          <label class="md-nav__link" for="__nav_6_1" id="__nav_6_1_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_1" id="__nav_6_1_label" tabindex="">
             
   
   
@@ -4135,7 +4007,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/crud-fastapi-postgres/" class="md-nav__link">
+      <a href="../crud-fastapi-postgres/" class="md-nav__link">
         
   
   
@@ -4164,7 +4036,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/governed-aggregate-kit/" class="md-nav__link">
+      <a href="../governed-aggregate-kit/" class="md-nav__link">
         
   
   
@@ -4193,7 +4065,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/read-only-document-api/" class="md-nav__link">
+      <a href="../read-only-document-api/" class="md-nav__link">
         
   
   
@@ -4222,7 +4094,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/cache-reads-with-redis/" class="md-nav__link">
+      <a href="../cache-reads-with-redis/" class="md-nav__link">
         
   
   
@@ -4251,7 +4123,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/analytics-over-a-data-lake/" class="md-nav__link">
+      <a href="../analytics-over-a-data-lake/" class="md-nav__link">
         
   
   
@@ -4280,7 +4152,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/expose-an-aggregate-over-mcp/" class="md-nav__link">
+      <a href="../expose-an-aggregate-over-mcp/" class="md-nav__link">
         
   
   
@@ -4309,7 +4181,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/mock-server/" class="md-nav__link">
+      <a href="../mock-server/" class="md-nav__link">
         
   
   
@@ -4352,17 +4224,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_2" >
         
           
-          <label class="md-nav__link" for="__nav_6_2" id="__nav_6_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_2" id="__nav_6_2_label" tabindex="">
             
   
   
@@ -4396,7 +4271,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/add-idempotency/" class="md-nav__link">
+      <a href="../add-idempotency/" class="md-nav__link">
         
   
   
@@ -4425,7 +4300,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/two-phase-handler/" class="md-nav__link">
+      <a href="../two-phase-handler/" class="md-nav__link">
         
   
   
@@ -4454,7 +4329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/offload-cpu-work/" class="md-nav__link">
+      <a href="../offload-cpu-work/" class="md-nav__link">
         
   
   
@@ -4497,17 +4372,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_3" >
         
           
-          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="">
             
   
   
@@ -4541,7 +4419,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/authn-authz-tenancy-fastapi/" class="md-nav__link">
+      <a href="../authn-authz-tenancy-fastapi/" class="md-nav__link">
         
   
   
@@ -4570,7 +4448,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/provision-identity-postgres/" class="md-nav__link">
+      <a href="../provision-identity-postgres/" class="md-nav__link">
         
   
   
@@ -4599,7 +4477,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/password-reset/" class="md-nav__link">
+      <a href="../password-reset/" class="md-nav__link">
         
   
   
@@ -4628,7 +4506,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/tenant-selector-and-admin/" class="md-nav__link">
+      <a href="../tenant-selector-and-admin/" class="md-nav__link">
         
   
   
@@ -4657,7 +4535,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/local-identity/" class="md-nav__link">
+      <a href="../local-identity/" class="md-nav__link">
         
   
   
@@ -4686,7 +4564,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/external-bootstrap-forze-jwt/" class="md-nav__link">
+      <a href="../external-bootstrap-forze-jwt/" class="md-nav__link">
         
   
   
@@ -4715,7 +4593,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/external-idp-oidc/" class="md-nav__link">
+      <a href="../external-idp-oidc/" class="md-nav__link">
         
   
   
@@ -4744,7 +4622,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/social-sign-in/" class="md-nav__link">
+      <a href="../social-sign-in/" class="md-nav__link">
         
   
   
@@ -4773,7 +4651,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/rotating-oauth-credentials/" class="md-nav__link">
+      <a href="../rotating-oauth-credentials/" class="md-nav__link">
         
   
   
@@ -4807,26 +4685,31 @@
                 
   
   
+    
   
   
+  
     
     
     
     
       
       
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_4" >
         
           
-          <label class="md-nav__link" for="__nav_6_4" id="__nav_6_4_label" tabindex="0">
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6_4" id="__nav_6_4_label" tabindex="">
             
   
   
@@ -4843,7 +4726,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_6_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -4860,7 +4743,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/end-to-end-saga-outbox-inbox/" class="md-nav__link">
+      <a href="../end-to-end-saga-outbox-inbox/" class="md-nav__link">
         
   
   
@@ -4889,7 +4772,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/transactional-outbox/" class="md-nav__link">
+      <a href="../transactional-outbox/" class="md-nav__link">
         
   
   
@@ -4918,7 +4801,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/transactional-notifications/" class="md-nav__link">
+      <a href="../transactional-notifications/" class="md-nav__link">
         
   
   
@@ -4947,7 +4830,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/realtime-offline-delivery/" class="md-nav__link">
+      <a href="../realtime-offline-delivery/" class="md-nav__link">
         
   
   
@@ -4976,7 +4859,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/tenant-sharded-realtime/" class="md-nav__link">
+      <a href="../tenant-sharded-realtime/" class="md-nav__link">
         
   
   
@@ -5005,7 +4888,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/background-workflow/" class="md-nav__link">
+      <a href="../background-workflow/" class="md-nav__link">
         
   
   
@@ -5031,10 +4914,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../recipes/temporal-worker/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-hard-hat" viewBox="0 0 24 24"><path d="M10 10V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5M14 6a6 6 0 0 1 6 6v3M4 15v-3a6 6 0 0 1 6-6"/><rect width="20" height="4" x="2" y="15" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Run a Temporal worker
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -5051,6 +4960,80 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-entrypoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The entrypoint
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-you-get-for-free" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What you get for free
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shutdown" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Shutdown
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-a-worker-dies" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When a worker dies
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Notes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -5063,7 +5046,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../recipes/scheduled-queue-jobs/" class="md-nav__link">
+      <a href="../scheduled-queue-jobs/" class="md-nav__link">
         
   
   
@@ -6118,10 +6101,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#declare-the-budget-on-the-plan" class="md-nav__link">
+  <a href="#the-entrypoint" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Declare the budget on the plan
+        The entrypoint
       </span>
     </span>
   </a>
@@ -6129,10 +6112,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#bind-a-caller-budget-at-the-boundary" class="md-nav__link">
+  <a href="#what-you-get-for-free" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Bind a caller budget at the boundary
+        What you get for free
       </span>
     </span>
   </a>
@@ -6140,10 +6123,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#what-enforcement-looks-like" class="md-nav__link">
+  <a href="#shutdown" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        What enforcement looks like
+        Shutdown
       </span>
     </span>
   </a>
@@ -6151,10 +6134,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-budget-is-visible" class="md-nav__link">
+  <a href="#when-a-worker-dies" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The budget is visible
+        When a worker dies
       </span>
     </span>
   </a>
@@ -6162,21 +6145,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#budgets-cross-service-boundaries" class="md-nav__link">
+  <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Budgets cross service boundaries
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#cancellation-never-skips-committed-work" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Cancellation never skips committed work
+        Notes
       </span>
     </span>
   </a>
@@ -6238,11 +6210,11 @@
     
     
       <li class="md-path__item">
-        <a href="../../core-concepts/overview/" class="md-path__link">
+        <a href="../crud-fastapi-postgres/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Learn
+    Recipes
   </span>
 
         </a>
@@ -6263,11 +6235,11 @@
     
     
       <li class="md-path__item">
-        <a href="././" class="md-path__link">
+        <a href="../end-to-end-saga-outbox-inbox/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Running in production
+    Messaging & workflows
   </span>
 
         </a>
@@ -6287,109 +6259,124 @@
   
 
 
-  <h1 id="__skip">Deadlines</h1>
+  <h1 id="__skip">Run a Temporal worker</h1>
 
-<p>An operation without a time budget can outlive the caller that wanted it: the
-client gave up seconds ago, but the handler is still holding a connection,
-a bulkhead slot, and a transaction. Forze uses <strong>gRPC-style deadlines</strong>: a
-budget is bound once at operation entry, and everything downstream — hooks,
-the transaction, dispatched operations, resilience strategies, outbound calls —
-inherits it for free.</p>
-<p><a class="glightbox" data-gallery="light" data-title="The tightest of the plan and caller budgets is bound at operation entry, then inherited by hooks, the transaction, the resilience chain, and outbound HTTP calls" data-type="image" href="../../_diagrams/light/deadline-propagation.svg#only-light"><img alt="The tightest of the plan and caller budgets is bound at operation entry, then inherited by hooks, the transaction, the resilience chain, and outbound HTTP calls" src="../../_diagrams/light/deadline-propagation.svg#only-light" /></a>
-<a class="glightbox" data-gallery="dark" data-title="The tightest of the plan and caller budgets is bound at operation entry, then inherited by hooks, the transaction, the resilience chain, and outbound HTTP calls" data-type="image" href="../../_diagrams/dark/deadline-propagation.svg#only-dark"><img alt="The tightest of the plan and caller budgets is bound at operation entry, then inherited by hooks, the transaction, the resilience chain, and outbound HTTP calls" src="../../_diagrams/dark/deadline-propagation.svg#only-dark" /></a></p>
-<h2 id="declare-the-budget-on-the-plan">Declare the budget on the plan<a class="headerlink" href="#declare-the-budget-on-the-plan" title="Permanent link">&para;</a></h2>
-<p>A deadline is a property of the <strong>operation</strong>, not of the route or the caller.
-Declare it where the operation is composed:</p>
-<div class="highlight"><pre><span></span><code><span class="n">registry</span> <span class="o">=</span> <span class="p">(</span>
-    <span class="n">registry</span>
-    <span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="s2">&quot;orders.create&quot;</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">with_deadline</span><span class="p">(</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">))</span>
-    <span class="o">.</span><span class="n">finish</span><span class="p">()</span>
-    <span class="o">.</span><span class="n">freeze</span><span class="p">()</span>
+<p>Your workflows and activities need a process polling their task queue. That process
+is not a Forze concept — it is a Temporal worker, written against the SDK — but
+<em>starting and stopping it</em> is, and getting shutdown wrong costs you every activity
+that happened to be running at deploy time.</p>
+<p><code>temporal_worker_lifecycle_step</code> runs the worker as a lifecycle citizen: supervised
+crash restart, and a drain that lets in-flight activities land before teardown.</p>
+<h2 id="the-entrypoint">The entrypoint<a class="headerlink" href="#the-entrypoint" title="Permanent link">&para;</a></h2>
+<p>A worker process is the client step, the worker step, and a probe listener so
+Kubernetes can see it:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_runtime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_temporal</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">TemporalClient</span><span class="p">,</span>
+    <span class="n">TemporalConfig</span><span class="p">,</span>
+    <span class="n">TemporalDepsModule</span><span class="p">,</span>
+    <span class="n">temporal_lifecycle_step</span><span class="p">,</span>
+    <span class="n">temporal_worker_lifecycle_step</span><span class="p">,</span>
 <span class="p">)</span>
-</code></pre></div>
-<p>Patch mode sets a default across many operations at once —
-<code>registry.patch(selector).with_deadline(timedelta(seconds=10)).finish()</code> gives
-every matched operation a budget in one line. Scope it to a namespace with
-<code>patch(selector, namespace=ns)</code>, or settle it into per-operation plans with
-<code>registry.materialize_patches()</code> so it can't leak to a sibling registry on
-<code>merge</code> — see <a href="../../writing-operation/capability-execution/#cross-cutting-patches">Cross-cutting patches</a>.</p>
-<p>Merging is <strong>restrictive</strong>: across patches, explicit plans, and any
-caller-bound deadline, the <em>tightest</em> budget wins. A layer can shorten an
-operation's budget, never extend it — to give one operation more room than a
-broad patch default, narrow the patch selector instead.</p>
-<h2 id="bind-a-caller-budget-at-the-boundary">Bind a caller budget at the boundary<a class="headerlink" href="#bind-a-caller-budget-at-the-boundary" title="Permanent link">&para;</a></h2>
-<p>A boundary (HTTP middleware, a worker loop) may additionally bind the caller's
-own budget:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">bind_deadline</span>
 
-<span class="k">with</span> <span class="n">bind_deadline</span><span class="p">(</span><span class="n">timeout_s</span><span class="p">):</span>   <span class="c1"># None is a no-op passthrough</span>
-    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">resolved_op</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">myapp.workflows</span><span class="w"> </span><span class="kn">import</span> <span class="n">FulfilOrder</span><span class="p">,</span> <span class="n">charge_card</span><span class="p">,</span> <span class="n">reserve_stock</span>
+
+<span class="n">temporal</span> <span class="o">=</span> <span class="n">TemporalClient</span><span class="p">()</span>
+
+<span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span>
+    <span class="n">TemporalDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">temporal</span><span class="p">,</span> <span class="n">workflows</span><span class="o">=</span><span class="n">WORKFLOW_CONFIGS</span><span class="p">),</span>
+    <span class="n">lifecycle_steps</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">temporal_lifecycle_step</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s2">&quot;temporal:7233&quot;</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">TemporalConfig</span><span class="p">()),</span>
+        <span class="n">temporal_worker_lifecycle_step</span><span class="p">(</span>
+            <span class="n">client</span><span class="o">=</span><span class="n">temporal</span><span class="p">,</span>
+            <span class="n">task_queue</span><span class="o">=</span><span class="s2">&quot;orders-tq&quot;</span><span class="p">,</span>
+            <span class="n">workflows</span><span class="o">=</span><span class="p">[</span><span class="n">FulfilOrder</span><span class="p">],</span>
+            <span class="n">activities</span><span class="o">=</span><span class="p">[</span><span class="n">reserve_stock</span><span class="p">,</span> <span class="n">charge_card</span><span class="p">],</span>
+        <span class="p">),</span>
+    <span class="p">],</span>
+<span class="p">)</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">runtime</span><span class="o">.</span><span class="n">scope</span><span class="p">():</span>
+        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Event</span><span class="p">()</span><span class="o">.</span><span class="n">wait</span><span class="p">()</span>  <span class="c1"># run until the process is signalled</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
 </code></pre></div>
-<p>Binding is task-scoped and <strong>tighten-only</strong> — a nested bind can shorten the
-budget but never extend past the enclosing deadline. <code>bind_deadline(None)</code>
-passes through, so an <em>optional</em> per-request timeout forwards without
-branching. Ports that want to derive per-call budgets can read
-<code>remaining_time()</code> — seconds left, or <code>None</code> when no deadline is bound.</p>
-<h2 id="what-enforcement-looks-like">What enforcement looks like<a class="headerlink" href="#what-enforcement-looks-like" title="Permanent link">&para;</a></h2>
+<p>Order matters: the worker step reaches for the client's live connection at startup,
+so it must come <strong>after</strong> the step that connects it. Wired the other way round, the
+process fails at boot rather than restarting a worker that can never reach a server.</p>
+<h2 id="what-you-get-for-free">What you get for free<a class="headerlink" href="#what-you-get-for-free" title="Permanent link">&para;</a></h2>
+<p>The worker rides the framework client's connection, so it inherits everything
+configured there:</p>
 <ul>
-<li><strong>Entry fail-fast</strong> — an operation invoked with its budget already spent
-  fails immediately, before any hook runs.</li>
-<li><strong>The whole plan is bounded</strong> — the budget covers hooks, the transaction,
-  and dispatch chains, and propagates into dispatched operations.</li>
-<li><strong>Resilience cooperates</strong> — the <a href="../resilience/">resilience executor</a> gates
-  its entire strategy chain from the outside, and a retry abandons a backoff
-  sleep that would outlive the deadline, surfacing the real error instead.</li>
+<li>the data converter — including payload encryption, if you turned it on</li>
+<li>every client interceptor that is also a worker interceptor, which is how
+  <code>ExecutionContextInterceptor</code> gives activities the caller's identity, tenant and
+  correlation id without appearing in the wiring above</li>
 </ul>
-<p>Expiry raises <code>exc.timeout</code> (<code>code="deadline_exceeded"</code>) — <strong>504</strong> at the
-FastAPI edge, details suppressed. The kind is deliberately <strong>non-retryable</strong>:
-within the same invocation the budget is spent, and a fresh invocation carries
-a fresh deadline.</p>
-<div class="admonition note">
-<p class="admonition-title">Deadline ≠ per-attempt timeout</p>
-<p>The resilience <code>TimeoutStrategy</code> bounds a <em>single attempt</em> and keeps
-raising retryable <code>infrastructure</code>, so a retry can take another shot. The
-invocation deadline bounds the <em>whole call</em> and is final. They compose:
-per-attempt timeouts inside, the deadline outside.</p>
-</div>
-<p>When no deadline is declared or bound, nothing changes — the unbound path is
-one ContextVar read, with no timeout machinery.</p>
-<h2 id="the-budget-is-visible">The budget is visible<a class="headerlink" href="#the-budget-is-visible" title="Permanent link">&para;</a></h2>
-<p>A declared deadline projects through the operation catalog like every other
-plan-derived fact: <code>OperationCatalogEntry.deadline</code>, an <code>x-deadline-seconds</code>
-vendor extension plus a "Time budget" line on
-<a href="../../integrations/fastapi/#generated-routes">generated FastAPI routes</a>, and a
-sentence in each <a href="../../integrations/mcp/"><abbr title="Model Context Protocol">MCP</abbr> tool description</a> — so clients
-and agents can set their own timeouts instead of retrying a call that died of
-budget exhaustion.</p>
-<h2 id="budgets-cross-service-boundaries">Budgets cross service boundaries<a class="headerlink" href="#budgets-cross-service-boundaries" title="Permanent link">&para;</a></h2>
-<p>When one Forze service calls another, the <a href="../../integrations/http/">outbound HTTP
-adapter</a> attaches the caller's remaining budget as an
-<code>X-Forze-Deadline-Budget</code> header automatically (opt out per service with
-<code>HttpServiceConfig(propagate_deadline=False)</code>). The receiving side honors it
-only when asked:</p>
-<div class="highlight"><pre><span></span><code><span class="n">app</span><span class="o">.</span><span class="n">add_middleware</span><span class="p">(</span>
-    <span class="n">InvocationMetadataMiddleware</span><span class="p">,</span>
-    <span class="n">ctx_dep</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">,</span>
-    <span class="n">bind_deadline_from_header</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<p>That is also why there is no <code>interceptors=</code> argument on the step. One interceptor
+on the client covers both sides in the same process.</p>
+<h2 id="shutdown">Shutdown<a class="headerlink" href="#shutdown" title="Permanent link">&para;</a></h2>
+<p>On shutdown the step stops polling and gives in-flight activities
+<code>graceful_shutdown</code> (10 s by default) to finish. The SDK's own default is <strong>zero</strong> —
+activities are cancelled the instant the worker stops — so a hand-rolled worker pays
+for every deploy in retried work.</p>
+<p>That window is spent out of the runtime's own drain budget, <code>shutdown_step_timeout</code>
+(also 10 s), which every background loop in the process shares. Raising
+<code>graceful_shutdown</code> alone buys nothing: the shared deadline still fires first, and when
+it does it cuts <em>every</em> loop's shutdown short, not just this one. Raise both together —
+<code>shutdown_step_timeout</code> is a runtime field rather than a <code>build_runtime</code> argument, so
+evolve it:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">attrs</span>
+
+<span class="n">runtime</span> <span class="o">=</span> <span class="n">attrs</span><span class="o">.</span><span class="n">evolve</span><span class="p">(</span><span class="n">runtime</span><span class="p">,</span> <span class="n">shutdown_step_timeout</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">45</span><span class="p">))</span>
+</code></pre></div>
+<p>Then keep the pair under your orchestrator's termination grace period, so the pod is not
+killed mid-drain.</p>
+<h2 id="when-a-worker-dies">When a worker dies<a class="headerlink" href="#when-a-worker-dies" title="Permanent link">&para;</a></h2>
+<p>A crashed worker is rebuilt after a jittered backoff, on the same connection. Set
+<code>max_consecutive_crashes</code> to give up instead of restarting forever:</p>
+<div class="highlight"><pre><span></span><code><span class="n">temporal_worker_lifecycle_step</span><span class="p">(</span>
+    <span class="n">client</span><span class="o">=</span><span class="n">temporal</span><span class="p">,</span>
+    <span class="n">task_queue</span><span class="o">=</span><span class="s2">&quot;orders-tq&quot;</span><span class="p">,</span>
+    <span class="n">workflows</span><span class="o">=</span><span class="p">[</span><span class="n">FulfilOrder</span><span class="p">],</span>
+    <span class="n">activities</span><span class="o">=</span><span class="p">[</span><span class="n">reserve_stock</span><span class="p">,</span> <span class="n">charge_card</span><span class="p">],</span>
+    <span class="n">max_concurrent_activities</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+    <span class="n">restart_backoff</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>
+    <span class="n">max_consecutive_crashes</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>The header carries a <strong>duration</strong>, not an instant, so clock skew between hosts
-doesn't matter; and because binding is tighten-only, a forged or stale value
-can only shorten the sender's own request — never extend it.</p>
-<p>The budget is deliberately <strong>not</strong> a message-envelope header: deadlines belong
-to the synchronous call chain. A queued event consumed after a backlog must
-not inherit its producer's leftover budget.</p>
-<h2 id="cancellation-never-skips-committed-work">Cancellation never skips committed work<a class="headerlink" href="#cancellation-never-skips-committed-work" title="Permanent link">&para;</a></h2>
-<p>A deadline firing — or a client disconnecting — cancels the operation's task.
-One window must survive that: after the root transaction <strong>commits</strong>, the
-deferred after-commit work (idempotency records, event dispatch) is a
-cancellation-protected critical section. It runs to completion even while
-cancellation is pending, and the cancellation re-raises afterwards — so a
-committed transaction is never left half-announced.</p>
-<p>A deadline is one of several controls over how an operation behaves under
-stress; the full set — retries, bulkheads, breakers, hedging — composes in
-<a href="../resilience/">Resilience</a>.</p>
+<p>Ten short-lived runs in a row means the fault is not transient — better a process
+that exits loudly than one that hot-loops a critical log until someone notices.</p>
+<h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>One step runs one worker on one queue.</strong> How many workers, which queues exist,
+  and how they are deployed stay yours; register a second step for a second queue.</li>
+<li><strong>Synchronous activities need an executor.</strong> The SDK refuses to build a worker with a
+  plain <code>def</code> activity unless one is given, so pass <code>activity_executor=ThreadPoolExecutor(…)</code>
+  and size it alongside <code>max_concurrent_activities</code>.</li>
+<li>A tenant-routed client cannot back a worker — it resolves its connection from the
+  calling scope's tenant, and a worker polls a queue. Run one worker process per cluster.</li>
+<li>Add <code>probe_listener_step</code> so the orchestrator can see the process — it serves
+  <code>/livez</code> and <code>/readyz</code> from the same runtime state, and reports <code>draining</code> for the
+  whole shutdown window. See
+  <a href="../../running-in-prod/shutdown-and-fleets/">Shutdown &amp; fleets</a>.</li>
+<li>Workflow and activity <em>authoring</em> is raw <code>temporalio</code> and always will be — see
+  <a href="../../integrations/temporal/">Temporal</a> for what the framework does and does not
+  own.</li>
+<li>Under a <code>SERVERLESS</code> deployment profile this step fails runtime assembly by
+  design: a function that freezes between invocations cannot host a poller.</li>
+<li>Long activities should heartbeat so a dead worker is detected in seconds rather
+  than at the timeout — see
+  <a href="../../integrations/temporal/#activity-heartbeats">heartbeats</a>.</li>
+</ul>
 
 
 
@@ -6430,7 +6417,7 @@ stress; the full set — retries, bulkheads, breakers, hedging — composes in
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../../identity-tenancy-enc/cursor-tokens/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Cursor tokens">
+          <a href="../background-workflow/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Background work">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -6440,20 +6427,20 @@ stress; the full set — retries, bulkheads, breakers, hedging — composes in
                 Previous
               </span>
               <div class="md-ellipsis">
-                Cursor tokens
+                Background work
               </div>
             </div>
           </a>
         
         
           
-          <a href="../resilience/" class="md-footer__link md-footer__link--next" aria-label="Next: Resilience">
+          <a href="../scheduled-queue-jobs/" class="md-footer__link md-footer__link--next" aria-label="Next: Scheduled &amp; delayed jobs">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Resilience
+                Scheduled & delayed jobs
               </div>
             </div>
             <div class="md-footer__button md-icon">

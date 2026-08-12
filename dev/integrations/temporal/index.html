@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#install" class="md-skip">
+        <a href="#what-this-package-is" class="md-skip">
           Skip to content
         </a>
       
@@ -3406,6 +3406,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#what-this-package-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What this package is
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#install" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3432,6 +3443,50 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Wire it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#start-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Start options
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-a-worker" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Run a worker
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#activity-heartbeats" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Activity heartbeats
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-escape-hatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The escape hatch
       </span>
     </span>
   </a>
@@ -5024,6 +5079,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../recipes/temporal-worker/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-hard-hat" viewBox="0 0 24 24"><path d="M10 10V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5M14 6a6 6 0 0 1 6 6v3M4 15v-3a6 6 0 0 1 6-6"/><rect width="20" height="4" x="2" y="15" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Run a Temporal worker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../recipes/scheduled-queue-jobs/" class="md-nav__link">
         
   
@@ -6079,6 +6163,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#what-this-package-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What this package is
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#install" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6105,6 +6200,50 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Wire it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#start-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Start options
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-a-worker" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Run a worker
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#activity-heartbeats" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Activity heartbeats
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-escape-hatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The escape hatch
       </span>
     </span>
   </a>
@@ -6231,6 +6370,17 @@
 <p><code>forze[temporal]</code> implements the durable-workflow contracts on
 <a href="https://temporal.io">Temporal</a> — starting, signalling, querying, and scheduling
 long-running workflows behind a stable port.</p>
+<h2 id="what-this-package-is">What this package is<a class="headerlink" href="#what-this-package-is" title="Permanent link">&para;</a></h2>
+<p><code>forze_temporal</code> will <strong>never</strong> grow a workflow model, an activity registry, a step
+DSL, or an opinion about task-queue topology. Temporal's SDK is a complete authoring
+surface with its own determinism sandbox, test framework, and documentation; wrapping
+it produces a worse Temporal.</p>
+<p>What the framework owns is the <em>boundary</em>: how a process connects (config, mTLS/API
+key, namespace), what rides on the wire (codec, data converter), what crosses into
+execution context (identity, tenant, correlation, replay-safe time), when things start
+and stop (lifecycle, drain), and the schedule control plane.</p>
+<p>Your <code>@workflow.defn</code> and <code>@activity.defn</code> are raw <code>temporalio</code>, and that is the
+design — not a gap waiting to be filled.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">&#39;forze[temporal]&#39;</span>
 </code></pre></div>
@@ -6257,6 +6407,7 @@ queues your workflows use.</p>
 <span class="n">orders_wf</span> <span class="o">=</span> <span class="n">TemporalWorkflowConfig</span><span class="p">(</span><span class="n">queue</span><span class="o">=</span><span class="s2">&quot;orders-tq&quot;</span><span class="p">)</span>
 <span class="n">configs</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;orders&quot;</span><span class="p">:</span> <span class="n">orders_wf</span><span class="p">}</span>
 
+
 <span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span><span class="n">TemporalDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">temporal</span><span class="p">,</span> <span class="n">workflows</span><span class="o">=</span><span class="n">configs</span><span class="p">))</span>
 <span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_steps</span><span class="p">(</span>
     <span class="n">temporal_lifecycle_step</span><span class="p">(</span>
@@ -6266,6 +6417,66 @@ queues your workflows use.</p>
     <span class="p">),</span>
 <span class="p">)</span>
 </code></pre></div>
+<h2 id="start-options">Start options<a class="headerlink" href="#start-options" title="Permanent link">&para;</a></h2>
+<p>Retry policy, timeouts and id-reuse are properties of a workflow <em>kind</em>, so they are
+declared once beside the queue rather than passed at every call site:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">temporalio.common</span><span class="w"> </span><span class="kn">import</span> <span class="n">RetryPolicy</span><span class="p">,</span> <span class="n">WorkflowIDReusePolicy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_temporal</span><span class="w"> </span><span class="kn">import</span> <span class="n">TemporalStartOptions</span><span class="p">,</span> <span class="n">TemporalWorkflowConfig</span>
+
+<span class="n">reports_wf</span> <span class="o">=</span> <span class="n">TemporalWorkflowConfig</span><span class="p">(</span>
+    <span class="n">queue</span><span class="o">=</span><span class="s2">&quot;reports-tq&quot;</span><span class="p">,</span>
+    <span class="n">start_options</span><span class="o">=</span><span class="n">TemporalStartOptions</span><span class="p">(</span>
+        <span class="n">execution_timeout</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">hours</span><span class="o">=</span><span class="mi">6</span><span class="p">),</span>
+        <span class="n">retry_policy</span><span class="o">=</span><span class="n">RetryPolicy</span><span class="p">(</span><span class="n">maximum_attempts</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span>
+        <span class="n">id_reuse_policy</span><span class="o">=</span><span class="n">WorkflowIDReusePolicy</span><span class="o">.</span><span class="n">REJECT_DUPLICATE</span><span class="p">,</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Every field is unset by default, and an unset field is omitted from the start call
+rather than sent as a default — declaring no options produces exactly the request the
+package sent before they existed.</p>
+<p><code>DurableWorkflowCommandPort.start</code> does <strong>not</strong> learn about them: these are engine
+vocabulary. A caller holding the engine-agnostic port cannot reach them; one who knows
+it is Temporal can pass <code>options=</code> to the adapter, and only the fields they set win —
+the rest of the configured set stands.</p>
+<p>Two limits worth knowing. A <strong>schedule</strong> for the same workflow carries its own action
+and does not pick these up. And a non-positive timeout is refused at construction,
+because Temporal reads one as <em>unset</em> — silently widening the bound you meant to
+tighten.</p>
+<h2 id="run-a-worker">Run a worker<a class="headerlink" href="#run-a-worker" title="Permanent link">&para;</a></h2>
+<p>The command port talks to the cluster; something still has to poll the task queue.
+<code>temporal_worker_lifecycle_step</code> runs that worker under the runtime's supervision and
+drain — see <a href="../../recipes/temporal-worker/">Run a Temporal worker</a> for the full
+entrypoint.</p>
+<h2 id="activity-heartbeats">Activity heartbeats<a class="headerlink" href="#activity-heartbeats" title="Permanent link">&para;</a></h2>
+<p><code>heartbeat_timeout</code> is Temporal's real dead-worker detector: an activity that stops
+heartbeating is rescheduled in seconds instead of at <code>start_to_close</code>.</p>
+<p>For an activity with incremental state to report, call <code>activity.heartbeat(details)</code>
+yourself — details are authoring surface, and the framework puts nothing between you
+and the SDK there. For the common case ("this is alive, stop killing it"), the context
+interceptor can beat on the activity's behalf:</p>
+<div class="highlight"><pre><span></span><code><span class="n">ExecutionContextInterceptor</span><span class="p">(</span><span class="n">ctx_dep</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">ctx</span><span class="p">,</span> <span class="n">auto_heartbeat</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p>It beats at a third of each activity's <code>heartbeat_timeout</code>, and does nothing for
+activities that declare none or run locally.</p>
+<p><strong>Off by default, and that is a judgement rather than caution.</strong> An automatic heartbeat
+says <em>the process is alive</em>, which is not the claim <em>the activity is making progress</em>.
+Switch it on and a wedged activity holds its lease until <code>start_to_close</code> instead of
+being rescheduled at <code>heartbeat_timeout</code>.</p>
+<h2 id="the-escape-hatch">The escape hatch<a class="headerlink" href="#the-escape-hatch" title="Permanent link">&para;</a></h2>
+<p><code>TemporalClientPort.native</code> hands back the configured <code>temporalio.client.Client</code> for
+SDK surface the port deliberately omits — child workflows, continue-as-new, update
+polling, exotic start options:</p>
+<div class="highlight"><pre><span></span><code><span class="n">client</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">deps</span><span class="o">.</span><span class="n">provide</span><span class="p">(</span><span class="n">TemporalClientDepKey</span><span class="p">)</span>
+<span class="n">handle</span> <span class="o">=</span> <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">native</span><span class="o">.</span><span class="n">start_workflow</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>  <span class="c1"># same connection, same codec</span>
+</code></pre></div>
+<p>Reach for it instead of a second <code>Client.connect</code>. A hand-built client carries none of
+the configured data converter, interceptor stack, or rpc metadata — so payloads a
+deployment believes are sealed go to the datastore in plaintext, and nothing fails.</p>
+<p>Anything reachable <em>through</em> the port goes through the port: that is what tenancy,
+error mapping and the test doubles can see.</p>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -6284,16 +6495,16 @@ queues your workflows use.</p>
 <td><code>DurableWorkflowSpec.name</code> (same workflow route)</td>
 </tr>
 <tr>
-<td>Raw client</td>
+<td>Client (and, through <code>native</code>, the SDK client)</td>
 <td><code>TemporalClientDepKey</code></td>
 </tr>
 </tbody>
 </table>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Workers are separate.</strong> The command port talks to the cluster; you still run
-  workers that poll the configured task queue — the route's <code>queue</code> must match
-  what the worker polls.</li>
+<li><strong>Workers are separate processes</strong>, by deployment design — the route's <code>queue</code> must
+  match what the worker polls. Being a separate process does not mean being
+  hand-written: use the worker step above.</li>
 <li>The cluster host is the lifecycle step's <code>host=</code>; <code>TemporalConfig</code> carries
   <code>namespace</code> and interceptors.</li>
 <li>Schedules need a real Temporal server (not the time-skipping test env). Pass

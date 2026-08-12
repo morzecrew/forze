@@ -18,7 +18,7 @@
         <link rel="prev" href="../tenant-sharded-realtime/">
       
       
-        <link rel="next" href="../scheduled-queue-jobs/">
+        <link rel="next" href="../temporal-worker/">
       
       
         
@@ -5006,6 +5006,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../temporal-worker/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-hard-hat" viewBox="0 0 24 24"><path d="M10 10V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5M14 6a6 6 0 0 1 6 6v3M4 15v-3a6 6 0 0 1 6-6"/><rect width="20" height="4" x="2" y="15" rx="1"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Run a Temporal worker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../scheduled-queue-jobs/" class="md-nav__link">
         
   
@@ -6278,6 +6307,8 @@ in the durable backend:</p>
 <li>A durable workflow needs a real backend — <a href="../../integrations/temporal/">Temporal</a>
   or <a href="../../integrations/inngest/">Inngest</a> — for its durability, retries, and
   timers. The queue path runs on any <a href="../../integrations/rabbitmq/">queue backend</a>.</li>
+<li>On Temporal the workflow only runs once a <strong>worker</strong> polls its task queue — see
+  <a href="../temporal-worker/">Run a Temporal worker</a> for that process.</li>
 <li>A stable <code>workflow_id</code> makes <code>start</code> idempotent (<code>raise_on_already_started</code>
   controls the collision behaviour).</li>
 <li>To kick the work off <em>reliably</em> from a request — only if the write commits —
@@ -6341,13 +6372,13 @@ in the durable backend:</p>
         
         
           
-          <a href="../scheduled-queue-jobs/" class="md-footer__link md-footer__link--next" aria-label="Next: Scheduled &amp; delayed jobs">
+          <a href="../temporal-worker/" class="md-footer__link md-footer__link--next" aria-label="Next: Run a Temporal worker">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Scheduled & delayed jobs
+                Run a Temporal worker
               </div>
             </div>
             <div class="md-footer__button md-icon">
