@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Docs floors** (`[tool.docs_floors]`, `just docs-check`) — every public `DepKey`/`*Spec` under `contracts/` must be mentioned in `pages/docs`, the nav must resolve both ways, and every relative doc link must land. New `reference/spec-registry.md`.
 - **Conformance manifest** (`[tool.conformance_manifest]`, `just conformance`) — every `DepKey` is claimed by exactly one plane, legs carry `@pytest.mark.conformance(plane=…, engine=…)`, and a manifested leg that ran on no shard fails CI. `test_forze_inference` and `test_portability` join the CI matrix. New `forze_dst.conformance` scenarios and `forze_kits.integrations.realtime.conformance`.
 - **Mock catalog gate** (`[tool.mock_gate]`) — every operation in the driving example's catalog must resolve and answer against seeded data, and every plane it serves must be one the seed plan fills.
+- **Nightly DST matrix** (`.github/workflows/nightly.yml`, `just dst-nightly` / `dst-nightly-all` / `dst-nightly-cells`) — the flagship scenarios over 65,536 seeds per cell across four `FaultProfile` environments declared in `tests/support/dst_flagship.py`, with cells derived from the profiles. The verdict fails on a missing cell, an empty band, a violating seed, a declared reachability target the band never drove, or an undeclared result.
 
 **Operation progress** — long-running work gets an observable shape, kit-level (`forze_kits.integrations.progress`), no core-contract changes:
 
