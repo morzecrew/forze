@@ -11,6 +11,7 @@ orchestration steps, and recipes where the port itself is the subject.
 
 Layout:
 
+- **`hexagon/`** — the README slice: domain, port, wiring, no transport at all.
 - **`quickstart/`** — the Get Started app (in-memory User CRUD on FastAPI).
 - **`recipes/<name>/`** — one directory per docs recipe. Each has an `app.py`; backend-coupled recipes also carry a `compose.yaml` + `justfile` (`just run`).
 

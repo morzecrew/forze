@@ -66,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Server-side CSRF gate on cookie ingress, on by default** — `CookieTokenAuthn.csrf` (new `CookieCsrf`): an unsafe-method request using the cookie must prove a same-host or `allowed_origins` origin via `Origin`/`Referer`, refused as 403 `csrf_rejected`; `allow_missing_origin=True` admits header-less non-browser cookie clients, `csrf=None` opts out.
 
+**README rewritten** around a runnable, transport-free slice — new test-backed `examples/hexagon/` (domain → port → wiring, no web framework), what the library deliberately does not do, how to write an adapter for an unshipped backend, and a stability statement in place of the SemVer boilerplate; banner now served from the repo.
+
 ### Fixed
 
 **A routed tenant resolver was never found, so authenticated requests bound no tenant** (**behaviour change**) — `TenancyDepsModule`/`local_identity_deps` register `TenantResolverDepKey` routed while `TenancyDeps.resolver()` looked it up plain-only, so tenant-aware adapters failed closed with `tenant_required`. `resolver()`/`manager()` now take an optional route (the authn spec's name), falling back to plain. `MockDepsModule` registered both tenancy keys with the wrong factory arity; new `route_simple_stubs`/`ConstantSimpleMockFactory` fix it.
