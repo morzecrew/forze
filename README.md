@@ -87,8 +87,9 @@ async def read_order(ctx: ExecutionContext, order_id: UUID) -> ReadOrder:
 
 
 async def main() -> None:
-    # Wiring — the only place an adapter is named. Swap MockDepsModule for
-    # PostgresDepsModule and nothing above this line changes.
+    # Wiring — the only place an adapter is named. A real backend replaces this module
+    # (Postgres takes a client, its relation config and a lifecycle module — see
+    # examples/recipes/crud_fastapi), and nothing above this line changes.
     runtime = build_runtime(MockDepsModule())
     async with runtime.scope():
         ctx = runtime.get_context()
@@ -105,8 +106,10 @@ if __name__ == "__main__":
 
 That file is [`examples/hexagon/app.py`](https://github.com/morzecrew/forze/blob/main/examples/hexagon/app.py),
 copied verbatim and run by CI on every commit — `uv run python -m examples.hexagon.app`.
-The in-memory adapter it wires needs no extras; a real backend is an extra plus a different
-deps module, and the two application functions above it stay untouched.
+The in-memory adapter it wires needs no extras. A real backend replaces that one module — for
+Postgres, a client, the relation config for the aggregate and a lifecycle module, as in
+[recipes/crud_fastapi](https://github.com/morzecrew/forze/blob/main/examples/recipes/crud_fastapi/app.py)
+— and the domain, the spec and the two application functions above it stay exactly as they are.
 
 ## What Forze does not do
 

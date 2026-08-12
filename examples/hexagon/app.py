@@ -59,8 +59,9 @@ async def read_order(ctx: ExecutionContext, order_id: UUID) -> ReadOrder:
 
 
 async def main() -> None:
-    # Wiring — the only place an adapter is named. Swap MockDepsModule for
-    # PostgresDepsModule and nothing above this line changes.
+    # Wiring — the only place an adapter is named. A real backend replaces this module
+    # (Postgres takes a client, its relation config and a lifecycle module — see
+    # examples/recipes/crud_fastapi), and nothing above this line changes.
     runtime = build_runtime(MockDepsModule())
     async with runtime.scope():
         ctx = runtime.get_context()
