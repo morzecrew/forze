@@ -1,6 +1,6 @@
 # RFC 0013 — Durable engine adapters: deliberate thinness for `forze_temporal` (+ Inngest parity notes)
 
-- **Status:** 📝 Draft (pairs with the shipped durable run-control work; executable in either order)
+- **Status:** ✅ Executed (2026-08-12) — see §10 for the execution log
 - **Scope:** Make `forze_temporal`'s thinness a *stance* instead of an accident. The package's identity is fixed as **connection + codec + interceptors + schedules + lifecycle** — workflow and activity authoring stays raw `temporalio`, forever. Four workstreams close the gap between that stance and the current code: **(W1)** a public raw-client escape hatch, **(W2)** start-options passthrough, **(W3)** a worker lifecycle step, **(W4)** activity heartbeat ergonomics. A short §6 records what parity means (and doesn't) for `forze_inngest`.
 - **Related:** The durable workflow contracts document an escape-hatch policy in their own docstrings ("child workflows / continue-as-new: use the raw SDK, per the escape-hatch policy") — W1 exists because the code currently contradicts that written policy. The broker/durable failure-path review supplies the `exception_egress_policy(kind).retryable` hook `TemporalSaga` already uses. The promoted background-loop machinery (`BackgroundLoopControl`, `run_supervised`) is what W3 builds on. The observability plane's worker-process probe surface pairs with W3 operationally. Durable run control is the shipped sibling for the self-hosted tier.
 - **Origin:** The eis-dag evaluation (2026-07-30): a real Temporal application uses precisely the features the wrapper doesn't expose — per-activity retry policies, `heartbeat_timeout` as the dead-worker detector, activity heartbeats with details, cancellation-type control, custom `@workflow.defn`s — and today reaches them only by building a **second, hand-configured `temporalio.Client`**, which silently drops the `EncryptingPayloadCodec` and interceptor stack the framework client carries. That is not an ergonomics gap; it is a security footgun the framework itself creates.
@@ -76,3 +76,51 @@ This single property deletes the entire "second client" class of bug.
 | 5 | Auto-heartbeat is opt-in and details-less; details-bearing heartbeats stay raw SDK | locked |
 | 6 | ~~Inngest parity = boundary discipline + `supports_cancel` participation, nothing more~~ → **REOPENED by RFC 0036 (2026-08-05):** unbuildable as written — the capability lives on the admin port (not the step adapter), the step adapter has no reach to a *run*, and the Inngest SDK has no imperative cancel (only declarative `cancel_on`). Parity = boundary discipline; cancellation is deferred to RFC 0036 | reopened |
 | 7 | No mock Temporal; the real-server integration suite is the conformance battery | locked |
+
+---
+
+## 10. Execution log (2026-08-12)
+
+All four phases landed, one commit per phase. Decision rows 1–5 and 7 held as written;
+row 6 was already reopened by RFC 0036 and stayed that way (parity = boundary
+discipline, cancellation deferred).
+
+### Readings — where the spec left a choice
+
+| # | Question | Reading taken |
+|---|---|---|
+| R1 | §3: `start_workflow` "gains one optional `options` … overriding the configured default field-by-field" — where does the merge happen? | The two sets meet in the **adapter**. `TemporalClientPort.start_workflow(options=…)` carries one already-merged set to the SDK; `TemporalWorkflowCommandAdapter.start(…, options=…)` merges the workflow kind's configured set with the per-call one. Decision 3's second clause stays literally true — options stay in the adapter layer, and `DurableWorkflowCommandPort.start` is untouched, because an implementation may accept *more* than its protocol promises |
+| R2 | Does `TemporalStartOptions` mirror the SDK's types or wrap them? | Carries them directly (`RetryPolicy`, `WorkflowIDReusePolicy`, `TypedSearchAttributes`). The whole value object is declared engine vocabulary; a parallel `TemporalRetryPolicy` adds no meaning and would have to chase SDK evolution. `search_attributes` takes only the typed form, not the deprecated mapping |
+| R3 | Do **schedules** for a workflow kind inherit its start options? | No, and it is documented on the field and the page. `ScheduleActionStartWorkflow` cannot express `id_reuse_policy` or `start_delay`, so inheriting would silently drop two of eight fields; §3 speaks only of starts, and deciding the other two belongs to whoever needs them |
+| R4 | Obligation 3: "boot fails loudly on an unreachable server after the retry budget" — whose boot? | The **client** step's. The worker step takes an already-connected client, so an unreachable server fails at `Client.connect`, which raises on a refused connection without spending a retry budget. Pinned twice: connect to a dead address raises, and a worker step ordered *before* the client step raises at boot instead of crash-looping |
+| R5 | §4's signature has no `interceptors=`. Deliberate? | Yes, and now provable: the SDK prepends client interceptors that are also worker interceptors (no dedup), so one `ExecutionContextInterceptor` on the client covers the worker, and a parameter here would invite running it twice. Pinned by an integration test |
+
+### Departures — beyond what §2–§5 asked for
+
+| # | Addition | Why |
+|---|---|---|
+| D1 | Two wiring refusals on the worker step: a non-positive `graceful_shutdown`, and a worker registering neither workflows nor activities | The second is the quiet one — such a worker polls a queue and answers nothing, so its tasks time out and retry forever behind a process that looks perfectly healthy |
+| D2 | `DEFAULT_WORKER_GRACEFUL_SHUTDOWN = 30 s` | §4 left the default open. The SDK's own is **zero**, which turns every deploy into cancelled work |
+| D3 | A stop check at the top of the supervised run | Found while testing: startup immediately followed by shutdown (a failed boot, a health-check flap) left `stop()` with no worker to shut down, and the loop then built one nobody would ask to stop — it polled out the whole grace window and was cancelled mid-task |
+| D4 | `TemporalStartOptions` refuses non-positive timeouts at construction | Temporal reads a non-positive timeout as *unset*, silently widening the bound the caller meant to tighten |
+| D5 | `max_consecutive_crashes` exposed, defaulting to `None` | Framework parity with `run_supervised`; exposed so the ceiling in §4 is reachable and testable |
+| D6 | Corrected `skills/forze-temporal-workflows` anti-pattern 5 | It advised registering the context interceptor on both client and worker, which R5 shows runs it twice |
+
+### Found, out of scope, not fixed
+
+`TemporalWorkflowCommandAdapter.start` builds its handle from `WorkflowHandle.run_id`,
+which `Client.start_workflow` never populates (the set field is `result_run_id`). So a
+handle returned by `start` always carries `run_id=None`, and every later call on it uses
+"latest run" semantics. Populating it would **pin** those calls to that run, changing
+behaviour across continue-as-new and retries — a decision of its own, not a side effect
+of this RFC.
+
+### Proof obligations
+
+| § | Obligation | Where |
+|---|---|---|
+| 7.1 | `native` is the client the port drives; a payload written through it round-trips under an encrypting codec | `tests/integration/…/test_native_escape_hatch.py` — and the round trip alone is **not** the assertion: the codec passes unrecognized payloads through, so a hand-built second client round-trips fine. What fails is the at-rest read through a codec-less client |
+| 7.2 | Configured options reach the server; a per-call override wins field by field | `tests/integration/…/test_start_options.py` — timeouts and memo via describe, retry policy from the start event, id-reuse behaviourally (a refusal, with an allow-duplicate control) |
+| 7.3 | Drain, crash restart, crash ceiling, loud boot failure | `tests/integration/…/test_worker_lifecycle.py` (drain, with a tiny-window control) + `tests/unit/…/test_worker_lifecycle.py` (restart, ceiling, boot) |
+| 7.4 | Auto-heartbeat keeps a slow activity alive; with it off the same activity is timed out | `tests/integration/…/test_auto_heartbeat.py` — the off leg asserts the timeout is `HEARTBEAT` specifically, not `start_to_close` |
+| 7.5 | All of it against a real Temporal dev server | Every integration leg above runs on the testcontainers dev server |
