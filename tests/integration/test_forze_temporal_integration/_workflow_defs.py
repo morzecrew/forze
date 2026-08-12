@@ -236,3 +236,28 @@ class ItRawCoreFailureWorkflow:
             from forze.base.exceptions import exc
 
         raise exc.validation("bad charge", code="charge.invalid")
+
+
+# ----------------------- #
+# Escape hatch (``TemporalClient.native``) — payload sealing at rest.
+
+
+class EchoIn(BaseModel):
+    """Input for :class:`ItEchoWorkflow`; carries a marker the test greps for at rest."""
+
+    marker: str
+
+
+class EchoOut(BaseModel):
+    """Output for :class:`ItEchoWorkflow`."""
+
+    echoed: str
+
+
+@workflow.defn(name="ItEchoWorkflow")
+class ItEchoWorkflow:
+    """Echoes its input, so both the argument and the result payload carry the marker."""
+
+    @workflow.run
+    async def run(self, inp: EchoIn) -> EchoOut:
+        return EchoOut(echoed=inp.marker)

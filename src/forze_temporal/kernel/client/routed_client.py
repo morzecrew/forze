@@ -6,7 +6,7 @@ from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
-from temporalio.client import WorkflowHandle
+from temporalio.client import Client, WorkflowHandle
 
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowRunDescription,
@@ -64,6 +64,31 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
 
     def access_fingerprint_extra_parts(self, tenant_id: UUID) -> Sequence[str]:
         return [self.connection_config.namespace]
+
+    # ....................... #
+
+    @property
+    def native(self) -> Client:
+        """The active tenant's configured SDK client — the escape hatch, per route.
+
+        Same contract as :attr:`TemporalClient.native`, resolved for the tenant bound to
+        the calling scope. Synchronous like :meth:`get_workflow_handle`, so it can only
+        hand back a client this route has already connected: reach for an async method
+        first (``health()``, ``start_workflow``) to open the tenant's connection.
+        """
+
+        self._pool.require_started()
+
+        tid = self._require_tenant_id()
+        inner = self._peek_client(tid)
+
+        if inner is None:
+            raise exc.internal(
+                "No Temporal client for this tenant in cache; call an async method "
+                "(e.g. :meth:`start_workflow` or :meth:`health`) first to connect.",
+            )
+
+        return inner.native
 
     # ....................... #
 

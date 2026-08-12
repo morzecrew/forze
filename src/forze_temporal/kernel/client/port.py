@@ -4,7 +4,7 @@ from collections.abc import Awaitable
 from typing import Any, Protocol
 
 from pydantic import BaseModel
-from temporalio.client import WorkflowHandle
+from temporalio.client import Client, WorkflowHandle
 
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowRunDescription,
@@ -19,6 +19,11 @@ from .schedule_types import TemporalScheduleListPage
 
 class TemporalClientPort(Protocol):
     """Operations implemented by :class:`TemporalClient` and routed variants."""
+
+    @property
+    def native(self) -> Client:
+        """The fully configured SDK client behind this port — the escape hatch."""
+        ...  # pragma: no cover
 
     def close(self) -> Awaitable[None]: ...  # pragma: no cover
 

@@ -194,6 +194,28 @@ class TemporalClient(TemporalClientPort):
 
     # ....................... #
 
+    @property
+    def native(self) -> Client:
+        """The configured :class:`temporalio.client.Client` this port drives.
+
+        The escape hatch, for SDK surface the port deliberately omits — child workflows,
+        continue-as-new, workflow-update polling, exotic start options. It is the *same*
+        connection every port method uses, so it carries the configured data converter
+        (payload encryption included), the interceptor stack, and the config's rpc
+        metadata. That is the whole point: a second hand-built ``Client.connect`` carries
+        none of them, and writes plaintext into a deployment that believes its payloads
+        are sealed.
+
+        Named ``native``, not ``raw``: nothing about this client is raw.
+
+        Anything reachable *through* the port goes through the port — the port is what
+        the mock, the DST oracle, tenancy and error mapping can see.
+        """
+
+        return self.__require_client()
+
+    # ....................... #
+
     async def health(self) -> tuple[str, bool]:
         try:
             await self.__require_client().count_workflows()
