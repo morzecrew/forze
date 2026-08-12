@@ -365,7 +365,7 @@ class TestRedundancyEndToEnd:
 
         assert len(report.shape_counts) == 1
         assert report.redundant_seeds
-        assert "60 seeds explored 1 distinct execution shapes" in "\n".join(report.warnings)
+        assert "60 seeds explored 1 distinct execution shape " in "\n".join(report.warnings)
 
     def test_a_diverse_sweep_is_not(self) -> None:
         probe = ConfidenceProbe()

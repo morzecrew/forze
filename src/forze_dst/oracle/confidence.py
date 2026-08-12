@@ -218,9 +218,11 @@ class ConfidenceReport:
         )
 
         if self.redundant_seeds:
+            shapes = len(self.shape_counts)
             out.append(
-                f"{self.seeds_run} seeds explored {len(self.shape_counts)} distinct execution "
-                "shapes — the bound counts seeds, not distinct trials"
+                f"{self.seeds_run} seeds explored {shapes} distinct execution "
+                f"{'shape' if shapes == 1 else 'shapes'} — the bound counts seeds, not "
+                "distinct trials"
             )
 
         if self.accounting is not None:
@@ -307,10 +309,6 @@ class ConfidenceReport:
             f"  raced:        {len(self.raced_ops)}/{len(self.ran_ops)} operations overlapped another",
         ]
 
-        deficit = self.deficit
-        if deficit is not None:
-            lines.append(f"  exec. shapes: {format_coverage_deficit(deficit)}")
-
         if self.faults_declared:
             lines.append(
                 f"  faults fired: {len(self.faults_fired)}/{len(self.faults_declared)} declared rules"
@@ -325,6 +323,12 @@ class ConfidenceReport:
             if self.accounting.unexercisable:
                 line += f" / {len(self.accounting.unexercisable)} unexercisable under this config"
             lines.append(line)
+
+        # The denominator facts sit together, after what the sweep exercised: how much of the
+        # shape space it reached, and how much of the sweep each invariant was actually at risk in.
+        deficit = self.deficit
+        if deficit is not None:
+            lines.append(f"  exec. shapes: {format_coverage_deficit(deficit)}")
 
         if self.at_risk_runs:
             narrowest = min(n for _, n in self.at_risk_runs)
