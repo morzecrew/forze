@@ -13,7 +13,6 @@
 [![PyPI](https://img.shields.io/pypi/v/forze?label=PyPI)](https://pypi.org/project/forze/)
 [![Python](https://img.shields.io/pypi/pyversions/forze)](https://pypi.org/project/forze/)
 [![License](https://img.shields.io/pypi/l/forze?label=License)](https://github.com/morzecrew/forze/blob/main/LICENSE)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12151/badge)](https://www.bestpractices.dev/projects/12151)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/morzecrew/forze/badge)](https://scorecard.dev/viewer/?uri=github.com/morzecrew/forze)
 [![codecov](https://codecov.io/github/morzecrew/forze/graph/badge.svg?token=WIKAC2IUS9)](https://codecov.io/github/morzecrew/forze)
 [![CodeFactor](https://www.codefactor.io/repository/github/morzecrew/forze/badge)](https://www.codefactor.io/repository/github/morzecrew/forze)
