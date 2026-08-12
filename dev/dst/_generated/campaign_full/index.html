@@ -6968,6 +6968,21 @@ the same guarantee had <code>steps</code> been set to the measured schedule leng
 decomposition of any looseness into draw-range slack versus residual conservatism.
 A cell whose records predate the instrumentation falls back to the structural
 estimates (workload concurrency; the draw range) and says so.</p>
+<p><strong>Multiplicity.</strong> The scan checks 31 cells and reports one violation count, so
+a per-cell 95% interval would not be a 95% claim about the family — under the null that
+the bound holds everywhere, the chance of at least one spurious flag grows past a coin
+flip by ~15 cells, and a false alarm here sends a reviewer off to re-derive a correct
+depth label. Each interval below is therefore computed at <strong>99.8387% per cell</strong>
+(Bonferroni over 31), holding <strong>95% family-wise</strong> across the scan.</p>
+<p><strong>Flip margin.</strong> Uncertainty is propagated through <code>p̂</code> and through nothing else:
+<code>p_trigger</code> is a structural constant, several of its values exact combinatorics, but all
+of them derived from reviewed reasoning rather than measured. Respect holds iff
+<code>p_trigger ≤ p̂_upper / bound</code>, so each cell carries the exact factor <code>F</code> by which
+<code>p_trigger</code> would have to be understated for that cell's verdict to flip — no arbitrary
+perturbation band to calibrate. A cell at <code>F = 40×</code> is immune to any plausible derivation
+error; one at <code>F = 1.2×</code> is a single reviewed assumption away from a false alarm. Where
+the flip would need <code>p_trigger &gt; 1</code> it is <strong>unreachable</strong>, reported as such rather than as
+a meaningless factor.</p>
 <table>
 <thead>
 <tr>
@@ -6981,6 +6996,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <th>p̂_sched</th>
 <th>bound</th>
 <th>respected</th>
+<th>flip margin</th>
 <th>k-tuned floor</th>
 </tr>
 </thead>
@@ -6996,6 +7012,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.3333</td>
 <td>yes</td>
+<td>unreachable</td>
 <td>0.3333 (3× loose)</td>
 </tr>
 <tr>
@@ -7009,6 +7026,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.3333</td>
 <td>yes</td>
+<td>unreachable</td>
 <td>0.3333 (3× loose)</td>
 </tr>
 <tr>
@@ -7022,6 +7040,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>0.96</td>
 <td>0.2500</td>
 <td>yes</td>
+<td>unreachable</td>
 <td>0.2500 (4× loose)</td>
 </tr>
 <tr>
@@ -7035,6 +7054,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>0.92</td>
 <td>0.2500</td>
 <td>yes</td>
+<td>unreachable</td>
 <td>0.2500 (4× loose)</td>
 </tr>
 <tr>
@@ -7048,6 +7068,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.3333</td>
 <td>yes</td>
+<td>unreachable</td>
 <td>0.3333 (3× loose)</td>
 </tr>
 <tr>
@@ -7061,6 +7082,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.3333</td>
 <td>yes</td>
+<td>unreachable</td>
 <td>0.3333 (3× loose)</td>
 </tr>
 <tr>
@@ -7074,6 +7096,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.2500</td>
 <td>yes</td>
+<td>unreachable</td>
 <td>0.2500 (4× loose)</td>
 </tr>
 <tr>
@@ -7087,6 +7110,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.2500</td>
 <td>yes</td>
+<td>unreachable</td>
 <td>0.2500 (4× loose)</td>
 </tr>
 <tr>
@@ -7100,6 +7124,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.4×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7113,6 +7138,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.4×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7126,6 +7152,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>0.98</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.3×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7139,6 +7166,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.5×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7152,6 +7180,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>0.97</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.3×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7165,6 +7194,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.6×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7178,6 +7208,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>unreachable</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7191,6 +7222,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>unreachable</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7204,6 +7236,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>unreachable</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7217,6 +7250,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>unreachable</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7230,6 +7264,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>0.99</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.3×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7243,6 +7278,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.4×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7256,6 +7292,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.4×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7269,6 +7306,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.4×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7282,6 +7320,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>0.02</td>
 <td>0.0002</td>
 <td>yes</td>
+<td>unreachable</td>
 <td>0.0102 (2× loose)</td>
 </tr>
 <tr>
@@ -7295,6 +7334,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.4×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7308,6 +7348,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>0.94</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.2×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7321,6 +7362,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>0.49</td>
 <td>0.0100</td>
 <td>yes</td>
+<td>unreachable</td>
 <td>0.0833 (6× loose)</td>
 </tr>
 <tr>
@@ -7334,6 +7376,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>0.52</td>
 <td>0.0100</td>
 <td>yes</td>
+<td>unreachable</td>
 <td>0.0833 (6× loose)</td>
 </tr>
 <tr>
@@ -7347,6 +7390,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>1.00</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.6×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7360,6 +7404,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>0.96</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.3×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7373,6 +7418,7 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>0.95</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.3×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 <tr>
@@ -7386,12 +7432,13 @@ estimates (workload concurrency; the draw range) and says so.</p>
 <td>0.96</td>
 <td>0.5000</td>
 <td>yes</td>
+<td>2.3×</td>
 <td>0.5000 (2× loose)</td>
 </tr>
 </tbody>
 </table>
 <p>Excluded from the bound comparison (trigger is not a schedule lottery): <code>D4-unmerged-remote-hlc</code>, <code>I3-ack-before-processing</code>, <code>M1-dual-write-shipment</code>, <code>N1-drop-tenant-predicate</code>.</p>
-<p><strong>Bound violations: 0.</strong></p>
+<p><strong>Bound violations: 0</strong> (family-wise 95% over 31 cells).</p>
 <p>Reading: for every depth-1 cell the conditional schedule probability sits at ≈ 1 — once
 the workload carries the trigger, essentially any schedule realizes it, consistent with
 d=1 meaning zero ordering constraints (for d=1 the bound is <code>1/n</code> and <code>k</code> drops out).
@@ -7403,6 +7450,10 @@ to the measured schedule length) versus PCT's residual conservatism. A violation
 anywhere would have meant a wrong depth label or wrong n/k accounting — the first
 (unconditioned) pass of this analysis produced exactly such false violations and was
 corrected to the conditional form above.</p>
+<p><code>n</code> and <code>k</code> carry no interval on purpose. They are per-run measurements folded per cell
+as <strong>maxima</strong> — a biased extreme-order statistic, but biased toward the lowest, most
+conservative floor, which is the direction that cannot manufacture a violation. The
+absence of an interval there is a decision, not an oversight.</p>
 
 
 

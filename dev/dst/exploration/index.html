@@ -6319,10 +6319,19 @@
 <h2 id="coverage-sweep-until-behaviour-saturates">Coverage — sweep until behaviour saturates<a class="headerlink" href="#coverage-sweep-until-behaviour-saturates" title="Permanent link">&para;</a></h2>
 <p>A uniform seed sweep has a problem at the other end: how many seeds is <em>enough</em>? <code>coverage()</code> answers it by watching behavioural coverage and stopping once it plateaus — once <code>coverage_plateau</code> consecutive seeds add nothing new, the exploration has saturated:</p>
 <div class="highlight"><pre><span></span><code><span class="n">stats</span> <span class="o">=</span> <span class="n">simulation</span><span class="o">.</span><span class="n">coverage</span><span class="p">(</span><span class="n">SimulationConfig</span><span class="p">(</span><span class="n">seeds</span><span class="o">=</span><span class="nb">range</span><span class="p">(</span><span class="mi">500</span><span class="p">),</span> <span class="n">coverage_plateau</span><span class="o">=</span><span class="mi">8</span><span class="p">))</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">stats</span><span class="o">.</span><span class="n">format</span><span class="p">())</span>   <span class="c1"># behaviours covered, seeds run, whether it plateaued</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">stats</span><span class="o">.</span><span class="n">format</span><span class="p">())</span>   <span class="c1"># behaviours covered, seeds run, how much shape space is left</span>
 <span class="n">report</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">violation</span>  <span class="c1"># the minimized counterexample, if a seed tripped an invariant</span>
 </code></pre></div>
+<div class="highlight"><pre><span></span><code>DST coverage report
+  behaviors covered: 17
+  seeds run:         11  (saturated on behaviours — plateau stop)
+  productive seeds:  [0, 1, 2]
+  execution shapes:  10 observed; ~50 estimated reachable (Chao1, 95% CI 16–272) — 81.82% of seeds still discovering
+  ⚠ 0 violations in 11 seeds → no per-seed bound: n was chosen from the data (plateau stop), and an exact bound is a fixed-design guarantee. Re-run the configured pool with the early stop disabled (audit()) for a bound.
+</code></pre></div>
 <p>The sweep right-sizes itself instead of guessing a seed count, and a bug still beats coverage — the first violating seed stops it with the same minimized report <code>run</code> produces.</p>
+<p>Two things it deliberately does <em>not</em> say. It prints no per-seed exclusion bound, because the plateau chose <code>n</code> by reading the very runs a bound would summarize — see <a href="../detection-statistics/#what-the-bound-divides-by">what the bound divides by</a>. And it does not let "saturated" stand for "explored": behavioural coverage is a coarse alphabet that settles early, so the report puts a measured deficit beside the flag. This sweep stopped at 11 seeds having seen 10 execution shapes against an estimated 50, with four seeds in five still turning up a new one — a plateau worth ignoring. The richness is an estimate with an interval, not a floor: Chao1 <em>targets</em> a lower bound on richness, but a single undersampled draw lands above the truth about as often as below.</p>
+<p>To explore <em>and</em> bound in one pass, reach for <code>audit()</code>. It runs the configured pool with no early stop, so <code>n</code> is fixed before the data exists and the bound holds.</p>
 <h2 id="confidence-make-a-green-run-mean-something">Confidence — make a green run mean something<a class="headerlink" href="#confidence-make-a-green-run-mean-something" title="Permanent link">&para;</a></h2>
 <p>A clean sweep is the most dangerous thing <abbr title="Deterministic Simulation Testing">DST</abbr> prints, because it looks like safety. But "no violation" only proves what was <em>tried</em> — a sweep can pass every invariant while never driving the dangerous case, and then green is not safety, it is silence. This is the same trap <a href="../invariants/#what-must-sometimes-happen">reachability</a> guards against, turned on the sweep itself.</p>
 <p><code>audit()</code> runs the full seed range and reports what it actually exercised:</p>
@@ -6335,15 +6344,20 @@
 <ul>
 <li><strong>Operations that ran but never raced</strong> — an operation that always ran alone had its concurrency checked against nothing. Its happy path passed; its interleavings were never explored.</li>
 <li><strong>Declared faults that never fired</strong> — a fault rule no seed ever triggered means that failure path was never exercised, so the green result says nothing about it.</li>
+<li><strong>Seeds that bought no new trials</strong> — a sweep whose seeds all drive the same handful of execution shapes has fewer independent chances than its seed count implies, and the bound counts seeds.</li>
 </ul>
 <div class="highlight"><pre><span></span><code>DST confidence
   seeds run:    256
   raced:        2/3 operations overlapped another
   faults fired: 0/1 declared rules
+  exec. shapes: 3 observed; ~3 estimated reachable (Chao1, 95% CI 3–3) — 0.00% of seeds still discovering
+  at risk:      37–256 of 256 runs per invariant
   ⚠ confidence gaps:
       • ran but never raced: refund — their concurrency was never tested
       • declared fault never fired: queue_command[*].* (drop) — that failure path was never exercised
+      • 256 seeds explored 3 distinct execution shapes — the bound counts seeds, not distinct trials
 </code></pre></div>
+<p>That last gap is named, never priced in. The execution-shape fingerprint erases entity ids, and entity identity is exactly what a collision-heavy workload varies, so shape count is a coarse <em>lower</em> proxy for how many independent trials the sweep really bought. Substituting it into the bound would trade a known overstatement for an unknown understatement, so the report says the number is worth less than it reads and leaves it alone.</p>
 <p><code>audit()</code> is <code>coverage()</code> with the plateau disabled, so every seed runs and the picture is honest — it is the CI-gate sweep that also tells you how much to trust the green. The command line prints this automatically on a clean <code>forze dst run</code> (pass <code>--no-confidence</code> to suppress it), so confidence is the default, not an extra step.</p>
 <h2 id="guided-exploration-fuzz-toward-new-behaviour">Guided exploration — fuzz toward new behaviour<a class="headerlink" href="#guided-exploration-fuzz-toward-new-behaviour" title="Permanent link">&para;</a></h2>
 <p>A uniform sweep knows when to <em>stop</em> but not <em>where to look</em> — every seed is independent, so behaviour gated behind a rare combination of operations is found only by chance. <code>coverage_guided</code> is <strong>feedback-directed</strong> instead: it keeps a corpus of inputs that each unlocked new coverage and <em>mutates</em> the productive ones (tweak an op, grow or shrink the workload, re-roll the schedule and faults), under an AFL-style power schedule that pushes the newest coverage frontier:</p>
