@@ -77,7 +77,7 @@ Read `references/rfc-template.md` before writing a new RFC and start from it. Th
 8. **Out of scope** — named and *reasoned*: each item says why it's excluded and what would change that
 9. **Risks** — honest failure modes, including risks of the document being misread
 10. **Unresolved questions** — what must be settled before the design counts as locked, vs. what implementation is free to settle; naming an unknown beats resolving it silently mid-build
-11. **Decisions** — a numbered table of locked decisions; this is what makes pickup cheap and re-litigation unnecessary. Where a decision constrains the future non-obviously, the row says so — the consequences of one decision are the context of the next
+11. **Decisions** — a numbered table of decisions, each carrying a **grade** (see "Decision grades" below); this is what makes pickup cheap and re-litigation unnecessary. Where a decision constrains the future non-obviously, the row says so — the consequences of one decision are the context of the next. Decisions the RFC deliberately leaves to implementation belong here too, graded `OPEN`, rather than being left out
 12. **Phasing** — what lands first, what's gated on what
 
 **Scale to the RFC's weight.** A small design-lock RFC needs only the header block, Design, Non-goals, and the Decision table. Don't pad a two-page RFC to twelve sections; don't collapse a system-wide proposal into three. Keep section numbering contiguous for whatever subset is used.
@@ -88,7 +88,43 @@ Read `references/rfc-template.md` before writing a new RFC and start from it. Th
 - **Record decisions with their why — and their cost.** The decision table is the contract; the body carries the reasoning. Rejected alternatives get a sentence saying why they lost (an alternative recorded with its trade-off stays rejected; one recorded as merely "rejected" gets re-proposed). A decision that closes a door later says so in its row.
 - **Timely beats polished.** A rough RFC that exists beats a perfect one that doesn't (Oxide's RFD rule: "timely rather than polished"). Draft prose may be rough; the Scope paragraph and the decision table may not.
 - **Be honest about limits.** If a mechanism is deferred, gated, or known-incomplete, say so in the RFC rather than letting the reader discover it. Fail-closed wording ("refused", "raises", "deliberately unscheduled") beats optimistic vagueness.
-- **Dense beats long.** Prefer one load-bearing paragraph over three thin ones. The index one-liner especially: it must be self-contained enough that a reader can skip the RFC.
+- **Dense beats long.** Prefer one load-bearing paragraph over three thin ones. This applies inside the RFC; the index entry is governed by the rule below, which is the opposite instinct.
+
+## Decision grades
+
+Every row in the Decisions table carries a grade. The grade tells whoever executes the RFC what to do when the code disagrees with the document — `flag-dont-flip` owns that behaviour, this skill owns the vocabulary, and both read the same three words:
+
+| Grade | Meaning | What it asks of an executor |
+|---|---|---|
+| `LOCKED` | Settled. Reopening is expensive, or the consequences reach beyond this RFC. | Halt on conflict and surface it. The author decides, in the RFC. |
+| `ASSUMED` | Believed correct, not load-bearing. | Depart if building it proves the assumption wrong, and log the departure. |
+| `OPEN` | Deliberately delegated to implementation. | Decide it, and log the decision with its rationale. |
+
+**Grade honestly — most rows are `ASSUMED`.** `LOCKED` is not a way of saying "I mean it". Marking rows `LOCKED` by default makes halting routine, and routine halts get waved through, which costs you the one signal the grade exists to send. Reserve it for decisions whose reversal would invalidate other work.
+
+**`OPEN` is not the same as leaving a row out.** An `OPEN` row records that the author considered the question and chose to delegate it. An absent row records nothing: the question still gets answered, by whoever reaches it first, and no later reader can tell it was ever a decision. Writing the row down is cheap and front-loads the questions execution would otherwise answer alone.
+
+## Reconciling what execution learned
+
+Execution finds things the design could not. When it does, the executor **proposes** rows and the author appends them. Two rails:
+
+- **The decision table is append-only.** A superseded row stays, marked superseded, naming the row that replaced it. The history of a decision is the part that stops it being re-litigated.
+- **Never amend the RFC's prose to match what was built.** It reads as tidying, and it destroys the only evidence that a decision changed at all — which is precisely what a later reader needs in order to trust the document. Record the change; don't erase the disagreement.
+
+An RFC whose prose has been quietly retrofitted is worse than one that is visibly out of date: the second tells you to check, the first does not.
+
+## The index one-liner: routing, not summary
+
+**The one-liner exists to tell a reader which RFC to open, not what it decided.** It has one job — discriminate this design from the others in the table — and that takes far less text than summarising it. "Get a backup off the machine that took it" is forty characters and separates its RFC from twenty others; the design, the decisions and the trade-offs belong in the file it points at.
+
+The rules:
+
+- **One sentence. Aim for 200 characters, and treat 300 as the ceiling.** A table of thirty rows is then a couple of thousand characters, which is what makes the index cheap enough to consult on every lookup.
+- **State the problem and the shape of the answer.** Not the mechanism, not the alternatives, not the numbers.
+- **The index records what an RFC *is*, never what happened to it.** No "shipped 2026-08-04", no phase-by-phase progress, no defects found, no amendment history. Status lives in the Status column; everything else lives in the RFC — its `**Status:**` annotation, its Decisions table, its execution notes. An entry that grows each time work lands has become a changelog, and the whole table is then re-read on every allocation.
+- **Write it once.** Revisit it only when the RFC's *subject* changes — not when its state does.
+
+This is the one place in the skill where completeness is the wrong target. An index entry dense enough to substitute for opening the file has stopped being an index: every future lookup pays for content that belongs to one document.
 
 ## Workflows
 
@@ -108,13 +144,13 @@ python3 scripts/rfc_index.py new "Title" --number 42   # a reserved number, or r
 1. Locate the RFC directory (`rfcs/` or `rfc/`); if none exists, run Workflow D first.
 2. Allocate the next number and instantiate the file: `rfc_index.py new "Title"` — it mints the number, writes the template, adds the index row, and bumps the next-free claim. Steps 3 and 4 stay yours: it leaves the template unfilled and writes a literal `TODO: one-line summary` in the index. By hand: read the next-free number from the index and cross-check against `ls` — numbers collide when minted in parallel.
 3. Fill the file from `references/rfc-template.md`'s shape, scaled to the design's weight. Investigate the actual code before writing "Current state" — this is most of the work.
-4. Replace the placeholder index one-liner with a dense, self-contained summary.
+4. Replace the placeholder index one-liner with one sentence that says which design this is — see the one-liner rules above. The summary the RFC deserves goes in the RFC's Summary section.
 
 ### B — Update an existing RFC
 
 1. When work ships partially or fully, update the `**Status:**` line — and annotate it with what shipped and when ("Shipped 2026-06-29: …; only P5 remains").
 2. If execution diverged from the design, record the divergence in the RFC (a status note or an amendment in the relevant section) — don't silently rewrite history; the decision log stays append-only.
-3. Mirror the status (and, if the shape changed, the one-liner) in the index table.
+3. Mirror the status in the index table. Leave the one-liner alone unless the RFC's *subject* changed — shipping, phasing and amendments are the RFC's history, not the index's.
 4. Rejected designs get ❌ and stay in the directory.
 
 ### C — Maintain the index
@@ -134,6 +170,7 @@ Run `rfc_index.py check` — it reports every file without an index row and vice
 
 ## Related skills
 
+- `flag-dont-flip` — executes an RFC against its grades, and proposes the rows execution turned up
 - `altitude-docs` — the user-facing documentation that ships after the design; the RFC's Docs section points at it
 - `self-audit` — adversarial review of the branch that executed an RFC, before merge
 - `keep-a-changelog` — records what shipped; the RFC records why it was built that way

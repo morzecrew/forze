@@ -50,11 +50,25 @@ STATUS_LINE = re.compile(r"^-\s+\*\*Status:\*\*\s*(\S+)", re.M)
 # Cells may contain an escaped pipe, so a cell is "anything but a delimiter,
 # where a backslash escapes the next character". Reading with plain [^|]* ended
 # the title cell at the escape and shifted every column after it.
-CELL = r"(?:[^|\\]|\\.)*"
-INDEX_ROW = re.compile(rf"^\|\s*\[(\d{{4}})\]\(([^)]+)\)\s*\|({CELL})\|({CELL})\|", re.M)
+# No newlines: a table cell is one line, and letting it span them meant a row
+# missing its trailing pipe swallowed the row beneath it — the parser then
+# reported the wrong row as absent and could insert a new RFC in the wrong
+# place. `\\.` is likewise stopped from crossing a line break.
+CELL = r"(?:[^|\\\n]|\\[^\n])*"
+INDEX_ROW = re.compile(
+    rf"^\|\s*\[(\d{{4}})\]\(([^)]+)\)\s*\|({CELL})\|({CELL})\|(?:({CELL})\|)?", re.M
+)
 NEXT_FREE = re.compile(r"(next free number is\s+\*\*)(\d{4})(\*\*)", re.I)
 TEMPLATE_BLOCK = re.compile(r"```markdown\n(.*?)\n```", re.S)
 TEMPLATE_TITLE = "RFC NNNN — <Title>"
+# The index is read in full on every lookup and every allocation, so its cost is
+# paid per consultation while an RFC's is paid once by whoever opens it. An
+# entry long enough to substitute for the file makes the whole table expensive
+# to consult — the target is what routing needs, the ceiling is where a table
+# stops being an index. Reported as a warning: an unusually broad RFC may
+# reasonably run past the target, and the tool should not overrule that.
+ONE_LINER_TARGET = 200
+ONE_LINER_CEILING = 300
 
 
 def fail(message: str) -> None:
@@ -148,6 +162,7 @@ def index_rows(index_text: str) -> dict[int, dict[str, str]]:
             "link": match.group(2).strip(),
             "title": match.group(3).strip(),
             "status": next((e for e in STATUS_EMOJI if status.startswith(e)), status),
+            "oneLiner": (match.group(5) or "").strip(),
         }
     return rows
 
@@ -213,10 +228,40 @@ def cmd_check(rfc_dir: Path) -> int:
             f"{index_path.name}: claims next free is {claimed:04d}, but {highest:04d} is already taken"
         )
 
+    # Reported, never fatal: an index entry that runs long is a cost, not a
+    # broken collection, and the writer is better placed than the tool to judge
+    # whether this particular design needs the extra words.
+    warnings: list[str] = []
+    for number in sorted(rows):
+        one_liner = rows[number].get("oneLiner", "")
+        length = len(one_liner)
+        if length > ONE_LINER_CEILING:
+            warnings.append(
+                f"{number:04d}: one-liner is {length} chars (ceiling {ONE_LINER_CEILING}) — "
+                "the index is re-read on every lookup; move the detail into the RFC"
+            )
+        elif length > ONE_LINER_TARGET:
+            warnings.append(
+                f"{number:04d}: one-liner is {length} chars (target {ONE_LINER_TARGET})"
+            )
+
+    total = sum(len(row.get("oneLiner", "")) for row in rows.values())
+    if total > ONE_LINER_TARGET * max(len(rows), 1):
+        warnings.append(
+            f"{index_path.name}: {total} chars of one-liners across {len(rows)} row(s) — "
+            "every lookup pays for all of it"
+        )
+
     for problem in problems:
         print(f"PROBLEM {problem}")
+    for warning in warnings:
+        print(f"WARN    {warning}")
     verdict = "FAIL " if problems else "OK   "
-    print(f"{verdict} {len(files)} RFC(s), {len(rows)} index row(s), {len(problems)} problem(s)")
+    tail = f", {len(warnings)} warning(s)" if warnings else ""
+    print(
+        f"{verdict} {len(files)} RFC(s), {len(rows)} index row(s), "
+        f"{len(problems)} problem(s){tail}"
+    )
     return 2 if problems else 0
 
 
@@ -395,9 +440,11 @@ def cmd_new(rfc_dir: Path, title: str, script_dir: Path, number: int | None = No
             fail(f"{path.name} was created by another process — re-run to take the next number")
         # A pipe in the title would open a new cell and shift every column after
         # it, so the row the checker reads back is not the row that was written.
+        # The placeholder states the constraint, so the writer meets it the
+        # first time instead of discovering it from `check` afterwards.
         row = (
             f"| [{number:04d}]({path.name}) | {escape_cell(title)} | 📝 Draft "
-            "| TODO: one-line summary |"
+            f"| TODO: one sentence, ~{ONE_LINER_TARGET} chars (max {ONE_LINER_CEILING}) — which design this is, not what it decided |"
         )
 
         lines = index_text.splitlines()
@@ -434,7 +481,7 @@ def cmd_new(rfc_dir: Path, title: str, script_dir: Path, number: int | None = No
 
     print(f"created {path}")
     print(f"updated {index_path} (row added, next free number -> {next_free:04d})")
-    print("next: fill the Scope paragraph and the one-line index summary")
+    print("next: fill the Scope paragraph and the one-line routing description")
     return 0
 
 

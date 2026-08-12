@@ -78,6 +78,18 @@ Distrust every "tested" and "covered" claim, including your own — reading a te
 - **Patch coverage:** measure coverage of the new lines specifically, with the full test profile (unit-only can be wildly misleading). `scripts/audit_scope.py patch-coverage --base main --report coverage.xml` intersects the added lines with a Cobertura or LCOV report and names the uncovered ones; it reports `n/a` rather than a percentage when nothing was measured, because "100% of zero lines" is the vacuous pass this rule exists to prevent. The gaps that matter most are **detection branches** — code that only runs when the bug it detects is present, which is exactly the code that must not be dead.
 - **Sabotage and coverage are not substitutes — run both, in that order.** Sabotage only probes the code you thought to mutate, so a clean sweep measures your imagination rather than your tests — and it leaves you *feeling* finished, which is exactly when you stop looking. Coverage finds the branch you never considered at all. When the two disagree, coverage is the one saying something new: a sabotage sweep that passes everything, sitting next to an uncovered detection branch, means that branch is dead — not that it is safe.
 
+### 10. Conformance to the decision table
+
+If the work executed an RFC, spec or design doc, diff the branch against its decision table. **Every departure either appears in the deviation log or is a finding — and so does every `OPEN` row.**
+
+The `OPEN` half is easy to miss, because choosing one of the options an RFC delegated is not a departure from it: conformance can look perfect while the choice that was made, and why, exists nowhere but the code. Walk the `OPEN` rows separately and check each one has a logged decision with its rationale. An `OPEN` row that execution never answered is the other finding — the plan needed it and nobody noticed.
+
+This pass differs in kind from the other nine, and it is worth knowing why. The rest are judgment calls — whether a boundary case matters, whether a wrapper is really unsafe in that state. This one has an oracle: a departure is either recorded or it isn't, and the document says which. That makes it the cheapest pass to run, and the only one where **"found nothing" is a credible result** rather than a sign the audit was shallow.
+
+It also catches the one failure the executor cannot catch alone. `flag-dont-flip` logs departures the executor *noticed*; this pass finds the ones they didn't, which are the departures a reviewer has no way to anticipate. Read the decision table first and the diff second — the other order lets the code tell you what the design "must have meant".
+
+A departure from a `LOCKED` row is a finding regardless of how right the code looks. That grade means reopening was expensive enough to want a second reader, and an executor's confidence is the thing under test.
+
 ## Translating to non-code work
 
 The passes generalize: spec fidelity (§1) and prose honesty (§7) apply verbatim to documents; boundary cases (§3) become "what does the reader do in the case this section doesn't cover"; discipline drift (§4) becomes consistency with sibling documents; verification honesty (§9) becomes checking every link resolves, every number traces to a source, every claimed behavior was actually observed.
@@ -93,4 +105,5 @@ The passes generalize: spec fidelity (§1) and prose honesty (§7) apply verbati
 
 - `reading-isnt-proof` — pass 9's discipline expanded into a full method for multi-implementation contracts
 - `fewer-tests-more-proof` — when the audit's real finding is the suite itself: ritual tests, per-backend copies, flake-retry volume
+- `flag-dont-flip` — produces the deviation log pass 10 audits, and grades the decisions it audits against
 - `less-code-same-behavior` — pass 6 at codebase scale, with the same NO ACTION discipline

@@ -18,10 +18,33 @@ Checks:
   C5  `BREAKING CHANGE` is uppercase and its continuation lines are indented
   C6  description is imperative-ish and unpunctuated
   C7  a body is separated from the subject by a blank line
+  C8  the body is not an essay (hard cap on its length)
+  C9  the body is short enough to read at a glance (soft cap)
+  C10 body lines are wrapped
 
 Subject length is reported as a warning, not a failure: the skill's cap is
 "<= 72 characters when possible", and a validator should not harden a rule its
 skill deliberately hedged.
+
+C8 is a hard failure and the caps are not taste. Measured over this
+repository's own history when the rule was added: median body 9 non-blank
+lines, 96% at or under 15, exactly one commit over 20. The hard cap sits at
+that ceiling so honest history keeps passing, because a check that is red over
+good data teaches everyone to ignore it. What it stops is the failure mode it
+was written for — agent-written bodies that narrate a working session instead
+of explaining a change, which ran 22-29 lines apiece.
+
+The one historical commit it fails is a batched fix carrying six unrelated
+stories, which "one commit, one semantic story" already discourages; the cap
+was not widened to admit it. Raising the cap by four lines would have let two
+of the three essays that prompted this rule straight through, which is the
+whole argument against tuning a limit until the thing that caught you passes.
+
+Footers and fenced code blocks are excluded from both caps. That makes a
+fence the declared way to carry bulk a body genuinely needs (a stack trace, a
+failing config, a benchmark table), and it is a speed bump rather than a lock:
+prose hidden inside a fence would pass. It would also be plainly visible to
+the next reader, which is the point.
 
 Merge, fixup!, squash! and revert-generated messages are skipped — git writes
 those, not you.
@@ -45,8 +68,15 @@ import sys
 from pathlib import Path
 
 SUBJECT_CAP = 72
+# Body caps, in non-blank lines, excluding footers and fenced blocks. Derived
+# from this repository's own history rather than from preference — see the
+# module docstring for the distribution they came from.
+BODY_HARD_CAP = 20
+BODY_SOFT_CAP = 12
+BODY_WIDTH_CAP = 72
 VS16 = "️"
 BOOM = "💥"
+FENCE = re.compile(r"^\s*(?:```|~~~)")
 
 SUBJECT = re.compile(
     r"^(?P<emoji>\S+)\s+(?P<type>[a-z]+)(?:\((?P<scope>[^)]*)\))?(?P<bang>!)?:\s(?P<desc>.+)$"
@@ -169,6 +199,69 @@ def check_message(message: str, mapping: dict[str, str]) -> list[tuple[str, str]
     findings.extend(("error", problem) for problem in problems)
     if len(subject) > SUBJECT_CAP:
         findings.append(("warn", f"C6: subject is {len(subject)} characters (aim for <= {SUBJECT_CAP})"))
+    findings.extend(check_body_length(lines))
+    return findings
+
+
+def prose_body(lines: list[str]) -> list[tuple[int, str]]:
+    """(line number, text) for every non-blank body line the caps apply to.
+
+    Excluded: the subject, the trailing footer paragraph, and anything inside a
+    fenced block — including the fences. Bulk a body genuinely needs (a stack
+    trace, a failing config) belongs in a fence, and putting it there is what
+    exempts it.
+    """
+    body = list(enumerate(lines, start=1))[1:]
+    start = last_paragraph_start(lines)
+    if start is not None:
+        paragraph = [line for line in lines[start:] if line.strip()]
+        # Git reads trailers from the LAST paragraph only, and a trailer block
+        # OPENS with a token — the indent rule applies to continuation lines,
+        # not to the first. Accepting any all-indented paragraph meant a body of
+        # prose indented by one space was read as footers and escaped the caps
+        # entirely, which is the exemption doing the opposite of its job.
+        if (paragraph and FOOTER_TOKEN.match(paragraph[0])
+                and all(FOOTER_TOKEN.match(line) or line.startswith((" ", "\t"))
+                        for line in paragraph[1:])):
+            body = [row for row in body if row[0] <= start]
+
+    out, fenced = [], False
+    for number, text in body:
+        if FENCE.match(text):
+            fenced = not fenced
+            continue
+        if not fenced and text.strip():
+            out.append((number, text))
+    return out
+
+
+def check_body_length(lines: list[str]) -> list[tuple[str, str]]:
+    """C8/C9/C10 — a commit body explains a change; it is not a document."""
+    body = prose_body(lines)
+    findings: list[tuple[str, str]] = []
+    if len(body) > BODY_HARD_CAP:
+        findings.append((
+            "error",
+            f"C8: body is {len(body)} non-blank lines (hard cap {BODY_HARD_CAP}). "
+            f"A commit body states why the change was made, not the story of "
+            f"making it. Move the narrative to the PR description, an RFC or an "
+            f"issue, and link to it; put evidence in a fenced block if it must "
+            f"travel with the commit."))
+    elif len(body) > BODY_SOFT_CAP:
+        findings.append((
+            "warn",
+            f"C9: body is {len(body)} non-blank lines (aim for <= {BODY_SOFT_CAP}). "
+            f"Check that every line is about the change rather than the work."))
+    for number, text in body:
+        # A long unbroken token — a URL, a path, a hash — cannot be wrapped, so
+        # flagging it would just teach people to ignore C10. Any internal
+        # whitespace is a wrap opportunity, not only a literal space: checking
+        # for " " alone let a tab-separated line through.
+        if len(text) > BODY_WIDTH_CAP and any(ch.isspace() for ch in text.strip()):
+            findings.append((
+                "warn",
+                f"C10 line {number}: {len(text)} characters (wrap at "
+                f"{BODY_WIDTH_CAP}) — git log does not wrap for you"))
     return findings
 
 

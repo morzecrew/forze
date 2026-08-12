@@ -16,13 +16,13 @@
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/distill-the-rule/SKILL.md",
-      "computedHash": "c6dee11c62067364885e55a031a1d8aad11911dbb808f24f7d9890b2708a46ac"
+      "computedHash": "df6a18d271886a7e294a0b74bfa467ff32ee0f0f3968ad3b0525a58367fb0a91"
     },
     "gitmoji-conventional": {
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/gitmoji-conventional/SKILL.md",
-      "computedHash": "51a6f9fe65cdd3fdf39a8c44af9455e5297a1939a1149c55da95e47ecb0078e7"
+      "computedHash": "eb00eb7b5c576705b53aa5d254e5b053e32c82603665197e9921d9c6ab716b68"
     },
     "karpathy-guidelines": {
       "source": "multica-ai/andrej-karpathy-skills",
@@ -64,7 +64,7 @@
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/pr-review-loop/SKILL.md",
-      "computedHash": "c968fa95a44abf44ec13c1dee7f57192fbe201b5fa064fd7c31384437346a0ac"
+      "computedHash": "dd9f1cb9345b90d337014fac286b6616b26807c671b406650528e59c242b73cb"
     },
     "python-background-jobs": {
       "source": "wshobson/agents",
@@ -118,13 +118,13 @@
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/rfc-writer/SKILL.md",
-      "computedHash": "79d53a3fc4601ec4fd6d4a42dcd657336d751b9a13150ff810b298b91affd786"
+      "computedHash": "1048601ec78d4a7e7aaaac5b38b479ad5d02ee70b928228760ed040f3382605f"
     },
     "self-audit": {
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/self-audit/SKILL.md",
-      "computedHash": "5902269c13520d5813aae567793308fe0f637eef6feb7255f5ff9583b5005996"
+      "computedHash": "61a3171a779c3dc0cc7f8d12161a2f8e9922597d036055de9ff87ef756774f18"
     },
     "self-documenting-code": {
       "source": "morzecrew/agent-skills",

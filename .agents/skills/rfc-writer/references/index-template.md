@@ -22,7 +22,7 @@ number in the filename in sync.
 
 ## Index
 
-| # | Title | Status | One-line |
+| # | Title | Status | One-line routing description |
 |---|---|---|---|
 
 ## Status legend
@@ -37,6 +37,7 @@ number in the filename in sync.
 
 ## Notes
 
-- **Row format:** `| [0001](0001-kebab-title.md) | Title | 📝 Draft | One-line summary |` — number linked to the file, newest rows appended at the bottom.
-- **The one-liner is a summary, not a teaser.** Compress what the RFC decides — key mechanism, key exclusions, shipped-state notes — densely enough that scanning the index substitutes for opening most files.
+- **Row format:** `| [0001](0001-kebab-title.md) | Title | 📝 Draft | One-line routing description |` — number linked to the file, newest rows appended at the bottom.
+- **The one-liner routes, it does not summarise.** One sentence naming the problem and the shape of the answer — enough to tell this design apart from the others, and no more. Aim for 200 characters, ceiling 300. What the RFC decides, how it works and what it excluded belong in the RFC.
+- **Never record history here.** No shipped dates, no phase progress, no defects found, no amendments. The Status column carries state; the RFC carries its own story. An entry that grows each time work lands turns the index into a changelog that every lookup has to read.
 - **Keep "next free number" honest.** Every RFC creation bumps it in the same change; when syncing a stale index, recompute it from the files actually present.

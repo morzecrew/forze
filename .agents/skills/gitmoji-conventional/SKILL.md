@@ -97,6 +97,7 @@ Add a body when the subject alone can't carry the context: multiple meaningful c
 
 - Blank line after the subject (and again before footers)
 - Bullets use `-` only; at most 4, each ≤ 80 characters, action-oriented — group or summarize beyond that
+- Wrap body lines at 72 characters — `git log` does not wrap for you
 - Footers follow the git trailer convention: `Token: value` or `Token #value`, multi-word tokens hyphenated. Supported here: `BREAKING CHANGE:`, `Closes #123`, `Refs #123`, `Refs: <sha>`
 
 ```text
@@ -106,6 +107,29 @@ Add a body when the subject alone can't carry the context: multiple meaningful c
 - add GitHub provider
 - store refresh tokens securely
 ```
+
+### The body is capped, and the cap is enforced
+
+**12 non-blank lines is the target; 20 is a hard failure.** Footers and fenced blocks don't count, so evidence that must travel with the commit — a stack trace, a failing config, a benchmark table — goes in a fence.
+
+The cap exists because commit bodies drift toward being documents, and the drift is one-directional: nobody has ever written too little and regretted it in `git blame`. Write for the person who lands here in two years asking "why is this line like this?", not for the reviewer who already has the diff open.
+
+#### What belongs in a body
+
+- The motivation the diff cannot show — the constraint, the bug's mechanism, the rejected alternative
+- The consequence a reader would not predict from the change itself
+- What the change deliberately does *not* do, when the omission looks like an oversight
+
+#### What does not
+
+- **Session narrative.** "Then I ran the tests, which found X, so I fixed Y." The tell: the body describes the author's activity rather than the code's new state. This belongs in the PR description.
+- **Evidence dumps.** Test counts, coverage percentages, mutation tallies. A reviewer wants these in the PR, where they are current; in `git log` they are fossils. Exception: a number that *is* the reason for the change ("p99 was 240ms against a 150ms bar").
+- **Restating the subject** in longer words, or listing files the diff already names.
+- **Process commentary** — which skill you followed, which pass found it, how many rounds it took.
+
+If the explanation genuinely needs more room, it is not a commit body. Put it in an RFC, an issue, or the PR description, and let the commit link to it — one line, permanently resolvable, instead of twenty that age in place.
+
+**A long body is often a batching smell.** Six paragraphs usually means six commits: if the body needs headings or a topic per paragraph, the "one commit, one semantic story" rule above is the actual finding.
 
 ## SemVer signal
 
@@ -139,7 +163,9 @@ python3 scripts/check_commit_msg.py --range main..HEAD    # audit a branch
 python3 scripts/check_commit_msg.py --file "$1"           # commit-msg hook
 ```
 
-It catches wrong emoji/type pairs, unofficial gitmoji, the three breaking signals disagreeing, a lowercase or unfolded `BREAKING CHANGE` footer, past-tense descriptions, and a body without its blank line. Subject length is a warning, not a failure — the cap is "when possible". As a `commit-msg` hook it turns this skill from advice into enforcement (see `ratchet-what-you-build`).
+It catches wrong emoji/type pairs, unofficial gitmoji, the three breaking signals disagreeing, a lowercase or unfolded `BREAKING CHANGE` footer, past-tense descriptions, a body without its blank line, and a body over the hard cap. Subject length, the soft body cap and unwrapped body lines are warnings, not failures. As a `commit-msg` hook it turns this skill from advice into enforcement (see `ratchet-what-you-build`).
+
+The body cap is enforced in the script rather than stated here for a reason: it was added *because* the prose rule above was being read, agreed with, and ignored in the same session. A rule enforced by memory drifts; see `drift-to-gate`.
 
 ## Output
 

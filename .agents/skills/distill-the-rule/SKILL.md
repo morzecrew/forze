@@ -76,5 +76,6 @@ A rule that keeps firing usefully earns promotion up the ladder; the promotion i
 
 - `self-audit` — its reporting step ("distill rules") feeds this skill; the audit finds, this skill keeps
 - `ratchet-what-you-build` — the top of the escalation ladder: rules that graduate into enforcement
+- `drift-to-gate` — what to do when a distilled rule is read, quoted, and reasoned around anyway
 - `reproduce-then-fix` — explained mechanisms are exactly the findings worth distilling
 - `rfc-writer` — decision-log discipline is the same move for design choices
