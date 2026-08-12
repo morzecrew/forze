@@ -1,5 +1,6 @@
 """Module-scope workflow and activity definitions for Temporal integration tests."""
 
+import asyncio
 from datetime import timedelta
 from typing import Any
 
@@ -261,3 +262,41 @@ class ItEchoWorkflow:
     @workflow.run
     async def run(self, inp: EchoIn) -> EchoOut:
         return EchoOut(echoed=inp.marker)
+
+
+# ----------------------- #
+# Worker lifecycle — activity drain at shutdown.
+
+# Records whether an in-flight activity finished or was cut off; cleared per test.
+DRAIN_RECORDER: list[str] = []
+
+
+@activity.defn(name="it_slow_drain")
+async def it_slow_drain(seconds: float) -> str:
+    """Sleeps, recording whether it reached the end or was cancelled mid-flight."""
+
+    DRAIN_RECORDER.append("started")
+
+    try:
+        await asyncio.sleep(seconds)
+
+    except asyncio.CancelledError:
+        DRAIN_RECORDER.append("cancelled")
+        raise
+
+    DRAIN_RECORDER.append("finished")
+
+    return "done"
+
+
+@workflow.defn(name="ItSlowDrainWorkflow")
+class ItSlowDrainWorkflow:
+    """Runs one slow activity, so a shutdown lands while that activity is in flight."""
+
+    @workflow.run
+    async def run(self, seconds: float) -> str:
+        return await workflow.execute_activity(
+            it_slow_drain,
+            args=[seconds],
+            start_to_close_timeout=timedelta(seconds=60),
+        )

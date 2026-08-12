@@ -7,11 +7,13 @@ require_temporal()
 # ....................... #
 
 from .execution import (
+    DEFAULT_WORKER_GRACEFUL_SHUTDOWN,
     TemporalClientDepKey,
     TemporalDepsModule,
     TemporalWorkflowConfig,
     routed_temporal_lifecycle_step,
     temporal_lifecycle_step,
+    temporal_worker_lifecycle_step,
 )
 from .interceptors import ExecutionContextInterceptor
 from .kernel.client import (
@@ -44,6 +46,8 @@ __all__ = [
     "TemporalWorkflowConfig",
     "temporal_lifecycle_step",
     "routed_temporal_lifecycle_step",
+    "temporal_worker_lifecycle_step",
+    "DEFAULT_WORKER_GRACEFUL_SHUTDOWN",
     "ExecutionContextInterceptor",
     "TemporalSaga",
     "PASSTHROUGH_MODULES",

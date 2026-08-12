@@ -180,6 +180,7 @@ nav = [
             "recipes/realtime-offline-delivery.md",
             "recipes/tenant-sharded-realtime.md",
             "recipes/background-workflow.md",
+            "recipes/temporal-worker.md",
             "recipes/scheduled-queue-jobs.md",
         ] },
     ] },
