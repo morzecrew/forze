@@ -130,11 +130,46 @@ perf *args='tests/perf':
         {{ args }}
 
 
-# Run the extended DST fuzz (many seeds; intended for a nightly CI job)
+# Run the extended DST fuzz (a wider band than the merge guard; still seconds, runs in-suite)
 fuzz *args='tests/unit/test_forze_dst':
     {{ _uv_sync }}
 
     uv run pytest -m fuzz {{ args }}
+
+
+# Run one cell of the nightly DST matrix (see `just dst-nightly-cells` for the names)
+dst-nightly cell seeds='65536':
+    {{ _uv_sync }}
+
+    uv run python .github/scripts/dst_nightly.py \
+        --cell {{ cell }} \
+        --seeds {{ seeds }} \
+        --out nightly-{{ cell }}.json
+
+
+# List the cells the nightly matrix runs — derived from the declared fault profiles
+dst-nightly-cells:
+    {{ _uv_sync }}
+
+    uv run python .github/scripts/dst_nightly.py --matrix
+
+
+# Run the whole nightly matrix locally and gate it (minutes at the default band)
+dst-nightly-all seeds='65536':
+    {{ _uv_sync }}
+
+    rm -rf .nightly && mkdir -p .nightly
+
+    for cell in $(uv run python .github/scripts/dst_nightly.py --matrix | \
+        python3 -c 'import json,sys; print(" ".join(c["cell"] for c in json.load(sys.stdin)))'); do \
+            uv run python .github/scripts/dst_nightly.py \
+                --cell "$cell" --seeds {{ seeds }} --out ".nightly/$cell.json" >/dev/null; \
+    done
+
+    uv run python .github/scripts/dst_nightly.py \
+        --verdict .nightly \
+        --expect "$(uv run python .github/scripts/dst_nightly.py --matrix | \
+            python3 -c 'import json,sys; print(",".join(c["cell"] for c in json.load(sys.stdin)))')"
 
 
 # Run the DST detection-time pilot campaign (writes pages/docs/dst/_generated/campaign_pilot.md)
