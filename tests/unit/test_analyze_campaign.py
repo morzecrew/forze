@@ -7,7 +7,7 @@ easy to get quietly wrong:
 - **Family-wise error.** Per-cell 95% across ~15 cells makes a spurious flag likelier than not,
   and the analysis says exactly what a violation would mean (*"a wrong depth label or wrong n/k
   accounting"*), so a false alarm costs a reviewer a re-derivation of something correct. The
-  per-cell level must be Šidák-corrected to the number of cells the scan **actually** covered —
+  per-cell level must be Bonferroni-corrected to the number of cells the scan **actually** covered —
   not to the number of groups in the file, and not to a constant.
 - **The flip margin.** ``p̂_sched = p̂ / p_trigger`` carries an interval on ``p̂`` and none at all on
   ``p_trigger``. Each cell states the exact factor by which ``p_trigger`` would have to be wrong
@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from forze_dst.stats import sidak_level
+from forze_dst.stats import familywise_level
 
 # ----------------------- #
 
@@ -116,8 +116,8 @@ class TestFamilyWiseControl:
         scanned = len(_cells(text))
 
         assert scanned == 4  # 2 mutants × 2 PCT strategies, all depth-1 so both parameters apply
-        assert f"Šidák over {scanned}" in text
-        assert f"{sidak_level(0.95, scanned):.4%} per cell" in text
+        assert f"Bonferroni over {scanned}" in text
+        assert f"{familywise_level(0.95, scanned):.4%} per cell" in text
         assert "95% family-wise" in text
 
     def test_the_level_tightens_as_the_scan_widens(self, tmp_path: Path) -> None:
@@ -129,9 +129,9 @@ class TestFamilyWiseControl:
             ),
         )
 
-        assert f"{sidak_level(0.95, 2):.4%} per cell" in narrow
-        assert f"{sidak_level(0.95, 6):.4%} per cell" in wide
-        assert sidak_level(0.95, 6) > sidak_level(0.95, 2)
+        assert f"{familywise_level(0.95, 2):.4%} per cell" in narrow
+        assert f"{familywise_level(0.95, 6):.4%} per cell" in wide
+        assert familywise_level(0.95, 6) > familywise_level(0.95, 2)
 
     def test_excluded_mutants_do_not_inflate_the_denominator(self, tmp_path: Path) -> None:
         # A mutant whose trigger is a fault lottery is not scanned, so correcting for it would
@@ -143,7 +143,7 @@ class TestFamilyWiseControl:
         text = _run(tmp_path, with_excluded)
 
         assert len(_cells(text)) == 2
-        assert f"Šidák over {2}" in text
+        assert f"Bonferroni over {2}" in text
         assert "`M1-dual-write-shipment`" in text  # named in the exclusions, never silent
 
     def test_the_violation_count_is_reported_with_its_family_level(self, tmp_path: Path) -> None:
@@ -162,8 +162,8 @@ class TestFamilyWiseControl:
             self._corpus_records(["T1-blind-write-payment", "T2-charge-before-guard"]),
         )
 
-        assert f"{sidak_level(0.95, 2):.4%} per cell" in narrow
-        assert f"{sidak_level(0.95, 2):.4%} per cell" not in wide
+        assert f"{familywise_level(0.95, 2):.4%} per cell" in narrow
+        assert f"{familywise_level(0.95, 2):.4%} per cell" not in wide
         assert f"{0.95:.4%} per cell" not in narrow  # nor the uncorrected level
 
 
@@ -251,5 +251,5 @@ def test_mutants_the_theorem_does_not_speak_about_are_excluded_by_name(
     assert f"`{mutant_id}`" in text
     # No cell scanned means no family to correct: stating a level over zero comparisons would
     # name a correction the code did not apply.
-    assert "Šidák over" not in text
+    assert "Bonferroni over" not in text
     assert "**Multiplicity.**" not in text

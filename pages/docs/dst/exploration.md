@@ -71,13 +71,13 @@ DST coverage report
   behaviors covered: 17
   seeds run:         11  (saturated on behaviours — plateau stop)
   productive seeds:  [0, 1, 2]
-  execution shapes:  10 observed; ≥51 estimated reachable (Chao1, 95% CI 16–272) — 81.8% of seeds still discovering
+  execution shapes:  10 observed; ~50 estimated reachable (Chao1, 95% CI 16–272) — 81.82% of seeds still discovering
   ⚠ 0 violations in 11 seeds → no per-seed bound: n was chosen from the data (plateau stop), and an exact bound is a fixed-design guarantee. Re-run the configured pool with the early stop disabled (audit()) for a bound.
 ```
 
 The sweep right-sizes itself instead of guessing a seed count, and a bug still beats coverage — the first violating seed stops it with the same minimized report `run` produces.
 
-Two things it deliberately does *not* say. It prints no per-seed exclusion bound, because the plateau chose `n` by reading the very runs a bound would summarize — see [what the bound divides by](detection-statistics.md#what-the-bound-divides-by). And it does not let "saturated" stand for "explored": behavioural coverage is a coarse alphabet that settles early, so the report puts a measured deficit beside the flag. This sweep stopped at 11 seeds having seen 10 execution shapes out of an estimated 51, with four seeds in five still turning up a new one — a plateau worth ignoring.
+Two things it deliberately does *not* say. It prints no per-seed exclusion bound, because the plateau chose `n` by reading the very runs a bound would summarize — see [what the bound divides by](detection-statistics.md#what-the-bound-divides-by). And it does not let "saturated" stand for "explored": behavioural coverage is a coarse alphabet that settles early, so the report puts a measured deficit beside the flag. This sweep stopped at 11 seeds having seen 10 execution shapes against an estimated 50, with four seeds in five still turning up a new one — a plateau worth ignoring. The richness is an estimate with an interval, not a floor: Chao1 *targets* a lower bound on richness, but a single undersampled draw lands above the truth about as often as below.
 
 To explore *and* bound in one pass, reach for `audit()`. It runs the configured pool with no early stop, so `n` is fixed before the data exists and the bound holds.
 
@@ -105,7 +105,7 @@ DST confidence
   seeds run:    256
   raced:        2/3 operations overlapped another
   faults fired: 0/1 declared rules
-  exec. shapes: 3 observed; ≥3 estimated reachable (Chao1, 95% CI 3–3) — 0.0% of seeds still discovering
+  exec. shapes: 3 observed; ~3 estimated reachable (Chao1, 95% CI 3–3) — 0.00% of seeds still discovering
   at risk:      37–256 of 256 runs per invariant
   ⚠ confidence gaps:
       • ran but never raced: refund — their concurrency was never tested

@@ -128,7 +128,8 @@ surface that prints it rather than left to the reader:
 - **Many bounds at 95% each are not one claim at 95%.** The [bound-comparison
   scan](campaign-results.md) checks every applicable cell and reports one violation count; at
   15 cells, a spurious flag under the null is likelier than not. Each cell's interval is
-  Šidák-corrected to the number of cells actually scanned, and both levels are stated. The pytest
+  corrected to the number of cells actually scanned — by the union bound, which needs no
+  independence assumption these cells have not been shown to satisfy — and both levels are stated. The pytest
   plugin corrects the other way: it never aggregates per-sweep bounds by default, and offers one
   opt-in line that holds across every sweep at once.
 - **"Saturated" is not "explored".** The coverage sweep's plateau flag is a boolean over the

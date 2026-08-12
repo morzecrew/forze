@@ -155,8 +155,8 @@ estimates (workload concurrency; the draw range) and says so.
 a per-cell 95% interval would not be a 95% claim about the family — under the null that
 the bound holds everywhere, the chance of at least one spurious flag grows past a coin
 flip by ~15 cells, and a false alarm here sends a reviewer off to re-derive a correct
-depth label. Each interval below is therefore computed at **99.8347% per cell**
-(Šidák over 31), holding **95% family-wise** across the scan.
+depth label. Each interval below is therefore computed at **99.8387% per cell**
+(Bonferroni over 31), holding **95% family-wise** across the scan.
 
 **Flip margin.** Uncertainty is propagated through `p̂` and through nothing else:
 `p_trigger` is a structural constant, several of its values exact combinatorics, but all

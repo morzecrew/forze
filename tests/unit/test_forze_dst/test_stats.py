@@ -33,7 +33,7 @@ from forze_dst.stats import (
     format_withheld_verdict,
     geometric_p_hat,
     log_rank,
-    sidak_level,
+    familywise_level,
 )
 
 # The Gehan (1965) 6-MP leukemia trial — the canonical Kaplan–Meier worked example. Remission
@@ -231,38 +231,94 @@ class TestCoverageDeficit:
         assert "estimated reachable (Chao1, 95% CI" in line
         assert "of seeds still discovering" in line
 
+    def test_the_richness_is_never_rendered_as_a_bound(self) -> None:
+        # Chao1's *estimand* is a lower bound on richness; the estimate is not. Sampled below
+        # saturation it lands above the truth about as often as below (see the test beneath), so a
+        # `≥` in front of it would claim a floor the number cannot carry — the exact shape of
+        # overclaim this module exists to remove.
+        line = format_coverage_deficit(coverage_deficit({f"s{i}": 1 for i in range(4)} | {"x": 2}))
+
+        assert "≥" not in line
+        assert "~" in line
+
+    def test_the_point_estimate_overshoots_the_truth_about_half_the_time(self) -> None:
+        # The measurement behind the rule above, so a future reader does not reinstate the `≥`.
+        truth = 80
+
+        def sample(seed: int) -> float:
+            rng = random.Random(seed)  # one generator per sample, not one per draw
+            return coverage_deficit(Counter(rng.randrange(truth) for _ in range(150))).richness
+
+        overshoots = sum(sample(seed) > truth for seed in range(200))
+
+        assert 60 < overshoots < 140, f"{overshoots}/200 — re-derive before trusting a bound glyph"
+
+    def test_a_tiny_unseen_mass_never_renders_as_zero(self) -> None:
+        # 0.0% reads as "saturated" when the sample is still discovering. The module already solves
+        # this for bounds; the saturation line must agree on what "too small to show" looks like.
+        # One singleton in a large pool is reachable from an audit() sweep, not a 200-seed one.
+        deficit = coverage_deficit({"lonely": 1} | {f"s{i}": 3 for i in range(700)})
+
+        assert 0.0 < deficit.unseen_mass < 0.0005
+        assert "0.0%" not in format_coverage_deficit(deficit)
+        assert "e-04" in format_coverage_deficit(deficit)
+
+    def test_an_exact_zero_mass_still_renders_as_a_percentage(self) -> None:
+        # The scientific fallback is for a mass too small to show, not for one that is genuinely
+        # nothing — "0.0e+00 of seeds still discovering" is noise where "0.00%" is the answer.
+        deficit = coverage_deficit({"a": 100, "b": 100, "c": 100})
+
+        assert deficit.unseen_mass == 0.0
+        assert "0.00% of seeds still discovering" in format_coverage_deficit(deficit)
+        assert "e+00" not in format_coverage_deficit(deficit)
+
 
 # ....................... #
 
 
-class TestSidakLevel:
+class TestFamilywiseLevel:
     """Family-wise control, in both directions — a scan of m cells, and a family of K sweeps."""
 
     def test_hand_computed_level_for_a_fixed_m(self) -> None:
-        # γ' = γ^(1/m): the per-comparison level that leaves 5% family-wise error across 15 cells.
-        assert sidak_level(0.95, 15) == pytest.approx(0.95 ** (1 / 15))
-        # By hand: exp(ln 0.95 / 15) = exp(-0.05129329 / 15) = exp(-0.00341955) = 0.99658629…
-        assert sidak_level(0.95, 15) == pytest.approx(0.9965863, abs=1e-7)
+        # The union bound, γ' = 1 − α/m: the per-comparison level that leaves 5% family-wise error
+        # across 15 cells. By hand: 1 − 0.05/15 = 1 − 0.003333… = 0.996666…
+        assert familywise_level(0.95, 15) == pytest.approx(1.0 - 0.05 / 15)
+        assert familywise_level(0.95, 15) == pytest.approx(0.9966667, abs=1e-7)
+
+    def test_it_needs_no_independence_assumption(self) -> None:
+        # The load-bearing property, and the reason it is not Šidák. Šidák's γ^(1/m) is tighter but
+        # valid only under independence, and *anti-conservative* under positive dependence — which
+        # is what a session sharing one --dst-seeds range across sweeps produces. The union bound
+        # holds under arbitrary dependence, so it is never the looser-looking of the two by
+        # accident: it is looser on purpose, and correct without a premise nothing here checks.
+        for m in (2, 5, 15, 31, 60):
+            sidak = 0.95 ** (1 / m)
+
+            assert familywise_level(0.95, m) >= sidak  # never claims more than Šidák would
+            assert familywise_level(0.95, m) - sidak < 1e-3  # and the price is negligible
 
     def test_one_comparison_is_the_uncorrected_level(self) -> None:
-        assert sidak_level(0.95, 1) == pytest.approx(0.95)
+        assert familywise_level(0.95, 1) == pytest.approx(0.95)
 
     def test_more_comparisons_demand_a_stricter_per_cell_level(self) -> None:
-        assert sidak_level(0.95, 5) < sidak_level(0.95, 30) < sidak_level(0.95, 60) < 1.0
+        assert (
+            familywise_level(0.95, 5) < familywise_level(0.95, 30) < familywise_level(0.95, 60) < 1.0
+        )
 
-    def test_it_is_effectively_bonferroni_at_these_counts(self) -> None:
-        # Bonferroni's union bound (1 − α/m) is the cheaper approximation; Šidák is exact under
-        # independence. Recorded so the choice is not mistaken for a meaningful difference.
-        for m in (5, 15, 30, 60):
-            assert sidak_level(0.95, m) == pytest.approx(1.0 - 0.05 / m, abs=1e-3)
+    def test_the_family_wise_error_it_buys(self) -> None:
+        # What the correction is for: uncorrected, m statements at 95% each leave a spurious flag
+        # likelier than not by 15 comparisons.
+        assert 1.0 - 0.95**5 == pytest.approx(0.2262, abs=5e-4)
+        assert 1.0 - 0.95**15 == pytest.approx(0.5367, abs=5e-4)
+        assert 1.0 - 0.95**60 == pytest.approx(0.9539, abs=5e-4)
 
     def test_rejects_a_nonpositive_comparison_count(self) -> None:
         with pytest.raises(ValueError, match="comparisons must be >= 1"):
-            sidak_level(0.95, 0)
+            familywise_level(0.95, 0)
 
     def test_rejects_an_out_of_range_confidence(self) -> None:
         with pytest.raises(ValueError, match="confidence must be in"):
-            sidak_level(1.0, 10)
+            familywise_level(1.0, 10)
 
 
 # ....................... #
@@ -277,13 +333,13 @@ class TestFormatFamilyVerdict:
         assert "0 violations across 10 sweeps" in family
         assert "0.53%" in family
         assert "simultaneously" in family
-        assert "(95% family-wise, Šidák over 10)" in family
+        assert "(95% family-wise, Bonferroni over 10)" in family
         assert per_sweep < 0.0053
 
     def test_the_widest_corrected_bound_is_what_holds_for_all(self) -> None:
         # A mixed-size family is bounded by its smallest sweep — claiming the tightest would be
         # false of the others.
-        expected = detection_upper_bound(50, confidence=sidak_level(0.95, 3))
+        expected = detection_upper_bound(50, confidence=familywise_level(0.95, 3))
 
         assert _render_probability(expected) in format_family_verdict([1000, 50, 400])
 

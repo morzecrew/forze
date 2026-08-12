@@ -11,7 +11,7 @@ Two multiplicity guards sit on top of that comparison:
 
 * **Family-wise control.** The scan checks every cell at once and reports one ``Bound violations``
   count, so per-cell 95% is not family-wise 95% — at ~15 cells a spurious flag is likelier than
-  not. Each cell's interval is Šidák-corrected to the number of cells actually scanned, and both
+  not. Each cell's interval is Bonferroni-corrected to the number of cells actually scanned, and
   levels are stated in the generated table.
 * **The flip margin.** ``p̂_sched = p̂ / p_trigger`` propagates uncertainty through ``p̂`` and
   through nothing else; ``p_trigger`` is a structural constant with none attached. Rather than
@@ -30,7 +30,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import cast
 
-from forze_dst.stats import flip_margin, geometric_p_hat, sidak_level
+from forze_dst.stats import familywise_level, flip_margin, geometric_p_hat
 from tests.support.misuse import CORPUS
 
 K_ESTIMATE = 50  # the PCT `steps` parameter — change points spread over at most this many ticks
@@ -70,7 +70,7 @@ def main(argv: list[str]) -> int:
         if record.get("kind") == "campaign":
             groups[(str(record["mutant_id"]), str(record["strategy"]))].append(record)
 
-    # Pass one: which cells the scan actually covers. The Šidák correction divides by that count,
+    # Pass one: which cells the scan actually covers. The correction divides by that count,
     # so no interval may be computed before it is known.
     excluded: list[str] = []
     cells: list[tuple[str, str, list[dict[str, object]], float]] = []
@@ -90,7 +90,7 @@ def main(argv: list[str]) -> int:
 
         cells.append((mutant_id, strategy, records, p_trigger))
 
-    per_cell = sidak_level(FAMILY_CONFIDENCE, max(1, len(cells)))
+    per_cell = familywise_level(FAMILY_CONFIDENCE, max(1, len(cells)))
 
     # With no cell to scan there is no family to correct, and the paragraph below would state a
     # level over zero comparisons that the code did not apply.
@@ -106,7 +106,7 @@ def main(argv: list[str]) -> int:
             "flip by ~15 cells, and a false alarm here sends a reviewer off to re-derive a correct",
             f"depth label. Each interval below is therefore computed at **{per_cell:.4%} per cell**",
             (
-                f"(Šidák over {len(cells)}), holding **{FAMILY_CONFIDENCE:.0%} family-wise** "
+                f"(Bonferroni over {len(cells)}), holding **{FAMILY_CONFIDENCE:.0%} family-wise** "
                 "across the scan."
             ),
         ]

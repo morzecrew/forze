@@ -346,7 +346,7 @@ class TestCleanRunVerdicts:
 
         family = next(line for line in lines if "simultaneously" in line)
         assert "0 violations across 10 sweeps" in family
-        assert "Šidák over 10" in family
+        assert "Bonferroni over 10" in family
         # 0.53% simultaneously against 0.30% per sweep — the price of the joint claim, stated.
         assert "< 0.53%" in family
         assert all("< 0.30%" in line for line in lines if line.startswith("test_"))
@@ -437,6 +437,65 @@ class TestPluginHooks:
             assert opts is not None and opts.seeds == 12
         finally:
             set_active(None)
+
+    @staticmethod
+    def _family_verdict(cli: bool | None, ini: bool) -> bool:
+        """Resolve ``family_verdict`` for one (CLI, ini) pair through the real configure hook."""
+
+        class _Config:
+            def addinivalue_line(self, _kind: str, _line: str) -> None:
+                pass
+
+            def getoption(self, name: str) -> object:
+                return cli if name == "dst_family_verdict" else None
+
+            def getini(self, name: str) -> object:
+                return ini if name == "dst_family_verdict" else None
+
+        try:
+            plugin.pytest_configure(_Config())
+            opts = active()
+            assert opts is not None
+            return opts.family_verdict
+        finally:
+            set_active(None)
+
+    def test_the_cli_can_turn_the_family_verdict_off_against_the_ini(self) -> None:
+        # A bare store_true flag makes the ini un-overridable: `dst_family_verdict = true` would
+        # stick for every run with no way to say *off* for one of them. The flag is tri-state, so
+        # an explicit False must not fall through to the ini.
+        assert self._family_verdict(cli=False, ini=True) is False
+
+    def test_an_absent_flag_leaves_the_ini_standing(self) -> None:
+        assert self._family_verdict(cli=None, ini=True) is True
+
+    def test_the_cli_can_turn_it_on_against_a_silent_ini(self) -> None:
+        assert self._family_verdict(cli=True, ini=False) is True
+
+    def test_off_by_default(self) -> None:
+        assert self._family_verdict(cli=None, ini=False) is False
+
+    def test_both_flags_are_registered_on_one_dest(self) -> None:
+        recorded: dict[str, dict[str, object]] = {}
+
+        class _Group:
+            def addoption(self, name: str, **kwargs: object) -> None:
+                recorded[name] = kwargs
+
+        class _Parser:
+            def getgroup(self, *_a: object, **_k: object) -> _Group:
+                return _Group()
+
+            def addini(self, *_a: object, **_k: object) -> None:
+                pass
+
+        plugin.pytest_addoption(_Parser())
+
+        on, off = recorded["--dst-family-verdict"], recorded["--no-dst-family-verdict"]
+        assert on["dest"] == off["dest"] == "dst_family_verdict"
+        # Both default to None, which is what makes "the CLI said nothing" distinguishable from
+        # "the CLI said no".
+        assert on["default"] is None and off["default"] is None
 
 
 # ....................... #

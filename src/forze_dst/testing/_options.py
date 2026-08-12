@@ -26,7 +26,7 @@ class DstOptions:
     seed + full config to reproduce it. ``None`` saves nothing."""
 
     family_verdict: bool = False
-    """``--dst-family-verdict`` / ini ``dst_family_verdict`` — also print one Šidák-corrected line
+    """``--dst-family-verdict`` / ini ``dst_family_verdict`` — also print one family-wise-corrected
     that holds **simultaneously** across every clean sweep in the session. Off by default: a family
     claim over unrelated scenarios is rarely the question anyone is asking, and the per-sweep lines
     are the honest default."""

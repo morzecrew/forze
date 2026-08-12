@@ -30,10 +30,11 @@ questions like "does anomaly-level divergence predict bug-level divergence?").
 **Discovery deficit.** Saturation is otherwise a boolean out of a heuristic with no uncertainty
 attached — under a per-seed discovery probability of 10%, eight consecutive quiet seeds happen by
 luck alone 43% of the time. :func:`coverage_deficit` puts a number on it: Good–Turing unseen mass
-and the Chao1 lower bound on richness, over a frequency table of whatever features a sweep
-collected.
+and a Chao1 richness estimate with its interval, over a frequency table of whatever features a
+sweep collected. Chao1 *targets* a lower bound on richness; the estimate itself is not one, so it
+travels with its interval and never with a ``≥``.
 
-**Multiplicity, in both directions.** :func:`sidak_level` is the per-comparison level that holds a
+**Multiplicity, in both directions.** :func:`familywise_level` is the per-comparison level that holds a
 family-wise one: scanning many cells at 95% each and reporting the family as one verdict makes a
 spurious flag likelier than not by ~15 cells. It corrects in the conservative direction for a scan,
 and in the *permissive* one for :func:`format_family_verdict`, the opt-in simultaneous claim over
@@ -619,15 +620,23 @@ class CoverageDeficit:
     never seen before. Zero means the sample stopped finding new things, not that none remain."""
 
     richness: float
-    """Chao1's estimate of the true richness — a **lower** bound, which is the safe direction for
-    a warning: it under-promises how much is left."""
+    """Chao1's **point estimate** of the true richness.
+
+    Chao1's *estimand* is a lower bound on richness — the estimator is derived that way, and that
+    is what makes it the safe target for a warning. The estimate is not: it carries sampling error
+    like any other, and on an undersampled draw it overshoots the truth about as often as not.
+    Read it with :attr:`lower`/:attr:`upper`, never as a floor on its own.
+    """
 
     lower: float
+    """The lower limit of the log-transformed Chao1 interval (Chao 1987)."""
+
     upper: float
-    """The log-transformed Chao1 interval (Chao 1987). Collapses onto :attr:`observed` when the
-    estimator has no signal to extrapolate from (``f1 <= 1`` with no doubletons)."""
+    """The upper limit. Both collapse onto :attr:`observed` when the estimator has no signal to
+    extrapolate from (``f1 <= 1`` with no doubletons)."""
 
     confidence: float
+    """The level :attr:`lower`/:attr:`upper` were computed at."""
 
     # ....................... #
 
@@ -646,6 +655,12 @@ def coverage_deficit(counts: Mapping[Any, int], *, confidence: float = 0.95) -> 
     the *frequency of frequencies*: ``f1`` (seen once) and ``f2`` (seen twice). Chao1 is
     ``S_obs + f1²/(2·f2)``, falling back to the bias-corrected ``S_obs + f1·(f1−1)/2`` when no
     feature was seen exactly twice, with the standard log-transformed interval.
+
+    **The richness is an estimate, not a floor.** Chao1's estimand is a lower bound on true
+    richness, which is why it is the right target for a warning — but the estimator has sampling
+    error, and on an undersampled draw the point estimate lands above the truth roughly half the
+    time. :attr:`CoverageDeficit.lower`/:attr:`~CoverageDeficit.upper` are what carry that, and the
+    rendered line states the estimate with its interval rather than as a bound.
 
     **Which alphabet you feed it decides whether it says anything.** Measured over every control in
     the misuse corpus, the sweep's *behavioural* coverage alphabet (the unordered set of operation
@@ -709,16 +724,21 @@ def coverage_deficit(counts: Mapping[Any, int], *, confidence: float = 0.95) -> 
 # ....................... #
 
 
-def sidak_level(confidence: float, comparisons: int) -> float:
+def familywise_level(confidence: float, comparisons: int) -> float:
     """The per-comparison confidence that holds *confidence* family-wise across *comparisons*.
 
-    Šidák: with ``m`` independent statements each true at level ``γ'``, all ``m`` hold together
-    with probability ``γ'^m``, so ``γ' = γ^(1/m)``. Scanning ``m`` cells at 95% each and reporting
-    the family as one verdict is not a 95% claim — under the null that every cell is fine,
-    ``P(≥1 spurious flag)`` is 22% at ``m = 5``, 54% at 15 and 95% at 60.
+    Reporting ``m`` statements each at 95% as one verdict is not a 95% claim about the family:
+    under the null that every one is fine, ``P(≥1 spurious flag)`` is 22% at ``m = 5``, 54% at 15
+    and 95% at 60.
 
-    Bonferroni's ``γ' = 1 − (1 − γ)/m`` is the union-bound approximation and is effectively
-    identical at these ``m``; Šidák is exact under independence and no more code.
+    **Bonferroni's union bound**, ``γ' = 1 − (1 − γ)/m``. Šidák's ``γ' = γ^(1/m)`` is tighter and
+    exact — but only *under independence*, and it is anti-conservative when the comparisons are
+    positively dependent. Nothing here establishes independence: a pytest session's sweeps can
+    share a seed range outright (``--dst-seeds=N`` gives every one of them ``range(N)``), and the
+    campaign scan's cells are grouped measurements over one corpus. The union bound needs no such
+    assumption, holds under arbitrary dependence, and costs ~4e-5 of level at the ``m`` these
+    surfaces actually use — a correction whose validity rests on an unverified premise is the
+    thing this module exists to avoid.
     """
 
     if comparisons < 1:
@@ -726,7 +746,7 @@ def sidak_level(confidence: float, comparisons: int) -> float:
     if not 0.0 < confidence < 1.0:
         raise ValueError(f"confidence must be in (0, 1), got {confidence}")
 
-    return confidence ** (1.0 / comparisons)
+    return 1.0 - (1.0 - confidence) / comparisons
 
 
 # ....................... #
@@ -737,8 +757,12 @@ def format_family_verdict(runs: Sequence[int], *, confidence: float = 0.95) -> s
 
     Per-sweep bounds are deliberately never aggregated — a combined number would claim more than
     any single sweep established. That leaves a reader with no joint statement at all, though, and
-    one is cheap: Šidák-correcting each sweep's level and quoting the widest of the corrected
-    bounds costs 1.8–2.8× width and is true of every sweep at once.
+    one is cheap: correcting each sweep's level with :func:`familywise_level` and quoting the
+    widest of the corrected bounds costs ~1.8–2.8× width and is true of every sweep at once.
+
+    The correction is the union bound precisely because these sweeps are **not** known to be
+    independent — a session commonly runs them all over one ``--dst-seeds`` range, so their
+    detection indicators share the seed stream outright.
 
     Opt-in by design: a family claim over unrelated scenarios is rarely the question anyone is
     asking, so it is offered rather than printed.
@@ -747,14 +771,14 @@ def format_family_verdict(runs: Sequence[int], *, confidence: float = 0.95) -> s
     if not runs:
         raise ValueError("at least one sweep is required")
 
-    level = sidak_level(confidence, len(runs))
+    level = familywise_level(confidence, len(runs))
     widest = max(detection_upper_bound(n, confidence=level) for n in runs)
     plural = "sweeps" if len(runs) != 1 else "sweep"
 
     return (
         f"0 violations across {len(runs)} {plural} → every sweep's per-seed detection probability "
         f"< {_render_probability(widest)} simultaneously "
-        f"({_render_confidence(confidence)} family-wise, Šidák over {len(runs)})"
+        f"({_render_confidence(confidence)} family-wise, Bonferroni over {len(runs)})"
     )
 
 
@@ -812,15 +836,25 @@ def format_coverage_deficit(deficit: CoverageDeficit) -> str:
     """The locked one-line rendering of a :class:`CoverageDeficit`, beside a sweep's stop reason.
 
     Always states both halves, because they answer different questions and can disagree honestly:
-    Chao1's ``≥`` is how many distinct features are estimated to exist, and Good–Turing's percentage
-    is how often the sample was still turning one up.
+    Chao1 is how many distinct features are estimated to exist, and Good–Turing's percentage is how
+    often the sample was still turning one up.
+
+    The richness is rendered as an **estimate with its interval**, never with a ``≥``. Chao1's
+    estimand is a lower bound on richness, but the estimate is not one — on an undersampled draw
+    it lands above the truth about as often as below, so a bound glyph in front of it would claim
+    exactly the kind of guarantee the number cannot carry. The mass reuses
+    :func:`_render_probability`, so a still-discovering sweep can never print ``0.0%``.
     """
 
+    # An exact zero is not "too small to show", it is zero — the scientific fallback exists so a
+    # nonzero mass can never read as none, and rendering 0 as ``0.0e+00`` would be noise.
+    mass = "0.00%" if deficit.unseen_mass == 0.0 else _render_probability(deficit.unseen_mass)
+
     return (
-        f"{deficit.observed} observed; ≥{math.ceil(deficit.richness)} estimated reachable "
+        f"{deficit.observed} observed; ~{round(deficit.richness)} estimated reachable "
         f"(Chao1, {_render_confidence(deficit.confidence)} CI "
         f"{math.floor(deficit.lower)}–{math.ceil(deficit.upper)}) — "
-        f"{deficit.unseen_mass:.1%} of seeds still discovering"
+        f"{mass} of seeds still discovering"
     )
 
 
