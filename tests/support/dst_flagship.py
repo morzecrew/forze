@@ -163,6 +163,11 @@ class FaultProfile:
         if not 0.0 <= self.error <= 1.0:
             raise exc.configuration(f"Fault profile {self.name!r} has an error rate outside [0, 1]")
 
+        # `Partition` refuses this too, but only when `partitions()` is finally called — so
+        # without it here one bad field is caught at declaration and another at first use.
+        if not 0.0 < self.loss <= 1.0:
+            raise exc.configuration(f"Fault profile {self.name!r} has a link loss outside (0, 1]")
+
     # ....................... #
 
     def partitions(self) -> PartitionSchedule | None:

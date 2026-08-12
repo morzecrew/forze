@@ -216,6 +216,15 @@ def check_verdict(expected: tuple[str, ...], results: dict[str, CellResult]) -> 
             violations.append(f"{name}: ran 0 seeds — an empty band proves nothing")
             continue
 
+        # The third face of the same vacuity: a cell declaring no targets has nothing that can
+        # be unreached, so the reachability rule below reduces over an empty set and passes.
+        # The profile declaration refuses this, but a result read off disk did not go through it.
+        if not result.targets:
+            violations.append(
+                f"{name}: declared no reachability targets, so nothing about the band was required",
+            )
+            continue
+
         if result.violations:
             listed = ", ".join(str(seed) for seed in result.violations[:8])
             more = "" if len(result.violations) <= 8 else f" (+{len(result.violations) - 8} more)"

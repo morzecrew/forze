@@ -129,6 +129,20 @@ class TestFaultProfiles:
         with pytest.raises(CoreException, match="error rate outside"):
             FaultProfile(name="impossible", targets=DLOCK_TARGETS, error=error)
 
+    @pytest.mark.parametrize("loss", [0.0, 1.5])
+    def test_a_link_loss_outside_its_interval_is_refused(self, loss: float) -> None:
+        """Refused here, not at first use — a declaration that validates half its fields is worse
+        than one that validates none, because the half it skips looks checked."""
+
+        with pytest.raises(CoreException, match="link loss outside"):
+            FaultProfile(
+                name="impossible",
+                targets=DLOCK_TARGETS,
+                isolated=frozenset({1}),
+                window=(0.5, 1.5),
+                loss=loss,
+            )
+
     # ....................... #
 
     def test_the_declared_profiles_reach_what_they_claim(self) -> None:
@@ -316,6 +330,20 @@ class TestVerdict:
 
         assert "never reached write-retried" in runner.check_verdict(("dlock-storm",), loaded)[0]
 
+    def test_a_cell_declaring_no_targets_fails(self, results) -> None:  # type: ignore[no-untyped-def]
+        """The third vacuous pass: no targets means nothing can be unreached.
+
+        `FaultProfile` refuses an empty target set at declaration, but the verdict reads results
+        off disk — from an artifact written by an older revision, or by a cell whose scenario
+        constant was emptied — and never went through that check.
+        """
+
+        loaded = results(_result("dlock-storm", targets=[], reached={}))
+        violations = runner.check_verdict(("dlock-storm",), loaded)
+
+        assert len(violations) == 1
+        assert "declared no reachability targets" in violations[0]
+
     def test_a_result_for_an_undeclared_cell_fails(self, results) -> None:  # type: ignore[no-untyped-def]
         """The matrix and the declaration disagreeing is itself the finding."""
 
@@ -354,6 +382,75 @@ class TestVerdict:
 
         with pytest.raises(SystemExit, match=r"dlock-storm\.json could not be read"):
             runner.load_results(tmp_path)
+
+
+# ....................... #
+
+
+class TestRendering:
+    """The table is what a human reads the next morning, so it has to survive a bad night."""
+
+    def test_a_missing_cell_renders_as_missing_not_as_a_blank_row(self, results) -> None:  # type: ignore[no-untyped-def]
+        """This row only ever renders when a shard died — which is when it must not be silent.
+
+        A blank or absent row reads as "nothing to report" beside four healthy ones.
+        """
+
+        table = runner.render(("dlock-storm", "hlc"), results(_result("dlock-storm")))
+
+        assert "**no result**" in table
+        assert "`hlc`" in table
+
+    def test_a_reached_target_is_rendered_as_a_rate(self, results) -> None:  # type: ignore[no-untyped-def]
+        """A count without its denominator cannot be compared across nights."""
+
+        loaded = results(
+            _result("dlock-storm", seeds=100, reached={"lock-contended": 100, "write-retried": 37}),
+        )
+        table = runner.render(("dlock-storm",), loaded)
+
+        assert "write-retried 37/100" in table
+        assert "lock-contended 100/100" in table
+
+    def test_violations_are_rendered_emphasised(self, results) -> None:  # type: ignore[no-untyped-def]
+        """The one number a reader scans for; plain text loses it among four zeroes."""
+
+        table = runner.render(("dlock-storm",), results(_result("dlock-storm", violations=[1, 2])))
+
+        assert "**2**" in table
+
+
+# ....................... #
+
+
+class TestCommandLine:
+    """The entry points CI actually invokes, exit codes included."""
+
+    def test_matrix_mode_emits_the_cells_as_json(self, capsys) -> None:  # type: ignore[no-untyped-def]
+        """The workflow feeds this straight into `fromJSON`, so it must parse as a matrix include."""
+
+        assert runner.main(["--matrix"]) == 0
+
+        cells = json.loads(capsys.readouterr().out)
+
+        assert [entry["cell"] for entry in cells] == [c.name for c in runner.declared_cells()]
+
+    def test_a_clean_verdict_exits_zero(self, tmp_path: Path) -> None:
+        (tmp_path / "a.json").write_text(json.dumps(_result("dlock-storm")), encoding="utf-8")
+
+        assert runner.main(["--verdict", str(tmp_path), "--expect", "dlock-storm"]) == 0
+
+    def test_a_violated_verdict_exits_one(self, tmp_path: Path) -> None:
+        payload = _result("dlock-storm", violations=[3])
+        (tmp_path / "a.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        assert runner.main(["--verdict", str(tmp_path), "--expect", "dlock-storm"]) == 1
+
+    def test_no_mode_is_an_error_not_a_silent_success(self) -> None:
+        """Exit 0 having done nothing is the worst answer a gate can give."""
+
+        with pytest.raises(SystemExit):
+            runner.main([])
 
 
 # ....................... #
