@@ -19,12 +19,17 @@ state per call, so distinct seeds share nothing — the inter-seed parallelism t
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
+from functools import partial
+from types import MappingProxyType
+from typing import final
+
+import attrs
 
 from forze.application.contracts.dlock import DistributedLockSpec
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.execution import ExecutionContext
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import HlcTimestamp, HybridLogicalClock, monotonic
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_dst import Cluster, SimulationConfig
@@ -100,6 +105,127 @@ DLOCK_INVARIANTS = (_MUTUAL_EXCLUSION, _NO_LOST_UPDATE)
 # held lock, and the partition struck during the guarded write).
 DLOCK_TARGETS = frozenset({"lock-contended", "write-retried"})
 
+CONTENDED = "lock-contended"
+WRITE_RETRIED = "write-retried"
+
+
+# ....................... #
+# The fault-profile axis — the environment the same critical section must survive.
+
+
+@final
+@attrs.define(frozen=True, kw_only=True)
+class FaultProfile:
+    """One environment for the dlock scenario: same workload, different infrastructure hostility.
+
+    A profile carries its own :attr:`targets` rather than sharing :data:`DLOCK_TARGETS`, because
+    which dangerous states are *reachable at all* is a property of the environment: a profile that
+    injects no errors and cuts no link can never drive ``write-retried``, so a shared target set
+    would fail every run of it. Coupling the two keeps both halves honest — the targets say what
+    this environment is supposed to provoke, and the sweep fails if it did not.
+    """
+
+    name: str
+    """Cell name, used in the nightly matrix and in artifact filenames."""
+
+    targets: frozenset[str]
+    """The reachability labels this environment must drive. Never empty — see below."""
+
+    isolated: frozenset[int] = frozenset()
+    """Nodes cut from ``document_command`` during :attr:`window`."""
+
+    window: tuple[float, float] | None = None
+    """The partition's ``(start, end)`` in virtual seconds, or ``None`` for no partition."""
+
+    loss: float = 1.0
+    """Drop probability for an isolated node's gated calls — ``1.0`` is a clean cut, below that a
+    flaky link where some calls slip through."""
+
+    error: float = 0.0
+    """Probability that a ``document_command`` call fails outright, partition or not."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # An empty target set passes `reachability(...).satisfied` vacuously, which would make this
+        # profile's whole band green without proving it ever raced. Refuse it at declaration.
+        if not self.targets:
+            raise exc.configuration(f"Fault profile {self.name!r} declares no reachability targets")
+
+        if (self.window is None) != (not self.isolated):
+            raise exc.configuration(
+                f"Fault profile {self.name!r} must declare a window and isolated nodes together",
+            )
+
+        if self.window is not None and self.window[0] >= self.window[1]:
+            raise exc.configuration(f"Fault profile {self.name!r} has an empty partition window")
+
+        if not 0.0 <= self.error <= 1.0:
+            raise exc.configuration(f"Fault profile {self.name!r} has an error rate outside [0, 1]")
+
+    # ....................... #
+
+    def partitions(self) -> PartitionSchedule | None:
+        """The partition schedule this profile describes, or ``None`` when it cuts nothing."""
+
+        if self.window is None:
+            return None
+
+        start, end = self.window
+
+        return PartitionSchedule(
+            windows=(Partition(start=start, end=end, isolated=self.isolated, loss=self.loss),),
+            surfaces=frozenset({"document_command"}),
+        )
+
+
+# ....................... #
+
+DLOCK_PROFILES: Mapping[str, FaultProfile] = MappingProxyType(
+    {
+        profile.name: profile
+        for profile in (
+            # The historical shape — a clean cut of one node plus a moderate error rate. Every
+            # other profile is a deliberate departure from exactly one of its axes.
+            FaultProfile(
+                name="baseline",
+                isolated=frozenset({1}),
+                window=(0.5, 1.5),
+                error=0.3,
+                targets=DLOCK_TARGETS,
+            ),
+            # No partition, no injected errors: the lock alone against pure contention. A violation
+            # here is the mutual-exclusion logic itself, with no infrastructure noise to blame — the
+            # one profile whose failure has a single possible cause. `write-retried` is
+            # unreachable by construction, so it is not declared.
+            FaultProfile(
+                name="contention",
+                targets=frozenset({CONTENDED}),
+            ),
+            # A lossy link rather than a clean break: some calls slip through mid-partition, so the
+            # retry loop sees interleaved success and failure instead of a solid outage block.
+            FaultProfile(
+                name="flaky-link",
+                isolated=frozenset({1}),
+                window=(0.3, 1.8),
+                loss=0.5,
+                error=0.1,
+                targets=DLOCK_TARGETS,
+            ),
+            # Two of three nodes cut, for most of the run, with heavy errors on top: the harshest
+            # environment the scenario is expected to survive.
+            FaultProfile(
+                name="storm",
+                isolated=frozenset({0, 2}),
+                window=(0.2, 2.0),
+                error=0.7,
+                targets=DLOCK_TARGETS,
+            ),
+        )
+    },
+)
+"""Every environment the nightly runs the dlock scenario in, by name."""
+
 
 def _deps(state: MockState) -> MockDepsModule:
     return MockDepsModule(state=state)
@@ -169,27 +295,26 @@ def guarded_cluster(counter: dict[str, object]) -> Cluster:
     )
 
 
-def dlock_config(seeds: Sequence[int], *, isolated: frozenset[int] = frozenset({1})) -> SimulationConfig:
+def dlock_config(seeds: Sequence[int], *, profile: str = "baseline") -> SimulationConfig:
+    """The simulation config for a seed band under the named environment."""
+
+    chosen = DLOCK_PROFILES[profile]
+    rules = (FaultRule(surface="document_command", error=chosen.error),) if chosen.error else ()
+
     return SimulationConfig(
         seeds=seeds,
-        cluster=ClusterConfig(
-            nodes=3,
-            partitions=PartitionSchedule(
-                windows=(Partition(start=0.5, end=1.5, isolated=isolated),),
-                surfaces=frozenset({"document_command"}),
-            ),
-        ),
-        faults=FaultPolicy(rules=(FaultRule(surface="document_command", error=0.3),)),
-        reachability_targets=DLOCK_TARGETS,
+        cluster=ClusterConfig(nodes=3, partitions=chosen.partitions()),
+        faults=FaultPolicy(rules=rules),
+        reachability_targets=chosen.targets,
     )
 
 
-def run_dlock_seed(seed: int) -> SeedOutcome:
+def run_dlock_seed(seed: int, profile: str = "baseline") -> SeedOutcome:
     """Run the guarded-dlock scenario at one *seed* and report its outcome (picklable for the pool)."""
 
     counter = shared_counter()
     cluster = guarded_cluster(counter)
-    histories = cluster.histories(dlock_config([seed]))
+    histories = cluster.histories(dlock_config([seed], profile=profile))
 
     behaviors = frozenset[Behavior]().union(
         *(behavioral_coverage(history) for history in histories)
@@ -198,6 +323,20 @@ def run_dlock_seed(seed: int) -> SeedOutcome:
     violated = any(bool(check(history, DLOCK_INVARIANTS)) for history in histories)
 
     return SeedOutcome(seed=seed, violated=violated, behaviors=behaviors, reached=reached)
+
+
+def dlock_target(profile: str) -> Callable[[int], SeedOutcome]:
+    """A one-argument seed target bound to *profile*, picklable for the process pool.
+
+    ``partial`` of a module-level function pickles by reference, so a worker rebuilds it by
+    importing this module — the same reason the seed runners are top-level functions and not
+    closures.
+    """
+
+    if profile not in DLOCK_PROFILES:
+        raise exc.configuration(f"Unknown dlock fault profile {profile!r}")
+
+    return partial(run_dlock_seed, profile=profile)
 
 
 # ----------------------- #
