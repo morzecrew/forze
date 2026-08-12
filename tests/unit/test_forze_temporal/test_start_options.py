@@ -5,7 +5,6 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import attrs
-
 import pytest
 from pydantic import BaseModel
 

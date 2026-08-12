@@ -4,7 +4,9 @@ The pump itself only means anything against a running worker (see the integratio
 what is checked here is the arithmetic and the two cases that must produce *no* pump.
 """
 
+import asyncio
 from datetime import timedelta
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -15,6 +17,7 @@ from forze.testing import context_from_deps
 from forze_temporal.interceptors.context import (
     ActivityContextInboundInterceptor,
     ExecutionContextInterceptor,
+    _heartbeating,
     heartbeat_interval,
 )
 
@@ -94,3 +97,67 @@ class TestWiring:
         )
 
         assert built.auto_heartbeat is False
+
+
+# ....................... #
+
+
+class TestPump:
+    """What the beating itself may and may not do to the activity around it."""
+
+    @pytest.mark.asyncio
+    async def test_a_failing_beat_is_reported_once_not_per_beat(self) -> None:
+        """A beat that fails usually keeps failing, at a few hundred milliseconds apart.
+
+        Reported every time, the one line that says something is buried under thousands
+        repeating it — so the pump keeps trying and stays quiet after the first.
+        """
+
+        beats = MagicMock(side_effect=RuntimeError("no activity context"))
+        recorded = MagicMock()
+
+        with (
+            patch("forze_temporal.interceptors.context.activity.heartbeat", beats),
+            patch("forze_temporal.interceptors.context.logger", recorded),
+        ):
+            async with _heartbeating(0.001):
+                await asyncio.sleep(0.08)
+
+        assert beats.call_count > 3, "the pump gave up after a failed beat"
+        assert recorded.warning.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_the_pump_never_replaces_the_activity_outcome(self) -> None:
+        """The activity's exception must reach the caller, not a bookkeeping error.
+
+        Anything raised out of the teardown would *replace* what the activity returned or
+        raised — a failure the caller has no way to interpret.
+        """
+
+        beats = MagicMock(side_effect=RuntimeError("no activity context"))
+
+        with (
+            patch("forze_temporal.interceptors.context.activity.heartbeat", beats),
+            patch("forze_temporal.interceptors.context.logger", MagicMock()),
+            pytest.raises(ValueError, match="the activity itself"),
+        ):
+            async with _heartbeating(0.001):
+                await asyncio.sleep(0.02)
+
+                raise ValueError("the activity itself failed")
+
+    @pytest.mark.asyncio
+    async def test_the_pump_stops_with_the_block(self) -> None:
+        """No task outlives the activity it was beating for."""
+
+        beats = MagicMock()
+
+        with patch("forze_temporal.interceptors.context.activity.heartbeat", beats):
+            async with _heartbeating(0.001):
+                await asyncio.sleep(0.02)
+
+            settled = beats.call_count
+
+        await asyncio.sleep(0.02)
+
+        assert beats.call_count == settled

@@ -98,6 +98,8 @@ async def _heartbeating(interval: float) -> AsyncGenerator[None]:
     """
 
     async def _pump() -> None:
+        reported = False
+
         while True:
             await asyncio.sleep(interval)
 
@@ -108,7 +110,14 @@ async def _heartbeating(interval: float) -> AsyncGenerator[None]:
                 # A beat can fail on its own (a completed activity's context, a closing
                 # loop). Keep beating: the next one may well land, and giving up quietly
                 # would let the activity time out for a reason nobody can see.
-                logger.warning("Temporal auto-heartbeat failed", exc_info=True)
+                #
+                # Once per activity, though. A failing beat usually keeps failing, and at
+                # a third of the heartbeat timeout that is a warning every few hundred
+                # milliseconds — the one line that says something, buried under the
+                # thousands that repeat it.
+                if not reported:
+                    reported = True
+                    logger.warning("Temporal auto-heartbeat failed", exc_info=True)
 
     task = asyncio.create_task(_pump(), name="temporal-auto-heartbeat")
 

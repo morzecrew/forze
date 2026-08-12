@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,7 +18,7 @@ from forze.base.exceptions import CoreException, ExceptionKind
 
 pytest.importorskip("temporalio")
 
-from forze.application.execution import Deps
+from forze.application.execution import Deps, ExecutionRuntime
 from forze.testing import context_from_deps
 from forze_temporal import (
     DEFAULT_WORKER_GRACEFUL_SHUTDOWN,
@@ -31,7 +32,9 @@ from forze_temporal.kernel.client import TemporalClient
 class _StubWorker:
     """Stands in for ``temporalio.worker.Worker``; records how it was built and stopped."""
 
-    instances: list[_StubWorker] = []
+    # Per-class on purpose: each subclass gets its own registry, reset by the fixture
+    # below, so one test's workers can never be counted by another's.
+    instances: ClassVar[list[_StubWorker]] = []
 
     def __init__(self, client, **kwargs) -> None:
         self.client = client
@@ -147,9 +150,7 @@ class TestWiringRefusals:
         because the two constants live in different packages and would drift silently.
         """
 
-        from forze.application.execution import ExecutionRuntime
-
-        assert DEFAULT_WORKER_GRACEFUL_SHUTDOWN <= ExecutionRuntime().shutdown_step_timeout
+        assert ExecutionRuntime().shutdown_step_timeout >= DEFAULT_WORKER_GRACEFUL_SHUTDOWN
 
     def test_step_declares_it_needs_a_long_running_host(self) -> None:
         """A serverless profile must refuse this step at assembly, not at 3am."""
