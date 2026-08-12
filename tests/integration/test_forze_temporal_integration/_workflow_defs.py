@@ -1,5 +1,6 @@
 """Module-scope workflow and activity definitions for Temporal integration tests."""
 
+import asyncio
 from datetime import timedelta
 from typing import Any
 
@@ -236,3 +237,100 @@ class ItRawCoreFailureWorkflow:
             from forze.base.exceptions import exc
 
         raise exc.validation("bad charge", code="charge.invalid")
+
+
+# ----------------------- #
+# Escape hatch (``TemporalClient.native``) — payload sealing at rest.
+
+
+class EchoIn(BaseModel):
+    """Input for :class:`ItEchoWorkflow`; carries a marker the test greps for at rest."""
+
+    marker: str
+
+
+class EchoOut(BaseModel):
+    """Output for :class:`ItEchoWorkflow`."""
+
+    echoed: str
+
+
+@workflow.defn(name="ItEchoWorkflow")
+class ItEchoWorkflow:
+    """Echoes its input, so both the argument and the result payload carry the marker."""
+
+    @workflow.run
+    async def run(self, inp: EchoIn) -> EchoOut:
+        return EchoOut(echoed=inp.marker)
+
+
+# ----------------------- #
+# Worker lifecycle — activity drain at shutdown.
+
+# Records whether an in-flight activity finished or was cut off; cleared per test.
+DRAIN_RECORDER: list[str] = []
+
+
+@activity.defn(name="it_slow_drain")
+async def it_slow_drain(seconds: float) -> str:
+    """Sleeps, recording whether it reached the end or was cancelled mid-flight."""
+
+    DRAIN_RECORDER.append("started")
+
+    try:
+        await asyncio.sleep(seconds)
+
+    except asyncio.CancelledError:
+        DRAIN_RECORDER.append("cancelled")
+        raise
+
+    DRAIN_RECORDER.append("finished")
+
+    return "done"
+
+
+@workflow.defn(name="ItSlowDrainWorkflow")
+class ItSlowDrainWorkflow:
+    """Runs one slow activity, so a shutdown lands while that activity is in flight."""
+
+    @workflow.run
+    async def run(self, seconds: float) -> str:
+        return await workflow.execute_activity(
+            it_slow_drain,
+            args=[seconds],
+            start_to_close_timeout=timedelta(seconds=60),
+        )
+
+
+# ----------------------- #
+# Activity auto-heartbeat.
+
+
+@activity.defn(name="it_heartbeat_probe")
+async def it_heartbeat_probe(seconds: float) -> str:
+    """Sleeps past its own ``heartbeat_timeout``, reporting nothing while it does.
+
+    Exactly the activity the auto-heartbeat exists for: alive, busy, and with no
+    incremental state worth a manual ``activity.heartbeat(details)``.
+    """
+
+    await asyncio.sleep(seconds)
+
+    return "survived"
+
+
+@workflow.defn(name="ItHeartbeatWorkflow")
+class ItHeartbeatWorkflow:
+    """One slow activity with a short heartbeat timeout and no retries."""
+
+    @workflow.run
+    async def run(self, seconds: float) -> str:
+        return await workflow.execute_activity(
+            it_heartbeat_probe,
+            args=[seconds],
+            start_to_close_timeout=timedelta(seconds=60),
+            heartbeat_timeout=timedelta(seconds=2),
+            # One attempt, so a heartbeat timeout surfaces as a failed run instead of
+            # being retried into an eventual success.
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )

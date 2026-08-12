@@ -1,7 +1,7 @@
 from .client import TemporalClient
 from .port import TemporalClientPort
 from .routed_client import RoutedTemporalClient
-from .value_objects import TemporalConfig
+from .value_objects import TemporalConfig, TemporalStartOptions
 
 # ----------------------- #
 
@@ -10,4 +10,5 @@ __all__ = [
     "TemporalClient",
     "TemporalClientPort",
     "TemporalConfig",
+    "TemporalStartOptions",
 ]

@@ -62,6 +62,8 @@ if run.status is DurableWorkflowRunStatus.COMPLETED:
 - A durable workflow needs a real backend — [Temporal](../integrations/temporal.md)
   or [Inngest](../integrations/inngest.md) — for its durability, retries, and
   timers. The queue path runs on any [queue backend](../integrations/rabbitmq.md).
+- On Temporal the workflow only runs once a **worker** polls its task queue — see
+  [Run a Temporal worker](temporal-worker.md) for that process.
 - A stable `workflow_id` makes `start` idempotent (`raise_on_already_started`
   controls the collision behaviour).
 - To kick the work off *reliably* from a request — only if the write commits —

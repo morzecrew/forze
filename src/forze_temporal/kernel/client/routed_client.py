@@ -6,7 +6,7 @@ from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
-from temporalio.client import WorkflowHandle
+from temporalio.client import Client, WorkflowHandle
 
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowRunDescription,
@@ -20,7 +20,7 @@ from forze.base.exceptions import exc
 from .client import TemporalClient
 from .port import TemporalClientPort
 from .schedule_types import TemporalScheduleListPage
-from .value_objects import TemporalConfig
+from .value_objects import TemporalConfig, TemporalStartOptions
 
 # ----------------------- #
 
@@ -67,6 +67,31 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
 
     # ....................... #
 
+    @property
+    def native(self) -> Client:
+        """The active tenant's configured SDK client — the escape hatch, per route.
+
+        Same contract as :attr:`TemporalClient.native`, resolved for the tenant bound to
+        the calling scope. Synchronous like :meth:`get_workflow_handle`, so it can only
+        hand back a client this route has already connected: reach for an async method
+        first (``health()``, ``start_workflow``) to open the tenant's connection.
+        """
+
+        self._pool.require_started()
+
+        tid = self._require_tenant_id()
+        inner = self._peek_client(tid)
+
+        if inner is None:
+            raise exc.internal(
+                "No Temporal client for this tenant in cache; call an async method "
+                "(e.g. :meth:`start_workflow` or :meth:`health`) first to connect.",
+            )
+
+        return inner.native
+
+    # ....................... #
+
     async def health(self) -> tuple[str, bool]:
         inner = await self._get_client()
 
@@ -82,6 +107,7 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
         *,
         workflow_id: str,
         raise_on_already_started: bool = True,
+        options: TemporalStartOptions | None = None,
     ) -> WorkflowHandle[Any, Any]:
         inner = await self._get_client()
         return await inner.start_workflow(
@@ -90,6 +116,7 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
             arg,
             workflow_id=workflow_id,
             raise_on_already_started=raise_on_already_started,
+            options=options,
         )
 
     # ....................... #

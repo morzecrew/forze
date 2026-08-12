@@ -77,4 +77,5 @@ class ConfigurableTemporalWorkflowCommand(DurableWorkflowCommandDepPort):
             spec=spec,
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
+            start_options=self.config.start_options,
         )

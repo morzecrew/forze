@@ -181,6 +181,21 @@ temporal_lifecycle_step(host="...", workflow_configs={...})
 
 Schedules require a Temporal server with the Schedules API (not the time-skipping test environment).
 
+## Worker process
+
+Workflows only run once a worker polls their task queue. Run it as a lifecycle step in its own process rather than hand-writing the connect/shutdown loop:
+
+```python
+temporal_worker_lifecycle_step(
+    client=client,
+    task_queue="project-tasks",
+    workflows=[ProjectOnboardingWorkflow],
+    activities=[provision_project],
+)
+```
+
+Order it after `temporal_lifecycle_step`: the worker rides that client's connection, so it inherits the data converter and the context interceptor. Shutdown gives in-flight activities a graceful window (`graceful_shutdown`, 10 s by default) instead of cancelling them. That window shares the runtime's `shutdown_step_timeout` budget, so raise both together or neither.
+
 ## Testing
 
 For handlers that only need to verify a workflow command was issued, register fake `DurableWorkflowCommandDepKey` / `DurableWorkflowQueryDepKey` factories in `Deps` (for example via `MockDepsModule` or a test `DepsRegistry`). Schedule handlers can use fake `DurableWorkflowScheduleCommandDepKey` / `DurableWorkflowScheduleQueryDepKey` factories similarly. For workflow definition tests, follow the [Temporal integration](https://morzecrew.github.io/forze/latest/integrations/temporal/) testing section.
@@ -191,7 +206,7 @@ For handlers that only need to verify a workflow command was issued, register fa
 2. **Putting Temporal task queues in `DurableWorkflowSpec`** — queues belong in `TemporalWorkflowConfig`.
 3. **Using raw Temporal SDK types in handlers** — keep handlers on `DurableWorkflowSpec`, ports, and Pydantic DTOs.
 4. **Skipping lifecycle** — the client connects through `temporal_lifecycle_step`.
-5. **Ignoring context propagation in workers** — register interceptors on both client and worker when identity/correlation matters.
+5. **Passing `ExecutionContextInterceptor` to both the client and the `Worker`** — the SDK prepends client interceptors that are also worker interceptors, so giving it in both places runs it twice. Register it on the client only.
 
 ## Reference
 
