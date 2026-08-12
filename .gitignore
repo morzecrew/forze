@@ -48,6 +48,8 @@ coverage.xml
 coverage.json
 conformance-*.json
 .conformance/
+nightly-*.json
+.nightly/
 *.cover
 *.py.cover
 .hypothesis/
