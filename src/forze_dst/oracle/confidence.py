@@ -15,16 +15,25 @@ for the overlap relation and the injected-environment timeline for what actually
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections import Counter
+from collections.abc import Iterable, Mapping
 from functools import cached_property
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, final
 
 import attrs
 
+from forze_dst.oracle.coverage import NO_SHAPES, behavioral_fingerprint
 from forze_dst.oracle.horizon import HorizonAnalysis, HorizonProbe
 from forze_dst.oracle.recorder import History
 from forze_dst.oracle.report import CausalGraph
-from forze_dst.stats import format_clean_verdict
+from forze_dst.stats import (
+    CoverageDeficit,
+    coverage_deficit,
+    format_clean_verdict,
+    format_coverage_deficit,
+    format_withheld_verdict,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -34,6 +43,17 @@ if TYPE_CHECKING:
     from forze_dst.oracle.witness import InvariantAccounting
 
 # ----------------------- #
+
+REDUNDANCY_RATIO = 0.05
+"""Warn below this many distinct execution shapes per seed. Calibrated against the misuse corpus's
+own spread rather than picked round: swept at 200 seeds, its 18 controls land anywhere from 1 to
+170 distinct shapes, and the observed ratios leave a clean gap — ten controls at 0.005–0.020, then
+nothing until 0.060. This threshold sits inside that gap, 2.5× above the loudest case it warns on
+and 1.2× below the quietest it stays silent for."""
+
+REDUNDANCY_MIN_SEEDS = 50
+"""…and only once the sweep is long enough for the ratio to mean anything. One shape in twenty
+seeds is not evidence of redundancy, it is a short sweep."""
 
 
 def _fault_label(rule: Any) -> str:
@@ -93,6 +113,77 @@ class ConfidenceReport:
     """Per-invariant witness accounting, when the simulation opted in (declared witnesses or
     horizon declarations). Makes the verdict's oracle-set clause countable."""
 
+    data_dependent_stop: str | None = None
+    """The rule that ended the sweep early by *looking at the runs*, or ``None`` when the seed
+    count was fixed before any of them existed. A bound is a statement about a denominator, and
+    Clopper–Pearson's exactness is a fixed-design guarantee — under a data-dependent stopping
+    rule ``seeds_run`` is a random variable whose value depends on the runs being summarized, so
+    :meth:`verdict` states the stop reason and withholds the number."""
+
+    shape_counts: Mapping[str, int] = NO_SHAPES
+    """Execution-shape fingerprint → how many of the swept runs produced it. The frequency table
+    :attr:`deficit` extrapolates from; empty when the sweep folded no runs."""
+
+    at_risk_runs: tuple[tuple[str, int], ...] = ()
+    """``(invariant, runs that put it at risk)`` — the per-invariant denominators the single
+    sweep-wide ``S`` stands in for. Empty when exposure was not measured."""
+
+    unmeasured_exposure: tuple[str, ...] = ()
+    """Invariants whose read footprint is opaque, so their exposure could not be counted. Named
+    rather than assumed to be the full sweep."""
+
+    # ....................... #
+
+    def _in_scope(self, name: str) -> bool:
+        """Whether the verdict's scope clause actually speaks for *name*.
+
+        With accounting on, the clause names the WITNESSED set — reporting an exposure gap for an
+        invariant the sentence already excludes (declared out-of-horizon, unexercisable) would
+        qualify a claim that was never made.
+        """
+
+        return self.accounting is None or name in set(self.accounting.witnessed)
+
+    # ....................... #
+
+    def weakest_exposure(self, runs: int | None = None) -> tuple[str, int] | None:
+        """The invariant the aggregate bound overstates most, or ``None`` when it overstates none.
+
+        Scoped by :meth:`_in_scope`. ``None`` once every in-scope invariant was at risk in every
+        run, because then the aggregate is already its own weakest member and the extra line
+        would be noise. *runs* is the denominator the verdict is about to print, so the comparison
+        and the rendered fraction can never disagree.
+        """
+
+        seeds = self.seeds_run if runs is None else runs
+        exposures = [(name, n) for name, n in self.at_risk_runs if self._in_scope(name)]
+
+        if not exposures:
+            return None
+
+        weakest = min(exposures, key=lambda pair: (pair[1], pair[0]))
+
+        return weakest if weakest[1] < seeds else None
+
+    # ....................... #
+
+    @property
+    def scoped_unmeasured_exposure(self) -> tuple[str, ...]:
+        """Invariants with an unmeasurable exposure that the verdict's clause *does* speak for."""
+
+        return tuple(name for name in self.unmeasured_exposure if self._in_scope(name))
+
+    # ....................... #
+
+    @cached_property
+    def deficit(self) -> CoverageDeficit | None:
+        """How much of the execution-shape alphabet the sweep did *not* reach (``None`` when it
+        folded no runs). Saturation measured rather than asserted — see
+        :func:`~forze_dst.stats.coverage_deficit` for why this runs on shapes and not on the
+        behaviour alphabet."""
+
+        return coverage_deficit(self.shape_counts) if self.shape_counts else None
+
     # ....................... #
 
     @cached_property
@@ -144,10 +235,42 @@ class ConfidenceReport:
             for name, kinds in self.marker_blind_invariants
         )
 
+        if self.redundant_seeds:
+            shapes = len(self.shape_counts)
+            out.append(
+                f"{self.seeds_run} seeds explored {shapes} distinct execution "
+                f"{'shape' if shapes == 1 else 'shapes'} — the bound counts seeds, not "
+                "distinct trials"
+            )
+
         if self.accounting is not None:
             out.extend(self.accounting.problems)
 
         return tuple(out)
+
+    # ....................... #
+
+    @property
+    def redundant_seeds(self) -> bool:
+        """Whether the sweep's seeds bought far fewer distinct trials than their count suggests.
+
+        Every bound treats ``S`` seeds as ``S`` independent chances. Measured on the misuse corpus,
+        200 seeds routinely explore one to three distinct execution shapes — so were the effective
+        count 120 of 1000, an honest bound would be 2.47% against a claimed 0.30%.
+
+        This stays a **warning and never a corrected denominator.** The shape fingerprint
+        deliberately erases entity ids, and entity collision is exactly what the collision-pool
+        regimes vary, so distinct-shape count is a coarse *lower* proxy for effective sample size.
+        Substituting it into the bound would trade a known overstatement for an unknown
+        understatement — the same register as ``never_raced``, which names a gap without repricing
+        anything.
+        """
+
+        return (
+            bool(self.shape_counts)
+            and self.seeds_run >= REDUNDANCY_MIN_SEEDS
+            and len(self.shape_counts) / self.seeds_run < REDUNDANCY_RATIO
+        )
 
     # ....................... #
 
@@ -163,20 +286,33 @@ class ConfidenceReport:
         """The locked clean-run verdict for this sweep, accounting-scoped when available.
 
         The single place the countable clause is threaded, so every surface that prints the
-        verdict (this report, the coverage report, the CLI) states the identical claim.
+        verdict (this report, the coverage report, the CLI) states the identical claim — including
+        the refusal to print one at all when :attr:`data_dependent_stop` says ``n`` came from the
+        data.
         """
+
+        seeds = self.seeds_run if runs is None else runs
+
+        if self.data_dependent_stop is not None:
+            return format_withheld_verdict(seeds, stop_reason=self.data_dependent_stop)
 
         accounting = self.accounting
 
         if accounting is None:
-            return format_clean_verdict(self.seeds_run if runs is None else runs)
+            return format_clean_verdict(
+                seeds,
+                weakest=self.weakest_exposure(seeds),
+                unmeasured_exposure=self.scoped_unmeasured_exposure,
+            )
 
         return format_clean_verdict(
-            self.seeds_run if runs is None else runs,
+            seeds,
             witnessed=len(accounting.witnessed),
             declared=accounting.declared,
             unexercisable=accounting.unexercisable,
             unaccounted=accounting.unaccounted,
+            weakest=self.weakest_exposure(seeds),
+            unmeasured_exposure=self.scoped_unmeasured_exposure,
         )
 
     # ....................... #
@@ -184,9 +320,10 @@ class ConfidenceReport:
     def format(self) -> str:
         """Render a short human summary — what a green run did and didn't exercise."""
 
+        stop = f"  ({self.data_dependent_stop})" if self.data_dependent_stop is not None else ""
         lines = [
             "DST confidence",
-            f"  seeds run:    {self.seeds_run}",
+            f"  seeds run:    {self.seeds_run}{stop}",
             f"  raced:        {len(self.raced_ops)}/{len(self.ran_ops)} operations overlapped another",
         ]
 
@@ -205,6 +342,19 @@ class ConfidenceReport:
                 line += f" / {len(self.accounting.unexercisable)} unexercisable under this config"
             lines.append(line)
 
+        # The denominator facts sit together, after what the sweep exercised: how much of the
+        # shape space it reached, and how much of the sweep each invariant was actually at risk in.
+        deficit = self.deficit
+        if deficit is not None:
+            lines.append(f"  exec. shapes: {format_coverage_deficit(deficit)}")
+
+        if self.at_risk_runs:
+            narrowest = min(n for _, n in self.at_risk_runs)
+            lines.append(
+                f"  at risk:      {narrowest}–{max(n for _, n in self.at_risk_runs)} "
+                f"of {self.seeds_run} runs per invariant"
+            )
+
         if self.warnings:
             lines.append("  ⚠ confidence gaps:")
             lines.extend(f"      • {warning}" for warning in self.warnings)
@@ -212,9 +362,11 @@ class ConfidenceReport:
             lines.append("  ✓ every operation raced and every declared fault fired")
 
         # The quantitative verdict sits adjacent to the gaps so the bound is never read as
-        # stronger than the coverage supports.
+        # stronger than the coverage supports. A withheld verdict is not a positive result and
+        # does not get the tick.
         if self.violations_seen == 0 and self.seeds_run > 0:
-            lines.append(f"  ✓ {self.verdict()}")
+            mark = "⚠" if self.data_dependent_stop is not None else "✓"
+            lines.append(f"  {mark} {self.verdict()}")
 
         return "\n".join(lines)
 
@@ -228,12 +380,26 @@ class ConfidenceProbe:
 
     Incremental by design — the sweep feeds each history in as it runs, so thousands of seeds
     never have to be held in memory at once.
+
+    Declare *invariants* here (not only at :meth:`report`) to have per-run exposure counted:
+    "at risk" is a per-history fact, so it cannot be recovered afterwards from the folded
+    accumulators. Without it the report still names every gap it always did, and simply says the
+    exposure was not measured.
     """
+
+    invariants: Sequence[Invariant] = ()
 
     _ran: set[str] = attrs.field(factory=set)
     _raced: set[str] = attrs.field(factory=set)
     _fired_calls: set[tuple[Any, Any, str]] = attrs.field(factory=set)
-    _horizon: HorizonProbe = attrs.field(factory=HorizonProbe)
+    _horizon: HorizonProbe = attrs.field(
+        init=False,
+        default=attrs.Factory(
+            lambda self: HorizonProbe(invariants=self.invariants),  # type: ignore[misc]
+            takes_self=True,
+        ),
+    )
+    _shapes: Counter[str] = attrs.field(factory=Counter)
     _seeds: int = 0
 
     # ....................... #
@@ -243,6 +409,9 @@ class ConfidenceProbe:
 
         self._seeds += 1
         self._horizon.observe(history)
+        # One counter bucket per run — the frequency-of-frequencies the deficit estimator needs
+        # survives, while the histories themselves still do not have to.
+        self._shapes[behavioral_fingerprint(history)] += 1
         graph = CausalGraph.from_history(history)
 
         for span in graph.spans:
@@ -271,6 +440,7 @@ class ConfidenceProbe:
         violations: int = 0,
         invariants: Sequence[Invariant] = (),
         accounting: InvariantAccounting | None = None,
+        data_dependent_stop: str | None = None,
     ) -> ConfidenceReport:
         """Build the report; *faults* is the declared policy whose rules are checked for firing.
 
@@ -278,7 +448,9 @@ class ConfidenceProbe:
         histories, so the caller supplies it; it gates the clean-run bound in the report.
         *invariants* enables the horizon analysis (vacuity / marker-blindness flags over the
         folded histories); *accounting* is the simulation's witness accounting, threaded so the
-        verdict's oracle-set clause is countable.
+        verdict's oracle-set clause is countable. *data_dependent_stop* names the rule that ended
+        the sweep by reading the runs (the caller knows the design; the probe only sees
+        histories), which withholds the bound.
         """
 
         declared: list[str] = []
@@ -306,6 +478,10 @@ class ConfidenceProbe:
             vacuous_invariants=horizon.vacuous,
             marker_blind_invariants=horizon.marker_blind,
             accounting=accounting,
+            data_dependent_stop=data_dependent_stop,
+            shape_counts=MappingProxyType(dict(self._shapes)),
+            at_risk_runs=horizon.at_risk,
+            unmeasured_exposure=horizon.unmeasured_exposure,
         )
 
 
@@ -319,6 +495,7 @@ def assess_confidence(
     violations: int = 0,
     invariants: Sequence[Invariant] = (),
     accounting: InvariantAccounting | None = None,
+    data_dependent_stop: str | None = None,
 ) -> ConfidenceReport:
     """Read a sweep's recorded *histories* into a :class:`ConfidenceReport`.
 
@@ -326,14 +503,20 @@ def assess_confidence(
     report can name the rules that were declared but never triggered. *violations* is how many
     of those runs violated (histories alone can't tell — it gates the clean-run bound). Folds
     the histories in one pass, so an iterator/generator works without materializing every run.
-    *invariants* / *accounting* enable the horizon analysis and the countable verdict clause
-    (see :meth:`ConfidenceProbe.report`).
+    *invariants* / *accounting* / *data_dependent_stop* enable the horizon analysis, the countable
+    verdict clause, and the withheld-bound refusal (see :meth:`ConfidenceProbe.report`).
     """
 
-    probe = ConfidenceProbe()
+    # Declared up front, not only at report time: per-run exposure is a per-history fact and
+    # cannot be recovered once the histories are folded away.
+    probe = ConfidenceProbe(invariants=invariants)
     for history in histories:
         probe.observe(history)
 
     return probe.report(
-        faults=faults, violations=violations, invariants=invariants, accounting=accounting
+        faults=faults,
+        violations=violations,
+        invariants=invariants,
+        accounting=accounting,
+        data_dependent_stop=data_dependent_stop,
     )

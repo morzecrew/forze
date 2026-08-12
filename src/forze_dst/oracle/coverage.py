@@ -15,13 +15,21 @@ behavior is still appearing), and report which seeds mattered.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from functools import cached_property
+from types import MappingProxyType
 from typing import TYPE_CHECKING, final
 
 import attrs
 
 from forze_dst.oracle.recorder import History
-from forze_dst.stats import format_clean_verdict
+from forze_dst.stats import (
+    CoverageDeficit,
+    coverage_deficit,
+    format_clean_verdict,
+    format_coverage_deficit,
+    format_withheld_verdict,
+)
 
 if TYPE_CHECKING:
     from forze_dst.oracle import ViolationReport
@@ -34,6 +42,10 @@ Behavior = tuple[str | None, ...]
 """One distinct, PII-free behavioral feature exercised by a run (an operation outcome, a port
 edge, or an injected fault/partition kind). A tag string followed by the structural tokens of the
 feature — each a recorded field that is a string or ``None``, never an id, key, or payload."""
+
+NO_SHAPES: Mapping[str, int] = MappingProxyType({})
+"""The empty execution-shape table — a shared immutable default, so a frozen report never owns a
+mutable one."""
 
 
 def behavioral_coverage(history: History) -> frozenset[Behavior]:
@@ -137,7 +149,15 @@ class CoverageStats:
     """Per seed, in run order: ``(seed, count of behaviors it added that no earlier seed had)``."""
 
     plateaued: bool
-    """Whether the sweep stopped early because coverage saturated (vs exhausting the pool)."""
+    """Whether the sweep stopped early because *behaviour* coverage saturated (vs exhausting the
+    pool). Saturation on that alphabet is not saturation of the state space: measured on the misuse
+    corpus, the plateau fires while only 14–37% of the reachable execution *shapes* have appeared.
+    :attr:`deficit` is what puts a number on the rest."""
+
+    shape_counts: Mapping[str, int] = NO_SHAPES
+    """Execution-shape fingerprint → how many swept seeds produced it. Kept (rather than collapsed
+    to a set) because the deficit estimator runs entirely on the frequency-of-frequencies —
+    features seen exactly once, and exactly twice."""
 
     violation: ViolationReport | None = None
     """The first violating seed's minimized report, if the sweep hit one (it stops there)."""
@@ -171,15 +191,37 @@ class CoverageStats:
 
     # ....................... #
 
+    @cached_property
+    def deficit(self) -> CoverageDeficit | None:
+        """How much of the execution-shape alphabet the sweep did *not* reach (``None`` before any
+        shapes were recorded).
+
+        The measured counterweight to :attr:`plateaued`: a boolean saturation flag over the
+        behaviour alphabet carries no uncertainty at all, and at the shipped ``coverage_plateau=8``
+        a sweep still discovering on 10% of its seeds declares saturation 43% of the time.
+        """
+
+        return coverage_deficit(self.shape_counts) if self.shape_counts else None
+
+    # ....................... #
+
     def format(self) -> str:
         """Render a short human summary of the exploration."""
 
         lines = [
             "DST coverage report",
             f"  behaviors covered: {self.size}",
-            f"  seeds run:         {self.seeds_run}" + ("  (saturated)" if self.plateaued else ""),
+            f"  seeds run:         {self.seeds_run}"
+            + ("  (saturated on behaviours — plateau stop)" if self.plateaued else ""),
             f"  productive seeds:  {list(self.productive_seeds)}",
         ]
+
+        # The saturation flag reports the behaviour alphabet; the deficit reports the one the
+        # sweep did not measure. Printing both together is the point — on the corpus they
+        # routinely disagree by 3–7×.
+        deficit = self.deficit
+        if deficit is not None:
+            lines.append(f"  execution shapes:  {format_coverage_deficit(deficit)}")
 
         if self.reachability is not None:
             reached = len(self.reachability.targets) - len(self.reachability.unreached)
@@ -202,11 +244,18 @@ class CoverageStats:
         elif self.seeds_run > 0:
             # Route through the confidence report when present, so an accounting-scoped sweep
             # prints the countable oracle-set clause here too (one claim, every surface).
-            verdict = (
-                self.confidence.verdict(self.seeds_run)
-                if self.confidence is not None
-                else format_clean_verdict(self.seeds_run)
-            )
-            lines.append(f"  ✓ {verdict}")
+            # A plateau stop makes ``seeds_run`` a stopping time — a random variable read off the
+            # very runs being summarized — so the exact bound's fixed-design assumption fails and
+            # the number is withheld rather than widened (a wide bound still reads as a result).
+            # Gated on this report's own ``plateaued``, not the confidence report's copy of it, so
+            # a mis-wired report can never leak a bound through this surface.
+            if self.plateaued:
+                verdict = format_withheld_verdict(self.seeds_run, stop_reason="plateau stop")
+            elif self.confidence is not None:
+                verdict = self.confidence.verdict(self.seeds_run)
+            else:
+                verdict = format_clean_verdict(self.seeds_run)
+
+            lines.append(f"  {'⚠' if self.plateaued else '✓'} {verdict}")
 
         return "\n".join(lines)

@@ -90,6 +90,53 @@ Every number above comes from one measurement protocol, built so its own errors 
   measured per run (distinct contending tasks; real ordering-choice ticks), and mutants whose
   trigger is a crash lottery or an uninstrumented workload-order lottery are excluded by name,
   never silently.
+- **The scan states how far its own assumptions can be wrong.** Dividing by the trigger introduces
+  one input carrying no interval, so every cell publishes the exact factor by which that constant
+  would have to be mis-derived for its verdict to flip. Cells where the flip would need a
+  probability above 1 read as *unreachable*; the tightest real cells sit around 2.3×, and knowing
+  which is which is the point. `n` and `k` are left without intervals deliberately — they are
+  per-cell maxima, biased toward the most conservative floor, which is the direction that cannot
+  manufacture a violation.
+
+## What the bound divides by
+
+A clean sweep prints an *exclusion bound*: 0 violations in `S` seeds licenses "the per-seed
+detection probability is below `1 − 0.05^(1/S)`". Read closely, that sentence is a claim about a
+denominator — it says there were `S` **independent chances** at the thing being bounded. Most of
+the ways this number can be wrong are ways `S` is not what it looks like, so each is named on the
+surface that prints it rather than left to the reader:
+
+- **`S` must be fixed before the runs exist.** Clopper–Pearson's exactness is a fixed-design
+  guarantee. A plateau-stopped `coverage()` sweep chooses its seed count *from* the runs it is
+  summarizing, which is a different, unstated design — not a conservative one — so it states its
+  stop reason and prints no bound at all. `audit()` is unaffected: it disables the early stop, so
+  every configured seed runs. A confidence sequence would make peeking safe, and was priced rather
+  than dismissed — it costs 2.3–5.1× width, against an alternative (run the pool you already
+  configured) that costs nothing.
+- **Each invariant has its own `S`.** The scope clause names the witnessed invariants, but
+  "witnessed" is a static status: it says a falsifiability witness exists, not how many runs put
+  that invariant at risk. An invariant exposed on 50 of 1000 runs is bounded at 5.82%, not the
+  0.30% the aggregate quotes. The verdict now counts exposure per invariant and prints the weakest
+  member beside the aggregate, with its own number.
+- **`S` counts seeds, not distinct trials.** Every bound treats `S` seeds as `S` independent
+  chances. Measured across the corpus's controls, 200 seeds explore anywhere from 1 to 170
+  distinct execution shapes — six of eighteen produced exactly one. That gap is reported as a confidence warning
+  and **never** folded into the denominator: the execution-shape fingerprint erases entity ids, and
+  entity collision is exactly what the collision-pool regimes vary, so distinct-shape count is a
+  coarse lower proxy. Substituting it would trade a known overstatement for an unknown
+  understatement.
+- **Many bounds at 95% each are not one claim at 95%.** The [bound-comparison
+  scan](campaign-results.md) checks every applicable cell and reports one violation count; at
+  15 cells, a spurious flag under the null is likelier than not. Each cell's interval is
+  corrected to the number of cells actually scanned — by the union bound, which needs no
+  independence assumption these cells have not been shown to satisfy — and both levels are stated. The pytest
+  plugin corrects the other way: it never aggregates per-sweep bounds by default, and offers one
+  opt-in line that holds across every sweep at once.
+- **"Saturated" is not "explored".** The coverage sweep's plateau flag is a boolean over the
+  behavioural alphabet, which settles early — at the shipped `coverage_plateau=8`, a sweep still
+  discovering on 10% of its seeds declares saturation 43% of the time. Beside it the report prints
+  a measured deficit over the finer execution-shape alphabet: Good–Turing unseen mass and a Chao1
+  richness estimate, which is a *lower* bound and so under-promises how much is left.
 
 ## What these numbers license — and what they don't
 
@@ -99,6 +146,15 @@ Every number above comes from one measurement protocol, built so its own errors 
 - The false-positive **zero is a bound, not an absolute**: at 400 runs per cell it licenses "the
   per-seed false-positive rate is below ~0.9% per cell (95%, exact)" — for these controls,
   these strategies, and nothing stronger.
+- **A sweep-wide bound is not a per-invariant bound.** The aggregate is the number that gets
+  quoted, so it stays — but it divides by the whole sweep for every invariant it names, and each
+  was only at risk in some of those runs. Read the weakest-member line beside it before quoting
+  the aggregate for any single invariant, and treat an invariant reported with *unmeasured
+  exposure* (an opaque read footprint) as outside the aggregate entirely.
+- **Seeds are the unit, not independent trials.** Where a sweep's seeds collapse onto a handful of
+  execution shapes the bound is optimistic by an unquantified factor, and the confidence report
+  says so rather than repricing it. A redundancy warning means the number is worth less than it
+  reads — not that a corrected number is available.
 - **There is no best strategy, and this data refuses to name one.** Random beats PCT by ~20× on
   the depth-3 bug; PCT beats random on the lease-release race; they tie on depth-1 exactly as
   theory predicts. Which scheduler finds *your* bug faster is a property of the bug's shape.

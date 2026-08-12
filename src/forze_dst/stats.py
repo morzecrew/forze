@@ -10,6 +10,9 @@ upper limit, whose mnemonic is the *rule of three* (``≈ 3 / S`` at 95%).
 :func:`detection_upper_bound` computes it; :func:`format_clean_verdict` renders the one locked
 sentence every clean-run surface prints, scope clause included ("this scenario × strategy ×
 oracle set, independent seeds") — the number never travels without the claim it is scoped to.
+Clopper–Pearson's exactness is a **fixed-design** guarantee, so a sweep that chose its own ``n``
+by looking at the runs it is summarizing gets :func:`format_withheld_verdict` instead: the stop
+reason, stated, and no number.
 
 **The survival kernel** (for detection-time campaigns over the misuse corpus). Time-to-detection
 is survival analysis with right censoring — a campaign that hit its seed ceiling without a
@@ -23,13 +26,28 @@ them), :func:`log_rank` (the two-sample strategy comparison; χ²(1 df) tail via
 bridge to per-run theoretical bounds; only meaningful for iid-seed strategies, never adaptive
 ones), and :func:`fisher_exact` (the two-sided 2×2 exact test, for pre-registered contingency
 questions like "does anomaly-level divergence predict bug-level divergence?").
+
+**Discovery deficit.** Saturation is otherwise a boolean out of a heuristic with no uncertainty
+attached — under a per-seed discovery probability of 10%, eight consecutive quiet seeds happen by
+luck alone 43% of the time. :func:`coverage_deficit` puts a number on it: Good–Turing unseen mass
+and a Chao1 richness estimate with its interval, over a frequency table of whatever features a
+sweep collected. Chao1 *targets* a lower bound on richness; the estimate itself is not one, so it
+travels with its interval and never with a ``≥``.
+
+**Multiplicity, in both directions.** :func:`familywise_level` is the per-comparison level that holds a
+family-wise one: scanning many cells at 95% each and reporting the family as one verdict makes a
+spurious flag likelier than not by ~15 cells. It corrects in the conservative direction for a scan,
+and in the *permissive* one for :func:`format_family_verdict`, the opt-in simultaneous claim over
+several clean sweeps that per-sweep non-aggregation otherwise leaves unsaid. :func:`flip_margin`
+covers the remaining input no interval reaches — an assumed structural constant a comparison
+divides by — by reporting the exact factor by which it would have to be wrong to flip the verdict.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
-from typing import final
+from collections.abc import Mapping, Sequence
+from typing import Any, final
 
 import attrs
 
@@ -83,8 +101,10 @@ def format_clean_verdict(
     declared: Sequence[str] = (),
     unexercisable: Sequence[str] = (),
     unaccounted: Sequence[str] = (),
+    weakest: tuple[str, int] | None = None,
+    unmeasured_exposure: Sequence[str] = (),
 ) -> str:
-    """The locked one-line verdict a clean run prints instead of a bare "passed".
+    """The locked verdict a clean run prints instead of a bare "passed".
 
     One shared sentence — bound plus scope clause — so every surface (sweep, confidence report,
     coverage report, CLI, pytest summary) states exactly the same claim and never a stronger one.
@@ -95,6 +115,17 @@ def format_clean_verdict(
     (*unexercisable* — the bound does not cover them), and — should the gate ever be bypassed —
     which are unaccounted, so the claim can never silently cover an invariant the harness was
     never shown able to catch.
+
+    The countable clause still divides by one ``runs`` for every invariant it names, and each was
+    only at risk in some ``n_i <= runs`` of them. *weakest* is the narrowest such
+    ``(invariant, n_i)``: it gets its own continuation line carrying **its** bound, because the
+    aggregate is the number a reader will quote. *unmeasured_exposure* names invariants whose read
+    footprint is opaque, so their exposure could not be counted — stated rather than folded into
+    the aggregate at ``n = runs``.
+
+    The aggregate stays, because it answers a real question ("did this sweep catch anything") and
+    removing it would push readers to quote the weakest number as the sweep's result, overstating
+    in the other direction.
     """
 
     bound = detection_upper_bound(runs, confidence=confidence)
@@ -117,10 +148,60 @@ def format_clean_verdict(
         if unaccounted:
             scope += f" (⚠ {len(unaccounted)} UNACCOUNTED: {', '.join(unaccounted)})"
 
+    lines = [
+        (
+            f"0 violations in {runs} {plural} → per-seed detection probability "
+            f"< {_render_probability(bound)} ({_render_confidence(confidence)}, exact) "
+            f"{scope} (independent seeds)"
+        )
+    ]
+
+    if weakest is not None:
+        name, exposed = weakest
+        lines.append(
+            f"    ⚠ weakest coverage: {name} at risk in {exposed}/{runs} runs → "
+            + (
+                f"< {_render_probability(detection_upper_bound(exposed, confidence=confidence))} "
+                "for that invariant alone"
+                if exposed > 0
+                else "the bound above does not cover it at all"
+            )
+        )
+
+    if unmeasured_exposure:
+        lines.append(
+            f"    ⚠ unmeasured exposure: {', '.join(unmeasured_exposure)} — opaque read "
+            "footprint, so how often each was at risk could not be counted"
+        )
+
+    return "\n".join(lines)
+
+
+# ....................... #
+
+
+def format_withheld_verdict(runs: int, *, stop_reason: str) -> str:
+    """The locked verdict for a sweep whose ``n`` was **chosen from the data** — no bound.
+
+    Clopper–Pearson exactness is a fixed-design guarantee: it assumes the seed count was fixed
+    before the runs existed. Under a data-dependent stopping rule (the coverage sweep's plateau
+    break) ``runs`` is a random variable whose value depends on the very runs being summarized,
+    and the exact bound is not conservative in a known direction — it is simply a different,
+    unstated design. So the sweep states what it did and prints no number: a wide bound reads as
+    a real result in a way a withheld one does not.
+
+    *stop_reason* names the rule that ended the sweep (e.g. ``"plateau stop"``).
+    """
+
+    if runs < 1:
+        raise ValueError(f"runs must be >= 1, got {runs}")
+
+    plural = "seeds" if runs != 1 else "seed"
+
     return (
-        f"0 violations in {runs} {plural} → per-seed detection probability "
-        f"< {_render_probability(bound)} ({_render_confidence(confidence)}, exact) "
-        f"{scope} (independent seeds)"
+        f"0 violations in {runs} {plural} → no per-seed bound: n was chosen from the data "
+        f"({stop_reason}), and an exact bound is a fixed-design guarantee. Re-run the configured "
+        f"pool with the early stop disabled (audit()) for a bound."
     )
 
 
@@ -510,6 +591,270 @@ def geometric_p_hat(
         ci=binomial_ci(detections, seeds, confidence=confidence),
         detections=detections,
         seeds=seeds,
+    )
+
+
+# ----------------------- #
+
+
+@final
+@attrs.frozen(kw_only=True)
+class CoverageDeficit:
+    """How much of a feature alphabet a sample has *not* seen — the measured form of saturation."""
+
+    observed: int
+    """Distinct features the sample actually contains."""
+
+    total: int
+    """Total observations (the sum of the frequency table — e.g. seeds swept)."""
+
+    singletons: int
+    """``f1`` — features seen exactly once. The whole signal: an alphabet still producing
+    singletons is still producing surprises."""
+
+    doubletons: int
+    """``f2`` — features seen exactly twice."""
+
+    unseen_mass: float
+    """Good–Turing: ``f1 / N``, the estimated probability that the *next* observation is a feature
+    never seen before. Zero means the sample stopped finding new things, not that none remain."""
+
+    richness: float
+    """Chao1's **point estimate** of the true richness.
+
+    Chao1's *estimand* is a lower bound on richness — the estimator is derived that way, and that
+    is what makes it the safe target for a warning. The estimate is not: it carries sampling error
+    like any other, and on an undersampled draw it overshoots the truth about as often as not.
+    Read it with :attr:`lower`/:attr:`upper`, never as a floor on its own.
+    """
+
+    lower: float
+    """The lower limit of the log-transformed Chao1 interval (Chao 1987)."""
+
+    upper: float
+    """The upper limit. Both collapse onto :attr:`observed` when the estimator has no signal to
+    extrapolate from (``f1 <= 1`` with no doubletons)."""
+
+    confidence: float
+    """The level :attr:`lower`/:attr:`upper` were computed at."""
+
+    # ....................... #
+
+    @property
+    def unseen(self) -> float:
+        """Estimated features not yet seen: ``richness - observed`` (``0.0`` when saturated)."""
+
+        return max(0.0, self.richness - self.observed)
+
+
+def coverage_deficit(counts: Mapping[Any, int], *, confidence: float = 0.95) -> CoverageDeficit:
+    """The unseen-feature deficit of a frequency table — Good–Turing mass plus Chao1 richness.
+
+    *counts* maps each observed feature to how many observations contained it (e.g. execution-shape
+    fingerprint → number of seeds that produced it). Species-richness estimation runs entirely on
+    the *frequency of frequencies*: ``f1`` (seen once) and ``f2`` (seen twice). Chao1 is
+    ``S_obs + f1²/(2·f2)``, falling back to the bias-corrected ``S_obs + f1·(f1−1)/2`` when no
+    feature was seen exactly twice, with the standard log-transformed interval.
+
+    **The richness is an estimate, not a floor.** Chao1's estimand is a lower bound on true
+    richness, which is why it is the right target for a warning — but the estimator has sampling
+    error, and on an undersampled draw the point estimate lands above the truth roughly half the
+    time. :attr:`CoverageDeficit.lower`/:attr:`~CoverageDeficit.upper` are what carry that, and the
+    rendered line states the estimate with its interval rather than as a bound.
+
+    **Which alphabet you feed it decides whether it says anything.** Measured over every control in
+    the misuse corpus, the sweep's *behavioural* coverage alphabet (the unordered set of operation
+    outcomes / port edges / fault kinds) has ``f1 == f2 == 0`` in every case — every behaviour that
+    appears at all appears in many seeds, so Good–Turing reports zero unseen mass and Chao1 returns
+    the observed count, permanently. On that alphabet this estimator is degenerate and would ship
+    as a green number that can never go red. It is informative on the *ordered execution-shape*
+    alphabet (``behavioral_fingerprint``), where the same controls span one shape to well over a
+    hundred at 200 seeds, with live singletons and doubletons throughout — and still returns
+    exactly 1 on a genuinely single-shape workload, so it does not cry wolf.
+    """
+
+    if not counts:
+        raise ValueError("at least one observed feature is required")
+    if any(count < 1 for count in counts.values()):
+        raise ValueError("every feature's count must be >= 1 (a zero count is not an observation)")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError(f"confidence must be in (0, 1), got {confidence}")
+
+    observed = len(counts)
+    total = sum(counts.values())
+    f1 = sum(1 for count in counts.values() if count == 1)
+    f2 = sum(1 for count in counts.values() if count == 2)
+
+    if f2 > 0:
+        extra = f1 * f1 / (2.0 * f2)
+        ratio = f1 / f2
+        variance = f2 * (ratio**4 / 4.0 + ratio**3 + ratio**2 / 2.0)
+    else:
+        # Bias-corrected form: with no doubleton the classic estimator divides by zero, and a
+        # lone singleton carries no extrapolation at all (f1·(f1−1) = 0).
+        extra = f1 * (f1 - 1) / 2.0
+        variance = (
+            f1 * (f1 - 1) / 2.0 + f1 * (2 * f1 - 1) ** 2 / 4.0 - f1**4 / (4.0 * (observed + extra))
+        )
+
+    richness = observed + extra
+    z = _norm_ppf(1.0 - (1.0 - confidence) / 2.0)
+
+    if extra > 0.0 and variance > 0.0:
+        # Chao's log transform keeps the interval on the right side of S_obs — a richness estimate
+        # can never be below what was actually counted.
+        spread = math.exp(z * math.sqrt(math.log1p(variance / (extra * extra))))
+        lower, upper = observed + extra / spread, observed + extra * spread
+    else:
+        lower = upper = float(observed)
+
+    return CoverageDeficit(
+        observed=observed,
+        total=total,
+        singletons=f1,
+        doubletons=f2,
+        unseen_mass=f1 / total,
+        richness=richness,
+        lower=lower,
+        upper=upper,
+        confidence=confidence,
+    )
+
+
+# ....................... #
+
+
+def familywise_level(confidence: float, comparisons: int) -> float:
+    """The per-comparison confidence that holds *confidence* family-wise across *comparisons*.
+
+    Reporting ``m`` statements each at 95% as one verdict is not a 95% claim about the family:
+    under the null that every one is fine, ``P(≥1 spurious flag)`` is 22% at ``m = 5``, 54% at 15
+    and 95% at 60.
+
+    **Bonferroni's union bound**, ``γ' = 1 − (1 − γ)/m``. Šidák's ``γ' = γ^(1/m)`` is tighter and
+    exact — but only *under independence*, and it is anti-conservative when the comparisons are
+    positively dependent. Nothing here establishes independence: a pytest session's sweeps can
+    share a seed range outright (``--dst-seeds=N`` gives every one of them ``range(N)``), and the
+    campaign scan's cells are grouped measurements over one corpus. The union bound needs no such
+    assumption, holds under arbitrary dependence, and costs ~4e-5 of level at the ``m`` these
+    surfaces actually use — a correction whose validity rests on an unverified premise is the
+    thing this module exists to avoid.
+    """
+
+    if comparisons < 1:
+        raise ValueError(f"comparisons must be >= 1, got {comparisons}")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError(f"confidence must be in (0, 1), got {confidence}")
+
+    return 1.0 - (1.0 - confidence) / comparisons
+
+
+# ....................... #
+
+
+def format_family_verdict(runs: Sequence[int], *, confidence: float = 0.95) -> str:
+    """One **simultaneous** claim over several independent clean sweeps.
+
+    Per-sweep bounds are deliberately never aggregated — a combined number would claim more than
+    any single sweep established. That leaves a reader with no joint statement at all, though, and
+    one is cheap: correcting each sweep's level with :func:`familywise_level` and quoting the
+    widest of the corrected bounds costs ~1.8–2.8× width and is true of every sweep at once.
+
+    The correction is the union bound precisely because these sweeps are **not** known to be
+    independent — a session commonly runs them all over one ``--dst-seeds`` range, so their
+    detection indicators share the seed stream outright.
+
+    Opt-in by design: a family claim over unrelated scenarios is rarely the question anyone is
+    asking, so it is offered rather than printed.
+    """
+
+    if not runs:
+        raise ValueError("at least one sweep is required")
+
+    level = familywise_level(confidence, len(runs))
+    widest = max(detection_upper_bound(n, confidence=level) for n in runs)
+    plural = "sweeps" if len(runs) != 1 else "sweep"
+
+    return (
+        f"0 violations across {len(runs)} {plural} → every sweep's per-seed detection probability "
+        f"< {_render_probability(widest)} simultaneously "
+        f"({_render_confidence(confidence)} family-wise, Bonferroni over {len(runs)})"
+    )
+
+
+# ....................... #
+
+
+@final
+@attrs.frozen(kw_only=True)
+class FlipMargin:
+    """How far an assumed constant would have to be wrong to flip a bound comparison's verdict."""
+
+    factor: float
+    """The multiplicative factor on the assumed constant that lands exactly on the verdict
+    boundary. Above 1 on a respected cell: how far the constant would have to be *understated*
+    for the cell to start reading as a violation. Below 1 on a violating cell: how far it would
+    have to be *overstated* for the violation to disappear."""
+
+    reachable: bool
+    """Whether that factor is attainable at all. ``False`` when the constant is a probability and
+    :attr:`factor` would push it above 1 — the verdict cannot flip for any admissible value, and
+    reporting a numeric factor there would imply a probability greater than one."""
+
+
+def flip_margin(*, observed_upper: float, bound: float, trigger: float) -> FlipMargin:
+    """The exact sensitivity of ``p̂/trigger >= bound`` to the assumed *trigger*.
+
+    A measured per-seed rate is a product — p(the workload carries the trigger) × p(the schedule
+    realizes it) — so a bound on the schedule half is compared against ``p̂ / trigger``. Uncertainty
+    is propagated through ``p̂`` (its exact interval) and through nothing else: *trigger* is a
+    structural constant derived from reviewed reasoning about workload shape, and a mis-derived one
+    produces exactly the false "violation" that sends a reviewer off to re-derive a correct label.
+
+    Respect holds iff ``trigger <= observed_upper / bound``, so the margin is exact:
+    ``F = (observed_upper / bound) / trigger``. A cell at ``F = 40×`` is immune to any plausible
+    derivation error; a cell at ``F = 1.2×`` is one reviewed assumption away from a false alarm and
+    should be read as such. No arbitrary perturbation band to calibrate.
+    """
+
+    if not 0.0 <= observed_upper <= 1.0:
+        raise ValueError(f"observed_upper must be in [0, 1], got {observed_upper}")
+    if not 0.0 < bound <= 1.0:
+        raise ValueError(f"bound must be in (0, 1], got {bound}")
+    if not 0.0 < trigger <= 1.0:
+        raise ValueError(f"trigger must be in (0, 1], got {trigger}")
+
+    boundary = observed_upper / bound
+
+    return FlipMargin(factor=boundary / trigger, reachable=boundary <= 1.0)
+
+
+# ....................... #
+
+
+def format_coverage_deficit(deficit: CoverageDeficit) -> str:
+    """The locked one-line rendering of a :class:`CoverageDeficit`, beside a sweep's stop reason.
+
+    Always states both halves, because they answer different questions and can disagree honestly:
+    Chao1 is how many distinct features are estimated to exist, and Good–Turing's percentage is how
+    often the sample was still turning one up.
+
+    The richness is rendered as an **estimate with its interval**, never with a ``≥``. Chao1's
+    estimand is a lower bound on richness, but the estimate is not one — on an undersampled draw
+    it lands above the truth about as often as below, so a bound glyph in front of it would claim
+    exactly the kind of guarantee the number cannot carry. The mass reuses
+    :func:`_render_probability`, so a still-discovering sweep can never print ``0.0%``.
+    """
+
+    # An exact zero is not "too small to show", it is zero — the scientific fallback exists so a
+    # nonzero mass can never read as none, and rendering 0 as ``0.0e+00`` would be noise.
+    mass = "0.00%" if deficit.unseen_mass == 0.0 else _render_probability(deficit.unseen_mass)
+
+    return (
+        f"{deficit.observed} observed; ~{round(deficit.richness)} estimated reachable "
+        f"(Chao1, {_render_confidence(deficit.confidence)} CI "
+        f"{math.floor(deficit.lower)}–{math.ceil(deficit.upper)}) — "
+        f"{mass} of seeds still discovering"
     )
 
 

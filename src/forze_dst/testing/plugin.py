@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from forze_dst.testing._options import DstOptions, drain_clean_sweeps, set_active
+from forze_dst.testing._options import DstOptions, active, drain_clean_sweeps, set_active
 
 # ----------------------- #
 
@@ -47,6 +47,25 @@ def pytest_addoption(parser: Any) -> None:
         help="On a failure, drop a portable FailureBundle (seed + full config) into DIR "
         "for CI to keep and replay.",
     )
+    # Tri-state: ``None`` means "the CLI said nothing", so the ini value stands. A bare
+    # ``store_true`` would make the ini un-overridable — there would be no way to say *off* for
+    # one run of a project that turned it on.
+    group.addoption(
+        "--dst-family-verdict",
+        dest="dst_family_verdict",
+        action="store_true",
+        default=None,
+        help="Also print one family-wise-corrected verdict line holding simultaneously across "
+        "every clean sweep in the session (off by default: the per-sweep lines are the honest "
+        "claim).",
+    )
+    group.addoption(
+        "--no-dst-family-verdict",
+        dest="dst_family_verdict",
+        action="store_false",
+        default=None,
+        help="Suppress the family verdict line for this run, overriding ini dst_family_verdict.",
+    )
     parser.addini(
         "dst_seeds",
         "Default seed count for DST sweeps (overridden by --dst-seeds).",
@@ -56,6 +75,13 @@ def pytest_addoption(parser: Any) -> None:
         "dst_save_bundle",
         "Directory for FailureBundles on failure (overridden by --dst-save-bundle).",
         default=None,
+    )
+    parser.addini(
+        "dst_family_verdict",
+        "Print the simultaneous family verdict line (overridden by --dst-family-verdict / "
+        "--no-dst-family-verdict).",
+        type="bool",
+        default=False,
     )
 
 
@@ -77,7 +103,15 @@ def pytest_configure(config: Any) -> None:
 
     save_bundle = config.getoption("--dst-save-bundle") or config.getini("dst_save_bundle")
 
-    set_active(DstOptions(seeds=seeds, save_bundle=save_bundle or None))
+    # The CLI wins when it said anything at all — including ``--no-dst-family-verdict``, which is
+    # ``False`` rather than "unset" and so must not fall through to the ini.
+    family = config.getoption("dst_family_verdict")
+    if family is None:
+        family = bool(config.getini("dst_family_verdict"))
+
+    set_active(
+        DstOptions(seeds=seeds, save_bundle=save_bundle or None, family_verdict=bool(family))
+    )
 
 
 # ....................... #
@@ -88,7 +122,9 @@ def pytest_terminal_summary(terminalreporter: Any) -> None:
 
     Each line is scoped to its own test (scenario × strategy × oracle set) — the bounds are never
     aggregated across tests, because a combined number would claim more than any single sweep
-    established.
+    established. That refusal is the default and stays; ``--dst-family-verdict`` adds one
+    family-wise-corrected line beside it that *is* true of every sweep at once, printed only when
+    all share a confidence level (there would otherwise be no single level to state).
     """
 
     records = drain_clean_sweeps()
@@ -97,18 +133,27 @@ def pytest_terminal_summary(terminalreporter: Any) -> None:
 
     # Local import: the DST facade is heavy (~⅓ s), and a record existing means the helper
     # already loaded it — an empty session never pays the cost.
-    from forze_dst.stats import format_clean_verdict
+    from forze_dst.stats import format_clean_verdict, format_family_verdict
 
     terminalreporter.write_sep("-", "DST clean-run verdicts")
     for record in records:
         verdict = format_clean_verdict(
             record.runs,
+            confidence=record.confidence,
             witnessed=record.witnessed,
             declared=record.declared,
             unexercisable=record.unexercisable,
             unaccounted=record.unaccounted,
         )
         terminalreporter.write_line(f"{record.label}: {verdict}")
+
+    options = active()
+    levels = {record.confidence for record in records}
+
+    if options is not None and options.family_verdict and len(levels) == 1:
+        terminalreporter.write_line(
+            format_family_verdict([r.runs for r in records], confidence=levels.pop())
+        )
 
 
 # ....................... #

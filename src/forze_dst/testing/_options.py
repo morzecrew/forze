@@ -25,6 +25,12 @@ class DstOptions:
     :class:`~forze_dst.artifacts.FailureBundle` into whenever a sweep fails, so CI keeps the
     seed + full config to reproduce it. ``None`` saves nothing."""
 
+    family_verdict: bool = False
+    """``--dst-family-verdict`` / ini ``dst_family_verdict`` — also print one family-wise-corrected
+    that holds **simultaneously** across every clean sweep in the session. Off by default: a family
+    claim over unrelated scenarios is rarely the question anyone is asking, and the per-sweep lines
+    are the honest default."""
+
 
 # ....................... #
 
@@ -57,6 +63,11 @@ class CleanSweep:
 
     unaccounted: tuple[str, ...] = ()
     """Invariants neither witnessed nor declared — surfaced, never silently absorbed."""
+
+    confidence: float = 0.95
+    """The level this sweep's bound was established at. Recorded so the optional family verdict
+    can refuse to combine sweeps that do not share one — a simultaneous claim over mixed levels
+    would have no single level to state."""
 
 
 # ....................... #

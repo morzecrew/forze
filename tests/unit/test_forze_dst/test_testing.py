@@ -268,6 +268,7 @@ class TestCleanRunVerdicts:
         # A new session (configure) must not inherit a previous in-process session's verdicts.
         record_clean_sweep(CleanSweep(label="stale", runs=10))
 
+
         set_active(DstOptions())
         try:
             assert drain_clean_sweeps() == ()
@@ -297,6 +298,70 @@ class TestCleanRunVerdicts:
         assert reporter.lines[2].startswith("test_b: 0 violations in 20 seeds")
         # Drained: a second summary (or the next session) starts empty.
         assert drain_clean_sweeps() == ()
+
+    @staticmethod
+    def _summarize(options: DstOptions, *records: CleanSweep) -> list[str]:
+        """Run the terminal summary for *records* under *options* (which resets the buffer, so it
+        is installed first), leaving no session state behind."""
+
+        class _Reporter:
+            def __init__(self) -> None:
+                self.lines: list[str] = []
+
+            def write_sep(self, sep: str, title: str) -> None:
+                self.lines.append(title)
+
+            def write_line(self, line: str) -> None:
+                self.lines.append(line)
+
+        reporter = _Reporter()
+        set_active(options)
+        try:
+            for record in records:
+                record_clean_sweep(record)
+            plugin.pytest_terminal_summary(reporter)
+        finally:
+            set_active(None)
+
+        return reporter.lines
+
+    def test_no_family_verdict_unless_opted_in(self) -> None:
+        # Per-sweep non-aggregation is the default and stays: a combined number claims more than
+        # any single sweep established, and a family claim over unrelated scenarios is rarely the
+        # question anyone is asking.
+        lines = self._summarize(
+            DstOptions(),
+            CleanSweep(label="test_a", runs=1000),
+            CleanSweep(label="test_b", runs=1000),
+        )
+
+        assert any(line.startswith("test_a:") for line in lines)
+        assert not any("simultaneously" in line for line in lines)
+
+    def test_family_verdict_is_wider_than_any_per_sweep_line(self) -> None:
+        lines = self._summarize(
+            DstOptions(family_verdict=True),
+            *(CleanSweep(label=f"test_{i}", runs=1000) for i in range(10)),
+        )
+
+        family = next(line for line in lines if "simultaneously" in line)
+        assert "0 violations across 10 sweeps" in family
+        assert "Bonferroni over 10" in family
+        # 0.53% simultaneously against 0.30% per sweep — the price of the joint claim, stated.
+        assert "< 0.53%" in family
+        assert all("< 0.30%" in line for line in lines if line.startswith("test_"))
+
+    def test_family_verdict_refuses_a_mixed_confidence_session(self) -> None:
+        # A simultaneous claim needs one level to state; sweeps bounded at different levels have
+        # none, so the line is withheld rather than quietly picking one.
+        lines = self._summarize(
+            DstOptions(family_verdict=True),
+            CleanSweep(label="test_a", runs=1000),
+            CleanSweep(label="test_b", runs=1000, confidence=0.99),
+        )
+
+        assert any(line.startswith("test_a:") for line in lines)
+        assert not any("simultaneously" in line for line in lines)
 
     def test_terminal_summary_is_silent_with_no_records(self) -> None:
         class _Reporter:
@@ -372,6 +437,65 @@ class TestPluginHooks:
             assert opts is not None and opts.seeds == 12
         finally:
             set_active(None)
+
+    @staticmethod
+    def _family_verdict(cli: bool | None, ini: bool) -> bool:
+        """Resolve ``family_verdict`` for one (CLI, ini) pair through the real configure hook."""
+
+        class _Config:
+            def addinivalue_line(self, _kind: str, _line: str) -> None:
+                pass
+
+            def getoption(self, name: str) -> object:
+                return cli if name == "dst_family_verdict" else None
+
+            def getini(self, name: str) -> object:
+                return ini if name == "dst_family_verdict" else None
+
+        try:
+            plugin.pytest_configure(_Config())
+            opts = active()
+            assert opts is not None
+            return opts.family_verdict
+        finally:
+            set_active(None)
+
+    def test_the_cli_can_turn_the_family_verdict_off_against_the_ini(self) -> None:
+        # A bare store_true flag makes the ini un-overridable: `dst_family_verdict = true` would
+        # stick for every run with no way to say *off* for one of them. The flag is tri-state, so
+        # an explicit False must not fall through to the ini.
+        assert self._family_verdict(cli=False, ini=True) is False
+
+    def test_an_absent_flag_leaves_the_ini_standing(self) -> None:
+        assert self._family_verdict(cli=None, ini=True) is True
+
+    def test_the_cli_can_turn_it_on_against_a_silent_ini(self) -> None:
+        assert self._family_verdict(cli=True, ini=False) is True
+
+    def test_off_by_default(self) -> None:
+        assert self._family_verdict(cli=None, ini=False) is False
+
+    def test_both_flags_are_registered_on_one_dest(self) -> None:
+        recorded: dict[str, dict[str, object]] = {}
+
+        class _Group:
+            def addoption(self, name: str, **kwargs: object) -> None:
+                recorded[name] = kwargs
+
+        class _Parser:
+            def getgroup(self, *_a: object, **_k: object) -> _Group:
+                return _Group()
+
+            def addini(self, *_a: object, **_k: object) -> None:
+                pass
+
+        plugin.pytest_addoption(_Parser())
+
+        on, off = recorded["--dst-family-verdict"], recorded["--no-dst-family-verdict"]
+        assert on["dest"] == off["dest"] == "dst_family_verdict"
+        # Both default to None, which is what makes "the CLI said nothing" distinguishable from
+        # "the CLI said no".
+        assert on["default"] is None and off["default"] is None
 
 
 # ....................... #

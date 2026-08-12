@@ -7,6 +7,17 @@ per-run schedule profiles (distinct contending tasks; realized ordering-choice t
 cell as maxima; records that predate the instrumentation fall back to the structural estimates
 (workload concurrency; the ``steps`` draw range) with the fallback stated, never silent.
 
+Two multiplicity guards sit on top of that comparison:
+
+* **Family-wise control.** The scan checks every cell at once and reports one ``Bound violations``
+  count, so per-cell 95% is not family-wise 95% — at ~15 cells a spurious flag is likelier than
+  not. Each cell's interval is Bonferroni-corrected to the number of cells actually scanned, and
+  levels are stated in the generated table.
+* **The flip margin.** ``p̂_sched = p̂ / p_trigger`` propagates uncertainty through ``p̂`` and
+  through nothing else; ``p_trigger`` is a structural constant with none attached. Rather than
+  invent a perturbation band, each cell reports the exact factor by which ``p_trigger`` would have
+  to be wrong for that cell's verdict to flip.
+
 Usage: ``python analyze_campaign.py <campaign.jsonl> --summary <campaign_full.md>``
 """
 
@@ -19,10 +30,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import cast
 
-from forze_dst.stats import geometric_p_hat
+from forze_dst.stats import familywise_level, flip_margin, geometric_p_hat
 from tests.support.misuse import CORPUS
 
 K_ESTIMATE = 50  # the PCT `steps` parameter — change points spread over at most this many ticks
+FAMILY_CONFIDENCE = 0.95  # held across the whole scan, not per cell
 
 
 def main(argv: list[str]) -> int:
@@ -58,6 +70,50 @@ def main(argv: list[str]) -> int:
         if record.get("kind") == "campaign":
             groups[(str(record["mutant_id"]), str(record["strategy"]))].append(record)
 
+    # Pass one: which cells the scan actually covers. The correction divides by that count,
+    # so no interval may be computed before it is known.
+    excluded: list[str] = []
+    cells: list[tuple[str, str, list[dict[str, object]], float]] = []
+
+    for (mutant_id, strategy), records in sorted(groups.items()):
+        if not strategy.startswith("pct"):
+            continue
+
+        if int(strategy.rsplit("d", 1)[-1]) < mutants[mutant_id].depth:
+            continue  # the guarantee only speaks for parameter >= depth
+
+        p_trigger = trigger_probability(mutant_id)
+        if p_trigger is None:
+            if mutant_id not in excluded:
+                excluded.append(mutant_id)
+            continue
+
+        cells.append((mutant_id, strategy, records, p_trigger))
+
+    per_cell = familywise_level(FAMILY_CONFIDENCE, max(1, len(cells)))
+
+    # With no cell to scan there is no family to correct, and the paragraph below would state a
+    # level over zero comparisons that the code did not apply.
+    multiplicity = (
+        [
+            "",
+            (
+                f"**Multiplicity.** The scan checks {len(cells)} cells and reports one violation "
+                "count, so"
+            ),
+            "a per-cell 95% interval would not be a 95% claim about the family — under the null that",
+            "the bound holds everywhere, the chance of at least one spurious flag grows past a coin",
+            "flip by ~15 cells, and a false alarm here sends a reviewer off to re-derive a correct",
+            f"depth label. Each interval below is therefore computed at **{per_cell:.4%} per cell**",
+            (
+                f"(Bonferroni over {len(cells)}), holding **{FAMILY_CONFIDENCE:.0%} family-wise** "
+                "across the scan."
+            ),
+        ]
+        if cells
+        else []
+    )
+
     lines = [
         "",
         "## p̂ versus the PCT bound (W3)",
@@ -79,26 +135,25 @@ def main(argv: list[str]) -> int:
         "decomposition of any looseness into draw-range slack versus residual conservatism.",
         "A cell whose records predate the instrumentation falls back to the structural",
         "estimates (workload concurrency; the draw range) and says so.",
+        *multiplicity,
         "",
-        "| mutant | d | strategy | n | k | p̂ per seed | p_trigger | p̂_sched | bound | respected | k-tuned floor |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        "**Flip margin.** Uncertainty is propagated through `p̂` and through nothing else:",
+        "`p_trigger` is a structural constant, several of its values exact combinatorics, but all",
+        "of them derived from reviewed reasoning rather than measured. Respect holds iff",
+        "`p_trigger ≤ p̂_upper / bound`, so each cell carries the exact factor `F` by which",
+        "`p_trigger` would have to be understated for that cell's verdict to flip — no arbitrary",
+        "perturbation band to calibrate. A cell at `F = 40×` is immune to any plausible derivation",
+        "error; one at `F = 1.2×` is a single reviewed assumption away from a false alarm. Where",
+        "the flip would need `p_trigger > 1` it is **unreachable**, reported as such rather than as",
+        "a meaningless factor.",
+        "",
+        "| mutant | d | strategy | n | k | p̂ per seed | p_trigger | p̂_sched | bound | respected | flip margin | k-tuned floor |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
 
-    excluded: list[str] = []
     violations = 0
-    for (mutant_id, strategy), records in sorted(groups.items()):
-        if not strategy.startswith("pct"):
-            continue
-
+    for mutant_id, strategy, records, p_trigger in cells:
         mutant = mutants[mutant_id]
-        if int(strategy.rsplit("d", 1)[-1]) < mutant.depth:
-            continue  # the guarantee only speaks for parameter >= depth
-
-        p_trigger = trigger_probability(mutant_id)
-        if p_trigger is None:
-            if mutant_id not in excluded:
-                excluded.append(mutant_id)
-            continue
 
         measured = all(r.get("max_tasks") is not None for r in records)
         if measured:
@@ -113,7 +168,7 @@ def main(argv: list[str]) -> int:
 
         events = [r["detection_trial"] for r in records if r["detection_trial"] is not None]
         censored = [r["trials_run"] for r in records if r["detection_trial"] is None]
-        estimate = geometric_p_hat(events, censored)  # type: ignore[arg-type]
+        estimate = geometric_p_hat(events, censored, confidence=per_cell)  # type: ignore[arg-type]
 
         # The formal guarantee draws change points over `steps`; the tuned floor is the same
         # theorem had `steps` matched the measured schedule length.
@@ -125,18 +180,27 @@ def main(argv: list[str]) -> int:
         if not respected:
             violations += 1
 
+        margin = flip_margin(observed_upper=estimate.ci.upper, bound=bound, trigger=p_trigger)
+        margin_cell = "unreachable" if not margin.reachable else f"{margin.factor:.1f}×"
+
         lines.append(
             f"| `{mutant_id}` | {mutant.depth} | {strategy} | {n_cell} | {k_cell} "
             f"| {estimate.p_hat:.3f} | {p_trigger:.3f} | {p_sched:.2f} | {bound:.4f} "
-            f"| {'yes' if respected else '**NO**'} | {tuned:.4f} ({p_sched / tuned:.0f}× loose) |"
+            f"| {'yes' if respected else '**NO**'} | {margin_cell} "
+            f"| {tuned:.4f} ({p_sched / tuned:.0f}× loose) |"
         )
 
     lines += [
         "",
-        f"Excluded from the bound comparison (trigger is not a schedule lottery): "
-        f"{', '.join(f'`{m}`' for m in excluded) or 'none'}.",
+        (
+            "Excluded from the bound comparison (trigger is not a schedule lottery): "
+            f"{', '.join(f'`{m}`' for m in excluded) or 'none'}."
+        ),
         "",
-        f"**Bound violations: {violations}.**" ,
+        (
+            f"**Bound violations: {violations}** "
+            f"(family-wise {FAMILY_CONFIDENCE:.0%} over {len(cells)} cells)."
+        ),
         "",
         "Reading: for every depth-1 cell the conditional schedule probability sits at ≈ 1 — once",
         "the workload carries the trigger, essentially any schedule realizes it, consistent with",
@@ -149,6 +213,11 @@ def main(argv: list[str]) -> int:
         "anywhere would have meant a wrong depth label or wrong n/k accounting — the first",
         "(unconditioned) pass of this analysis produced exactly such false violations and was",
         "corrected to the conditional form above.",
+        "",
+        "`n` and `k` carry no interval on purpose. They are per-run measurements folded per cell",
+        "as **maxima** — a biased extreme-order statistic, but biased toward the lowest, most",
+        "conservative floor, which is the direction that cannot manufacture a violation. The",
+        "absence of an interval there is a decision, not an oversight.",
         "",
     ]
 

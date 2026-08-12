@@ -36,6 +36,7 @@ from forze_dst.oracle.confidence import ConfidenceReport
 from forze_dst.oracle.coverage import CoverageStats, behavioral_fingerprint
 from forze_dst.oracle.reachability import ReachabilityReport
 from forze_dst.oracle.recorder import Event, History
+from forze_dst.stats import format_clean_verdict
 from forze_mock import MockDepsModule
 
 # ----------------------- #
@@ -258,6 +259,101 @@ class TestCoverageGuidedSweep:
 # ....................... #
 
 
+class TestStoppingTimeWithholdsTheBound:
+    """A plateau break chooses ``n`` by reading the runs, so the fixed-design exact bound does
+    not describe it. The sweep states its stop reason and prints no number; the same config with
+    the stop disabled prints one."""
+
+    @staticmethod
+    def _sweep(plateau: int, seeds: int = 60) -> CoverageStats:
+        return _clean_sim().coverage(
+            SimulationConfig(
+                strategy=Strategy.SCENARIO,
+                seeds=range(seeds),
+                act_count=2,
+                concurrency=1,
+                coverage_plateau=plateau,
+            ),
+            scenario=_MAKE_SCENARIO,
+        )
+
+    def test_plateau_stopped_sweep_prints_no_per_seed_bound(self) -> None:
+        stats = self._sweep(plateau=3)
+        out = stats.format()
+
+        assert stats.plateaued
+        assert stats.seeds_run < 60  # it really did stop early
+        assert "no per-seed bound" in out
+        assert "n was chosen from the data" in out
+        # The withheld sentence must not carry anything quotable as a rate.
+        assert "per-seed detection probability <" not in out
+        assert "exact)" not in out
+
+    def test_fixed_n_sweep_prints_the_bound(self) -> None:
+        stats = self._sweep(plateau=0, seeds=5)
+        out = stats.format()
+
+        assert not stats.plateaued
+        assert stats.seeds_run == 5
+        assert "0 violations in 5 seeds → per-seed detection probability <" in out
+        assert "(95%, exact)" in out
+        assert "no per-seed bound" not in out
+
+    def test_the_confidence_surface_agrees_with_the_coverage_surface(self) -> None:
+        # Two surfaces print the verdict; a fix on only one of them leaks the bound out the other.
+        stats = self._sweep(plateau=3)
+
+        assert stats.confidence is not None
+        assert stats.confidence.data_dependent_stop == "plateau stop"
+        assert "no per-seed bound" in stats.confidence.format()
+        assert "per-seed detection probability <" not in stats.confidence.format()
+
+    def test_injected_regression_the_unconditional_print_would_fail_this(self) -> None:
+        # The gate's own red run: restoring the pre-fix behaviour (print the bound regardless of
+        # how ``n`` was chosen) is exactly ``format_clean_verdict(seeds_run)``, and it is what the
+        # assertions above forbid.
+        stats = self._sweep(plateau=3)
+        unconditional = format_clean_verdict(stats.seeds_run)
+
+        assert "per-seed detection probability <" in unconditional
+        assert unconditional not in stats.format()
+
+    def test_the_sweep_reports_a_measured_deficit_beside_the_stop_reason(self) -> None:
+        # The plateau flag says "saturated"; the deficit says how much of the *state space* that
+        # claim covers. Both print, because on the corpus they routinely disagree.
+        stats = self._sweep(plateau=3)
+        out = stats.format()
+
+        assert stats.shape_counts, "the sweep discarded its execution shapes"
+        assert stats.deficit is not None
+        assert stats.deficit.total == stats.seeds_run  # one shape bucket per run, none dropped
+        assert "execution shapes:" in out
+        assert "(Chao1," in out
+        assert "of seeds still discovering" in out
+
+    def test_audit_is_unaffected_byte_identical_verdict(self) -> None:
+        # audit() disables the plateau, so its ``n`` was fixed before the data existed and its
+        # verdict line is exactly what it was before this change.
+        stats = _clean_sim().audit(
+            SimulationConfig(
+                strategy=Strategy.SCENARIO,
+                seeds=range(4),
+                act_count=2,
+                concurrency=1,
+            ),
+            scenario=_MAKE_SCENARIO,
+        )
+
+        assert not stats.plateaued
+        assert stats.confidence is not None
+        assert stats.confidence.data_dependent_stop is None
+        assert stats.confidence.verdict() == format_clean_verdict(4)
+        assert f"  ✓ {format_clean_verdict(4)}" in stats.format()
+
+
+# ....................... #
+
+
 class TestBehavioralFingerprint:
     """The ordered, PII-free signature of a run's path (vs. the unordered coverage set)."""
 
@@ -367,8 +463,10 @@ class TestCoverageStatsValueObject:
         assert "confidence gaps" not in out
         assert "✗ violation" not in out
 
-    def test_format_marks_saturation(self) -> None:
-        assert "(saturated)" in _stats(plateaued=True).format()
+    def test_format_marks_saturation_and_names_the_stop_rule(self) -> None:
+        # The stop rule is named (it is what makes ``seeds_run`` a stopping time), and so is the
+        # alphabet it saturated on — behaviours, not the state space.
+        assert "(saturated on behaviours — plateau stop)" in _stats(plateaued=True).format()
 
     def test_format_reachability_all_reached(self) -> None:
         reach = ReachabilityReport(

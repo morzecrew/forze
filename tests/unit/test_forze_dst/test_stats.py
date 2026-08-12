@@ -7,6 +7,8 @@ binomial tail at the bound equals α/2).
 """
 
 import math
+import random
+from collections import Counter
 from types import MappingProxyType
 
 import pytest
@@ -19,12 +21,19 @@ from forze_dst.oracle.recorder import History
 from forze_dst.oracle.replay import ViolationReport
 from forze_dst.stats import (
     SurvivalCurve,
+    _render_probability,
     binomial_ci,
+    coverage_deficit,
     detection_upper_bound,
     fisher_exact,
+    flip_margin,
     format_clean_verdict,
+    format_coverage_deficit,
+    format_family_verdict,
+    format_withheld_verdict,
     geometric_p_hat,
     log_rank,
+    familywise_level,
 )
 
 # The Gehan (1965) 6-MP leukemia trial — the canonical Kaplan–Meier worked example. Remission
@@ -98,6 +107,310 @@ class TestFormatCleanVerdict:
 
         assert "0.00%" not in out
         assert "e-07" in out
+
+
+# ....................... #
+
+
+class TestFormatWithheldVerdict:
+    """The stopping-time refusal: an exact bound is a *fixed-design* guarantee, so a sweep whose
+    ``n`` was read off its own runs states the stop reason and prints no number."""
+
+    def test_states_the_stop_reason_and_carries_no_bound(self) -> None:
+        out = format_withheld_verdict(13, stop_reason="plateau stop")
+
+        assert "0 violations in 13 seeds" in out
+        assert "no per-seed bound" in out
+        assert "n was chosen from the data" in out
+        assert "plateau stop" in out
+        # Nothing that could be quoted as a rate: no percentage, no confidence, no "exact".
+        assert "%" not in out
+        assert "detection probability" not in out
+        assert "exact)" not in out
+
+    def test_points_at_the_fixed_design_alternative(self) -> None:
+        # Withholding without a remedy would just be a dead end; audit() is the fixed-n path.
+        assert "audit()" in format_withheld_verdict(13, stop_reason="plateau stop")
+
+    def test_singular_seed(self) -> None:
+        assert "0 violations in 1 seed →" in format_withheld_verdict(1, stop_reason="plateau stop")
+
+    def test_rejects_nonpositive_runs(self) -> None:
+        with pytest.raises(ValueError, match="runs must be >= 1"):
+            format_withheld_verdict(0, stop_reason="plateau stop")
+
+
+# ....................... #
+
+
+class TestCoverageDeficit:
+    """Chao1 + Good–Turing over a frequency table. Pinned to the closed form, to recovery of a
+    known richness, and to *silence* on a source that genuinely has one shape."""
+
+    def test_closed_form_chao1(self) -> None:
+        # S_obs + f1²/(2·f2): 50 + 100/10 = 60.
+        counts = {f"s{i}": 1 for i in range(10)}
+        counts |= {f"s{i}": 2 for i in range(10, 15)}
+        counts |= {f"s{i}": 7 for i in range(15, 50)}
+
+        deficit = coverage_deficit(counts)
+
+        assert deficit.observed == 50
+        assert (deficit.singletons, deficit.doubletons) == (10, 5)
+        assert deficit.richness == pytest.approx(60.0)
+        assert deficit.unseen == pytest.approx(10.0)
+        # Good–Turing: 10 singletons over 10 + 10 + 245 = 265 observations.
+        assert deficit.unseen_mass == pytest.approx(10 / 265)
+
+    def test_interval_brackets_the_estimate(self) -> None:
+        counts = {f"s{i}": 1 for i in range(10)} | {f"s{i}": 2 for i in range(10, 15)}
+
+        deficit = coverage_deficit(counts)
+
+        # The log transform keeps the interval above what was actually counted.
+        assert deficit.observed <= deficit.lower <= deficit.richness <= deficit.upper
+
+    def test_recovers_a_known_richness_from_an_undersampled_source(self) -> None:
+        # A synthetic run-source with a fixed shape population: sampled below saturation the truth
+        # sits inside the interval, and the estimate is a *lower* bound on it (the safe direction).
+        rng = random.Random(7)
+        truth = 80
+
+        undersampled = coverage_deficit(Counter(rng.randrange(truth) for _ in range(150)))
+
+        assert undersampled.observed < truth  # genuinely below saturation
+        assert undersampled.richness > undersampled.observed  # it names the deficit
+        assert undersampled.lower <= truth <= undersampled.upper
+
+    def test_sampled_to_exhaustion_the_estimate_equals_the_truth(self) -> None:
+        rng = random.Random(7)
+        truth = 80
+
+        exhausted = coverage_deficit(Counter(rng.randrange(truth) for _ in range(4000)))
+
+        assert exhausted.observed == truth
+        assert exhausted.richness == pytest.approx(float(truth))
+        assert exhausted.unseen == 0.0
+
+    def test_does_not_cry_wolf_on_a_degenerate_source(self) -> None:
+        # One shape, three hundred runs: richness 1, no deficit, no interval to wave around.
+        deficit = coverage_deficit({"one-shape": 300})
+
+        assert deficit.observed == 1
+        assert deficit.richness == 1.0
+        assert deficit.unseen == 0.0
+        assert deficit.unseen_mass == 0.0
+        assert (deficit.lower, deficit.upper) == (1.0, 1.0)
+
+    def test_a_lone_singleton_extrapolates_to_nothing(self) -> None:
+        # f1 = 1, f2 = 0 → the bias-corrected form is f1·(f1−1)/2 = 0. Good–Turing still reports
+        # mass (a new shape is plausible); Chao1's lower bound simply cannot name a number.
+        deficit = coverage_deficit({"a": 9, "b": 1})
+
+        assert deficit.richness == 2.0
+        assert deficit.unseen == 0.0
+        assert deficit.unseen_mass == pytest.approx(0.1)
+
+    def test_rejects_an_empty_table(self) -> None:
+        with pytest.raises(ValueError, match="at least one observed feature"):
+            coverage_deficit({})
+
+    def test_rejects_a_zero_count(self) -> None:
+        # A Counter can carry a zero after arithmetic; zero observations is not an observation.
+        with pytest.raises(ValueError, match="count must be >= 1"):
+            coverage_deficit(Counter({"a": 3, "b": 0}))
+
+    def test_rejects_an_out_of_range_confidence(self) -> None:
+        with pytest.raises(ValueError, match="confidence must be in"):
+            coverage_deficit({"a": 1, "b": 1}, confidence=1.0)
+
+    def test_rendering_states_both_halves(self) -> None:
+        line = format_coverage_deficit(coverage_deficit({f"s{i}": 1 for i in range(4)} | {"x": 2}))
+
+        assert "5 observed" in line
+        assert "estimated reachable (Chao1, 95% CI" in line
+        assert "of seeds still discovering" in line
+
+    def test_the_richness_is_never_rendered_as_a_bound(self) -> None:
+        # Chao1's *estimand* is a lower bound on richness; the estimate is not. Sampled below
+        # saturation it lands above the truth about as often as below (see the test beneath), so a
+        # `≥` in front of it would claim a floor the number cannot carry — the exact shape of
+        # overclaim this module exists to remove.
+        line = format_coverage_deficit(coverage_deficit({f"s{i}": 1 for i in range(4)} | {"x": 2}))
+
+        assert "≥" not in line
+        assert "~" in line
+
+    def test_the_point_estimate_overshoots_the_truth_about_half_the_time(self) -> None:
+        # The measurement behind the rule above, so a future reader does not reinstate the `≥`.
+        truth = 80
+
+        def sample(seed: int) -> float:
+            rng = random.Random(seed)  # one generator per sample, not one per draw
+            return coverage_deficit(Counter(rng.randrange(truth) for _ in range(150))).richness
+
+        overshoots = sum(sample(seed) > truth for seed in range(200))
+
+        assert 60 < overshoots < 140, f"{overshoots}/200 — re-derive before trusting a bound glyph"
+
+    def test_a_tiny_unseen_mass_never_renders_as_zero(self) -> None:
+        # 0.0% reads as "saturated" when the sample is still discovering. The module already solves
+        # this for bounds; the saturation line must agree on what "too small to show" looks like.
+        # One singleton in a large pool is reachable from an audit() sweep, not a 200-seed one.
+        deficit = coverage_deficit({"lonely": 1} | {f"s{i}": 3 for i in range(700)})
+
+        assert 0.0 < deficit.unseen_mass < 0.0005
+        assert "0.0%" not in format_coverage_deficit(deficit)
+        assert "e-04" in format_coverage_deficit(deficit)
+
+    def test_an_exact_zero_mass_still_renders_as_a_percentage(self) -> None:
+        # The scientific fallback is for a mass too small to show, not for one that is genuinely
+        # nothing — "0.0e+00 of seeds still discovering" is noise where "0.00%" is the answer.
+        deficit = coverage_deficit({"a": 100, "b": 100, "c": 100})
+
+        assert deficit.unseen_mass == 0.0
+        assert "0.00% of seeds still discovering" in format_coverage_deficit(deficit)
+        assert "e+00" not in format_coverage_deficit(deficit)
+
+
+# ....................... #
+
+
+class TestFamilywiseLevel:
+    """Family-wise control, in both directions — a scan of m cells, and a family of K sweeps."""
+
+    def test_hand_computed_level_for_a_fixed_m(self) -> None:
+        # The union bound, γ' = 1 − α/m: the per-comparison level that leaves 5% family-wise error
+        # across 15 cells. By hand: 1 − 0.05/15 = 1 − 0.003333… = 0.996666…
+        assert familywise_level(0.95, 15) == pytest.approx(1.0 - 0.05 / 15)
+        assert familywise_level(0.95, 15) == pytest.approx(0.9966667, abs=1e-7)
+
+    def test_it_needs_no_independence_assumption(self) -> None:
+        # The load-bearing property, and the reason it is not Šidák. Šidák's γ^(1/m) is tighter but
+        # valid only under independence, and *anti-conservative* under positive dependence — which
+        # is what a session sharing one --dst-seeds range across sweeps produces. The union bound
+        # holds under arbitrary dependence, so it is never the looser-looking of the two by
+        # accident: it is looser on purpose, and correct without a premise nothing here checks.
+        for m in (2, 5, 15, 31, 60):
+            sidak = 0.95 ** (1 / m)
+
+            assert familywise_level(0.95, m) >= sidak  # never claims more than Šidák would
+            assert familywise_level(0.95, m) - sidak < 1e-3  # and the price is negligible
+
+    def test_one_comparison_is_the_uncorrected_level(self) -> None:
+        assert familywise_level(0.95, 1) == pytest.approx(0.95)
+
+    def test_more_comparisons_demand_a_stricter_per_cell_level(self) -> None:
+        assert (
+            familywise_level(0.95, 5) < familywise_level(0.95, 30) < familywise_level(0.95, 60) < 1.0
+        )
+
+    def test_the_family_wise_error_it_buys(self) -> None:
+        # What the correction is for: uncorrected, m statements at 95% each leave a spurious flag
+        # likelier than not by 15 comparisons.
+        assert 1.0 - 0.95**5 == pytest.approx(0.2262, abs=5e-4)
+        assert 1.0 - 0.95**15 == pytest.approx(0.5367, abs=5e-4)
+        assert 1.0 - 0.95**60 == pytest.approx(0.9539, abs=5e-4)
+
+    def test_rejects_a_nonpositive_comparison_count(self) -> None:
+        with pytest.raises(ValueError, match="comparisons must be >= 1"):
+            familywise_level(0.95, 0)
+
+    def test_rejects_an_out_of_range_confidence(self) -> None:
+        with pytest.raises(ValueError, match="confidence must be in"):
+            familywise_level(1.0, 10)
+
+
+# ....................... #
+
+
+class TestFormatFamilyVerdict:
+    def test_the_simultaneous_bound_is_wider_than_any_per_sweep_one(self) -> None:
+        per_sweep = detection_upper_bound(1000)
+        family = format_family_verdict([1000] * 10)
+
+        # 10 sweeps × 1000 seeds: 0.299% per sweep → 0.526% simultaneously (1.76× wider).
+        assert "0 violations across 10 sweeps" in family
+        assert "0.53%" in family
+        assert "simultaneously" in family
+        assert "(95% family-wise, Bonferroni over 10)" in family
+        assert per_sweep < 0.0053
+
+    def test_the_widest_corrected_bound_is_what_holds_for_all(self) -> None:
+        # A mixed-size family is bounded by its smallest sweep — claiming the tightest would be
+        # false of the others.
+        expected = detection_upper_bound(50, confidence=familywise_level(0.95, 3))
+
+        assert _render_probability(expected) in format_family_verdict([1000, 50, 400])
+
+    def test_a_single_sweep_family_is_just_that_sweep(self) -> None:
+        assert _render_probability(detection_upper_bound(200)) in format_family_verdict([200])
+
+    def test_rejects_an_empty_family(self) -> None:
+        with pytest.raises(ValueError, match="at least one sweep"):
+            format_family_verdict([])
+
+
+# ....................... #
+
+
+class TestFlipMargin:
+    """The exact sensitivity of a bound comparison to the one input carrying no interval."""
+
+    @staticmethod
+    def _respected(trigger: float, *, upper: float = 0.075, bound: float = 0.5) -> bool:
+        """The scan's own verdict, restated: respect iff the conditional upper clears the bound."""
+
+        return min(1.0, upper / trigger) >= bound
+
+    def test_the_factor_is_the_exact_boundary(self) -> None:
+        upper, bound, trigger = 0.075, 0.5, 0.0625
+        margin = flip_margin(observed_upper=upper, bound=bound, trigger=trigger)
+
+        assert margin.reachable
+        assert margin.factor == pytest.approx((upper / bound) / trigger)
+
+        # Just under F keeps the verdict; just over flips it. This is the whole claim.
+        assert self._respected(trigger * margin.factor * 0.999)
+        assert not self._respected(trigger * margin.factor * 1.001)
+
+    def test_an_unreachable_flip_is_reported_as_such(self) -> None:
+        # p̂_upper / bound > 1 → no admissible p_trigger flips this cell, and a numeric factor
+        # would imply a probability above 1.
+        margin = flip_margin(observed_upper=0.9, bound=0.25, trigger=0.5)
+
+        assert not margin.reachable
+        assert margin.factor * 0.5 > 1.0  # exactly why it cannot be quoted as a factor
+
+    def test_the_boundary_case_of_exactly_one_is_still_reachable(self) -> None:
+        # p̂_upper / bound == 1 lands on p_trigger = 1, which is admissible.
+        margin = flip_margin(observed_upper=0.5, bound=0.5, trigger=0.25)
+
+        assert margin.reachable
+        assert margin.factor == pytest.approx(4.0)
+
+    def test_a_violating_cell_reports_a_factor_below_one(self) -> None:
+        # Below 1 the reading inverts: how far the constant would have to be *overstated* for the
+        # violation to disappear.
+        margin = flip_margin(observed_upper=0.01, bound=0.5, trigger=0.5)
+
+        assert margin.factor < 1.0
+        assert not self._respected(0.5, upper=0.01)
+
+    def test_a_wide_margin_is_immune_to_any_plausible_derivation_error(self) -> None:
+        assert flip_margin(observed_upper=0.02, bound=0.0002, trigger=0.5).factor > 40.0
+
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"observed_upper": 1.5, "bound": 0.5, "trigger": 0.5}, "observed_upper must be"),
+            ({"observed_upper": 0.5, "bound": 0.0, "trigger": 0.5}, "bound must be"),
+            ({"observed_upper": 0.5, "bound": 0.5, "trigger": 0.0}, "trigger must be"),
+        ],
+    )
+    def test_rejects_inadmissible_inputs(self, kwargs: dict[str, float], match: str) -> None:
+        with pytest.raises(ValueError, match=match):
+            flip_margin(**kwargs)  # type: ignore[arg-type]
 
 
 # ....................... #

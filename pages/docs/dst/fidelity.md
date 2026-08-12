@@ -135,6 +135,17 @@ forgetting the wiring fail at authoring time rather than in production.
   [the gap table](#which-planes-have-a-leg) is where those are named.
 - The transfer table is the *direct* evidence, at found-bug granularity — and its N is what it
   is: every transferable corpus instance, currently against Postgres.
+- **The transfer leg's zero is not a sampling result, and no interval will ever be attached to
+  it.** Elsewhere in DST a zero comes with a bound, because it is a zero out of repeated
+  independent draws: [detection statistics](detection-statistics.md) can say "0 violations in
+  1000 seeds licenses < 0.30%" precisely because there were 1000 chances. Here each transferable
+  mutant runs *once* per backend under a deterministic verdict predicate. There is no repetition,
+  no rate, and — because the corpus is hand-authored rather than sampled from the population of
+  real defects — nothing a frequentist interval could be an interval *over*. "Does the mock's
+  verdict hold on the real engine?" is an epistemic question, and a binomial bound on "0
+  divergences in K mutants" would be a category error dressed as rigour. The honest artifact is
+  the list of what has been checked and the [gap table](#which-planes-have-a-leg) naming what has
+  not: untested, not confirmed.
 - The pre-registered predictor analysis is currently uninformative by construction (zero
   divergence on either plane), so the battery is **not** certified as a substitute for the
   transfer run — and for the corpus's non-isolation half it could never be one.
