@@ -7,6 +7,7 @@ non-positive, looks identical from inside the SDK call.
 
 from __future__ import annotations
 
+from contextlib import suppress
 from datetime import timedelta
 from uuid import uuid4
 
@@ -49,6 +50,23 @@ async def echo_client(temporal_dev_target):
         await client.close()
 
 
+@pytest.fixture
+async def terminate_after(echo_client):
+    """Collects workflow ids to terminate when the test ends.
+
+    Most legs here assert on what a *start* recorded and never run a worker, so the runs
+    would otherwise sit open on the session-scoped server until their own timeouts expire.
+    """
+
+    started: list[str] = []
+
+    yield started.append
+
+    for workflow_id in started:
+        with suppress(Exception):
+            await echo_client.terminate_workflow(workflow_id, reason="test cleanup")
+
+
 def _adapter(
     client: TemporalClient,
     task_queue: str,
@@ -69,7 +87,7 @@ def _adapter(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_configured_timeouts_reach_the_server(echo_client) -> None:
+async def test_configured_timeouts_reach_the_server(echo_client, terminate_after) -> None:
     """Timeouts declared on the workflow kind show up in the run's server-side config.
 
     No worker runs here on purpose: the assertion is about what the *start* recorded,
@@ -84,6 +102,8 @@ async def test_configured_timeouts_reach_the_server(echo_client) -> None:
     adapter = _adapter(echo_client, f"opts-tq-{uuid4()}", start_options=options)
 
     handle = await adapter.start(EchoIn(marker="timeouts"))
+    terminate_after(handle.workflow_id)
+
     described = await echo_client.native.get_workflow_handle(handle.workflow_id).describe()
     config = described.raw_description.execution_config
 
@@ -94,7 +114,7 @@ async def test_configured_timeouts_reach_the_server(echo_client) -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_per_call_override_wins_field_by_field_on_the_server(echo_client) -> None:
+async def test_per_call_override_wins_field_by_field_on_the_server(echo_client, terminate_after) -> None:
     """The overridden field changes; the configured field the caller did not mention stands."""
 
     adapter = _adapter(
@@ -110,6 +130,8 @@ async def test_per_call_override_wins_field_by_field_on_the_server(echo_client) 
         EchoIn(marker="override"),
         options=TemporalStartOptions(run_timeout=timedelta(seconds=30)),
     )
+    terminate_after(handle.workflow_id)
+
     described = await echo_client.native.get_workflow_handle(handle.workflow_id).describe()
     config = described.raw_description.execution_config
 
@@ -119,7 +141,7 @@ async def test_per_call_override_wins_field_by_field_on_the_server(echo_client) 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_configured_retry_policy_and_memo_reach_the_server(echo_client) -> None:
+async def test_configured_retry_policy_and_memo_reach_the_server(echo_client, terminate_after) -> None:
     """Retry policy rides the start event; memo comes back on describe."""
 
     adapter = _adapter(
@@ -132,6 +154,8 @@ async def test_configured_retry_policy_and_memo_reach_the_server(echo_client) ->
     )
 
     handle = await adapter.start(EchoIn(marker="retry"))
+    terminate_after(handle.workflow_id)
+
     native_handle = echo_client.native.get_workflow_handle(handle.workflow_id)
 
     described = await native_handle.describe()

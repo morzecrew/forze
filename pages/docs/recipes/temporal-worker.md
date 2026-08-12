@@ -122,6 +122,11 @@ that exits loudly than one that hot-loops a critical log until someone notices.
 
 - **One step runs one worker on one queue.** How many workers, which queues exist,
   and how they are deployed stay yours; register a second step for a second queue.
+- **Synchronous activities need an executor.** The SDK refuses to build a worker with a
+  plain `def` activity unless one is given, so pass `activity_executor=ThreadPoolExecutor(…)`
+  and size it alongside `max_concurrent_activities`.
+- A tenant-routed client cannot back a worker — it resolves its connection from the
+  calling scope's tenant, and a worker polls a queue. Run one worker process per cluster.
 - Add `probe_listener_step` so the orchestrator can see the process — it serves
   `/livez` and `/readyz` from the same runtime state, and reports `draining` for the
   whole shutdown window. See

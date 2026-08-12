@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from concurrent.futures import ThreadPoolExecutor
 from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
@@ -24,7 +25,8 @@ from forze_temporal import (
     DEFAULT_WORKER_GRACEFUL_SHUTDOWN,
     temporal_worker_lifecycle_step,
 )
-from forze_temporal.kernel.client import TemporalClient
+from forze.application.execution.background import DEFAULT_STOP_GRACE_SECONDS
+from forze_temporal.kernel.client import RoutedTemporalClient, TemporalClient
 
 # ----------------------- #
 
@@ -152,6 +154,27 @@ class TestWiringRefusals:
 
         assert ExecutionRuntime().shutdown_step_timeout >= DEFAULT_WORKER_GRACEFUL_SHUTDOWN
 
+    def test_a_tenant_routed_client_is_refused(self) -> None:
+        """``native`` on a routed client resolves the *calling scope's* tenant.
+
+        A worker has no calling scope — it polls a queue — so a routed client can only
+        fail, and left to startup it fails with "Tenant ID is required", which reads like
+        a missing binding rather than a client that cannot back a worker at all.
+        """
+
+        routed = RoutedTemporalClient(
+            secrets=MagicMock(),
+            secret_ref_for_tenant=MagicMock(),
+            tenant_provider=lambda: None,
+        )
+
+        with pytest.raises(CoreException, match="cannot run on a tenant-routed client"):
+            temporal_worker_lifecycle_step(
+                client=routed,
+                task_queue="tq",
+                workflows=[_Wf],
+            )
+
     def test_step_declares_it_needs_a_long_running_host(self) -> None:
         """A serverless profile must refuse this step at assembly, not at 3am."""
 
@@ -237,6 +260,31 @@ class TestStartup:
             assert worker.kwargs["graceful_shutdown_timeout"] == timedelta(seconds=11)
 
             await step.shutdown(ctx)
+
+    @pytest.mark.asyncio
+    async def test_activity_executor_reaches_the_worker(self) -> None:
+        """The SDK refuses a plain ``def`` activity without one, so it must be reachable."""
+
+        executor = ThreadPoolExecutor(1)
+        step = temporal_worker_lifecycle_step(
+            client=_connected_client(),
+            task_queue="tq",
+            activities=[lambda: None],
+            activity_executor=executor,
+        )
+        ctx = _ctx()
+
+        try:
+            with patch("forze_temporal.execution.lifecycle.worker.Worker", _StubWorker):
+                await step.startup(ctx)
+                await asyncio.sleep(0)
+
+                assert _StubWorker.instances[0].kwargs["activity_executor"] is executor
+
+                await step.shutdown(ctx)
+
+        finally:
+            executor.shutdown(wait=False)
 
     @pytest.mark.asyncio
     async def test_duplicate_startup_does_not_orphan_a_worker(self) -> None:
@@ -415,6 +463,34 @@ class TestStop:
         assert step.startup.task.done()  # type: ignore[attr-defined]
         assert recorded.error.call_count == 1
         assert "shutdown failed" in recorded.error.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_the_fallback_hook_honours_a_longer_configured_window(self) -> None:
+        """The hand-driven path must not cut a deliberately widened drain short.
+
+        This hook runs only when nobody stopped the loop first; giving it the shared
+        five-second fallback would cancel exactly the activities a longer window was
+        configured for.
+        """
+
+        window = timedelta(seconds=DEFAULT_STOP_GRACE_SECONDS * 4)
+        step = temporal_worker_lifecycle_step(
+            client=_connected_client(),
+            task_queue="tq",
+            workflows=[_Wf],
+            graceful_shutdown=window,
+        )
+        seen: list[float] = []
+
+        async def _record(*, deadline: float) -> bool:
+            seen.append(deadline - asyncio.get_running_loop().time())
+
+            return True
+
+        with patch.object(step.startup, "stop", _record):  # type: ignore[attr-defined]
+            await step.shutdown(_ctx())
+
+        assert seen and seen[0] >= window.total_seconds() - 1
 
     @pytest.mark.asyncio
     async def test_stop_is_idempotent(self) -> None:

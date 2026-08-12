@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
+from concurrent.futures import Executor
 from contextlib import suppress
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, final
@@ -37,7 +38,7 @@ from forze.application.execution.background import (
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
-from ...kernel.client import TemporalClientPort
+from ...kernel.client import RoutedTemporalClient, TemporalClientPort
 from ...sandbox import sandboxed_workflow_runner
 from .._logger import logger
 
@@ -93,6 +94,7 @@ class _TemporalWorkerStartup(LifecycleHook):
     restart_backoff: timedelta
     max_concurrent_activities: int | None
     max_consecutive_crashes: int | None
+    activity_executor: Executor | None
 
     # ....................... #
 
@@ -224,6 +226,7 @@ class _TemporalWorkerStartup(LifecycleHook):
                 workflow_runner=self.workflow_runner,
                 max_concurrent_activities=self.max_concurrent_activities,
                 graceful_shutdown_timeout=self.graceful_shutdown,
+                activity_executor=self.activity_executor,
             )
 
         except Exception as error:
@@ -265,7 +268,16 @@ class _TemporalWorkerShutdown(LifecycleHook):
 
     async def __call__(self, ctx: ExecutionContext) -> None:
         clock = asyncio.get_running_loop()
-        await self.startup.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
+
+        # At least the configured window: this path runs when nobody stopped the loop
+        # first, and the shared five-second fallback would otherwise cut a deliberately
+        # longer drain short — cancelling exactly the activities it was widened for.
+        grace = max(
+            DEFAULT_STOP_GRACE_SECONDS,
+            self.startup.graceful_shutdown.total_seconds(),
+        )
+
+        await self.startup.stop(deadline=clock.time() + grace)
 
 
 # ----------------------- #
@@ -279,6 +291,7 @@ def temporal_worker_lifecycle_step(
     workflows: Sequence[type] = (),
     activities: Sequence[Callable[..., Any]] = (),
     max_concurrent_activities: int | None = None,
+    activity_executor: Executor | None = None,
     workflow_runner: WorkflowRunner | None = None,
     graceful_shutdown: timedelta = DEFAULT_WORKER_GRACEFUL_SHUTDOWN,
     restart_backoff: timedelta = timedelta(seconds=5),
@@ -300,6 +313,10 @@ def temporal_worker_lifecycle_step(
 
     :param client: A connected framework client. A tenant-routed client is not meaningful
         here — a worker polls a queue, and has no request scope to resolve a tenant from.
+    :param activity_executor: Required by the SDK as soon as any registered activity is a
+        plain ``def`` rather than ``async def`` — without one, building the worker fails.
+        A ``ThreadPoolExecutor`` is the usual choice; its size bounds how many synchronous
+        activities run at once, so pair it with *max_concurrent_activities*.
     :param graceful_shutdown: How long in-flight activities get once shutdown starts. The
         runtime's drain deadline caps this; past it the loop is cancelled outright.
     :param restart_backoff: Base delay before a crashed worker is rebuilt, jittered.
@@ -312,6 +329,18 @@ def temporal_worker_lifecycle_step(
         # would mean cancelling activities mid-flight on every deploy.
         raise exc.configuration(
             f"Temporal worker {name!r} graceful_shutdown must be positive",
+            code="core.temporal.worker_wiring",
+        )
+
+    if isinstance(client, RoutedTemporalClient):
+        # ``native`` on a routed client resolves *the calling scope's* tenant, and a
+        # worker has no calling scope — it polls a queue. Left to startup this surfaces
+        # as "Tenant ID is required", which reads like a missing binding rather than a
+        # client that cannot back a worker at all.
+        raise exc.configuration(
+            f"Temporal worker {name!r} cannot run on a tenant-routed client: a worker "
+            "polls a task queue and has no request scope to resolve a tenant from. Give "
+            "it a TemporalClient, and run one worker process per tenant cluster.",
             code="core.temporal.worker_wiring",
         )
 
@@ -336,6 +365,7 @@ def temporal_worker_lifecycle_step(
         restart_backoff=restart_backoff,
         max_concurrent_activities=max_concurrent_activities,
         max_consecutive_crashes=max_consecutive_crashes,
+        activity_executor=activity_executor,
     )
 
     return LifecycleStep(
