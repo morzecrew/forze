@@ -249,3 +249,7 @@ def test_mutants_the_theorem_does_not_speak_about_are_excluded_by_name(
     assert expected is None
     assert _cells(text) == []
     assert f"`{mutant_id}`" in text
+    # No cell scanned means no family to correct: stating a level over zero comparisons would
+    # name a correction the code did not apply.
+    assert "Šidák over" not in text
+    assert "**Multiplicity.**" not in text

@@ -647,15 +647,15 @@ def coverage_deficit(counts: Mapping[Any, int], *, confidence: float = 0.95) -> 
     ``S_obs + f1²/(2·f2)``, falling back to the bias-corrected ``S_obs + f1·(f1−1)/2`` when no
     feature was seen exactly twice, with the standard log-transformed interval.
 
-    **Which alphabet you feed it decides whether it says anything.** Measured across the misuse
-    corpus at 200 seeds per mutant, the sweep's *behavioural* coverage alphabet (the unordered set
-    of operation outcomes / port edges / fault kinds) has ``f1 == f2 == 0`` in every case — every
-    behaviour that appears at all appears in many seeds, so Good–Turing reports zero unseen mass
-    and Chao1 returns the observed count, permanently. On that alphabet this estimator is
-    degenerate and would ship as a green number that can never go red. It is informative on the
-    *ordered execution-shape* alphabet (``behavioral_fingerprint``), where the same corpus at 100
-    seeds names a richness the sweep does not reach until 400 — and still returns exactly 1 on a
-    genuinely single-shape workload, so it does not cry wolf.
+    **Which alphabet you feed it decides whether it says anything.** Measured over every control in
+    the misuse corpus, the sweep's *behavioural* coverage alphabet (the unordered set of operation
+    outcomes / port edges / fault kinds) has ``f1 == f2 == 0`` in every case — every behaviour that
+    appears at all appears in many seeds, so Good–Turing reports zero unseen mass and Chao1 returns
+    the observed count, permanently. On that alphabet this estimator is degenerate and would ship
+    as a green number that can never go red. It is informative on the *ordered execution-shape*
+    alphabet (``behavioral_fingerprint``), where the same controls span one shape to well over a
+    hundred at 200 seeds, with live singletons and doubletons throughout — and still returns
+    exactly 1 on a genuinely single-shape workload, so it does not cry wolf.
     """
 
     if not counts:

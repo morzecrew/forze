@@ -92,6 +92,28 @@ def main(argv: list[str]) -> int:
 
     per_cell = sidak_level(FAMILY_CONFIDENCE, max(1, len(cells)))
 
+    # With no cell to scan there is no family to correct, and the paragraph below would state a
+    # level over zero comparisons that the code did not apply.
+    multiplicity = (
+        [
+            "",
+            (
+                f"**Multiplicity.** The scan checks {len(cells)} cells and reports one violation "
+                "count, so"
+            ),
+            "a per-cell 95% interval would not be a 95% claim about the family — under the null that",
+            "the bound holds everywhere, the chance of at least one spurious flag grows past a coin",
+            "flip by ~15 cells, and a false alarm here sends a reviewer off to re-derive a correct",
+            f"depth label. Each interval below is therefore computed at **{per_cell:.4%} per cell**",
+            (
+                f"(Šidák over {len(cells)}), holding **{FAMILY_CONFIDENCE:.0%} family-wise** "
+                "across the scan."
+            ),
+        ]
+        if cells
+        else []
+    )
+
     lines = [
         "",
         "## p̂ versus the PCT bound (W3)",
@@ -113,19 +135,7 @@ def main(argv: list[str]) -> int:
         "decomposition of any looseness into draw-range slack versus residual conservatism.",
         "A cell whose records predate the instrumentation falls back to the structural",
         "estimates (workload concurrency; the draw range) and says so.",
-        "",
-        (
-            f"**Multiplicity.** The scan checks {len(cells)} cells and reports one violation "
-            "count, so"
-        ),
-        "a per-cell 95% interval would not be a 95% claim about the family — under the null that",
-        "the bound holds everywhere, the chance of at least one spurious flag grows past a coin",
-        "flip by ~15 cells, and a false alarm here sends a reviewer off to re-derive a correct",
-        f"depth label. Each interval below is therefore computed at **{per_cell:.4%} per cell**",
-        (
-            f"(Šidák over {len(cells)}), holding **{FAMILY_CONFIDENCE:.0%} family-wise** across "
-            "the scan."
-        ),
+        *multiplicity,
         "",
         "**Flip margin.** Uncertainty is propagated through `p̂` and through nothing else:",
         "`p_trigger` is a structural constant, several of its values exact combinatorics, but all",

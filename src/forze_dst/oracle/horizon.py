@@ -197,8 +197,7 @@ class HorizonProbe:
 
     _present: set[str] = attrs.field(factory=set)
     _blind_kinds: set[str] = attrs.field(factory=set)
-    _footprints: dict[str, frozenset[str]] = attrs.field(factory=dict)
-    _opaque: set[str] = attrs.field(factory=set)
+    _footprints: dict[str, frozenset[str] | None] = attrs.field(factory=dict)
     _at_risk: Counter[str] = attrs.field(factory=Counter)
     _runs: int = 0
 
@@ -207,21 +206,35 @@ class HorizonProbe:
     def __attrs_post_init__(self) -> None:
         """Resolve each declared invariant's read footprint once, before any run is folded.
 
-        The footprint probe runs the predicate against an empty synthetic history, so doing it
-        per run would repeat identical work; doing it once here also means the probe is ready to
-        count from the very first ``observe``. Repeated names collapse to one entry with the
-        union of their footprints, so a run can never be counted twice for one name — the
-        accounting gate is what forbids duplicate names in the first place.
+        The footprint probe *runs the predicate* (against an empty synthetic history), so it is
+        resolved exactly once per invariant and reused by both ``observe`` and ``analyze`` —
+        neither the per-run fold nor the final analysis probes a predicate again. Doing it here
+        also means the probe is ready to count from the very first ``observe``. A ``None`` entry
+        records an opaque footprint, which is a different fact from "not declared". Repeated names
+        collapse to one entry with the union of their footprints, so a run can never be counted
+        twice for one name — the accounting gate is what forbids duplicate names in the first
+        place.
         """
 
         for invariant in self.invariants:
             kinds = read_kinds(invariant)
             name = name_of(invariant)
+            known = self._footprints.get(name)
 
-            if kinds is None:
-                self._opaque.add(name)
+            if kinds is None or (name in self._footprints and known is None):
+                self._footprints[name] = None  # opaque wins: an unknown footprint stays unknown
             else:
-                self._footprints[name] = self._footprints.get(name, frozenset()) | kinds
+                self._footprints[name] = (known or frozenset()) | kinds
+
+    # ....................... #
+
+    def _footprint_of(self, invariant: Invariant, name: str) -> frozenset[str] | None:
+        """The read footprint of *invariant*, from the resolved table when it was declared here."""
+
+        if name in self._footprints:
+            return self._footprints[name]
+
+        return read_kinds(invariant)
 
     # ....................... #
 
@@ -254,9 +267,12 @@ class HorizonProbe:
                 self._blind_kinds.add(event.kind)
 
         # "At risk" is the same relation vacuity uses, applied per run rather than sweep-wide:
-        # this run recorded at least one kind the invariant's predicate reads.
+        # this run recorded at least one kind the invariant's predicate reads. An opaque footprint
+        # (``None``) is skipped so the counter never holds a number nothing could justify —
+        # ``analyze`` is the load-bearing exclusion (it reports those names as unmeasured and
+        # never reads their count), this keeps the accumulator itself honest.
         for name, footprint in self._footprints.items():
-            if footprint & kinds_here:
+            if footprint is not None and footprint & kinds_here:
                 self._at_risk[name] += 1
 
     # ....................... #
@@ -270,8 +286,8 @@ class HorizonProbe:
         unmeasured: list[str] = []
 
         for invariant in invariants:
-            kinds = read_kinds(invariant)
             name = name_of(invariant)
+            kinds = self._footprint_of(invariant, name)
 
             if kinds is None:
                 # Opaque footprint — vacuity cannot be decided, and neither can exposure. Named

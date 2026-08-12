@@ -27,6 +27,7 @@ import pytest
 
 from forze_dst import SimulationConfig
 from forze_dst.misuse import MisuseCase, MisuseControl
+from forze_dst.oracle.confidence import REDUNDANCY_MIN_SEEDS, ConfidenceReport
 from forze_dst.oracle.coverage import Behavior
 from forze_dst.stats import coverage_deficit
 from tests.support.misuse import CONTROLS, SMOKE_CONTROL_EXPLORE
@@ -71,6 +72,33 @@ def _alphabets(control: MisuseControl) -> tuple[Counter[Behavior], Counter[str]]
         shapes.update(stats.shape_counts)
 
     return behaviours, shapes
+
+
+def _redundancy_report(control_id: str) -> ConfidenceReport:
+    """A confidence report over *control_id*, swept past the redundancy floor.
+
+    Runs the whole pool in one sweep (so ``seeds_run`` and the shape table come from the same
+    place) at a seed count above :data:`~forze_dst.oracle.confidence.REDUNDANCY_MIN_SEEDS` — the
+    check is about the ratio threshold, not the floor.
+    """
+
+    control = next(c for c in CONTROLS if c.control_id == control_id)
+    case = _resolve(control.base)
+
+    stats = case.simulation.audit(
+        SimulationConfig(
+            seeds=range(REDUNDANCY_MIN_SEEDS + 10),
+            act_count=int(SMOKE_CONTROL_EXPLORE["act_count"]),  # type: ignore[arg-type]
+            concurrency=int(SMOKE_CONTROL_EXPLORE["concurrency"]),  # type: ignore[arg-type]
+            crash=case.crash,
+        ),
+        scenario=case.scenario,
+    )
+
+    assert stats.violation is None, f"{control_id} is a control and must sweep clean"
+    assert stats.confidence is not None
+
+    return stats.confidence
 
 
 # ....................... #
@@ -155,6 +183,18 @@ class TestShapeAlphabetIsInformative:
 
             assert deficit.richness == 1.0, control_id
             assert deficit.unseen == 0.0, control_id
+
+    def test_the_redundancy_threshold_discriminates_on_real_corpus_sweeps(self) -> None:
+        # The calibration claim, on corpus data rather than synthetic ratios: the threshold has to
+        # fire on a genuinely single-shape control and stay silent on a diverse one, at a seed
+        # count above the floor. A threshold that did neither would be a constant dressed up as a
+        # measurement.
+        loud = _redundancy_report("ctrl-unique-reservation")
+        quiet = _redundancy_report("ctrl-atomic-provision")
+
+        assert loud.redundant_seeds, "a single-shape control did not trip the redundancy warning"
+        assert not quiet.redundant_seeds, "a diverse control tripped it — the threshold is noise"
+        assert len(loud.shape_counts) < len(quiet.shape_counts)
 
     def test_the_two_alphabets_disagree_about_saturation(
         self, measured: dict[str, tuple[Counter[Behavior], Counter[str]]]

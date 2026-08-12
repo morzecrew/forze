@@ -46,13 +46,14 @@ if TYPE_CHECKING:
 
 REDUNDANCY_RATIO = 0.05
 """Warn below this many distinct execution shapes per seed. Calibrated against the misuse corpus's
-own spread rather than picked round: at 200 seeds its mutants range from 1 to 55 distinct shapes,
-and 0.05 separates the genuinely redundant end (1–3 shapes) from the diverse one (19–55) with room
-either side."""
+own spread rather than picked round: swept at 200 seeds, its 18 controls land anywhere from 1 to
+170 distinct shapes, and the observed ratios leave a clean gap — ten controls at 0.005–0.020, then
+nothing until 0.060. This threshold sits inside that gap, 2.5× above the loudest case it warns on
+and 1.2× below the quietest it stays silent for."""
 
 REDUNDANCY_MIN_SEEDS = 50
-"""…and only once the sweep is long enough for the ratio to mean anything. A 10-seed sweep with 1
-shape is not evidence of redundancy, it is a short sweep."""
+"""…and only once the sweep is long enough for the ratio to mean anything. One shape in twenty
+seeds is not evidence of redundancy, it is a short sweep."""
 
 
 def _fault_label(rule: Any) -> str:
@@ -133,27 +134,44 @@ class ConfidenceReport:
 
     # ....................... #
 
-    @property
-    def weakest_exposure(self) -> tuple[str, int] | None:
-        """The invariant the aggregate bound overstates most, or ``None`` when it overstates none.
+    def _in_scope(self, name: str) -> bool:
+        """Whether the verdict's scope clause actually speaks for *name*.
 
-        Scoped to the invariants the verdict's clause actually names — the accounted-for
-        ``witnessed`` set when accounting is on, every measured invariant otherwise. ``None`` once
-        every one of them was at risk in every run, because then the aggregate is already its own
-        weakest member and the extra line would be noise.
+        With accounting on, the clause names the WITNESSED set — reporting an exposure gap for an
+        invariant the sentence already excludes (declared out-of-horizon, unexercisable) would
+        qualify a claim that was never made.
         """
 
-        covered = {name for name, _ in self.at_risk_runs}
-        if self.accounting is not None:
-            covered &= set(self.accounting.witnessed)
+        return self.accounting is None or name in set(self.accounting.witnessed)
 
-        exposures = [(name, n) for name, n in self.at_risk_runs if name in covered]
+    # ....................... #
+
+    def weakest_exposure(self, runs: int | None = None) -> tuple[str, int] | None:
+        """The invariant the aggregate bound overstates most, or ``None`` when it overstates none.
+
+        Scoped by :meth:`_in_scope`. ``None`` once every in-scope invariant was at risk in every
+        run, because then the aggregate is already its own weakest member and the extra line
+        would be noise. *runs* is the denominator the verdict is about to print, so the comparison
+        and the rendered fraction can never disagree.
+        """
+
+        seeds = self.seeds_run if runs is None else runs
+        exposures = [(name, n) for name, n in self.at_risk_runs if self._in_scope(name)]
+
         if not exposures:
             return None
 
         weakest = min(exposures, key=lambda pair: (pair[1], pair[0]))
 
-        return weakest if weakest[1] < self.seeds_run else None
+        return weakest if weakest[1] < seeds else None
+
+    # ....................... #
+
+    @property
+    def scoped_unmeasured_exposure(self) -> tuple[str, ...]:
+        """Invariants with an unmeasurable exposure that the verdict's clause *does* speak for."""
+
+        return tuple(name for name in self.unmeasured_exposure if self._in_scope(name))
 
     # ....................... #
 
@@ -283,8 +301,8 @@ class ConfidenceReport:
         if accounting is None:
             return format_clean_verdict(
                 seeds,
-                weakest=self.weakest_exposure,
-                unmeasured_exposure=self.unmeasured_exposure,
+                weakest=self.weakest_exposure(seeds),
+                unmeasured_exposure=self.scoped_unmeasured_exposure,
             )
 
         return format_clean_verdict(
@@ -293,8 +311,8 @@ class ConfidenceReport:
             declared=accounting.declared,
             unexercisable=accounting.unexercisable,
             unaccounted=accounting.unaccounted,
-            weakest=self.weakest_exposure,
-            unmeasured_exposure=self.unmeasured_exposure,
+            weakest=self.weakest_exposure(seeds),
+            unmeasured_exposure=self.scoped_unmeasured_exposure,
         )
 
     # ....................... #

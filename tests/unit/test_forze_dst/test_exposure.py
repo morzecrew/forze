@@ -15,7 +15,12 @@ from __future__ import annotations
 
 import pytest
 
-from forze_dst.oracle.confidence import ConfidenceProbe, ConfidenceReport
+from forze_dst.oracle.confidence import (
+    REDUNDANCY_MIN_SEEDS,
+    REDUNDANCY_RATIO,
+    ConfidenceProbe,
+    ConfidenceReport,
+)
 from forze_dst.oracle.horizon import HorizonProbe
 from forze_dst.oracle.invariants import Invariant, Violation, named
 from forze_dst.oracle.recorder import Event, History
@@ -141,6 +146,34 @@ class TestOpaqueFootprintsAreUnmeasured:
         assert dict(analysis.at_risk) == {"narrow": 3}
         assert "reads_everything" not in dict(analysis.at_risk)
 
+    def test_a_predicate_is_probed_once_per_sweep_not_once_per_analysis(self) -> None:
+        # The footprint probe *runs the predicate*. Resolving it in the probe and re-resolving it
+        # in analyze() would run user code twice per sweep and — for a predicate whose reads are
+        # not stable — let the at-risk counts and the vacuity flag derive from two different
+        # footprints. The reuse is what keeps one answer.
+        probes = 0
+
+        def _counting(history: History) -> list[Violation]:
+            nonlocal probes
+            probes += 1
+            return [
+                Violation(invariant="counted", message="boom", events=(event,))
+                for event in history.of_kind("common")
+                if event.fields.get("boom")
+            ]
+
+        invariant = named("counted", _counting)
+        probe = HorizonProbe(invariants=[invariant])
+        probes = 0  # the constructor's resolution is the one under test; count from there
+
+        for seed in range(5):
+            probe.observe(_run(seed, "common"))
+        analysis = probe.analyze([invariant])
+
+        # observe() never probes (it reuses the resolved footprint); analyze() reuses it too.
+        assert probes == 0
+        assert dict(analysis.at_risk) == {"counted": 5}
+
     def test_an_invariant_analyzed_but_never_declared_to_the_probe_is_unmeasured(self) -> None:
         # Exposure is a per-history fact. A probe that was not told about an invariant up front
         # cannot recover it afterwards, and must say so rather than assume the full sweep.
@@ -181,14 +214,14 @@ class TestTheVerdictCarriesTheWeakestMember:
     def test_the_weakest_member_is_the_narrowest_one(self) -> None:
         report = self._report(at_risk_runs=(("a", 900), ("b", 4), ("c", 250)))
 
-        assert report.weakest_exposure == ("b", 4)
+        assert report.weakest_exposure() == ("b", 4)
         assert "weakest coverage: b at risk in 4/1000 runs" in report.verdict()
 
     def test_no_line_when_every_invariant_was_at_risk_every_run(self) -> None:
         # Then the aggregate already *is* its own weakest member; the extra line would be noise.
         report = self._report(at_risk_runs=(("a", 1000), ("b", 1000)))
 
-        assert report.weakest_exposure is None
+        assert report.weakest_exposure() is None
         assert "weakest coverage" not in report.verdict()
 
     def test_a_never_at_risk_invariant_says_so_instead_of_quoting_a_bound(self) -> None:
@@ -247,8 +280,45 @@ class TestScopeMatchesTheClauseTheVerdictPrints:
             at_risk_runs=(("witnessed_one", 60), ("declared_one", 2)),
         )
 
-        assert report.weakest_exposure == ("witnessed_one", 60)
+        assert report.weakest_exposure() == ("witnessed_one", 60)
         assert "weakest coverage: witnessed_one" in report.verdict()
+
+    def test_unmeasured_exposure_is_scoped_the_same_way(self) -> None:
+        # An invariant the clause already excludes must not come back as a caveat on it —
+        # qualifying a claim that was never made reads as a gap in the sweep rather than a
+        # deliberate exclusion.
+        from forze_dst.oracle.witness import InvariantAccounting, InvariantStatus
+
+        report = ConfidenceReport(
+            seeds_run=100,
+            ran_ops=("go",),
+            raced_ops=("go",),
+            accounting=InvariantAccounting(
+                statuses=(
+                    ("witnessed_opaque", InvariantStatus.WITNESSED),
+                    ("declared_opaque", InvariantStatus.DECLARED),
+                )
+            ),
+            unmeasured_exposure=("witnessed_opaque", "declared_opaque"),
+        )
+
+        assert report.scoped_unmeasured_exposure == ("witnessed_opaque",)
+        assert "unmeasured exposure: witnessed_opaque —" in report.verdict()
+        assert "declared_opaque" not in report.verdict().partition("unmeasured exposure")[2]
+
+    def test_the_weakest_line_cannot_print_more_at_risk_runs_than_the_bound_counts(self) -> None:
+        # verdict() takes a runs override, and the weakest clause renders `n_i/runs`. Deriving the
+        # comparison from a different number than the one printed is how "at risk in 50/20 runs"
+        # would ship — nonsense of exactly the kind this work exists to remove.
+        report = ConfidenceReport(
+            seeds_run=1000,
+            ran_ops=("go",),
+            raced_ops=("go",),
+            at_risk_runs=(("broad", 1000), ("narrow", 50)),
+        )
+
+        assert "weakest coverage" not in report.verdict(20)
+        assert "0 violations in 20 seeds" in report.verdict(20)
 
 
 # ....................... #
@@ -265,7 +335,7 @@ class TestEndToEndThroughTheProbe:
         report = probe.report(invariants=[_reads("broad", "common"), _reads("narrow", "rare")])
 
         assert dict(report.at_risk_runs) == {"broad": 20, "narrow": 2}
-        assert report.weakest_exposure == ("narrow", 2)
+        assert report.weakest_exposure() == ("narrow", 2)
         assert "weakest coverage: narrow at risk in 2/20 runs" in report.format()
 
     def test_no_invariants_means_no_exposure_claims_at_all(self) -> None:
@@ -276,7 +346,7 @@ class TestEndToEndThroughTheProbe:
 
         assert report.at_risk_runs == ()
         assert report.unmeasured_exposure == ()
-        assert report.weakest_exposure is None
+        assert report.weakest_exposure() is None
 
 
 # ....................... #
@@ -333,8 +403,13 @@ class TestSeedRedundancy:
         assert not any(diverse)
 
     def test_a_short_sweep_stays_quiet(self) -> None:
-        # One shape in ten seeds is a short sweep, not evidence of redundancy.
-        assert not self._report(seeds=10, shapes=1).redundant_seeds
+        # One shape in 21 seeds *is* below the ratio (0.048), so only the seed floor keeps this
+        # quiet — the case has to sit under the floor and over the ratio, or the floor is never
+        # the deciding condition and could be deleted with the suite still green.
+        assert 1 / 21 < REDUNDANCY_RATIO
+        assert not self._report(seeds=21, shapes=1).redundant_seeds
+        # One seed over the floor, same ratio: now it fires.
+        assert self._report(seeds=REDUNDANCY_MIN_SEEDS, shapes=1).redundant_seeds
 
     def test_the_bound_is_never_repriced_by_the_signal(self) -> None:
         # The guard against this warning quietly becoming a corrected denominator. The fingerprint

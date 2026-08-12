@@ -119,8 +119,8 @@ surface that prints it rather than left to the reader:
   0.30% the aggregate quotes. The verdict now counts exposure per invariant and prints the weakest
   member beside the aggregate, with its own number.
 - **`S` counts seeds, not distinct trials.** Every bound treats `S` seeds as `S` independent
-  chances. Measured across the corpus, 200 seeds explore anywhere from 1 to 55 distinct execution
-  shapes — one control produced 2 across 300 seeds. That gap is reported as a confidence warning
+  chances. Measured across the corpus's controls, 200 seeds explore anywhere from 1 to 170
+  distinct execution shapes — six of eighteen produced exactly one. That gap is reported as a confidence warning
   and **never** folded into the denominator: the execution-shape fingerprint erases entity ids, and
   entity collision is exactly what the collision-pool regimes vary, so distinct-shape count is a
   coarse lower proxy. Substituting it would trade a known overstatement for an unknown
