@@ -56,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `forze_dst.stats`: exact Clopper–Pearson detection bounds in every clean verdict, plus a stdlib-only survival kernel (Kaplan–Meier, log-rank, Fisher exact); new `dirty_write`/`intermediate_read` anomaly cases with Adya labels.
 - `forze_dst.conformance` fidelity matrix and corpus transfer against real Postgres (`just dst-fidelity`/`dst-transfer`); `forze_dst.misuse` corpus; detection-time campaigns (`forze dst campaign`); mechanical depth extraction (`forze_dst.depth`).
 - Falsifiability witnesses and horizon accounting: `Simulation(witnesses=…, horizon=…)`, `mine_witnesses`/`replay_witnesses`/`account_invariants`, `named`/`name_of`, `FaultRule.at_call`. **Behaviour change:** `no_unclosed_transaction()` violations report their own name.
+- **Honest denominators** — every clean-run bound states what it divides by. New `stats.coverage_deficit`/`format_coverage_deficit` (Good–Turing + Chao1 over execution shapes), `stats.sidak_level`/`format_family_verdict` (family-wise control on the campaign scan; opt-in `--dst-family-verdict` / ini `dst_family_verdict`), `stats.flip_margin`, `stats.format_withheld_verdict`. The verdict names its weakest per-invariant denominator: new `CoverageStats.shape_counts`/`deficit`, `ConfidenceReport.at_risk_runs`/`unmeasured_exposure`/`shape_counts`/`redundant_seeds`/`weakest_exposure`, `HorizonProbe(invariants=…)`, `ConfidenceProbe(invariants=…)`. Seed redundancy is a warning, never a corrected denominator.
 
 **Serve your real app on in-memory backends** — the mock composes with real modules, and the whole app can be served on it:
 
@@ -96,6 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **The spec inventory closes the routeless-provider blind spot** (**behaviour change**) — declaring a `spec_registry` installs a resolve-time guard (new `inventory_route_guard`): an uncatalogued route on an inventoried plane is refused at first use, whatever the provider's shape; `allow_unregistered=True` downgrades to one warning per route.
 
 **DST `audit()` no longer claims a detection bound for invariants the sweep could not falsify** (**behaviour change**) — such witnesses are new `InvariantStatus.UNEXERCISABLE` and `audit()` fails naming the missing capability. New `forze_dst.oracle.config_capabilities`; `invariant_accounting`/`account_invariants` accept `config=`.
+
+**A plateau-stopped DST `coverage()` sweep printed an exact fixed-`n` bound over a stopping time** (**behaviour change**) — the early stop chooses `n` from the runs the bound summarizes, so the sweep now states its stop reason and prints no bound; `stats.format_withheld_verdict` renders it, and `ConfidenceReport.data_dependent_stop` carries the design. `audit()` is byte-identical (it has no plateau).
 
 **Log scrubbing masks pluralized, numbered, and compound-`authorization` names** — `tokens=…`, `"api_key2": "…"`, `authorization_value: …` previously leaked; the email and userinfo-DSN rules are length-bounded, removing a quadratic-cost path on adversarial log text.
 
