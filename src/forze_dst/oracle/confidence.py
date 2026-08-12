@@ -15,16 +15,25 @@ for the overlap relation and the injected-environment timeline for what actually
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections import Counter
+from collections.abc import Iterable, Mapping
 from functools import cached_property
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, final
 
 import attrs
 
+from forze_dst.oracle.coverage import NO_SHAPES, behavioral_fingerprint
 from forze_dst.oracle.horizon import HorizonAnalysis, HorizonProbe
 from forze_dst.oracle.recorder import History
 from forze_dst.oracle.report import CausalGraph
-from forze_dst.stats import format_clean_verdict, format_withheld_verdict
+from forze_dst.stats import (
+    CoverageDeficit,
+    coverage_deficit,
+    format_clean_verdict,
+    format_coverage_deficit,
+    format_withheld_verdict,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -99,6 +108,21 @@ class ConfidenceReport:
     Clopper–Pearson's exactness is a fixed-design guarantee — under a data-dependent stopping
     rule ``seeds_run`` is a random variable whose value depends on the runs being summarized, so
     :meth:`verdict` states the stop reason and withholds the number."""
+
+    shape_counts: Mapping[str, int] = NO_SHAPES
+    """Execution-shape fingerprint → how many of the swept runs produced it. The frequency table
+    :attr:`deficit` extrapolates from; empty when the sweep folded no runs."""
+
+    # ....................... #
+
+    @cached_property
+    def deficit(self) -> CoverageDeficit | None:
+        """How much of the execution-shape alphabet the sweep did *not* reach (``None`` when it
+        folded no runs). Saturation measured rather than asserted — see
+        :func:`~forze_dst.stats.coverage_deficit` for why this runs on shapes and not on the
+        behaviour alphabet."""
+
+        return coverage_deficit(self.shape_counts) if self.shape_counts else None
 
     # ....................... #
 
@@ -205,6 +229,10 @@ class ConfidenceReport:
             f"  raced:        {len(self.raced_ops)}/{len(self.ran_ops)} operations overlapped another",
         ]
 
+        deficit = self.deficit
+        if deficit is not None:
+            lines.append(f"  exec. shapes: {format_coverage_deficit(deficit)}")
+
         if self.faults_declared:
             lines.append(
                 f"  faults fired: {len(self.faults_fired)}/{len(self.faults_declared)} declared rules"
@@ -251,6 +279,7 @@ class ConfidenceProbe:
     _raced: set[str] = attrs.field(factory=set)
     _fired_calls: set[tuple[Any, Any, str]] = attrs.field(factory=set)
     _horizon: HorizonProbe = attrs.field(factory=HorizonProbe)
+    _shapes: Counter[str] = attrs.field(factory=Counter)
     _seeds: int = 0
 
     # ....................... #
@@ -260,6 +289,9 @@ class ConfidenceProbe:
 
         self._seeds += 1
         self._horizon.observe(history)
+        # One counter bucket per run — the frequency-of-frequencies the deficit estimator needs
+        # survives, while the histories themselves still do not have to.
+        self._shapes[behavioral_fingerprint(history)] += 1
         graph = CausalGraph.from_history(history)
 
         for span in graph.spans:
@@ -327,6 +359,7 @@ class ConfidenceProbe:
             marker_blind_invariants=horizon.marker_blind,
             accounting=accounting,
             data_dependent_stop=data_dependent_stop,
+            shape_counts=MappingProxyType(dict(self._shapes)),
         )
 
 

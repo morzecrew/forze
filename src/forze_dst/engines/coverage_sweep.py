@@ -113,20 +113,24 @@ def run_coverage(
         else None
     )
 
+    confidence = probe.report(
+        faults=config.faults,
+        violations=0 if violation is None else 1,
+        invariants=sim.invariants,
+        accounting=accounting,
+        # A plateau break chooses ``n`` by reading the runs, so the report withholds the
+        # exact bound rather than printing a fixed-design number over a stopping time.
+        data_dependent_stop="plateau stop" if plateaued else None,
+    )
+
     return CoverageStats(
         behaviors=frozenset(behaviors),
         seeds_run=seeds_run,
         new_by_seed=tuple(new_by_seed),
         plateaued=plateaued,
+        # One table, two readers — the probe is the single place a history is folded into shapes.
+        shape_counts=confidence.shape_counts,
         violation=violation,
         reachability=reachability,
-        confidence=probe.report(
-            faults=config.faults,
-            violations=0 if violation is None else 1,
-            invariants=sim.invariants,
-            accounting=accounting,
-            # A plateau break chooses ``n`` by reading the runs, so the report withholds the
-            # exact bound rather than printing a fixed-design number over a stopping time.
-            data_dependent_stop="plateau stop" if plateaued else None,
-        ),
+        confidence=confidence,
     )

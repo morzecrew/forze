@@ -318,6 +318,19 @@ class TestStoppingTimeWithholdsTheBound:
         assert "per-seed detection probability <" in unconditional
         assert unconditional not in stats.format()
 
+    def test_the_sweep_reports_a_measured_deficit_beside_the_stop_reason(self) -> None:
+        # The plateau flag says "saturated"; the deficit says how much of the *state space* that
+        # claim covers. Both print, because on the corpus they routinely disagree.
+        stats = self._sweep(plateau=3)
+        out = stats.format()
+
+        assert stats.shape_counts, "the sweep discarded its execution shapes"
+        assert stats.deficit is not None
+        assert stats.deficit.total == stats.seeds_run  # one shape bucket per run, none dropped
+        assert "execution shapes:" in out
+        assert "(Chao1," in out
+        assert "of seeds still discovering" in out
+
     def test_audit_is_unaffected_byte_identical_verdict(self) -> None:
         # audit() disables the plateau, so its ``n`` was fixed before the data existed and its
         # verdict line is exactly what it was before this change.
@@ -451,8 +464,9 @@ class TestCoverageStatsValueObject:
         assert "✗ violation" not in out
 
     def test_format_marks_saturation_and_names_the_stop_rule(self) -> None:
-        # The stop rule is named, because it is what makes ``seeds_run`` a stopping time.
-        assert "(saturated — plateau stop)" in _stats(plateaued=True).format()
+        # The stop rule is named (it is what makes ``seeds_run`` a stopping time), and so is the
+        # alphabet it saturated on — behaviours, not the state space.
+        assert "(saturated on behaviours — plateau stop)" in _stats(plateaued=True).format()
 
     def test_format_reachability_all_reached(self) -> None:
         reach = ReachabilityReport(

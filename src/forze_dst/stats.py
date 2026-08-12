@@ -26,13 +26,19 @@ them), :func:`log_rank` (the two-sample strategy comparison; χ²(1 df) tail via
 bridge to per-run theoretical bounds; only meaningful for iid-seed strategies, never adaptive
 ones), and :func:`fisher_exact` (the two-sided 2×2 exact test, for pre-registered contingency
 questions like "does anomaly-level divergence predict bug-level divergence?").
+
+**Discovery deficit.** Saturation is otherwise a boolean out of a heuristic with no uncertainty
+attached — under a per-seed discovery probability of 10%, eight consecutive quiet seeds happen by
+luck alone 43% of the time. :func:`coverage_deficit` puts a number on it: Good–Turing unseen mass
+and the Chao1 lower bound on richness, over a frequency table of whatever features a sweep
+collected.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
-from typing import final
+from collections.abc import Mapping, Sequence
+from typing import Any, final
 
 import attrs
 
@@ -541,6 +547,138 @@ def geometric_p_hat(
         ci=binomial_ci(detections, seeds, confidence=confidence),
         detections=detections,
         seeds=seeds,
+    )
+
+
+# ----------------------- #
+
+
+@final
+@attrs.frozen(kw_only=True)
+class CoverageDeficit:
+    """How much of a feature alphabet a sample has *not* seen — the measured form of saturation."""
+
+    observed: int
+    """Distinct features the sample actually contains."""
+
+    total: int
+    """Total observations (the sum of the frequency table — e.g. seeds swept)."""
+
+    singletons: int
+    """``f1`` — features seen exactly once. The whole signal: an alphabet still producing
+    singletons is still producing surprises."""
+
+    doubletons: int
+    """``f2`` — features seen exactly twice."""
+
+    unseen_mass: float
+    """Good–Turing: ``f1 / N``, the estimated probability that the *next* observation is a feature
+    never seen before. Zero means the sample stopped finding new things, not that none remain."""
+
+    richness: float
+    """Chao1's estimate of the true richness — a **lower** bound, which is the safe direction for
+    a warning: it under-promises how much is left."""
+
+    lower: float
+    upper: float
+    """The log-transformed Chao1 interval (Chao 1987). Collapses onto :attr:`observed` when the
+    estimator has no signal to extrapolate from (``f1 <= 1`` with no doubletons)."""
+
+    confidence: float
+
+    # ....................... #
+
+    @property
+    def unseen(self) -> float:
+        """Estimated features not yet seen: ``richness - observed`` (``0.0`` when saturated)."""
+
+        return max(0.0, self.richness - self.observed)
+
+
+def coverage_deficit(counts: Mapping[Any, int], *, confidence: float = 0.95) -> CoverageDeficit:
+    """The unseen-feature deficit of a frequency table — Good–Turing mass plus Chao1 richness.
+
+    *counts* maps each observed feature to how many observations contained it (e.g. execution-shape
+    fingerprint → number of seeds that produced it). Species-richness estimation runs entirely on
+    the *frequency of frequencies*: ``f1`` (seen once) and ``f2`` (seen twice). Chao1 is
+    ``S_obs + f1²/(2·f2)``, falling back to the bias-corrected ``S_obs + f1·(f1−1)/2`` when no
+    feature was seen exactly twice, with the standard log-transformed interval.
+
+    **Which alphabet you feed it decides whether it says anything.** Measured across the misuse
+    corpus at 200 seeds per mutant, the sweep's *behavioural* coverage alphabet (the unordered set
+    of operation outcomes / port edges / fault kinds) has ``f1 == f2 == 0`` in every case — every
+    behaviour that appears at all appears in many seeds, so Good–Turing reports zero unseen mass
+    and Chao1 returns the observed count, permanently. On that alphabet this estimator is
+    degenerate and would ship as a green number that can never go red. It is informative on the
+    *ordered execution-shape* alphabet (``behavioral_fingerprint``), where the same corpus at 100
+    seeds names a richness the sweep does not reach until 400 — and still returns exactly 1 on a
+    genuinely single-shape workload, so it does not cry wolf.
+    """
+
+    if not counts:
+        raise ValueError("at least one observed feature is required")
+    if any(count < 1 for count in counts.values()):
+        raise ValueError("every feature's count must be >= 1 (a zero count is not an observation)")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError(f"confidence must be in (0, 1), got {confidence}")
+
+    observed = len(counts)
+    total = sum(counts.values())
+    f1 = sum(1 for count in counts.values() if count == 1)
+    f2 = sum(1 for count in counts.values() if count == 2)
+
+    if f2 > 0:
+        extra = f1 * f1 / (2.0 * f2)
+        ratio = f1 / f2
+        variance = f2 * (ratio**4 / 4.0 + ratio**3 + ratio**2 / 2.0)
+    else:
+        # Bias-corrected form: with no doubleton the classic estimator divides by zero, and a
+        # lone singleton carries no extrapolation at all (f1·(f1−1) = 0).
+        extra = f1 * (f1 - 1) / 2.0
+        variance = (
+            f1 * (f1 - 1) / 2.0 + f1 * (2 * f1 - 1) ** 2 / 4.0 - f1**4 / (4.0 * (observed + extra))
+        )
+
+    richness = observed + extra
+    z = _norm_ppf(1.0 - (1.0 - confidence) / 2.0)
+
+    if extra > 0.0 and variance > 0.0:
+        # Chao's log transform keeps the interval on the right side of S_obs — a richness estimate
+        # can never be below what was actually counted.
+        spread = math.exp(z * math.sqrt(math.log1p(variance / (extra * extra))))
+        lower, upper = observed + extra / spread, observed + extra * spread
+    else:
+        lower = upper = float(observed)
+
+    return CoverageDeficit(
+        observed=observed,
+        total=total,
+        singletons=f1,
+        doubletons=f2,
+        unseen_mass=f1 / total,
+        richness=richness,
+        lower=lower,
+        upper=upper,
+        confidence=confidence,
+    )
+
+
+# ....................... #
+
+
+def format_coverage_deficit(deficit: CoverageDeficit) -> str:
+    """The locked one-line rendering of a :class:`CoverageDeficit`, beside a sweep's stop reason.
+
+    Always states both halves, because they answer different questions and can disagree honestly:
+    Chao1's ``≥`` is how many distinct features are estimated to exist, and Good–Turing's percentage
+    is how often the sample was still turning one up.
+    """
+
+    return (
+        f"{deficit.observed} observed; ≥{math.ceil(deficit.richness)} estimated reachable "
+        f"(Chao1, {_render_confidence(deficit.confidence)} CI "
+        f"{math.floor(deficit.lower)}–{math.ceil(deficit.upper)}) — "
+        f"{deficit.unseen_mass:.1%} of seeds still discovering"
     )
 
 

@@ -7,6 +7,8 @@ binomial tail at the bound equals α/2).
 """
 
 import math
+import random
+from collections import Counter
 from types import MappingProxyType
 
 import pytest
@@ -20,9 +22,11 @@ from forze_dst.oracle.replay import ViolationReport
 from forze_dst.stats import (
     SurvivalCurve,
     binomial_ci,
+    coverage_deficit,
     detection_upper_bound,
     fisher_exact,
     format_clean_verdict,
+    format_coverage_deficit,
     format_withheld_verdict,
     geometric_p_hat,
     log_rank,
@@ -130,6 +134,98 @@ class TestFormatWithheldVerdict:
     def test_rejects_nonpositive_runs(self) -> None:
         with pytest.raises(ValueError, match="runs must be >= 1"):
             format_withheld_verdict(0, stop_reason="plateau stop")
+
+
+# ....................... #
+
+
+class TestCoverageDeficit:
+    """Chao1 + Good–Turing over a frequency table. Pinned to the closed form, to recovery of a
+    known richness, and to *silence* on a source that genuinely has one shape."""
+
+    def test_closed_form_chao1(self) -> None:
+        # S_obs + f1²/(2·f2): 50 + 100/10 = 60.
+        counts = {f"s{i}": 1 for i in range(10)}
+        counts |= {f"s{i}": 2 for i in range(10, 15)}
+        counts |= {f"s{i}": 7 for i in range(15, 50)}
+
+        deficit = coverage_deficit(counts)
+
+        assert deficit.observed == 50
+        assert (deficit.singletons, deficit.doubletons) == (10, 5)
+        assert deficit.richness == pytest.approx(60.0)
+        assert deficit.unseen == pytest.approx(10.0)
+        # Good–Turing: 10 singletons over 10 + 10 + 245 = 265 observations.
+        assert deficit.unseen_mass == pytest.approx(10 / 265)
+
+    def test_interval_brackets_the_estimate(self) -> None:
+        counts = {f"s{i}": 1 for i in range(10)} | {f"s{i}": 2 for i in range(10, 15)}
+
+        deficit = coverage_deficit(counts)
+
+        # The log transform keeps the interval above what was actually counted.
+        assert deficit.observed <= deficit.lower <= deficit.richness <= deficit.upper
+
+    def test_recovers_a_known_richness_from_an_undersampled_source(self) -> None:
+        # A synthetic run-source with a fixed shape population: sampled below saturation the truth
+        # sits inside the interval, and the estimate is a *lower* bound on it (the safe direction).
+        rng = random.Random(7)
+        truth = 80
+
+        undersampled = coverage_deficit(Counter(rng.randrange(truth) for _ in range(150)))
+
+        assert undersampled.observed < truth  # genuinely below saturation
+        assert undersampled.richness > undersampled.observed  # it names the deficit
+        assert undersampled.lower <= truth <= undersampled.upper
+
+    def test_sampled_to_exhaustion_the_estimate_equals_the_truth(self) -> None:
+        rng = random.Random(7)
+        truth = 80
+
+        exhausted = coverage_deficit(Counter(rng.randrange(truth) for _ in range(4000)))
+
+        assert exhausted.observed == truth
+        assert exhausted.richness == pytest.approx(float(truth))
+        assert exhausted.unseen == 0.0
+
+    def test_does_not_cry_wolf_on_a_degenerate_source(self) -> None:
+        # One shape, three hundred runs: richness 1, no deficit, no interval to wave around.
+        deficit = coverage_deficit({"one-shape": 300})
+
+        assert deficit.observed == 1
+        assert deficit.richness == 1.0
+        assert deficit.unseen == 0.0
+        assert deficit.unseen_mass == 0.0
+        assert (deficit.lower, deficit.upper) == (1.0, 1.0)
+
+    def test_a_lone_singleton_extrapolates_to_nothing(self) -> None:
+        # f1 = 1, f2 = 0 → the bias-corrected form is f1·(f1−1)/2 = 0. Good–Turing still reports
+        # mass (a new shape is plausible); Chao1's lower bound simply cannot name a number.
+        deficit = coverage_deficit({"a": 9, "b": 1})
+
+        assert deficit.richness == 2.0
+        assert deficit.unseen == 0.0
+        assert deficit.unseen_mass == pytest.approx(0.1)
+
+    def test_rejects_an_empty_table(self) -> None:
+        with pytest.raises(ValueError, match="at least one observed feature"):
+            coverage_deficit({})
+
+    def test_rejects_a_zero_count(self) -> None:
+        # A Counter can carry a zero after arithmetic; zero observations is not an observation.
+        with pytest.raises(ValueError, match="count must be >= 1"):
+            coverage_deficit(Counter({"a": 3, "b": 0}))
+
+    def test_rejects_an_out_of_range_confidence(self) -> None:
+        with pytest.raises(ValueError, match="confidence must be in"):
+            coverage_deficit({"a": 1, "b": 1}, confidence=1.0)
+
+    def test_rendering_states_both_halves(self) -> None:
+        line = format_coverage_deficit(coverage_deficit({f"s{i}": 1 for i in range(4)} | {"x": 2}))
+
+        assert "5 observed" in line
+        assert "estimated reachable (Chao1, 95% CI" in line
+        assert "of seeds still discovering" in line
 
 
 # ....................... #
