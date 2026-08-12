@@ -19,6 +19,7 @@ from .kernel.client import (
     TemporalClient,
     TemporalClientPort,
     TemporalConfig,
+    TemporalStartOptions,
 )
 from .kernel.crypto import EncryptingPayloadCodec, encrypting_data_converter
 from .saga import TemporalSaga
@@ -39,6 +40,7 @@ __all__ = [
     "RoutedTemporalClient",
     "TemporalClientDepKey",
     "TemporalDepsModule",
+    "TemporalStartOptions",
     "TemporalWorkflowConfig",
     "temporal_lifecycle_step",
     "routed_temporal_lifecycle_step",

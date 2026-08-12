@@ -21,6 +21,7 @@ from forze.application.contracts.durable.workflow import (
 )
 from forze.base.exceptions import exc
 
+from ..kernel.client import TemporalStartOptions
 from .base import TemporalBaseAdapter
 
 # ----------------------- #
@@ -42,6 +43,9 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
     spec: DurableWorkflowSpec[In, Out]
     """Workflow specification."""
 
+    start_options: TemporalStartOptions | None = None
+    """This workflow kind's configured start options, from ``TemporalWorkflowConfig``."""
+
     # ....................... #
 
     async def start(
@@ -50,7 +54,17 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
         *,
         workflow_id: str | None = None,
         raise_on_already_started: bool = True,
+        options: TemporalStartOptions | None = None,
     ) -> DurableWorkflowHandle:
+        """Start a run, optionally overriding the configured start options.
+
+        *options* is Temporal vocabulary and is deliberately absent from
+        :class:`~forze.application.contracts.durable.workflow.DurableWorkflowCommandPort`:
+        a caller holding the engine-agnostic port cannot reach it, which is the point.
+        A caller who knows the engine can, and only the fields they set win — the rest
+        of :attr:`start_options` stands.
+        """
+
         await self._prepare_queue()
         wid = self.construct_workflow_id(workflow_id)
 
@@ -60,6 +74,9 @@ class TemporalWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
             arg=args,
             workflow_id=wid,
             raise_on_already_started=raise_on_already_started,
+            options=(
+                self.start_options.override(options) if self.start_options is not None else options
+            ),
         )
 
         return DurableWorkflowHandle(workflow_id=res.id, run_id=res.run_id)

@@ -13,6 +13,7 @@ from forze.application.contracts.durable.workflow import (
 )
 
 from .schedule_types import TemporalScheduleListPage
+from .value_objects import TemporalStartOptions
 
 # ----------------------- #
 
@@ -37,6 +38,7 @@ class TemporalClientPort(Protocol):
         *,
         workflow_id: str,
         raise_on_already_started: bool = True,
+        options: TemporalStartOptions | None = None,
     ) -> Awaitable[WorkflowHandle[Any, Any]]: ...  # pragma: no cover
 
     def get_workflow_handle(

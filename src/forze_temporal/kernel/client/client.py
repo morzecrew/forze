@@ -37,7 +37,7 @@ from .schedule_mapping import (
     timing_to_schedule_spec,
 )
 from .schedule_types import TemporalScheduleListPage
-from .value_objects import TemporalConfig
+from .value_objects import TemporalConfig, TemporalStartOptions
 from .workflow_mapping import description_from_temporal_execution
 
 # ----------------------- #
@@ -250,6 +250,7 @@ class TemporalClient(TemporalClientPort):
         *,
         workflow_id: str,
         raise_on_already_started: bool = True,
+        options: TemporalStartOptions | None = None,
     ) -> WorkflowHandle[Any, Any]:
         c = self.__require_client()
 
@@ -259,6 +260,7 @@ class TemporalClient(TemporalClientPort):
                 id=workflow_id,
                 task_queue=queue,
                 arg=arg,
+                **(options.as_start_kwargs() if options is not None else {}),
             )
 
         except WorkflowAlreadyStartedError as e:

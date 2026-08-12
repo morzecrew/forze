@@ -20,7 +20,7 @@ from forze.base.exceptions import exc
 from .client import TemporalClient
 from .port import TemporalClientPort
 from .schedule_types import TemporalScheduleListPage
-from .value_objects import TemporalConfig
+from .value_objects import TemporalConfig, TemporalStartOptions
 
 # ----------------------- #
 
@@ -107,6 +107,7 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
         *,
         workflow_id: str,
         raise_on_already_started: bool = True,
+        options: TemporalStartOptions | None = None,
     ) -> WorkflowHandle[Any, Any]:
         inner = await self._get_client()
         return await inner.start_workflow(
@@ -115,6 +116,7 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
             arg,
             workflow_id=workflow_id,
             raise_on_already_started=raise_on_already_started,
+            options=options,
         )
 
     # ....................... #
