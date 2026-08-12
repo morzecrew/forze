@@ -4,10 +4,14 @@ require_temporal()
 
 # ....................... #
 
-from collections.abc import Awaitable, Callable, Mapping
+import asyncio
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager, suppress
+from datetime import timedelta
 from typing import Any, Protocol
 
 import attrs
+from temporalio import activity
 from temporalio.api.common.v1 import Payload
 from temporalio.client import Interceptor as ClientInterceptor
 from temporalio.client import (
@@ -50,6 +54,61 @@ from .codecs import TemporalContextBinder, TemporalContextCodec
 _WORKFLOW_CLOCK = TemporalWorkflowTimeSource()
 """Replay-deterministic time source bound for the duration of workflow execution."""
 
+_HEARTBEAT_INTERVAL_DIVISOR = 3
+"""Heartbeats go out at ``heartbeat_timeout`` divided by this.
+
+Three, so two consecutive heartbeats can be lost — to a paused event loop, a slow
+frontend call, the SDK's own throttling — before the server calls the activity dead.
+"""
+
+
+def heartbeat_interval(
+    heartbeat_timeout: timedelta | None,
+    *,
+    is_local: bool,
+) -> float | None:
+    """Seconds between auto-heartbeats, or ``None`` when there is nothing to keep alive.
+
+    Two cases produce ``None`` rather than a default interval. An activity with **no**
+    ``heartbeat_timeout`` has no liveness deadline to miss, so heartbeating it only adds
+    RPCs. A **local** activity runs inside the workflow task and cannot heartbeat at all —
+    calling ``activity.heartbeat()`` there is a no-op the SDK ignores, and pretending
+    otherwise would suggest a liveness guarantee that does not exist.
+    """
+
+    if is_local or heartbeat_timeout is None:
+        return None
+
+    seconds = heartbeat_timeout.total_seconds() / _HEARTBEAT_INTERVAL_DIVISOR
+
+    return seconds if seconds > 0 else None
+
+
+@asynccontextmanager
+async def _heartbeating(interval: float) -> AsyncGenerator[None]:
+    """Beat every *interval* seconds for the duration of the block.
+
+    The pump is torn down in a ``finally`` that swallows only its own cancellation: an
+    activity's result — or its exception — must never be replaced by whatever happened
+    while stopping a bookkeeping task.
+    """
+
+    async def _pump() -> None:
+        while True:
+            await asyncio.sleep(interval)
+            activity.heartbeat()
+
+    task = asyncio.create_task(_pump(), name="temporal-auto-heartbeat")
+
+    try:
+        yield
+
+    finally:
+        task.cancel()
+
+        with suppress(asyncio.CancelledError):
+            await task
+
 
 @attrs.define(slots=True)
 class ExecutionContextInterceptor(ClientInterceptor, WorkerInterceptor):
@@ -58,6 +117,24 @@ class ExecutionContextInterceptor(ClientInterceptor, WorkerInterceptor):
         on_setattr=attrs.setters.frozen,
     )
     """The dependency to resolve the execution context."""
+
+    auto_heartbeat: bool = attrs.field(
+        default=False,
+        kw_only=True,
+        on_setattr=attrs.setters.frozen,
+    )
+    """Beat for every activity that declares a ``heartbeat_timeout``, opt-in.
+
+    Covers the common case — "this activity is alive, stop killing it" — for work with no
+    incremental state to report. Off by default, and that default is a judgement, not
+    caution: an automatic heartbeat says *the process is alive*, which is not the same
+    claim as *the activity is making progress*. Turn it on and a wedged activity keeps its
+    lease until ``start_to_close`` instead of being rescheduled at ``heartbeat_timeout``.
+
+    An activity that has incremental state to report should call
+    ``activity.heartbeat(details)`` itself — details are authoring-surface territory and
+    the framework puts nothing between the author and the SDK there.
+    """
 
     # ....................... #
 
@@ -74,7 +151,11 @@ class ExecutionContextInterceptor(ClientInterceptor, WorkerInterceptor):
     ) -> ActivityInboundInterceptor:
         """Intercept the activity inbound interceptor."""
 
-        return ActivityContextInboundInterceptor(next=next, ctx_dep=self.ctx_dep)
+        return ActivityContextInboundInterceptor(
+            next=next,
+            ctx_dep=self.ctx_dep,
+            auto_heartbeat=self.auto_heartbeat,
+        )
 
     # ....................... #
 
@@ -367,10 +448,26 @@ class ActivityContextInboundInterceptor(
 ):
     next: ActivityInboundInterceptor
 
+    auto_heartbeat: bool = False
+    """Whether to keep an activity with a ``heartbeat_timeout`` alive while it runs."""
+
     # ....................... #
 
     async def execute_activity(self, input: ExecuteActivityInput) -> Any:
-        return await self.bind_and_call(
-            input.headers,
-            lambda: self.next.execute_activity(input),
-        )
+        async def run() -> Any:
+            return await self.bind_and_call(
+                input.headers,
+                lambda: self.next.execute_activity(input),
+            )
+
+        if not self.auto_heartbeat:
+            return await run()
+
+        info = activity.info()
+        interval = heartbeat_interval(info.heartbeat_timeout, is_local=info.is_local)
+
+        if interval is None:
+            return await run()
+
+        async with _heartbeating(interval):
+            return await run()

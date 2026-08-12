@@ -300,3 +300,37 @@ class ItSlowDrainWorkflow:
             args=[seconds],
             start_to_close_timeout=timedelta(seconds=60),
         )
+
+
+# ----------------------- #
+# Activity auto-heartbeat.
+
+
+@activity.defn(name="it_heartbeat_probe")
+async def it_heartbeat_probe(seconds: float) -> str:
+    """Sleeps past its own ``heartbeat_timeout``, reporting nothing while it does.
+
+    Exactly the activity the auto-heartbeat exists for: alive, busy, and with no
+    incremental state worth a manual ``activity.heartbeat(details)``.
+    """
+
+    await asyncio.sleep(seconds)
+
+    return "survived"
+
+
+@workflow.defn(name="ItHeartbeatWorkflow")
+class ItHeartbeatWorkflow:
+    """One slow activity with a short heartbeat timeout and no retries."""
+
+    @workflow.run
+    async def run(self, seconds: float) -> str:
+        return await workflow.execute_activity(
+            it_heartbeat_probe,
+            args=[seconds],
+            start_to_close_timeout=timedelta(seconds=60),
+            heartbeat_timeout=timedelta(seconds=2),
+            # One attempt, so a heartbeat timeout surfaces as a failed run instead of
+            # being retried into an eventual success.
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )

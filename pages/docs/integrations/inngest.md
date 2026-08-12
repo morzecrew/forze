@@ -8,6 +8,18 @@ summary: Durable functions and events on Inngest
 [Inngest](https://inngest.com) — emit events that trigger functions, and run
 memoized steps inside them, behind the durable ports.
 
+## What this package is
+
+The same boundary discipline as [Temporal](temporal.md#what-this-package-is):
+connection and credentials, what rides on the wire, what crosses into execution
+context, registration and lifecycle. Function *authoring* is the Inngest SDK's, and
+stays that way.
+
+Here the SDK forces that boundary rather than merely permitting it — its step object is
+handed to your function, so there is no equivalent of Temporal's escape hatch to add:
+the SDK's own objects are already in your hands. Parity between the two packages means
+the same discipline, not the same feature list.
+
 ## Install
 
 ```bash
@@ -49,6 +61,19 @@ from forze_inngest.fastapi import serve
 
 serve(app, inngest, bindings, ctx_factory=lambda req: runtime.get_context(), registry=registry)
 ```
+
+## The serve process
+
+Inngest's execution model inverts Temporal's: instead of a worker polling a queue, the
+platform calls **you**. So the canonical process here is an ordinary Forze HTTP app —
+runtime, FastAPI, `serve(...)` on the same router — and there is no worker step,
+because there is no poller to supervise.
+
+What that costs you is the drain story a poller gets for free: an in-flight function
+call is an in-flight HTTP request, so it drains with your web server, and the platform
+retries a step whose request the deploy cut short. Give the app a termination grace
+period longer than your slowest step for the same reason a worker gets a graceful
+shutdown window.
 
 ## What it provides
 
