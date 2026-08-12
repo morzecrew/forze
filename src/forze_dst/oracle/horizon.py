@@ -282,8 +282,8 @@ class HorizonProbe:
 
         vacuous: list[tuple[str, tuple[str, ...]]] = []
         blind: list[tuple[str, tuple[str, ...]]] = []
-        at_risk: list[tuple[str, int]] = []
-        unmeasured: list[str] = []
+        at_risk: dict[str, int] = {}
+        unmeasured: dict[str, None] = {}  # ordered set: two instances of a name are one report
 
         for invariant in invariants:
             name = name_of(invariant)
@@ -293,15 +293,15 @@ class HorizonProbe:
                 # Opaque footprint — vacuity cannot be decided, and neither can exposure. Named
                 # rather than folded into the aggregate at n = runs, which would be the overclaim
                 # this measurement exists to remove.
-                unmeasured.append(name)
+                unmeasured[name] = None
                 continue
 
             if name in self._footprints:
-                at_risk.append((name, self._at_risk[name]))
+                at_risk[name] = self._at_risk[name]
             else:
                 # Counted footprints come from the invariants the probe was *constructed* with;
                 # anything analyzed but not declared there was never measured per run.
-                unmeasured.append(name)
+                unmeasured[name] = None
 
             if not kinds & self._present:
                 vacuous.append((name, tuple(sorted(kinds))))
@@ -314,6 +314,6 @@ class HorizonProbe:
             vacuous=tuple(vacuous),
             marker_blind=tuple(blind),
             runs=self._runs,
-            at_risk=tuple(at_risk),
+            at_risk=tuple(at_risk.items()),
             unmeasured_exposure=tuple(unmeasured),
         )

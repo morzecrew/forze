@@ -119,6 +119,21 @@ class TestAtRiskCounts:
 
         assert dict(analysis.at_risk) == {"dup": 10}
 
+    def test_a_name_is_reported_once_however_many_instances_carry_it(self) -> None:
+        # Two instances of one name must not produce two rows — a verdict reading
+        # "unmeasured exposure: x, x" (or two at-risk entries for one clause) is noise at best
+        # and a miscount at worst.
+        probe = HorizonProbe(invariants=[_reads("dup", "a"), _opaque("dup")])
+        for seed in range(10):
+            probe.observe(_run(seed, "a"))
+
+        analysis = probe.analyze([_reads("dup", "a"), _opaque("dup")])
+
+        # Opaque wins for the shared name: exposure cannot be measured for one of them, so it is
+        # not claimed for either.
+        assert analysis.at_risk == ()
+        assert analysis.unmeasured_exposure == ("dup",)
+
     def test_vacuity_is_the_zero_edge_of_the_same_measurement(self) -> None:
         probe = HorizonProbe(invariants=[_reads("never_at_risk", "absent")])
         for seed in range(10):
