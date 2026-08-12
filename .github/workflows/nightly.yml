@@ -1,9 +1,10 @@
 # The nightly DST matrix — the wide search a merge guard cannot afford.
 #
 # Every build already runs the flagship scenarios over a small band as a merge guard. That band is
-# sized for a human waiting on a PR, not for finding a rare interleaving: 64 dlock seeds is a third
-# of a second of searching. This job runs the same scenarios and the same invariants over 65,536
-# seeds per cell, across four fault profiles, on a schedule nobody waits on.
+# sized for a human waiting on a PR, not for finding a rare interleaving: 8 dlock seeds and 12 HLC
+# seeds, with `just fuzz` widening it to 64 and 128 only when asked. This job runs the same
+# scenarios and the same invariants over 65,536 seeds per cell, across four fault profiles, on a
+# schedule nobody waits on.
 #
 # The cell list is not written here — it is derived from the fault profiles by the runner, so
 # adding a profile adds a nightly cell and the verdict starts requiring it. The verdict fails on a
@@ -156,20 +157,23 @@ jobs:
       # No Python setup and no dependency install: in this mode the verdict reads JSON through the
       # standard library alone, so the gate cannot fail for want of an extra — and a cell whose
       # own shard died shows up here as a missing result rather than as silence.
+      # `tee` so the run page and the retained artifact hold the same bytes — the table *and* the
+      # verdict under it. `pipefail` because the exit code that matters is the gate's, not tee's.
       - name: Gate the night
         env:
           EXPECTED: ${{ needs.matrix.outputs.names }}
         run: |
+          set -o pipefail
           python3 .github/scripts/dst_nightly.py \
             --verdict nightly-data \
             --expect "${EXPECTED}" \
-            --summary "${GITHUB_STEP_SUMMARY}"
+          | tee nightly-summary.md >>"${GITHUB_STEP_SUMMARY}"
 
       - name: Upload the night's summary
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: nightly-summary
-          path: nightly-data
+          path: nightly-summary.md
           if-no-files-found: error
           retention-days: 90

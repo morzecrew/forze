@@ -336,10 +336,24 @@ class TestVerdict:
 
         assert len(violations) == 2
 
-    def test_an_empty_expectation_is_a_failure_not_a_pass(self) -> None:
-        """Requiring nothing is how a matrix that produced nothing reports a clean night."""
+    def test_an_empty_expectation_is_a_failure_not_a_pass(self, tmp_path: Path) -> None:
+        """Requiring nothing is how a matrix that produced nothing reports a clean night.
 
-        assert runner.main(["--verdict", str(_REPO), "--expect", ""]) == 1
+        Pinned at the checker rather than only at the CLI: the loop's own empty case passes
+        every rule by never entering one, so the decision has to live where a second caller
+        cannot skip it.
+        """
+
+        assert runner.check_verdict((), {}) != []
+        assert runner.main(["--verdict", str(tmp_path), "--expect", ""]) == 1
+
+    def test_an_unreadable_cell_file_names_itself(self, tmp_path: Path) -> None:
+        """A truncated upload is a broken night; the bare decode error names no file."""
+
+        (tmp_path / "dlock-storm.json").write_text("{trunc", encoding="utf-8")
+
+        with pytest.raises(SystemExit, match=r"dlock-storm\.json could not be read"):
+            runner.load_results(tmp_path)
 
 
 # ....................... #

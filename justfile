@@ -130,7 +130,7 @@ perf *args='tests/perf':
         {{ args }}
 
 
-# Run the extended DST fuzz (a wider band than the merge guard; still seconds, runs in-suite)
+# Run the extended DST fuzz (64/128 seeds vs the merge guard's 8/12; excluded from `just test`)
 fuzz *args='tests/unit/test_forze_dst':
     {{ _uv_sync }}
 
@@ -160,16 +160,16 @@ dst-nightly-all seeds='65536':
 
     rm -rf .nightly && mkdir -p .nightly
 
-    for cell in $(uv run python .github/scripts/dst_nightly.py --matrix | \
-        python3 -c 'import json,sys; print(" ".join(c["cell"] for c in json.load(sys.stdin)))'); do \
-            uv run python .github/scripts/dst_nightly.py \
-                --cell "$cell" --seeds {{ seeds }} --out ".nightly/$cell.json" >/dev/null; \
-    done
-
+    # One `--matrix` call feeds both the fan-out and the expectation, for the same reason CI
+    # derives both from one job output: two calls are two lists, free to disagree.
+    cells="$(uv run python .github/scripts/dst_nightly.py --matrix | \
+        python3 -c 'import json,sys; print(" ".join(c["cell"] for c in json.load(sys.stdin)))')"; \
+    for cell in $cells; do \
+        uv run python .github/scripts/dst_nightly.py \
+            --cell "$cell" --seeds {{ seeds }} --out ".nightly/$cell.json" >/dev/null; \
+    done; \
     uv run python .github/scripts/dst_nightly.py \
-        --verdict .nightly \
-        --expect "$(uv run python .github/scripts/dst_nightly.py --matrix | \
-            python3 -c 'import json,sys; print(",".join(c["cell"] for c in json.load(sys.stdin)))')"
+        --verdict .nightly --expect "$(echo $cells | tr ' ' ',')"
 
 
 # Run the DST detection-time pilot campaign (writes pages/docs/dst/_generated/campaign_pilot.md)

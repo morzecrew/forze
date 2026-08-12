@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """The nightly DST matrix: flagship scenarios × fault profiles × a seed band no PR can afford.
 
-The merge guard runs a handful of seeds on every build, which is the right size for a gate
-that has to finish before a human waits on it. It is the wrong size for finding a rare
-interleaving: the flagship bands are 64 and 128 seeds, and at ~5 ms a seed that is a third of
-a second of searching. The scheduler space is much larger than that, so the seeds a merge
-guard can afford are the ones a bug is least likely to hide in.
+The merge guard runs a handful of seeds on every build, which is the right size for a gate that
+has to finish before a human waits on it: 8 dlock seeds and 12 HLC seeds, about a twentieth of
+a second of searching. `just fuzz` widens that to 64 and 128, but it is `fuzz`-marked and so
+excluded from the default suite — it runs when someone asks. Neither is a size at which a rare
+interleaving turns up; the seeds a merge guard can afford are the ones a bug is least likely to
+hide in.
 
 This is the other half — the same scenarios, the same invariants, run overnight across a band
 four orders of magnitude wider and across several fault profiles instead of one. Nothing here
@@ -57,7 +58,7 @@ DEFAULT_SEEDS = 65536
 
 Measured at ~0.85 ms a seed through the process pool (linear from 256 to 65,536), so a cell is
 about a minute of work locally and a few minutes on a four-core runner — cheap for a job nobody
-waits on, and 1024× the 64-seed band the merge guard can afford. That ratio is the point: a
+waits on. That is 1024× the `just fuzz` band and 8192× the merge guard's, which is the point: a
 nightly running a band a PR could have run is a nightly that finds what the PR already found."""
 
 
@@ -166,7 +167,13 @@ def load_results(directory: Path) -> dict[str, CellResult]:
     results: dict[str, CellResult] = {}
 
     for path in sorted(directory.rglob("*.json")):
-        payload: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            payload: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            # A truncated upload is a broken night, not a clean one — but the bare decode error
+            # names no file, which is the one thing whoever reads this at 09:00 needs.
+            raise SystemExit(f"cell result {path.name} could not be read: {error}") from error
+
         result = CellResult(
             cell=str(payload["cell"]),
             seeds=int(payload["seeds"]),
@@ -185,9 +192,15 @@ def load_results(directory: Path) -> dict[str, CellResult]:
 
 
 def check_verdict(expected: tuple[str, ...], results: dict[str, CellResult]) -> list[str]:
-    """The four gate rules, as a list of violations (empty when the night was clean)."""
+    """The gate rules, as a list of violations (empty when the night was clean)."""
 
     violations: list[str] = []
+
+    # Requiring nothing is the loop's own empty case, and it passes every rule below by never
+    # entering them — the same vacuous green as a cell that ran zero seeds, one level up. Decide
+    # it here rather than in the caller, so a second caller cannot inherit the hole.
+    if not expected:
+        return ["no cells were required to run, so nothing about tonight was checked"]
 
     for name in expected:
         result = results.get(name)
@@ -269,7 +282,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, help="where to write the cell result")
     parser.add_argument("--verdict", type=Path, help="directory of cell results to gate")
     parser.add_argument("--expect", default="", help="comma-separated cells the verdict requires")
-    parser.add_argument("--summary", type=Path, help="append the markdown table here")
     args = parser.parse_args(argv)
 
     # `tests.support` is importable only with the repo root on the path, which pytest arranges and
@@ -297,22 +309,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("pass --matrix, --cell or --verdict")
 
     expected = tuple(name for name in args.expect.split(",") if name)
-
-    if not expected:
-        # Without a declared expectation the gate degenerates into "check whatever showed up",
-        # which is exactly how a silently-dropped cell passes.
-        print("nightly verdict FAILED: --expect named no cells, so nothing was required to run")
-        return 1
-
     results = load_results(args.verdict)
     violations = check_verdict(expected, results)
-    table = render(expected, results)
 
-    print(table)
-
-    if args.summary:
-        with args.summary.open("a", encoding="utf-8") as handle:
-            handle.write(f"### DST nightly matrix\n\n{table}\n")
+    print(f"### DST nightly matrix\n\n{render(expected, results)}")
 
     if violations:
         print(f"\nNightly DST matrix FAILED ({len(violations)} violation(s)):")

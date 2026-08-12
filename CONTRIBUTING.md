@@ -60,7 +60,7 @@ just test tests/integration
 
 ### The nightly DST matrix
 
-Every build runs the flagship simulation scenarios over a small seed band as a merge guard. That band is sized for a human waiting on a PR — 64 dlock seeds is about a third of a second of searching, which is the wrong size for finding a rare interleaving. The nightly workflow runs the same scenarios and the same invariants over 65,536 seeds per cell, across four fault profiles:
+Every build runs the flagship simulation scenarios over a small seed band as a merge guard — 8 dlock seeds and 12 HLC seeds, sized for a human waiting on a PR. `just fuzz` widens that to 64 and 128, but it is `fuzz`-marked and excluded from `just test`, so it runs only when asked. Neither is a size at which a rare interleaving turns up. The nightly workflow runs the same scenarios and the same invariants over 65,536 seeds per cell, across four fault profiles:
 
 ```bash
 just dst-nightly-cells          # which cells exist
