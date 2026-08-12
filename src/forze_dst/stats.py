@@ -10,6 +10,9 @@ upper limit, whose mnemonic is the *rule of three* (``≈ 3 / S`` at 95%).
 :func:`detection_upper_bound` computes it; :func:`format_clean_verdict` renders the one locked
 sentence every clean-run surface prints, scope clause included ("this scenario × strategy ×
 oracle set, independent seeds") — the number never travels without the claim it is scoped to.
+Clopper–Pearson's exactness is a **fixed-design** guarantee, so a sweep that chose its own ``n``
+by looking at the runs it is summarizing gets :func:`format_withheld_verdict` instead: the stop
+reason, stated, and no number.
 
 **The survival kernel** (for detection-time campaigns over the misuse corpus). Time-to-detection
 is survival analysis with right censoring — a campaign that hit its seed ceiling without a
@@ -121,6 +124,34 @@ def format_clean_verdict(
         f"0 violations in {runs} {plural} → per-seed detection probability "
         f"< {_render_probability(bound)} ({_render_confidence(confidence)}, exact) "
         f"{scope} (independent seeds)"
+    )
+
+
+# ....................... #
+
+
+def format_withheld_verdict(runs: int, *, stop_reason: str) -> str:
+    """The locked verdict for a sweep whose ``n`` was **chosen from the data** — no bound.
+
+    Clopper–Pearson exactness is a fixed-design guarantee: it assumes the seed count was fixed
+    before the runs existed. Under a data-dependent stopping rule (the coverage sweep's plateau
+    break) ``runs`` is a random variable whose value depends on the very runs being summarized,
+    and the exact bound is not conservative in a known direction — it is simply a different,
+    unstated design. So the sweep states what it did and prints no number: a wide bound reads as
+    a real result in a way a withheld one does not.
+
+    *stop_reason* names the rule that ended the sweep (e.g. ``"plateau stop"``).
+    """
+
+    if runs < 1:
+        raise ValueError(f"runs must be >= 1, got {runs}")
+
+    plural = "seeds" if runs != 1 else "seed"
+
+    return (
+        f"0 violations in {runs} {plural} → no per-seed bound: n was chosen from the data "
+        f"({stop_reason}), and an exact bound is a fixed-design guarantee. Re-run the configured "
+        f"pool with the early stop disabled (audit()) for a bound."
     )
 
 

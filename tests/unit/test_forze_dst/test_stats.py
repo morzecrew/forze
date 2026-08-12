@@ -23,6 +23,7 @@ from forze_dst.stats import (
     detection_upper_bound,
     fisher_exact,
     format_clean_verdict,
+    format_withheld_verdict,
     geometric_p_hat,
     log_rank,
 )
@@ -98,6 +99,37 @@ class TestFormatCleanVerdict:
 
         assert "0.00%" not in out
         assert "e-07" in out
+
+
+# ....................... #
+
+
+class TestFormatWithheldVerdict:
+    """The stopping-time refusal: an exact bound is a *fixed-design* guarantee, so a sweep whose
+    ``n`` was read off its own runs states the stop reason and prints no number."""
+
+    def test_states_the_stop_reason_and_carries_no_bound(self) -> None:
+        out = format_withheld_verdict(13, stop_reason="plateau stop")
+
+        assert "0 violations in 13 seeds" in out
+        assert "no per-seed bound" in out
+        assert "n was chosen from the data" in out
+        assert "plateau stop" in out
+        # Nothing that could be quoted as a rate: no percentage, no confidence, no "exact".
+        assert "%" not in out
+        assert "detection probability" not in out
+        assert "exact)" not in out
+
+    def test_points_at_the_fixed_design_alternative(self) -> None:
+        # Withholding without a remedy would just be a dead end; audit() is the fixed-n path.
+        assert "audit()" in format_withheld_verdict(13, stop_reason="plateau stop")
+
+    def test_singular_seed(self) -> None:
+        assert "0 violations in 1 seed →" in format_withheld_verdict(1, stop_reason="plateau stop")
+
+    def test_rejects_nonpositive_runs(self) -> None:
+        with pytest.raises(ValueError, match="runs must be >= 1"):
+            format_withheld_verdict(0, stop_reason="plateau stop")
 
 
 # ....................... #

@@ -125,5 +125,8 @@ def run_coverage(
             violations=0 if violation is None else 1,
             invariants=sim.invariants,
             accounting=accounting,
+            # A plateau break chooses ``n`` by reading the runs, so the report withholds the
+            # exact bound rather than printing a fixed-design number over a stopping time.
+            data_dependent_stop="plateau stop" if plateaued else None,
         ),
     )

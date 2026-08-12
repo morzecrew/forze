@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, final
 import attrs
 
 from forze_dst.oracle.recorder import History
-from forze_dst.stats import format_clean_verdict
+from forze_dst.stats import format_clean_verdict, format_withheld_verdict
 
 if TYPE_CHECKING:
     from forze_dst.oracle import ViolationReport
@@ -177,7 +177,8 @@ class CoverageStats:
         lines = [
             "DST coverage report",
             f"  behaviors covered: {self.size}",
-            f"  seeds run:         {self.seeds_run}" + ("  (saturated)" if self.plateaued else ""),
+            f"  seeds run:         {self.seeds_run}"
+            + ("  (saturated — plateau stop)" if self.plateaued else ""),
             f"  productive seeds:  {list(self.productive_seeds)}",
         ]
 
@@ -202,11 +203,18 @@ class CoverageStats:
         elif self.seeds_run > 0:
             # Route through the confidence report when present, so an accounting-scoped sweep
             # prints the countable oracle-set clause here too (one claim, every surface).
-            verdict = (
-                self.confidence.verdict(self.seeds_run)
-                if self.confidence is not None
-                else format_clean_verdict(self.seeds_run)
-            )
-            lines.append(f"  ✓ {verdict}")
+            # A plateau stop makes ``seeds_run`` a stopping time — a random variable read off the
+            # very runs being summarized — so the exact bound's fixed-design assumption fails and
+            # the number is withheld rather than widened (a wide bound still reads as a result).
+            # Gated on this report's own ``plateaued``, not the confidence report's copy of it, so
+            # a mis-wired report can never leak a bound through this surface.
+            if self.plateaued:
+                verdict = format_withheld_verdict(self.seeds_run, stop_reason="plateau stop")
+            elif self.confidence is not None:
+                verdict = self.confidence.verdict(self.seeds_run)
+            else:
+                verdict = format_clean_verdict(self.seeds_run)
+
+            lines.append(f"  {'⚠' if self.plateaued else '✓'} {verdict}")
 
         return "\n".join(lines)

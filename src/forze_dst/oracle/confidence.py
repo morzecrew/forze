@@ -24,7 +24,7 @@ import attrs
 from forze_dst.oracle.horizon import HorizonAnalysis, HorizonProbe
 from forze_dst.oracle.recorder import History
 from forze_dst.oracle.report import CausalGraph
-from forze_dst.stats import format_clean_verdict
+from forze_dst.stats import format_clean_verdict, format_withheld_verdict
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -92,6 +92,13 @@ class ConfidenceReport:
     accounting: InvariantAccounting | None = None
     """Per-invariant witness accounting, when the simulation opted in (declared witnesses or
     horizon declarations). Makes the verdict's oracle-set clause countable."""
+
+    data_dependent_stop: str | None = None
+    """The rule that ended the sweep early by *looking at the runs*, or ``None`` when the seed
+    count was fixed before any of them existed. A bound is a statement about a denominator, and
+    Clopper–Pearson's exactness is a fixed-design guarantee — under a data-dependent stopping
+    rule ``seeds_run`` is a random variable whose value depends on the runs being summarized, so
+    :meth:`verdict` states the stop reason and withholds the number."""
 
     # ....................... #
 
@@ -163,16 +170,23 @@ class ConfidenceReport:
         """The locked clean-run verdict for this sweep, accounting-scoped when available.
 
         The single place the countable clause is threaded, so every surface that prints the
-        verdict (this report, the coverage report, the CLI) states the identical claim.
+        verdict (this report, the coverage report, the CLI) states the identical claim — including
+        the refusal to print one at all when :attr:`data_dependent_stop` says ``n`` came from the
+        data.
         """
+
+        seeds = self.seeds_run if runs is None else runs
+
+        if self.data_dependent_stop is not None:
+            return format_withheld_verdict(seeds, stop_reason=self.data_dependent_stop)
 
         accounting = self.accounting
 
         if accounting is None:
-            return format_clean_verdict(self.seeds_run if runs is None else runs)
+            return format_clean_verdict(seeds)
 
         return format_clean_verdict(
-            self.seeds_run if runs is None else runs,
+            seeds,
             witnessed=len(accounting.witnessed),
             declared=accounting.declared,
             unexercisable=accounting.unexercisable,
@@ -184,9 +198,10 @@ class ConfidenceReport:
     def format(self) -> str:
         """Render a short human summary — what a green run did and didn't exercise."""
 
+        stop = f"  ({self.data_dependent_stop})" if self.data_dependent_stop is not None else ""
         lines = [
             "DST confidence",
-            f"  seeds run:    {self.seeds_run}",
+            f"  seeds run:    {self.seeds_run}{stop}",
             f"  raced:        {len(self.raced_ops)}/{len(self.ran_ops)} operations overlapped another",
         ]
 
@@ -212,9 +227,11 @@ class ConfidenceReport:
             lines.append("  ✓ every operation raced and every declared fault fired")
 
         # The quantitative verdict sits adjacent to the gaps so the bound is never read as
-        # stronger than the coverage supports.
+        # stronger than the coverage supports. A withheld verdict is not a positive result and
+        # does not get the tick.
         if self.violations_seen == 0 and self.seeds_run > 0:
-            lines.append(f"  ✓ {self.verdict()}")
+            mark = "⚠" if self.data_dependent_stop is not None else "✓"
+            lines.append(f"  {mark} {self.verdict()}")
 
         return "\n".join(lines)
 
@@ -271,6 +288,7 @@ class ConfidenceProbe:
         violations: int = 0,
         invariants: Sequence[Invariant] = (),
         accounting: InvariantAccounting | None = None,
+        data_dependent_stop: str | None = None,
     ) -> ConfidenceReport:
         """Build the report; *faults* is the declared policy whose rules are checked for firing.
 
@@ -278,7 +296,9 @@ class ConfidenceProbe:
         histories, so the caller supplies it; it gates the clean-run bound in the report.
         *invariants* enables the horizon analysis (vacuity / marker-blindness flags over the
         folded histories); *accounting* is the simulation's witness accounting, threaded so the
-        verdict's oracle-set clause is countable.
+        verdict's oracle-set clause is countable. *data_dependent_stop* names the rule that ended
+        the sweep by reading the runs (the caller knows the design; the probe only sees
+        histories), which withholds the bound.
         """
 
         declared: list[str] = []
@@ -306,6 +326,7 @@ class ConfidenceProbe:
             vacuous_invariants=horizon.vacuous,
             marker_blind_invariants=horizon.marker_blind,
             accounting=accounting,
+            data_dependent_stop=data_dependent_stop,
         )
 
 
@@ -319,6 +340,7 @@ def assess_confidence(
     violations: int = 0,
     invariants: Sequence[Invariant] = (),
     accounting: InvariantAccounting | None = None,
+    data_dependent_stop: str | None = None,
 ) -> ConfidenceReport:
     """Read a sweep's recorded *histories* into a :class:`ConfidenceReport`.
 
@@ -326,8 +348,8 @@ def assess_confidence(
     report can name the rules that were declared but never triggered. *violations* is how many
     of those runs violated (histories alone can't tell — it gates the clean-run bound). Folds
     the histories in one pass, so an iterator/generator works without materializing every run.
-    *invariants* / *accounting* enable the horizon analysis and the countable verdict clause
-    (see :meth:`ConfidenceProbe.report`).
+    *invariants* / *accounting* / *data_dependent_stop* enable the horizon analysis, the countable
+    verdict clause, and the withheld-bound refusal (see :meth:`ConfidenceProbe.report`).
     """
 
     probe = ConfidenceProbe()
@@ -335,5 +357,9 @@ def assess_confidence(
         probe.observe(history)
 
     return probe.report(
-        faults=faults, violations=violations, invariants=invariants, accounting=accounting
+        faults=faults,
+        violations=violations,
+        invariants=invariants,
+        accounting=accounting,
+        data_dependent_stop=data_dependent_stop,
     )
