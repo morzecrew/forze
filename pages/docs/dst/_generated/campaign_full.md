@@ -151,43 +151,60 @@ decomposition of any looseness into draw-range slack versus residual conservatis
 A cell whose records predate the instrumentation falls back to the structural
 estimates (workload concurrency; the draw range) and says so.
 
-| mutant | d | strategy | n | k | p̂ per seed | p_trigger | p̂_sched | bound | respected | k-tuned floor |
-|---|---|---|---|---|---|---|---|---|---|---|
-| `D1-skip-lock` | 1 | pct-d2 | 3 | 5 | 1.000 | 1.000 | 1.00 | 0.3333 | yes | 0.3333 (3× loose) |
-| `D1-skip-lock` | 1 | pct-d3 | 3 | 5 | 1.000 | 1.000 | 1.00 | 0.3333 | yes | 0.3333 (3× loose) |
-| `D2-early-lease-release` | 1 | pct-d2 | 4 | 9 | 0.965 | 1.000 | 0.96 | 0.2500 | yes | 0.2500 (4× loose) |
-| `D2-early-lease-release` | 1 | pct-d3 | 4 | 9 | 0.920 | 1.000 | 0.92 | 0.2500 | yes | 0.2500 (4× loose) |
-| `D3-nonatomic-acquire` | 1 | pct-d2 | 3 | 7 | 1.000 | 1.000 | 1.00 | 0.3333 | yes | 0.3333 (3× loose) |
-| `D3-nonatomic-acquire` | 1 | pct-d3 | 3 | 7 | 1.000 | 1.000 | 1.00 | 0.3333 | yes | 0.3333 (3× loose) |
-| `D5-wall-clock-ordering` | 1 | pct-d2 | 4 | 4 | 1.000 | 1.000 | 1.00 | 0.2500 | yes | 0.2500 (4× loose) |
-| `D5-wall-clock-ordering` | 1 | pct-d3 | 4 | 4 | 1.000 | 1.000 | 1.00 | 0.2500 | yes | 0.2500 (4× loose) |
-| `I1-retry-without-key` | 1 | pct-d2 | 2 | 2 | 0.063 | 0.062 | 1.00 | 0.5000 | yes | 0.5000 (2× loose) |
-| `I1-retry-without-key` | 1 | pct-d3 | 2 | 2 | 0.064 | 0.062 | 1.00 | 0.5000 | yes | 0.5000 (2× loose) |
-| `I2-naive-retry-loop` | 1 | pct-d2 | 2 | 2 | 0.061 | 0.062 | 0.98 | 0.5000 | yes | 0.5000 (2× loose) |
-| `I2-naive-retry-loop` | 1 | pct-d3 | 2 | 2 | 0.065 | 0.062 | 1.00 | 0.5000 | yes | 0.5000 (2× loose) |
-| `M2-consumer-without-inbox` | 1 | pct-d2 | 2 | 2 | 0.061 | 0.062 | 0.97 | 0.5000 | yes | 0.5000 (2× loose) |
-| `M2-consumer-without-inbox` | 1 | pct-d3 | 2 | 2 | 0.067 | 0.062 | 1.00 | 0.5000 | yes | 0.5000 (2× loose) |
-| `N2-stale-cache` | 1 | pct-d2 | 2 | 2 | 1.000 | 1.000 | 1.00 | 0.5000 | yes | 0.5000 (2× loose) |
-| `N2-stale-cache` | 1 | pct-d3 | 2 | 2 | 1.000 | 1.000 | 1.00 | 0.5000 | yes | 0.5000 (2× loose) |
-| `N3-unbound-cursor-walk` | 1 | pct-d2 | 2 | 2 | 1.000 | 1.000 | 1.00 | 0.5000 | yes | 0.5000 (2× loose) |
-| `N3-unbound-cursor-walk` | 1 | pct-d3 | 2 | 2 | 1.000 | 1.000 | 1.00 | 0.5000 | yes | 0.5000 (2× loose) |
-| `T1-blind-write-payment` | 1 | pct-d2 | 2 | 5 | 0.062 | 0.062 | 0.99 | 0.5000 | yes | 0.5000 (2× loose) |
-| `T1-blind-write-payment` | 1 | pct-d3 | 2 | 5 | 0.064 | 0.062 | 1.00 | 0.5000 | yes | 0.5000 (2× loose) |
-| `T2-charge-before-guard` | 1 | pct-d2 | 2 | 4 | 0.063 | 0.062 | 1.00 | 0.5000 | yes | 0.5000 (2× loose) |
-| `T2-charge-before-guard` | 1 | pct-d3 | 2 | 4 | 0.064 | 0.062 | 1.00 | 0.5000 | yes | 0.5000 (2× loose) |
-| `T3-double-torn` | 3 | pct-d3 | 2 | 7 | 0.010 | 0.500 | 0.02 | 0.0002 | yes | 0.0102 (2× loose) |
-| `T3-payment-outside-tx` | 1 | pct-d2 | 2 | 5 | 0.063 | 0.062 | 1.00 | 0.5000 | yes | 0.5000 (2× loose) |
-| `T3-payment-outside-tx` | 1 | pct-d3 | 2 | 5 | 0.059 | 0.062 | 0.94 | 0.5000 | yes | 0.5000 (2× loose) |
-| `T3-torn-activation` | 2 | pct-d2 | 2 | 6 | 0.244 | 0.500 | 0.49 | 0.0100 | yes | 0.0833 (6× loose) |
-| `T3-torn-activation` | 2 | pct-d3 | 2 | 6 | 0.258 | 0.500 | 0.52 | 0.0100 | yes | 0.0833 (6× loose) |
-| `T4-weakened-oncall` | 1 | pct-d2 | 2 | 5 | 0.034 | 0.031 | 1.00 | 0.5000 | yes | 0.5000 (2× loose) |
-| `T4-weakened-oncall` | 1 | pct-d3 | 2 | 5 | 0.030 | 0.031 | 0.96 | 0.5000 | yes | 0.5000 (2× loose) |
-| `T5-unchecked-reservation` | 1 | pct-d2 | 2 | 4 | 0.059 | 0.062 | 0.95 | 0.5000 | yes | 0.5000 (2× loose) |
-| `T5-unchecked-reservation` | 1 | pct-d3 | 2 | 4 | 0.060 | 0.062 | 0.96 | 0.5000 | yes | 0.5000 (2× loose) |
+**Multiplicity.** The scan checks 31 cells and reports one violation count, so
+a per-cell 95% interval would not be a 95% claim about the family — under the null that
+the bound holds everywhere, the chance of at least one spurious flag grows past a coin
+flip by ~15 cells, and a false alarm here sends a reviewer off to re-derive a correct
+depth label. Each interval below is therefore computed at **99.8347% per cell**
+(Šidák over 31), holding **95% family-wise** across the scan.
+
+**Flip margin.** Uncertainty is propagated through `p̂` and through nothing else:
+`p_trigger` is a structural constant, several of its values exact combinatorics, but all
+of them derived from reviewed reasoning rather than measured. Respect holds iff
+`p_trigger ≤ p̂_upper / bound`, so each cell carries the exact factor `F` by which
+`p_trigger` would have to be understated for that cell's verdict to flip — no arbitrary
+perturbation band to calibrate. A cell at `F = 40×` is immune to any plausible derivation
+error; one at `F = 1.2×` is a single reviewed assumption away from a false alarm. Where
+the flip would need `p_trigger > 1` it is **unreachable**, reported as such rather than as
+a meaningless factor.
+
+| mutant | d | strategy | n | k | p̂ per seed | p_trigger | p̂_sched | bound | respected | flip margin | k-tuned floor |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `D1-skip-lock` | 1 | pct-d2 | 3 | 5 | 1.000 | 1.000 | 1.00 | 0.3333 | yes | unreachable | 0.3333 (3× loose) |
+| `D1-skip-lock` | 1 | pct-d3 | 3 | 5 | 1.000 | 1.000 | 1.00 | 0.3333 | yes | unreachable | 0.3333 (3× loose) |
+| `D2-early-lease-release` | 1 | pct-d2 | 4 | 9 | 0.965 | 1.000 | 0.96 | 0.2500 | yes | unreachable | 0.2500 (4× loose) |
+| `D2-early-lease-release` | 1 | pct-d3 | 4 | 9 | 0.920 | 1.000 | 0.92 | 0.2500 | yes | unreachable | 0.2500 (4× loose) |
+| `D3-nonatomic-acquire` | 1 | pct-d2 | 3 | 7 | 1.000 | 1.000 | 1.00 | 0.3333 | yes | unreachable | 0.3333 (3× loose) |
+| `D3-nonatomic-acquire` | 1 | pct-d3 | 3 | 7 | 1.000 | 1.000 | 1.00 | 0.3333 | yes | unreachable | 0.3333 (3× loose) |
+| `D5-wall-clock-ordering` | 1 | pct-d2 | 4 | 4 | 1.000 | 1.000 | 1.00 | 0.2500 | yes | unreachable | 0.2500 (4× loose) |
+| `D5-wall-clock-ordering` | 1 | pct-d3 | 4 | 4 | 1.000 | 1.000 | 1.00 | 0.2500 | yes | unreachable | 0.2500 (4× loose) |
+| `I1-retry-without-key` | 1 | pct-d2 | 2 | 2 | 0.063 | 0.062 | 1.00 | 0.5000 | yes | 2.4× | 0.5000 (2× loose) |
+| `I1-retry-without-key` | 1 | pct-d3 | 2 | 2 | 0.064 | 0.062 | 1.00 | 0.5000 | yes | 2.4× | 0.5000 (2× loose) |
+| `I2-naive-retry-loop` | 1 | pct-d2 | 2 | 2 | 0.061 | 0.062 | 0.98 | 0.5000 | yes | 2.3× | 0.5000 (2× loose) |
+| `I2-naive-retry-loop` | 1 | pct-d3 | 2 | 2 | 0.065 | 0.062 | 1.00 | 0.5000 | yes | 2.5× | 0.5000 (2× loose) |
+| `M2-consumer-without-inbox` | 1 | pct-d2 | 2 | 2 | 0.061 | 0.062 | 0.97 | 0.5000 | yes | 2.3× | 0.5000 (2× loose) |
+| `M2-consumer-without-inbox` | 1 | pct-d3 | 2 | 2 | 0.067 | 0.062 | 1.00 | 0.5000 | yes | 2.6× | 0.5000 (2× loose) |
+| `N2-stale-cache` | 1 | pct-d2 | 2 | 2 | 1.000 | 1.000 | 1.00 | 0.5000 | yes | unreachable | 0.5000 (2× loose) |
+| `N2-stale-cache` | 1 | pct-d3 | 2 | 2 | 1.000 | 1.000 | 1.00 | 0.5000 | yes | unreachable | 0.5000 (2× loose) |
+| `N3-unbound-cursor-walk` | 1 | pct-d2 | 2 | 2 | 1.000 | 1.000 | 1.00 | 0.5000 | yes | unreachable | 0.5000 (2× loose) |
+| `N3-unbound-cursor-walk` | 1 | pct-d3 | 2 | 2 | 1.000 | 1.000 | 1.00 | 0.5000 | yes | unreachable | 0.5000 (2× loose) |
+| `T1-blind-write-payment` | 1 | pct-d2 | 2 | 5 | 0.062 | 0.062 | 0.99 | 0.5000 | yes | 2.3× | 0.5000 (2× loose) |
+| `T1-blind-write-payment` | 1 | pct-d3 | 2 | 5 | 0.064 | 0.062 | 1.00 | 0.5000 | yes | 2.4× | 0.5000 (2× loose) |
+| `T2-charge-before-guard` | 1 | pct-d2 | 2 | 4 | 0.063 | 0.062 | 1.00 | 0.5000 | yes | 2.4× | 0.5000 (2× loose) |
+| `T2-charge-before-guard` | 1 | pct-d3 | 2 | 4 | 0.064 | 0.062 | 1.00 | 0.5000 | yes | 2.4× | 0.5000 (2× loose) |
+| `T3-double-torn` | 3 | pct-d3 | 2 | 7 | 0.010 | 0.500 | 0.02 | 0.0002 | yes | unreachable | 0.0102 (2× loose) |
+| `T3-payment-outside-tx` | 1 | pct-d2 | 2 | 5 | 0.063 | 0.062 | 1.00 | 0.5000 | yes | 2.4× | 0.5000 (2× loose) |
+| `T3-payment-outside-tx` | 1 | pct-d3 | 2 | 5 | 0.059 | 0.062 | 0.94 | 0.5000 | yes | 2.2× | 0.5000 (2× loose) |
+| `T3-torn-activation` | 2 | pct-d2 | 2 | 6 | 0.244 | 0.500 | 0.49 | 0.0100 | yes | unreachable | 0.0833 (6× loose) |
+| `T3-torn-activation` | 2 | pct-d3 | 2 | 6 | 0.258 | 0.500 | 0.52 | 0.0100 | yes | unreachable | 0.0833 (6× loose) |
+| `T4-weakened-oncall` | 1 | pct-d2 | 2 | 5 | 0.034 | 0.031 | 1.00 | 0.5000 | yes | 2.6× | 0.5000 (2× loose) |
+| `T4-weakened-oncall` | 1 | pct-d3 | 2 | 5 | 0.030 | 0.031 | 0.96 | 0.5000 | yes | 2.3× | 0.5000 (2× loose) |
+| `T5-unchecked-reservation` | 1 | pct-d2 | 2 | 4 | 0.059 | 0.062 | 0.95 | 0.5000 | yes | 2.3× | 0.5000 (2× loose) |
+| `T5-unchecked-reservation` | 1 | pct-d3 | 2 | 4 | 0.060 | 0.062 | 0.96 | 0.5000 | yes | 2.3× | 0.5000 (2× loose) |
 
 Excluded from the bound comparison (trigger is not a schedule lottery): `D4-unmerged-remote-hlc`, `I3-ack-before-processing`, `M1-dual-write-shipment`, `N1-drop-tenant-predicate`.
 
-**Bound violations: 0.**
+**Bound violations: 0** (family-wise 95% over 31 cells).
 
 Reading: for every depth-1 cell the conditional schedule probability sits at ≈ 1 — once
 the workload carries the trigger, essentially any schedule realizes it, consistent with
@@ -200,3 +217,8 @@ to the measured schedule length) versus PCT's residual conservatism. A violation
 anywhere would have meant a wrong depth label or wrong n/k accounting — the first
 (unconditioned) pass of this analysis produced exactly such false violations and was
 corrected to the conditional form above.
+
+`n` and `k` carry no interval on purpose. They are per-run measurements folded per cell
+as **maxima** — a biased extreme-order statistic, but biased toward the lowest, most
+conservative floor, which is the direction that cannot manufacture a violation. The
+absence of an interval there is a decision, not an oversight.

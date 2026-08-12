@@ -21,15 +21,19 @@ from forze_dst.oracle.recorder import History
 from forze_dst.oracle.replay import ViolationReport
 from forze_dst.stats import (
     SurvivalCurve,
+    _render_probability,
     binomial_ci,
     coverage_deficit,
     detection_upper_bound,
     fisher_exact,
+    flip_margin,
     format_clean_verdict,
     format_coverage_deficit,
+    format_family_verdict,
     format_withheld_verdict,
     geometric_p_hat,
     log_rank,
+    sidak_level,
 )
 
 # The Gehan (1965) 6-MP leukemia trial — the canonical Kaplan–Meier worked example. Remission
@@ -226,6 +230,131 @@ class TestCoverageDeficit:
         assert "5 observed" in line
         assert "estimated reachable (Chao1, 95% CI" in line
         assert "of seeds still discovering" in line
+
+
+# ....................... #
+
+
+class TestSidakLevel:
+    """Family-wise control, in both directions — a scan of m cells, and a family of K sweeps."""
+
+    def test_hand_computed_level_for_a_fixed_m(self) -> None:
+        # γ' = γ^(1/m): the per-comparison level that leaves 5% family-wise error across 15 cells.
+        assert sidak_level(0.95, 15) == pytest.approx(0.95 ** (1 / 15))
+        # By hand: exp(ln 0.95 / 15) = exp(-0.05129329 / 15) = exp(-0.00341955) = 0.99658629…
+        assert sidak_level(0.95, 15) == pytest.approx(0.9965863, abs=1e-7)
+
+    def test_one_comparison_is_the_uncorrected_level(self) -> None:
+        assert sidak_level(0.95, 1) == pytest.approx(0.95)
+
+    def test_more_comparisons_demand_a_stricter_per_cell_level(self) -> None:
+        assert sidak_level(0.95, 5) < sidak_level(0.95, 30) < sidak_level(0.95, 60) < 1.0
+
+    def test_it_is_effectively_bonferroni_at_these_counts(self) -> None:
+        # Bonferroni's union bound (1 − α/m) is the cheaper approximation; Šidák is exact under
+        # independence. Recorded so the choice is not mistaken for a meaningful difference.
+        for m in (5, 15, 30, 60):
+            assert sidak_level(0.95, m) == pytest.approx(1.0 - 0.05 / m, abs=1e-3)
+
+    def test_rejects_a_nonpositive_comparison_count(self) -> None:
+        with pytest.raises(ValueError, match="comparisons must be >= 1"):
+            sidak_level(0.95, 0)
+
+    def test_rejects_an_out_of_range_confidence(self) -> None:
+        with pytest.raises(ValueError, match="confidence must be in"):
+            sidak_level(1.0, 10)
+
+
+# ....................... #
+
+
+class TestFormatFamilyVerdict:
+    def test_the_simultaneous_bound_is_wider_than_any_per_sweep_one(self) -> None:
+        per_sweep = detection_upper_bound(1000)
+        family = format_family_verdict([1000] * 10)
+
+        # 10 sweeps × 1000 seeds: 0.299% per sweep → 0.526% simultaneously (1.76× wider).
+        assert "0 violations across 10 sweeps" in family
+        assert "0.53%" in family
+        assert "simultaneously" in family
+        assert "(95% family-wise, Šidák over 10)" in family
+        assert per_sweep < 0.0053
+
+    def test_the_widest_corrected_bound_is_what_holds_for_all(self) -> None:
+        # A mixed-size family is bounded by its smallest sweep — claiming the tightest would be
+        # false of the others.
+        expected = detection_upper_bound(50, confidence=sidak_level(0.95, 3))
+
+        assert _render_probability(expected) in format_family_verdict([1000, 50, 400])
+
+    def test_a_single_sweep_family_is_just_that_sweep(self) -> None:
+        assert _render_probability(detection_upper_bound(200)) in format_family_verdict([200])
+
+    def test_rejects_an_empty_family(self) -> None:
+        with pytest.raises(ValueError, match="at least one sweep"):
+            format_family_verdict([])
+
+
+# ....................... #
+
+
+class TestFlipMargin:
+    """The exact sensitivity of a bound comparison to the one input carrying no interval."""
+
+    @staticmethod
+    def _respected(trigger: float, *, upper: float = 0.075, bound: float = 0.5) -> bool:
+        """The scan's own verdict, restated: respect iff the conditional upper clears the bound."""
+
+        return min(1.0, upper / trigger) >= bound
+
+    def test_the_factor_is_the_exact_boundary(self) -> None:
+        upper, bound, trigger = 0.075, 0.5, 0.0625
+        margin = flip_margin(observed_upper=upper, bound=bound, trigger=trigger)
+
+        assert margin.reachable
+        assert margin.factor == pytest.approx((upper / bound) / trigger)
+
+        # Just under F keeps the verdict; just over flips it. This is the whole claim.
+        assert self._respected(trigger * margin.factor * 0.999)
+        assert not self._respected(trigger * margin.factor * 1.001)
+
+    def test_an_unreachable_flip_is_reported_as_such(self) -> None:
+        # p̂_upper / bound > 1 → no admissible p_trigger flips this cell, and a numeric factor
+        # would imply a probability above 1.
+        margin = flip_margin(observed_upper=0.9, bound=0.25, trigger=0.5)
+
+        assert not margin.reachable
+        assert margin.factor * 0.5 > 1.0  # exactly why it cannot be quoted as a factor
+
+    def test_the_boundary_case_of_exactly_one_is_still_reachable(self) -> None:
+        # p̂_upper / bound == 1 lands on p_trigger = 1, which is admissible.
+        margin = flip_margin(observed_upper=0.5, bound=0.5, trigger=0.25)
+
+        assert margin.reachable
+        assert margin.factor == pytest.approx(4.0)
+
+    def test_a_violating_cell_reports_a_factor_below_one(self) -> None:
+        # Below 1 the reading inverts: how far the constant would have to be *overstated* for the
+        # violation to disappear.
+        margin = flip_margin(observed_upper=0.01, bound=0.5, trigger=0.5)
+
+        assert margin.factor < 1.0
+        assert not self._respected(0.5, upper=0.01)
+
+    def test_a_wide_margin_is_immune_to_any_plausible_derivation_error(self) -> None:
+        assert flip_margin(observed_upper=0.02, bound=0.0002, trigger=0.5).factor > 40.0
+
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"observed_upper": 1.5, "bound": 0.5, "trigger": 0.5}, "observed_upper must be"),
+            ({"observed_upper": 0.5, "bound": 0.0, "trigger": 0.5}, "bound must be"),
+            ({"observed_upper": 0.5, "bound": 0.5, "trigger": 0.0}, "trigger must be"),
+        ],
+    )
+    def test_rejects_inadmissible_inputs(self, kwargs: dict[str, float], match: str) -> None:
+        with pytest.raises(ValueError, match=match):
+            flip_margin(**kwargs)  # type: ignore[arg-type]
 
 
 # ....................... #

@@ -44,6 +44,16 @@ if TYPE_CHECKING:
 
 # ----------------------- #
 
+REDUNDANCY_RATIO = 0.05
+"""Warn below this many distinct execution shapes per seed. Calibrated against the misuse corpus's
+own spread rather than picked round: at 200 seeds its mutants range from 1 to 55 distinct shapes,
+and 0.05 separates the genuinely redundant end (1–3 shapes) from the diverse one (19–55) with room
+either side."""
+
+REDUNDANCY_MIN_SEEDS = 50
+"""…and only once the sweep is long enough for the ratio to mean anything. A 10-seed sweep with 1
+shape is not evidence of redundancy, it is a short sweep."""
+
 
 def _fault_label(rule: Any) -> str:
     """A stable, readable identifier for a declared fault rule — its selector + active kinds."""
@@ -207,10 +217,40 @@ class ConfidenceReport:
             for name, kinds in self.marker_blind_invariants
         )
 
+        if self.redundant_seeds:
+            out.append(
+                f"{self.seeds_run} seeds explored {len(self.shape_counts)} distinct execution "
+                "shapes — the bound counts seeds, not distinct trials"
+            )
+
         if self.accounting is not None:
             out.extend(self.accounting.problems)
 
         return tuple(out)
+
+    # ....................... #
+
+    @property
+    def redundant_seeds(self) -> bool:
+        """Whether the sweep's seeds bought far fewer distinct trials than their count suggests.
+
+        Every bound treats ``S`` seeds as ``S`` independent chances. Measured on the misuse corpus,
+        200 seeds routinely explore one to three distinct execution shapes — so were the effective
+        count 120 of 1000, an honest bound would be 2.47% against a claimed 0.30%.
+
+        This stays a **warning and never a corrected denominator.** The shape fingerprint
+        deliberately erases entity ids, and entity collision is exactly what the collision-pool
+        regimes vary, so distinct-shape count is a coarse *lower* proxy for effective sample size.
+        Substituting it into the bound would trade a known overstatement for an unknown
+        understatement — the same register as ``never_raced``, which names a gap without repricing
+        anything.
+        """
+
+        return (
+            bool(self.shape_counts)
+            and self.seeds_run >= REDUNDANCY_MIN_SEEDS
+            and len(self.shape_counts) / self.seeds_run < REDUNDANCY_RATIO
+        )
 
     # ....................... #
 

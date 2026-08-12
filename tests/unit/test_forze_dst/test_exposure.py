@@ -286,3 +286,102 @@ def test_detection_upper_bound_still_refuses_zero_runs() -> None:
     # The guard the never-at-risk branch exists to respect.
     with pytest.raises(ValueError, match="runs must be >= 1"):
         detection_upper_bound(0)
+
+
+# ....................... #
+
+
+class TestSeedRedundancy:
+    """`S` seeds are treated as `S` independent chances by every bound. Measured on the corpus,
+    200 seeds routinely explore one to three distinct execution shapes — a gap worth naming, and
+    (deliberately) not worth substituting into the denominator."""
+
+    @staticmethod
+    def _report(seeds: int, shapes: int) -> ConfidenceReport:
+        return ConfidenceReport(
+            seeds_run=seeds,
+            ran_ops=("go",),
+            raced_ops=("go",),
+            shape_counts={f"shape-{i}": 1 for i in range(shapes)},
+        )
+
+    def test_fires_on_a_low_diversity_sweep(self) -> None:
+        # The corpus control's shape: 300 seeds, 2 distinct shapes.
+        report = self._report(seeds=300, shapes=2)
+
+        assert report.redundant_seeds
+        assert any(
+            "300 seeds explored 2 distinct execution shapes" in w for w in report.warnings
+        )
+        assert any("counts seeds, not distinct trials" in w for w in report.warnings)
+
+    def test_stays_silent_on_a_high_diversity_sweep(self) -> None:
+        # The deep mutant's shape: 200 seeds, 55 distinct shapes.
+        report = self._report(seeds=200, shapes=55)
+
+        assert not report.redundant_seeds
+        assert not any("distinct execution shapes" in w for w in report.warnings)
+
+    def test_the_corpus_spread_is_separated_cleanly_by_the_threshold(self) -> None:
+        # Calibrated against the corpus's own range at 200 seeds (1, 2, 3, 3, 19, 55 shapes)
+        # rather than a round number: the redundant end fires, the diverse end does not, and
+        # neither sits near the boundary.
+        redundant = [self._report(200, n).redundant_seeds for n in (1, 2, 3)]
+        diverse = [self._report(200, n).redundant_seeds for n in (19, 55)]
+
+        assert all(redundant)
+        assert not any(diverse)
+
+    def test_a_short_sweep_stays_quiet(self) -> None:
+        # One shape in ten seeds is a short sweep, not evidence of redundancy.
+        assert not self._report(seeds=10, shapes=1).redundant_seeds
+
+    def test_the_bound_is_never_repriced_by_the_signal(self) -> None:
+        # The guard against this warning quietly becoming a corrected denominator. The fingerprint
+        # erases entity ids — the very dimension the collision pools vary — so distinct-shape
+        # count is a coarse *lower* proxy for effective sample size, and substituting it would
+        # trade a known overstatement for an unknown understatement.
+        redundant = self._report(seeds=300, shapes=2)
+        diverse = self._report(seeds=300, shapes=250)
+
+        assert redundant.redundant_seeds and not diverse.redundant_seeds
+        assert redundant.verdict() == diverse.verdict()
+        assert redundant.verdict() == format_clean_verdict(300)
+
+    def test_the_warning_is_absent_when_no_shapes_were_recorded(self) -> None:
+        assert not ConfidenceReport(seeds_run=300, ran_ops=(), raced_ops=()).redundant_seeds
+
+
+# ....................... #
+
+
+class TestRedundancyEndToEnd:
+    def test_a_single_shape_sweep_is_flagged_through_the_probe(self) -> None:
+        probe = ConfidenceProbe()
+        for seed in range(60):
+            probe.observe(_run(seed, "common"))  # every run drives the identical shape
+
+        report = probe.report()
+
+        assert len(report.shape_counts) == 1
+        assert report.redundant_seeds
+        assert "60 seeds explored 1 distinct execution shapes" in "\n".join(report.warnings)
+
+    def test_a_diverse_sweep_is_not(self) -> None:
+        probe = ConfidenceProbe()
+        for seed in range(60):
+            # A different *execution shape* every run: the fingerprint folds operation outcomes
+            # and port edges, so the ops are what has to vary — a marker kind would not move it.
+            probe.observe(
+                History(
+                    seed=seed,
+                    events=tuple(
+                        _ev(i, "operation", op=f"op{i}", outcome="ok") for i in range(seed % 20 + 1)
+                    ),
+                )
+            )
+
+        report = probe.report()
+
+        assert len(report.shape_counts) > 1
+        assert not report.redundant_seeds

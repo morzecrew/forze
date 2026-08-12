@@ -32,6 +32,14 @@ attached — under a per-seed discovery probability of 10%, eight consecutive qu
 luck alone 43% of the time. :func:`coverage_deficit` puts a number on it: Good–Turing unseen mass
 and the Chao1 lower bound on richness, over a frequency table of whatever features a sweep
 collected.
+
+**Multiplicity, in both directions.** :func:`sidak_level` is the per-comparison level that holds a
+family-wise one: scanning many cells at 95% each and reporting the family as one verdict makes a
+spurious flag likelier than not by ~15 cells. It corrects in the conservative direction for a scan,
+and in the *permissive* one for :func:`format_family_verdict`, the opt-in simultaneous claim over
+several clean sweeps that per-sweep non-aggregation otherwise leaves unsaid. :func:`flip_margin`
+covers the remaining input no interval reaches — an assumed structural constant a comparison
+divides by — by reporting the exact factor by which it would have to be wrong to flip the verdict.
 """
 
 from __future__ import annotations
@@ -696,6 +704,105 @@ def coverage_deficit(counts: Mapping[Any, int], *, confidence: float = 0.95) -> 
         upper=upper,
         confidence=confidence,
     )
+
+
+# ....................... #
+
+
+def sidak_level(confidence: float, comparisons: int) -> float:
+    """The per-comparison confidence that holds *confidence* family-wise across *comparisons*.
+
+    Šidák: with ``m`` independent statements each true at level ``γ'``, all ``m`` hold together
+    with probability ``γ'^m``, so ``γ' = γ^(1/m)``. Scanning ``m`` cells at 95% each and reporting
+    the family as one verdict is not a 95% claim — under the null that every cell is fine,
+    ``P(≥1 spurious flag)`` is 22% at ``m = 5``, 54% at 15 and 95% at 60.
+
+    Bonferroni's ``γ' = 1 − (1 − γ)/m`` is the union-bound approximation and is effectively
+    identical at these ``m``; Šidák is exact under independence and no more code.
+    """
+
+    if comparisons < 1:
+        raise ValueError(f"comparisons must be >= 1, got {comparisons}")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError(f"confidence must be in (0, 1), got {confidence}")
+
+    return confidence ** (1.0 / comparisons)
+
+
+# ....................... #
+
+
+def format_family_verdict(runs: Sequence[int], *, confidence: float = 0.95) -> str:
+    """One **simultaneous** claim over several independent clean sweeps.
+
+    Per-sweep bounds are deliberately never aggregated — a combined number would claim more than
+    any single sweep established. That leaves a reader with no joint statement at all, though, and
+    one is cheap: Šidák-correcting each sweep's level and quoting the widest of the corrected
+    bounds costs 1.8–2.8× width and is true of every sweep at once.
+
+    Opt-in by design: a family claim over unrelated scenarios is rarely the question anyone is
+    asking, so it is offered rather than printed.
+    """
+
+    if not runs:
+        raise ValueError("at least one sweep is required")
+
+    level = sidak_level(confidence, len(runs))
+    widest = max(detection_upper_bound(n, confidence=level) for n in runs)
+    plural = "sweeps" if len(runs) != 1 else "sweep"
+
+    return (
+        f"0 violations across {len(runs)} {plural} → every sweep's per-seed detection probability "
+        f"< {_render_probability(widest)} simultaneously "
+        f"({_render_confidence(confidence)} family-wise, Šidák over {len(runs)})"
+    )
+
+
+# ....................... #
+
+
+@final
+@attrs.frozen(kw_only=True)
+class FlipMargin:
+    """How far an assumed constant would have to be wrong to flip a bound comparison's verdict."""
+
+    factor: float
+    """The multiplicative factor on the assumed constant that lands exactly on the verdict
+    boundary. Above 1 on a respected cell: how far the constant would have to be *understated*
+    for the cell to start reading as a violation. Below 1 on a violating cell: how far it would
+    have to be *overstated* for the violation to disappear."""
+
+    reachable: bool
+    """Whether that factor is attainable at all. ``False`` when the constant is a probability and
+    :attr:`factor` would push it above 1 — the verdict cannot flip for any admissible value, and
+    reporting a numeric factor there would imply a probability greater than one."""
+
+
+def flip_margin(*, observed_upper: float, bound: float, trigger: float) -> FlipMargin:
+    """The exact sensitivity of ``p̂/trigger >= bound`` to the assumed *trigger*.
+
+    A measured per-seed rate is a product — p(the workload carries the trigger) × p(the schedule
+    realizes it) — so a bound on the schedule half is compared against ``p̂ / trigger``. Uncertainty
+    is propagated through ``p̂`` (its exact interval) and through nothing else: *trigger* is a
+    structural constant derived from reviewed reasoning about workload shape, and a mis-derived one
+    produces exactly the false "violation" that sends a reviewer off to re-derive a correct label.
+
+    Respect holds iff ``trigger <= observed_upper / bound``, so the margin is exact:
+    ``F = (observed_upper / bound) / trigger``. A cell at ``F = 40×`` is immune to any plausible
+    derivation error; a cell at ``F = 1.2×`` is one reviewed assumption away from a false alarm and
+    should be read as such. No arbitrary perturbation band to calibrate.
+    """
+
+    if not 0.0 <= observed_upper <= 1.0:
+        raise ValueError(f"observed_upper must be in [0, 1], got {observed_upper}")
+    if not 0.0 < bound <= 1.0:
+        raise ValueError(f"bound must be in (0, 1], got {bound}")
+    if not 0.0 < trigger <= 1.0:
+        raise ValueError(f"trigger must be in (0, 1], got {trigger}")
+
+    boundary = observed_upper / bound
+
+    return FlipMargin(factor=boundary / trigger, reachable=boundary <= 1.0)
 
 
 # ....................... #
