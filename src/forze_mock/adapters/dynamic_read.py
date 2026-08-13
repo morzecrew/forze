@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, cast, final
+from typing import Any, final
 
 import attrs
 
@@ -119,7 +119,11 @@ class MockDynamicReadAdapter(DynamicReadAdapter):
                 f"mappings, got {type(rows).__name__}.",
             )
 
-        materialized = list(cast(Sequence[Any], rows))
+        # An annotated binding rather than a cast: the ``isinstance`` above already narrows
+        # this for mypy, which rejects the cast as redundant, while pyright still needs the
+        # element type spelled out. The annotation satisfies both without an ignore comment.
+        sequence: Sequence[Any] = rows
+        materialized = list(sequence)
 
         if len(materialized) > request.row_probe:
             raise exc.internal(
