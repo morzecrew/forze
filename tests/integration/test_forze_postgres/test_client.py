@@ -4,12 +4,12 @@ from datetime import timedelta
 import pytest
 
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_postgres.kernel.client.errors import POOL_ACQUIRE_TIMEOUT_CODE
 from forze_postgres.kernel.client.client import (
     PostgresClient,
     PostgresConfig,
     PostgresTransactionOptions,
 )
+from forze_postgres.kernel.client.errors import POOL_ACQUIRE_TIMEOUT_CODE
 
 
 @pytest.mark.asyncio

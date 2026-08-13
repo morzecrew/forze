@@ -10,6 +10,7 @@ from forze.base.exceptions import CoreException
 pytest.importorskip("psycopg")
 
 from psycopg import IsolationLevel
+from psycopg_pool import PoolTimeout
 
 from forze_postgres.kernel.client.client import (
     PostgresClient,
@@ -590,3 +591,26 @@ class TestLazyTransaction:
         # Materialized once, committed on a clean exit — no token reset error.
         assert pool.checkouts == 1
         assert conn.tx_events == [("begin", None), ("commit", None)]
+
+
+class TestAcquireTranslatesOnlyItsOwnWait:
+    """The guard that keeps `_acquire` from claiming a timeout it did not cause."""
+
+    @pytest.mark.asyncio
+    async def test_a_timeout_raised_inside_the_body_passes_through(self) -> None:
+        """A nested checkout's timeout belongs to that wait, not to this one.
+
+        Without the guard, `_acquire` would catch anything the body raised — including a
+        `PoolTimeout` from a *different* acquisition — and reclassify it against counters
+        sampled around the wrong window, reporting an unreachable database from a pool that
+        had just handed out a connection.
+        """
+
+        client, _conn, _pool = _client_with_stub_pool()
+        inner = PoolTimeout("a wait that belongs to someone else")
+
+        with pytest.raises(PoolTimeout) as caught:
+            async with client._acquire():
+                raise inner
+
+        assert caught.value is inner

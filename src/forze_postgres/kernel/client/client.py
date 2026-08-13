@@ -413,6 +413,14 @@ class PostgresClient(PostgresClientPort):
         Only the *acquisition* is translated. A ``PoolTimeout`` raised by the body — a nested
         checkout inside a caller's transaction, say — belongs to that inner wait and is left
         to propagate as itself.
+
+        The pre-wait sample is the price of the classification, and it is paid on every
+        checkout: ``get_stats`` is lock-free but copies two dicts, measured at 0.40 us
+        against a 132 us checkout-and-query. Under eight-way concurrency on ``SELECT 1`` —
+        the cheapest query there is, so the least favourable ratio — that showed as +3%;
+        against queries costing hundreds of microseconds it is under a percent. Kept exact
+        rather than cached behind a refresh interval, because "during this wait" is what
+        makes the verdict worth trusting, and "some time recently" is not.
         """
 
         pool = self.__require_pool()
