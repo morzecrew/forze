@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, final
+from typing import Any, cast, final
 
 import attrs
 
@@ -119,11 +119,10 @@ class MockDynamicReadAdapter(DynamicReadAdapter):
                 f"mappings, got {type(rows).__name__}.",
             )
 
-        # An annotated binding rather than a cast: the ``isinstance`` above already narrows
-        # this for mypy, which rejects the cast as redundant, while pyright still needs the
-        # element type spelled out. The annotation satisfies both without an ignore comment.
-        sequence: Sequence[Any] = rows
-        materialized = list(sequence)
+        # The cast is for pyright, which otherwise carries the element type through as Unknown
+        # and reddens every use below. mypy sees the ``isinstance`` narrowing and calls the same
+        # cast redundant — hence the ignore. Two checkers, opposite complaints, one line.
+        materialized = list(cast(Sequence[Any], rows))  # type: ignore[redundant-cast]
 
         if len(materialized) > request.row_probe:
             raise exc.internal(
@@ -139,7 +138,7 @@ class MockDynamicReadAdapter(DynamicReadAdapter):
                     f"{type(row).__name__}.",
                 )
 
-        return [dict(row) for row in materialized]  # pyright: ignore[reportUnknownArgumentType]
+        return [dict(row) for row in materialized]
 
 
 # ....................... #
