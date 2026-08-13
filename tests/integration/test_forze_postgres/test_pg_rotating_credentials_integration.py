@@ -99,6 +99,51 @@ async def credentials_table(pg_client: PostgresClient) -> str:
     return table
 
 
+async def _await_presentation(counterparty: FakeCounterparty, *, timeout: float = 10.0) -> None:
+    """Block until the worker has handed its token to the counterparty.
+
+    The observable form of "the row lock is held": presentation happens inside the locked
+    transaction, so a recorded token proves the lock was taken. Waiting on it rather than on
+    a fixed sleep is what stops the two workers from silently swapping order — an inversion
+    that leaves these tests *passing* while exercising nothing, because the second worker
+    then finds a moved version and converges through single-flight without presenting.
+    """
+
+    deadline = asyncio.get_running_loop().time() + timeout
+
+    while not counterparty.presented:
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError("the worker never presented its token")
+
+        await asyncio.sleep(0.005)
+
+
+async def _await_lock_waiter(client: PostgresClient, *, timeout: float = 10.0) -> None:
+    """Block until some backend is queued on a lock, as the server itself reports it.
+
+    ``pg_stat_activity.wait_event_type`` is the only account of "the contender is waiting on
+    that row" that does not amount to guessing how long queueing takes.
+    """
+
+    deadline = asyncio.get_running_loop().time() + timeout
+
+    while True:
+        waiting = await client.fetch_value(
+            sql.SQL(
+                "SELECT count(*) FROM pg_stat_activity "
+                "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+            )
+        )
+
+        if waiting:
+            return
+
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError("no backend ever queued on the row lock")
+
+        await asyncio.sleep(0.005)
+
+
 async def _build_harness(
     pg_client: PostgresClient,
     credentials_table: str,
@@ -368,8 +413,10 @@ async def test_a_waiting_worker_never_sees_a_failed_rotation_as_live(
                     await contended_harness.store.refresh(REF, observed=before.version)
 
         async def _contend() -> None:
-            # Queues on the row lock, then acts on whatever it finds when granted.
-            await asyncio.sleep(0.05)
+            # Queues on the row lock, then acts on whatever it finds when granted. Starting
+            # only once the token is presented pins the order the race needs: the first
+            # worker is inside its locked transaction, so this refresh can only queue.
+            await _await_presentation(contended_harness.counterparty)
 
             with pytest.raises(CoreException):
                 await contender.refresh(REF, observed=before.version)
@@ -423,10 +470,14 @@ async def test_a_cancelled_rotation_does_not_hand_the_row_back_live(
         rotating = asyncio.ensure_future(
             cancelling_harness.store.refresh(REF, observed=before.version)
         )
-        await asyncio.sleep(0.05)  # the token is presented; the row lock is held
+        # The token is presented, so the row lock is held — asserted, not assumed.
+        await _await_presentation(cancelling_harness.counterparty)
 
         contending = asyncio.ensure_future(contender.refresh(REF, observed=before.version))
-        await asyncio.sleep(0.05)  # the contender is now queued on that row
+        # …and the server itself reports a backend queued behind that lock. Cancelling
+        # before the contender is actually waiting would unwind with nobody to hand the row
+        # to, which is a different scenario that this test would still pass.
+        await _await_lock_waiter(pg_client)
 
         rotating.cancel()
 
