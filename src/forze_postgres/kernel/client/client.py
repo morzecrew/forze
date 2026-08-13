@@ -48,6 +48,63 @@ from .value_objects import (
 # ----------------------- #
 
 
+def _prepare_copy(
+    target: tuple[str, str],
+    columns: Sequence[str],
+    *,
+    binary: bool,
+    column_types: Sequence[str] | None,
+) -> tuple[sql.Composed, list[str], list[int]]:
+    """Check the arguments describe a possible load, and compose its statement.
+
+    Split out so :meth:`PostgresClient.copy_rows` reads as prepare → copy → map instead of
+    interleaving refusals with the transfer. Returns the statement, the column names, and
+    the indices of binary json columns that need per-row checking (see
+    :func:`_reject_json_text`) — empty whenever that check cannot apply.
+    """
+
+    schema, table = target
+    names = list(columns)
+
+    if not names:
+        # `COPY t () FROM STDIN` is a syntax error, and an empty column list is far more
+        # likely a caller that built the list dynamically and got nothing back.
+        raise exc.configuration("copy_rows requires at least one column.")
+
+    if column_types is not None:
+        if not binary:
+            # Silently ignoring it would leave the caller believing they pinned types.
+            raise exc.configuration(
+                "copy_rows column_types applies to binary mode only; pass binary=True.",
+            )
+
+        if len(column_types) != len(names):
+            raise exc.configuration(
+                f"copy_rows got {len(column_types)} column_types for {len(names)} columns.",
+            )
+
+    json_columns = (
+        [
+            index
+            for index, declared in enumerate(column_types)
+            if declared.strip().lower() in {"json", "jsonb"}
+        ]
+        if binary and column_types is not None
+        else []
+    )
+
+    statement = sql.SQL("COPY {target} ({cols}) FROM STDIN{fmt}").format(
+        target=sql.SQL(".").join([sql.Identifier(schema), sql.Identifier(table)]),
+        cols=sql.SQL(", ").join(sql.Identifier(name) for name in names),
+        fmt=sql.SQL(" (FORMAT BINARY)") if binary else sql.SQL(""),
+    )
+
+    return statement, names, json_columns
+
+
+# ....................... #
+
+
 def _reject_json_text(
     row: Sequence[Any],
     json_columns: Sequence[int],
@@ -1004,52 +1061,17 @@ class PostgresClient(PostgresClientPort):
         :returns: The server-reported row count.
         """
 
-        schema, table = target
-        names = list(columns)
-
-        if not names:
-            # `COPY t () FROM STDIN` is a syntax error, and an empty column list is far
-            # more likely a caller that built the list dynamically and got nothing back.
-            raise exc.configuration("copy_rows requires at least one column.")
-
-        if column_types is not None:
-            if not binary:
-                # Silently ignoring it would leave the caller believing they pinned types.
-                raise exc.configuration(
-                    "copy_rows column_types applies to binary mode only; pass binary=True.",
-                )
-
-            if len(column_types) != len(names):
-                raise exc.configuration(
-                    f"copy_rows got {len(column_types)} column_types for {len(names)} columns.",
-                )
-
-        statement = sql.SQL("COPY {target} ({cols}) FROM STDIN{fmt}").format(
-            target=sql.SQL(".").join([sql.Identifier(schema), sql.Identifier(table)]),
-            cols=sql.SQL(", ").join(sql.Identifier(name) for name in names),
-            fmt=sql.SQL(" (FORMAT BINARY)") if binary else sql.SQL(""),
-        )
-
-        # Binary mode dumps a `str` destined for json/jsonb as a JSON *string scalar* — the
-        # document becomes a quoted string and the column ends up holding text that looks
-        # like JSON. Text mode has the opposite rule (the server parses a str, and a mapping
-        # is an error), so the same rows silently mean different things depending on a flag
-        # the caller set for speed. Refusing costs one isinstance per json column per row and
-        # turns a silent wrong write into a message naming the fix.
-        json_columns = (
-            [
-                index
-                for index, declared in enumerate(column_types)
-                if declared.strip().lower() in {"json", "jsonb"}
-            ]
-            if binary and column_types is not None
-            else []
+        statement, names, json_columns = _prepare_copy(
+            target,
+            columns,
+            binary=binary,
+            column_types=column_types,
         )
 
         # Bounded by construction: names the load, never a value from it.
         details = {
-            "schema": schema,
-            "table": table,
+            "schema": target[0],
+            "table": target[1],
             "columns": names,
             "binary": binary,
         }
