@@ -8193,6 +8193,11 @@
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<p><strong>Postgres <code>COPY</code> bulk load</strong> — the engine-native bulk path, 20–79× faster than the multi-VALUES <code>INSERT</code> it replaces (10⁴–10⁵ rows × 6–20 columns, interleaved A/B):</p>
+<ul>
+<li><code>PostgresClientPort.copy_rows((schema, table), columns, rows, *, binary=False, column_types=None) -&gt; int</code> — sync or async row iterables, joins the caller's <code>transaction()</code>. Raises <code>copy_row_invalid</code> with the server's COPY line/column, or <code>copy_type_mismatch</code> for a binary type mismatch. In binary mode a <code>str</code> for a declared <code>json</code>/<code>jsonb</code> column is refused (text and binary want opposite Python types there).</li>
+<li>Analytics <code>append</code> on Postgres executes over <code>COPY</code>; port contract, encoding, field encryption and <code>AnalyticsAppendResult</code> unchanged. <strong><code>PostgresAnalyticsConfig.max_append_rows</code> default rises 10 000 → 100 000.</strong> ClickHouse and BigQuery caps unchanged.</li>
+</ul>
 <p><strong>Temporal, deliberately thin</strong> — package identity fixed at connection, codec, interceptors, schedules and lifecycle (no workflow model, ever):</p>
 <ul>
 <li><code>TemporalClientPort.native</code> returns the configured SDK client (codec, interceptors, rpc metadata included) — the escape hatch the durable contracts' docstrings already promised.</li>
@@ -8212,6 +8217,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><strong>Docs floors</strong> (<code>[tool.docs_floors]</code>, <code>just docs-check</code>) — every public <code>DepKey</code>/<code>*Spec</code> under <code>contracts/</code> must be mentioned in <code>pages/docs</code>, the nav must resolve both ways, and every relative doc link must land. New <code>reference/spec-registry.md</code>.</li>
 <li><strong>Conformance manifest</strong> (<code>[tool.conformance_manifest]</code>, <code>just conformance</code>) — every <code>DepKey</code> is claimed by exactly one plane, legs carry <code>@pytest.mark.conformance(plane=…, engine=…)</code>, and a manifested leg that ran on no shard fails CI. <code>test_forze_inference</code> and <code>test_portability</code> join the CI matrix. New <code>forze_dst.conformance</code> scenarios and <code>forze_kits.integrations.realtime.conformance</code>.</li>
 <li><strong>Mock catalog gate</strong> (<code>[tool.mock_gate]</code>) — every operation in the driving example's catalog must resolve and answer against seeded data, and every plane it serves must be one the seed plan fills.</li>
+<li><strong>Nightly <abbr title="Deterministic Simulation Testing">DST</abbr> matrix</strong> (<code>.github/workflows/nightly.yml</code>, <code>just dst-nightly</code> / <code>dst-nightly-all</code> / <code>dst-nightly-cells</code>) — the flagship scenarios over 65,536 seeds per cell across four <code>FaultProfile</code> environments declared in <code>tests/support/dst_flagship.py</code>, with cells derived from the profiles. The verdict fails on a missing cell, an empty band, a violating seed, a declared reachability target the band never drove, or an undeclared result.</li>
 </ul>
 <p><strong>Operation progress</strong> — long-running work gets an observable shape, kit-level (<code>forze_kits.integrations.progress</code>), no core-contract changes:</p>
 <ul>

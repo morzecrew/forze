@@ -2897,6 +2897,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The client">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bulk-loading" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Bulk loading
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6127,6 +6144,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The client">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bulk-loading" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Bulk loading
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6273,6 +6307,26 @@ ranked text, pgvector for similarity).</p>
 </code></pre></div>
 <p>Use <code>RoutedPostgresClient</code> when the tenant or route decides the DSN — see
 <a href="../../identity-tenancy-enc/multi-tenancy/">Multi-tenancy</a>.</p>
+<h3 id="bulk-loading">Bulk loading<a class="headerlink" href="#bulk-loading" title="Permanent link">&para;</a></h3>
+<p><code>copy_rows</code> runs <code>COPY … FROM STDIN</code>, the engine's own bulk path — no bind-parameter
+ceiling, and 20–79× faster than a multi-VALUES <code>INSERT</code> at 10⁴–10⁵ rows:</p>
+<div class="highlight"><pre><span></span><code><span class="n">loaded</span> <span class="o">=</span> <span class="k">await</span> <span class="n">pg</span><span class="o">.</span><span class="n">copy_rows</span><span class="p">(</span>
+    <span class="p">(</span><span class="s2">&quot;analytics&quot;</span><span class="p">,</span> <span class="s2">&quot;events&quot;</span><span class="p">),</span>          <span class="c1"># (schema, table)</span>
+    <span class="p">(</span><span class="s2">&quot;id&quot;</span><span class="p">,</span> <span class="s2">&quot;occurred_at&quot;</span><span class="p">,</span> <span class="s2">&quot;payload&quot;</span><span class="p">),</span> <span class="c1"># columns, in row order</span>
+    <span class="n">rows</span><span class="p">,</span>                             <span class="c1"># tuples, sync or async iterable</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The target is a tuple rather than a string so it cannot arrive pre-joined from an f-string;
+both it and the column names are composed as identifiers, which is the part a hand-rolled
+<code>COPY</code> gets wrong. Rows may be an async iterator and are consumed one at a time, so a
+pipeline can stream decode → transform → load without holding the dataset.</p>
+<p>One bad row aborts the whole load and nothing is written — there is no skip-bad-rows mode.
+The error carries the server's line and column, so a rejected row in a million is locatable.
+Inside <code>transaction()</code> the copy joins that transaction; a rollback removes every row.</p>
+<p>Text format by default lets the server cast, which is what runtime-created tables want. Pass
+<code>binary=True</code> with <code>column_types</code> when you control both sides — but note the two formats want
+different Python values for <code>json</code>/<code>jsonb</code>: text takes JSON <em>text</em>, binary takes a mapping.
+Passing text in binary mode is refused rather than silently stored as a quoted string.</p>
 <h2 id="wire-it">Wire it<a class="headerlink" href="#wire-it" title="Permanent link">&para;</a></h2>
 <p>Map each logical spec name to physical relations, register them on the deps
 module, and open the pool from the lifecycle plan:</p>
