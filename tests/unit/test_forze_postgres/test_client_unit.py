@@ -292,6 +292,11 @@ class _StubPool:
         self.conn = conn
         self.checkouts = 0
 
+    def get_stats(self) -> dict[str, int]:
+        # The real pool always reports these; the client samples `connections_errors`
+        # around a checkout to tell a full pool from an unreachable server.
+        return {"connections_errors": 0}
+
     def connection(self, timeout=None):
         from contextlib import asynccontextmanager
 

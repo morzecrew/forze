@@ -29,13 +29,13 @@ from typing import Any, Literal, final, overload
 import attrs
 from psycopg import AsyncConnection, Column, sql
 from psycopg.abc import Params, QueryNoTemplate
-from psycopg_pool import AsyncConnectionPool
+from psycopg_pool import AsyncConnectionPool, PoolTimeout
 
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, uuid4
 
 from .._logger import logger
-from .errors import copy_data_error, exc_interceptor
+from .errors import copy_data_error, exc_interceptor, pool_acquire_error
 from .helpers import isolation_level_enum
 from .port import PostgresClientPort
 from .types import RowFactory
@@ -393,6 +393,50 @@ class PostgresClient(PostgresClientPort):
 
     # ....................... #
 
+    @staticmethod
+    def __connection_errors(pool: AsyncConnectionPool) -> int:
+        """Failed connection attempts the pool has counted, absent meaning none yet."""
+
+        return int(pool.get_stats().get("connections_errors", 0) or 0)
+
+    # ....................... #
+
+    @asynccontextmanager
+    async def _acquire(self) -> AsyncGenerator[AsyncConnection]:
+        """Check a connection out of the pool, classifying a failure to get one.
+
+        Every checkout goes through here so the two causes of a ``PoolTimeout`` are told apart
+        in one place: the counter is sampled either side of the wait and handed to
+        :func:`~forze_postgres.kernel.client.errors.pool_acquire_error`, which reads a rise as
+        the pool failing to connect rather than merely being full.
+
+        Only the *acquisition* is translated. A ``PoolTimeout`` raised by the body — a nested
+        checkout inside a caller's transaction, say — belongs to that inner wait and is left
+        to propagate as itself.
+        """
+
+        pool = self.__require_pool()
+        errors_before = self.__connection_errors(pool)
+        acquiring = True
+
+        try:
+            async with pool.connection(timeout=self.__acquire_timeout.total_seconds()) as conn:
+                acquiring = False
+
+                yield conn
+
+        except PoolTimeout as error:
+            if not acquiring:
+                raise
+
+            raise pool_acquire_error(
+                connection_errors_before=errors_before,
+                connection_errors_after=self.__connection_errors(pool),
+                details={"acquire_timeout_s": self.__acquire_timeout.total_seconds()},
+            ) from error
+
+    # ....................... #
+
     async def health(self) -> tuple[str, bool]:
         """Runs a simple query to check connectivity.
 
@@ -456,9 +500,7 @@ class PostgresClient(PostgresClientPort):
             if pending.conn is not None:
                 return pending.conn
 
-            conn = await pending.stack.enter_async_context(
-                self.__require_pool().connection(timeout=self.__acquire_timeout.total_seconds())
-            )
+            conn = await pending.stack.enter_async_context(self._acquire())
 
             # Apply read_only / isolation as connection attributes before BEGIN
             # (zero round-trips); restore them as the connection returns to the pool.
@@ -524,9 +566,7 @@ class PostgresClient(PostgresClientPort):
             yield await self._materialize_pending()
             return
 
-        async with self.__require_pool().connection(
-            timeout=self.__acquire_timeout.total_seconds()
-        ) as pooled_conn:
+        async with self._acquire() as pooled_conn:
             yield pooled_conn
 
     # ....................... #
@@ -565,9 +605,7 @@ class PostgresClient(PostgresClientPort):
             yield await self._materialize_pending()
             return
 
-        async with self.__require_pool().connection(
-            timeout=self.__acquire_timeout.total_seconds()
-        ) as pooled_conn:
+        async with self._acquire() as pooled_conn:
             await pooled_conn.set_autocommit(True)
 
             try:
@@ -697,9 +735,7 @@ class PostgresClient(PostgresClientPort):
         if self.__current_conn() is not None:
             raise exc.internal("A connection is already bound in this context")
 
-        async with self.__require_pool().connection(
-            timeout=self.__acquire_timeout.total_seconds()
-        ) as conn:
+        async with self._acquire() as conn:
             token = self.__ctx_conn.set(conn)
 
             try:
@@ -883,9 +919,7 @@ class PostgresClient(PostgresClientPort):
 
             return
 
-        async with self.__require_pool().connection(
-            timeout=self.__acquire_timeout.total_seconds()
-        ) as conn:
+        async with self._acquire() as conn:
             token_conn = self.__ctx_conn.set(conn)
             token_depth = self.__ctx_depth.set(1)
 

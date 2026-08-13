@@ -258,14 +258,62 @@ class TestPoolAcquisitionTimeout:
         assert out is not None
         assert out.kind == ExceptionKind.CONCURRENCY
 
-    @pytest.mark.asyncio
-    async def test_an_unreachable_server_arrives_as_the_same_timeout(self) -> None:
-        """Nothing listening: the checkout still ends in `PoolTimeout`, not a connect error.
+    def test_a_rise_in_connection_errors_reads_as_unreachable(self) -> None:
+        """The pool tried to open connections while we waited, and they failed."""
 
-        Pinned because it is the reason the code is named for the timeout rather than for a
-        full pool — the two causes are indistinguishable at this seam. A change that learns
-        to tell them apart should classify this one as infrastructure and rewrite this test;
-        until then it records what a caller actually receives when the database is down.
+        out = client_errors.pool_acquire_error(
+            connection_errors_before=4,
+            connection_errors_after=7,
+        )
+
+        assert out.kind == ExceptionKind.INFRASTRUCTURE
+        assert out.code == client_errors.DATABASE_UNREACHABLE_CODE
+        assert http_status_for_kind(out.kind) == 500
+
+    def test_a_still_counter_reads_as_a_full_pool(self) -> None:
+        """No attempts were made, so every connection the pool has is simply busy."""
+
+        out = client_errors.pool_acquire_error(
+            connection_errors_before=4,
+            connection_errors_after=4,
+        )
+
+        assert out.kind == ExceptionKind.THROTTLED
+        assert out.code == client_errors.POOL_ACQUIRE_TIMEOUT_CODE
+        assert http_status_for_kind(out.kind) == 429
+
+    def test_both_verdicts_stay_retryable(self) -> None:
+        """Whichever it was, the caller should come back — only the remedy differs."""
+
+        for before, after in ((0, 0), (0, 1)):
+            out = client_errors.pool_acquire_error(
+                connection_errors_before=before,
+                connection_errors_after=after,
+            )
+
+            assert exception_egress_policy(out.kind).retryable
+
+    def test_a_counter_that_somehow_fell_is_not_read_as_unreachable(self) -> None:
+        """`connections_errors` is monotonic, so a fall means a reset, not a healthy pool.
+
+        Guarded because the comparison is the whole classifier: read with `!=` instead of
+        `>`, a pool whose stats restarted would report an unreachable database forever.
+        """
+
+        out = client_errors.pool_acquire_error(
+            connection_errors_before=9,
+            connection_errors_after=0,
+        )
+
+        assert out.kind == ExceptionKind.THROTTLED
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_server_is_told_apart_from_a_full_pool(self) -> None:
+        """Nothing listening: still a `PoolTimeout`, but no longer answered as capacity.
+
+        The end-to-end half of the classification — the pool really does count failed
+        connection attempts while a caller waits, so the rise `_acquire` measures is not a
+        theory about psycopg_pool's bookkeeping.
         """
 
         client = PostgresClient()
@@ -283,5 +331,5 @@ class TestPoolAcquisitionTimeout:
         finally:
             await client.close()
 
-        assert caught.value.kind == ExceptionKind.THROTTLED
-        assert caught.value.code == client_errors.POOL_ACQUIRE_TIMEOUT_CODE
+        assert caught.value.kind == ExceptionKind.INFRASTRUCTURE
+        assert caught.value.code == client_errors.DATABASE_UNREACHABLE_CODE

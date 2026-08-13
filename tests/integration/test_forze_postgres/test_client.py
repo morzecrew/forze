@@ -1,6 +1,10 @@
+import asyncio
+from datetime import timedelta
+
 import pytest
 
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
+from forze_postgres.kernel.client.errors import POOL_ACQUIRE_TIMEOUT_CODE
 from forze_postgres.kernel.client.client import (
     PostgresClient,
     PostgresConfig,
@@ -391,3 +395,45 @@ async def test_fetch_all_batched_early_break_leaves_conn_usable(
     # The pool connection is clean and immediately reusable.
     total = await pg_client.fetch_value("SELECT count(*) FROM test_stream_break")
     assert total == 500
+
+
+@pytest.mark.asyncio
+async def test_a_busy_pool_is_throttled_not_reported_as_unreachable(
+    postgres_container,
+) -> None:
+    """The saturation half of the acquisition classifier, against a live server.
+
+    Its counterpart lives in the unit tests, where nothing is listening. Both halves are
+    worth having on the real thing: the whole classification rests on psycopg_pool leaving
+    `connections_errors` alone while a pool is merely busy, and that is a claim about the
+    library's bookkeeping rather than about our arithmetic.
+    """
+
+    url = postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
+    client = PostgresClient()
+    await client.initialize(
+        dsn=url,
+        # One connection, so the second caller has nothing to take.
+        config=PostgresConfig(min_size=1, max_size=1),
+        acquire_timeout=timedelta(milliseconds=300),
+    )
+
+    async def hold() -> None:
+        async with client.transaction():
+            await client.fetch_value("SELECT 1")
+            await asyncio.sleep(1.0)
+
+    try:
+        holder = asyncio.ensure_future(hold())
+        await asyncio.sleep(0.1)  # the holder owns the only connection
+
+        with pytest.raises(CoreException) as caught:
+            await client.fetch_value("SELECT 2")
+
+        await holder
+
+    finally:
+        await client.close()
+
+    assert caught.value.kind == ExceptionKind.THROTTLED
+    assert caught.value.code == POOL_ACQUIRE_TIMEOUT_CODE

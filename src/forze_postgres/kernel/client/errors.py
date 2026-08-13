@@ -36,11 +36,14 @@ Distinct either way from the server refusing connections (``too many connections
 53300, which stays a concurrency error): that is the database's own ceiling, this is
 ``max_size`` or ``acquire_timeout`` on this client.
 
-Separating the two causes is possible but not free. The obvious signal does not work —
-``pool_size`` reports 2 against a dead server — while ``connections_errors == connections_num``
-does hold, since saturation implies at least one connection was established. Acting on it
-means giving all five checkout sites access to the pool's stats, so it is left undone rather
-than approximated."""
+Which of the two it was is decided by :func:`pool_acquire_error`, where the caller can measure
+it; this code is what remains when the answer is "a busy pool"."""
+
+DATABASE_UNREACHABLE_CODE: Final[str] = "database_unreachable"
+"""Code for a wait that ended with the pool unable to establish any connection.
+
+The other half of :data:`POOL_ACQUIRE_TIMEOUT_CODE`: same ``PoolTimeout``, opposite cause and
+opposite remedy — nobody should be scaling a pool while the server is refusing connections."""
 
 COPY_ERRORS: tuple[type[errors.Error], ...] = (
     errors.DataError,
@@ -322,6 +325,52 @@ def _psycopg_eh(  # skipcq: PY-R1000
 
         case _:
             return None
+
+
+# ....................... #
+
+
+def pool_acquire_error(
+    *,
+    connection_errors_before: int,
+    connection_errors_after: int,
+    details: Mapping[str, Any] | None = None,
+) -> CoreException:
+    """Decide which of a ``PoolTimeout``'s two causes actually happened.
+
+    The exception itself says only "no connection within the timeout". It says that both when
+    every connection is checked out and busy, and when none could be established at all — and
+    the remedies are opposite, so answering "at capacity" to an unreachable server sends
+    whoever reads it to scale a pool that is not the problem.
+
+    The evidence is the pool's own ``connections_errors``, sampled either side of the wait. It
+    counts failed connection *attempts*, so a rise means the pool was trying to open
+    connections and failing while this caller waited. A saturated pool at ``max_size`` makes no
+    attempts and the counter stands still.
+
+    A delta rather than a total, deliberately: the total is cumulative for the pool's whole
+    life, so a server that dies after serving traffic keeps ``errors < attempts`` forever and
+    would never be recognised — which is the outage that matters most. What the delta cannot
+    separate is a single connection recycling badly during a genuinely saturated wait; that
+    reports as unreachable, a rare and safe direction to be wrong in.
+
+    :param connection_errors_before: ``connections_errors`` sampled before the wait.
+    :param connection_errors_after: the same counter once the wait has failed.
+    :returns: the classified failure — never ``None``, since the caller already has a timeout.
+    """
+
+    if connection_errors_after > connection_errors_before:
+        return CoreException.infrastructure(
+            "Database is unreachable (no connection could be established).",
+            code=DATABASE_UNREACHABLE_CODE,
+            details=details,
+        )
+
+    return CoreException.throttled(
+        "Timed out acquiring a database connection. Please retry.",
+        code=POOL_ACQUIRE_TIMEOUT_CODE,
+        details=details,
+    )
 
 
 # ....................... #
