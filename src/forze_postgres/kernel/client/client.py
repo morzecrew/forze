@@ -31,7 +31,7 @@ from psycopg import AsyncConnection, Column, sql
 from psycopg.abc import Params, QueryNoTemplate
 from psycopg_pool import AsyncConnectionPool
 
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, uuid4
 
 from .._logger import logger
@@ -46,6 +46,31 @@ from .value_objects import (
 )
 
 # ----------------------- #
+
+
+def _reject_json_text(
+    row: Sequence[Any],
+    json_columns: Sequence[int],
+    names: Sequence[str],
+) -> None:
+    """Refuse a ``str`` bound for a binary json/jsonb column.
+
+    psycopg would dump it as a JSON string scalar rather than a document, so the column
+    would hold ``"{\\"a\\": 1}"`` where the caller meant ``{"a": 1}`` — no error, wrong data.
+    Empty ``json_columns`` (the usual case) makes this a no-op the caller never pays for.
+    """
+
+    for index in json_columns:
+        if index < len(row) and isinstance(row[index], str):
+            raise exc.validation(
+                f"copy_rows got a str for binary json column {names[index]!r}; "
+                "pass a mapping (or psycopg's Jsonb) so it lands as a document, "
+                "not as a quoted string.",
+                code="copy_type_mismatch",
+            )
+
+
+# ....................... #
 
 
 def _timeout_ms(t: timedelta) -> int:
@@ -923,7 +948,6 @@ class PostgresClient(PostgresClientPort):
 
     # ....................... #
 
-    @exc_interceptor.coroutine("postgres.copy_rows")  # type: ignore[untyped-decorator]
     async def copy_rows(
         self,
         target: tuple[str, str],
@@ -966,6 +990,12 @@ class PostgresClient(PostgresClientPort):
         single-connection-in-flight rule a long copy serializes with its neighbours exactly
         like any other long statement.
 
+        **Errors never carry the payload.** Unlike its siblings this method maps failures
+        itself rather than through the argument-binding decorator, because that decorator
+        sanitizes and attaches every bound argument — which here is the whole dataset. A
+        failed 10⁶-row load would put 10⁶ rows of user data into an exception and from
+        there into the logs. Details name the target and the failing line instead.
+
         :param target: ``(schema, table)`` to load into.
         :param columns: Target columns, in the order each row supplies them.
         :param rows: Row tuples, sync or async iterable.
@@ -1000,29 +1030,62 @@ class PostgresClient(PostgresClientPort):
             fmt=sql.SQL(" (FORMAT BINARY)") if binary else sql.SQL(""),
         )
 
-        async with self._statement_conn() as conn, conn.cursor() as cur:
-            try:
+        # Binary mode dumps a `str` destined for json/jsonb as a JSON *string scalar* — the
+        # document becomes a quoted string and the column ends up holding text that looks
+        # like JSON. Text mode has the opposite rule (the server parses a str, and a mapping
+        # is an error), so the same rows silently mean different things depending on a flag
+        # the caller set for speed. Refusing costs one isinstance per json column per row and
+        # turns a silent wrong write into a message naming the fix.
+        json_columns = (
+            [
+                index
+                for index, declared in enumerate(column_types)
+                if declared.strip().lower() in {"json", "jsonb"}
+            ]
+            if binary and column_types is not None
+            else []
+        )
+
+        # Bounded by construction: names the load, never a value from it.
+        details = {
+            "schema": schema,
+            "table": table,
+            "columns": names,
+            "binary": binary,
+        }
+
+        try:
+            async with self._statement_conn() as conn, conn.cursor() as cur:
                 async with cur.copy(statement) as copy:
                     if column_types is not None:
                         copy.set_types(list(column_types))
 
                     if isinstance(rows, AsyncIterable):
                         async for row in rows:
+                            _reject_json_text(row, json_columns, names)
                             await copy.write_row(row)
 
                     else:
                         for row in rows:
+                            _reject_json_text(row, json_columns, names)
                             await copy.write_row(row)
 
-            except Exception as error:
-                mapped = copy_data_error(error, binary=binary)
+                return cur.rowcount
 
-                if mapped is not None:
-                    raise mapped from error
+        except CoreException:
+            raise
 
+        except Exception as error:
+            mapped = copy_data_error(error, binary=binary) or exc_interceptor.mapper(
+                error,
+                site="postgres.copy_rows",
+                details=details,
+            )
+
+            if mapped is None:  # pragma: no cover — the chain ends in a total fallback
                 raise
 
-            return cur.rowcount
+            raise mapped from error
 
     # ....................... #
 

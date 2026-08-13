@@ -292,6 +292,226 @@ class TestIdentifierHostility:
 # ....................... #
 
 
+class TestBinaryMode:
+    """Battery 5 — the opt-in fast path, and what it does when the declaration is wrong."""
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_rich_types_survive_a_binary_copy(self, pg_client: PostgresClient) -> None:
+        """Binary skips the server's text parsing, so the values must arrive byte-identical."""
+
+        await _make_rich_table(pg_client, "copy_rich_binary")
+        # jsonb takes a mapping here, not JSON text — see the divergence test below.
+        rows = [(*row[:4], json.loads(row[4]), *row[5:]) for row in _rich_rows(10_000)]
+
+        copied = await pg_client.copy_rows(
+            ("public", "copy_rich_binary"),
+            RICH_COLUMNS,
+            rows,
+            binary=True,
+            column_types=["uuid", "numeric", "timestamptz", "text", "jsonb", "bool", "int4"],
+        )
+
+        assert copied == 10_000
+
+        expected = rows[4_242]
+        got = await pg_client.fetch_one(
+            "SELECT * FROM copy_rich_binary WHERE id = %(id)s",
+            {"id": expected[0]},
+        )
+
+        assert got is not None
+        assert got["amount"] == expected[1]
+        assert got["occurred_at"] == expected[2]
+        assert got["note"] == expected[3]
+        assert got["payload"] == expected[4]
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_json_text_in_binary_mode_is_refused_not_silently_stringified(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        """The two modes want opposite Python types for jsonb, and one combination lied.
+
+        Text mode parses a ``str`` into a document and rejects a mapping; binary mode wants
+        the mapping and dumps a ``str`` as a *quoted JSON string* — no error, wrong data, so
+        a caller flipping ``binary=True`` for speed silently changes what lands in the
+        column. This is the one place the mode switch was not value-preserving, so it is a
+        refusal that names the fix.
+        """
+
+        await pg_client.execute("CREATE TABLE copy_json_guard (id uuid, payload jsonb);")
+        marker = uuid4()
+
+        with pytest.raises(CoreException) as caught:
+            await pg_client.copy_rows(
+                ("public", "copy_json_guard"),
+                ("id", "payload"),
+                [(marker, '{"a": 1}')],
+                binary=True,
+                column_types=["uuid", "jsonb"],
+            )
+
+        assert caught.value.code == "copy_type_mismatch"
+        assert "payload" in caught.value.summary
+
+        # The control: the mapping the message asks for round-trips as a document.
+        await pg_client.copy_rows(
+            ("public", "copy_json_guard"),
+            ("id", "payload"),
+            [(marker, {"a": 1})],
+            binary=True,
+            column_types=["uuid", "jsonb"],
+        )
+
+        stored = await pg_client.fetch_value("SELECT payload FROM copy_json_guard")
+        assert stored == {"a": 1}
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_the_json_guard_also_covers_streamed_rows(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        """Sync and async rows take different code paths, so both need the guard proven.
+
+        A streaming pipeline is the case the guard matters most for — it is the one loading
+        10⁶ rows — and it is the path a list-based test never reaches.
+        """
+
+        await pg_client.execute("CREATE TABLE copy_json_stream (id uuid, payload jsonb);")
+
+        async def stream():  # type: ignore[no-untyped-def]
+            yield (uuid4(), '{"a": 1}')
+
+        with pytest.raises(CoreException) as caught:
+            await pg_client.copy_rows(
+                ("public", "copy_json_stream"),
+                ("id", "payload"),
+                stream(),
+                binary=True,
+                column_types=["uuid", "jsonb"],
+            )
+
+        assert caught.value.code == "copy_type_mismatch"
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_text_mode_still_takes_json_text(self, pg_client: PostgresClient) -> None:
+        """The guard is binary-only: text mode's rule is unchanged, and it is the opposite one."""
+
+        await pg_client.execute("CREATE TABLE copy_json_text (id uuid, payload jsonb);")
+
+        await pg_client.copy_rows(
+            ("public", "copy_json_text"),
+            ("id", "payload"),
+            [(uuid4(), '{"a": 1}')],
+        )
+
+        assert await pg_client.fetch_value("SELECT payload FROM copy_json_text") == {"a": 1}
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_declared_types_disagreeing_with_the_table_fail_loud(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        """The declaration is wrong, not the data — and the code has to say which.
+
+        Binary framing is fixed-width, so a wrong declared type derails the stream and the
+        server reports a protocol violation rather than a data error. Left to the generic
+        mapping that reads as a *retryable* class, which would have a caller retrying a load
+        that can only ever fail the same way.
+        """
+
+        await pg_client.execute("CREATE TABLE copy_binary_mismatch (id uuid, label text);")
+
+        with pytest.raises(CoreException) as caught:
+            await pg_client.copy_rows(
+                ("public", "copy_binary_mismatch"),
+                ("id", "label"),
+                [(1, "x")],
+                binary=True,
+                column_types=["integer", "text"],
+            )
+
+        assert caught.value.code == "copy_type_mismatch"
+        assert caught.value.kind != "concurrency", "a wrong declaration is not worth retrying"
+
+        stored = await pg_client.fetch_value("SELECT count(*) FROM copy_binary_mismatch")
+        assert stored == 0
+
+
+# ....................... #
+
+
+class TestTimeoutAndErrorHygiene:
+    """Battery 4 — and the rule that a failure never carries the load with it."""
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_statement_timeout_maps_and_leaves_the_client_usable(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        """A timeout mid-copy is a timeout, and the connection is fine afterward."""
+
+        await pg_client.execute("CREATE TABLE copy_timeout (id integer, label text);")
+
+        class Aborted(Exception):
+            pass
+
+        with pytest.raises((CoreException, Aborted)) as caught:
+            async with pg_client.transaction():
+                await pg_client.apply_statement_timeout(1)
+                await pg_client.copy_rows(
+                    ("public", "copy_timeout"),
+                    ("id", "label"),
+                    ((index, f"row-{index}" * 20) for index in range(400_000)),
+                )
+
+        # `QueryCanceled` is mapped by the client's existing arm — infrastructure-kind with
+        # a timeout message — and `copy_rows` deliberately does not invent a second mapping
+        # for the same server condition. Asserting the mapping that exists, not a nicer one.
+        if isinstance(caught.value, CoreException):
+            assert caught.value.kind == "infrastructure", f"mapped as {caught.value.kind}"
+            assert "timeout" in caught.value.summary.lower()
+
+        # The point of the check: the pool is reusable, not poisoned by the aborted copy.
+        assert await pg_client.fetch_value("SELECT 1") == 1
+        assert await pg_client.fetch_value("SELECT count(*) FROM copy_timeout") == 0
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_a_failure_never_carries_the_rows_into_the_error(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        """The sibling methods attach every bound argument to the error; here that is the data.
+
+        A failed 10⁶-row load must not put 10⁶ rows of user data into an exception and from
+        there into whatever logs it. This pins that no value from the payload appears —
+        checked on the *unmapped* path, since the mapped one never binds arguments at all.
+        """
+
+        secret = "d0-not-log-me-9f3a"
+        rows = [(index, secret) for index in range(2_000)]
+
+        with pytest.raises(CoreException) as caught:
+            # An undefined table fails outside the copy taxonomy, so it takes the generic
+            # mapping — the arm that would otherwise attach the arguments.
+            await pg_client.copy_rows(("public", "no_such_table_here"), ("id", "label"), rows)
+
+        rendered = f"{caught.value.details} {caught.value.summary}"
+
+        assert secret not in rendered, "the payload reached the error details"
+        assert "no_such_table_here" in rendered, "the target should still be named"
+
+
+# ....................... #
+
+
 class TestArgumentRefusals:
     """The caller mistakes that must not reach the server as a broken statement."""
 

@@ -23,6 +23,18 @@ FK_pattern = re.compile(
     r'Key \((?P<column>[^)]+)\)=\((?P<value>[0-9a-fA-F-]+)\) is not present in table "(?P<table>[^"]+)"'
 )
 
+COPY_ERRORS: tuple[type[errors.Error], ...] = (
+    errors.DataError,
+    errors.BadCopyFileFormat,
+    errors.ProtocolViolation,
+)
+"""The psycopg families a ``COPY`` failure can arrive as.
+
+``ProtocolViolation`` earns its place by measurement rather than by category: a binary-mode
+type mismatch derails the stream's framing, so the server reports ``insufficient data left
+in message`` (SQLSTATE 08P01) — an ``OperationalError``, nowhere near ``DataError``, and
+mapped to a retryable class if left to the generic arm."""
+
 COPY_CONTEXT_pattern = re.compile(
     r"COPY\s+(?P<table>[^,]+),\s+line\s+(?P<line>\d+)(?:,\s+column\s+(?P<column>[^:]+?))?(?::|$)",
 )
@@ -274,36 +286,38 @@ def copy_data_error(error: BaseException, *, binary: bool) -> CoreException | No
     everything else is left for :func:`_psycopg_eh` and keeps the mapping it always had.
     """
 
-    if not isinstance(error, errors.DataError | errors.BadCopyFileFormat):
+    if not isinstance(error, COPY_ERRORS):
         return None
 
     failure: errors.Error = error
-    context = str(failure.diag.context or "")
-    match = COPY_CONTEXT_pattern.search(context)
+    match = COPY_CONTEXT_pattern.search(str(failure.diag.context or ""))
 
-    details: dict[str, Any] = {"detail": str(failure.diag.message_primary or failure)}
+    if match is None:
+        # No ``COPY … line N`` context means the server did not attribute this to the
+        # stream — a protocol violation on a broken connection, a data error raised
+        # somewhere else entirely. Defer, so it keeps the mapping it has always had rather
+        # than being relabelled as a bad row.
+        return None
 
-    if match:
-        details["line"] = int(match.group("line"))
+    details: dict[str, Any] = {
+        "detail": str(failure.diag.message_primary or failure),
+        "line": int(match.group("line")),
+    }
 
-        if match.group("column"):
-            details["column"] = match.group("column").strip()
+    if match.group("column"):
+        details["column"] = match.group("column").strip()
 
-    # A binary-format rejection is the dumper and the column disagreeing, not a bad value:
-    # the caller declared `column_types` that the table does not accept, so the fix is the
-    # declaration rather than the data. Distinguishable only in binary mode — in text mode
-    # the server casts, and a rejection there really is the row's fault.
-    if binary and isinstance(error, errors.BadCopyFileFormat):
+    # In binary mode the server parses a fixed-width stream, so a declared type that does
+    # not match the column derails the framing itself — it arrives as a protocol violation
+    # ("insufficient data left in message"), not as a bad value. The fix is the caller's
+    # `column_types`, not the row, and the code has to say which. Text mode has no such
+    # case: the server casts, and a rejection there really is the row's fault.
+    if binary and isinstance(error, errors.ProtocolViolation | errors.BadCopyFileFormat):
         return CoreException.validation(
             "COPY rejected the binary stream: declared column types do not match the table.",
             code="copy_type_mismatch",
             details=details,
         )
-
-    if not match and not isinstance(error, errors.BadCopyFileFormat):
-        # A data error with no COPY context did not come from the stream — leave it alone
-        # rather than relabel someone else's failure as a bad row.
-        return None
 
     return CoreException.validation(
         "COPY rejected an input row.",
