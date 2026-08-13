@@ -51,7 +51,7 @@ async def _make_rich_table(client: PostgresClient, name: str) -> None:
             flag boolean,
             maybe integer
         );
-        """  # noqa: S608 — name is a test-local literal, never caller input
+        """  # name is a test-local literal, never caller input
     )
 
 
@@ -198,6 +198,64 @@ class TestFailureIsAllOrNothing:
 
         remaining = await pg_client.fetch_value("SELECT count(*) FROM copy_abort")
         assert remaining == 0, "a partial load was observable — COPY is all-or-nothing"
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_a_comma_in_the_table_name_still_reports_the_line(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        """The server writes the relation name into its context line *unquoted*.
+
+        So a table called ``copy,comma`` produces ``COPY copy,comma, line 3, column id: …``,
+        and a reader that stops the name at the first comma finds no line number at all —
+        the failure then degrades to whatever generic mapping the driver's exception family
+        carries, losing both the taxonomy code and the one field that makes a rejected load
+        findable. Rare table name, but the caller passes it and the identifier is composed
+        rather than rejected, so it is reachable.
+        """
+
+        await pg_client.execute('CREATE TABLE "copy,comma" (id integer, label text);')
+
+        rows: list[tuple[Any, ...]] = [(index, f"row-{index}") for index in range(5)]
+        rows[2] = ("not-an-integer", "row-2")
+
+        with pytest.raises(CoreException) as caught:
+            await pg_client.copy_rows(("public", "copy,comma"), ("id", "label"), rows)
+
+        assert caught.value.code == "copy_row_invalid"
+        assert caught.value.details is not None
+        assert caught.value.details.get("line") == 3, "the reported line must be 1-based"
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_the_servers_line_wins_over_one_inside_the_rejected_value(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        """The rejected value is quoted *into* the same context line the line number lives on.
+
+        ``COPY t, line 3, column id: "nope, line 999:"`` — so data can supply a second
+        ``, line N``, and only the leading one is the server speaking. Reading the last match
+        instead would report a line number chosen by whoever wrote the bad row.
+
+        The trailing colon is the point rather than decoration: without it the decoy is
+        followed by a quote, no continuation matches there, and a last-match reader falls
+        back onto the real line and looks correct. The colon gives the decoy a valid ending,
+        which is the shape that actually tells the two readings apart.
+        """
+
+        await pg_client.execute("CREATE TABLE copy_line_decoy (id integer, label text);")
+
+        rows: list[tuple[Any, ...]] = [(index, f"row-{index}") for index in range(5)]
+        rows[2] = ("nope, line 999:", "row-2")
+
+        with pytest.raises(CoreException) as caught:
+            await pg_client.copy_rows(("public", "copy_line_decoy"), ("id", "label"), rows)
+
+        assert caught.value.code == "copy_row_invalid"
+        assert caught.value.details is not None
+        assert caught.value.details.get("line") == 3, "a value in the row chose the line number"
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -583,14 +641,14 @@ class TestArgumentRefusals:
         # shared name would collide on the second case rather than test it.
         table = f"copy_arity_{label}"
         await pg_client.execute(
-            f"CREATE TABLE {table} (id integer, label text);"  # noqa: S608 — test-local literal
+            f"CREATE TABLE {table} (id integer, label text);"  # test-local literal
         )
 
         with pytest.raises(CoreException) as caught:
             await pg_client.copy_rows(("public", table), ("id", "label"), [row])
 
         assert caught.value.code == "copy_row_invalid"
-        assert await pg_client.fetch_value(f"SELECT count(*) FROM {table}") == 0  # noqa: S608
+        assert await pg_client.fetch_value(f"SELECT count(*) FROM {table}") == 0  # table name is a test-local literal, never caller input
 
     @pytest.mark.integration
     @pytest.mark.asyncio

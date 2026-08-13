@@ -36,12 +36,18 @@ in message`` (SQLSTATE 08P01) — an ``OperationalError``, nowhere near ``DataEr
 mapped to a retryable class if left to the generic arm."""
 
 COPY_CONTEXT_pattern = re.compile(
-    r"COPY\s+(?P<table>[^,]+),\s+line\s+(?P<line>\d+)(?:,\s+column\s+(?P<column>[^:]+?))?(?::|$)",
+    r"COPY\s+.+?,\s+line\s+(?P<line>\d+)(?:,\s+column\s+(?P<column>[^:]+?))?(?::|$)",
 )
 """Postgres reports data errors during ``COPY`` as ``CONTEXT: COPY t, line N, column c: …``.
 
 At 10⁶ rows that line number is the difference between a debugging session and a ``sed -n``,
-so it is lifted out of the driver's free-text diagnostic and onto the error's details."""
+so it is lifted out of the driver's free-text diagnostic and onto the error's details.
+
+The relation name is skipped rather than captured, and *lazily*: the server writes it
+unquoted, so a table called ``odd,name`` yields ``COPY odd,name, line 3`` and a name matched
+up to the first comma finds no line at all. Lazy matching also settles which ``, line N`` wins
+when the error detail quotes a value containing one — the leading occurrence is the server's,
+any later one is inside the text it is complaining about."""
 
 # ....................... #
 
