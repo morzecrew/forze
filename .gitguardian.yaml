@@ -1,0 +1,41 @@
+# GitGuardian / ggshield configuration.
+#
+# Scope note: this file is read by the **ggshield CLI** (and anything invoking it, such as a
+# pre-commit hook or a CI step). GitGuardian's GitHub App scans platform-side and takes its
+# exclusions from the dashboard, so the two have to be kept in step by hand — a path listed
+# here is not automatically excluded there.
+#
+# What is excluded below is limited to paths that cannot hold a production credential:
+# fixtures, generated artifacts, and lock files whose high-entropy hashes are the classic
+# false positive. `src/`, `.github/` and prose documentation stay scanned deliberately —
+# workflows are where a real secret does the most damage, and prose is where one is most
+# likely to be pasted by accident and least likely to be noticed.
+#
+# The cost of the `tests/**` entry, stated plainly: a real credential committed into a test
+# fixture will no longer be caught here. That is a known leak route, so the exclusion buys
+# quiet at the price of one detection path — worth revisiting if fixtures ever start holding
+# anything but synthetic values.
+
+version: 2
+
+secret:
+  ignored_paths:
+    # Test fixtures and support code — synthetic values by construction. Canaries and
+    # sample envelopes in these files read as credentials to any entropy-based detector.
+    - 'tests/**/*'
+
+    # Lock files: dependency hashes are high-entropy by design and are not secrets.
+    - 'uv.lock'
+    - '**/*.lock'
+
+    # Generated documentation artifacts — rendered from sources that are themselves scanned.
+    - 'pages/docs/_generated/**/*'
+    - 'pages/docs/_diagrams/**/*'
+    - 'pages/docs/_images/**/*'
+
+    # Build and tooling output, never authored by hand.
+    - '**/__pycache__/**/*'
+    - '**/*.py[cod]'
+    - '.venv/**/*'
+    - 'dist/**/*'
+    - 'site/**/*'

@@ -80,7 +80,13 @@ class ClickHouseAnalyticsConfig(TenantAwareIntegrationConfig):
     """Append-only ingest target ``(database, table)`` or tenant resolver (relation-level isolation)."""
 
     max_append_rows: int = 10_000
-    """Maximum rows per ``append`` call."""
+    """Maximum rows per ``append`` call — a latency and memory guard, not a protocol limit.
+
+    ClickHouse never had the parameter ceiling Postgres did: ``insert_rows`` already chunks
+    columnar-native inserts at ``insert_batch_size``, which *is* this engine's bulk path. The
+    cap exists so a governed route refuses a surprise mega-call, and raising it per route is
+    a tuning decision rather than a negotiation with the wire format.
+    """
 
     # ....................... #
 

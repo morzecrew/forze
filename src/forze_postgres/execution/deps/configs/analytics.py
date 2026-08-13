@@ -76,8 +76,18 @@ class PostgresAnalyticsConfig(TenantAwareIntegrationConfig):
     leaves ``search_path`` untouched (the prior behavior).
     """
 
-    max_append_rows: int = 10_000
-    """Maximum rows per ``append`` call."""
+    max_append_rows: int = 100_000
+    """Maximum rows per ``append`` call — a latency and memory guard, not a protocol limit.
+
+    It used to be both. Ingest ran as one multi-VALUES ``INSERT``, and the extended protocol
+    tops out at 65 535 bind parameters, so ~6 columns × 10 000 rows already sat near a
+    ceiling the server would enforce as an error. ``COPY`` has no such ceiling, and the cap
+    survives for the other reason: a governed route should still refuse a surprise 10⁷-row
+    call rather than discover the size at the far end of a load.
+
+    Raising it per route is now an honest tuning decision about how much latency and memory
+    one call may take, rather than negotiating with a protocol cliff.
+    """
 
     # ....................... #
 

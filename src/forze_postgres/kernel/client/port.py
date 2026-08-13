@@ -7,7 +7,13 @@ require_psycopg()
 # ....................... #
 
 import asyncio
-from collections.abc import AsyncGenerator, Awaitable, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    Awaitable,
+    Iterable,
+    Sequence,
+)
 from contextlib import AbstractAsyncContextManager
 from datetime import timedelta
 from typing import (
@@ -122,6 +128,28 @@ class PostgresClientPort(Protocol):
         query: QueryNoTemplate,
         params: Sequence[Params],
     ) -> Awaitable[None]: ...  # pragma: no cover
+
+    def copy_rows(
+        self,
+        target: tuple[str, str],
+        columns: Sequence[str],
+        rows: Iterable[Sequence[Any]] | AsyncIterable[Sequence[Any]],
+        *,
+        binary: bool = False,
+        column_types: Sequence[str] | None = None,
+    ) -> Awaitable[int]:
+        """Bulk-load *rows* into ``(schema, table)`` via ``COPY … FROM STDIN``.
+
+        The engine's designed bulk path, and the reason it belongs on the port rather than
+        in each caller: ``target`` and ``columns`` are composed through
+        :mod:`psycopg.sql`, so the runtime identifiers that a hand-rolled ``COPY`` has to
+        f-format — at the exact spot where a mistake writes garbage at scale — are never
+        formatted into SQL by application code.
+
+        :returns: the server-reported row count.
+        """
+
+        ...  # pragma: no cover
 
     @overload
     def fetch_all(

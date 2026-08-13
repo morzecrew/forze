@@ -23,6 +23,32 @@ FK_pattern = re.compile(
     r'Key \((?P<column>[^)]+)\)=\((?P<value>[0-9a-fA-F-]+)\) is not present in table "(?P<table>[^"]+)"'
 )
 
+COPY_ERRORS: tuple[type[errors.Error], ...] = (
+    errors.DataError,
+    errors.BadCopyFileFormat,
+    errors.ProtocolViolation,
+)
+"""The psycopg families a ``COPY`` failure can arrive as.
+
+``ProtocolViolation`` earns its place by measurement rather than by category: a binary-mode
+type mismatch derails the stream's framing, so the server reports ``insufficient data left
+in message`` (SQLSTATE 08P01) — an ``OperationalError``, nowhere near ``DataError``, and
+mapped to a retryable class if left to the generic arm."""
+
+COPY_CONTEXT_pattern = re.compile(
+    r"COPY\s+.+?,\s+line\s+(?P<line>\d+)(?:,\s+column\s+(?P<column>[^:]+?))?(?::|$)",
+)
+"""Postgres reports data errors during ``COPY`` as ``CONTEXT: COPY t, line N, column c: …``.
+
+At 10⁶ rows that line number is the difference between a debugging session and a ``sed -n``,
+so it is lifted out of the driver's free-text diagnostic and onto the error's details.
+
+The relation name is skipped rather than captured, and *lazily*: the server writes it
+unquoted, so a table called ``odd,name`` yields ``COPY odd,name, line 3`` and a name matched
+up to the first comma finds no line at all. Lazy matching also settles which ``, line N`` wins
+when the error detail quotes a value containing one — the leading occurrence is the server's,
+any later one is inside the text it is complaining about."""
+
 # ....................... #
 
 
@@ -251,6 +277,59 @@ def _psycopg_eh(  # skipcq: PY-R1000
 
         case _:
             return None
+
+
+# ....................... #
+
+
+def copy_data_error(error: BaseException, *, binary: bool) -> CoreException | None:
+    """Map a ``COPY`` data error to the copy taxonomy, or ``None`` to defer.
+
+    Deferring is the important half. A ``COPY`` can fail for reasons that have nothing to
+    do with the rows — a statement timeout, a serialization failure, a missing table — and
+    those already have mappings that callers handle. Only an error the server attributes to
+    a specific input line, or a binary-format rejection, is this function's business;
+    everything else is left for :func:`_psycopg_eh` and keeps the mapping it always had.
+    """
+
+    if not isinstance(error, COPY_ERRORS):
+        return None
+
+    failure: errors.Error = error
+    match = COPY_CONTEXT_pattern.search(str(failure.diag.context or ""))
+
+    if match is None:
+        # No ``COPY … line N`` context means the server did not attribute this to the
+        # stream — a protocol violation on a broken connection, a data error raised
+        # somewhere else entirely. Defer, so it keeps the mapping it has always had rather
+        # than being relabelled as a bad row.
+        return None
+
+    details: dict[str, Any] = {
+        "detail": str(failure.diag.message_primary or failure),
+        "line": int(match.group("line")),
+    }
+
+    if match.group("column"):
+        details["column"] = match.group("column").strip()
+
+    # In binary mode the server parses a fixed-width stream, so a declared type that does
+    # not match the column derails the framing itself — it arrives as a protocol violation
+    # ("insufficient data left in message"), not as a bad value. The fix is the caller's
+    # `column_types`, not the row, and the code has to say which. Text mode has no such
+    # case: the server casts, and a rejection there really is the row's fault.
+    if binary and isinstance(error, errors.ProtocolViolation | errors.BadCopyFileFormat):
+        return CoreException.validation(
+            "COPY rejected the binary stream: declared column types do not match the table.",
+            code="copy_type_mismatch",
+            details=details,
+        )
+
+    return CoreException.validation(
+        "COPY rejected an input row.",
+        code="copy_row_invalid",
+        details=details,
+    )
 
 
 # ....................... #

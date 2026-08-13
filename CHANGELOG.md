@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Postgres `COPY` bulk load** — the engine-native bulk path, 20–79× faster than the multi-VALUES `INSERT` it replaces (10⁴–10⁵ rows × 6–20 columns, interleaved A/B):
+
+- `PostgresClientPort.copy_rows((schema, table), columns, rows, *, binary=False, column_types=None) -> int` — sync or async row iterables, joins the caller's `transaction()`. Raises `copy_row_invalid` with the server's COPY line/column, or `copy_type_mismatch` for a binary type mismatch. In binary mode a `str` for a declared `json`/`jsonb` column is refused (text and binary want opposite Python types there).
+- Analytics `append` on Postgres executes over `COPY`; port contract, encoding, field encryption and `AnalyticsAppendResult` unchanged. **`PostgresAnalyticsConfig.max_append_rows` default rises 10 000 → 100 000.** ClickHouse and BigQuery caps unchanged.
+
 **Temporal, deliberately thin** — package identity fixed at connection, codec, interceptors, schedules and lifecycle (no workflow model, ever):
 
 - `TemporalClientPort.native` returns the configured SDK client (codec, interceptors, rpc metadata included) — the escape hatch the durable contracts' docstrings already promised.

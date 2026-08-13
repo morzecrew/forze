@@ -15,7 +15,7 @@ require_psycopg()
 # ....................... #
 
 import asyncio
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Iterable, Sequence
 from contextlib import (
     AbstractAsyncContextManager,
     AsyncExitStack,
@@ -31,11 +31,11 @@ from psycopg import AsyncConnection, Column, sql
 from psycopg.abc import Params, QueryNoTemplate
 from psycopg_pool import AsyncConnectionPool
 
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, uuid4
 
 from .._logger import logger
-from .errors import exc_interceptor
+from .errors import copy_data_error, exc_interceptor
 from .helpers import isolation_level_enum
 from .port import PostgresClientPort
 from .types import RowFactory
@@ -46,6 +46,88 @@ from .value_objects import (
 )
 
 # ----------------------- #
+
+
+def _prepare_copy(
+    target: tuple[str, str],
+    columns: Sequence[str],
+    *,
+    binary: bool,
+    column_types: Sequence[str] | None,
+) -> tuple[sql.Composed, list[str], list[int]]:
+    """Check the arguments describe a possible load, and compose its statement.
+
+    Split out so :meth:`PostgresClient.copy_rows` reads as prepare → copy → map instead of
+    interleaving refusals with the transfer. Returns the statement, the column names, and
+    the indices of binary json columns that need per-row checking (see
+    :func:`_reject_json_text`) — empty whenever that check cannot apply.
+    """
+
+    schema, table = target
+    names = list(columns)
+
+    if not names:
+        # `COPY t () FROM STDIN` is a syntax error, and an empty column list is far more
+        # likely a caller that built the list dynamically and got nothing back.
+        raise exc.configuration("copy_rows requires at least one column.")
+
+    if column_types is not None:
+        if not binary:
+            # Silently ignoring it would leave the caller believing they pinned types.
+            raise exc.configuration(
+                "copy_rows column_types applies to binary mode only; pass binary=True.",
+            )
+
+        if len(column_types) != len(names):
+            raise exc.configuration(
+                f"copy_rows got {len(column_types)} column_types for {len(names)} columns.",
+            )
+
+    json_columns = (
+        [
+            index
+            for index, declared in enumerate(column_types)
+            if declared.strip().lower() in {"json", "jsonb"}
+        ]
+        if binary and column_types is not None
+        else []
+    )
+
+    statement = sql.SQL("COPY {target} ({cols}) FROM STDIN{fmt}").format(
+        target=sql.SQL(".").join([sql.Identifier(schema), sql.Identifier(table)]),
+        cols=sql.SQL(", ").join(sql.Identifier(name) for name in names),
+        fmt=sql.SQL(" (FORMAT BINARY)") if binary else sql.SQL(""),
+    )
+
+    return statement, names, json_columns
+
+
+# ....................... #
+
+
+def _reject_json_text(
+    row: Sequence[Any],
+    json_columns: Sequence[int],
+    names: Sequence[str],
+) -> None:
+    """Refuse a ``str`` bound for a binary json/jsonb column.
+
+    psycopg would dump it as a JSON string scalar rather than a document, so the column
+    would hold ``"{\\"a\\": 1}"`` where the caller meant ``{"a": 1}`` — no error, wrong data.
+    Empty ``json_columns`` (the usual case) makes this a no-op the caller never pays for.
+    """
+
+    for index in json_columns:
+        if index < len(row) and isinstance(row[index], str):
+            raise exc.validation(
+                f"copy_rows got a str for binary json column {names[index]!r}; "
+                "pass a mapping (or psycopg's Jsonb) so it lands as a document, "
+                "not as a quoted string.",
+                code="copy_type_mismatch",
+            )
+
+
+# ....................... #
 
 
 def _timeout_ms(t: timedelta) -> int:
@@ -920,6 +1002,117 @@ class PostgresClient(PostgresClientPort):
 
         async with self._statement_conn() as conn, conn.cursor() as cur:
             await cur.executemany(query, params)
+
+    # ....................... #
+
+    async def copy_rows(
+        self,
+        target: tuple[str, str],
+        columns: Sequence[str],
+        rows: Iterable[Sequence[Any]] | AsyncIterable[Sequence[Any]],
+        *,
+        binary: bool = False,
+        column_types: Sequence[str] | None = None,
+    ) -> int:
+        """Bulk-loads *rows* into ``(schema, table)`` through ``COPY … FROM STDIN``.
+
+        ``COPY`` has no bind-parameter ceiling, which is what makes it the engine's bulk
+        path: a multi-VALUES ``INSERT`` tops out at 65 535 parameters, so ~6 columns puts
+        10k rows near the limit, while this is bounded only by time.
+
+        **Identifiers are composed, never formatted.** ``target`` is a ``(schema, table)``
+        tuple rather than a string precisely so it cannot arrive pre-joined from an
+        f-string; both it and ``columns`` go through :class:`psycopg.sql.Identifier`, the
+        same discipline the tenant provisioner uses for ``CREATE SCHEMA``.
+
+        **Memory is bounded by construction.** ``rows`` may be an async iterator and is
+        driven row by row, so a pipeline can stream decode → transform → copy without ever
+        holding the dataset.
+
+        **Text format by default, binary opt-in.** Text lets psycopg adapt and the server
+        cast, which is forgiving about ``int4``-vs-``int8``-grade mismatches — the right
+        default for runtime-created tables whose exact column types the caller may not own.
+        ``binary=True`` with ``column_types`` is the fast path for callers who control both
+        sides, and a mismatch there fails loudly rather than coercing.
+
+        **All-or-nothing, and that is deliberate.** One bad row aborts the whole ``COPY``;
+        there is no skip-bad-rows mode and there will not be one, because silently dropping
+        rows is the failure this framework exists to prevent. Data errors surface as
+        ``copy_row_invalid`` carrying the server's line (and column) so a rejected row in a
+        million is locatable.
+
+        **Transactions and tenure.** Inside :meth:`transaction` the copy joins the caller's
+        transaction and a rollback removes every row; standalone it follows the client's
+        autocommit convention. It holds its connection for the full load, so under the
+        single-connection-in-flight rule a long copy serializes with its neighbours exactly
+        like any other long statement.
+
+        **Errors never carry the payload.** Unlike its siblings this method maps failures
+        itself rather than through the argument-binding decorator, because that decorator
+        sanitizes and attaches every bound argument — which here is the whole dataset. A
+        failed 10⁶-row load would put 10⁶ rows of user data into an exception and from
+        there into the logs. Details name the target and the failing line instead.
+
+        :param target: ``(schema, table)`` to load into.
+        :param columns: Target columns, in the order each row supplies them.
+        :param rows: Row tuples, sync or async iterable.
+        :param binary: Use ``FORMAT BINARY`` instead of text.
+        :param column_types: Postgres type names for binary mode, one per column.
+        :returns: The server-reported row count.
+        """
+
+        statement, names, json_columns = _prepare_copy(
+            target,
+            columns,
+            binary=binary,
+            column_types=column_types,
+        )
+
+        # Bounded by construction: names the load, never a value from it.
+        details = {
+            "schema": target[0],
+            "table": target[1],
+            "columns": names,
+            "binary": binary,
+        }
+
+        try:
+            async with self._statement_conn() as conn, conn.cursor() as cur:
+                async with cur.copy(statement) as copy:
+                    if column_types is not None:
+                        copy.set_types(list(column_types))
+
+                    if isinstance(rows, AsyncIterable):
+                        async for row in rows:
+                            _reject_json_text(row, json_columns, names)
+                            await copy.write_row(row)
+
+                    else:
+                        for row in rows:
+                            _reject_json_text(row, json_columns, names)
+                            await copy.write_row(row)
+
+                return cur.rowcount
+
+        # `Exception`, not `BaseException`, and that is load-bearing: the shared interceptor
+        # also passes `CancelledError` / `GeneratorExit` / `KeyboardInterrupt` / `SystemExit`
+        # through untouched, and all of them are BaseExceptions this arm therefore never
+        # sees. Widening it would start mapping a cancelled copy into an infrastructure
+        # error and swallow the cancellation.
+        except CoreException:
+            raise
+
+        except Exception as error:
+            mapped = copy_data_error(error, binary=binary) or exc_interceptor.mapper(
+                error,
+                site="postgres.copy_rows",
+                details=details,
+            )
+
+            if mapped is None:  # pragma: no cover — the chain ends in a total fallback
+                raise
+
+            raise mapped from error
 
     # ....................... #
 
