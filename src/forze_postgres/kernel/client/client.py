@@ -1072,6 +1072,11 @@ class PostgresClient(PostgresClientPort):
 
                 return cur.rowcount
 
+        # `Exception`, not `BaseException`, and that is load-bearing: the shared interceptor
+        # also passes `CancelledError` / `GeneratorExit` / `KeyboardInterrupt` / `SystemExit`
+        # through untouched, and all of them are BaseExceptions this arm therefore never
+        # sees. Widening it would start mapping a cancelled copy into an infrastructure
+        # error and swallow the cancellation.
         except CoreException:
             raise
 

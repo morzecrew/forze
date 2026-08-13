@@ -85,6 +85,18 @@ async def test_routed_postgres_sql_execute_fetch_mapping_refs(postgres_container
                 [(3, "c"), (4, "d")],
             )
 
+            # Bulk load through the routed client: it resolves the tenant's pool and holds
+            # that scope for the whole copy, so a streamed load cannot drift to another
+            # tenant's database halfway through. Its own relation, so the row counts the
+            # assertions below check stay about the statements that produced them.
+            bulk = f"routed_copy_{uuid4().hex[:10]}"
+            await routed.execute(f"CREATE TEMP TABLE {bulk} (id int, msg text)")
+
+            copied = await routed.copy_rows(("pg_temp", bulk), ("id", "msg"), [(5, "e"), (6, "f")])
+
+            assert copied == 2
+            assert await routed.fetch_value(f"SELECT count(*) FROM {bulk}") == 2
+
             rows_d = await routed.fetch_all(
                 f"SELECT id, msg FROM {tbl} ORDER BY id",
                 row_factory="dict",

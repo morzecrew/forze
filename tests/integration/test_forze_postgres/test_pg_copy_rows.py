@@ -247,6 +247,41 @@ class TestTransactionComposition:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
+    async def test_a_savepoint_rollback_removes_only_its_own_rows(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        """A nested transaction is a savepoint, and a copy inside one unwinds with it.
+
+        The outer case says a copy joins *a* transaction; this says it joins the *innermost*
+        one, so partial unwinding works the way the rest of the client's transaction
+        vocabulary does rather than the copy escaping to the outer scope.
+        """
+
+        await pg_client.execute("CREATE TABLE copy_savepoint (id integer);")
+
+        class Inner(Exception):
+            pass
+
+        async with pg_client.transaction():
+            await pg_client.copy_rows(("public", "copy_savepoint"), ("id",), [(1,)])
+
+            with pytest.raises(Inner):
+                async with pg_client.transaction():
+                    await pg_client.copy_rows(
+                        ("public", "copy_savepoint"),
+                        ("id",),
+                        [(2,), (3,)],
+                    )
+
+                    raise Inner
+
+        kept = await pg_client.fetch_all("SELECT id FROM copy_savepoint ORDER BY id")
+
+        assert [row["id"] for row in kept] == [1]
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
     async def test_commit_keeps_every_copied_row(self, pg_client: PostgresClient) -> None:
         await pg_client.execute("CREATE TABLE copy_commit (id integer);")
 
@@ -514,6 +549,44 @@ class TestTimeoutAndErrorHygiene:
 
 class TestArgumentRefusals:
     """The caller mistakes that must not reach the server as a broken statement."""
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_no_rows_loads_nothing_and_says_so(self, pg_client: PostgresClient) -> None:
+        """An empty load is a no-op returning zero, not an error.
+
+        Decided rather than inherited: callers batch, and a batch that came back empty is
+        ordinary. Raising here would push a `if rows:` guard into every caller.
+        """
+
+        await pg_client.execute("CREATE TABLE copy_empty (id integer);")
+
+        assert await pg_client.copy_rows(("public", "copy_empty"), ("id",), []) == 0
+        assert await pg_client.fetch_value("SELECT count(*) FROM copy_empty") == 0
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("label", "row"), [("short", (1,)), ("long", (1, "a", "extra"))])
+    async def test_a_row_whose_width_disagrees_with_the_columns_is_rejected(
+        self,
+        pg_client: PostgresClient,
+        label: str,
+        row: tuple[object, ...],
+    ) -> None:
+        """The likeliest caller mistake, in both directions, and it must not half-load."""
+
+        # Distinct per parameter: the container outlives the function-scoped client, so a
+        # shared name would collide on the second case rather than test it.
+        table = f"copy_arity_{label}"
+        await pg_client.execute(
+            f"CREATE TABLE {table} (id integer, label text);"  # noqa: S608 — test-local literal
+        )
+
+        with pytest.raises(CoreException) as caught:
+            await pg_client.copy_rows(("public", table), ("id", "label"), [row])
+
+        assert caught.value.code == "copy_row_invalid"
+        assert await pg_client.fetch_value(f"SELECT count(*) FROM {table}") == 0  # noqa: S608
 
     @pytest.mark.integration
     @pytest.mark.asyncio

@@ -1,6 +1,6 @@
 # RFC 0017 — Postgres `COPY` bulk load
 
-- **Status:** 🚧 **P1–P3 landed 2026-08-12**; P4 blocked on its pair. W1 (`PostgresClientPort.copy_rows`, text + binary) and W2 (analytics ingest over `COPY`, cap re-rationalized, Postgres default 10k → 100k) ship with the full acceptance battery against a real server. **P4 (W4, BigQuery load jobs) is not started and cannot be: §2 requires it to land with RFC 0030 P2 as that publish's stage step, and 0030 is still Draft — building it now would produce a surface with no consumer, which is the outcome its own demand gate exists to prevent.**
+- **Status:** 🚧 **P1–P3 landed 2026-08-13**; P4 blocked on its pair. W1 (`PostgresClientPort.copy_rows`, text + binary) and W2 (analytics ingest over `COPY`, cap re-rationalized, Postgres default 10k → 100k) ship with the full acceptance battery against a real server. **P4 (W4, BigQuery load jobs) is not started and cannot be: §2 requires it to land with RFC 0030 P2 as that publish's stage step, and 0030 is still Draft — building it now would produce a surface with no consumer, which is the outcome its own demand gate exists to prevent.**
 
   **Battery 7 — measured, interleaved same-runner rounds, median of per-round minima** ([tests/perf/test_forze_postgres/test_pg_perf_copy_rows.py](tests/perf/test_forze_postgres/test_pg_perf_copy_rows.py)). Decision 7 made W2 conditional on this; it confirms:
 
@@ -80,9 +80,11 @@ Why it stays a different mechanism, and what that means for the design: the curr
 
 ## 5. Phases
 
-- **P1 — W1 `copy_rows` (text mode) + taxonomy + battery 1–4, 8. ✅ Landed 2026-08-12.**
-- **P2 — binary mode + `column_types` (battery 5); perf evidence (battery 7) recorded. ✅ Landed 2026-08-12.**
-- **P3 — W2 ingest switch + cap re-rationale + battery 6; ClickHouse cap docstring alignment. ✅ Landed 2026-08-12.** Battery 6 ran unedited, which is the proof the contract did not move; the two column shapes the switch could plausibly break — a field-encrypted column and a `jsonb` column — had **no test** despite §2 calling both "battery-pinned", so they were written. Both also pass against the old `INSERT` execution, which is what makes them a contract test rather than a description of `COPY`.
+- **P1 — W1 `copy_rows` (text mode) + taxonomy + battery 1–4, 8. ✅ Landed 2026-08-13.**
+- **P2 — binary mode + `column_types` (battery 5); perf evidence (battery 7) recorded. ✅ Landed 2026-08-13.**
+- **P3 — W2 ingest switch + cap re-rationale + battery 6; ClickHouse cap docstring alignment. ✅ Landed 2026-08-13.** The two column shapes the switch could plausibly break — a field-encrypted column and a `jsonb` column — had **no test** despite §2 calling both "battery-pinned", so they were written. Both also pass against the old `INSERT` execution, which is what makes them contract tests rather than descriptions of `COPY`.
+
+  **Battery 6 overstated its own bar and needed one edit.** The claim was "the full existing suite green with no test edits"; the integration suite met it, but a *unit* test (`test_pg_analytics_adapter.py::test_append_ingest`) asserted `len(mock.executes) == 1` — a count of statements, which describes the multi-VALUES `INSERT` rather than anything `append` promises. Its hand-written mock client also had no `copy_rows`. Both were updated to assert the target relation and the row instead. The lesson is the test's, not the switch's: **a test that counts calls to a specific method is a description of the mechanism, and it will fail the day the mechanism is legitimately replaced** — which is exactly when a contract test should stay green.
 - **P4 — W4 BigQuery load jobs. ⛔ Blocked, not started.** §2 pairs it with RFC 0030 P2 ("W4 and 0030 P2 should land together or W4 has no good consumer") and 0030 is still Draft, as are 0028/0029 ahead of it. Building the load-job surface now would ship exactly the consumer-less mechanism its own demand gate was written to prevent. Battery item to add when it unblocks: a 10⁶-row GCS→BQ load lands atomically into a staging relation, rich types intact, job failure surfaced with the job's own error rather than a generic mapping.
 
 ## 6. Decision log
@@ -91,9 +93,9 @@ Why it stays a different mechanism, and what that means for the design: the curr
 |---|---|---|
 | 1 | Two tiers, no third plane: kernel `copy_rows` for the raw zone, `COPY` behind the unchanged `AnalyticsIngestPort` for the governed zone; `BulkLoadPort` foreclosed | locked |
 | 2 | `target`/`columns` composed via `psycopg.sql` — string-formatted identifiers never appear in the surface or its callers | locked |
-| 3 | Text format default; binary opt-in with explicit `column_types`; mismatches fail loud. **Amended 2026-08-12:** "fail loud" needed enforcing, not just declaring — binary silently stored JSON *text* as a quoted string, so a `str` for a declared json column is refused | locked |
+| 3 | Text format default; binary opt-in with explicit `column_types`; mismatches fail loud. **Amended 2026-08-13:** "fail loud" needed enforcing, not just declaring — binary silently stored JSON *text* as a quoted string, so a `str` for a declared json column is refused | locked |
 | 4 | All-or-nothing preserved; no skip-bad-rows mode ever; data errors must surface `COPY` line context | locked |
-| 5 | `max_append_rows` re-rationalized as a latency/memory guard (Postgres default raised 10k → 100k), not removed — a governed route still refuses surprise mega-calls. BigQuery's 10k is untouched: there it *is* a wire limit (`insertAll`), not a guard | locked 2026-08-12 |
+| 5 | `max_append_rows` re-rationalized as a latency/memory guard (Postgres default raised 10k → 100k), not removed — a governed route still refuses surprise mega-calls. BigQuery's 10k is untouched: there it *is* a wire limit (`insertAll`), not a guard | locked 2026-08-13 |
 | 6 | `append_stream` contract addition demand-gated (no current consumer); `COPY TO` export not built (portability uses JSONL by design) | locked |
-| 7 | W2 ships only if the interleaved A/B evidence confirms the win — perf claims are measured, never assumed. **Satisfied 2026-08-12: 20–79× across the grid** (status block) | locked |
+| 7 | W2 ships only if the interleaved A/B evidence confirms the win — perf claims are measured, never assumed. **Satisfied 2026-08-13: 20–79× across the grid** (status block) | locked |
 | 8 | **W4 promoted 2026-08-03** — the BigQuery-load-job trigger fired (DWH consumer, RFC 0028–0030). Load jobs get their own capability-gated, visibly-asynchronous surface; never hidden behind `append`; staged via the storage plane; paired with 0030 P2 as its stage step. Storage Write API recorded, no trigger | proposed |

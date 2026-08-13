@@ -52,6 +52,7 @@ class _MockClient:
         self.queries: list[str] = []
         self.params_seen: list[Any] = []
         self.executes: list[tuple[Any, Any]] = []
+        self.copies: list[tuple[Any, list[Any], list[Any]]] = []
         self.fetch_one_calls: list[tuple[Any, Any]] = []
         self._in_tx = False
 
@@ -103,6 +104,19 @@ class _MockClient:
     ) -> None:
         _ = kwargs
         self.executes.append((query, params))
+
+    async def copy_rows(
+        self,
+        target: Any,
+        columns: Any,
+        rows: Any,
+        **kwargs: Any,
+    ) -> int:
+        _ = kwargs
+        materialized = list(rows)
+        self.copies.append((target, list(columns), materialized))
+
+        return len(materialized)
 
 
 @pytest.mark.asyncio
@@ -175,7 +189,16 @@ async def test_append_ingest() -> None:
     result = await adapter.append([_Ingest(event="signup")])
     assert result is not None
     assert result.accepted == 1
-    assert len(mock.executes) == 1
+
+    # One load into the configured relation. Asserting the target and the row rather than
+    # "one statement ran" — the previous form counted `execute` calls, which described the
+    # multi-VALUES INSERT this now replaces instead of what `append` promises.
+    assert len(mock.copies) == 1
+
+    target, columns, rows = mock.copies[0]
+
+    assert target == ("public", "events_raw")
+    assert list(rows) == [tuple(row[column] for column in columns) for row in [{"event": "signup"}]]
 
 
 @pytest.mark.asyncio
