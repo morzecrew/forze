@@ -104,6 +104,25 @@ async def _receive_until(
             return messages
     raise AssertionError("SQS message was not received in time")
 
+async def _await_poll_start(receivers: list[int], *, timeout: float = 10.0) -> None:
+    """Block until the consumer enters its next ``receive``.
+
+    *receivers* is appended to at the top of every poll, so its growth is the observable
+    "the poll has started" event. A test that instead sleeps a fixed span is asserting a
+    scheduler's speed: too short and the eviction under test lands before the poll it is
+    supposed to interrupt, and the leg passes having exercised nothing.
+    """
+
+    loop = asyncio.get_running_loop()
+    polls = len(receivers)
+    deadline = loop.time() + timeout
+
+    while len(receivers) == polls:
+        if loop.time() > deadline:
+            raise AssertionError(f"the consumer started no poll within {timeout}s")
+
+        await asyncio.sleep(0.01)
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_sqs_enqueue_receive_consume_ack(
@@ -360,27 +379,36 @@ async def test_routed_sqs_consume_survives_rotation_eviction(
                 # queue. The stream has to survive the client being disposed under it
                 # and go on delivering.
                 pending = asyncio.ensure_future(anext(gen))
-                await asyncio.sleep(0.3)  # let the long poll start on the old client
+                # Wait for the poll itself, not for a duration: `receivers` grows when
+                # `receive` is entered, so this is the difference between evicting
+                # mid-poll and evicting before the poll ever started — which a sleep
+                # cannot tell apart, and which is the whole point of this leg.
+                await _await_poll_start(receivers)
+                polls_at_eviction = len(receivers)
                 await routed.evict_tenant(t1)
-                assert len(closed) == 2  # the second stale client, torn down mid-poll
+                assert len(closed) == 2  # the second stale client, torn down under it
                 await routed.enqueue(url, b"m3")
                 third = await asyncio.wait_for(pending, timeout=40)
                 assert third.body == b"m3"
-                await routed.ack(url, [third.id])
 
-                # Which client delivers `m3` is deliberately not asserted. Disposing a
-                # client does not abort the poll already in flight on it — it keeps
-                # long-polling to its own expiry — so whether that poll returns the
-                # message or drains empty first is the queue's timing, not a promise.
-                # `consume` says as much: at *worst* the in-flight poll fails.
+                # `m3` is deliberately left unacked. It may have been delivered by the
+                # client that was disposed under it, and pending receipts live on the
+                # instance that received them — acking through the rebuilt client would
+                # silently match nothing and return 0. Rotation orphans that one ack.
                 #
-                # The promise that does hold is about the poll after it: the disposed
-                # client is out of the pool, so every poll started from here on runs on
-                # the rebuilt one.
+                # Which client delivered it is not asserted either: disposal does not
+                # abort the poll already in flight, which keeps long-polling to its own
+                # expiry, so whether that poll carries the message or drains empty first
+                # is the queue's timing. `consume` promises only that at *worst* the
+                # in-flight poll fails.
+                #
+                # What does hold is about the polls after it: the disposed client is out
+                # of the pool, so none of them can run on it. Asserted on the poll rather
+                # than on the message, since an orphaned `m3` is free to come back.
                 await routed.enqueue(url, b"m4")
-                fourth = await asyncio.wait_for(anext(gen), timeout=40)
-                assert fourth.body == b"m4"
-                assert receivers[-1] != second_receiver
+                await asyncio.wait_for(anext(gen), timeout=40)
+                assert len(receivers) > polls_at_eviction  # a fresh poll really ran
+                assert second_receiver not in receivers[polls_at_eviction:]
     finally:
         await routed.close()
 
