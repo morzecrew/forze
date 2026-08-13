@@ -82,6 +82,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **README rewritten** around a runnable, transport-free slice — new test-backed `examples/hexagon/` (domain → port → wiring, no web framework), what the library deliberately does not do, how to write an adapter for an unshipped backend, and a stability statement in place of the SemVer boilerplate; banner now served from the repo.
 
+### Changed
+
+**`build_runtime` takes its modules like every other argument** (**breaking**) — the variadic `*modules` becomes a normal `deps_modules` parameter, so a list no longer has to be spread and can finally be named: `build_runtime(module)`, `build_runtime([a, b])` and `build_runtime(deps_modules=[a, b])` all work. `deps`, `lifecycle_modules`, `lifecycle_steps` and `specs` accept one item or many on the same footing. **Migration:** two or more modules passed positionally become one sequence — `build_runtime(a, b)` → `build_runtime([a, b])`; `concurrent_lifecycle=` is now `lifecycle_concurrent=`.
+
+- `specs=` accepts every contribution to merge — the author's own registry, each `AggregateKit.spec_contributions()`, `forze_identity.spec_contributions()` — instead of one pre-merged registry. Merging happens into a fresh registry, so no argument is mutated; a frozen registry is still accepted alone but is refused inside a list.
+- `shutdown_step_timeout`, `cursor_token_signer` and `cursor_token_cipher` join the pass-throughs; setting any of them no longer means abandoning the assembler and composing `ExecutionRuntime` by hand.
+
 ### Fixed
 
 **A routed tenant resolver was never found, so authenticated requests bound no tenant** (**behaviour change**) — `TenancyDepsModule`/`local_identity_deps` register `TenantResolverDepKey` routed while `TenancyDeps.resolver()` looked it up plain-only, so tenant-aware adapters failed closed with `tenant_required`. `resolver()`/`manager()` now take an optional route (the authn spec's name), falling back to plain. `MockDepsModule` registered both tenancy keys with the wrong factory arity; new `route_simple_stubs`/`ConstantSimpleMockFactory` fix it.
