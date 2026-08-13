@@ -183,6 +183,10 @@ Leave it unset (the default) and nothing is enforced.
     Declaring `required_tenant_isolation="dedicated"` refuses to wire them
     anywhere a shared store could leak.
 
+A route that executes statement text the framework didn't build carries a second,
+undeclarable floor from its `StatementOrigin` — see
+[Tenancy matrix → statement origin](../reference/tenancy-matrix.md#the-floor-a-route-cant-lower-statement-origin).
+
 ## Provisioning per-tenant infrastructure
 
 The stronger tiers assume the per-tenant container already exists — a schema, a
