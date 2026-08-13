@@ -29,6 +29,33 @@ pg = PostgresClient()
 Use `RoutedPostgresClient` when the tenant or route decides the DSN — see
 [Multi-tenancy](../identity-tenancy-enc/multi-tenancy.md).
 
+### Bulk loading
+
+`copy_rows` runs `COPY … FROM STDIN`, the engine's own bulk path — no bind-parameter
+ceiling, and 20–79× faster than a multi-VALUES `INSERT` at 10⁴–10⁵ rows:
+
+```python
+loaded = await pg.copy_rows(
+    ("analytics", "events"),          # (schema, table)
+    ("id", "occurred_at", "payload"), # columns, in row order
+    rows,                             # tuples, sync or async iterable
+)
+```
+
+The target is a tuple rather than a string so it cannot arrive pre-joined from an f-string;
+both it and the column names are composed as identifiers, which is the part a hand-rolled
+`COPY` gets wrong. Rows may be an async iterator and are consumed one at a time, so a
+pipeline can stream decode → transform → load without holding the dataset.
+
+One bad row aborts the whole load and nothing is written — there is no skip-bad-rows mode.
+The error carries the server's line and column, so a rejected row in a million is locatable.
+Inside `transaction()` the copy joins that transaction; a rollback removes every row.
+
+Text format by default lets the server cast, which is what runtime-created tables want. Pass
+`binary=True` with `column_types` when you control both sides — but note the two formats want
+different Python values for `json`/`jsonb`: text takes JSON *text*, binary takes a mapping.
+Passing text in binary mode is refused rather than silently stored as a quoted string.
+
 ## Wire it
 
 Map each logical spec name to physical relations, register them on the deps
