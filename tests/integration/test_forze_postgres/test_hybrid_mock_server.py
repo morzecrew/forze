@@ -7,15 +7,16 @@ that the *real* adapter answers — which a mock cannot demonstrate about itself
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
+import pytest_asyncio
 
 pytest.importorskip("fastapi")
 
 from fastapi import APIRouter, FastAPI
-from fastapi.testclient import TestClient
 from psycopg import sql
 from pydantic import BaseModel
 
@@ -124,8 +125,25 @@ def _build_app(runtime: ExecutionRuntime) -> FastAPI:
     return app
 
 
-@pytest.fixture
-def hybrid(pg_client: PostgresClient, notes_table: str) -> Iterator[TestClient]:
+@pytest_asyncio.fixture
+async def hybrid(
+    pg_client: PostgresClient,
+    notes_table: str,
+) -> AsyncIterator[httpx.AsyncClient]:
+    """The served app, driven over ASGI from the test's own event loop.
+
+    Deliberately not :class:`fastapi.testclient.TestClient`. That runs the application on a
+    *second* event loop in a portal thread, while ``pg_client`` — and the psycopg pool inside
+    it — was created on this one. Driving an async pool across two loops leaks one checked-out
+    connection per request: the transaction commits and the server sees the session go idle,
+    but the checkout is never handed back. The pool then empties one request at a time, and
+    the first request that finds it empty waits out ``acquire_timeout`` and fails with
+    ``core.concurrency`` — an HTTP 409 that reads as a genuine conflict.
+
+    That is what made this file flake on CI. Real deployments never had the problem, because a
+    real server runs the app on the same loop as its pool, which is exactly what this restores.
+    """
+
     mock_app = MockApp(
         build_app=_build_app,
         modules=(
@@ -142,9 +160,13 @@ def hybrid(pg_client: PostgresClient, notes_table: str) -> Iterator[TestClient]:
             ),
         ),
     )
+    app = build_mock_server(mock_app)
 
-    with TestClient(build_mock_server(mock_app)) as client:
-        yield client
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://hybrid") as client:
+            yield client
 
 
 # ....................... #
@@ -154,11 +176,11 @@ class TestHybridComposition:
     @pytest.mark.asyncio
     async def test_documents_go_to_postgres_and_search_stays_in_memory(
         self,
-        hybrid: TestClient,
+        hybrid: httpx.AsyncClient,
         pg_client: PostgresClient,
         notes_table: str,
     ) -> None:
-        created = hybrid.post("/notes", json={"title": "hybrid"})
+        created = await hybrid.post("/notes", json={"title": "hybrid"})
         assert created.status_code in (200, 201), created.text
         note_id = created.json()["id"]
 
@@ -169,29 +191,34 @@ class TestHybridComposition:
         assert [(str(row["id"]), row["title"]) for row in rows] == [(note_id, "hybrid")]
 
         # The mock plane, in the same server and the same deps list.
-        assert hybrid.post("/search/index", json={"id": note_id, "title": "hybrid"}).status_code in (
-            200,
-            201,
-        )
-        assert hybrid.get("/search", params={"q": "hybrid"}).json() == [note_id]
+        indexed = await hybrid.post("/search/index", json={"id": note_id, "title": "hybrid"})
+        assert indexed.status_code in (200, 201)
+
+        found = await hybrid.get("/search", params={"q": "hybrid"})
+        assert found.json() == [note_id]
 
     @pytest.mark.asyncio
-    async def test_the_mock_never_saw_the_document(self, hybrid: TestClient) -> None:
+    async def test_the_mock_never_saw_the_document(self, hybrid: httpx.AsyncClient) -> None:
         # The other half of "the real one answered": if the mock had served documents, its
         # store would hold the row — and the SQL assertion above would have passed anyway
         # only because nothing else wrote there.
-        hybrid.post("/notes", json={"title": "postgres-only"})
+        #
+        # The status is asserted because the check below is "the mock store is empty", which
+        # an unaccepted write satisfies just as well as a correctly-routed one.
+        created = await hybrid.post("/notes", json={"title": "postgres-only"})
+        assert created.status_code in (200, 201), created.text
 
-        documents = hybrid.get("/_mock/state/documents").json()["documents"]
+        state = await hybrid.get("/_mock/state/documents")
+        documents = state.json()["documents"]
 
         assert "notes" not in documents
 
     @pytest.mark.asyncio
     async def test_the_report_names_which_planes_the_mock_still_backs(
-        self, hybrid: TestClient
+        self, hybrid: httpx.AsyncClient
     ) -> None:
         # Serving a hybrid is legitimate; leaving it invisible is not.
-        health = hybrid.get("/_mock/health")
+        health = await hybrid.get("/_mock/health")
 
         assert health.status_code == 200
         assert health.json()["mock"] is True
@@ -201,14 +228,18 @@ class TestHybridUuidRoundTrip:
     @pytest.mark.asyncio
     async def test_the_id_postgres_assigned_is_the_one_the_client_reads(
         self,
-        hybrid: TestClient,
+        hybrid: httpx.AsyncClient,
         pg_client: PostgresClient,
         notes_table: str,
     ) -> None:
-        created = hybrid.post("/notes", json={"title": "identity"}).json()
+        posted = await hybrid.post("/notes", json={"title": "identity"})
+        assert posted.status_code in (200, 201), posted.text
+        created = posted.json()
 
-        fetched = hybrid.get(f"/notes/{created['id']}")
+        fetched = await hybrid.get(f"/notes/{created['id']}")
 
-        assert fetched.status_code == 200
+        assert fetched.status_code == 200, (
+            f"code={fetched.headers.get('x-error-code')} body={fetched.text}"
+        )
         assert fetched.json()["title"] == "identity"
         assert UUID(created["id"])  # a real UUID from the real adapter, not a synthesized one

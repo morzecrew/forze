@@ -1,0 +1,27 @@
+# What the mock-server image is allowed to see.
+#
+# Scoped deliberately: BuildKit prefers `<Dockerfile>.dockerignore` over the repository root
+# one, so nothing here changes any other build in the repo.
+#
+# The rule is deny-then-admit rather than a list of things to skip. A skip list was silently
+# wrong every time someone added a cache directory, and the failure it hid was not cosmetic:
+# the build context is the repository root, so `COPY . .` was dropping the host's 1.1 GB
+# `.venv` — absolute paths, host interpreter and all — directly on top of the virtualenv
+# `uv sync` had just built inside the image, along with 86 MB of `.git`.
+*
+
+# The package itself, and the metadata uv and hatchling read to install it. `README.md` and
+# `LICENSE` are named by `pyproject.toml`, so the build fails outright without them — this
+# list is what the backend reads, not a guess at what looks relevant.
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!src
+
+# The app being served, including its `identity.local.json`.
+!examples
+
+# Compiled leftovers from a host-side run, which are never the image's to reuse.
+**/__pycache__
+**/*.py[cod]

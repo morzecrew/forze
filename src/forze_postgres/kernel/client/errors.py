@@ -6,8 +6,9 @@ require_psycopg()
 
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Final
 
+import psycopg_pool as pool_errors
 from psycopg import errors
 
 from forze.base.conformity import static_fn_conformity
@@ -22,6 +23,24 @@ from forze.base.exceptions import (
 FK_pattern = re.compile(
     r'Key \((?P<column>[^)]+)\)=\((?P<value>[0-9a-fA-F-]+)\) is not present in table "(?P<table>[^"]+)"'
 )
+
+POOL_ACQUIRE_TIMEOUT_CODE: Final[str] = "pool_acquire_timeout"
+"""Code for a connection this process could not obtain from its own pool in time.
+
+Named for what was observed rather than for a cause, because ``PoolTimeout`` does not carry
+one. It arrives both when every connection is checked out and busy, and when none could be
+established at all — a refused connection reaches a caller as exactly this timeout, verified
+against a closed port.
+
+Distinct either way from the server refusing connections (``too many connections``, SQLSTATE
+53300, which stays a concurrency error): that is the database's own ceiling, this is
+``max_size`` or ``acquire_timeout`` on this client.
+
+Separating the two causes is possible but not free. The obvious signal does not work —
+``pool_size`` reports 2 against a dead server — while ``connections_errors == connections_num``
+does hold, since saturation implies at least one connection was established. Acting on it
+means giving all five checkout sites access to the pool's stats, so it is left undone rather
+than approximated."""
 
 COPY_ERRORS: tuple[type[errors.Error], ...] = (
     errors.DataError,
@@ -230,6 +249,32 @@ def _psycopg_eh(  # skipcq: PY-R1000
         case errors.OutOfMemory() | errors.DiskFull():
             return CoreException.infrastructure(
                 "Database resource exhaustion.",
+                details=details,
+            )
+
+        # Local resource limits — the pool, not the server
+
+        case pool_errors.PoolTimeout() | pool_errors.TooManyRequests():
+            # This process could not get a connection out of its own pool in time. It has to
+            # be matched *before* the OperationalError fallback below, which both of these
+            # subclass with no SQLSTATE, and which would otherwise call local saturation a
+            # connectivity failure and hand the caller a 409.
+            #
+            # Throttled rather than concurrency: nothing conflicted, so 429 tells a caller to
+            # back off where 409 tells it to reconcile state it has no quarrel with. That
+            # instruction is right whichever cause produced the timeout — a full pool and an
+            # unreachable server both mean "not now, try later" — which is why the kind is
+            # chosen for what the caller should do rather than for what went wrong. Throttled
+            # also keeps details off the wire, which suits a limit that is ours.
+            #
+            # Both kinds are retryable at egress, so brokers, consumers and sagas treat this
+            # exactly as before. What does change: the built-in ``occ`` policy retries
+            # ``concurrency`` only, so a write gateway no longer spends three in-process
+            # attempts on a starved pool — which is the right call anyway, since those
+            # attempts contend for the very connections that are missing.
+            return CoreException.throttled(
+                "Timed out acquiring a database connection. Please retry.",
+                code=POOL_ACQUIRE_TIMEOUT_CODE,
                 details=details,
             )
 

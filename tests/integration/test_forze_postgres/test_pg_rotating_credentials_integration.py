@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -50,6 +51,22 @@ from tests.support.rotating_credentials import (
 
 # ----------------------- #
 
+CONTENDED_EXCHANGE_TIMEOUT = timedelta(seconds=10)
+"""Exchange bound for the persist-failure race — see :func:`contended_harness` for why.
+
+Ten seconds because the store doubles it into the server-side transaction bound, and twenty
+seconds of patience is far beyond any stall a runner has produced while still being a real
+timeout rather than an unbounded wait. It also matches the store's own default, which is
+what the contender in that test has always been built with.
+"""
+
+CANCELLING_EXCHANGE_TIMEOUT = timedelta(seconds=2)
+"""Exchange bound for the cancellation race — see :func:`cancelling_harness`.
+
+Two seconds rather than ten: that test's counterparty delay is five, and the exchange has to
+expire inside it. Anything larger stops being a timeout there and starts being a success.
+"""
+
 
 @pytest_asyncio.fixture
 async def credentials_table(pg_client: PostgresClient) -> str:
@@ -82,10 +99,55 @@ async def credentials_table(pg_client: PostgresClient) -> str:
     return table
 
 
-@pytest_asyncio.fixture
-async def harness(
+async def _await_presentation(counterparty: FakeCounterparty, *, timeout: float = 10.0) -> None:
+    """Block until the worker has handed its token to the counterparty.
+
+    The observable form of "the row lock is held": presentation happens inside the locked
+    transaction, so a recorded token proves the lock was taken. Waiting on it rather than on
+    a fixed sleep is what stops the two workers from silently swapping order — an inversion
+    that leaves these tests *passing* while exercising nothing, because the second worker
+    then finds a moved version and converges through single-flight without presenting.
+    """
+
+    deadline = asyncio.get_running_loop().time() + timeout
+
+    while not counterparty.presented:
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError("the worker never presented its token")
+
+        await asyncio.sleep(0.005)
+
+
+async def _await_lock_waiter(client: PostgresClient, *, timeout: float = 10.0) -> None:
+    """Block until some backend is queued on a lock, as the server itself reports it.
+
+    ``pg_stat_activity.wait_event_type`` is the only account of "the contender is waiting on
+    that row" that does not amount to guessing how long queueing takes.
+    """
+
+    deadline = asyncio.get_running_loop().time() + timeout
+
+    while True:
+        waiting = await client.fetch_value(
+            sql.SQL(
+                "SELECT count(*) FROM pg_stat_activity "
+                "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+            )
+        )
+
+        if waiting:
+            return
+
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError("no backend ever queued on the row lock")
+
+        await asyncio.sleep(0.005)
+
+
+async def _build_harness(
     pg_client: PostgresClient,
     credentials_table: str,
+    exchange_timeout: timedelta,
 ) -> RotatingStoreHarness:
     counterparty = FakeCounterparty()
     tenant = TenantCell()
@@ -93,7 +155,7 @@ async def harness(
         client=pg_client,
         relation=("public", credentials_table),
         exchanger=counterparty,
-        exchange_timeout=EXCHANGE_TIMEOUT,
+        exchange_timeout=exchange_timeout,
         tenant_provider=tenant,
         # A real keyring: the point of running the battery here is that the envelope
         # survives a genuine jsonb round-trip, not just a dict in memory.
@@ -189,6 +251,64 @@ async def harness(
     )
 
 
+@pytest_asyncio.fixture
+async def harness(
+    pg_client: PostgresClient,
+    credentials_table: str,
+) -> RotatingStoreHarness:
+    """The shared battery's harness, on the timeout the battery needs to observe."""
+
+    return await _build_harness(pg_client, credentials_table, EXCHANGE_TIMEOUT)
+
+
+@pytest_asyncio.fixture
+async def contended_harness(
+    pg_client: PostgresClient,
+    credentials_table: str,
+) -> RotatingStoreHarness:
+    """The same harness, with the store's server-side transaction bound made generous.
+
+    One number carries two jobs, and the persist-failure race wants the opposite of what the
+    battery wants. The store derives ``idle_in_transaction_session_timeout`` from
+    ``exchange_timeout``, so the battery's deliberately-short 300 ms also caps the *whole*
+    locked section — the locked read, a KMS round trip, the exchange, the seal, the upsert
+    and the poison — at 600 ms of server-side patience. A runner that stalls past that gets
+    the transaction reaped mid-rotation, and the in-place poison the test exists to check is
+    rolled back with it: the waiter is handed a live row and replays the spent token, which
+    is indistinguishable from the defect being tested for. Observed on CI, and reproduced
+    here by shrinking the bound directly.
+
+    The race is unaffected — it comes from the counterparty's delay and the contender's
+    queueing, neither of which this number touches.
+
+    Its sibling, the cancellation race, cannot go this far — there the exchange *must* time
+    out while the caller is gone, so its timeout stays under the counterparty's delay. See
+    :func:`cancelling_harness` for the largest value that still leaves it a real timeout.
+    """
+
+    return await _build_harness(pg_client, credentials_table, CONTENDED_EXCHANGE_TIMEOUT)
+
+
+@pytest_asyncio.fixture
+async def cancelling_harness(
+    pg_client: PostgresClient,
+    credentials_table: str,
+) -> RotatingStoreHarness:
+    """As much stall tolerance as the cancellation race can take without losing its meaning.
+
+    That test needs the abandoned exchange to *time out* — the timeout is what writes the
+    poison the waiter must find — so its bound is boxed in from both sides: below by the
+    stall it has to survive, above by the counterparty delay it has to expire before. At two
+    seconds the transaction tolerates a four-second stall and still times out well inside the
+    five-second delay, where the battery's 300 ms tolerated only about three hundred
+    milliseconds of it.
+
+    The cost is the test now spending those two seconds waiting for the timeout it asks for.
+    """
+
+    return await _build_harness(pg_client, credentials_table, CANCELLING_EXCHANGE_TIMEOUT)
+
+
 # ....................... #
 
 
@@ -258,7 +378,7 @@ async def test_a_waiting_worker_never_sees_a_failed_rotation_as_live(
     postgres_container,
     pg_client: PostgresClient,
     credentials_table: str,
-    harness: RotatingStoreHarness,
+    contended_harness: RotatingStoreHarness,
 ) -> None:
     """The race the in-place poison exists to close.
 
@@ -276,25 +396,27 @@ async def test_a_waiting_worker_never_sees_a_failed_rotation_as_live(
         contender = PostgresRotatingCredentialStore(
             client=second_client,
             relation=("public", credentials_table),
-            exchanger=harness.counterparty,
-            cipher=harness.store.cipher,  # type: ignore[attr-defined]
+            exchanger=contended_harness.counterparty,
+            cipher=contended_harness.store.cipher,  # type: ignore[attr-defined]
         )
 
-        await harness.seed()
-        before = await harness.store.get(REF)
+        await contended_harness.seed()
+        before = await contended_harness.store.get(REF)
 
         # Slow enough that the contender is genuinely queued on the row lock while the
         # first worker is mid-exchange — the only arrangement in which the race exists.
-        harness.counterparty.delay = 0.15
+        contended_harness.counterparty.delay = 0.15
 
         async def _rotate_and_fail() -> None:
-            async with harness.break_persist():
+            async with contended_harness.break_persist():
                 with pytest.raises(CoreException):
-                    await harness.store.refresh(REF, observed=before.version)
+                    await contended_harness.store.refresh(REF, observed=before.version)
 
         async def _contend() -> None:
-            # Queues on the row lock, then acts on whatever it finds when granted.
-            await asyncio.sleep(0.05)
+            # Queues on the row lock, then acts on whatever it finds when granted. Starting
+            # only once the token is presented pins the order the race needs: the first
+            # worker is inside its locked transaction, so this refresh can only queue.
+            await _await_presentation(contended_harness.counterparty)
 
             with pytest.raises(CoreException):
                 await contender.refresh(REF, observed=before.version)
@@ -303,8 +425,8 @@ async def test_a_waiting_worker_never_sees_a_failed_rotation_as_live(
 
         # One presentation, total: the contender found the grant already unusable rather
         # than a restored row it would have replayed the spent token into.
-        assert harness.counterparty.presented == ["refresh-seed"]
-        assert not harness.counterparty.family_revoked
+        assert contended_harness.counterparty.presented == ["refresh-seed"]
+        assert not contended_harness.counterparty.family_revoked
 
     finally:
         await second_client.close()
@@ -317,7 +439,7 @@ async def test_a_cancelled_rotation_does_not_hand_the_row_back_live(
     postgres_container,
     pg_client: PostgresClient,
     credentials_table: str,
-    harness: RotatingStoreHarness,
+    cancelling_harness: RotatingStoreHarness,
 ) -> None:
     """Cancellation must not release the row lock to a waiter with the token still spent.
 
@@ -335,19 +457,27 @@ async def test_a_cancelled_rotation_does_not_hand_the_row_back_live(
         contender = PostgresRotatingCredentialStore(
             client=second_client,
             relation=("public", credentials_table),
-            exchanger=harness.counterparty,
-            cipher=harness.store.cipher,  # type: ignore[attr-defined]
+            exchanger=cancelling_harness.counterparty,
+            cipher=cancelling_harness.store.cipher,  # type: ignore[attr-defined]
         )
 
-        await harness.seed()
-        before = await harness.store.get(REF)
-        harness.counterparty.delay = 5.0  # outlives the store's own exchange bound
+        await cancelling_harness.seed()
+        before = await cancelling_harness.store.get(REF)
+        # Long enough that the exchange is still in flight when the caller goes away, and
+        # that the store's own bound expires inside it rather than the other way round.
+        cancelling_harness.counterparty.delay = 5.0
 
-        rotating = asyncio.ensure_future(harness.store.refresh(REF, observed=before.version))
-        await asyncio.sleep(0.05)  # the token is presented; the row lock is held
+        rotating = asyncio.ensure_future(
+            cancelling_harness.store.refresh(REF, observed=before.version)
+        )
+        # The token is presented, so the row lock is held — asserted, not assumed.
+        await _await_presentation(cancelling_harness.counterparty)
 
         contending = asyncio.ensure_future(contender.refresh(REF, observed=before.version))
-        await asyncio.sleep(0.05)  # the contender is now queued on that row
+        # …and the server itself reports a backend queued behind that lock. Cancelling
+        # before the contender is actually waiting would unwind with nobody to hand the row
+        # to, which is a different scenario that this test would still pass.
+        await _await_lock_waiter(pg_client)
 
         rotating.cancel()
 
@@ -358,11 +488,12 @@ async def test_a_cancelled_rotation_does_not_hand_the_row_back_live(
         with pytest.raises(CoreException):
             await contending
 
-        assert harness.counterparty.presented == ["refresh-seed"], "presented exactly once"
-        assert not harness.counterparty.family_revoked
+        presented = cancelling_harness.counterparty.presented
+        assert presented == ["refresh-seed"], "presented exactly once"
+        assert not cancelling_harness.counterparty.family_revoked
 
     finally:
-        harness.counterparty.delay = 0.0
+        cancelling_harness.counterparty.delay = 0.0
         await second_client.close()
 
 
