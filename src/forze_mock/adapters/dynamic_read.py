@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, final
+from typing import Any, cast, final
 
 import attrs
 
@@ -119,7 +119,7 @@ class MockDynamicReadAdapter(DynamicReadAdapter):
                 f"mappings, got {type(rows).__name__}.",
             )
 
-        materialized = list(rows)  # pyright: ignore[reportUnknownArgumentType]
+        materialized = list(cast(Sequence[Any], rows))
 
         if len(materialized) > request.row_probe:
             raise exc.internal(
