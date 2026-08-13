@@ -28,7 +28,7 @@ def _many[T](value: T | Iterable[T]) -> tuple[T, ...]:
     are callables, deps blobs and steps are attrs values, and none of them is iterable.
     """
 
-    return tuple(value) if isinstance(value, Iterable) else (value,)
+    return tuple(value) if isinstance(value, Iterable) else (value,)  # pyright: ignore[reportUnknownArgumentType]
 
 
 # ....................... #
@@ -55,7 +55,7 @@ def _frozen_specs(
     merged = SpecRegistry()
 
     for one in specs:
-        if isinstance(one, FrozenSpecRegistry):
+        if isinstance(one, FrozenSpecRegistry):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise exc.configuration(
                 "A frozen registry cannot be merged with others. Pass the unfrozen "
                 "SpecRegistry contributions and let assembly freeze the result.",
