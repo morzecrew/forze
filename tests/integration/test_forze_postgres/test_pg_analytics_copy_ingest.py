@@ -96,7 +96,7 @@ class TestSealedColumnsThroughCopy:
 
         table = f"sealed_events_{uuid4().hex[:12]}"
         await pg_client.execute(
-            f"CREATE TABLE public.{table} (id text, region text, email text)"  # noqa: S608
+            f"CREATE TABLE public.{table} (id text, region text, email text)"  # table name is a test-local literal, never caller input
         )
 
         adapter = PostgresAnalyticsAdapter(
@@ -105,7 +105,7 @@ class TestSealedColumnsThroughCopy:
             config=PostgresAnalyticsConfig(
                 queries={
                     "all": PostgresQueryConfig(
-                        sql=f"SELECT id, region, email FROM public.{table}",  # noqa: S608
+                        sql=f"SELECT id, region, email FROM public.{table}",  # table name is a test-local literal, never caller input
                     ),
                 },
                 ingest=IngestSpec(("public", table)),
@@ -121,7 +121,7 @@ class TestSealedColumnsThroughCopy:
 
         # The witness: read the column with the driver, around the decrypting codec.
         at_rest = await pg_client.fetch_all(
-            f"SELECT id, region, email FROM public.{table} ORDER BY id"  # noqa: S608
+            f"SELECT id, region, email FROM public.{table} ORDER BY id"  # table name is a test-local literal, never caller input
         )
 
         assert [row["region"] for row in at_rest] == ["eu", "us"], "a dimension must stay plain"
@@ -162,7 +162,7 @@ class TestJsonColumnsThroughCopy:
 
         table = f"json_events_{uuid4().hex[:12]}"
         await pg_client.execute(
-            f"CREATE TABLE public.{table} (id text, payload jsonb)"  # noqa: S608
+            f"CREATE TABLE public.{table} (id text, payload jsonb)"  # table name is a test-local literal, never caller input
         )
 
         adapter = PostgresAnalyticsAdapter(
@@ -176,7 +176,7 @@ class TestJsonColumnsThroughCopy:
             config=PostgresAnalyticsConfig(
                 queries={
                     "all": PostgresQueryConfig(
-                        sql=f"SELECT id, payload::text AS payload FROM public.{table}",  # noqa: S608
+                        sql=f"SELECT id, payload::text AS payload FROM public.{table}",  # table name is a test-local literal, never caller input
                     ),
                 },
                 ingest=IngestSpec(("public", table)),
@@ -185,7 +185,7 @@ class TestJsonColumnsThroughCopy:
 
         await adapter.append([_JsonRow(id="a", payload=json.dumps({"nested": {"tab": "\t"}}))])
 
-        stored = await pg_client.fetch_value(f"SELECT payload FROM public.{table}")  # noqa: S608
+        stored = await pg_client.fetch_value(f"SELECT payload FROM public.{table}")  # table name is a test-local literal, never caller input
 
         assert stored == {"nested": {"tab": "\t"}}, "JSON text must land as a document"
 
@@ -223,7 +223,7 @@ class TestAppendCap:
             config=PostgresAnalyticsConfig(
                 queries={
                     "all": PostgresQueryConfig(
-                        sql=f"SELECT event, value FROM public.{pg_analytics_table}",  # noqa: S608
+                        sql=f"SELECT event, value FROM public.{pg_analytics_table}",  # table name is a test-local literal, never caller input
                     ),
                 },
                 ingest=IngestSpec(("public", pg_analytics_table)),
@@ -235,5 +235,5 @@ class TestAppendCap:
             await adapter.append([_Ingest(event="e", value=index) for index in range(11)])
 
         assert await pg_client.fetch_value(
-            f"SELECT count(*) FROM public.{pg_analytics_table}"  # noqa: S608
+            f"SELECT count(*) FROM public.{pg_analytics_table}"  # table name is a test-local literal, never caller input
         ) == 0
