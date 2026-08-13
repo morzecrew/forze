@@ -415,12 +415,17 @@ class PostgresClient(PostgresClientPort):
         to propagate as itself.
 
         The pre-wait sample is the price of the classification, and it is paid on every
-        checkout: ``get_stats`` is lock-free but copies two dicts, measured at 0.40 us
-        against a 132 us checkout-and-query. Under eight-way concurrency on ``SELECT 1`` —
-        the cheapest query there is, so the least favourable ratio — that showed as +3%;
-        against queries costing hundreds of microseconds it is under a percent. Kept exact
-        rather than cached behind a refresh interval, because "during this wait" is what
-        makes the verdict worth trusting, and "some time recently" is not.
+        checkout: ``get_stats`` is lock-free but copies two dicts. Measured against the
+        previous code, interleaved, eight workers over ``SELECT 1`` — the cheapest query
+        there is, so the least favourable ratio this has — the whole change costs **+4.6%**
+        (101.4 ms against 96.9 ms, median of per-round minima, consistent across rounds), of
+        which roughly three points are the sample and the rest this wrapper. Against queries
+        costing hundreds of microseconds rather than eighty, the same ~4 us is under a
+        percent.
+
+        Kept exact rather than cached behind a refresh interval, and kept as one path rather
+        than inlined at each call site: "during this wait" is what makes the verdict worth
+        trusting, and a classification duplicated five times is one that drifts.
         """
 
         pool = self.__require_pool()
