@@ -275,12 +275,19 @@ nothing binds fails startup):
 ```python
 from forze_kits.integrations.progress import progress_spec_contributions
 
-registry = SpecRegistry().register(*my_specs).merge(
-    progress_spec_contributions(
-        spec=job_record_spec(), outbox_spec=progress_outbox_spec()
-    )
+runtime = build_runtime(
+    modules,
+    specs=[
+        SpecRegistry().register(*my_specs),
+        progress_spec_contributions(
+            spec=job_record_spec(), outbox_spec=progress_outbox_spec()
+        ),
+    ],
 )
 ```
+
+`specs=` folds every contribution into one inventory, leaving each registry you
+pass untouched.
 
 The job collection is catalogued **exportable** — nothing recomputes the history
 of what ran — while the transitions route is drained like any other outbox.

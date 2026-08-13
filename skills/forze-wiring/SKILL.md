@@ -128,7 +128,7 @@ from forze.application.contracts.inventory import SpecRegistry
 
 specs = SpecRegistry().register(order_spec, order_search_spec, invoice_blob_spec)
 
-runtime = build_runtime(*modules, specs=specs, lifecycle_steps=steps)
+runtime = build_runtime(modules, specs=specs, lifecycle_steps=steps)
 ```
 
 Kits and the identity plane contribute their own entries, including the routes nobody hand-wrote (a kit's search-sync outbox, queue and inbox). At construction `build_runtime` reconciles the inventory against the wiring and **logs** a bound route the inventory does not know — a drift signal, not a gate.
