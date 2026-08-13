@@ -2,7 +2,7 @@
 
 - **Status:** 🚧 **P1–P3 landed 2026-08-13**; P4 blocked on its pair. W1 (`PostgresClientPort.copy_rows`, text + binary) and W2 (analytics ingest over `COPY`, cap re-rationalized, Postgres default 10k → 100k) ship with the full acceptance battery against a real server. **P4 (W4, BigQuery load jobs) is not started and cannot be: §2 requires it to land with RFC 0030 P2 as that publish's stage step, and 0030 is still Draft — building it now would produce a surface with no consumer, which is the outcome its own demand gate exists to prevent.**
 
-  **Battery 7 — measured, interleaved same-runner rounds, median of per-round minima** ([tests/perf/test_forze_postgres/test_pg_perf_copy_rows.py](tests/perf/test_forze_postgres/test_pg_perf_copy_rows.py)). Decision 7 made W2 conditional on this; it confirms:
+  **Battery 7 — measured, interleaved same-runner rounds, median of per-round minima** ([tests/perf/test_forze_postgres/test_pg_perf_copy_rows.py](../tests/perf/test_forze_postgres/test_pg_perf_copy_rows.py)). Decision 7 made W2 conditional on this; it confirms:
 
   | rows × cols | `COPY` | multi-VALUES | `execute_many` |
   |---|---|---|---|

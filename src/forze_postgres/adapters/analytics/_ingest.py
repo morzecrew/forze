@@ -22,7 +22,7 @@ Ing = TypeVar("Ing", bound=BaseModel)
 class PostgresAnalyticsIngestMixin[R: BaseModel, Ing: BaseModel](
     PostgresAnalyticsMixinBase[R, Ing],
 ):
-    """Batch INSERT ingest into a configured table."""
+    """Batch ingest into a configured table."""
 
     async def append(self, rows: Sequence[Ing]) -> AnalyticsAppendResult | None:
         host = self._host
