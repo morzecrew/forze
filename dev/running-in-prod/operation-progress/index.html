@@ -6650,12 +6650,18 @@ assembly, passing the halves this deployment actually wires (a catalogued route
 nothing binds fails startup):</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.progress</span><span class="w"> </span><span class="kn">import</span> <span class="n">progress_spec_contributions</span>
 
-<span class="n">registry</span> <span class="o">=</span> <span class="n">SpecRegistry</span><span class="p">()</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="o">*</span><span class="n">my_specs</span><span class="p">)</span><span class="o">.</span><span class="n">merge</span><span class="p">(</span>
-    <span class="n">progress_spec_contributions</span><span class="p">(</span>
-        <span class="n">spec</span><span class="o">=</span><span class="n">job_record_spec</span><span class="p">(),</span> <span class="n">outbox_spec</span><span class="o">=</span><span class="n">progress_outbox_spec</span><span class="p">()</span>
-    <span class="p">)</span>
+<span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span>
+    <span class="n">modules</span><span class="p">,</span>
+    <span class="n">specs</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">SpecRegistry</span><span class="p">()</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="o">*</span><span class="n">my_specs</span><span class="p">),</span>
+        <span class="n">progress_spec_contributions</span><span class="p">(</span>
+            <span class="n">spec</span><span class="o">=</span><span class="n">job_record_spec</span><span class="p">(),</span> <span class="n">outbox_spec</span><span class="o">=</span><span class="n">progress_outbox_spec</span><span class="p">()</span>
+        <span class="p">),</span>
+    <span class="p">],</span>
 <span class="p">)</span>
 </code></pre></div>
+<p><code>specs=</code> folds every contribution into one inventory, leaving each registry you
+pass untouched.</p>
 <p>The job collection is catalogued <strong>exportable</strong> — nothing recomputes the history
 of what ran — while the transitions route is drained like any other outbox.</p>
 <p>Pass <code>encryption=</code> to seal <code>message</code>, <code>subject</code> or <code>error</code> — the fields that carry
