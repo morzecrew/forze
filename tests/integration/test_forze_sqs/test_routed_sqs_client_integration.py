@@ -357,14 +357,29 @@ async def test_routed_sqs_consume_survives_rotation_eviction(
                 await routed.ack(url, [second.id])
 
                 # …and mid-poll: evict while the consumer is long-polling an empty
-                # queue; the poll on the disposed client fails or drains, and the
-                # loop retries on the rebuilt client without the stream dying.
+                # queue. The stream has to survive the client being disposed under it
+                # and go on delivering.
                 pending = asyncio.ensure_future(anext(gen))
                 await asyncio.sleep(0.3)  # let the long poll start on the old client
                 await routed.evict_tenant(t1)
+                assert len(closed) == 2  # the second stale client, torn down mid-poll
                 await routed.enqueue(url, b"m3")
                 third = await asyncio.wait_for(pending, timeout=40)
                 assert third.body == b"m3"
+                await routed.ack(url, [third.id])
+
+                # Which client delivers `m3` is deliberately not asserted. Disposing a
+                # client does not abort the poll already in flight on it — it keeps
+                # long-polling to its own expiry — so whether that poll returns the
+                # message or drains empty first is the queue's timing, not a promise.
+                # `consume` says as much: at *worst* the in-flight poll fails.
+                #
+                # The promise that does hold is about the poll after it: the disposed
+                # client is out of the pool, so every poll started from here on runs on
+                # the rebuilt one.
+                await routed.enqueue(url, b"m4")
+                fourth = await asyncio.wait_for(anext(gen), timeout=40)
+                assert fourth.body == b"m4"
                 assert receivers[-1] != second_receiver
     finally:
         await routed.close()
