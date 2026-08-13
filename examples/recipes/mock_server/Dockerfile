@@ -3,11 +3,22 @@
 # Nothing here is production packaging — there is no database, no migration step and no
 # secret handling, because the whole image is a development fixture. It exists so a
 # frontend or CI job can `docker run` the API without a Python toolchain.
-FROM python:3.13-slim
+#
+# Both images below are pinned by digest, as `.devcontainer/Dockerfile` already is: a tag is
+# a moving pointer, so an unpinned build is not reproducible and silently adopts whatever the
+# tag points at today. To refresh either one, resolve the current index digest and record
+# what it turned out to be:
+#
+#     docker buildx imagetools inspect python:3.13-slim --format '{{.Manifest.Digest}}'
+#
+# python:3.13-slim → Python 3.13.15
+FROM python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a
 
 # uv resolves and installs far faster than pip on a cold layer, which matters for an image
 # that is rebuilt whenever the app changes.
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+#
+# ghcr.io/astral-sh/uv:latest → uv 0.12.3
+COPY --from=ghcr.io/astral-sh/uv@sha256:2d890623d310b57771ce840f0da5eed5fc6d657da05ffaa45d82797b53fa3abc /uv /usr/local/bin/uv
 
 WORKDIR /app
 
