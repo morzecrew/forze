@@ -22,12 +22,31 @@ COPY --from=ghcr.io/astral-sh/uv@sha256:2d890623d310b57771ce840f0da5eed5fc6d657d
 
 WORKDIR /app
 
+# The project's version comes from `git describe`, and this image has neither a git binary
+# nor any reason to grow one — `.git` is not in its build context (see the adjacent
+# `Dockerfile.dockerignore`). setuptools-scm refuses to guess, so without a stated version
+# the install below fails outright rather than falling back to anything. A development
+# fixture's version is not a fact anyone acts on; override the build arg if yours is.
+#
+# It has to be the unscoped variable: hatch-vcs calls setuptools-scm without passing the
+# distribution name, so the per-project `..._FOR_FORZE` form never matches. Nothing else in
+# this image is built from source, so there is no other package for it to reach.
+#
+# It stays set at runtime as well as build time, because the `uv run` in CMD re-checks the
+# environment and can rebuild the editable install.
+ARG FORZE_VERSION=0.0.0
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${FORZE_VERSION}
+
+# `authn` is in the list because the served app has an identity plane — its dev API key is
+# checked against a seeded principal — and the extra carries PyJWT. Without it the image
+# builds cleanly and then dies on first import, which is the worst place to find out.
+#
 # Dependencies first, so editing the app does not re-resolve them.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --extra cli --extra mock-server --extra fastapi
+RUN uv sync --frozen --no-install-project --extra cli --extra mock-server --extra fastapi --extra authn
 
 COPY . .
-RUN uv sync --frozen --extra cli --extra mock-server --extra fastapi
+RUN uv sync --frozen --extra cli --extra mock-server --extra fastapi --extra authn
 
 # The refusal gate, satisfied deliberately and visibly: this image *is* the mock, and the
 # declaration says so in its own name. Anything running this container is opting in.
