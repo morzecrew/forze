@@ -1,0 +1,179 @@
+# The nightly DST matrix — the wide search a merge guard cannot afford.
+#
+# Every build already runs the flagship scenarios over a small band as a merge guard. That band is
+# sized for a human waiting on a PR, not for finding a rare interleaving: 8 dlock seeds and 12 HLC
+# seeds, with `just fuzz` widening it to 64 and 128 only when asked. This job runs the same
+# scenarios and the same invariants over 65,536 seeds per cell, across four fault profiles, on a
+# schedule nobody waits on.
+#
+# The cell list is not written here — it is derived from the fault profiles by the runner, so
+# adding a profile adds a nightly cell and the verdict starts requiring it. The verdict fails on a
+# missing cell, an empty band, a violating seed, or a declared reachability target the band never
+# drove.
+name: Nightly DST
+
+on:
+  schedule:
+    # 04:00 UTC, after the day's merges have landed and well clear of the weekly CodeQL/Scorecard
+    # runs at 03:00 Monday.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: Seeds per cell
+        required: false
+        type: string
+        default: "65536"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-dst-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # One source of truth for which cells exist: the runner derives them from the declared fault
+  # profiles. A hand-written matrix here could silently drop a profile and the verdict — which
+  # reads this same list — would never know a cell was missing.
+  matrix:
+    name: Declare the matrix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    outputs:
+      cells: ${{ steps.declare.outputs.cells }}
+      names: ${{ steps.declare.outputs.names }}
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout code # zizmor: ignore[artipacked] no workspace/.git is uploaded as an artifact
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
+
+      - name: Install dependencies
+        run: uv sync --all-groups --extra dst
+
+      - name: Declare the cells
+        id: declare
+        run: |
+          cells="$(uv run python .github/scripts/dst_nightly.py --matrix)"
+          echo "cells=${cells}" >>"${GITHUB_OUTPUT}"
+          echo "names=$(echo "${cells}" | python3 -c 'import json,sys; print(",".join(c["cell"] for c in json.load(sys.stdin)))')" >>"${GITHUB_OUTPUT}"
+          echo "${cells}"
+
+  sweep:
+    name: Sweep (${{ matrix.cell }})
+    needs: matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      # One failing cell must not cancel the others: the whole point of the night is the full
+      # picture, and a cell that violates is exactly when the rest matters most.
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.cells) }}
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout code # zizmor: ignore[artipacked] no workspace/.git is uploaded as an artifact
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
+
+      - name: Install dependencies
+        run: uv sync --all-groups --extra dst
+
+      - name: Sweep ${{ matrix.cell }}
+        env:
+          CELL: ${{ matrix.cell }}
+          SEEDS: ${{ inputs.seeds || '65536' }}
+        run: |
+          uv run python .github/scripts/dst_nightly.py \
+            --cell "${CELL}" \
+            --seeds "${SEEDS}" \
+            --out "nightly-${CELL}.json"
+
+      - name: Upload the cell result
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nightly-${{ matrix.cell }}
+          path: nightly-${{ matrix.cell }}.json
+          if-no-files-found: error
+          # Kept for a quarter so the reachability rates and behaviour counts can be read as a
+          # trend across nights. There is no trend *store* — each night is its own artifact, and
+          # comparing them is a manual read.
+          retention-days: 90
+
+  verdict:
+    name: Nightly verdict
+    needs: [matrix, sweep]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout code # zizmor: ignore[artipacked] no workspace/.git is uploaded as an artifact
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the cell results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: nightly-*
+          path: nightly-data
+          merge-multiple: true
+
+      # No Python setup and no dependency install: in this mode the verdict reads JSON through the
+      # standard library alone, so the gate cannot fail for want of an extra — and a cell whose
+      # own shard died shows up here as a missing result rather than as silence.
+      # `tee` so the run page and the retained artifact hold the same bytes — the table *and* the
+      # verdict under it. `pipefail` because the exit code that matters is the gate's, not tee's.
+      - name: Gate the night
+        env:
+          EXPECTED: ${{ needs.matrix.outputs.names }}
+        run: |
+          set -o pipefail
+          python3 .github/scripts/dst_nightly.py \
+            --verdict nightly-data \
+            --expect "${EXPECTED}" \
+          | tee nightly-summary.md >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload the night's summary
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nightly-summary
+          path: nightly-summary.md
+          if-no-files-found: error
+          retention-days: 90

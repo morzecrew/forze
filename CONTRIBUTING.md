@@ -58,6 +58,22 @@ Run integration tests (require running external services or testcontainers):
 just test tests/integration
 ```
 
+### The nightly DST matrix
+
+Every build runs the flagship simulation scenarios over a small seed band as a merge guard — 8 dlock seeds and 12 HLC seeds, sized for a human waiting on a PR. `just fuzz` widens that to 64 and 128, but it is `fuzz`-marked and excluded from `just test`, so it runs only when asked. Neither is a size at which a rare interleaving turns up. The nightly workflow runs the same scenarios and the same invariants over 65,536 seeds per cell, across four fault profiles:
+
+```bash
+just dst-nightly-cells          # which cells exist
+just dst-nightly dlock-storm    # one cell at the nightly band
+just dst-nightly-all 1024       # the whole matrix at a band you will wait for
+```
+
+A cell is a scenario in one environment. The environments are `FaultProfile` declarations in `tests/support/dst_flagship.py`, and the cell list is **derived** from them — add a profile and the nightly gains a cell that the verdict then requires, with no list to remember to edit.
+
+Each profile declares the reachability targets it must drive, because what is reachable depends on the environment: `contention` cuts no link and injects no error, so it can never reach `write-retried`, and a profile that declared no targets at all is refused outright. The verdict fails on a missing cell, a band that ran zero seeds, any violating seed, a declared target the band never drove, or a result for a cell nobody declared.
+
+When a night finds a violating seed, append it to the scenario's `*_REGRESSION_SEEDS` tuple so the merge guard re-checks it forever.
+
 ### Emulators and engine matrices
 
 A test that stands in for a managed cloud service is admissible in exactly three forms:

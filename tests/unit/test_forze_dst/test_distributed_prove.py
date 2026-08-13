@@ -44,6 +44,9 @@ from tests.support.dst_flagship import (
     DLOCK_INVARIANTS as _DLOCK_INVARIANTS,
 )
 from tests.support.dst_flagship import (
+    DLOCK_PROFILES as _DLOCK_PROFILES,
+)
+from tests.support.dst_flagship import (
     DLOCK_TARGETS as _DLOCK_TARGETS,
 )
 from tests.support.dst_flagship import (
@@ -54,6 +57,9 @@ from tests.support.dst_flagship import (
 )
 from tests.support.dst_flagship import (
     dlock_config as _dlock_config,
+)
+from tests.support.dst_flagship import (
+    dlock_target as _dlock_target,
 )
 from tests.support.dst_flagship import (
     guarded_cluster as _guarded_cluster,
@@ -201,12 +207,18 @@ class TestFlagshipCorpus:
 
 class TestFlagshipFuzz:
     @pytest.mark.fuzz
-    def test_dlock_wide_sweep(self) -> None:
-        result = parallel_sweep(run_dlock_seed, tuple(DLOCK_WIDE))
+    @pytest.mark.parametrize("profile", sorted(_DLOCK_PROFILES))
+    def test_dlock_wide_sweep(self, profile: str) -> None:
+        # Every environment, not just the historical one: a lock that survives a clean cut can
+        # still lose to a lossy link, where success and failure interleave inside one section.
+        # The nightly runs these same cells over a band 1024× wider.
+        result = parallel_sweep(_dlock_target(profile), tuple(DLOCK_WIDE))
+        targets = _DLOCK_PROFILES[profile].targets
+
         assert result.violations == (), result.format()
         # A wide green sweep means nothing if the band never raced — assert the dangerous states
         # fired across it (the reachability fold, §9.12a), not just that no invariant tripped.
-        assert result.reachability(_DLOCK_TARGETS).satisfied, result.reachability(_DLOCK_TARGETS).format()
+        assert result.reachability(targets).satisfied, result.reachability(targets).format()
 
     @pytest.mark.fuzz
     def test_hlc_wide_sweep(self) -> None:
