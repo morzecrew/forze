@@ -530,8 +530,12 @@ class TestTimeoutAndErrorHygiene:
         checked on the *unmapped* path, since the mapped one never binds arguments at all.
         """
 
-        secret = "d0-not-log-me-9f3a"
-        rows = [(index, secret) for index in range(2_000)]
+        # A canary, deliberately spelled so it cannot read as a credential: the value only
+        # has to be distinctive enough to find in the rendered error, and a random-looking
+        # string next to a variable named `secret` is what a scanner flags — correctly,
+        # since a reader cannot tell a fake one from the real thing either.
+        canary = "payload-canary-must-not-be-logged"
+        rows = [(index, canary) for index in range(2_000)]
 
         with pytest.raises(CoreException) as caught:
             # An undefined table fails outside the copy taxonomy, so it takes the generic
@@ -540,7 +544,7 @@ class TestTimeoutAndErrorHygiene:
 
         rendered = f"{caught.value.details} {caught.value.summary}"
 
-        assert secret not in rendered, "the payload reached the error details"
+        assert canary not in rendered, "the payload reached the error details"
         assert "no_such_table_here" in rendered, "the target should still be named"
 
 
