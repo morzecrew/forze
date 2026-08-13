@@ -899,6 +899,53 @@ DELIVERY_DIVERGENCES: tuple[PlaneDivergence, ...] = (
 # ----------------------- #
 
 
+DYNAMIC_READ_DIVERGENCES: tuple[PlaneDivergence, ...] = (
+    PlaneDivergence(
+        plane="dynamic_read",
+        name="engine-enforced-refusals-are-postgres-only",
+        observed=(
+            EngineBehaviour(
+                engine="postgres",
+                behaviour=(
+                    "refuses a write with SQLSTATE 25006 from the READ ONLY transaction, a "
+                    "multi-command string at the extended protocol's parse step, and a "
+                    "cross-schema read through role grants — all before the adapter is "
+                    "consulted"
+                ),
+            ),
+            EngineBehaviour(
+                engine="mock",
+                behaviour=(
+                    "executes a programmed handler and cannot see the statement text as SQL "
+                    "at all: an INSERT string returns whatever the handler returns"
+                ),
+            ),
+        ),
+        resolution=DivergenceResolution.DECLARED,
+        reason=(
+            "This is the mock horizon stated out loud rather than papered over. Half of this "
+            "plane's contract is refusals the *engine* makes, and the only way the mock could "
+            "reproduce them is by parsing SQL — which is the one mechanism the plane forecloses "
+            "outright, because a parser the framework writes is a parser a statement outgrows. "
+            "A mock that pattern-matched 'INSERT' would be worse than one that does not try: it "
+            "would certify statements a real gadget walks straight past, and DST proofs run "
+            "against it would inherit that certification. So the differential covers the "
+            "governance shell — caps, clamping, fail-closed tenancy, the tenant-parameter merge "
+            "— which really is identical code on both sides, and the engine-enforced half is "
+            "pinned against a live server instead. A DST scenario that needs a refusal path "
+            "raises the taxonomy from its handler, declaring the outcome rather than deriving it."
+        ),
+        probe=(
+            "tests/integration/test_forze_postgres/test_pg_dynamic_read_integration.py::"
+            "test_a_multi_command_string_is_refused_at_the_protocol_layer"
+        ),
+    ),
+)
+
+
+# ----------------------- #
+
+
 PLANE_DIVERGENCES: dict[str, tuple[PlaneDivergence, ...]] = {
     "counter": COUNTER_DIVERGENCES,
     "storage": STORAGE_DIVERGENCES,
@@ -909,6 +956,7 @@ PLANE_DIVERGENCES: dict[str, tuple[PlaneDivergence, ...]] = {
     "graph_management": GRAPH_MANAGEMENT_DIVERGENCES,
     "delivery": DELIVERY_DIVERGENCES,
     "realtime_cursor": REALTIME_CURSOR_DIVERGENCES,
+    "dynamic_read": DYNAMIC_READ_DIVERGENCES,
 }
 """Every catalogued divergence, by plane. The isolation family lives in ``divergence.py``."""
 

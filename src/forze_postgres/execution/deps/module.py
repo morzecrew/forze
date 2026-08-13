@@ -30,6 +30,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStoreDepKey,
     DurableScheduleStoreDepKey,
 )
+from forze.application.contracts.dynamic_read import DynamicReadDepKey
 from forze.application.contracts.hlc import HlcCheckpointDepKey
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.inbox import InboxDepKey
@@ -69,6 +70,7 @@ from .configs import (
     PostgresDurableRunConfig,
     PostgresDurableScheduleConfig,
     PostgresDurableStepConfig,
+    PostgresDynamicReadConfig,
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLegHub,
     PostgresHlcCheckpointConfig,
@@ -89,6 +91,7 @@ from .factories import (
     ConfigurablePostgresDurableRun,
     ConfigurablePostgresDurableSchedule,
     ConfigurablePostgresDurableStep,
+    ConfigurablePostgresDynamicRead,
     ConfigurablePostgresFederatedSearch,
     ConfigurablePostgresHlcCheckpoint,
     ConfigurablePostgresHubSearch,
@@ -107,6 +110,46 @@ from .factories import (
 from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 
 # ----------------------- #
+
+
+def _validate_dynamic_read_route(
+    *,
+    route: str,
+    config: PostgresDynamicReadConfig,
+    client_is_routed: bool,
+) -> None:
+    """Refuse a dynamic-read route whose container cannot carry its declared threat tier.
+
+    Both checks live here rather than in the config because both need something only the
+    module knows: whether the client is routed. A dedicated-tier deployment answers either one
+    with credentials, and a config that could not see the client would demand a schema or a
+    role it does not need.
+    """
+
+    if config.tenant_aware and not (callable(config.query_schema) or client_is_routed):
+        raise exc.configuration(
+            f"Postgres dynamic-read route {route!r} is tenant_aware on the tagged tier. A "
+            "tagged container's only isolation is a predicate inside the statement, and this "
+            "plane's statements are written at runtime — the predicate cannot be reviewed, "
+            "cannot be verified at wiring, and a missing one does not error: it succeeds with "
+            "another tenant's rows. Set a per-tenant query_schema (namespace tier) or route "
+            "the client per tenant (dedicated tier) so the container does the scoping.",
+            code="dynamic_read_tagged_refused",
+            details={"route": route},
+        )
+
+    if config.provenance == "untrusted" and not (config.role is not None or client_is_routed):
+        raise exc.configuration(
+            f"Postgres dynamic-read route {route!r} declares untrusted provenance with no "
+            "confinement. Statements produced by a program nobody reviews per-statement need "
+            "a schema-confined role (SET LOCAL ROLE) or a routed per-tenant client; the "
+            "read-only transaction alone bounds what they can write, not what they can read.",
+            code="dynamic_read_untrusted_unconfined",
+            details={"route": route},
+        )
+
+
+# ....................... #
 
 
 @final
@@ -192,6 +235,16 @@ class PostgresDepsModule(DepsModule):
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
     """Mapping from procedure route names to their Postgres-specific configurations."""
+
+    dynamic_reads: StrKeyMapping[PostgresDynamicReadConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """Mapping from governed dynamic-read route names to their Postgres configurations.
+
+    The plane that executes statements the framework cannot inspect. Wiring one is the
+    greppable moment a reviewer looks for — which is the whole reason it is a separate mapping
+    and not a method on the analytics routes above."""
 
     outboxes: StrKeyMapping[PostgresOutboxConfig] | None = attrs.field(
         default=None,
@@ -428,6 +481,24 @@ class PostgresDepsModule(DepsModule):
                     ),
                 )
 
+        if self.dynamic_reads:
+            client_is_routed = isinstance(self.client, RoutedPostgresClient)
+
+            for name, dynamic_read_cfg in self.dynamic_reads.items():
+                _validate_dynamic_read_route(
+                    route=str(name),
+                    config=dynamic_read_cfg,
+                    client_is_routed=client_is_routed,
+                )
+                routes.append(
+                    PostgresTenancyRouteSpec(
+                        name=str(name),
+                        tenant_aware=dynamic_read_cfg.tenant_aware,
+                        kind="dynamic_read",
+                        has_namespace_routing=callable(dynamic_read_cfg.query_schema),
+                    ),
+                )
+
         if self.outboxes:
             for name, outbox_cfg in self.outboxes.items():
                 routes.append(
@@ -622,6 +693,18 @@ class PostgresDepsModule(DepsModule):
                 )
             )
 
+        dynamic_read_deps = Deps()
+
+        if self.dynamic_reads:
+            dynamic_read_deps = Deps.routed(
+                {
+                    DynamicReadDepKey: {
+                        name: ConfigurablePostgresDynamicRead(config=config)
+                        for name, config in self.dynamic_reads.items()
+                    },
+                }
+            )
+
         if self.outboxes:
             outbox_deps = outbox_deps.merge(
                 Deps.routed(
@@ -763,6 +846,7 @@ class PostgresDepsModule(DepsModule):
             federated_search_deps,
             analytics_deps,
             procedures_deps,
+            dynamic_read_deps,
             outbox_deps,
             inbox_deps,
             idempotency_deps,

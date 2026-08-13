@@ -101,6 +101,24 @@ def _strip_sql_comments(sql: str) -> str:
     return _SQL_TOKEN.sub(_blank, sql)
 
 
+def sql_references_param(sql: str, *, pattern: str) -> bool:
+    """Whether *sql* mentions *pattern* outside comments.
+
+    Reference, not scope. A statement can name the tenant parameter on one branch of a
+    ``UNION``, in a dead ``OR``, or after the aggregation it was meant to bound — so this
+    answers "is the placeholder there at all", which is a floor and never a proof of isolation.
+    Callers that need a boundary use a container (schema / role / database) instead.
+
+    :param sql: The statement to scan.
+    :param pattern: Backend regex matching the tenant placeholder (e.g. ``r"%\\(tenant\\)s"``).
+    """
+
+    return re.search(pattern, _strip_sql_comments(sql)) is not None
+
+
+# ....................... #
+
+
 def unreferenced_param_keys(
     queries: Mapping[str, str],
     *,
@@ -117,6 +135,6 @@ def unreferenced_param_keys(
     :param pattern: Backend regex matching the tenant placeholder (e.g. ``r"%\\(tenant\\)s"``).
     """
 
-    rx = re.compile(pattern)
-
-    return sorted(key for key, sql in queries.items() if not rx.search(_strip_sql_comments(sql)))
+    return sorted(
+        key for key, sql in queries.items() if not sql_references_param(sql, pattern=pattern)
+    )

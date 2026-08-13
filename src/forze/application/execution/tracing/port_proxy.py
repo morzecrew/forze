@@ -101,6 +101,14 @@ class TracingPortProxy(PortProxy):
     """Field names to mask to ``"<redacted>"`` when capturing — the spec's declared-sensitive
     fields (``encryption.encrypted`` ∪ ``encryption.searchable``)."""
 
+    text_arg_key: str | None = None
+    """Key a leading **text** argument is captured under, or ``None`` to ignore one.
+
+    A query whose text is data (the dynamic-read plane) carries its whole predicate in a
+    ``str``, which :meth:`_dump` treats as unstructured and captures as nothing. Opting in per
+    spec rather than for every port keeps that default: an ``str`` leading positional that is a
+    key, a query name or an id stays uncaptured, as it always was."""
+
     # ....................... #
 
     @staticmethod
@@ -200,6 +208,14 @@ class TracingPortProxy(PortProxy):
         if self.phase == "query":
             candidate = kwargs["filters"] if "filters" in kwargs else (args[0] if args else None)
             data = self._dump(candidate)
+
+            if data is None and self.text_arg_key is not None and isinstance(candidate, str):
+                # The statement *is* the predicate on a text-query plane. Captured under a
+                # declared key so the same ``redact`` set that masks structured fields masks
+                # it too — recorded as ``"<redacted>"`` rather than dropped, so a trace
+                # consumer can tell a withheld statement from no statement at all.
+                data = {self.text_arg_key: candidate}
+
             return self._redact(data) if data is not None else None
 
         return self._payload_of(args, kwargs)
@@ -342,6 +358,7 @@ def wrap_port[T](
     tx_id_getter: Callable[[], int | None] | None = None,
     capture: bool = False,
     redact: frozenset[str] = frozenset(),
+    text_arg_key: str | None = None,
 ) -> T:
     """Return *inner* wrapped for runtime tracing."""
 
@@ -358,5 +375,6 @@ def wrap_port[T](
             tx_id_getter=tx_id_getter or _default_tx_id,
             capture=capture,
             redact=redact,
+            text_arg_key=text_arg_key,
         ),
     )

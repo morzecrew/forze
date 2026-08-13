@@ -23,6 +23,7 @@ the other two:
 | Raw client | any SQL, inline | no — you own validation, tenancy, portability |
 | **Procedures** | a named command / compute step | **yes** — validated params, tenancy, backend-portable |
 | Analytics | named reads, pages of rows | yes |
+| [Dynamic read](dynamic-read.md) | a read whose SQL another program wrote at runtime | partly — read-only, tenancy and limits are enforced; the statement itself cannot be validated |
 
 Procedures promotes raw SQL to a *named, validated, tenant-aware, portable*
 operation. Unlike analytics it mutates or computes rather than returning pages —

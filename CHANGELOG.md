@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 **Statement origin — a second tenancy floor, set by what wrote the statement.** `StatementOrigin` (`structured` → `none`, `compiled` → `namespace`, `raw` → `dedicated`), declared per route via `TenancyRouteSpec.origin` / `TenancyRouteGroup.origin` and enforced at freeze in `validate_module_tenancy`, independently of `required_tenant_isolation`. New `required_isolation_for_origin`, `validate_origin_isolation`, `ORIGIN_ISOLATION_FLOOR_CODE` (`"statement_origin_isolation_floor"`). Nothing that wires today changes: `structured` is the default and no shipped config declares an origin.
+**Governed dynamic read** — a separate, opt-in read plane for statements whose text is data (catalog SQL, a semantic layer's output, a report builder). New `contracts/dynamic_read/` + `ctx.dynamic_read.query(spec)`, resolvable in `QUERY` operations; Postgres and mock adapters:
+
+- `DynamicReadSpec` (`row_cap=10_000`, `max_statement_bytes=65_536`, `capture_statements=False`) and `DynamicReadPort.run` / `.select(return_type, …)`. No pagination, no `In`/`Out` generics, no encryption field: both shapes are runtime data, so a sealed column returns ciphertext (documented, battery-pinned). Per-call `DynamicReadOptions` clamp down only.
+- `PostgresDynamicReadConfig` runs every statement in a `READ ONLY` root transaction on its own connection, with `SET LOCAL statement_timeout` / `search_path` / `ROLE`, streamed through the extended query protocol. No SQL is parsed anywhere — writes, multi-command strings and cross-schema reads are all refused by Postgres.
+- **Wiring fails closed:** `provenance` (`"trusted"`/`"untrusted"`) has no default; a `tenant_aware` route on the tagged tier raises `dynamic_read_tagged_refused` (namespace or dedicated only), and `untrusted` without a role or routed client raises `dynamic_read_untrusted_unconfined`.
+- Taxonomy, all caller-caused: `dynamic_read_write_refused`, `_statement_invalid`, `_multi_statement`, `_permission_denied`, `_timeout`, `_row_cap_exceeded`, `_statement_too_large`, `_row_type_mismatch`.
+- `MockDynamicReadRegistry` answers routes from a handler; engine-enforced refusals are deliberately *not* reproduced in memory (declared in the divergence catalog) — the mock ≡ Postgres differential covers the governance shell instead. New `dynamic_read` conformance plane.
+- New `data-events/dynamic-read.md` with the provenance-tier threat model.
 
 **Postgres `COPY` bulk load** — the engine-native bulk path, 20–79× faster than the multi-VALUES `INSERT` it replaces (10⁴–10⁵ rows × 6–20 columns, interleaved A/B):
 

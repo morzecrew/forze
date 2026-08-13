@@ -8,6 +8,7 @@ from .durable import (
     PostgresDurableScheduleConfig,
     PostgresDurableStepConfig,
 )
+from .dynamic_read import PostgresDynamicReadConfig
 from .federated import (
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLeg,
@@ -48,6 +49,7 @@ __all__ = [
     "PostgresDurableRunConfig",
     "PostgresDurableScheduleConfig",
     "PostgresDurableStepConfig",
+    "PostgresDynamicReadConfig",
     "PostgresFederatedSearchConfig",
     "PostgresFederatedSearchLeg",
     "PostgresFederatedSearchLegHub",

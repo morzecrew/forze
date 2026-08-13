@@ -11,6 +11,7 @@ from .durable import (
     ConfigurablePostgresDurableSchedule,
     ConfigurablePostgresDurableStep,
 )
+from .dynamic_read import ConfigurablePostgresDynamicRead
 from .federated import ConfigurablePostgresFederatedSearch
 from .hlc_checkpoint import ConfigurablePostgresHlcCheckpoint
 from .hub import ConfigurablePostgresHubSearch
@@ -50,6 +51,7 @@ __all__ = [
     "ConfigurablePostgresDurableRun",
     "ConfigurablePostgresDurableSchedule",
     "ConfigurablePostgresDurableStep",
+    "ConfigurablePostgresDynamicRead",
     "ConfigurablePostgresFederatedSearch",
     "ConfigurablePostgresHlcCheckpoint",
     "ConfigurablePostgresHubSearch",

@@ -18,6 +18,11 @@ from forze_mock.adapters.durable import (
     MockDurableWorkflowScheduleCommandAdapter,
     MockDurableWorkflowScheduleQueryAdapter,
 )
+from forze_mock.adapters.dynamic_read import (
+    MockDynamicReadAdapter,
+    MockDynamicReadHandler,
+    MockDynamicReadRegistry,
+)
 from forze_mock.adapters.embeddings import MockHashEmbeddingsProvider
 from forze_mock.adapters.events import RecordingAuthnEventSink
 from forze_mock.adapters.graph import MockGraphAdapter, MockGraphManagementAdapter
@@ -100,6 +105,9 @@ __all__ = [
     "MockCommitStreamGroupAdapter",
     "MockCommitStreamGroupAdminAdapter",
     "MockAnalyticsAdapter",
+    "MockDynamicReadAdapter",
+    "MockDynamicReadHandler",
+    "MockDynamicReadRegistry",
     "MockProcedureAdapter",
     "MockProcedureRegistry",
     "MockProcedureHandler",

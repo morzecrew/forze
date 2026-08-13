@@ -28,6 +28,7 @@ A store read under the bound tenant scopes itself — adapters call
 | Integration | Port(s) | `tenant_aware` | Resolver (`namespace`) | Routed client (`dedicated`) | Ceiling |
 |-------------|---------|----------------|------------------------|-----------------------------|---------|
 | Postgres | document, search, analytics, counter | `tagged` (`tenant_id` column) | schema | `RoutedPostgresClient` | `dedicated` |
+| Postgres | [dynamic read](../data-events/dynamic-read.md) | **refused** ‡ | schema (`query_schema`) | `RoutedPostgresClient` | `dedicated` |
 | Mongo | document, search, counter | `tagged` (column) | collection | `RoutedMongoClient` | `dedicated` |
 | Firestore | document, counter | `tagged` (column) | collection | `RoutedFirestoreClient` | `dedicated` |
 | DuckDB | analytics (query-only) | `tagged` (column) | — | — | **`tagged`** (in-process) |
@@ -40,6 +41,13 @@ A store read under the bound tenant scopes itself — adapters call
 | HTTP outbound | http service | — | — | per-tenant credentials (routed) | `dedicated` |
 | Served models (HTTP) | inference | `tagged` (bound tenant required) | per-tenant `model_name` | `RoutedInferenceHttpClient` | `dedicated` |
 | SageMaker | inference | `tagged` (bound tenant required) | per-tenant `endpoint_name` | `RoutedSageMakerRuntimeClient` | `dedicated` |
+
+‡ The dynamic-read plane refuses `tagged` for a tenant-aware route
+(`dynamic_read_tagged_refused`): its statements are written at runtime, so an
+isolating predicate cannot be reviewed, cannot be checked at wiring, and when it is
+missing the read *succeeds* with another tenant's rows. Its floor is therefore
+`namespace` — a per-tenant schema — and its container does the scoping the statement
+cannot be trusted to do.
 
 † Neo4j reaches `namespace` with a per-tenant database on one driver (the usual
 multi-tenant Neo4j shape); `dedicated` needs a genuinely per-tenant driver/instance,

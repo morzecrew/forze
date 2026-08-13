@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, final
 
 import attrs
@@ -29,6 +30,7 @@ from forze.application.contracts.dlock import DistributedLockSpec
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.durable.function import DurableFunctionEventSpec
 from forze.application.contracts.durable.workflow import DurableWorkflowSpec
+from forze.application.contracts.dynamic_read import DynamicReadSpec
 from forze.application.contracts.embeddings import EmbeddingsSpec
 from forze.application.contracts.graph import GraphModuleSpec
 from forze.application.contracts.http import HttpServiceSpec
@@ -100,6 +102,8 @@ from forze_mock.adapters import (
     MockDurableWorkflowQueryAdapter,
     MockDurableWorkflowScheduleCommandAdapter,
     MockDurableWorkflowScheduleQueryAdapter,
+    MockDynamicReadAdapter,
+    MockDynamicReadRegistry,
     MockFederatedSearchAdapter,
     MockGraphAdapter,
     MockGraphManagementAdapter,
@@ -144,6 +148,14 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 DocSpec = DocumentSpec[Any, Any, Any, Any]
+
+MOCK_DYNAMIC_READ_STATEMENT_TIMEOUT = timedelta(seconds=5)
+"""Statement timeout a mock-wired dynamic-read route clamps per-call options against.
+
+Pinned to :class:`~forze_postgres.execution.deps.configs.PostgresDynamicReadConfig`'s default
+rather than to something arbitrary: the mock has no statement to time out, so the only thing
+worth reproducing is *where the clamp lands*, and a differential comparing two different
+ceilings would pass for the wrong reason."""
 
 # ....................... #
 
@@ -391,6 +403,28 @@ class ConfigurableMockProcedure(_MockFactoryBase):
                 tenant_provider=_tenant_provider(context),
             ),
             registry=self.module.procedures or MockProcedureRegistry(),
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockDynamicRead(_MockFactoryBase):
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: DynamicReadSpec,
+    ) -> MockDynamicReadAdapter:
+        cfg = self._route(spec.name)
+        return MockDynamicReadAdapter(
+            state=self._state(context),
+            spec=spec,
+            registry=self.module.dynamic_reads or MockDynamicReadRegistry(),
+            # Same default as PostgresDynamicReadConfig, so a route wired against the mock
+            # clamps a per-call timeout at the same boundary the real adapter does — the
+            # clamping itself is what the differential compares.
+            statement_timeout=MOCK_DYNAMIC_READ_STATEMENT_TIMEOUT,
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
         )
