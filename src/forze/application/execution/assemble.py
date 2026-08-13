@@ -98,7 +98,8 @@ def build_runtime(
     semantics: validation still happens at freeze time, exactly as when
     composing the parts by hand.
 
-    Equivalent to::
+    Equivalent to the composition it saves you, with every argument read as a sequence
+    (a lone module or step being a sequence of one)::
 
         ExecutionRuntime(
             deps=DepsRegistry.from_modules(*deps_modules).with_deps(*deps).freeze(),

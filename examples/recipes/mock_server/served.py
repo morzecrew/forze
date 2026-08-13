@@ -55,8 +55,8 @@ seed_plan = SeedPlan(
 # --8<-- [start:declaration]
 mock_app = MockApp(
     build_app=build_app,
-    # Real modules would go in `deps_modules=`; the mock composes under them as a fallback,
-    # so "real Postgres for documents, mock for the rest" is this list and nothing else.
+    # Real modules would go in `modules=`; the mock composes under them as a fallback, so
+    # "real Postgres for documents, mock for the rest" is this list and nothing else.
     deps=(local_identity_deps(from_json_path(KEY_FILE), authn_route=AUTHN.name),),
     seed=seed_plan,
 )
