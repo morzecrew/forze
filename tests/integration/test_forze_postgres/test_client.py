@@ -407,33 +407,51 @@ async def test_a_busy_pool_is_throttled_not_reported_as_unreachable(
     worth having on the real thing: the whole classification rests on psycopg_pool leaving
     `connections_errors` alone while a pool is merely busy, and that is a claim about the
     library's bookkeeping rather than about our arithmetic.
+
+    Three waiters rather than one, because the counter is pool-wide. If a saturated pool
+    reached for connections behind a waiting caller, one attempt's failure would be read as
+    every concurrent caller's cause. The stronger claim is pinned below: a pool at `max_size`
+    cannot grow, so it makes no attempt at all and there is nothing to fail.
     """
 
     url = postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
     client = PostgresClient()
     await client.initialize(
         dsn=url,
-        # One connection, so the second caller has nothing to take.
+        # One connection, so no other caller has anything to take.
         config=PostgresConfig(min_size=1, max_size=1),
         acquire_timeout=timedelta(milliseconds=300),
     )
+    pool = client._PostgresClient__pool  # type: ignore[attr-defined]
 
     async def hold() -> None:
         async with client.transaction():
             await client.fetch_value("SELECT 1")
             await asyncio.sleep(1.0)
 
+    async def wait_in_vain() -> CoreException:
+        with pytest.raises(CoreException) as caught:
+            await client.fetch_value("SELECT 2")
+
+        return caught.value
+
     try:
         holder = asyncio.ensure_future(hold())
         await asyncio.sleep(0.1)  # the holder owns the only connection
 
-        with pytest.raises(CoreException) as caught:
-            await client.fetch_value("SELECT 2")
+        attempts_before = pool.get_stats()["connections_num"]
+        failures = await asyncio.gather(*(wait_in_vain() for _ in range(3)))
+        attempts_after = pool.get_stats()["connections_num"]
 
         await holder
 
     finally:
         await client.close()
 
-    assert caught.value.kind == ExceptionKind.THROTTLED
-    assert caught.value.code == POOL_ACQUIRE_TIMEOUT_CODE
+    assert [failure.kind for failure in failures] == [ExceptionKind.THROTTLED] * 3
+    assert [failure.code for failure in failures] == [POOL_ACQUIRE_TIMEOUT_CODE] * 3
+
+    # Non-vacuous: the pool did open its `min_size` connection, and then opened nothing more
+    # while three callers waited on it.
+    assert attempts_before > 0
+    assert attempts_after == attempts_before
