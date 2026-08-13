@@ -202,7 +202,11 @@ class TestHybridComposition:
         # The other half of "the real one answered": if the mock had served documents, its
         # store would hold the row — and the SQL assertion above would have passed anyway
         # only because nothing else wrote there.
-        await hybrid.post("/notes", json={"title": "postgres-only"})
+        #
+        # The status is asserted because the check below is "the mock store is empty", which
+        # an unaccepted write satisfies just as well as a correctly-routed one.
+        created = await hybrid.post("/notes", json={"title": "postgres-only"})
+        assert created.status_code in (200, 201), created.text
 
         state = await hybrid.get("/_mock/state/documents")
         documents = state.json()["documents"]
