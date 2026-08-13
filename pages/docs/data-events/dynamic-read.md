@@ -113,6 +113,35 @@ operator's choice of topology rather than a flag.
     What survives every such gadget is `SET TRANSACTION READ ONLY`, which is
     sticky for the transaction's lifetime: writes stay impossible throughout.
 
+### Provisioning the role
+
+`PostgresSchemaTenantProvisioner` creates it alongside the tenant's schema, so
+the two never drift apart:
+
+```python
+PostgresSchemaTenantProvisioner(
+    client=pg_client,
+    schema=lambda tid: f"project_{tid.hex}",
+    role=lambda tid: f"project_{tid.hex}_reader",   # NOLOGIN, USAGE + SELECT on that schema
+)
+```
+
+Onboarding issues `GRANT USAGE`, `GRANT SELECT ON ALL TABLES`, and
+`ALTER DEFAULT PRIVILEGES … GRANT SELECT ON TABLES` — the last one is what keeps
+the confinement true when a pipeline creates tomorrow's table. Two deployment
+facts the grants cannot cover on their own:
+
+- The **connection user must be a member of the role**, or `SET LOCAL ROLE` is
+  refused at read time with `dynamic_read_role_unavailable` (a `configuration`
+  error, because the statement is not at fault and was never sent). A
+  non-superuser that creates the role gets that membership implicitly on
+  Postgres 16+.
+- `ALTER DEFAULT PRIVILEGES` applies to relations created by **the role that ran
+  the provisioning**. If your pipeline writes as a different user, it issues its
+  own default privileges.
+
+Set `drop_on_deprovision=True` to tear the role down with the schema.
+
 ## Mapping it to Postgres
 
 One config maps a route to its container, its confinement, and its clock:
@@ -208,6 +237,7 @@ database, and none of it egresses as `internal`.
 | Syntax error, unknown relation/column/function | `validation` | `dynamic_read_statement_invalid` |
 | Multi-command string rejected by the protocol | `validation` | `dynamic_read_multi_statement` |
 | Refused by the route's confinement (role grants) | `precondition` | `dynamic_read_permission_denied` |
+| The route's role is missing, or the user is not a member | `configuration` | `dynamic_read_role_unavailable` |
 | The route's statement timeout fired | `timeout` | `dynamic_read_timeout` |
 | Result exceeded the effective row cap | `precondition` | `dynamic_read_row_cap_exceeded` |
 | Statement above `max_statement_bytes` | `validation` | `dynamic_read_statement_too_large` |

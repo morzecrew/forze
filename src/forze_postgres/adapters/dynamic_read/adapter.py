@@ -30,7 +30,7 @@ from contextlib import asynccontextmanager
 from typing import Any, cast, final
 
 import attrs
-from psycopg import AsyncConnection, capabilities, sql
+from psycopg import AsyncConnection, capabilities, errors, sql
 from psycopg.abc import QueryNoTemplate
 from psycopg.rows import dict_row
 
@@ -38,6 +38,7 @@ from forze.application.contracts.resolution import resolve_scoped_namespace
 from forze.application.integrations.dynamic_read import (
     DynamicReadAdapter,
     DynamicReadRequest,
+    role_unavailable,
 )
 from forze.base.primitives import JsonDict, OnceCell
 from forze_postgres.execution.deps.configs import PostgresDynamicReadConfig
@@ -159,7 +160,20 @@ class PostgresDynamicReadAdapter(DynamicReadAdapter):
             )
 
         if role is not None:
-            await conn.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
+            try:
+                await conn.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
+
+            except errors.Error as error:
+                # A role that does not exist (42704) or that the connection user is not a
+                # member of (42501) is a *wiring* fault, and it happens before the statement is
+                # even sent. Left to the generic mapping it would egress as
+                # ``dynamic_read_statement_invalid`` and blame the caller's statement for a
+                # deployment that never granted the membership.
+                raise role_unavailable(
+                    str(self.spec.name),
+                    role=role,
+                    detail=str(error.diag.message_primary or error),
+                ) from error
 
     # ....................... #
 

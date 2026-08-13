@@ -41,6 +41,14 @@ ROW_CAP_EXCEEDED_CODE = "dynamic_read_row_cap_exceeded"
 STATEMENT_TOO_LARGE_CODE = "dynamic_read_statement_too_large"
 """The statement is longer than the route's ``max_statement_bytes``."""
 
+ROLE_UNAVAILABLE_CODE = "dynamic_read_role_unavailable"
+"""The route's confinement role could not be entered.
+
+The one code here that is **not** the caller's fault: it fires before the statement is sent,
+because the role does not exist or the connection user is not a member of it. Both are
+deployment facts, so this egresses as ``configuration`` — blaming a widget's SQL for a missing
+``GRANT`` would send whoever reads it to debug the wrong system."""
+
 # ....................... #
 
 
@@ -114,6 +122,17 @@ def row_cap_exceeded(route: str, *, row_cap: int) -> CoreException:
     )
 
 
+def role_unavailable(route: str, *, role: str, detail: str | None = None) -> CoreException:
+    """The route's confinement role is missing, or unreachable from the connection user."""
+
+    return CoreException.configuration(
+        "Dynamic read could not enter the route's confinement role. The role must exist and "
+        "the connection user must be a member of it.",
+        code=ROLE_UNAVAILABLE_CODE,
+        details=_details(route, role=role, **({"detail": detail} if detail else {})),
+    )
+
+
 def statement_too_large(route: str, *, size: int, limit: int) -> CoreException:
     """The statement is longer than the route allows."""
 
@@ -132,6 +151,7 @@ DYNAMIC_READ_CODES: frozenset[str] = frozenset(
         STATEMENT_INVALID_CODE,
         MULTI_STATEMENT_CODE,
         PERMISSION_DENIED_CODE,
+        ROLE_UNAVAILABLE_CODE,
         TIMEOUT_CODE,
         ROW_CAP_EXCEEDED_CODE,
         STATEMENT_TOO_LARGE_CODE,
