@@ -99,14 +99,16 @@ The tier tells you how strong a route's container is. It doesn't tell you what k
 text runs inside it, and that's the other half of whether the route is safe. A route
 declares its `StatementOrigin`, and its tier has to reach that origin's floor:
 
-| Origin | Who wrote the statement | Floor | Where it shows up |
-|--------|-------------------------|-------|-------------------|
+| Origin | Who wrote the statement | Floor | The shape it describes |
+|--------|-------------------------|-------|------------------------|
 | `structured` (default) | the framework, from typed spec elements — the adapter places every predicate | `none` | every plane in the table above |
 | `compiled` | a trusted compiler, per request, declaring what it reads | `namespace` | catalog / semantic-layer SQL |
-| `raw` | an engine-specific string nothing can rewrite or verify | `dedicated` | `ctx.graph.raw` (`allow_raw_query=True`) |
+| `raw` | an engine-specific string nothing can rewrite or verify | `dedicated` | a whole-query hatch like `ctx.graph.raw` |
 
-Nothing you wire today declares an origin, because `structured` is the default and floors
-at `none`. Only a route that generates or passes through statement text declares one.
+**No shipped route declares an origin yet**, so today this changes nothing you wire —
+including the Neo4j raw hatch, which is still governed by `allow_raw_query` and your own
+`required_tenant_isolation`, not by the `raw` floor above. The floors bind a route the
+moment it declares one; until then the table tells you which tier a route *would* need.
 
 `compiled` floors at `namespace`, not `tagged`, and the reason is worth internalizing
 before you argue for the weaker tier: **verification raises confidence in a claim; it

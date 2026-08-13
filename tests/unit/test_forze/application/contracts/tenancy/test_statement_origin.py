@@ -33,7 +33,7 @@ from forze.application.contracts.tenancy.wiring import (
     validate_origin_isolation,
     validate_routed_client_tenancy_wiring,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 
@@ -128,6 +128,10 @@ def test_the_whole_origin_by_tier_grid(
             integration="X dynamic_read route",
         )
 
+    # The kind, not just the raise: `configuration` tells an operator to fix their
+    # wiring, `internal` tells them to file a bug. A floor refusal is the former, and the
+    # two are otherwise indistinguishable at the call site.
+    assert err.value.kind is ExceptionKind.CONFIGURATION
     assert err.value.code == ORIGIN_ISOLATION_FLOOR_CODE
     assert err.value.details["origin"] == origin
     assert err.value.details["derived_isolation"] == derived
@@ -387,6 +391,60 @@ def test_the_probe_executes_the_real_module_cleanly(reexecuted_wiring: Any) -> N
     reexecuted_wiring()
 
 
+def test_a_floor_for_no_rung_also_fails_at_import(
+    monkeypatch: pytest.MonkeyPatch,
+    reexecuted_wiring: Any,
+) -> None:
+    """The other direction: a floor left behind by a rung that was removed.
+
+    Harmless at runtime — nothing can declare it — which is exactly why it survives. What
+    it leaves is a table asserting a tier for an origin that no longer exists, and the
+    table is what the docs and the next reader reason from.
+    """
+
+    monkeypatch.setattr(typing, "get_args", lambda _tp: ("structured", "compiled"))
+
+    with pytest.raises(CoreException) as err:
+        reexecuted_wiring()
+
+    assert err.value.kind is ExceptionKind.INTERNAL
+    assert err.value.code == "origin_floors_incomplete"
+    assert err.value.details["stale"] == ["raw"]
+    assert err.value.details["missing"] == []
+
+
+def test_an_unrecognised_origin_is_refused_not_a_key_error() -> None:
+    """A wiring callable can return anything; nothing type-checks it at runtime.
+
+    ``TenancyRouteGroup.origin`` is a lambda in someone's deps module. A typo there used to
+    surface as ``KeyError: 'Compiled'`` raised from inside tenancy validation — an error
+    naming neither the route nor the fix, for a value that decides an isolation floor.
+    """
+
+    group: TenancyRouteGroup[dict[str, Any]] = TenancyRouteGroup(
+        kind="dynamic_read",
+        configs={"widgets": {}},
+        tenant_aware=lambda _config: True,
+        origin=lambda _config: "Compiled",  # type: ignore[arg-type,return-value]
+    )
+
+    with pytest.raises(CoreException) as err:
+        validate_module_tenancy(
+            integration="X",
+            client_is_routed=False,
+            groups=[group],
+            required_isolation=None,
+            max_supported_isolation="dedicated",
+            validation_failed_code="x_tenancy_failed",
+        )
+
+    assert err.value.kind is ExceptionKind.CONFIGURATION
+    assert err.value.code == "statement_origin_unknown"
+    assert "Compiled" in str(err.value)
+    assert err.value.details["origin"] == "'Compiled'"
+    assert err.value.details["known"] == sorted(FLOORS)
+
+
 def test_a_rung_without_a_floor_fails_at_import(
     monkeypatch: pytest.MonkeyPatch,
     reexecuted_wiring: Any,
@@ -409,5 +467,7 @@ def test_a_rung_without_a_floor_fails_at_import(
     with pytest.raises(CoreException) as err:
         reexecuted_wiring()
 
+    assert err.value.kind is ExceptionKind.INTERNAL
     assert err.value.code == "origin_floors_incomplete"
+    assert err.value.details["missing"] == ["ephemeral"]
     assert "ephemeral" in str(err.value)

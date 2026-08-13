@@ -105,8 +105,10 @@ paths"). That sentence recognises two kinds; this names the three that exist.
 - ``compiled`` — the text is generated per request by a trusted compiler, and the adapter
   can check a declared read set against it before executing. Stronger than ``raw`` because
   the claim is checkable; weaker than ``structured`` because the text is still not ours.
-- ``raw`` — an engine-specific string the framework can neither rewrite nor verify
-  (``GraphRawQueryPort``, ``allow_raw_query=True``).
+- ``raw`` — an engine-specific string the framework can neither rewrite nor verify, the
+  shape of a whole-query hatch like ``GraphRawQueryPort``. Naming the shape is not the
+  same as governing it: no shipped route declares an origin, so that hatch is still
+  governed by ``allow_raw_query`` and the deployment's own declared floor.
 
 Distinct from author *trust*, which asks how much we trust whoever produced the text and
 is spelled ``provenance`` on the routes that carry it. The two compose: an untrusted
@@ -141,28 +143,41 @@ security-relevant component rather than a readability one.
 
 
 def _check_origin_floors(floors: Mapping[StatementOrigin, TenantIsolationMode]) -> None:
-    """Refuse an origin ladder with a rung that has no floor.
+    """Refuse an origin ladder and a floor table that name different rungs.
 
     Not decoration: a ``dict`` literal missing a key is invisible to a type checker even
-    when the key type is a ``Literal``, so a fourth rung added without a floor would pass
-    every gate in the repository and first surface as a ``KeyError`` at wiring time — a
-    tenancy floor that fails open, which is the one failure mode this module exists to
-    prevent. The key set is derived from the literal so the two cannot drift.
+    when the key type is a ``Literal`` — verified against both mypy and pyright — so a
+    fourth rung added without a floor would pass every gate in the repository and first
+    surface as a ``KeyError`` at wiring time. That is a tenancy floor failing open, which
+    is the one outcome this module exists to prevent. The rung set is derived from the
+    literal so the two cannot drift.
+
+    Both directions are checked. A *missing* floor fails open, which is the dangerous
+    half; a *stale* floor for a rung the literal no longer has is harmless at runtime but
+    is a table that documents a tier nothing can reach, and a reader who trusts it is
+    reasoning about a ladder that does not exist.
 
     Raises rather than asserts: ``assert`` is stripped under ``-O``, which would remove
     the guard from exactly the deployments that run optimized.
     """
 
-    missing = frozenset(get_args(StatementOrigin)) - floors.keys()
+    rungs = frozenset(get_args(StatementOrigin))
 
-    if missing:
-        raise exc.internal(
-            f"StatementOrigin and the origin floor table disagree: {sorted(missing)} has "
-            "no isolation floor. Every origin needs one — a missing entry would fail open "
-            "as a KeyError at wiring time instead of refusing the route.",
-            code="origin_floors_incomplete",
-            details={"missing": sorted(missing)},
-        )
+    if rungs == floors.keys():
+        return
+
+    missing = sorted(rungs - floors.keys())
+    stale = sorted(floors.keys() - rungs)
+
+    raise exc.internal(
+        "StatementOrigin and the origin floor table disagree — "
+        f"origins with no floor: {missing}; floors for no origin: {stale}. Every origin "
+        "needs exactly one floor: a missing entry fails open as a KeyError at wiring time "
+        "instead of refusing the route, and a stale one documents a rung nothing can "
+        "declare.",
+        code="origin_floors_incomplete",
+        details={"missing": missing, "stale": stale},
+    )
 
 
 _check_origin_floors(_ORIGIN_FLOORS)
@@ -171,9 +186,27 @@ _check_origin_floors(_ORIGIN_FLOORS)
 
 
 def required_isolation_for_origin(origin: StatementOrigin) -> TenantIsolationMode:
-    """Return the weakest isolation tier at which *origin* is safe."""
+    """Return the weakest isolation tier at which *origin* is safe.
 
-    return _ORIGIN_FLOORS[origin]
+    Refuses an unrecognised origin rather than letting the lookup fail. The import guard
+    keeps the *table* honest, but the origin itself arrives from a wiring-supplied callable
+    (``TenancyRouteGroup.origin``) that nothing checks at runtime, so a typo — ``"Compiled"``,
+    a stray space — reaches here as a value no floor covers. A bare ``KeyError`` out of a
+    tenancy validator names neither the route nor the fix.
+    """
+
+    floor = _ORIGIN_FLOORS.get(origin)
+
+    if floor is None:
+        raise exc.configuration(
+            f"Unknown statement origin {origin!r}: expected one of "
+            f"{sorted(_ORIGIN_FLOORS)}. An origin decides a route's tenant-isolation "
+            "floor, so an unrecognised one cannot be defaulted.",
+            code="statement_origin_unknown",
+            details={"origin": repr(origin), "known": sorted(_ORIGIN_FLOORS)},
+        )
+
+    return floor
 
 
 # ....................... #
