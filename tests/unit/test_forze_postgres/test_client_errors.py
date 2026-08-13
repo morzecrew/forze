@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import psycopg_pool as pool_errors
 import pytest
 from psycopg import errors
 
-from forze.base.exceptions import ExceptionKind, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.exceptions.egress import exception_egress_policy, http_status_for_kind
 from forze_postgres.kernel.client import errors as client_errors
+from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 
 # ----------------------- #
 
@@ -204,8 +207,8 @@ class TestAssembledChain:
         assert client_errors.exc_interceptor.mapper(original, site="op") is original
 
 
-class TestPoolExhaustion:
-    """A connection this process could not get out of its own pool.
+class TestPoolAcquisitionTimeout:
+    """A connection this process could not get out of its own pool in time.
 
     `psycopg_pool` raises these as `psycopg.OperationalError` subclasses carrying no
     SQLSTATE, which put them one branch away from the connectivity fallback — and that
@@ -221,12 +224,12 @@ class TestPoolExhaustion:
         ],
         ids=["timeout", "queue-full"],
     )
-    def test_pool_exhaustion_is_throttled_not_a_conflict(self, error: Exception) -> None:
+    def test_a_failed_acquisition_is_throttled_not_a_conflict(self, error: Exception) -> None:
         out = client_errors.exc_interceptor.mapper(error, site="op")
 
         assert out is not None
         assert out.kind == ExceptionKind.THROTTLED
-        assert out.code == client_errors.POOL_EXHAUSTED_CODE
+        assert out.code == client_errors.POOL_ACQUIRE_TIMEOUT_CODE
         assert http_status_for_kind(out.kind) == 429
 
     def test_it_stays_retryable(self) -> None:
@@ -254,3 +257,31 @@ class TestPoolExhaustion:
 
         assert out is not None
         assert out.kind == ExceptionKind.CONCURRENCY
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_server_arrives_as_the_same_timeout(self) -> None:
+        """Nothing listening: the checkout still ends in `PoolTimeout`, not a connect error.
+
+        Pinned because it is the reason the code is named for the timeout rather than for a
+        full pool — the two causes are indistinguishable at this seam. A change that learns
+        to tell them apart should classify this one as infrastructure and rewrite this test;
+        until then it records what a caller actually receives when the database is down.
+        """
+
+        client = PostgresClient()
+        await client.initialize(
+            # Port 1 on loopback: refused immediately and reliably, no container needed.
+            dsn="postgresql://u:p@127.0.0.1:1/none",
+            config=PostgresConfig(min_size=1, max_size=1),
+            acquire_timeout=timedelta(milliseconds=200),
+        )
+
+        try:
+            with pytest.raises(CoreException) as caught:
+                await client.fetch_value("SELECT 1")
+
+        finally:
+            await client.close()
+
+        assert caught.value.kind == ExceptionKind.THROTTLED
+        assert caught.value.code == client_errors.POOL_ACQUIRE_TIMEOUT_CODE
