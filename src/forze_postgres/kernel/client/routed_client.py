@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    Callable,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import (
@@ -275,6 +282,32 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
     ) -> None:
         async with self.client_scope() as inner:
             await inner.execute_many(query, params)
+
+    # ....................... #
+
+    async def copy_rows(
+        self,
+        target: tuple[str, str],
+        columns: Sequence[str],
+        rows: Iterable[Sequence[Any]] | AsyncIterable[Sequence[Any]],
+        *,
+        binary: bool = False,
+        column_types: Sequence[str] | None = None,
+    ) -> int:
+        """Bulk-load into the active tenant's database — see :meth:`PostgresClient.copy_rows`.
+
+        The scope is held for the whole load, so a streaming ``rows`` iterator is consumed
+        against the tenant bound when the copy started and cannot drift to another.
+        """
+
+        async with self.client_scope() as inner:
+            return await inner.copy_rows(
+                target,
+                columns,
+                rows,
+                binary=binary,
+                column_types=column_types,
+            )
 
     # ....................... #
 

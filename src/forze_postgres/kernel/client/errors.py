@@ -23,6 +23,14 @@ FK_pattern = re.compile(
     r'Key \((?P<column>[^)]+)\)=\((?P<value>[0-9a-fA-F-]+)\) is not present in table "(?P<table>[^"]+)"'
 )
 
+COPY_CONTEXT_pattern = re.compile(
+    r"COPY\s+(?P<table>[^,]+),\s+line\s+(?P<line>\d+)(?:,\s+column\s+(?P<column>[^:]+?))?(?::|$)",
+)
+"""Postgres reports data errors during ``COPY`` as ``CONTEXT: COPY t, line N, column c: …``.
+
+At 10⁶ rows that line number is the difference between a debugging session and a ``sed -n``,
+so it is lifted out of the driver's free-text diagnostic and onto the error's details."""
+
 # ....................... #
 
 
@@ -251,6 +259,57 @@ def _psycopg_eh(  # skipcq: PY-R1000
 
         case _:
             return None
+
+
+# ....................... #
+
+
+def copy_data_error(error: BaseException, *, binary: bool) -> CoreException | None:
+    """Map a ``COPY`` data error to the copy taxonomy, or ``None`` to defer.
+
+    Deferring is the important half. A ``COPY`` can fail for reasons that have nothing to
+    do with the rows — a statement timeout, a serialization failure, a missing table — and
+    those already have mappings that callers handle. Only an error the server attributes to
+    a specific input line, or a binary-format rejection, is this function's business;
+    everything else is left for :func:`_psycopg_eh` and keeps the mapping it always had.
+    """
+
+    if not isinstance(error, errors.DataError | errors.BadCopyFileFormat):
+        return None
+
+    failure: errors.Error = error
+    context = str(failure.diag.context or "")
+    match = COPY_CONTEXT_pattern.search(context)
+
+    details: dict[str, Any] = {"detail": str(failure.diag.message_primary or failure)}
+
+    if match:
+        details["line"] = int(match.group("line"))
+
+        if match.group("column"):
+            details["column"] = match.group("column").strip()
+
+    # A binary-format rejection is the dumper and the column disagreeing, not a bad value:
+    # the caller declared `column_types` that the table does not accept, so the fix is the
+    # declaration rather than the data. Distinguishable only in binary mode — in text mode
+    # the server casts, and a rejection there really is the row's fault.
+    if binary and isinstance(error, errors.BadCopyFileFormat):
+        return CoreException.validation(
+            "COPY rejected the binary stream: declared column types do not match the table.",
+            code="copy_type_mismatch",
+            details=details,
+        )
+
+    if not match and not isinstance(error, errors.BadCopyFileFormat):
+        # A data error with no COPY context did not come from the stream — leave it alone
+        # rather than relabel someone else's failure as a bad row.
+        return None
+
+    return CoreException.validation(
+        "COPY rejected an input row.",
+        code="copy_row_invalid",
+        details=details,
+    )
 
 
 # ....................... #

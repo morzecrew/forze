@@ -15,7 +15,7 @@ require_psycopg()
 # ....................... #
 
 import asyncio
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Iterable, Sequence
 from contextlib import (
     AbstractAsyncContextManager,
     AsyncExitStack,
@@ -35,7 +35,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, uuid4
 
 from .._logger import logger
-from .errors import exc_interceptor
+from .errors import copy_data_error, exc_interceptor
 from .helpers import isolation_level_enum
 from .port import PostgresClientPort
 from .types import RowFactory
@@ -920,6 +920,109 @@ class PostgresClient(PostgresClientPort):
 
         async with self._statement_conn() as conn, conn.cursor() as cur:
             await cur.executemany(query, params)
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("postgres.copy_rows")  # type: ignore[untyped-decorator]
+    async def copy_rows(
+        self,
+        target: tuple[str, str],
+        columns: Sequence[str],
+        rows: Iterable[Sequence[Any]] | AsyncIterable[Sequence[Any]],
+        *,
+        binary: bool = False,
+        column_types: Sequence[str] | None = None,
+    ) -> int:
+        """Bulk-loads *rows* into ``(schema, table)`` through ``COPY … FROM STDIN``.
+
+        ``COPY`` has no bind-parameter ceiling, which is what makes it the engine's bulk
+        path: a multi-VALUES ``INSERT`` tops out at 65 535 parameters, so ~6 columns puts
+        10k rows near the limit, while this is bounded only by time.
+
+        **Identifiers are composed, never formatted.** ``target`` is a ``(schema, table)``
+        tuple rather than a string precisely so it cannot arrive pre-joined from an
+        f-string; both it and ``columns`` go through :class:`psycopg.sql.Identifier`, the
+        same discipline the tenant provisioner uses for ``CREATE SCHEMA``.
+
+        **Memory is bounded by construction.** ``rows`` may be an async iterator and is
+        driven row by row, so a pipeline can stream decode → transform → copy without ever
+        holding the dataset.
+
+        **Text format by default, binary opt-in.** Text lets psycopg adapt and the server
+        cast, which is forgiving about ``int4``-vs-``int8``-grade mismatches — the right
+        default for runtime-created tables whose exact column types the caller may not own.
+        ``binary=True`` with ``column_types`` is the fast path for callers who control both
+        sides, and a mismatch there fails loudly rather than coercing.
+
+        **All-or-nothing, and that is deliberate.** One bad row aborts the whole ``COPY``;
+        there is no skip-bad-rows mode and there will not be one, because silently dropping
+        rows is the failure this framework exists to prevent. Data errors surface as
+        ``copy_row_invalid`` carrying the server's line (and column) so a rejected row in a
+        million is locatable.
+
+        **Transactions and tenure.** Inside :meth:`transaction` the copy joins the caller's
+        transaction and a rollback removes every row; standalone it follows the client's
+        autocommit convention. It holds its connection for the full load, so under the
+        single-connection-in-flight rule a long copy serializes with its neighbours exactly
+        like any other long statement.
+
+        :param target: ``(schema, table)`` to load into.
+        :param columns: Target columns, in the order each row supplies them.
+        :param rows: Row tuples, sync or async iterable.
+        :param binary: Use ``FORMAT BINARY`` instead of text.
+        :param column_types: Postgres type names for binary mode, one per column.
+        :returns: The server-reported row count.
+        """
+
+        schema, table = target
+        names = list(columns)
+
+        if not names:
+            # `COPY t () FROM STDIN` is a syntax error, and an empty column list is far
+            # more likely a caller that built the list dynamically and got nothing back.
+            raise exc.configuration("copy_rows requires at least one column.")
+
+        if column_types is not None:
+            if not binary:
+                # Silently ignoring it would leave the caller believing they pinned types.
+                raise exc.configuration(
+                    "copy_rows column_types applies to binary mode only; pass binary=True.",
+                )
+
+            if len(column_types) != len(names):
+                raise exc.configuration(
+                    f"copy_rows got {len(column_types)} column_types for {len(names)} columns.",
+                )
+
+        statement = sql.SQL("COPY {target} ({cols}) FROM STDIN{fmt}").format(
+            target=sql.SQL(".").join([sql.Identifier(schema), sql.Identifier(table)]),
+            cols=sql.SQL(", ").join(sql.Identifier(name) for name in names),
+            fmt=sql.SQL(" (FORMAT BINARY)") if binary else sql.SQL(""),
+        )
+
+        async with self._statement_conn() as conn, conn.cursor() as cur:
+            try:
+                async with cur.copy(statement) as copy:
+                    if column_types is not None:
+                        copy.set_types(list(column_types))
+
+                    if isinstance(rows, AsyncIterable):
+                        async for row in rows:
+                            await copy.write_row(row)
+
+                    else:
+                        for row in rows:
+                            await copy.write_row(row)
+
+            except Exception as error:
+                mapped = copy_data_error(error, binary=binary)
+
+                if mapped is not None:
+                    raise mapped from error
+
+                raise
+
+            return cur.rowcount
 
     # ....................... #
 
