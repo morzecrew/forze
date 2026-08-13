@@ -119,6 +119,53 @@ async def test_a_handler_returning_non_rows_is_refused(returned: Any) -> None:
     assert ei.value.kind == ExceptionKind.INTERNAL
 
 
+async def test_a_route_wired_on_the_module_resolves_and_answers() -> None:
+    """The user-facing path, end to end: wiring → ``ctx.dynamic_read.query`` → rows.
+
+    Every other test here builds the adapter directly, which proves the adapter and nothing
+    about the wiring that is supposed to produce it. A registry the module never threaded
+    through would leave every route unprogrammed in production while this file stayed green.
+    """
+
+    from forze.application.execution import DepsRegistry, ExecutionContext
+    from forze_mock import MockDepsModule
+
+    def handler(request: DynamicReadRequest, state: MockState) -> Sequence[JsonDict]:
+        _ = state
+        return [{"echo": request.statement}]
+
+    module = MockDepsModule(dynamic_reads=MockDynamicReadRegistry().on(ROUTE, handler))
+    ctx = ExecutionContext(deps=DepsRegistry.from_modules(module).freeze().resolve())
+
+    spec = DynamicReadSpec(name=ROUTE)
+    rows = await ctx.dynamic_read.query(spec).run("SELECT 1")
+
+    assert rows == [{"echo": "SELECT 1"}]
+
+
+async def test_a_query_operation_may_resolve_the_port() -> None:
+    """Read-plane, deliberately: the whole point is dashboard reads.
+
+    This inverts the procedures plane's command-only stance, so it is worth a test that would
+    fail if the accessor were ever moved onto the write-guarded resolution path.
+    """
+
+    from forze.application.execution import DepsRegistry, ExecutionContext
+    from forze_mock import MockDepsModule
+
+    module = MockDepsModule(
+        dynamic_reads=MockDynamicReadRegistry().on(ROUTE, lambda request, state: []),
+    )
+    ctx = ExecutionContext(deps=DepsRegistry.from_modules(module).freeze().resolve())
+    token = ctx.inv_ctx.set_read_only()
+
+    try:
+        assert await ctx.dynamic_read.query(DynamicReadSpec(name=ROUTE)).run("SELECT 1") == []
+
+    finally:
+        ctx.inv_ctx.reset_read_only(token)
+
+
 async def test_the_handler_sees_the_governed_request() -> None:
     """Everything the shell resolved is visible, so a scenario can assert on it."""
 

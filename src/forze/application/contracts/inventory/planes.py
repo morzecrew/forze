@@ -139,11 +139,13 @@ PLANE_DEP_KEYS: Final[dict[SpecPlane, frozenset[str]]] = {
 """Plane → every dependency key routed by a spec of that plane's name.
 
 **Only these keys are reconciled.** Everything else a runtime binds is deliberately outside
-the inventory, for one of two reasons: it is a plain singleton with no route to check (crypto,
-secrets, saga, hlc, the durable step/run stores, the resilience executor), or its route is not
-a spec name at all — ``transaction_manager`` is routed by *engine* labels an app invents, and
-``authn``/``authz`` by policy-spec names the app chooses. Reconciling those would demand an
-inventory entry for a thing that has no state and no spec to catalogue."""
+the inventory, for one of three reasons: it is a plain singleton with no route to check
+(crypto, secrets, saga, hlc, the durable step/run stores, the resilience executor); its route
+is not a spec name at all — ``transaction_manager`` is routed by *engine* labels an app
+invents, and ``authn``/``authz`` by policy-spec names the app chooses; or it is routed by a
+spec name but **owns no rows** — ``dynamic_read_query`` is a read surface over relations other
+planes already catalogue, so an entry for it would claim state it does not hold. Reconciling
+any of them would demand an inventory entry for a thing with nothing to export."""
 
 
 # ....................... #

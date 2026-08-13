@@ -1,9 +1,12 @@
 """The dynamic-read error taxonomy, shared by every adapter of the plane.
 
-Every code here is **caller-caused** — a statement the caller compiled did something the
-engine refused, or asked for more than the route allows. None of them is ``internal``: on this
-plane the statement *is* the caller's input, so a syntax error or a missing relation is the
-exact analogue of a malformed request body, not of a broken framework.
+Every code here is **caller-caused, with one exception** — a statement the caller compiled did
+something the engine refused, or asked for more than the route allows. None of them is
+``internal``: on this plane the statement *is* the caller's input, so a syntax error or a
+missing relation is the exact analogue of a malformed request body, not of a broken framework.
+
+The exception is :data:`ROLE_UNAVAILABLE_CODE`, which is ``configuration``: it fires before the
+statement is sent, because the route's confinement was never deployed.
 
 The factories live in one module so the mock and a real engine cannot drift into raising
 different kinds for the same refusal — the differential compares codes, and a taxonomy that

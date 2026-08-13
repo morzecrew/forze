@@ -59,9 +59,12 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 
     Two deployment facts the grants cannot cover on their own:
 
-    - **The connection user must be a member of the role**, or ``SET LOCAL ROLE`` is refused at
-      read time. A non-superuser that creates the role gets that membership implicitly
-      (Postgres 16+); a superuser needs none.
+    - **The connection user must be able to ``SET ROLE`` into it**, and creating the role is
+      not enough to get that: since Postgres 16 the creator is granted ``ADMIN OPTION`` but
+      ``SET FALSE``. A non-superuser needs an explicit ``GRANT <role> TO <user> WITH SET TRUE``
+      (or ``createrole_self_grant = 'set, inherit'`` set before the role is created); a
+      superuser needs neither. Without it every read on the route raises
+      ``dynamic_read_role_unavailable``.
     - ``ALTER DEFAULT PRIVILEGES`` applies to relations created by **the role that ran this
       provisioning**. A pipeline writing as a different user must issue its own default
       privileges, or grant ``SELECT`` as it creates.
@@ -94,7 +97,15 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
             # fails with "cannot be dropped because some objects depend on it", and after a
             # CASCADE the default-privileges entry survives the tables it referred to.
             role = await resolve_value(self.role, tenant.tenant_id)
-            await self._revoke_read_only(schema=name, role=role)
+
+            # Both existence probes, because `REVOKE` has no `IF EXISTS` and offboarding is the
+            # operation most likely to be re-run: a half-finished teardown, a retried cleanup
+            # job, an operator repeating a command. Every other statement in this class is
+            # `IF EXISTS`/`IF NOT EXISTS`, and a revoke that raised on a schema already gone
+            # would leave that half-finished teardown with no way to complete.
+            if await self._schema_exists(name) and await self._role_exists(role):
+                await self._revoke_read_only(schema=name, role=role)
+
             await self.client.execute(
                 cast(
                     QueryNoTemplate,
@@ -111,6 +122,26 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 
     # ....................... #
 
+    async def _role_exists(self, role: str) -> bool:
+        return (
+            await self.client.fetch_value(
+                "SELECT 1 FROM pg_roles WHERE rolname = %(role)s",
+                {"role": role},
+            )
+        ) is not None
+
+    # ....................... #
+
+    async def _schema_exists(self, schema: str) -> bool:
+        return (
+            await self.client.fetch_value(
+                "SELECT 1 FROM pg_namespace WHERE nspname = %(schema)s",
+                {"schema": schema},
+            )
+        ) is not None
+
+    # ....................... #
+
     async def _ensure_role(self, role: str) -> None:
         """Create the role if it is missing, tolerating a concurrent creator.
 
@@ -120,12 +151,7 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
         failing an onboarding that has nothing wrong with it.
         """
 
-        existing = await self.client.fetch_value(
-            "SELECT 1 FROM pg_roles WHERE rolname = %(role)s",
-            {"role": role},
-        )
-
-        if existing is not None:
+        if await self._role_exists(role):
             return
 
         try:

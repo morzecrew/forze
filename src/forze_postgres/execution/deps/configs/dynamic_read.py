@@ -66,8 +66,11 @@ class PostgresDynamicReadConfig(TenantAwareIntegrationConfig):
     transaction, which is sticky for the transaction's lifetime. An author who must withstand a
     hostile statement uses a routed (dedicated) client instead.
 
-    The connection user must be a member of the role; a missing role or membership surfaces as
-    a configuration error rather than a raw ``42704``/``42501``."""
+    The connection user must be able to ``SET ROLE`` into it — which, since Postgres 16,
+    *creating* the role does not grant on its own (the creator gets ``ADMIN OPTION`` but
+    ``SET FALSE``). A missing role or missing membership surfaces as
+    ``dynamic_read_role_unavailable`` (configuration) rather than a raw ``42704``/``42501``;
+    see :class:`~forze_postgres.adapters.tenant_provisioner.PostgresSchemaTenantProvisioner`."""
 
     statement_timeout: timedelta = attrs.field(default=timedelta(seconds=5))
     """``SET LOCAL statement_timeout`` for every statement on this route. Always on; a per-call

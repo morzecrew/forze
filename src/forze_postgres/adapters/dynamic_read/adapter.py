@@ -8,7 +8,7 @@ Postgres can do, and each line of it is a refusal the *engine* makes:
 
     BEGIN READ ONLY                       -- sticky for the transaction; survives role games
     SET LOCAL statement_timeout = …       -- always on
-    SET LOCAL search_path = …             -- when query_schema is configured
+    SET LOCAL search_path TO …            -- when query_schema is configured
     SET LOCAL ROLE …                      -- when role is configured
     <statement>  via the extended protocol -- one command, server-enforced
 
@@ -26,13 +26,13 @@ require_psycopg()
 # ....................... #
 
 from collections.abc import AsyncGenerator, Sequence
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from typing import Any, cast, final
 
 import attrs
 from psycopg import AsyncConnection, capabilities, errors, sql
 from psycopg.abc import QueryNoTemplate
-from psycopg.rows import dict_row
+from psycopg.rows import DictRow, dict_row
 
 from forze.application.contracts.resolution import resolve_scoped_namespace
 from forze.application.integrations.dynamic_read import (
@@ -40,6 +40,7 @@ from forze.application.integrations.dynamic_read import (
     DynamicReadRequest,
     role_unavailable,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, OnceCell
 from forze_postgres.execution.deps.configs import PostgresDynamicReadConfig
 from forze_postgres.kernel.client import (
@@ -47,9 +48,19 @@ from forze_postgres.kernel.client import (
     PostgresTransactionOptions,
 )
 
-from .errors import dynamic_read_error
+from .errors import INSUFFICIENT_PRIVILEGE, INVALID_PARAMETER_VALUE, dynamic_read_error
 
 # ----------------------- #
+
+_ROLE_ENTRY_FAILURES = frozenset({INVALID_PARAMETER_VALUE, INSUFFICIENT_PRIVILEGE})
+"""SQLSTATEs from ``SET LOCAL ROLE`` that mean the route's confinement is not deployed.
+
+Both measured against a live server rather than reasoned from the class names, which is how the
+first of them was found: a role that does not exist reports ``22023`` (*invalid parameter
+value*) — the GUC assign hook rejecting the name — and **not** the ``42704`` *undefined object*
+its wording suggests. A role the connection user holds no ``SET``-able membership in reports
+``42501``. Both are things an operator fixes with a ``GRANT``, not things a statement author
+can influence."""
 
 _MAX_STREAM_CHUNK = 1_000
 """Rows pulled per round trip while streaming, when the libpq in use supports chunked mode.
@@ -67,6 +78,8 @@ class PostgresDynamicReadAdapter(DynamicReadAdapter):
 
     client: PostgresClientPort
     config: PostgresDynamicReadConfig
+    """The route's wiring. Its ``statement_timeout`` must match the shell's — see
+    :meth:`__attrs_post_init__`."""
 
     _query_schema_cell: OnceCell[str] = attrs.field(
         factory=OnceCell,
@@ -80,6 +93,29 @@ class PostgresDynamicReadAdapter(DynamicReadAdapter):
         eq=False,
         repr=False,
     )
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        """Refuse a route whose two copies of the timeout disagree.
+
+        The ceiling arrives twice: on the config, where the author wrote it, and on the shared
+        shell, which is the copy actually enforced. The factory forwards one to the other, so
+        in production they cannot differ — but nothing else stopped a caller constructing the
+        pair by hand and getting a route that clamps per-call options against one value while
+        the wiring documents another. Cheaper to refuse than to explain later.
+        """
+
+        if self.statement_timeout != self.config.statement_timeout:
+            raise exc.internal(
+                "Dynamic-read adapter built with a statement_timeout that disagrees with its "
+                "config; pass config.statement_timeout.",
+                details={
+                    "route": str(self.spec.name),
+                    "adapter": str(self.statement_timeout),
+                    "config": str(self.config.statement_timeout),
+                },
+            )
 
     # ....................... #
 
@@ -109,10 +145,11 @@ class PostgresDynamicReadAdapter(DynamicReadAdapter):
     async def _translated(self) -> AsyncGenerator[None]:
         """Re-raise a psycopg failure as this plane's taxonomy.
 
-        Wrapping the whole scope rather than the fetch alone: a role that does not exist and a
-        schema that cannot be entered both fail on the ``SET LOCAL`` line, and a caller reading
-        ``dynamic_read_permission_denied`` is better served than one reading a raw ``42501``
-        from a statement it never got to run.
+        Wrapping the whole scope rather than the fetch alone, because failures before the
+        statement runs deserve this plane's vocabulary too — a ``search_path`` naming a schema
+        that is not there is still a dynamic-read failure, not a raw ``3F000`` from the driver.
+        Entering the confinement role is the one thing handled ahead of this rather than
+        through it: it has its own code, since what went wrong there is the deployment.
         """
 
         try:
@@ -164,11 +201,19 @@ class PostgresDynamicReadAdapter(DynamicReadAdapter):
                 await conn.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
 
             except errors.Error as error:
-                # A role that does not exist (42704) or that the connection user is not a
-                # member of (42501) is a *wiring* fault, and it happens before the statement is
-                # even sent. Left to the generic mapping it would egress as
-                # ``dynamic_read_statement_invalid`` and blame the caller's statement for a
-                # deployment that never granted the membership.
+                # Only the two SQLSTATEs that mean what this error says: the role is not there
+                # (22023), or the connection user cannot enter it (42501). Both are *wiring*
+                # faults, and both happen before the statement is even sent — left to the
+                # generic mapping they would egress as ``dynamic_read_statement_invalid`` and
+                # blame the caller's statement for a deployment that never granted membership.
+                #
+                # Anything else raised here is not about the role at all (a connection dropped
+                # mid-``SET``, a server shutting down) and keeps its own mapping: reporting a
+                # network failure as a missing ``GRANT`` would send an operator to the wrong
+                # system, and it would strip the retryability the real classification carries.
+                if error.sqlstate not in _ROLE_ENTRY_FAILURES:
+                    raise
+
                 raise role_unavailable(
                     str(self.spec.name),
                     role=role,
@@ -195,24 +240,39 @@ class PostgresDynamicReadAdapter(DynamicReadAdapter):
         ``DECLARE … CURSOR FOR``, where a write is rejected as a *syntax* error before the
         read-only transaction ever gets to refuse it — turning the plane's clearest guarantee
         into a confusing one.
+
+        ``aclosing`` is not decoration. Stopping early leaves ``stream`` suspended **holding
+        the connection's lock**, with the server still sending rows; only the generator's own
+        teardown cancels the statement, drains what is in flight, and releases that lock, and
+        closing the cursor does not do it. Left to the garbage collector — which is what
+        happens without this — the teardown is scheduled whenever the last reference to the
+        generator drops, and a traceback holding the frame is enough to delay it past the point
+        where this connection goes back to the pool. The next borrower then waits on a lock
+        nobody holds an intention to release. Measured, not theorised: without ``aclosing`` the
+        next statement on the connection never returns.
         """
 
         rows: list[JsonDict] = []
 
         async with conn.cursor(row_factory=dict_row) as cur:
-            stream = cur.stream(
-                cast(QueryNoTemplate, request.statement),
-                request.params,
-                size=_stream_chunk_size(request.row_probe),
+            # psycopg annotates ``stream`` as the wider ``AsyncIterator``; it is defined with
+            # ``yield``, so what comes back is always an async generator — and the narrower
+            # type is the one with ``aclose``, which is the whole point here.
+            stream = cast(
+                AsyncGenerator[DictRow],
+                cur.stream(
+                    cast(QueryNoTemplate, request.statement),
+                    request.params,
+                    size=_stream_chunk_size(request.row_probe),
+                ),
             )
 
-            async for row in stream:
-                rows.append(dict(row))
+            async with aclosing(stream):
+                async for row in stream:
+                    rows.append(dict(row))
 
-                if len(rows) >= request.row_probe:
-                    # Exiting the generator cancels the running statement and drains what the
-                    # server already sent, so the connection goes back to the pool clean.
-                    break
+                    if len(rows) >= request.row_probe:
+                        break
 
         return rows
 

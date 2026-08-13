@@ -36,10 +36,17 @@ class RecordingAdapter(DynamicReadAdapter):
 
     rows: int = 0
     seen: list[DynamicReadRequest] = attrs.field(factory=list)
+    rows_payload: JsonDict | None = None
+    """When set, every scripted row is this mapping instead of ``{"n": i}``."""
 
     async def _fetch_rows(self, request: DynamicReadRequest) -> Sequence[JsonDict]:
         self.seen.append(request)
-        return [{"n": index} for index in range(min(self.rows, request.row_probe))]
+        count = min(self.rows, request.row_probe)
+
+        if self.rows_payload is not None:
+            return [dict(self.rows_payload) for _ in range(count)]
+
+        return [{"n": index} for index in range(count)]
 
 
 def _tenant(tenant_id: UUID | None) -> TenantProviderPort:
@@ -188,6 +195,38 @@ async def test_a_tenant_aware_route_fails_closed_before_the_engine() -> None:
 
     assert ei.value.code == "tenant_required"
     assert adapter.seen == []
+
+
+async def test_a_row_type_mismatch_reports_the_fields_and_not_the_row() -> None:
+    """The error says which field failed, never what the row held.
+
+    ``str(ValidationError)`` embeds ``input_value=`` — the whole offending row — and these are
+    warehouse rows on a plane pointed at BI relations. An error that egresses to the caller
+    and into logs must not carry them, so what ships is the failure and not the data.
+    """
+
+    from pydantic import BaseModel
+
+    class Expected(BaseModel):
+        missing_column: str
+
+    adapter = _adapter(
+        rows=1,
+        rows_payload={"customer_email": "nadia@example.com", "ssn": "123-45-6789"},
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.select(Expected, "SELECT * FROM gold")
+
+    assert ei.value.code == "dynamic_read_row_type_mismatch"
+    assert ei.value.details is not None
+
+    rendered = repr(ei.value.details)
+
+    assert "nadia@example.com" not in rendered
+    assert "123-45-6789" not in rendered
+    # Still actionable: the field that failed and why.
+    assert "missing_column" in rendered
 
 
 async def test_a_backend_that_overshoots_the_probe_still_gets_refused() -> None:

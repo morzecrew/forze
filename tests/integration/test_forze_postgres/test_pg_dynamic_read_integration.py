@@ -24,9 +24,11 @@ from psycopg import sql
 from forze.application.contracts.dynamic_read import DynamicReadPort, DynamicReadSpec
 from forze.application.integrations.dynamic_read import (
     MULTI_STATEMENT_CODE,
+    ROW_CAP_EXCEEDED_CODE,
     STATEMENT_INVALID_CODE,
     TIMEOUT_CODE,
     WRITE_REFUSED_CODE,
+    DynamicReadRequest,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_postgres.adapters.dynamic_read import PostgresDynamicReadAdapter
@@ -42,16 +44,12 @@ ROUTE = "pg_dynamic_read"
 async def schema(pg_client: PostgresClient) -> str:
     name = f"dr_engine_{uuid4().hex[:8]}"
 
-    await pg_client.execute(
-        sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(name))
-    )
+    await pg_client.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(name)))
     await pg_client.execute(
         sql.SQL("CREATE TABLE {} (n INTEGER NOT NULL)").format(sql.Identifier(name, "items"))
     )
     await pg_client.execute(
-        sql.SQL("INSERT INTO {} SELECT generate_series(0, 4)").format(
-            sql.Identifier(name, "items")
-        )
+        sql.SQL("INSERT INTO {} SELECT generate_series(0, 4)").format(sql.Identifier(name, "items"))
     )
 
     return name
@@ -210,6 +208,127 @@ async def test_transaction_local_settings_do_not_outlive_the_call(
     assert row is not None
     assert schema not in row["search_path"]
     assert row["timeout"] != "2s"
+
+
+async def test_stopping_at_the_row_cap_leaves_the_connection_usable(
+    pg_client: PostgresClient,
+    schema: str,
+) -> None:
+    """A refused over-cap read must not poison the connection it ran on.
+
+    The cap is enforced by stopping mid-stream, and stopping mid-stream is the one thing that
+    can strand a connection: the suspended generator holds psycopg's connection lock and the
+    server is still sending rows, so until its teardown runs the next statement on that
+    connection waits forever. Closing the cursor does *not* run it.
+
+    Asserted on the connection's own state rather than on a later query, because a later query
+    passes anyway once the garbage collector gets round to the generator — which is exactly the
+    accident this pins down. The end-to-end pair below is the weaker half kept on purpose: it
+    is what a reader recognises as the symptom, while the state assertions above are what
+    actually fail when the teardown is missing.
+    """
+
+    from psycopg.pq import TransactionStatus
+
+    async with pg_client.bound_connection() as conn, pg_client.transaction():
+        await _port(pg_client, schema, row_cap=2)._stream_rows(
+            conn,
+            DynamicReadRequest(
+                statement="SELECT g AS n FROM generate_series(1, 500000) g",
+                params={},
+                row_cap=2,
+                row_probe=3,
+                timeout=timedelta(seconds=30),
+                tenant_id=None,
+            ),
+        )
+
+        assert not conn.lock.locked(), (
+            "the stream generator still holds the connection lock — the next borrower of "
+            "this connection will block forever"
+        )
+        assert TransactionStatus(conn.pgconn.transaction_status) is not TransactionStatus.ACTIVE, (
+            "the server is still streaming into a connection that is about to be released"
+        )
+
+    # And the whole path, through the port, twice over one pooled connection.
+    port = _port(pg_client, schema, row_cap=2)
+
+    with pytest.raises(CoreException) as ei:
+        await port.run("SELECT g AS n FROM generate_series(1, 500000) g")
+
+    assert ei.value.code == ROW_CAP_EXCEEDED_CODE
+    assert await port.run("SELECT n FROM items ORDER BY n LIMIT 2") == [{"n": 0}, {"n": 1}]
+
+
+async def test_a_data_error_does_not_echo_the_stored_value(
+    pg_client: PostgresClient,
+    schema: str,
+) -> None:
+    """A failed cast reports its SQLSTATE, not the column value that failed it.
+
+    ``validation`` details egress to the caller, and a data exception names a *value* — which,
+    unlike a syntax error, can have come out of a column rather than out of the statement. One
+    row of another tenant's data in an error message is still a leak; the SQLSTATE is enough to
+    look the failure up.
+    """
+
+    secret = "nadia@example.com"
+
+    await pg_client.execute(
+        sql.SQL("CREATE TABLE {} (v TEXT NOT NULL)").format(sql.Identifier(schema, "casts"))
+    )
+    await pg_client.execute(
+        sql.SQL("INSERT INTO {} VALUES ({})").format(
+            sql.Identifier(schema, "casts"),
+            sql.Literal(secret),
+        )
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await _port(pg_client, schema).run("SELECT v::int AS n FROM casts")
+
+    assert ei.value.code == STATEMENT_INVALID_CODE
+    assert secret not in repr(ei.value.details)
+    assert "22P02" in repr(ei.value.details)
+
+
+async def test_it_runs_read_only_even_inside_a_caller_transaction(
+    pg_client: PostgresClient,
+    schema: str,
+) -> None:
+    """The plane's one guarantee survives being called from inside an open transaction.
+
+    ``READ ONLY`` is a property of a *root* transaction. Resolved inside a caller's
+    transaction, this scope would be a savepoint — where Postgres accepts no read-only mode at
+    all — so the adapter takes its own connection first. Without that, a dynamic read called
+    from a command handler would run with the caller's read-write transaction underneath it
+    and the write refusal would be gone.
+
+    Deliberately not in the shared battery: the mock has no transaction for a read to be
+    nested inside, so there is nothing there to compare.
+    """
+
+    async with pg_client.transaction():
+        # The caller's transaction is real and read-write — a write through it succeeds.
+        await pg_client.execute(
+            sql.SQL("INSERT INTO {} VALUES (42)").format(sql.Identifier(schema, "items"))
+        )
+
+        port = _port(pg_client, schema)
+
+        with pytest.raises(CoreException) as ei:
+            await port.run("INSERT INTO items (n) VALUES (99)")
+
+        assert ei.value.code == WRITE_REFUSED_CODE
+
+        # And an ordinary read still works from in here.
+        rows = await port.run("SELECT n FROM items ORDER BY n")
+
+    # Its own connection means its own snapshot: the caller's uncommitted 42 is not visible to
+    # the dynamic read. Documented behaviour, pinned so a future change to the scoping is not
+    # mistaken for an improvement.
+    assert [row["n"] for row in rows] == [0, 1, 2, 3, 4]
 
 
 async def test_a_sealed_column_comes_back_as_ciphertext(

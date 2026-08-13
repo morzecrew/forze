@@ -18,7 +18,7 @@ engine's to make, because a parser the framework writes is a parser an attacker 
 """
 
 from abc import abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any, final
 from uuid import UUID
@@ -149,10 +149,31 @@ class DynamicReadAdapter(DynamicReadPort, TenancyMixin):
             # The caller compiled the statement *and* named the type it should produce, so a
             # mismatch between them is its own bug — not the engine's, and not an internal
             # one. Surfaced at the port boundary rather than leaking half-validated rows.
+            #
+            # What ships is a field path and a message per failure, and nothing else. That
+            # narrowing is the point, not tidiness: pydantic's rendered message embeds
+            # ``input_value=`` — the offending row, whole — so ``str(error)`` here would put
+            # warehouse rows into an error that egresses to the caller and into logs
+            # (``validation`` is an ``expose_details=True`` kind). On a plane pointed at BI
+            # relations that is a data leak wearing a type error's severity label.
+            #
+            # ``include_input=False`` is the second belt: redundant while this stays a
+            # projection of ``loc`` and ``msg``, and the thing that keeps it safe if someone
+            # later widens it back to the raw error list.
             raise exc.validation(
                 f"Dynamic read rows do not match {return_type.__name__}.",
                 code="dynamic_read_row_type_mismatch",
-                details={"route": str(self.spec.name), "detail": str(error)},
+                details={
+                    "route": str(self.spec.name),
+                    "fields": [
+                        f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}"
+                        for item in error.errors(
+                            include_url=False,
+                            include_input=False,
+                            include_context=False,
+                        )
+                    ],
+                },
             ) from error
 
     # ....................... #
@@ -258,11 +279,3 @@ class DynamicReadAdapter(DynamicReadPort, TenancyMixin):
             return None
 
         return dict[str, Any](options).get(key)
-
-    # ....................... #
-
-    @staticmethod
-    def _rows_as_mappings(rows: Sequence[Mapping[str, Any]]) -> list[JsonDict]:
-        """Normalize backend rows to plain dicts in column order."""
-
-        return [dict(row) for row in rows]

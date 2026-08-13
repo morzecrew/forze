@@ -34,9 +34,13 @@ from forze.base.exceptions import CoreException
 READ_ONLY_SQL_TRANSACTION = "25006"
 QUERY_CANCELED = "57014"
 INSUFFICIENT_PRIVILEGE = "42501"
+INVALID_PARAMETER_VALUE = "22023"
 SYNTAX_ERROR = "42601"
 
-_CALLER_CAUSED_CLASSES = ("42", "22")
+SYNTAX_OR_ACCESS_CLASS = "42"
+DATA_EXCEPTION_CLASS = "22"
+
+_CALLER_CAUSED_CLASSES = (SYNTAX_OR_ACCESS_CLASS, DATA_EXCEPTION_CLASS)
 """SQLSTATE classes whose every member is the caller's statement being wrong."""
 
 _MULTI_COMMAND_MARKER = "multiple commands"
@@ -89,9 +93,33 @@ def dynamic_read_error(error: BaseException, *, route: str) -> CoreException | N
         return multi_statement(route)
 
     if sqlstate[:2] in _CALLER_CAUSED_CLASSES:
-        return statement_invalid(route, detail=_primary(error))
+        return statement_invalid(route, detail=_safe_detail(error, sqlstate))
 
     return None
+
+
+# ....................... #
+
+
+def _safe_detail(error: errors.Error, sqlstate: str) -> str:
+    """The server's message, unless the message is a place data can hide.
+
+    A ``validation`` error's details reach the client, so what goes in them matters on a plane
+    whose rows belong to a tenant. Class ``42`` messages talk about the *statement* — a bad
+    keyword, an unknown relation, a column that is not there — all of which the caller wrote
+    and already has.
+
+    Class ``22`` is different: a data exception names a **value**, and that value may have come
+    out of a column rather than out of the statement (``SELECT some_text::int`` reports the
+    stored text back). One row of somebody else's data in an error message is still one row of
+    somebody else's data, so these report the SQLSTATE instead — enough to look the failure up,
+    with nothing of the table in it.
+    """
+
+    if sqlstate.startswith(DATA_EXCEPTION_CLASS):
+        return f"SQLSTATE {sqlstate}"
+
+    return _primary(error)
 
 
 # ....................... #

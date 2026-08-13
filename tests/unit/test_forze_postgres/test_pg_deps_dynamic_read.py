@@ -12,7 +12,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from forze.application.contracts.dynamic_read import DynamicReadDepKey
+from forze.application.contracts.dynamic_read import DynamicReadDepKey, DynamicReadSpec
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_postgres.execution.deps.configs import PostgresDynamicReadConfig
 from forze_postgres.execution.deps.module import PostgresDepsModule
@@ -113,6 +113,36 @@ def test_untrusted_provenance_is_satisfied_by_a_routed_client() -> None:
     module = _module(PostgresDynamicReadConfig(provenance="untrusted"), routed=True)
 
     assert DynamicReadDepKey in module().routed_deps
+
+
+def test_the_wired_route_builds_an_adapter_carrying_the_config() -> None:
+    """Registration is not resolution — the factory has to hand back a usable port.
+
+    A route can be registered and still produce an adapter with, say, no timeout threaded
+    through: the wiring guards above would all pass and every statement on it would run
+    unbounded. So the built adapter is inspected, not just the key.
+    """
+
+    from forze.application.execution import DepsRegistry, ExecutionContext
+    from forze_postgres.adapters.dynamic_read import PostgresDynamicReadAdapter
+
+    config = PostgresDynamicReadConfig(
+        provenance="trusted",
+        query_schema="reporting",
+        statement_timeout=timedelta(seconds=3),
+    )
+    client = Mock(spec=PostgresClient)
+    module = PostgresDepsModule(client=client, dynamic_reads={ROUTE: config})
+    ctx = ExecutionContext(deps=DepsRegistry.from_modules(module).freeze().resolve())
+
+    port = ctx.dynamic_read.query(DynamicReadSpec(name=ROUTE))
+
+    assert isinstance(port, PostgresDynamicReadAdapter)
+    assert port.client is client
+    assert port.config is config
+    # The route's ceiling reaches the shared shell, which is what actually clamps a call.
+    assert port.statement_timeout == timedelta(seconds=3)
+    assert port.tenant_aware is False
 
 
 def test_provenance_has_no_default() -> None:

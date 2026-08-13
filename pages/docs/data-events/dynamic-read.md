@@ -131,11 +131,18 @@ Onboarding issues `GRANT USAGE`, `GRANT SELECT ON ALL TABLES`, and
 the confinement true when a pipeline creates tomorrow's table. Two deployment
 facts the grants cannot cover on their own:
 
-- The **connection user must be a member of the role**, or `SET LOCAL ROLE` is
-  refused at read time with `dynamic_read_role_unavailable` (a `configuration`
-  error, because the statement is not at fault and was never sent). A
-  non-superuser that creates the role gets that membership implicitly on
-  Postgres 16+.
+- The **connection user must be able to `SET ROLE` into it**, or every read is
+  refused with `dynamic_read_role_unavailable` (a `configuration` error, because
+  the statement is not at fault and was never sent). Creating the role is *not*
+  enough: since Postgres 16 the creator is granted `ADMIN OPTION` but
+  `SET FALSE`, so a non-superuser needs one of
+
+    ```sql
+    GRANT project_x_reader TO app_user WITH SET TRUE;   -- explicitly, after creation
+    SET createrole_self_grant = 'set, inherit';         -- or, before creating roles
+    ```
+
+    A superuser connection needs neither.
 - `ALTER DEFAULT PRIVILEGES` applies to relations created by **the role that ran
   the provisioning**. If your pipeline writes as a different user, it issues its
   own default privileges.
@@ -165,7 +172,7 @@ statement on the route runs as:
 ```text
 BEGIN READ ONLY                        -- sticky; survives role games
 SET LOCAL statement_timeout = …        -- always on
-SET LOCAL search_path = …              -- when query_schema is set
+SET LOCAL search_path TO …             -- when query_schema is set
 SET LOCAL ROLE …                       -- when role is set
 <statement>  via the extended protocol -- one command, server-enforced
 ```
