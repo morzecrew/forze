@@ -6,8 +6,9 @@ require_psycopg()
 
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Final
 
+import psycopg_pool as pool_errors
 from psycopg import errors
 
 from forze.base.conformity import static_fn_conformity
@@ -22,6 +23,13 @@ from forze.base.exceptions import (
 FK_pattern = re.compile(
     r'Key \((?P<column>[^)]+)\)=\((?P<value>[0-9a-fA-F-]+)\) is not present in table "(?P<table>[^"]+)"'
 )
+
+POOL_EXHAUSTED_CODE: Final[str] = "pool_exhausted"
+"""Code for a connection this process could not obtain from its own pool.
+
+Distinguishable from the server refusing connections (``too many connections``, SQLSTATE
+53300, which stays a concurrency error) because the remedies differ: that one is the
+database's ceiling, this one is ``max_size`` or ``acquire_timeout`` on this client."""
 
 COPY_ERRORS: tuple[type[errors.Error], ...] = (
     errors.DataError,
@@ -230,6 +238,30 @@ def _psycopg_eh(  # skipcq: PY-R1000
         case errors.OutOfMemory() | errors.DiskFull():
             return CoreException.infrastructure(
                 "Database resource exhaustion.",
+                details=details,
+            )
+
+        # Local resource limits — the pool, not the server
+
+        case pool_errors.PoolTimeout() | pool_errors.TooManyRequests():
+            # This process could not get a connection out of its own pool in time. It has to
+            # be matched *before* the OperationalError fallback below, which both of these
+            # subclass with no SQLSTATE, and which would otherwise call local saturation a
+            # connectivity failure and hand the caller a 409.
+            #
+            # Throttled rather than concurrency: nothing conflicted, the pool is simply full,
+            # and 429 tells a caller to back off where 409 tells it to reconcile state.
+            # Throttled also keeps details off the wire, which suits a limit that is ours
+            # rather than the caller's.
+            #
+            # Both kinds are retryable at egress, so brokers, consumers and sagas treat this
+            # exactly as before. What does change: the built-in ``occ`` policy retries
+            # ``concurrency`` only, so a write gateway no longer spends three in-process
+            # attempts on a starved pool — which is the right call anyway, since those
+            # attempts contend for the very connections that are missing.
+            return CoreException.throttled(
+                "Database connection pool exhausted. Please retry.",
+                code=POOL_EXHAUSTED_CODE,
                 details=details,
             )
 

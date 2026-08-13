@@ -117,6 +117,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Postgres `update_many`/`touch_many` could attach one document's returned diff to another** when the server reordered `RETURNING` rows; diffs are now keyed by document id.
 
+**Postgres pool exhaustion answers 429, not 409** (**behaviour change**) — `psycopg_pool`'s `PoolTimeout`/`TooManyRequests` map to `throttled` with code `pool_exhausted` instead of `concurrency`; the server's own `too many connections` is unchanged. Still retryable at egress, but no longer retried in place by the `occ` policy, which retries `concurrency` only.
+
 **The mock-server recipe's container never built** — unresolvable version metadata, an unfiltered build context, and a missing `authn` extra; both images are now pinned by digest.
 
 Also fixed: a paged Temporal schedule listing dropped schedules when a `limit` was reached mid-page (cursors stay opaque, but a mid-page one is no longer a bare Temporal token — do not decode it); Mongo counter allocations cost one round trip instead of two, and a legacy document appearing after the counter exists is left in place rather than retired; local KMS seals each wrap under a one-shot HKDF subkey, so the AES-GCM ~2^32 ceiling never accrues against a master key (earlier envelopes stay readable).

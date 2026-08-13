@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import psycopg_pool as pool_errors
 import pytest
 from psycopg import errors
 
 from forze.base.exceptions import ExceptionKind, exc
+from forze.base.exceptions.egress import exception_egress_policy, http_status_for_kind
 from forze_postgres.kernel.client import errors as client_errors
 
 # ----------------------- #
@@ -200,3 +202,55 @@ class TestAssembledChain:
     def test_core_exception_passthrough(self) -> None:
         original = exc.not_found("missing")
         assert client_errors.exc_interceptor.mapper(original, site="op") is original
+
+
+class TestPoolExhaustion:
+    """A connection this process could not get out of its own pool.
+
+    `psycopg_pool` raises these as `psycopg.OperationalError` subclasses carrying no
+    SQLSTATE, which put them one branch away from the connectivity fallback — and that
+    branch answers 409. A pool timeout is not a conflict: nothing disagreed about state,
+    the caller has nothing to reconcile, and the only useful instruction is to back off.
+    """
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            pool_errors.PoolTimeout("couldn't get a connection after 5.00 sec"),
+            pool_errors.TooManyRequests("too many clients waiting for a connection"),
+        ],
+        ids=["timeout", "queue-full"],
+    )
+    def test_pool_exhaustion_is_throttled_not_a_conflict(self, error: Exception) -> None:
+        out = client_errors.exc_interceptor.mapper(error, site="op")
+
+        assert out is not None
+        assert out.kind == ExceptionKind.THROTTLED
+        assert out.code == client_errors.POOL_EXHAUSTED_CODE
+        assert http_status_for_kind(out.kind) == 429
+
+    def test_it_stays_retryable(self) -> None:
+        """The disposition must not move: consumers and sagas retry on this today."""
+
+        out = client_errors.exc_interceptor.mapper(
+            pool_errors.PoolTimeout("couldn't get a connection"),
+            site="op",
+        )
+
+        assert out is not None
+        assert exception_egress_policy(out.kind).retryable
+
+    def test_the_servers_own_connection_ceiling_is_untouched(self) -> None:
+        """`too many connections` is the database refusing, not the pool running dry.
+
+        Different limit, different remedy — `max_connections` server-side against this
+        client's `max_size`/`acquire_timeout` — so it keeps its concurrency classification.
+        """
+
+        out = client_errors.exc_interceptor.mapper(
+            errors.TooManyConnections("sorry, too many clients already"),
+            site="op",
+        )
+
+        assert out is not None
+        assert out.kind == ExceptionKind.CONCURRENCY
