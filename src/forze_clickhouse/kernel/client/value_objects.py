@@ -71,7 +71,11 @@ class ClickHouseConfig:
     """Maximum rows per ``insert_rows`` HTTP request."""
 
     max_append_rows: int = 10_000
-    """Soft cap enforced by analytics adapter ``append`` (raises when exceeded)."""
+    """Soft cap enforced by analytics adapter ``append`` (raises when exceeded).
+
+    A latency and memory guard rather than a wire limit — ``insert_batch_size`` above is what
+    the transport actually constrains, and it chunks rather than refusing.
+    """
 
     # ....................... #
 

@@ -1,9 +1,8 @@
 """Ingest (append) for Postgres analytics."""
 
 from collections.abc import Sequence
-from typing import Any, TypeVar
+from typing import TypeVar
 
-from psycopg import sql
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsAppendResult
@@ -53,26 +52,19 @@ class PostgresAnalyticsIngestMixin[R: BaseModel, Ing: BaseModel](
         payloads = await encode_ingest_payloads(ingest_codec, list(rows))
 
         keys = list(payloads[0].keys())
-        col_idents = [sql.Identifier(k) for k in keys]
-        row_template = (
-            sql.SQL("(") + sql.SQL(", ").join(sql.Placeholder() for _ in keys) + sql.SQL(")")
-        )
-        value_parts = [row_template] * len(payloads)
-        flat_params: list[Any] = []
-
-        for payload in payloads:
-            flat_params.extend(payload[k] for k in keys)
+        values = [tuple(payload[key] for key in keys) for payload in payloads]
 
         ingest_qn = await host._ingest_qname()  # type: ignore[protected-access]
 
-        stmt = sql.SQL("INSERT INTO {table} ({cols}) VALUES {vals}").format(
-            table=ingest_qn.ident(),
-            cols=sql.SQL(", ").join(col_idents),
-            vals=sql.SQL(", ").join(value_parts),
-        )
-
         async def _run() -> None:
-            await host.client.execute(stmt, flat_params)
+            # Text format, not binary: the encoded payload carries JSON as text and sealed
+            # columns as envelope bytes, and text-mode COPY lets the server cast both —
+            # which is what keeps this an execution change behind an unchanged contract.
+            await host.client.copy_rows(
+                (ingest_qn.schema, ingest_qn.name),
+                keys,
+                values,
+            )
 
         await host._run_with_timeout(None, _run)  # type: ignore[protected-access]
 
