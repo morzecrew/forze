@@ -18,6 +18,12 @@
       "skillPath": "skills/distill-the-rule/SKILL.md",
       "computedHash": "df6a18d271886a7e294a0b74bfa467ff32ee0f0f3968ad3b0525a58367fb0a91"
     },
+    "flag-dont-flip": {
+      "source": "morzecrew/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/flag-dont-flip/SKILL.md",
+      "computedHash": "8e8c4276b3ddf71ac08f27a0339052faf3f295ca53078721f69c4787df1cdab2"
+    },
     "gitmoji-conventional": {
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
