@@ -92,3 +92,48 @@ fails as a **capability mismatch**, not a silent misconfiguration:
 See [Multi-tenancy → Declaring a minimum](../identity-tenancy-enc/multi-tenancy.md#declaring-a-minimum)
 for the wiring, and [→ Provisioning](../identity-tenancy-enc/multi-tenancy.md#provisioning-per-tenant-infrastructure)
 for creating the per-tenant containers the stronger tiers assume.
+
+## The floor a route can't lower: statement origin
+
+The tier tells you how strong a route's container is. It doesn't tell you what kind of
+text runs inside it, and that's the other half of whether the route is safe. A route
+declares its `StatementOrigin`, and its tier has to reach that origin's floor:
+
+| Origin | Who wrote the statement | Floor | The shape it describes |
+|--------|-------------------------|-------|------------------------|
+| `structured` (default) | the framework, from typed spec elements — the adapter places every predicate | `none` | every plane in the table above |
+| `compiled` | a trusted compiler, per request, declaring what it reads | `namespace` | catalog / semantic-layer SQL |
+| `raw` | an engine-specific string nothing can rewrite or verify | `dedicated` | a whole-query hatch like `ctx.graph.raw` |
+
+**No shipped route declares an origin yet**, so today this changes nothing you wire —
+including the Neo4j raw hatch, which is still governed by `allow_raw_query` and your own
+`required_tenant_isolation`, not by the `raw` floor above. The floors bind a route the
+moment it declares one; until then the table tells you which tier a route *would* need.
+
+`compiled` floors at `namespace`, not `tagged`, and the reason is worth internalizing
+before you argue for the weaker tier: **verification raises confidence in a claim; it
+doesn't create a boundary.** A read-set check runs over generated text, so a compiler bug
+or a construct the checker renders imprecisely yields a statement that passes the check
+and reads what it shouldn't. At `tagged` that's a silent cross-tenant read in a
+report that renders perfectly. At `namespace` the same defect names a relation that
+doesn't exist, or stays inside the tenant's own container. The floor follows from what
+happens *when the check is wrong*, not from how good the check is.
+
+The consequence is architectural: `compiled` at `namespace` means per-tenant containers,
+so whatever names those containers is a security-relevant component, not a readability
+one. A compiler that bakes namespace names into its artifacts is baking in an isolation
+boundary.
+
+Origin composes with `required_tenant_isolation` — a route clears both, and the stronger
+requirement is the one that governs. They fail differently on purpose:
+
+| | Comes from | Error code | How you fix it |
+|---|---|---|---|
+| Origin floor | the kind of text the route runs | `statement_origin_isolation_floor` | strengthen the container, or stop running that text here |
+| Declared floor | `required_tenant_isolation` on the module | `<backend>_tenancy_validation_failed` | strengthen the container, or lower what you declared |
+
+When both are unmet you get the origin one, because it's the floor you can't negotiate
+with — lowering your declaration would leave the route failing anyway.
+
+Origin is a **wiring** fact, checked once at startup. No statement is ever parsed to infer
+where it came from.

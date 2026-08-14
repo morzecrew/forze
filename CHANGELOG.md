@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Statement origin — a second tenancy floor, set by what wrote the statement.** `StatementOrigin` (`structured` → `none`, `compiled` → `namespace`, `raw` → `dedicated`), declared per route via `TenancyRouteSpec.origin` / `TenancyRouteGroup.origin` and enforced at freeze in `validate_module_tenancy`, independently of `required_tenant_isolation`. New `required_isolation_for_origin`, `validate_origin_isolation`, `ORIGIN_ISOLATION_FLOOR_CODE` (`"statement_origin_isolation_floor"`). Nothing that wires today changes: `structured` is the default and no shipped config declares an origin.
+
 **Postgres `COPY` bulk load** — the engine-native bulk path, 20–79× faster than the multi-VALUES `INSERT` it replaces (10⁴–10⁵ rows × 6–20 columns, interleaved A/B):
 
 - `PostgresClientPort.copy_rows((schema, table), columns, rows, *, binary=False, column_types=None) -> int` — sync or async row iterables, joins the caller's `transaction()`. Raises `copy_row_invalid` with the server's COPY line/column, or `copy_type_mismatch` for a binary type mismatch. In binary mode a `str` for a declared `json`/`jsonb` column is refused (text and binary want opposite Python types there).

@@ -1,7 +1,7 @@
 """Shared tenancy wiring validation for integration deps modules."""
 
-from collections.abc import Callable, Sequence
-from typing import Any, Literal, Protocol
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Final, Literal, Protocol, get_args
 
 import attrs
 
@@ -75,6 +75,183 @@ def isolation_satisfies(
     return _ISOLATION_LATTICE.satisfies(derived=derived, required=required)
 
 
+# ----------------------- #
+# Statement origin — the second axis of the floor
+
+ORIGIN_ISOLATION_FLOOR_CODE = "statement_origin_isolation_floor"
+"""Error code for an origin whose floor outruns the route's wired isolation.
+
+One code for every integration, unlike the per-integration ``*_tenancy_validation_failed``
+codes beside it: the origin floor is a framework-wide rule with one remediation, and an
+operator grepping for it is asking "where am I running unbuilt text without a container",
+which is not an integration-scoped question.
+"""
+
+# ....................... #
+
+StatementOrigin = Literal["structured", "compiled", "raw"]
+"""Who authored the statement text reaching a backend.
+
+The isolation ladder above answers *how strong is the container*. This answers *what kind
+of process produced the text that runs inside it*, and the two together decide whether a
+route is safe — which is why the ladder's own docstring already carries a sentence about
+query text (``dedicated`` is "the only model safe for untrusted raw or self-scoping query
+paths"). That sentence recognises two kinds; this names the three that exist.
+
+- ``structured`` — the framework builds the statement from typed spec elements (document,
+  search, analytics named queries, procedures). The adapter places every predicate itself,
+  so the text cannot address a container the adapter did not name. Safe at any tier, which
+  is why every shipped plane is this and none of them says so.
+- ``compiled`` — the text is generated per request by a trusted compiler, and the adapter
+  can check a declared read set against it before executing. Stronger than ``raw`` because
+  the claim is checkable; weaker than ``structured`` because the text is still not ours.
+- ``raw`` — an engine-specific string the framework can neither rewrite nor verify, the
+  shape of a whole-query hatch like ``GraphRawQueryPort``. Naming the shape is not the
+  same as governing it: no shipped route declares an origin, so that hatch is still
+  governed by ``allow_raw_query`` and the deployment's own declared floor.
+
+Distinct from author *trust*, which asks how much we trust whoever produced the text and
+is spelled ``provenance`` on the routes that carry it. The two compose: an untrusted
+author emitting into a ``compiled`` surface is a different route from a trusted one, and
+the effective floor is the strongest requirement either axis makes.
+"""
+
+# ....................... #
+
+_ORIGIN_FLOORS: Final[Mapping[StatementOrigin, TenantIsolationMode]] = {
+    "structured": "none",
+    "compiled": "namespace",
+    "raw": "dedicated",
+}
+"""The weakest isolation tier at which each origin is safe.
+
+``compiled`` sits at ``namespace`` rather than ``tagged`` on purpose, and the reason
+generalizes past this table: **verification raises confidence in a claim, it does not
+create a boundary.** A read-set assertion is a check over generated text, so a compiler
+bug or a construct the checker renders imprecisely produces a statement that passes the
+check and reads what it should not. At ``tagged`` that outcome is a silent cross-tenant
+read in a correctly-rendered report; at ``namespace`` the same defect either names a
+relation that does not exist or stays inside the tenant's own container. The floor is
+chosen by what happens *when the check is wrong*, not by how good the check is.
+
+The consequence is architectural rather than incidental: ``compiled`` at ``namespace``
+means per-tenant containers, which makes whatever names those containers a
+security-relevant component rather than a readability one.
+"""
+
+# ....................... #
+
+
+def _check_origin_floors(floors: Mapping[StatementOrigin, TenantIsolationMode]) -> None:
+    """Refuse an origin ladder and a floor table that name different rungs.
+
+    Not decoration: a ``dict`` literal missing a key is invisible to a type checker even
+    when the key type is a ``Literal`` — verified against both mypy and pyright — so a
+    fourth rung added without a floor would pass every gate in the repository and first
+    surface as a ``KeyError`` at wiring time. That is a tenancy floor failing open, which
+    is the one outcome this module exists to prevent. The rung set is derived from the
+    literal so the two cannot drift.
+
+    Both directions are checked. A *missing* floor fails open, which is the dangerous
+    half; a *stale* floor for a rung the literal no longer has is harmless at runtime but
+    is a table that documents a tier nothing can reach, and a reader who trusts it is
+    reasoning about a ladder that does not exist.
+
+    Raises rather than asserts: ``assert`` is stripped under ``-O``, which would remove
+    the guard from exactly the deployments that run optimized.
+    """
+
+    rungs = frozenset(get_args(StatementOrigin))
+
+    if rungs == floors.keys():  # pyright: ignore[reportUnnecessaryComparison]
+        return
+
+    missing = sorted(rungs - floors.keys())
+    stale = sorted(floors.keys() - rungs)
+
+    raise exc.internal(
+        "StatementOrigin and the origin floor table disagree — "
+        f"origins with no floor: {missing}; floors for no origin: {stale}. Every origin "
+        "needs exactly one floor: a missing entry fails open as a KeyError at wiring time "
+        "instead of refusing the route, and a stale one documents a rung nothing can "
+        "declare.",
+        code="origin_floors_incomplete",
+        details={"missing": missing, "stale": stale},
+    )
+
+
+_check_origin_floors(_ORIGIN_FLOORS)
+
+# ....................... #
+
+
+def required_isolation_for_origin(origin: StatementOrigin) -> TenantIsolationMode:
+    """Return the weakest isolation tier at which *origin* is safe.
+
+    Refuses an unrecognised origin rather than letting the lookup fail. The import guard
+    keeps the *table* honest, but the origin itself arrives from a wiring-supplied callable
+    (``TenancyRouteGroup.origin``) that nothing checks at runtime, so a typo — ``"Compiled"``,
+    a stray space — reaches here as a value no floor covers. A bare ``KeyError`` out of a
+    tenancy validator names neither the route nor the fix.
+    """
+
+    floor = _ORIGIN_FLOORS.get(origin)
+
+    if floor is None:
+        raise exc.configuration(
+            f"Unknown statement origin {origin!r}: expected one of "
+            f"{sorted(_ORIGIN_FLOORS)}. An origin decides a route's tenant-isolation "
+            "floor, so an unrecognised one cannot be defaulted.",
+            code="statement_origin_unknown",
+            details={"origin": repr(origin), "known": sorted(_ORIGIN_FLOORS)},
+        )
+
+    return floor
+
+
+# ....................... #
+
+
+def validate_origin_isolation(
+    *,
+    origin: StatementOrigin,
+    derived: TenantIsolationMode,
+    route: str,
+    integration: str,
+) -> None:
+    """Fail closed when a route runs an origin its isolation tier cannot carry.
+
+    The origin floor is **intrinsic**, not declared: it comes from the kind of text the
+    route executes, so unlike ``required_isolation`` there is nothing to lower. A route
+    that needs a weaker tier has to stop executing that kind of text.
+
+    The comparison goes through :func:`isolation_satisfies` rather than re-reading the
+    ranks, so this axis can never fork the ordering the declared floor uses.
+    """
+
+    required = required_isolation_for_origin(origin)
+
+    if isolation_satisfies(derived=derived, required=required):
+        return
+
+    raise exc.configuration(
+        f"{integration} {route!r} statement-origin validation failed: origin "
+        f"{origin!r} requires at least {required!r} tenant isolation, but the route wires "
+        f"{derived!r}, which is weaker. Text the framework did not build cannot be confined "
+        "by a tenant marker the statement is free to omit — give the route a per-tenant "
+        "container (schema / database / dataset / bucket) or a per-tenant routed client. "
+        "This floor comes from the origin itself and cannot be lowered; a route that must "
+        f"stay at {derived!r} has to stop executing {origin!r} statements.",
+        code=ORIGIN_ISOLATION_FLOOR_CODE,
+        details={
+            "route": route,
+            "origin": origin,
+            "required_isolation": required,
+            "derived_isolation": derived,
+        },
+    )
+
+
 # ....................... #
 
 
@@ -126,6 +303,40 @@ class TenancyRouteSpec:
     has_namespace_routing: bool = False
     """Whether *this* route resolves a per-tenant namespace (a dynamic resolver) — the
     ``namespace`` tier. Per-route so a declared floor is enforced route by route."""
+
+    origin: StatementOrigin = "structured"
+    """What kind of process authored the statements this route executes.
+
+    Defaults to ``structured`` because every shipped plane is, so nothing that wires today
+    has to say so; only a route that generates or passes through text declares otherwise.
+    See :data:`StatementOrigin`."""
+
+
+# ....................... #
+
+
+def _route_isolation_mode(
+    route: TenancyRouteSpec,
+    *,
+    client_is_routed: bool,
+) -> TenantIsolationMode:
+    """The isolation tier one route actually reaches.
+
+    A routed client scopes every connection per tenant, so it lifts every route to
+    ``dedicated`` regardless of what the route itself declares; otherwise the strongest
+    per-route mechanism wins.
+    """
+
+    if client_is_routed:
+        return "dedicated"
+
+    if route.has_namespace_routing:
+        return "namespace"
+
+    if route.tenant_aware:
+        return "tagged"
+
+    return "none"
 
 
 # ....................... #
@@ -313,13 +524,21 @@ def validate_routed_client_tenancy_wiring(
 ) -> None:
     """Fail or warn when a routed client and per-route ``tenant_aware`` disagree.
 
-    When ``required_isolation`` is set, the floor is enforced **per route** — the weakest
-    route is the module's real isolation, so an unscoped sibling cannot slip through under a
-    stronger one. A routed client scopes every connection per tenant (``dedicated`` for all
-    routes); otherwise each route's tier comes from its own ``has_namespace_routing`` /
-    ``tenant_aware``. The capability ceiling (``max_supported_isolation``) is also enforced —
-    see :func:`validate_required_isolation`. Put intentionally tenant-agnostic routes in a
-    module without a declared floor.
+    Two floors are enforced here, and a route must clear both:
+
+    * the **origin floor** — intrinsic to the kind of statement text a route executes, so it
+      applies whether or not the deployment declared anything (see
+      :func:`validate_origin_isolation`);
+    * the **declared floor** — ``required_isolation``, enforced **per route**, because the
+      weakest route is the module's real isolation and an unscoped sibling must not slip
+      through under a stronger one. The capability ceiling
+      (``max_supported_isolation``) is enforced with it — see
+      :func:`validate_required_isolation`. Put intentionally tenant-agnostic routes in a
+      module without a declared floor.
+
+    Either way a route's tier comes from :func:`_route_isolation_mode`. The origin floor
+    runs first: it is the one a deployment cannot resolve by revising its own declaration,
+    so reporting it ahead of a declared floor points at the fix that exists.
     """
 
     if client_is_routed and not partition_key_set:
@@ -329,6 +548,14 @@ def validate_routed_client_tenancy_wiring(
             f"{partition_key_detail}",
             code=validation_failed_code,
             details={"client_is_routed": True},
+        )
+
+    for route in routes:
+        validate_origin_isolation(
+            origin=route.origin,
+            derived=_route_isolation_mode(route, client_is_routed=client_is_routed),
+            route=str(route.name),
+            integration=f"{integration} {route.kind} route",
         )
 
     if required_isolation is not None:
@@ -355,17 +582,9 @@ def validate_routed_client_tenancy_wiring(
 
         else:
             for route in routes:
-                route_mode: TenantIsolationMode = (
-                    "namespace"
-                    if route.has_namespace_routing
-                    else "tagged"
-                    if route.tenant_aware
-                    else "none"
-                )
-
                 validate_required_isolation(
                     integration=f"{integration} {route.kind} route {route.name!r}",
-                    derived=route_mode,
+                    derived=_route_isolation_mode(route, client_is_routed=False),
                     required=required_isolation,
                     code=validation_failed_code,
                     max_supported=max_supported_isolation,
@@ -447,6 +666,13 @@ class TenancyRouteGroup[ConfigT]:
     index / dataset) or a ``RelationSpec`` (schema/collection pair), or ``None``. A
     *dynamic* (callable) spec marks the ``namespace`` isolation tier."""
 
+    origin: Callable[[ConfigT], StatementOrigin] = lambda _config: "structured"
+    """Return what kind of process authored the statements a route executes.
+
+    Left alone by every plane whose statements the framework builds — which is all of them
+    today. A group overrides it only when its routes generate or pass through text; see
+    :data:`StatementOrigin`."""
+
 
 # ....................... #
 
@@ -476,6 +702,11 @@ def validate_module_tenancy(
     in-process or single-client one). The integration declares its own ceiling here — it is
     the sole authority on its capability — so a declared ``required_isolation`` it can never
     meet fails closed as a capability mismatch rather than a wiring gap.
+
+    Each group also reports its routes' :data:`StatementOrigin`, whose floor is enforced
+    here too and independently of ``required_isolation``. Groups that leave it alone —
+    every shipped plane — declare ``structured``, whose floor is ``none``, so nothing that
+    wires today changes.
     """
 
     routes: list[TenancyRouteSpec] = []
@@ -492,6 +723,7 @@ def validate_module_tenancy(
                     tenant_aware=group.tenant_aware(config),
                     kind=group.kind,
                     has_namespace_routing=callable(namespace),
+                    origin=group.origin(config),
                 )
             )
 
