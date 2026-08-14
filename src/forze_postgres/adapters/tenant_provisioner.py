@@ -70,8 +70,12 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
       provisioning**. A pipeline writing as a different user must issue its own default
       privileges, or grant ``SELECT`` as it creates.
 
-    It must resolve per tenant whenever :attr:`schema` does — see
-    :meth:`__attrs_post_init__`.
+    **It must resolve to a distinct name per tenant whenever :attr:`schema` does.** A static
+    name is refused at construction (:meth:`__attrs_post_init__`); a resolver is taken on trust
+    there, because no tenant ids exist yet and it may be async — so a constant one has the shape
+    of per-tenant scoping without the substance. That case is caught at the second onboarding
+    instead, where the server can be asked
+    (:meth:`_refuse_role_bound_elsewhere`).
     """
 
     def __attrs_post_init__(self) -> None:
@@ -120,6 +124,7 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
             return
 
         role = await resolve_value(self.role, tenant.tenant_id)
+        await self._refuse_role_bound_elsewhere(schema=name, role=role)
         await self._ensure_role(role)
         await self._grant_read_only(schema=name, role=role)
 
@@ -251,6 +256,53 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
                 code="tenant_role_still_depended_on",
                 details={"role": role},
             ) from error
+
+    # ....................... #
+
+    async def _refuse_role_bound_elsewhere(self, *, schema: str, role: str) -> None:
+        """Refuse a role this provisioner already bound to a different tenant's schema.
+
+        ``__attrs_post_init__`` refuses a *static* role beside a per-tenant schema, but a
+        resolver can only be checked for its shape: the tenant ids do not exist at construction
+        and the resolver may be async, so ``lambda _: "shared"`` passes and then produces the
+        same accumulation one onboarding at a time.
+
+        The collision is a fact about the server rather than about the resolver's source, so it
+        is read from the server, at the moment it would begin. The signal is this class's own
+        ``ALTER DEFAULT PRIVILEGES`` entry — narrower than "holds USAGE somewhere", which an
+        operator granting a shared reference schema would trip on. A different *schema* is the
+        collision; the same one is a re-run, which onboarding does routinely.
+        """
+
+        bound = await self.client.fetch_value(
+            """
+            SELECT n.nspname
+            FROM pg_default_acl d
+            JOIN pg_namespace n ON n.oid = d.defaclnamespace
+            WHERE d.defaclobjtype = 'r'
+              AND n.nspname <> %(schema)s
+              AND EXISTS (
+                  SELECT 1 FROM aclexplode(d.defaclacl) a
+                  JOIN pg_roles r ON r.oid = a.grantee
+                  WHERE r.rolname = %(role)s
+              )
+            LIMIT 1
+            """,
+            {"schema": schema, "role": role},
+        )
+
+        if bound is None:
+            return
+
+        raise exc.configuration(
+            f"Role {role!r} is already provisioned for schema {str(bound)!r}, so binding it to "
+            f"{schema!r} as well would leave one role holding read access to both. A role "
+            "resolver must return a distinct name per tenant — a constant one has the shape of "
+            "per-tenant scoping without the substance, and the container is what confines this "
+            "plane's statements.",
+            code="tenant_role_already_bound",
+            details={"role": role, "schema": schema, "already_bound_to": str(bound)},
+        )
 
     # ....................... #
 

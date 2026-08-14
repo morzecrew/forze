@@ -208,3 +208,100 @@ async def _role_exists(client: PostgresClient, role: str) -> bool:
     return (
         await client.fetch_value("SELECT 1 FROM pg_roles WHERE rolname = %(r)s", {"r": role})
     ) is not None
+
+
+async def test_a_resolver_that_returns_one_name_for_every_tenant_is_caught(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """``callable(role)`` checks the shape; this checks the thing the shape stands for.
+
+    A resolver is accepted at construction because there is nothing there to evaluate — the
+    tenant ids do not exist yet and the resolver may be async. ``lambda _: "shared"`` therefore
+    passes the constructor and produces exactly the accumulation the constructor refuses in its
+    static form, one onboarding at a time.
+
+    The second tenant is where it becomes visible and where it is caught: the role already
+    carries this provisioner'"'"'s default-privileges entry for a different schema, which is a
+    fact about the server rather than about the resolver'"'"'s source.
+    """
+
+    role = f"collide_{tag}"
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=pg_client,
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+        role=lambda _tenant_id: role,
+        drop_on_deprovision=True,
+    )
+
+    first, second = TenantIdentity(tenant_id=uuid4()), TenantIdentity(tenant_id=uuid4())
+    schemas = [f"t_{t.tenant_id.hex[:8]}_{tag}" for t in (first, second)]
+
+    try:
+        await provisioner.provision(first)
+
+        with pytest.raises(CoreException) as ei:
+            await provisioner.provision(second)
+
+        assert ei.value.code == "tenant_role_already_bound"
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+        # The second tenant got nothing: refused before any grant reached its schema.
+        assert await _role_has_schema_grant(pg_client, role=role, schema=schemas[1]) is False
+
+    finally:
+        await _cleanup(pg_client, schemas=schemas, role=role)
+
+
+async def test_re_provisioning_the_same_tenant_is_still_idempotent(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """The check must not mistake a tenant for its own neighbour.
+
+    Onboarding is re-run routinely — a retried job, an operator repeating a command — and the
+    role legitimately already carries this schema'"'"'s entry by then. Only a *different* schema
+    is the collision.
+    """
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=pg_client,
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+        role=lambda tenant_id: f"r_{tenant_id.hex[:8]}_{tag}",
+        drop_on_deprovision=True,
+    )
+
+    tenant = TenantIdentity(tenant_id=uuid4())
+    schema = f"t_{tenant.tenant_id.hex[:8]}_{tag}"
+    role = f"r_{tenant.tenant_id.hex[:8]}_{tag}"
+
+    try:
+        await provisioner.provision(tenant)
+        await provisioner.provision(tenant)
+
+        assert await _role_has_schema_grant(pg_client, role=role, schema=schema) is True
+
+    finally:
+        await _cleanup(pg_client, schemas=[schema], role=role)
+
+
+async def _role_has_schema_grant(
+    client: PostgresClient,
+    *,
+    role: str,
+    schema: str,
+) -> bool:
+    return (
+        await client.fetch_value(
+            """
+            SELECT 1 FROM pg_namespace n
+            WHERE n.nspname = %(schema)s
+              AND EXISTS (
+                  SELECT 1 FROM aclexplode(n.nspacl) a
+                  JOIN pg_roles r ON r.oid = a.grantee
+                  WHERE r.rolname = %(role)s AND a.privilege_type = 'USAGE'
+              )
+            """,
+            {"schema": schema, "role": role},
+        )
+    ) is not None

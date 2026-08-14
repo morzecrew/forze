@@ -239,7 +239,11 @@ or database it runs inside.
 
     `PostgresSchemaTenantProvisioner` refuses the same pairing at construction
     (`tenant_role_shared_across_schemas`), since it is reachable without any route
-    at all. Teardown breaks there too: `deprovision` drops the role per tenant, and
+    at all. A *resolver* is taken on trust there — no tenant ids exist yet and it
+    may be async — so a constant one like `lambda _: "reader"` has the shape of
+    per-tenant scoping without the substance. That is caught at the second
+    onboarding instead (`tenant_role_already_bound`), where the server can say
+    whether the role is already provisioned for a different schema. Teardown breaks there too: `deprovision` drops the role per tenant, and
     PostgreSQL refuses to drop one another schema's grants still name — `IF EXISTS`
     covers absence, not dependency — so the `DROP SCHEMA` behind it never runs and
     the tenant's data stays.

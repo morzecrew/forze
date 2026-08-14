@@ -23,12 +23,14 @@ class _FakeClient:
         existing_schema: bool = True,
         role_can_login: bool = False,
         role_is_superuser: bool = False,
+        role_bound_to: str | None = None,
     ) -> None:
         self.executed: list[str] = []
         self.existing_role = existing_role
         self.existing_schema = existing_schema
         self.role_can_login = role_can_login
         self.role_is_superuser = role_is_superuser
+        self.role_bound_to = role_bound_to
 
     async def execute(self, query: Any, params: Any = None, **kwargs: Any) -> None:
         _ = params, kwargs
@@ -37,6 +39,13 @@ class _FakeClient:
     async def fetch_value(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
         _ = params, kwargs
         text = query if isinstance(query, str) else str(query)
+
+        # Most specific first. The default-ACL probe joins `pg_namespace` too, so a bare
+        # substring match on that table would answer the wrong question — and would answer it
+        # affirmatively, refusing every onboarding in this file for a reason none of them are
+        # about.
+        if "pg_default_acl" in text:
+            return self.role_bound_to
 
         if "pg_namespace" in text:
             return 1 if self.existing_schema else None
@@ -468,3 +477,30 @@ def test_create_schema_identifier_is_quoted() -> None:
         .as_string(None)
     )
     assert '"weird name"' in rendered
+
+
+@pytest.mark.asyncio
+async def test_a_role_already_provisioned_for_another_schema_is_refused() -> None:
+    """The collision a resolver'"'"'s shape cannot rule out, caught where it begins.
+
+    ``callable(role)`` is checked at construction because that is all there is to check then —
+    no tenant ids exist yet and the resolver may be async. A constant resolver therefore passes
+    and accumulates one onboarding at a time, so the second tenant is where the server can
+    answer the question the constructor could not.
+    """
+
+    client = _FakeClient(existing_role=True, role_bound_to="t_other")
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=client,  # type: ignore[arg-type]
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}",
+        role=lambda _tenant_id: "shared_reader",
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await provisioner.provision(TenantIdentity(tenant_id=uuid4()))
+
+    assert ei.value.code == "tenant_role_already_bound"
+    assert ei.value.details is not None
+    assert ei.value.details["already_bound_to"] == "t_other"
+    # Refused before anything was granted to this tenant'"'"'s schema.
+    assert "GRANT" not in "\n".join(client.executed)
