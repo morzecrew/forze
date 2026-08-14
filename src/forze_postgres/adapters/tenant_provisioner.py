@@ -344,14 +344,41 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
     async def _refuse_privileged_role(self, role: str) -> None:
         """Refuse to adopt an existing role that can log in or is a superuser.
 
-        Both are disqualifying for the same reason: statements run *as* this role via ``SET
-        LOCAL ROLE``, so adopting an application login user or a superuser hands every
-        dynamic statement that identity's reach, and then grants it the tenant's schema on
-        top. The refusal comes before any grant, so a mistyped name changes nothing.
+        All four are disqualifying for one reason: statements run *as* this role via ``SET
+        LOCAL ROLE``, so adopting a role that already reaches somewhere hands every dynamic
+        statement that reach, and then grants it the tenant's schema on top of it. ``LOGIN``
+        means it is somebody's application identity; ``SUPERUSER`` ignores every grant;
+        ``BYPASSRLS`` is the quietest, reading every row of a table the role was legitimately
+        granted while each grant still looks correct; and a membership carries whatever the
+        other role holds, which makes the tenant grant the *smallest* thing it can reach.
+
+        The refusal comes before any grant, so a mistyped name changes nothing.
+
+        This is **adoption-time mistake-proofing, not a standing boundary** — every one of
+        these can be granted the day after onboarding, ``LOGIN`` included. That is a reason to
+        say so plainly rather than a reason to skip the check: it catches the operator who
+        points ``role`` at something that was never meant for this, which is the mistake that
+        actually happens. A statement that must be contained against a hostile author still
+        needs the dedicated tier.
+
+        Deliberately *not* checked: direct grants the role holds on other schemas. Refusing
+        those would also refuse the legitimate pattern of a tenant role granted read access to
+        a shared reference schema. The cross-tenant case that matters — this role already
+        bound to another tenant's schema — is :meth:`_refuse_role_bound_elsewhere`, which uses
+        a signal only this class produces and so has no such false positive.
         """
 
         privileged = await self.client.fetch_value(
-            "SELECT 1 FROM pg_roles WHERE rolname = %(role)s AND (rolcanlogin OR rolsuper)",
+            """
+            SELECT 1 FROM pg_roles r
+            WHERE r.rolname = %(role)s
+              AND (
+                  r.rolcanlogin
+                  OR r.rolsuper
+                  OR r.rolbypassrls
+                  OR EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid)
+              )
+            """,
             {"role": role},
         )
 
@@ -359,11 +386,12 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
             return
 
         raise exc.configuration(
-            f"Role {role!r} already exists and can log in or is a superuser, so it cannot be "
-            "adopted as a tenant read role. Statements run as this role via SET LOCAL ROLE, "
-            "which would give them that identity's reach and then add the tenant's schema to "
-            "it. Point `role` at a name this provisioner owns, or create it NOLOGIN and "
-            "without superuser first.",
+            f"Role {role!r} already exists and already reaches somewhere — it can log in, is "
+            "a superuser, bypasses row-level security, or is a member of another role — so it "
+            "cannot be adopted as a tenant read role. Statements run as this role via SET "
+            "LOCAL ROLE, which would give them that reach and then add the tenant's schema to "
+            "it. Point `role` at a name this provisioner owns, or create it NOLOGIN, "
+            "NOSUPERUSER, NOBYPASSRLS and unaffiliated first.",
             code="tenant_role_not_confinable",
             details={"role": role},
         )

@@ -440,3 +440,120 @@ async def test_racing_role_creation_is_tolerated_against_a_real_server(
 
     finally:
         await _cleanup(pg_client, schemas=[schema], role=role)
+
+
+@pytest.mark.parametrize(
+    ("options", "suffix"),
+    [
+        ("NOLOGIN BYPASSRLS", "brls"),
+        ("NOLOGIN SUPERUSER", "su"),
+        # No NOLOGIN here: pairing it with LOGIN in one statement is not accepted.
+        ("LOGIN", "login"),
+    ],
+    ids=["bypassrls", "superuser", "login"],
+)
+async def test_a_real_role_carrying_a_disqualifying_attribute_is_refused(
+    pg_client: PostgresClient,
+    tag: str,
+    options: str,
+    suffix: str,
+) -> None:
+    """The catalog columns, read from the catalog rather than from a fake.
+
+    The unit battery models these, and a model of ``pg_roles`` is a claim about column names
+    and semantics that only a server can settle — ``rolbypassrls`` in particular is easy to
+    name wrongly and would fail open, since the probe returning nothing reads as "clean".
+    """
+
+    role = f"attr_{suffix}_{tag}"
+    await pg_client.execute(
+        sql.SQL("CREATE ROLE {} " + options).format(sql.Identifier(role))
+    )
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=pg_client,
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+        role=lambda _tenant_id: role,
+    )
+
+    tenant = TenantIdentity(tenant_id=uuid4())
+    schema = f"t_{tenant.tenant_id.hex[:8]}_{tag}"
+
+    try:
+        with pytest.raises(CoreException) as ei:
+            await provisioner.provision(tenant)
+
+        assert ei.value.code == "tenant_role_not_confinable"
+        assert await _role_has_schema_grant(pg_client, role=role, schema=schema) is False
+
+    finally:
+        await _cleanup(pg_client, schemas=[schema], role=role)
+
+
+async def test_a_real_role_inheriting_another_is_refused(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """Membership, on a live cluster — the one that is a join rather than a column."""
+
+    parent, child = f"parent_{tag}", f"child_{tag}"
+
+    for name in (parent, child):
+        await pg_client.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(name)))
+
+    await pg_client.execute(
+        sql.SQL("GRANT {} TO {}").format(sql.Identifier(parent), sql.Identifier(child))
+    )
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=pg_client,
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+        role=lambda _tenant_id: child,
+    )
+
+    tenant = TenantIdentity(tenant_id=uuid4())
+    schema = f"t_{tenant.tenant_id.hex[:8]}_{tag}"
+
+    try:
+        with pytest.raises(CoreException) as ei:
+            await provisioner.provision(tenant)
+
+        assert ei.value.code == "tenant_role_not_confinable"
+
+    finally:
+        await pg_client.execute(
+            sql.SQL("REVOKE {} FROM {}").format(sql.Identifier(parent), sql.Identifier(child))
+        )
+        await _cleanup(pg_client, schemas=[schema], role=child)
+        await pg_client.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(parent)))
+
+
+async def test_a_purpose_built_role_is_still_adopted(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """The control. Four refusals prove nothing if the clean case is refused too.
+
+    A plain ``NOLOGIN`` role with no memberships is exactly what this provisioner creates, so
+    re-adopting one is the ordinary idempotent path and must stay open.
+    """
+
+    role = f"clean_{tag}"
+    await pg_client.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(role)))
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=pg_client,
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+        role=lambda _tenant_id: role,
+    )
+
+    tenant = TenantIdentity(tenant_id=uuid4())
+    schema = f"t_{tenant.tenant_id.hex[:8]}_{tag}"
+
+    try:
+        await provisioner.provision(tenant)
+
+        assert await _role_has_schema_grant(pg_client, role=role, schema=schema) is True
+
+    finally:
+        await _cleanup(pg_client, schemas=[schema], role=role)

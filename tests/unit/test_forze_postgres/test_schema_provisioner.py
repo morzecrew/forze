@@ -26,6 +26,8 @@ class _FakeClient:
         existing_schema: bool = True,
         role_can_login: bool = False,
         role_is_superuser: bool = False,
+        role_bypasses_rls: bool = False,
+        role_has_memberships: bool = False,
         role_bound_to: str | None = None,
     ) -> None:
         self.executed: list[str] = []
@@ -33,6 +35,8 @@ class _FakeClient:
         self.existing_schema = existing_schema
         self.role_can_login = role_can_login
         self.role_is_superuser = role_is_superuser
+        self.role_bypasses_rls = role_bypasses_rls
+        self.role_has_memberships = role_has_memberships
         self.role_bound_to = role_bound_to
 
     def transaction(self, **kwargs: Any) -> Any:
@@ -80,9 +84,13 @@ class _FakeClient:
         # including one that stopped asking about superusers — and the test would go on
         # passing while the check it exists for had shrunk.
         if "rolcanlogin" in text or "rolsuper" in text:
-            hit = ("rolcanlogin" in text and self.role_can_login) or (
-                "rolsuper" in text and self.role_is_superuser
-            )
+            signals = {
+                "rolcanlogin": self.role_can_login,
+                "rolsuper": self.role_is_superuser,
+                "rolbypassrls": self.role_bypasses_rls,
+                "pg_auth_members": self.role_has_memberships,
+            }
+            hit = any(held for token, held in signals.items() if token in text)
             return 1 if (self.existing_role and hit) else None
 
         return 1 if self.existing_role else None
@@ -188,9 +196,15 @@ async def test_an_existing_role_is_not_recreated() -> None:
         # NOLOGIN is not confinement on its own: a superuser bypasses every grant, so a
         # NOLOGIN superuser is the shape that looks provisioned-for-purpose and is not.
         ({"role_is_superuser": True}, "admin_reader"),
+        # BYPASSRLS is the quietest of the four — the role reads every row of a table it was
+        # legitimately granted, and every grant still looks correct.
+        ({"role_bypasses_rls": True}, "rls_bypasser"),
+        # A member of another role carries that role's privileges, so adopting it adopts
+        # whatever it inherits — the tenant grant is then the smallest thing it can reach.
+        ({"role_has_memberships": True}, "inherits_reader"),
         ({"role_can_login": True, "role_is_superuser": True}, "postgres"),
     ],
-    ids=["login", "superuser", "both"],
+    ids=["login", "superuser", "bypassrls", "memberships", "login+superuser"],
 )
 async def test_reusing_a_privileged_role_is_refused(
     attributes: dict[str, bool],

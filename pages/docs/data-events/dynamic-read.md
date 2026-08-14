@@ -250,11 +250,18 @@ or database it runs inside.
     covers absence, not dependency — so the `DROP SCHEMA` behind it never runs and
     the tenant's data stays.
 
-    For the same reason the provisioner refuses to adopt an existing role that can
-    log in or is a superuser (`tenant_role_not_confinable`). Statements run *as*
-    this role, so pointing `role` at an application user would hand them that
-    identity's reach and add the tenant's schema on top. Reusing an existing
-    `NOLOGIN` role is fine — that is the idempotent onboarding path.
+    For the same reason the provisioner refuses to adopt an existing role that
+    already reaches somewhere — `LOGIN`, `SUPERUSER`, `BYPASSRLS`, or a member of
+    another role (`tenant_role_not_confinable`). Statements run *as* this role, so
+    pointing `role` at an application user or an inheriting one would hand them
+    that reach and add the tenant's schema on top. Adopting a plain `NOLOGIN` role
+    with no memberships is fine — that is the idempotent onboarding path.
+
+    This is adoption-time mistake-proofing, not a standing boundary: every one of
+    those can be granted the day after onboarding. It catches `role` pointed at
+    something never meant for this, which is the mistake that actually happens. A
+    statement that must be contained against a hostile author still needs the
+    dedicated tier.
 
 The tenant id is still bound as `%(tenant)s` when the statement references it, so
 a trusted statement can carry a predicate *in addition to* its container. That is
