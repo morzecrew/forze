@@ -26,7 +26,7 @@ from forze.application.contracts.resolution import (
     resolve_value,
 )
 from forze.application.contracts.tenancy import TenantIdentity, TenantProvisionerPort
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 
 from ..kernel.client import PostgresClientPort
 
@@ -155,16 +155,17 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 
         role = await resolve_value(self.role, tenant.tenant_id) if self.role is not None else None
 
-        # Both halves take the same lock `provision` binds under, so onboarding and offboarding
-        # of one role cannot interleave inside each other's critical section. What the lock does
-        # *not* do is make two contradictory operations succeed: a provision and a deprovision
-        # of the same tenant at the same moment still resolve to one of them failing, which is
-        # the honest outcome. It stops them leaving a half-bound role behind.
+        # One transaction, so the lock `provision` binds under is held continuously from
+        # before the revoke to after the role drop. Splitting it released the lock in between,
+        # and a provisioning that took it in that gap could recreate the schema and rebind the
+        # role — which this teardown would then drop, leaving a tenant whose schema exists and
+        # whose reads have no role to enter. Both calls would have returned successfully.
         #
-        # Two transactions rather than one, and the split is load-bearing. `_drop_role` raises
-        # when the cluster still depends on the role, and a single transaction would roll the
-        # schema drop back with it — undoing the part of offboarding that actually has to
-        # happen. Committing the schema drop first keeps that outcome: data gone, role reported.
+        # What the lock still does not do is make contradictory operations succeed: a provision
+        # and a deprovision of the same tenant at the same moment resolve to one of them
+        # failing, which is the honest outcome. It stops them leaving a half-torn-down tenant.
+        stranded: CoreException | None = None
+
         async with self.client.transaction():
             if role is not None:
                 await self._lock_role(role)
@@ -194,10 +195,14 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
                 )
             )
 
-        if role is not None:
-            async with self.client.transaction():
-                await self._lock_role(role)
-                await self._drop_role(role)
+            if role is not None:
+                stranded = await self._drop_role_in_savepoint(role)
+
+        # Raised after the commit, so the schema drop is durable before the operator hears
+        # about the role. A failed statement poisons its transaction, which is why the attempt
+        # sits in a savepoint rather than being caught in place.
+        if stranded is not None:
+            raise stranded
 
     # ....................... #
 
@@ -258,6 +263,31 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
             # path's check. Without it the same wiring would be refused or accepted depending
             # on which onboarding ran first.
             await self._refuse_privileged_role(role)
+
+    # ....................... #
+
+    async def _drop_role_in_savepoint(self, role: str) -> CoreException | None:
+        """Attempt the role drop without letting its failure undo the teardown.
+
+        A statement that errors aborts its transaction in PostgreSQL, so catching the
+        dependency failure in place would leave nothing else in this teardown able to run — and
+        the schema drop above it would roll back. A savepoint scopes the damage to the attempt.
+
+        Returns the refusal instead of raising it, so the caller can commit first and report
+        after: the tenant's data being gone is the part of offboarding that has to survive.
+        """
+
+        try:
+            async with self.client.transaction():
+                await self._drop_role(role)
+
+        except CoreException as error:
+            if error.code != "tenant_role_still_depended_on":
+                raise
+
+            return error
+
+        return None
 
     # ....................... #
 

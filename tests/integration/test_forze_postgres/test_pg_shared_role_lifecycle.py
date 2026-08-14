@@ -557,3 +557,57 @@ async def test_a_purpose_built_role_is_still_adopted(
 
     finally:
         await _cleanup(pg_client, schemas=[schema], role=role)
+
+
+async def test_a_role_the_cluster_still_needs_does_not_cost_the_tenant_its_teardown(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """The savepoint, against the server rather than a fake.
+
+    Teardown holds one lock across the whole sequence, so the role drop cannot be moved out of
+    the transaction that drops the schema — and a failed statement aborts its transaction in
+    PostgreSQL. The savepoint is what lets the drop fail while the schema drop above it stands.
+
+    Whether a `ROLLBACK TO SAVEPOINT` really preserves the preceding work is a claim about the
+    server, and the unit battery asserts it against a fake that was written to agree.
+    """
+
+    role = f"needed_{tag}"
+    tenant_schema = f"t_needed_{tag}"
+    other_schema = f"other_{tag}"
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=pg_client,
+        schema=lambda _tenant_id: tenant_schema,
+        role=lambda _tenant_id: role,
+        drop_on_deprovision=True,
+    )
+    tenant = TenantIdentity(tenant_id=uuid4())
+
+    try:
+        await provisioner.provision(tenant)
+
+        # A dependency this teardown cannot revoke — the stand-in for a grant in another
+        # database of the cluster, which is unreachable from this connection by construction.
+        await pg_client.execute(
+            sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(other_schema))
+        )
+        await pg_client.execute(
+            sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                sql.Identifier(other_schema), sql.Identifier(role)
+            )
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await provisioner.deprovision(tenant)
+
+        assert ei.value.code == "tenant_role_still_depended_on"
+
+        # The two halves of the point: the tenant's data is gone, and the role that could not
+        # be dropped is still there to be dealt with rather than silently half-removed.
+        assert await _schema_exists(pg_client, tenant_schema) is False
+        assert await _role_exists(pg_client, role) is True
+
+    finally:
+        await _cleanup(pg_client, schemas=[tenant_schema, other_schema], role=role)

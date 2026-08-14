@@ -38,22 +38,34 @@ class _FakeClient:
         self.role_bypasses_rls = role_bypasses_rls
         self.role_has_memberships = role_has_memberships
         self.role_bound_to = role_bound_to
+        self.depth = 0
 
     def transaction(self, **kwargs: Any) -> Any:
         """The binding runs inside a transaction so its advisory lock is scoped to one.
 
-        Recorded rather than ignored: the lock is only worth anything if it is taken *inside*
-        a transaction — a session-scoped one on a pooled connection would be released at a
-        moment nothing here controls — so the ordering is a property worth asserting.
+        Depth is tracked because the distinction matters to what is being asserted: a
+        transaction-scoped lock is released at the top-level ``COMMIT``, so a *savepoint*
+        inside it lets one statement fail and roll back without releasing the lock or losing
+        the work before it. Recording both as ``BEGIN`` would make those indistinguishable.
         """
 
         _ = kwargs
-        self.executed.append("BEGIN")
+        nested = self.depth > 0
+        self.depth += 1
+        self.executed.append("SAVEPOINT" if nested else "BEGIN")
 
         @asynccontextmanager
         async def _txn() -> AsyncIterator[None]:
-            yield None
-            self.executed.append("COMMIT")
+            try:
+                yield None
+
+            except BaseException:
+                self.depth -= 1
+                self.executed.append("ROLLBACK TO SAVEPOINT" if nested else "ROLLBACK")
+                raise
+
+            self.depth -= 1
+            self.executed.append("RELEASE" if nested else "COMMIT")
 
         return _txn()
 
@@ -635,11 +647,13 @@ async def test_teardown_takes_the_same_lock_provisioning_binds_under() -> None:
 
     assert _index_of("BEGIN") < _index_of("pg_advisory_xact_lock") < _index_of("DROP SCHEMA")
 
-    # The role drop lands in a *later* transaction than the schema drop, so its failure cannot
-    # take the schema drop with it.
-    assert steps.index("COMMIT") < _index_of("DROP ROLE")
-    assert steps.count("BEGIN") == 2
-    # And that later transaction is locked too, so it cannot race a binding either.
-    assert [i for i, q in enumerate(steps) if "pg_advisory_xact_lock" in q][-1] < _index_of(
-        "DROP ROLE"
-    )
+    # One transaction, so the lock is held continuously from before the revoke to after the
+    # role drop. Splitting it released the lock in between, and a provisioning that took it in
+    # that gap could recreate the schema and rebind the role — which this teardown would then
+    # drop, leaving a schema whose reads have no role to enter.
+    assert steps.count("BEGIN") == 1
+    assert _index_of("DROP ROLE") < steps.index("COMMIT")
+
+    # The role drop sits in a savepoint inside it, which is what lets it fail without taking
+    # the schema drop with it.
+    assert _index_of("SAVEPOINT") < _index_of("DROP ROLE")
