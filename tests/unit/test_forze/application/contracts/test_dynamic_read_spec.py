@@ -58,3 +58,25 @@ def test_opting_in_unmasks_the_statement() -> None:
 
     assert spec.sensitive_capture_fields == frozenset()
     assert spec.trace_text_arg_key == STATEMENT_CAPTURE_KEY
+
+
+@pytest.mark.parametrize("bad", [True, False, 1.5, 0, -1, None, "10"])
+@pytest.mark.parametrize("field", ["row_cap", "max_statement_bytes"])
+def test_a_cap_that_is_not_a_positive_int_is_refused(field: str, bad: object) -> None:
+    """``attrs`` does not enforce annotations, so the validator has to.
+
+    Each of these fails differently without a type check, and none of them fails usefully:
+    ``True`` is an ``int`` and would wire as a one-row cap, a ``float`` compares fine and then
+    reaches the fetch probe as ``cap + 1``, and ``None`` or a string raises ``TypeError`` from
+    inside the validator instead of the configuration error that names the field.
+    """
+
+    with pytest.raises(CoreException) as ei:
+        DynamicReadSpec(name="widgets", **{field: bad})  # type: ignore[arg-type]
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+    assert ei.value.code == (
+        "dynamic_read_row_cap_invalid"
+        if field == "row_cap"
+        else "dynamic_read_statement_bytes_invalid"
+    )

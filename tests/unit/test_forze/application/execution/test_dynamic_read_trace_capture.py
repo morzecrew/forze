@@ -23,6 +23,7 @@ from forze.application.execution import Deps, DepsRegistry, ExecutionContext
 from forze.application.execution.tracing.port_proxy import REDACTED
 from forze.application.integrations.dynamic_read import DynamicReadRequest
 from forze.base.primitives import JsonDict
+from pydantic import BaseModel
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters import MockDynamicReadAdapter, MockDynamicReadRegistry
 
@@ -102,3 +103,62 @@ async def test_opting_in_captures_the_statement_verbatim() -> None:
 
     assert payloads
     assert payloads[0] == {"statement": STATEMENT}
+
+
+class _Row(BaseModel):
+    revenue: int
+
+
+async def test_every_call_form_records_the_statement() -> None:
+    """The opt-in has to hold wherever the caller puts the statement.
+
+    ``run`` leads with it, ``select`` puts it second behind the return type, and either may
+    pass it by keyword. Capturing only a leading positional makes ``capture_statements=True``
+    silently record nothing for two of the four forms — and silence is the one outcome that
+    looks identical to "the statement was withheld", so nothing downstream would report it.
+    """
+
+    spec = DynamicReadSpec(name=ROUTE, capture_statements=True)
+
+    calls = {
+        "run positional": lambda port: port.run(STATEMENT),
+        "run keyword": lambda port: port.run(statement=STATEMENT),
+        "select positional": lambda port: port.select(_Row, STATEMENT),
+        "select keyword": lambda port: port.select(_Row, statement=STATEMENT),
+    }
+
+    missing: list[str] = []
+
+    for label, call in calls.items():
+        ctx = _ctx(spec, MockState())
+        await call(ctx.dynamic_read.query(spec))
+        payloads = _captured_payloads(ctx)
+
+        if payloads != [{"statement": STATEMENT}]:
+            missing.append(f"{label}: {payloads}")
+
+    assert not missing, f"statement not captured for {missing}"
+
+
+async def test_every_call_form_masks_the_statement_by_default() -> None:
+    """And the mask has to hold in the same four places.
+
+    The completeness bug above is safe on its own — an uncaptured statement leaks nothing.
+    This is the check that stays load-bearing after it is fixed: a form that starts capturing
+    must start capturing *masked*, or the fix for a silent gap becomes a leak.
+    """
+
+    spec = DynamicReadSpec(name=ROUTE)
+
+    for call in (
+        lambda port: port.run(STATEMENT),
+        lambda port: port.run(statement=STATEMENT),
+        lambda port: port.select(_Row, STATEMENT),
+        lambda port: port.select(_Row, statement=STATEMENT),
+    ):
+        ctx = _ctx(spec, MockState())
+        await call(ctx.dynamic_read.query(spec))
+        payloads = _captured_payloads(ctx)
+
+        assert payloads == [{"statement": REDACTED}]
+        assert "nadia@example.com" not in repr(payloads)

@@ -327,11 +327,17 @@ async def test_no_role_is_touched_when_none_is_configured() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deprovision_drops_the_role_before_the_schema() -> None:
-    """Order matters: a role Postgres still sees privileges for cannot be dropped.
+async def test_deprovision_revokes_then_drops_the_schema_then_the_role() -> None:
+    """Three steps, and each boundary is forced by something PostgreSQL does.
 
-    And after ``DROP SCHEMA … CASCADE`` the default-privileges entry outlives the tables it
-    referred to, so the revoke has to happen while the schema is still there.
+    The revoke goes first because ``DROP SCHEMA … CASCADE`` outlives the default-privileges
+    entry that referred to its tables, leaving nothing to name in ``ALTER DEFAULT PRIVILEGES``.
+
+    The schema goes before the role because roles are cluster-wide while grants are
+    per-database: this connection cannot revoke a privilege the role holds in another database,
+    and ``DROP ROLE`` refuses while any remains. Dropping the role first let a grant nobody here
+    can see abort teardown *before* the tenant's data was removed — which is the part of
+    offboarding that actually has to happen.
     """
 
     client = _FakeClient(existing_role=True, existing_schema=True)
@@ -349,7 +355,47 @@ async def test_deprovision_drops_the_role_before_the_schema() -> None:
         assert matches, f"{fragment!r} never ran; statements were {client.executed}"
         return matches[0]
 
-    assert _index_of("ALTER DEFAULT PRIVILEGES") < _index_of("DROP ROLE") < _index_of("DROP SCHEMA")
+    assert _index_of("ALTER DEFAULT PRIVILEGES") < _index_of("DROP SCHEMA") < _index_of("DROP ROLE")
+
+
+@pytest.mark.asyncio
+async def test_a_role_that_cannot_be_dropped_still_leaves_the_schema_gone() -> None:
+    """The ordering'"'"'s whole purpose, asserted on the failing path rather than the happy one.
+
+    A cluster-wide dependency this connection cannot see makes ``DROP ROLE`` refuse. The tenant
+    data must already be gone by then, and the operator must be told which role survived and
+    why — an orphaned role accumulates quietly, and the blocking grant is usually somewhere
+    they have to go looking for.
+    """
+
+    from psycopg import errors
+
+    class _RoleStuckClient(_FakeClient):
+        async def execute(self, query: Any, params: Any = None, **kwargs: Any) -> None:
+            await super().execute(query, params, **kwargs)
+
+            if "DROP ROLE" in self.executed[-1]:
+                raise RuntimeError("wrapped") from errors.DependentObjectsStillExist(
+                    "role cannot be dropped because some objects depend on it"
+                )
+
+    client = _RoleStuckClient(existing_role=True, existing_schema=True)
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=client,  # type: ignore[arg-type]
+        schema="acme",
+        role="acme_reader",
+        drop_on_deprovision=True,
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await provisioner.deprovision(TenantIdentity(tenant_id=uuid4()))
+
+    assert ei.value.code == "tenant_role_still_depended_on"
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+    assert ei.value.details is not None
+    assert ei.value.details["role"] == "acme_reader"
+    # The part that must not be lost to the failure.
+    assert any("DROP SCHEMA" in q for q in client.executed)
 
 
 @pytest.mark.asyncio

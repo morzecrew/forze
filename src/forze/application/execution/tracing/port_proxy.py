@@ -125,6 +125,35 @@ class TracingPortProxy(PortProxy):
     # ....................... #
 
     @staticmethod
+    def _text_argument(
+        key: str,
+        args: tuple[Any, ...],
+        kwargs: Mapping[str, Any],
+    ) -> str | None:
+        """The statement on a text-query plane, wherever the caller put it.
+
+        Only a spec that declared a text key reaches here, and on such a plane the statement is
+        the sole string argument — the rest are a return type, a params mapping and an options
+        mapping. So "the keyword under the declared name, else the first string positional"
+        identifies it without this proxy knowing any port's signature, which it must not.
+
+        Both halves are load-bearing: ``run`` leads with the statement while ``select`` puts it
+        behind the return type, and either may pass it by keyword. Matching only a leading
+        positional recorded nothing for the other three forms — and *nothing* is
+        indistinguishable from a deliberately withheld statement, so the gap could not surface
+        downstream.
+        """
+
+        value = kwargs.get(key)
+
+        if isinstance(value, str):
+            return value
+
+        return next((arg for arg in args if isinstance(arg, str)), None)
+
+    # ....................... #
+
+    @staticmethod
     def _dump(value: Any, *, mode: str = "json") -> JsonDict | None:
         """A structural ``dict`` view of *value* (a write DTO / read model), or ``None`` for a
         scalar / id / unstructured value — so capture only records the meaningful payloads.
@@ -136,6 +165,13 @@ class TracingPortProxy(PortProxy):
         """
 
         if value is None or isinstance(value, (str, bytes, int, float, bool, UUID)):
+            return None
+
+        if isinstance(value, type):
+            # A *class* is an argument, never a payload — ``select(return_type, …)`` leads with
+            # one. Without this it reaches ``model_dump`` as an unbound method, which is
+            # callable, so the call below raises ``TypeError`` for the missing ``self`` and the
+            # retry beneath raises it again: capture turns a traced read into a crash.
             return None
 
         dump = getattr(value, "model_dump", None)
@@ -209,12 +245,15 @@ class TracingPortProxy(PortProxy):
             candidate = kwargs["filters"] if "filters" in kwargs else (args[0] if args else None)
             data = self._dump(candidate)
 
-            if data is None and self.text_arg_key is not None and isinstance(candidate, str):
+            if data is None and self.text_arg_key is not None:
                 # The statement *is* the predicate on a text-query plane. Captured under a
                 # declared key so the same ``redact`` set that masks structured fields masks
                 # it too — recorded as ``"<redacted>"`` rather than dropped, so a trace
                 # consumer can tell a withheld statement from no statement at all.
-                data = {self.text_arg_key: candidate}
+                text = self._text_argument(self.text_arg_key, args, kwargs)
+
+                if text is not None:
+                    data = {self.text_arg_key: text}
 
             return self._redact(data) if data is not None else None
 

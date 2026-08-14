@@ -37,7 +37,7 @@ from forze_mock.state import MockState
 
 MockDynamicReadHandler = Callable[
     [DynamicReadRequest, MockState],
-    "Sequence[JsonDict] | Awaitable[Sequence[JsonDict]]",
+    Sequence[JsonDict] | Awaitable[Sequence[JsonDict]],
 ]
 """Handler for one dynamic-read route.
 

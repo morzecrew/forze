@@ -111,16 +111,38 @@ def validate_dynamic_read_spec(spec: DynamicReadSpec) -> None:
     :param spec: Dynamic-read surface to validate.
     """
 
-    if spec.row_cap < 1:
+    if not _is_positive_int(spec.row_cap):
         raise exc.configuration(
-            "DynamicReadSpec.row_cap must be at least 1.",
+            "DynamicReadSpec.row_cap must be a positive integer.",
             code="dynamic_read_row_cap_invalid",
-            details={"route": str(spec.name), "row_cap": spec.row_cap},
+            details={"route": str(spec.name), "row_cap": repr(spec.row_cap)},
         )
 
-    if spec.max_statement_bytes < 1:
+    if not _is_positive_int(spec.max_statement_bytes):
         raise exc.configuration(
-            "DynamicReadSpec.max_statement_bytes must be at least 1.",
+            "DynamicReadSpec.max_statement_bytes must be a positive integer.",
             code="dynamic_read_statement_bytes_invalid",
-            details={"route": str(spec.name), "max_statement_bytes": spec.max_statement_bytes},
+            details={
+                "route": str(spec.name),
+                "max_statement_bytes": repr(spec.max_statement_bytes),
+            },
         )
+
+
+# ....................... #
+
+
+def _is_positive_int(value: object) -> bool:
+    """Whether *value* is a genuine positive ``int``.
+
+    ``attrs`` does not enforce annotations, so a cap arrives as whatever the author wrote. The
+    type check is not pedantry here: ``True`` is an ``int`` and would pass ``>= 1`` as a cap of
+    one row, a ``float`` compares fine and then reaches ``row_cap + 1`` as the fetch probe, and
+    ``None`` or a string raises ``TypeError`` from inside a validator whose job is to produce a
+    configuration error naming the field.
+
+    The same predicate the per-call option check applies in the shared shell — one plane, one
+    rule for what a cap is.
+    """
+
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1

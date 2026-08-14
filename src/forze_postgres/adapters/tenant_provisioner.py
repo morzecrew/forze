@@ -129,33 +129,36 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 
         name = await resolve_value(self.schema, tenant.tenant_id)
 
-        if self.role is not None:
-            # Before the schema, not after: dropping a role Postgres still sees privileges for
-            # fails with "cannot be dropped because some objects depend on it", and after a
-            # CASCADE the default-privileges entry survives the tables it referred to.
-            role = await resolve_value(self.role, tenant.tenant_id)
+        role = await resolve_value(self.role, tenant.tenant_id) if self.role is not None else None
 
-            # Both existence probes, because `REVOKE` has no `IF EXISTS` and offboarding is the
-            # operation most likely to be re-run: a half-finished teardown, a retried cleanup
-            # job, an operator repeating a command. Every other statement in this class is
-            # `IF EXISTS`/`IF NOT EXISTS`, and a revoke that raised on a schema already gone
-            # would leave that half-finished teardown with no way to complete.
-            if await self._schema_exists(name) and await self._role_exists(role):
-                await self._revoke_read_only(schema=name, role=role)
+        # The revoke goes before the schema drop, because after a CASCADE the default-privileges
+        # entry survives the tables it referred to and there is then no schema to name in
+        # `ALTER DEFAULT PRIVILEGES`.
+        #
+        # Both existence probes, because `REVOKE` has no `IF EXISTS` and offboarding is the
+        # operation most likely to be re-run: a half-finished teardown, a retried cleanup job,
+        # an operator repeating a command. Every other statement in this class is
+        # `IF EXISTS`/`IF NOT EXISTS`, and a revoke that raised on a schema already gone would
+        # leave that half-finished teardown with no way to complete.
+        if role is not None and await self._schema_exists(name) and await self._role_exists(role):
+            await self._revoke_read_only(schema=name, role=role)
 
-            await self.client.execute(
-                cast(
-                    QueryNoTemplate,
-                    sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)),
-                )
-            )
-
+        # The schema goes before the role, and the ordering is the point rather than a
+        # preference. Roles are cluster-wide but grants are per-database, so this connection
+        # cannot revoke a privilege the role holds in another database of the cluster — and
+        # `DROP ROLE` refuses while any remains, with `IF EXISTS` covering absence rather than
+        # dependency. Dropping the role first therefore let a grant nobody here can see abort
+        # the whole teardown *before* the tenant's data was removed, which is the one part of
+        # offboarding that has to happen.
         await self.client.execute(
             cast(
                 QueryNoTemplate,
                 sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(name)),
             )
         )
+
+        if role is not None:
+            await self._drop_role(role)
 
     # ....................... #
 
@@ -215,6 +218,39 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
             # path's check. Without it the same wiring would be refused or accepted depending
             # on which onboarding ran first.
             await self._refuse_privileged_role(role)
+
+    # ....................... #
+
+    async def _drop_role(self, role: str) -> None:
+        """Drop the role, naming the dependency when the cluster still holds one.
+
+        Reached only after the tenant's schema is gone, so a refusal here leaves a role behind
+        rather than data. It is still raised: a silently orphaned role accumulates, and the one
+        thing an operator needs is which role and why, since the blocking grant is usually in a
+        database this connection cannot see.
+        """
+
+        try:
+            await self.client.execute(
+                cast(
+                    QueryNoTemplate,
+                    sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)),
+                )
+            )
+
+        except Exception as error:
+            if not _is_dependent_objects(error):
+                raise
+
+            raise exc.configuration(
+                f"Tenant schema was dropped, but role {role!r} could not be: the cluster still "
+                "holds privileges that depend on it. Grants are per-database while roles are "
+                "cluster-wide, so the blocker is often in another database this connection "
+                "cannot revoke from. Revoke there and drop the role, or give each tenant its "
+                "own role so teardown owns everything it created.",
+                code="tenant_role_still_depended_on",
+                details={"role": role},
+            ) from error
 
     # ....................... #
 
@@ -311,22 +347,45 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 # ....................... #
 
 
-def _is_duplicate_object(error: BaseException) -> bool:
-    """Whether *error* (or anything in its chain) is Postgres reporting an existing role.
+def _caused_by(error: BaseException, kind: type[BaseException]) -> bool:
+    """Whether *error* or anything in its cause chain is an instance of *kind*.
 
     The client's exception interceptor wraps the psycopg error, so the raw
-    :class:`~psycopg.errors.DuplicateObject` sits somewhere in the cause chain rather than at
-    the top.
+    :mod:`psycopg.errors` class sits somewhere in the chain rather than at the top. Walked with
+    a seen-set because ``__cause__``/``__context__`` can form a cycle when an error is re-raised
+    inside the handling of another.
     """
 
     seen: set[int] = set()
     current: BaseException | None = error
 
     while current is not None and id(current) not in seen:
-        if isinstance(current, errors.DuplicateObject):
+        if isinstance(current, kind):
             return True
 
         seen.add(id(current))
         current = current.__cause__ or current.__context__
 
     return False
+
+
+# ....................... #
+
+
+def _is_dependent_objects(error: BaseException) -> bool:
+    """Whether *error* is Postgres refusing a drop because something still depends on it.
+
+    SQLSTATE ``2BP01``. Matched on the class rather than the message, which names the blocking
+    objects and so varies with what they are.
+    """
+
+    return _caused_by(error, errors.DependentObjectsStillExist)
+
+
+# ....................... #
+
+
+def _is_duplicate_object(error: BaseException) -> bool:
+    """Whether *error* is Postgres reporting that the role already exists (SQLSTATE ``42710``)."""
+
+    return _caused_by(error, errors.DuplicateObject)
