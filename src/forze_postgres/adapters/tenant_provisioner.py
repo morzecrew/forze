@@ -13,6 +13,7 @@ require_psycopg()
 
 # ....................... #
 
+import hashlib
 from typing import cast
 
 import attrs
@@ -113,20 +114,38 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 
     async def provision(self, tenant: TenantIdentity) -> None:
         name = await resolve_value(self.schema, tenant.tenant_id)
-        await self.client.execute(
-            cast(
-                QueryNoTemplate,
-                sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(name)),
+
+        try:
+            await self.client.execute(
+                cast(
+                    QueryNoTemplate,
+                    sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(name)),
+                )
             )
-        )
+
+        except Exception as error:
+            # `IF NOT EXISTS` is check-then-act inside the server, so PostgreSQL documents it
+            # as racy: two onboardings for one tenant can both pass the check and the loser
+            # gets a unique violation on the catalog index. Onboarding is re-run routinely, so
+            # that has to be a no-op rather than a failure.
+            if not _is_already_exists(error):
+                raise
 
         if self.role is None:
             return
 
         role = await resolve_value(self.role, tenant.tenant_id)
-        await self._refuse_role_bound_elsewhere(schema=name, role=role)
         await self._ensure_role(role)
-        await self._grant_read_only(schema=name, role=role)
+
+        # The binding is check-then-act too, and unlike the creates above there is no server
+        # constraint behind it: two onboardings resolving one role can both read "unbound" and
+        # both grant, leaving that role holding read access to two tenants. The lock is keyed
+        # on the role because the role is what must not be shared, and transaction-scoped so it
+        # cannot outlive the connection's return to the pool.
+        async with self.client.transaction():
+            await self._lock_role(role)
+            await self._refuse_role_bound_elsewhere(schema=name, role=role)
+            await self._grant_read_only(schema=name, role=role)
 
     async def deprovision(self, tenant: TenantIdentity) -> None:
         if not self.drop_on_deprovision:
@@ -215,7 +234,7 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
             )
 
         except Exception as error:
-            if not _is_duplicate_object(error):
+            if not _is_already_exists(error):
                 raise
 
             # Losing the race means adopting a role this provisioner did not create, which is
@@ -256,6 +275,22 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
                 code="tenant_role_still_depended_on",
                 details={"role": role},
             ) from error
+
+    # ....................... #
+
+    async def _lock_role(self, role: str) -> None:
+        """Take the transaction-scoped advisory lock guarding one role's binding.
+
+        The key is a stable digest of the role name rather than :func:`hash`, which is salted
+        per process and would put two workers on different keys, and rather than the server's
+        ``hashtext``, which is undocumented. Only onboardings resolving the *same* role
+        contend; everything else proceeds in parallel.
+        """
+
+        await self.client.execute(
+            "SELECT pg_advisory_xact_lock(%(key)s)",
+            {"key": advisory_key(role)},
+        )
 
     # ....................... #
 
@@ -399,7 +434,33 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 # ....................... #
 
 
-def _caused_by(error: BaseException, kind: type[BaseException]) -> bool:
+def advisory_key(role: str) -> int:
+    """The advisory-lock key for *role*, stable across processes.
+
+    A digest rather than :func:`hash`, which is salted per interpreter: two workers onboarding
+    at the same time would take *different* keys and serialize against nobody, which is the one
+    deployment this lock exists for. Salting is invisible inside a single process, so the
+    property is pinned by comparing subprocesses.
+
+    Not the server's ``hashtext`` either — it is undocumented and free to change between
+    versions, and a key that shifts on upgrade means a rolling deployment where old and new
+    nodes do not contend.
+    """
+
+    return int.from_bytes(
+        hashlib.blake2b(role.encode("utf-8"), digest_size=8).digest(),
+        "big",
+        signed=True,
+    )
+
+
+# ....................... #
+
+
+def _caused_by(
+    error: BaseException,
+    kind: type[BaseException] | tuple[type[BaseException], ...],
+) -> bool:
     """Whether *error* or anything in its cause chain is an instance of *kind*.
 
     The client's exception interceptor wraps the psycopg error, so the raw
@@ -437,7 +498,19 @@ def _is_dependent_objects(error: BaseException) -> bool:
 # ....................... #
 
 
-def _is_duplicate_object(error: BaseException) -> bool:
-    """Whether *error* is Postgres reporting that the role already exists (SQLSTATE ``42710``)."""
+def _is_already_exists(error: BaseException) -> bool:
+    """Whether *error* is Postgres reporting that the object is already there.
 
-    return _caused_by(error, errors.DuplicateObject)
+    Three classes, because which one arrives depends on *when* the collision is noticed. A
+    conflict visible while the statement is planned raises ``DuplicateObject`` (42710) or
+    ``DuplicateSchema`` (42P06); one that only surfaces as the row is written raises a
+    ``UniqueViolation`` (23505) on the catalog index, which is what a live cluster produces
+    when two sessions genuinely race.
+
+    Matching only the first two is the shape of a tolerance that passes its test and does
+    nothing: a fabricated ``DuplicateObject`` satisfies it, and no real race ever does.
+    """
+
+    return _caused_by(
+        error, (errors.DuplicateObject, errors.DuplicateSchema, errors.UniqueViolation)
+    )

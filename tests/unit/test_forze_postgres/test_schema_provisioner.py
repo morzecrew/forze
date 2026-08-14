@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 from uuid import uuid4
 
@@ -31,6 +34,24 @@ class _FakeClient:
         self.role_can_login = role_can_login
         self.role_is_superuser = role_is_superuser
         self.role_bound_to = role_bound_to
+
+    def transaction(self, **kwargs: Any) -> Any:
+        """The binding runs inside a transaction so its advisory lock is scoped to one.
+
+        Recorded rather than ignored: the lock is only worth anything if it is taken *inside*
+        a transaction — a session-scoped one on a pooled connection would be released at a
+        moment nothing here controls — so the ordering is a property worth asserting.
+        """
+
+        _ = kwargs
+        self.executed.append("BEGIN")
+
+        @asynccontextmanager
+        async def _txn() -> AsyncIterator[None]:
+            yield None
+            self.executed.append("COMMIT")
+
+        return _txn()
 
     async def execute(self, query: Any, params: Any = None, **kwargs: Any) -> None:
         _ = params, kwargs
@@ -504,3 +525,65 @@ async def test_a_role_already_provisioned_for_another_schema_is_refused() -> Non
     assert ei.value.details["already_bound_to"] == "t_other"
     # Refused before anything was granted to this tenant'"'"'s schema.
     assert "GRANT" not in "\n".join(client.executed)
+
+
+@pytest.mark.asyncio
+async def test_the_binding_is_taken_under_a_transaction_scoped_lock() -> None:
+    """The check and the grant have to be one indivisible step.
+
+    Between reading "this role is unbound" and granting, another onboarding resolving the same
+    role can read the same thing — there is no server constraint behind a grant to catch it, so
+    both would proceed and one role would end up holding two tenants' schemas.
+
+    The lock has to be *transaction*-scoped: a session-scoped one on a pooled connection is
+    released when the pool decides, not when the binding is done. So the ordering asserted here
+    is BEGIN → lock → probe → grant.
+    """
+
+    client = _FakeClient(existing_role=True)
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=client,  # type: ignore[arg-type]
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}",
+        role=lambda tenant_id: f"r_{tenant_id.hex[:8]}",
+    )
+
+    await provisioner.provision(TenantIdentity(tenant_id=uuid4()))
+
+    def _index_of(fragment: str) -> int:
+        matches = [i for i, q in enumerate(client.executed) if fragment in q]
+        assert matches, f"{fragment!r} never ran; statements were {client.executed}"
+        return matches[0]
+
+    assert _index_of("BEGIN") < _index_of("pg_advisory_xact_lock") < _index_of("GRANT USAGE")
+
+
+def test_the_advisory_key_is_stable_across_processes() -> None:
+    """The lock only serializes if every worker computes the same key.
+
+    ``hash()`` would pass every test in this file and fail in production: PYTHONHASHSEED is
+    randomized per interpreter, so two onboarding workers would take different keys and
+    contend with nobody. A single-process test cannot see that, so this compares subprocesses
+    started with different seeds.
+    """
+
+    import subprocess
+    import sys
+
+    program = (
+        "from forze_postgres.adapters.tenant_provisioner import advisory_key;"
+        "print(advisory_key('acme_reader'))"
+    )
+    keys = {
+        subprocess.run(
+            [sys.executable, "-c", program],
+            capture_output=True,
+            text=True,
+            check=True,
+            env={"PYTHONHASHSEED": str(seed), "PATH": os.environ.get("PATH", "")},
+        ).stdout.strip()
+        for seed in (0, 1, 42, 12345)
+    }
+
+    assert len(keys) == 1, f"advisory key varies with the hash seed: {keys}"
+    # And it fits the signed bigint `pg_advisory_xact_lock` takes.
+    assert -(2**63) <= int(keys.pop()) < 2**63

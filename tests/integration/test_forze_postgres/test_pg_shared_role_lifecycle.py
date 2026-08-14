@@ -12,6 +12,7 @@ as obvious and turns out to be wrong.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
@@ -305,3 +306,137 @@ async def _role_has_schema_grant(
             {"schema": schema, "role": role},
         )
     ) is not None
+
+
+class _BarrieredClient:
+    """Delegates to a real client, holding the binding probe until both racers reach it.
+
+    The race is check-then-act, so reproducing it means both checks observing the catalog
+    before either write. Left to chance the two coroutines usually serialize and the test
+    would pass for the wrong reason.
+
+    The barrier waits with a timeout rather than forever, so the same test works after the
+    fix: with the check serialized, the second caller never reaches its probe, the first
+    stops waiting and completes, and the second then sees the binding it was meant to see.
+    """
+
+    def __init__(self, inner: PostgresClient, barrier_size: int) -> None:
+        self._inner = inner
+        self._arrived = 0
+        self._released = asyncio.Event()
+        self._size = barrier_size
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._inner, name)
+
+    async def fetch_value(self, query: object, params: object = None, **kwargs: object) -> object:
+        text = query if isinstance(query, str) else str(query)
+
+        if "pg_default_acl" in text:
+            self._arrived += 1
+
+            if self._arrived >= self._size:
+                self._released.set()
+
+            try:
+                await asyncio.wait_for(self._released.wait(), timeout=2.0)
+
+            except TimeoutError:
+                pass
+
+        return await self._inner.fetch_value(query, params, **kwargs)  # type: ignore[arg-type]
+
+
+async def test_two_onboardings_racing_on_one_role_cannot_both_bind_it(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """Check-then-act, run concurrently against a real server on separate pooled connections.
+
+    The role is created up front on purpose. Racing on a role that does not exist yet, both
+    onboardings also race on ``CREATE ROLE`` and the loser dies there — which looks like
+    protection and is not: it is the *role creation* colliding, not the binding being refused.
+    Pre-creating removes that accident and leaves the window this is about, which is also the
+    ordinary case (a role that already exists is the second tenant's normal situation).
+
+    One binding may land. Two would mean one role holding read access to two tenants — the
+    outcome every guard on this path exists to prevent, reached by timing rather than by
+    configuration.
+    """
+
+    role = f"raced_{tag}"
+    await pg_client.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(role)))
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=_BarrieredClient(pg_client, barrier_size=2),  # type: ignore[arg-type]
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+        role=lambda _tenant_id: role,
+        drop_on_deprovision=True,
+    )
+
+    first, second = TenantIdentity(tenant_id=uuid4()), TenantIdentity(tenant_id=uuid4())
+    schemas = [f"t_{t.tenant_id.hex[:8]}_{tag}" for t in (first, second)]
+
+    try:
+        results = await asyncio.gather(
+            provisioner.provision(first),
+            provisioner.provision(second),
+            return_exceptions=True,
+        )
+
+        bound = [
+            s for s in schemas if await _role_has_schema_grant(pg_client, role=role, schema=s)
+        ]
+
+        assert len(bound) == 1, f"one role ended up bound to {bound}; exactly one may win"
+
+        refusals = [r for r in results if isinstance(r, CoreException)]
+
+        assert len(refusals) == 1, f"expected one refusal, got {results}"
+        assert refusals[0].code == "tenant_role_already_bound"
+
+    finally:
+        await _cleanup(pg_client, schemas=schemas, role=role)
+
+
+async def test_racing_role_creation_is_tolerated_against_a_real_server(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """The duplicate-tolerance branch, against the server rather than a fabricated error.
+
+    Its whole purpose is that an onboarding whose only problem is that someone else finished
+    first must not fail. The unit test constructs ``DuplicateObject`` by hand; a real cluster
+    losing a ``CREATE ROLE`` race raises a **unique violation** on the role-name index instead,
+    which is a different class — so the branch could be, and was, correct against the fake and
+    inert against a server.
+
+    Two onboardings for *different* schemas with *different* roles, so neither the binding
+    guard nor anything else is in play — only role creation.
+    """
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=pg_client,
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+        role=lambda tenant_id: f"r_{tenant_id.hex[:8]}_{tag}",
+    )
+
+    tenant = TenantIdentity(tenant_id=uuid4())
+    schema, role = f"t_{tenant.tenant_id.hex[:8]}_{tag}", f"r_{tenant.tenant_id.hex[:8]}_{tag}"
+
+    try:
+        # The same tenant onboarded twice at once — the retried-job shape, and the cheapest way
+        # to make two CREATE ROLE statements for one name collide on a live server.
+        results = await asyncio.gather(
+            provisioner.provision(tenant),
+            provisioner.provision(tenant),
+            return_exceptions=True,
+        )
+
+        failures = [r for r in results if isinstance(r, BaseException)]
+
+        assert not failures, f"a lost CREATE ROLE race must not fail an onboarding: {failures}"
+        assert await _role_has_schema_grant(pg_client, role=role, schema=schema) is True
+
+    finally:
+        await _cleanup(pg_client, schemas=[schema], role=role)

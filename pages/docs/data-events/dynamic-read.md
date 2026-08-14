@@ -243,7 +243,9 @@ or database it runs inside.
     may be async — so a constant one like `lambda _: "reader"` has the shape of
     per-tenant scoping without the substance. That is caught at the second
     onboarding instead (`tenant_role_already_bound`), where the server can say
-    whether the role is already provisioned for a different schema. Teardown breaks there too: `deprovision` drops the role per tenant, and
+    whether the role is already provisioned for a different schema. That check and
+    the grant that follows it run under a transaction-scoped advisory lock keyed on
+    the role, so two onboardings resolving the same role cannot both pass it. Teardown breaks there too: `deprovision` drops the role per tenant, and
     PostgreSQL refuses to drop one another schema's grants still name — `IF EXISTS`
     covers absence, not dependency — so the `DROP SCHEMA` behind it never runs and
     the tenant's data stays.
