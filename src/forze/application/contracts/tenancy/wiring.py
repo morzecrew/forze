@@ -163,7 +163,7 @@ def _check_origin_floors(floors: Mapping[StatementOrigin, TenantIsolationMode]) 
 
     rungs = frozenset(get_args(StatementOrigin))
 
-    if rungs == floors.keys():
+    if rungs == floors.keys():  # pyright: ignore[reportUnnecessaryComparison]
         return
 
     missing = sorted(rungs - floors.keys())
