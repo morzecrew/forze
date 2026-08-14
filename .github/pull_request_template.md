@@ -1,6 +1,7 @@
 <!--
-Title: <gitmoji> <type>[scope][!]: <description>   (gitmoji-conventional)
+Title: <gitmoji> <type>[(scope)][!]: <description>   (gitmoji-conventional)
 e.g.  ✨ feat(ports): add outbox port for transactional dispatch
+See CONTRIBUTING.md → Commit Messages for the mapping and the validator.
 -->
 
 ## Summary
@@ -37,7 +38,7 @@ Deprecations, renames, or changed signatures:
 
 ## Verification
 
-- [ ] `just ci` green locally
+- [ ] `just test` and `just quality -s` green locally
 - [ ] New behaviour has a test that fails without the change (seen red first)
 - [ ] Domain-layer tests need no database, broker, or HTTP client
 
