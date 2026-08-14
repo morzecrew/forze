@@ -210,6 +210,12 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
             if not _is_duplicate_object(error):
                 raise
 
+            # Losing the race means adopting a role this provisioner did not create, which is
+            # the probe path's situation arriving by a different route — so it gets the probe
+            # path's check. Without it the same wiring would be refused or accepted depending
+            # on which onboarding ran first.
+            await self._refuse_privileged_role(role)
+
     # ....................... #
 
     async def _refuse_privileged_role(self, role: str) -> None:

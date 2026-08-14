@@ -250,6 +250,43 @@ async def test_a_role_created_concurrently_does_not_fail_the_onboarding() -> Non
 
 
 @pytest.mark.asyncio
+async def test_the_role_lost_to_a_race_is_checked_like_any_other() -> None:
+    """The path that adopts a role without having created it, checked the same way.
+
+    Losing the ``CREATE ROLE`` race means the role now in place is someone else's, exactly as
+    if the existence probe had found it — the two differ only in timing. Skipping the check
+    here would make the same wiring safe or unsafe depending on which onboarding ran first,
+    and the tolerated-duplicate branch exists precisely because that race is real.
+    """
+
+    from psycopg import errors
+
+    class _RacingWithPrivilegedRole(_FakeClient):
+        async def execute(self, query: Any, params: Any = None, **kwargs: Any) -> None:
+            await super().execute(query, params, **kwargs)
+
+            if "CREATE ROLE" in self.executed[-1]:
+                # The winner created something this provisioner would never have created.
+                self.existing_role = True
+                self.role_can_login = True
+                raise RuntimeError("wrapped") from errors.DuplicateObject("role already exists")
+
+    client = _RacingWithPrivilegedRole()
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=client,  # type: ignore[arg-type]
+        schema="acme",
+        role="shared_reader",
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await provisioner.provision(TenantIdentity(tenant_id=uuid4()))
+
+    assert ei.value.code == "tenant_role_not_confinable"
+    # The refusal lands before the schema is handed over, as on the probe path.
+    assert "GRANT" not in "\n".join(client.executed)
+
+
+@pytest.mark.asyncio
 async def test_a_role_creation_failure_that_is_not_a_race_still_propagates() -> None:
     """The control: only *duplicate* is swallowed, never a real permission failure.
 
