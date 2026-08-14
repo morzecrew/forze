@@ -584,8 +584,8 @@ def test_the_advisory_key_is_stable_across_processes() -> None:
     import sys
 
     program = (
-        "from forze_postgres.adapters.tenant_provisioner import advisory_key;"
-        "print(advisory_key('acme_reader'))"
+        "from forze_postgres.adapters.tenant_provisioner import _advisory_key;"
+        "print(_advisory_key('acme_reader'))"
     )
     keys = {
         subprocess.run(

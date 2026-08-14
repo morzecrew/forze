@@ -215,10 +215,11 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
         failing an onboarding that has nothing wrong with it.
 
         Reuse is checked rather than assumed, because the same skip that makes onboarding
-        idempotent also adopts a name that already belongs to something else. What is checked
-        is only what stays true: ``NOLOGIN`` and not a superuser are attributes of the role,
-        while memberships and privileges can be granted the day after onboarding — a check on
-        those would read as a boundary and be a snapshot.
+        idempotent also adopts a name that already belongs to something else. The check is
+        **adoption-time mistake-proofing, not a standing boundary** — every disqualifying
+        attribute can be granted after the fact, which is a reason to say so rather than a
+        reason to skip it. See :meth:`_refuse_privileged_role` for what disqualifies a role
+        and why direct schema grants are deliberately left to the binding check instead.
         """
 
         if await self._role_exists(role):
@@ -289,7 +290,7 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 
         await self.client.execute(
             "SELECT pg_advisory_xact_lock(%(key)s)",
-            {"key": advisory_key(role)},
+            {"key": _advisory_key(role)},
         )
 
     # ....................... #
@@ -462,7 +463,7 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 # ....................... #
 
 
-def advisory_key(role: str) -> int:
+def _advisory_key(role: str) -> int:
     """The advisory-lock key for *role*, stable across processes.
 
     A digest rather than :func:`hash`, which is salted per interpreter: two workers onboarding
