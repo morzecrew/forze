@@ -6518,6 +6518,9 @@ trusted to filter itself — are only as safe as the store underneath them.
 Declaring <code>required_tenant_isolation="dedicated"</code> refuses to wire them
 anywhere a shared store could leak.</p>
 </div>
+<p>A route that executes statement text the framework didn't build carries a second,
+undeclarable floor from its <code>StatementOrigin</code> — see
+<a href="../../reference/tenancy-matrix/#the-floor-a-route-cant-lower-statement-origin">Tenancy matrix → statement origin</a>.</p>
 <h2 id="provisioning-per-tenant-infrastructure">Provisioning per-tenant infrastructure<a class="headerlink" href="#provisioning-per-tenant-infrastructure" title="Permanent link">&para;</a></h2>
 <p>The stronger tiers assume the per-tenant container already exists — a schema, a
 dataset, a bucket. Onboarding a tenant should create it; offboarding should tear

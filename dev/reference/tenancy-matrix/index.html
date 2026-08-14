@@ -5608,6 +5608,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#the-floor-a-route-cant-lower-statement-origin" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The floor a route can't lower: statement origin
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6109,6 +6120,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#the-floor-a-route-cant-lower-statement-origin" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The floor a route can't lower: statement origin
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6444,6 +6466,86 @@ fails as a <strong>capability mismatch</strong>, not a silent misconfiguration:<
 <p>See <a href="../../identity-tenancy-enc/multi-tenancy/#declaring-a-minimum">Multi-tenancy → Declaring a minimum</a>
 for the wiring, and <a href="../../identity-tenancy-enc/multi-tenancy/#provisioning-per-tenant-infrastructure">→ Provisioning</a>
 for creating the per-tenant containers the stronger tiers assume.</p>
+<h2 id="the-floor-a-route-cant-lower-statement-origin">The floor a route can't lower: statement origin<a class="headerlink" href="#the-floor-a-route-cant-lower-statement-origin" title="Permanent link">&para;</a></h2>
+<p>The tier tells you how strong a route's container is. It doesn't tell you what kind of
+text runs inside it, and that's the other half of whether the route is safe. A route
+declares its <code>StatementOrigin</code>, and its tier has to reach that origin's floor:</p>
+<table>
+<thead>
+<tr>
+<th>Origin</th>
+<th>Who wrote the statement</th>
+<th>Floor</th>
+<th>The shape it describes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>structured</code> (default)</td>
+<td>the framework, from typed spec elements — the adapter places every predicate</td>
+<td><code>none</code></td>
+<td>every plane in the table above</td>
+</tr>
+<tr>
+<td><code>compiled</code></td>
+<td>a trusted compiler, per request, declaring what it reads</td>
+<td><code>namespace</code></td>
+<td>catalog / semantic-layer SQL</td>
+</tr>
+<tr>
+<td><code>raw</code></td>
+<td>an engine-specific string nothing can rewrite or verify</td>
+<td><code>dedicated</code></td>
+<td>a whole-query hatch like <code>ctx.graph.raw</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>No shipped route declares an origin yet</strong>, so today this changes nothing you wire —
+including the Neo4j raw hatch, which is still governed by <code>allow_raw_query</code> and your own
+<code>required_tenant_isolation</code>, not by the <code>raw</code> floor above. The floors bind a route the
+moment it declares one; until then the table tells you which tier a route <em>would</em> need.</p>
+<p><code>compiled</code> floors at <code>namespace</code>, not <code>tagged</code>, and the reason is worth internalizing
+before you argue for the weaker tier: <strong>verification raises confidence in a claim; it
+doesn't create a boundary.</strong> A read-set check runs over generated text, so a compiler bug
+or a construct the checker renders imprecisely yields a statement that passes the check
+and reads what it shouldn't. At <code>tagged</code> that's a silent cross-tenant read in a
+report that renders perfectly. At <code>namespace</code> the same defect names a relation that
+doesn't exist, or stays inside the tenant's own container. The floor follows from what
+happens <em>when the check is wrong</em>, not from how good the check is.</p>
+<p>The consequence is architectural: <code>compiled</code> at <code>namespace</code> means per-tenant containers,
+so whatever names those containers is a security-relevant component, not a readability
+one. A compiler that bakes namespace names into its artifacts is baking in an isolation
+boundary.</p>
+<p>Origin composes with <code>required_tenant_isolation</code> — a route clears both, and the stronger
+requirement is the one that governs. They fail differently on purpose:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Comes from</th>
+<th>Error code</th>
+<th>How you fix it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Origin floor</td>
+<td>the kind of text the route runs</td>
+<td><code>statement_origin_isolation_floor</code></td>
+<td>strengthen the container, or stop running that text here</td>
+</tr>
+<tr>
+<td>Declared floor</td>
+<td><code>required_tenant_isolation</code> on the module</td>
+<td><code>&lt;backend&gt;_tenancy_validation_failed</code></td>
+<td>strengthen the container, or lower what you declared</td>
+</tr>
+</tbody>
+</table>
+<p>When both are unmet you get the origin one, because it's the floor you can't negotiate
+with — lowering your declaration would leave the route failing anyway.</p>
+<p>Origin is a <strong>wiring</strong> fact, checked once at startup. No statement is ever parsed to infer
+where it came from.</p>
 
 
 
