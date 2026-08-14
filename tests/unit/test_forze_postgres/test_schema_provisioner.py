@@ -601,3 +601,45 @@ def test_the_advisory_key_is_stable_across_processes() -> None:
     assert len(keys) == 1, f"advisory key varies with the hash seed: {keys}"
     # And it fits the signed bigint `pg_advisory_xact_lock` takes.
     assert -(2**63) <= int(keys.pop()) < 2**63
+
+
+@pytest.mark.asyncio
+async def test_teardown_takes_the_same_lock_provisioning_binds_under() -> None:
+    """Both sides of the role's lifecycle serialize on the same key, or neither does.
+
+    Provisioning binds the role under an advisory lock; a teardown that mutates and drops the
+    same role without it can run inside that critical section, so the lock guards against every
+    concurrent onboarding and none of the offboardings.
+
+    The split into two transactions is asserted with it, because it is not cosmetic: the role
+    drop can raise, and a single transaction would roll the schema drop back with it — undoing
+    the part of offboarding that has to happen.
+    """
+
+    client = _FakeClient(existing_role=True, existing_schema=True)
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=client,  # type: ignore[arg-type]
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}",
+        role=lambda tenant_id: f"r_{tenant_id.hex[:8]}",
+        drop_on_deprovision=True,
+    )
+
+    await provisioner.deprovision(TenantIdentity(tenant_id=uuid4()))
+
+    steps = client.executed
+
+    def _index_of(fragment: str) -> int:
+        matches = [i for i, q in enumerate(steps) if fragment in q]
+        assert matches, f"{fragment!r} never ran; statements were {steps}"
+        return matches[0]
+
+    assert _index_of("BEGIN") < _index_of("pg_advisory_xact_lock") < _index_of("DROP SCHEMA")
+
+    # The role drop lands in a *later* transaction than the schema drop, so its failure cannot
+    # take the schema drop with it.
+    assert steps.index("COMMIT") < _index_of("DROP ROLE")
+    assert steps.count("BEGIN") == 2
+    # And that later transaction is locked too, so it cannot race a binding either.
+    assert [i for i, q in enumerate(steps) if "pg_advisory_xact_lock" in q][-1] < _index_of(
+        "DROP ROLE"
+    )

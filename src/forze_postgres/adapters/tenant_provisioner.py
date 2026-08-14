@@ -155,34 +155,49 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 
         role = await resolve_value(self.role, tenant.tenant_id) if self.role is not None else None
 
-        # The revoke goes before the schema drop, because after a CASCADE the default-privileges
-        # entry survives the tables it referred to and there is then no schema to name in
-        # `ALTER DEFAULT PRIVILEGES`.
+        # Both halves take the same lock `provision` binds under, so onboarding and offboarding
+        # of one role cannot interleave inside each other's critical section. What the lock does
+        # *not* do is make two contradictory operations succeed: a provision and a deprovision
+        # of the same tenant at the same moment still resolve to one of them failing, which is
+        # the honest outcome. It stops them leaving a half-bound role behind.
         #
-        # Both existence probes, because `REVOKE` has no `IF EXISTS` and offboarding is the
-        # operation most likely to be re-run: a half-finished teardown, a retried cleanup job,
-        # an operator repeating a command. Every other statement in this class is
-        # `IF EXISTS`/`IF NOT EXISTS`, and a revoke that raised on a schema already gone would
-        # leave that half-finished teardown with no way to complete.
-        if role is not None and await self._schema_exists(name) and await self._role_exists(role):
-            await self._revoke_read_only(schema=name, role=role)
+        # Two transactions rather than one, and the split is load-bearing. `_drop_role` raises
+        # when the cluster still depends on the role, and a single transaction would roll the
+        # schema drop back with it — undoing the part of offboarding that actually has to
+        # happen. Committing the schema drop first keeps that outcome: data gone, role reported.
+        async with self.client.transaction():
+            if role is not None:
+                await self._lock_role(role)
 
-        # The schema goes before the role, and the ordering is the point rather than a
-        # preference. Roles are cluster-wide but grants are per-database, so this connection
-        # cannot revoke a privilege the role holds in another database of the cluster — and
-        # `DROP ROLE` refuses while any remains, with `IF EXISTS` covering absence rather than
-        # dependency. Dropping the role first therefore let a grant nobody here can see abort
-        # the whole teardown *before* the tenant's data was removed, which is the one part of
-        # offboarding that has to happen.
-        await self.client.execute(
-            cast(
-                QueryNoTemplate,
-                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(name)),
+                # The revoke goes before the schema drop, because after a CASCADE the
+                # default-privileges entry has no schema left to name in `ALTER DEFAULT
+                # PRIVILEGES`.
+                #
+                # Both existence probes, because `REVOKE` has no `IF EXISTS` and offboarding is
+                # the operation most likely to be re-run: a half-finished teardown, a retried
+                # cleanup job, an operator repeating a command. Every other statement in this
+                # class is `IF EXISTS`/`IF NOT EXISTS`, and a revoke that raised on a schema
+                # already gone would leave that half-finished teardown with no way to complete.
+                if await self._schema_exists(name) and await self._role_exists(role):
+                    await self._revoke_read_only(schema=name, role=role)
+
+            # The schema goes before the role, and the ordering is the point rather than a
+            # preference. Roles are cluster-wide but grants are per-database, so this connection
+            # cannot revoke a privilege the role holds in another database of the cluster — and
+            # `DROP ROLE` refuses while any remains, with `IF EXISTS` covering absence rather
+            # than dependency. Dropping the role first therefore let a grant nobody here can see
+            # abort the whole teardown *before* the tenant's data was removed.
+            await self.client.execute(
+                cast(
+                    QueryNoTemplate,
+                    sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(name)),
+                )
             )
-        )
 
         if role is not None:
-            await self._drop_role(role)
+            async with self.client.transaction():
+                await self._lock_role(role)
+                await self._drop_role(role)
 
     # ....................... #
 
