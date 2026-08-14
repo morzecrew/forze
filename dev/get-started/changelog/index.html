@@ -2552,6 +2552,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../data-events/dynamic-read/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-scan-search" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m16 16-1.9-1.9"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Dynamic read
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../data-events/inference/" class="md-nav__link">
         
   
@@ -8215,7 +8244,14 @@
 and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
-<p><strong>Statement origin — a second tenancy floor, set by what wrote the statement.</strong> <code>StatementOrigin</code> (<code>structured</code> → <code>none</code>, <code>compiled</code> → <code>namespace</code>, <code>raw</code> → <code>dedicated</code>), declared per route via <code>TenancyRouteSpec.origin</code> / <code>TenancyRouteGroup.origin</code> and enforced at freeze in <code>validate_module_tenancy</code>, independently of <code>required_tenant_isolation</code>. New <code>required_isolation_for_origin</code>, <code>validate_origin_isolation</code>, <code>ORIGIN_ISOLATION_FLOOR_CODE</code> (<code>"statement_origin_isolation_floor"</code>). Nothing that wires today changes: <code>structured</code> is the default and no shipped config declares an origin.</p>
+<p><strong>Statement origin — a second tenancy floor, set by what wrote the statement.</strong> <code>StatementOrigin</code> (<code>structured</code> → <code>none</code>, <code>compiled</code> → <code>namespace</code>, <code>raw</code> → <code>dedicated</code>), declared per route via <code>TenancyRouteSpec.origin</code> / <code>TenancyRouteGroup.origin</code> and enforced at freeze in <code>validate_module_tenancy</code>, independently of <code>required_tenant_isolation</code>. New <code>required_isolation_for_origin</code>, <code>validate_origin_isolation</code>, <code>ORIGIN_ISOLATION_FLOOR_CODE</code> (<code>"statement_origin_isolation_floor"</code>). Nothing that wires today changes: <code>structured</code> is the default and no shipped config declares an origin.
+<strong>Governed dynamic read</strong> — a separate, opt-in read plane for statements whose text is data (catalog SQL, a semantic layer's output, a report builder). New <code>contracts/dynamic_read/</code> + <code>ctx.dynamic_read.query(spec)</code>, resolvable in <code>QUERY</code> operations; Postgres and mock adapters:</p>
+<ul>
+<li><code>DynamicReadSpec</code> (<code>row_cap=10_000</code>, <code>max_statement_bytes=65_536</code>, <code>capture_statements=False</code>) and <code>DynamicReadPort.run</code> / <code>.select(return_type, …)</code>. No pagination, no <code>In</code>/<code>Out</code> generics, no encryption field — both shapes are runtime data, so a sealed column returns ciphertext. Per-call <code>DynamicReadOptions</code> clamp down only; exceeding <code>row_cap</code> raises rather than truncates.</li>
+<li><code>PostgresDynamicReadConfig</code> runs every statement in a <code>READ ONLY</code> root transaction on its own connection, with <code>SET LOCAL statement_timeout</code> / <code>search_path</code> / <code>ROLE</code>, streamed over the extended query protocol. No SQL is parsed anywhere: writes, multi-command strings and cross-schema reads are refused by Postgres. Taxonomy <code>dynamic_read_write_refused</code>, <code>_statement_invalid</code>, <code>_multi_statement</code>, <code>_permission_denied</code>, <code>_timeout</code>, <code>_row_cap_exceeded</code>, <code>_statement_too_large</code>, <code>_row_type_mismatch</code>, <code>_role_unavailable</code>.</li>
+<li><strong>Wiring fails closed:</strong> <code>provenance</code> (<code>"trusted"</code>/<code>"untrusted"</code>) has no default; routes declare <code>origin="compiled"</code>, so any tier below <code>namespace</code> raises <code>statement_origin_isolation_floor</code>; <code>untrusted</code> without a role or routed client raises <code>dynamic_read_untrusted_unconfined</code>; a per-tenant <code>query_schema</code> with a shared static <code>role</code> raises <code>dynamic_read_shared_role_across_tenants</code>. <code>PostgresSchemaTenantProvisioner</code> refuses a per-tenant schema paired with a shared static role (<code>tenant_role_shared_across_schemas</code>), a role already bound to another tenant's schema (<code>tenant_role_already_bound</code>, under a transaction-scoped advisory lock), and an existing role that already reaches somewhere — <code>LOGIN</code>, <code>SUPERUSER</code>, <code>BYPASSRLS</code>, or a member of another role (<code>tenant_role_not_confinable</code>); teardown drops the schema before the role and reports a cluster-wide dependency as <code>tenant_role_still_depended_on</code>.</li>
+<li><code>MockDynamicReadRegistry</code> answers routes from a handler; engine-enforced refusals are declared in the divergence catalog rather than faked. New <code>dynamic_read</code> conformance plane and <code>data-events/dynamic-read.md</code>.</li>
+</ul>
 <p><strong>Postgres <code>COPY</code> bulk load</strong> — the engine-native bulk path, 20–79× faster than the multi-VALUES <code>INSERT</code> it replaces (10⁴–10⁵ rows × 6–20 columns, interleaved A/B):</p>
 <ul>
 <li><code>PostgresClientPort.copy_rows((schema, table), columns, rows, *, binary=False, column_types=None) -&gt; int</code> — sync or async row iterables, joins the caller's <code>transaction()</code>. Raises <code>copy_row_invalid</code> with the server's COPY line/column, or <code>copy_type_mismatch</code> for a binary type mismatch. In binary mode a <code>str</code> for a declared <code>json</code>/<code>jsonb</code> column is refused (text and binary want opposite Python types there).</li>
