@@ -201,20 +201,31 @@ or database it runs inside.
 | `namespace` | per-tenant schema via `query_schema` | supported — the statement runs in the tenant's own schema |
 | `dedicated` | a routed client per tenant | supported — strongest isolation |
 | `tagged` | a `%(tenant)s` predicate inside the statement | **refused at wiring** |
+| `none` | nothing scopes the route | **refused at wiring** |
 
-!!! danger "A tenant-aware route on the tagged tier fails at wiring"
+!!! danger "Every route on this plane needs a per-tenant container"
 
-    Wiring `tenant_aware=True` without a per-tenant `query_schema` or a routed
-    client raises `dynamic_read_tagged_refused` at startup. The registered-SQL
-    planes keep `tagged` because their compensating controls exist — frozen text,
-    a freeze-time placeholder guard, review — and none of them survive a statement
-    written at runtime. Worse, the failure mode is the bad one: a missing
-    predicate does not error, it *succeeds*, with another tenant's rows in a
-    correctly-rendered widget. On namespace or dedicated the identical mistake
-    either fails loudly or stays inside the tenant's container.
+    Routes here declare `origin="compiled"`, whose
+    [statement-origin floor](../reference/tenancy-matrix.md#the-floor-a-route-cant-lower-statement-origin)
+    is `namespace`. Anything weaker raises `statement_origin_isolation_floor` at
+    startup, so a route needs a per-tenant `query_schema` or a routed client —
+    including a route that says nothing about tenancy at all, which is the wiring
+    that reads across every tenant in the database.
+
+    The registered-SQL planes keep `tagged` because their compensating controls
+    exist — frozen text, a freeze-time placeholder guard, review — and none of
+    them survive a statement written at runtime. Worse, the failure mode is the
+    bad one: a missing predicate does not error, it *succeeds*, with another
+    tenant's rows in a correctly-rendered widget. On namespace or dedicated the
+    identical mistake either fails loudly or stays inside the tenant's container.
+
+    A static `query_schema` does not clear the floor. It is real confinement, but
+    it points every tenant at the same place, so it draws no boundary between them.
 
     A route declaring `provenance="untrusted"` without a role or a routed client
-    fails the same way, as `dynamic_read_untrusted_unconfined`.
+    fails separately, as `dynamic_read_untrusted_unconfined`. The two axes are
+    independent and a route clears both: the role answers *who authored this*,
+    the container answers *what the text may reach*.
 
 The tenant id is still bound as `%(tenant)s` when the statement references it, so
 a trusted statement can carry a predicate *in addition to* its container. That is

@@ -112,8 +112,10 @@ def test_the_documented_table_invents_no_codes() -> None:
     # ``_row_type_mismatch`` is raised by the shared shell's ``select`` rather than by this
     # module's factories, so it is documented and legitimately absent from the code set.
     documented.discard("dynamic_read_row_type_mismatch")
-    # Prose references to the wiring guards, which are configuration refusals raised at freeze
-    # by the Postgres deps module, not members of this runtime taxonomy.
-    documented -= {"dynamic_read_tagged_refused", "dynamic_read_untrusted_unconfined"}
+    # A prose reference to the trust guard, which is a configuration refusal raised at freeze
+    # by the Postgres deps module, not a member of this runtime taxonomy. The container guard
+    # has no entry here at all: it is the shared statement-origin floor, whose code carries no
+    # ``dynamic_read_`` prefix precisely because it is not this plane's to own.
+    documented.discard("dynamic_read_untrusted_unconfined")
 
     assert documented <= set(DYNAMIC_READ_CODES), sorted(documented - set(DYNAMIC_READ_CODES))

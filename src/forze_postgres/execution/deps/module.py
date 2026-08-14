@@ -118,25 +118,19 @@ def _validate_dynamic_read_route(
     config: PostgresDynamicReadConfig,
     client_is_routed: bool,
 ) -> None:
-    """Refuse a dynamic-read route whose container cannot carry its declared threat tier.
+    """Refuse a dynamic-read route whose confinement cannot carry its declared threat tier.
 
-    Both checks live here rather than in the config because both need something only the
-    module knows: whether the client is routed. A dedicated-tier deployment answers either one
-    with credentials, and a config that could not see the client would demand a schema or a
-    role it does not need.
+    Only the *trust* axis is checked here. The container axis — that a route running text the
+    framework did not build needs a name boundary rather than a predicate — is the shared
+    statement-origin floor, declared by tagging these routes ``origin="compiled"`` where they
+    are collected. That check is strictly wider than the per-route guard this plane shipped
+    with, which only fired when a route said ``tenant_aware=True``: a route that scoped itself
+    *not at all* asserted nothing for the guard to contradict, and read every tenant's rows.
+
+    This one stays local because it needs something only the module knows — whether the client
+    is routed. A dedicated-tier deployment answers it with credentials, and a config that could
+    not see the client would demand a role it does not need.
     """
-
-    if config.tenant_aware and not (callable(config.query_schema) or client_is_routed):
-        raise exc.configuration(
-            f"Postgres dynamic-read route {route!r} is tenant_aware on the tagged tier. A "
-            "tagged container's only isolation is a predicate inside the statement, and this "
-            "plane's statements are written at runtime — the predicate cannot be reviewed, "
-            "cannot be verified at wiring, and a missing one does not error: it succeeds with "
-            "another tenant's rows. Set a per-tenant query_schema (namespace tier) or route "
-            "the client per tenant (dedicated tier) so the container does the scoping.",
-            code="dynamic_read_tagged_refused",
-            details={"route": route},
-        )
 
     if config.provenance == "untrusted" and not (config.role is not None or client_is_routed):
         raise exc.configuration(
@@ -496,6 +490,11 @@ class PostgresDepsModule(DepsModule):
                         tenant_aware=dynamic_read_cfg.tenant_aware,
                         kind="dynamic_read",
                         has_namespace_routing=callable(dynamic_read_cfg.query_schema),
+                        # The whole plane, unconditionally: its statements are authored at
+                        # runtime by definition, which is what `compiled` names. Deriving it
+                        # from the config instead would put the plane's own definition behind
+                        # a wiring flag an author could get wrong.
+                        origin="compiled",
                     ),
                 )
 

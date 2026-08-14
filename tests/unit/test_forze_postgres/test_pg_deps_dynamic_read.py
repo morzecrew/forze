@@ -40,17 +40,45 @@ def test_a_tenant_aware_route_on_the_tagged_tier_is_refused() -> None:
     relation) or stays inside the tenant's container. On tagged it *succeeds*, with another
     tenant's rows in a correctly-rendered widget — and for a runtime statement there is nothing
     that could have caught it earlier.
+
+    The refusal is the shared statement-origin floor now rather than a guard this plane owns:
+    the route declares ``origin="compiled"`` and the floor for that origin is ``namespace``.
     """
 
     with pytest.raises(CoreException) as ei:
         _module(PostgresDynamicReadConfig(provenance="trusted", tenant_aware=True))
 
-    assert ei.value.code == "dynamic_read_tagged_refused"
+    assert ei.value.code == "statement_origin_isolation_floor"
     assert ei.value.kind == ExceptionKind.CONFIGURATION
+    assert ei.value.details["origin"] == "compiled"
+    assert ei.value.details["derived_isolation"] == "tagged"
 
 
-def test_a_static_query_schema_does_not_satisfy_the_tenant_aware_guard() -> None:
-    """One fixed schema for every tenant is not namespace routing, whatever it is named."""
+def test_a_route_that_scopes_itself_not_at_all_is_refused() -> None:
+    """The case the plane's own guard could not see, and the reason the floor is shared.
+
+    That guard fired on ``tenant_aware=True`` — an author claiming tagged-tier scoping the
+    container could not honour. A route claiming *nothing* contradicted nothing, so it wired,
+    and then read across every tenant in the database: strictly worse than the wiring that
+    was refused beside it.
+
+    Origin is a property of the plane rather than of the route's flags, so the floor applies
+    whether or not the author said anything about tenancy.
+    """
+
+    with pytest.raises(CoreException) as ei:
+        _module(PostgresDynamicReadConfig(provenance="trusted"))
+
+    assert ei.value.code == "statement_origin_isolation_floor"
+    assert ei.value.details["derived_isolation"] == "none"
+
+
+def test_a_static_query_schema_does_not_satisfy_the_floor() -> None:
+    """One fixed schema for every tenant is not namespace routing, whatever it is named.
+
+    It is real confinement — ``search_path`` does point somewhere narrower — but it is the
+    same somewhere for every tenant, so it draws no boundary between them.
+    """
 
     with pytest.raises(CoreException) as ei:
         _module(
@@ -61,7 +89,7 @@ def test_a_static_query_schema_does_not_satisfy_the_tenant_aware_guard() -> None
             )
         )
 
-    assert ei.value.code == "dynamic_read_tagged_refused"
+    assert ei.value.code == "statement_origin_isolation_floor"
 
 
 def test_a_per_tenant_query_schema_satisfies_the_tenant_aware_guard() -> None:
@@ -100,9 +128,20 @@ def test_untrusted_provenance_without_confinement_is_refused() -> None:
 
 
 def test_untrusted_provenance_is_satisfied_by_a_role() -> None:
-    """``SET LOCAL ROLE`` is the tier-B confinement the guard is asking for."""
+    """``SET LOCAL ROLE`` is the tier-B confinement the trust guard is asking for.
 
-    module = _module(PostgresDynamicReadConfig(provenance="untrusted", role="widget_reader"))
+    The per-tenant schema is here because the two axes are separate and a route clears both:
+    the role answers *who authored this*, the container answers *what the text may reach*.
+    A role alone leaves the second unanswered.
+    """
+
+    module = _module(
+        PostgresDynamicReadConfig(
+            provenance="untrusted",
+            role="widget_reader",
+            query_schema=lambda tenant_id: f"t_{tenant_id}",
+        )
+    )
 
     assert DynamicReadDepKey in module().routed_deps
 
@@ -128,7 +167,7 @@ def test_the_wired_route_builds_an_adapter_carrying_the_config() -> None:
 
     config = PostgresDynamicReadConfig(
         provenance="trusted",
-        query_schema="reporting",
+        query_schema=lambda tenant_id: f"t_{tenant_id}",
         statement_timeout=timedelta(seconds=3),
     )
     client = Mock(spec=PostgresClient)

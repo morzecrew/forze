@@ -42,12 +42,12 @@ A store read under the bound tenant scopes itself — adapters call
 | Served models (HTTP) | inference | `tagged` (bound tenant required) | per-tenant `model_name` | `RoutedInferenceHttpClient` | `dedicated` |
 | SageMaker | inference | `tagged` (bound tenant required) | per-tenant `endpoint_name` | `RoutedSageMakerRuntimeClient` | `dedicated` |
 
-‡ The dynamic-read plane refuses `tagged` for a tenant-aware route
-(`dynamic_read_tagged_refused`): its statements are written at runtime, so an
-isolating predicate cannot be reviewed, cannot be checked at wiring, and when it is
-missing the read *succeeds* with another tenant's rows. Its floor is therefore
-`namespace` — a per-tenant schema — and its container does the scoping the statement
-cannot be trusted to do.
+‡ The dynamic-read plane declares `origin="compiled"`, so its floor is `namespace`
+and both `tagged` and `none` are refused as `statement_origin_isolation_floor`. Its
+statements are written at runtime, so an isolating predicate cannot be reviewed,
+cannot be checked at wiring, and when it is missing the read *succeeds* with another
+tenant's rows. A per-tenant schema is the weakest container that does the scoping the
+statement cannot be trusted to do.
 
 † Neo4j reaches `namespace` with a per-tenant database on one driver (the usual
 multi-tenant Neo4j shape); `dedicated` needs a genuinely per-tenant driver/instance,
