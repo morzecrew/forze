@@ -69,6 +69,7 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowScheduleCommandDepKey,
     DurableWorkflowScheduleQueryDepKey,
 )
+from forze.application.contracts.dynamic_read import DynamicReadDepKey
 from forze.application.contracts.embeddings import (
     EmbeddingsProviderDepKey,
 )
@@ -151,6 +152,7 @@ from forze.application.integrations.authn import (
 from forze.application.integrations.crypto import DeterministicFieldCipher, Keyring
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_mock.adapters import (
+    MockDynamicReadRegistry,
     MockHttpRegistry,
     MockInferenceRegistry,
     MockKeyManagement,
@@ -203,6 +205,7 @@ from forze_mock.execution.factories import (
     ConfigurableMockDurableWorkflowQuery,
     ConfigurableMockDurableWorkflowScheduleCommand,
     ConfigurableMockDurableWorkflowScheduleQuery,
+    ConfigurableMockDynamicRead,
     ConfigurableMockEmbeddings,
     ConfigurableMockFederatedSearch,
     ConfigurableMockGraph,
@@ -289,6 +292,16 @@ class MockDepsModule(DepsModule):
     ``None`` registers the port but leaves every procedure unprogrammed (any call raises
     ``code="mock.procedures.unprogrammed"``); pass a :class:`MockProcedureRegistry` with handlers
     that model each procedure's effect on :class:`MockState`."""
+
+    dynamic_reads: MockDynamicReadRegistry | None = attrs.field(default=None)
+    """Programmable in-memory handlers for the ``DynamicReadPort`` (runtime-authored statements).
+
+    ``None`` registers the port but leaves every route unprogrammed (any call raises
+    ``code="mock.dynamic_read.unprogrammed"``); pass a :class:`MockDynamicReadRegistry` whose
+    handlers return the rows a statement would have produced. The engine-enforced half of the
+    plane — a write refused by a read-only transaction, a second command refused by the wire
+    protocol — is deliberately absent: the mock cannot detect a write in a string and does not
+    pretend to, so those refusals are pinned against real Postgres instead."""
 
     query_param_sources: MockQueryParamsRegistry | None = attrs.field(default=None)
     """Programmable sources modelling parametrized document reads (``with_parameters``).
@@ -402,6 +415,7 @@ class MockDepsModule(DepsModule):
             AnalyticsQueryDepKey: ConfigurableMockAnalytics(module=self),
             AnalyticsIngestDepKey: ConfigurableMockAnalytics(module=self),
             ProcedureCommandDepKey: ConfigurableMockProcedure(module=self),
+            DynamicReadDepKey: ConfigurableMockDynamicRead(module=self),
             InferenceDepKey: ConfigurableMockInference(module=self),
             CounterDepKey: ConfigurableMockCounter(module=self),
             CounterAdminDepKey: ConfigurableMockCounterAdmin(module=self),

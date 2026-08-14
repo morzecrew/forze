@@ -11,6 +11,7 @@ from forze.application.contracts.counter import CounterDeps
 from forze.application.contracts.dlock import DistributedLockDeps
 from forze.application.contracts.document import DocumentDeps
 from forze.application.contracts.domain import DomainDeps
+from forze.application.contracts.dynamic_read import DynamicReadDeps
 from forze.application.contracts.embeddings import EmbeddingsDeps
 from forze.application.contracts.graph import GraphDeps
 from forze.application.contracts.http import HttpServiceDeps
@@ -207,6 +208,9 @@ class ExecutionContext:
     procedure: ProcedureDeps = attrs.field(factory=ProcedureDeps, init=False)
     """Procedure dependencies (governed parametrized commands/compute; command-only)."""
 
+    dynamic_read: DynamicReadDeps = attrs.field(factory=DynamicReadDeps, init=False)
+    """Governed dynamic-read dependencies (runtime-authored statements; read-plane)."""
+
     cache: CacheDeps = attrs.field(factory=CacheDeps, init=False)
     """Cache dependencies."""
 
@@ -362,6 +366,7 @@ class ExecutionContext:
         self.http.lock(self)
         self.analytics.lock(self)
         self.procedure.lock(self)
+        self.dynamic_read.lock(self)
         self.cache.lock(self)
         self.counter.lock(self)
         self.storage.lock(self)

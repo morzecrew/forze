@@ -558,6 +558,11 @@ scenario = "forze_dst.conformance.inference:run_capability_gates"
 dep_keys = ["inference_query"]
 engines = ["mock", "local", "kserve_v2", "mlflow"]
 
+[tool.conformance_manifest.planes.dynamic_read]
+scenario = "tests.support.dynamic_read_conformance:DYNAMIC_READ_BATTERY"
+dep_keys = ["dynamic_read_query"]
+engines = ["mock", "postgres"]
+
 [tool.conformance_manifest.planes.rotating_credentials]
 scenario = "tests.support.rotating_credentials:ROTATING_STORE_BATTERY"
 dep_keys = ["rotating_credentials", "rotating_credentials_admin"]

@@ -1,0 +1,613 @@
+"""What a role shared across tenant schemas does to onboarding and teardown, measured.
+
+The provisioner's own contract says the role is "confined to" the tenant's schema. Resolve a
+*static* name and it isn't: every onboarding grants the same role another schema, and the
+first offboarding tries to drop a role two tenants still depend on.
+
+Both halves are asserted against a real server rather than reasoned about, because both are
+claims about PostgreSQL's dependency bookkeeping — which relations count as a dependency, and
+whether ``DROP ROLE`` refuses or cascades — and that is exactly the kind of claim that reads
+as obvious and turns out to be wrong.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+from uuid import uuid4
+
+import pytest
+import pytest_asyncio
+from psycopg import sql
+
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.base.exceptions import CoreException, ExceptionKind
+from forze_postgres.adapters.tenant_provisioner import PostgresSchemaTenantProvisioner
+from forze_postgres.kernel.client import PostgresClient
+
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
+
+@pytest_asyncio.fixture
+async def tag() -> AsyncIterator[str]:
+    """A per-test suffix, plus teardown that cannot itself depend on the code under test."""
+
+    value = uuid4().hex[:8]
+    yield value
+
+
+async def _cleanup(client: PostgresClient, *, schemas: list[str], role: str) -> None:
+    """Tear down whatever survived, in the order PostgreSQL insists on.
+
+    Neither `ALTER DEFAULT PRIVILEGES` nor `REVOKE` has an `IF EXISTS`, and this runs after
+    tests that leave the world in several different states — including ones where the
+    provisioner already dropped the role. So both objects are probed first; a cleanup that
+    raised would mask the failure it was cleaning up after.
+    """
+
+    if not await _role_exists(client, role):
+        for schema in schemas:
+            await client.execute(
+                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
+            )
+
+        return
+
+    for schema in schemas:
+        # Default-privileges entries survive the tables but not the schema, so they are
+        # revoked while the schema is still there — the exact bookkeeping this file is about.
+        if await _schema_exists(client, schema):
+            await client.execute(
+                sql.SQL(
+                    "ALTER DEFAULT PRIVILEGES IN SCHEMA {} REVOKE SELECT ON TABLES FROM {}"
+                ).format(sql.Identifier(schema), sql.Identifier(role))
+            )
+            await client.execute(
+                sql.SQL("REVOKE ALL ON SCHEMA {} FROM {}").format(
+                    sql.Identifier(schema), sql.Identifier(role)
+                )
+            )
+            await client.execute(
+                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
+            )
+
+    await client.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
+
+
+# ....................... #
+
+
+async def test_a_per_tenant_schema_with_a_shared_role_is_refused(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """The combination is refused where it is created, not only where it is wired.
+
+    A route's wiring guard catches this for the dynamic-read plane. The provisioner is a
+    standalone component with its own lifecycle, usable with no route at all, so the same
+    incoherence has to be refused here too: many schemas, one role, and a class whose own
+    docstring promises the role is confined to *the* tenant's schema.
+    """
+
+    with pytest.raises(CoreException) as ei:
+        PostgresSchemaTenantProvisioner(
+            client=pg_client,
+            schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+            role=f"shared_reader_{tag}",
+        )
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+    assert ei.value.code == "tenant_role_shared_across_schemas"
+
+
+async def test_a_per_tenant_role_alongside_per_tenant_schemas_onboards_and_tears_down(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """The shape that replaces it, end to end on a real server.
+
+    Two tenants, each with its own schema *and* its own role. The second teardown is the one
+    that matters: under a shared role it is the first teardown that fails, so a test that
+    offboarded only one tenant would pass either way.
+    """
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=pg_client,
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+        role=lambda tenant_id: f"r_{tenant_id.hex[:8]}_{tag}",
+        drop_on_deprovision=True,
+    )
+
+    first, second = TenantIdentity(tenant_id=uuid4()), TenantIdentity(tenant_id=uuid4())
+    schemas = [f"t_{t.tenant_id.hex[:8]}_{tag}" for t in (first, second)]
+    roles = [f"r_{t.tenant_id.hex[:8]}_{tag}" for t in (first, second)]
+
+    try:
+        await provisioner.provision(first)
+        await provisioner.provision(second)
+
+        await provisioner.deprovision(first)
+
+        # The first tenant is gone and the second is untouched — the property a shared role
+        # cannot provide, since dropping it would take the survivor's grants with it.
+        assert await _schema_exists(pg_client, schemas[0]) is False
+        assert await _schema_exists(pg_client, schemas[1]) is True
+        assert await _role_exists(pg_client, roles[0]) is False
+        assert await _role_exists(pg_client, roles[1]) is True
+
+        await provisioner.deprovision(second)
+
+        assert await _schema_exists(pg_client, schemas[1]) is False
+        assert await _role_exists(pg_client, roles[1]) is False
+
+    finally:
+        for schema, role in zip(schemas, roles, strict=True):
+            await _cleanup(pg_client, schemas=[schema], role=role)
+
+
+async def test_postgres_really_does_refuse_to_drop_a_depended_on_role(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """The server behaviour the refusal above is justified by.
+
+    Without this, "a shared role breaks teardown" is a plausible story about PostgreSQL rather
+    than a fact, and the guard could be defending against nothing. It is asserted directly —
+    grants placed by hand, no provisioner — so it keeps reporting on the server even if the
+    provisioner stops producing this shape.
+    """
+
+    role = f"depended_{tag}"
+    schemas = [f"dep_a_{tag}", f"dep_b_{tag}"]
+
+    await pg_client.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(role)))
+
+    try:
+        for schema in schemas:
+            await pg_client.execute(
+                sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema))
+            )
+            await pg_client.execute(
+                sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                    sql.Identifier(schema), sql.Identifier(role)
+                )
+            )
+
+        # Drop only the first schema, as a single-tenant offboarding would.
+        await pg_client.execute(
+            sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schemas[0]))
+        )
+
+        # The second schema's grant still names the role, so the drop is refused — and it is
+        # `DROP ROLE IF EXISTS`, whose `IF EXISTS` covers absence and not dependency.
+        with pytest.raises(Exception) as ei:
+            await pg_client.execute(
+                sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role))
+            )
+
+        # The server's message rides in ``details``; the summary is the sanitized one that
+        # egresses, so asserting on ``str()`` would pass for any Postgres error at all.
+        detail = " ".join(str(v) for v in (ei.value.details or {}).values()).lower()
+        assert "depend" in detail, detail
+
+    finally:
+        await _cleanup(pg_client, schemas=schemas, role=role)
+
+
+# ....................... #
+
+
+async def _schema_exists(client: PostgresClient, schema: str) -> bool:
+    return (
+        await client.fetch_value(
+            "SELECT 1 FROM pg_namespace WHERE nspname = %(s)s", {"s": schema}
+        )
+    ) is not None
+
+
+async def _role_exists(client: PostgresClient, role: str) -> bool:
+    return (
+        await client.fetch_value("SELECT 1 FROM pg_roles WHERE rolname = %(r)s", {"r": role})
+    ) is not None
+
+
+async def test_a_resolver_that_returns_one_name_for_every_tenant_is_caught(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """``callable(role)`` checks the shape; this checks the thing the shape stands for.
+
+    A resolver is accepted at construction because there is nothing there to evaluate — the
+    tenant ids do not exist yet and the resolver may be async. ``lambda _: "shared"`` therefore
+    passes the constructor and produces exactly the accumulation the constructor refuses in its
+    static form, one onboarding at a time.
+
+    The second tenant is where it becomes visible and where it is caught: the role already
+    carries this provisioner'"'"'s default-privileges entry for a different schema, which is a
+    fact about the server rather than about the resolver'"'"'s source.
+    """
+
+    role = f"collide_{tag}"
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=pg_client,
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+        role=lambda _tenant_id: role,
+        drop_on_deprovision=True,
+    )
+
+    first, second = TenantIdentity(tenant_id=uuid4()), TenantIdentity(tenant_id=uuid4())
+    schemas = [f"t_{t.tenant_id.hex[:8]}_{tag}" for t in (first, second)]
+
+    try:
+        await provisioner.provision(first)
+
+        with pytest.raises(CoreException) as ei:
+            await provisioner.provision(second)
+
+        assert ei.value.code == "tenant_role_already_bound"
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+        # The second tenant got nothing: refused before any grant reached its schema.
+        assert await _role_has_schema_grant(pg_client, role=role, schema=schemas[1]) is False
+
+    finally:
+        await _cleanup(pg_client, schemas=schemas, role=role)
+
+
+async def test_re_provisioning_the_same_tenant_is_still_idempotent(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """The check must not mistake a tenant for its own neighbour.
+
+    Onboarding is re-run routinely — a retried job, an operator repeating a command — and the
+    role legitimately already carries this schema'"'"'s entry by then. Only a *different* schema
+    is the collision.
+    """
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=pg_client,
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+        role=lambda tenant_id: f"r_{tenant_id.hex[:8]}_{tag}",
+        drop_on_deprovision=True,
+    )
+
+    tenant = TenantIdentity(tenant_id=uuid4())
+    schema = f"t_{tenant.tenant_id.hex[:8]}_{tag}"
+    role = f"r_{tenant.tenant_id.hex[:8]}_{tag}"
+
+    try:
+        await provisioner.provision(tenant)
+        await provisioner.provision(tenant)
+
+        assert await _role_has_schema_grant(pg_client, role=role, schema=schema) is True
+
+    finally:
+        await _cleanup(pg_client, schemas=[schema], role=role)
+
+
+async def _role_has_schema_grant(
+    client: PostgresClient,
+    *,
+    role: str,
+    schema: str,
+) -> bool:
+    return (
+        await client.fetch_value(
+            """
+            SELECT 1 FROM pg_namespace n
+            WHERE n.nspname = %(schema)s
+              AND EXISTS (
+                  SELECT 1 FROM aclexplode(n.nspacl) a
+                  JOIN pg_roles r ON r.oid = a.grantee
+                  WHERE r.rolname = %(role)s AND a.privilege_type = 'USAGE'
+              )
+            """,
+            {"schema": schema, "role": role},
+        )
+    ) is not None
+
+
+class _BarrieredClient:
+    """Delegates to a real client, holding the binding probe until both racers reach it.
+
+    The race is check-then-act, so reproducing it means both checks observing the catalog
+    before either write. Left to chance the two coroutines usually serialize and the test
+    would pass for the wrong reason.
+
+    The barrier waits with a timeout rather than forever, so the same test works after the
+    fix: with the check serialized, the second caller never reaches its probe, the first
+    stops waiting and completes, and the second then sees the binding it was meant to see.
+    """
+
+    def __init__(self, inner: PostgresClient, barrier_size: int) -> None:
+        self._inner = inner
+        self._arrived = 0
+        self._released = asyncio.Event()
+        self._size = barrier_size
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._inner, name)
+
+    async def fetch_value(self, query: object, params: object = None, **kwargs: object) -> object:
+        text = query if isinstance(query, str) else str(query)
+
+        if "pg_default_acl" in text:
+            self._arrived += 1
+
+            if self._arrived >= self._size:
+                self._released.set()
+
+            try:
+                await asyncio.wait_for(self._released.wait(), timeout=2.0)
+
+            except TimeoutError:
+                pass
+
+        return await self._inner.fetch_value(query, params, **kwargs)  # type: ignore[arg-type]
+
+
+async def test_two_onboardings_racing_on_one_role_cannot_both_bind_it(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """Check-then-act, run concurrently against a real server on separate pooled connections.
+
+    The role is created up front on purpose. Racing on a role that does not exist yet, both
+    onboardings also race on ``CREATE ROLE`` and the loser dies there — which looks like
+    protection and is not: it is the *role creation* colliding, not the binding being refused.
+    Pre-creating removes that accident and leaves the window this is about, which is also the
+    ordinary case (a role that already exists is the second tenant's normal situation).
+
+    One binding may land. Two would mean one role holding read access to two tenants — the
+    outcome every guard on this path exists to prevent, reached by timing rather than by
+    configuration.
+    """
+
+    role = f"raced_{tag}"
+    await pg_client.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(role)))
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=_BarrieredClient(pg_client, barrier_size=2),  # type: ignore[arg-type]
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+        role=lambda _tenant_id: role,
+        drop_on_deprovision=True,
+    )
+
+    first, second = TenantIdentity(tenant_id=uuid4()), TenantIdentity(tenant_id=uuid4())
+    schemas = [f"t_{t.tenant_id.hex[:8]}_{tag}" for t in (first, second)]
+
+    try:
+        results = await asyncio.gather(
+            provisioner.provision(first),
+            provisioner.provision(second),
+            return_exceptions=True,
+        )
+
+        bound = [
+            s for s in schemas if await _role_has_schema_grant(pg_client, role=role, schema=s)
+        ]
+
+        assert len(bound) == 1, f"one role ended up bound to {bound}; exactly one may win"
+
+        refusals = [r for r in results if isinstance(r, CoreException)]
+
+        assert len(refusals) == 1, f"expected one refusal, got {results}"
+        assert refusals[0].code == "tenant_role_already_bound"
+
+    finally:
+        await _cleanup(pg_client, schemas=schemas, role=role)
+
+
+async def test_racing_role_creation_is_tolerated_against_a_real_server(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """The duplicate-tolerance branch, against the server rather than a fabricated error.
+
+    Its whole purpose is that an onboarding whose only problem is that someone else finished
+    first must not fail. The unit test constructs ``DuplicateObject`` by hand; a real cluster
+    losing a ``CREATE ROLE`` race raises a **unique violation** on the role-name index instead,
+    which is a different class — so the branch could be, and was, correct against the fake and
+    inert against a server.
+
+    Two onboardings for *different* schemas with *different* roles, so neither the binding
+    guard nor anything else is in play — only role creation.
+    """
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=pg_client,
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+        role=lambda tenant_id: f"r_{tenant_id.hex[:8]}_{tag}",
+    )
+
+    tenant = TenantIdentity(tenant_id=uuid4())
+    schema, role = f"t_{tenant.tenant_id.hex[:8]}_{tag}", f"r_{tenant.tenant_id.hex[:8]}_{tag}"
+
+    try:
+        # The same tenant onboarded twice at once — the retried-job shape, and the cheapest way
+        # to make two CREATE ROLE statements for one name collide on a live server.
+        results = await asyncio.gather(
+            provisioner.provision(tenant),
+            provisioner.provision(tenant),
+            return_exceptions=True,
+        )
+
+        failures = [r for r in results if isinstance(r, BaseException)]
+
+        assert not failures, f"a lost CREATE ROLE race must not fail an onboarding: {failures}"
+        assert await _role_has_schema_grant(pg_client, role=role, schema=schema) is True
+
+    finally:
+        await _cleanup(pg_client, schemas=[schema], role=role)
+
+
+@pytest.mark.parametrize(
+    ("options", "suffix"),
+    [
+        ("NOLOGIN BYPASSRLS", "brls"),
+        ("NOLOGIN SUPERUSER", "su"),
+        # No NOLOGIN here: pairing it with LOGIN in one statement is not accepted.
+        ("LOGIN", "login"),
+    ],
+    ids=["bypassrls", "superuser", "login"],
+)
+async def test_a_real_role_carrying_a_disqualifying_attribute_is_refused(
+    pg_client: PostgresClient,
+    tag: str,
+    options: str,
+    suffix: str,
+) -> None:
+    """The catalog columns, read from the catalog rather than from a fake.
+
+    The unit battery models these, and a model of ``pg_roles`` is a claim about column names
+    and semantics that only a server can settle — ``rolbypassrls`` in particular is easy to
+    name wrongly and would fail open, since the probe returning nothing reads as "clean".
+    """
+
+    role = f"attr_{suffix}_{tag}"
+    await pg_client.execute(
+        sql.SQL("CREATE ROLE {} " + options).format(sql.Identifier(role))
+    )
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=pg_client,
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+        role=lambda _tenant_id: role,
+    )
+
+    tenant = TenantIdentity(tenant_id=uuid4())
+    schema = f"t_{tenant.tenant_id.hex[:8]}_{tag}"
+
+    try:
+        with pytest.raises(CoreException) as ei:
+            await provisioner.provision(tenant)
+
+        assert ei.value.code == "tenant_role_not_confinable"
+        assert await _role_has_schema_grant(pg_client, role=role, schema=schema) is False
+
+    finally:
+        await _cleanup(pg_client, schemas=[schema], role=role)
+
+
+async def test_a_real_role_inheriting_another_is_refused(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """Membership, on a live cluster — the one that is a join rather than a column."""
+
+    parent, child = f"parent_{tag}", f"child_{tag}"
+
+    for name in (parent, child):
+        await pg_client.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(name)))
+
+    await pg_client.execute(
+        sql.SQL("GRANT {} TO {}").format(sql.Identifier(parent), sql.Identifier(child))
+    )
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=pg_client,
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+        role=lambda _tenant_id: child,
+    )
+
+    tenant = TenantIdentity(tenant_id=uuid4())
+    schema = f"t_{tenant.tenant_id.hex[:8]}_{tag}"
+
+    try:
+        with pytest.raises(CoreException) as ei:
+            await provisioner.provision(tenant)
+
+        assert ei.value.code == "tenant_role_not_confinable"
+
+    finally:
+        await pg_client.execute(
+            sql.SQL("REVOKE {} FROM {}").format(sql.Identifier(parent), sql.Identifier(child))
+        )
+        await _cleanup(pg_client, schemas=[schema], role=child)
+        await pg_client.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(parent)))
+
+
+async def test_a_purpose_built_role_is_still_adopted(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """The control. Four refusals prove nothing if the clean case is refused too.
+
+    A plain ``NOLOGIN`` role with no memberships is exactly what this provisioner creates, so
+    re-adopting one is the ordinary idempotent path and must stay open.
+    """
+
+    role = f"clean_{tag}"
+    await pg_client.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(role)))
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=pg_client,
+        schema=lambda tenant_id: f"t_{tenant_id.hex[:8]}_{tag}",
+        role=lambda _tenant_id: role,
+    )
+
+    tenant = TenantIdentity(tenant_id=uuid4())
+    schema = f"t_{tenant.tenant_id.hex[:8]}_{tag}"
+
+    try:
+        await provisioner.provision(tenant)
+
+        assert await _role_has_schema_grant(pg_client, role=role, schema=schema) is True
+
+    finally:
+        await _cleanup(pg_client, schemas=[schema], role=role)
+
+
+async def test_a_role_the_cluster_still_needs_does_not_cost_the_tenant_its_teardown(
+    pg_client: PostgresClient,
+    tag: str,
+) -> None:
+    """The savepoint, against the server rather than a fake.
+
+    Teardown holds one lock across the whole sequence, so the role drop cannot be moved out of
+    the transaction that drops the schema — and a failed statement aborts its transaction in
+    PostgreSQL. The savepoint is what lets the drop fail while the schema drop above it stands.
+
+    Whether a `ROLLBACK TO SAVEPOINT` really preserves the preceding work is a claim about the
+    server, and the unit battery asserts it against a fake that was written to agree.
+    """
+
+    role = f"needed_{tag}"
+    tenant_schema = f"t_needed_{tag}"
+    other_schema = f"other_{tag}"
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=pg_client,
+        schema=lambda _tenant_id: tenant_schema,
+        role=lambda _tenant_id: role,
+        drop_on_deprovision=True,
+    )
+    tenant = TenantIdentity(tenant_id=uuid4())
+
+    try:
+        await provisioner.provision(tenant)
+
+        # A dependency this teardown cannot revoke — the stand-in for a grant in another
+        # database of the cluster, which is unreachable from this connection by construction.
+        await pg_client.execute(
+            sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(other_schema))
+        )
+        await pg_client.execute(
+            sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                sql.Identifier(other_schema), sql.Identifier(role)
+            )
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await provisioner.deprovision(tenant)
+
+        assert ei.value.code == "tenant_role_still_depended_on"
+
+        # The two halves of the point: the tenant's data is gone, and the role that could not
+        # be dropped is still there to be dealt with rather than silently half-removed.
+        assert await _schema_exists(pg_client, tenant_schema) is False
+        assert await _role_exists(pg_client, role) is True
+
+    finally:
+        await _cleanup(pg_client, schemas=[tenant_schema, other_schema], role=role)
