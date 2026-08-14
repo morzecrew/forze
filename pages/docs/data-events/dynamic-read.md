@@ -237,6 +237,13 @@ or database it runs inside.
     them — and the role meant to stop a cross-schema reference is what permits it.
     Wiring that combination raises `dynamic_read_shared_role_across_tenants`.
 
+    `PostgresSchemaTenantProvisioner` refuses the same pairing at construction
+    (`tenant_role_shared_across_schemas`), since it is reachable without any route
+    at all. Teardown breaks there too: `deprovision` drops the role per tenant, and
+    PostgreSQL refuses to drop one another schema's grants still name — `IF EXISTS`
+    covers absence, not dependency — so the `DROP SCHEMA` behind it never runs and
+    the tenant's data stays.
+
     For the same reason the provisioner refuses to adopt an existing role that can
     log in or is a superuser (`tenant_role_not_confinable`). Statements run *as*
     this role, so pointing `role` at an application user would hand them that

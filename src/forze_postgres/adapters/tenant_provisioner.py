@@ -69,7 +69,43 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
     - ``ALTER DEFAULT PRIVILEGES`` applies to relations created by **the role that ran this
       provisioning**. A pipeline writing as a different user must issue its own default
       privileges, or grant ``SELECT`` as it creates.
+
+    It must resolve per tenant whenever :attr:`schema` does — see
+    :meth:`__attrs_post_init__`.
     """
+
+    def __attrs_post_init__(self) -> None:
+        """Refuse a per-tenant schema paired with one shared role.
+
+        "Confined to it" above is the whole claim, and a static name cannot make it: every
+        onboarding grants the same role another schema, so it ends up holding ``USAGE`` and
+        ``SELECT`` across all of them. Two things then break, and the quieter one is worse.
+
+        Teardown fails loudly: ``deprovision`` drops the role per tenant, and PostgreSQL
+        refuses to drop one another schema's grants still name — ``IF EXISTS`` covers absence,
+        not dependency — so the ``DROP SCHEMA`` behind it never runs and offboarding leaves
+        the tenant's data in place.
+
+        Confinement fails silently: a statement entering the role reaches every other tenant's
+        schema by naming it, because ``search_path`` is routing rather than a boundary. The
+        role that was meant to stop a cross-schema reference is what permits it.
+
+        A deliberate cross-tenant reader is a different object with a different lifecycle;
+        this class provisions per-tenant containers, so it refuses rather than half-serving
+        both.
+        """
+
+        if callable(self.schema) and self.role is not None and not callable(self.role):
+            raise exc.configuration(
+                "PostgresSchemaTenantProvisioner resolves a per-tenant schema but a single "
+                "shared role. Every onboarding would grant that one role another tenant's "
+                "schema, so it confines to none of them — and the first offboarding would "
+                "fail to drop a role the remaining tenants still depend on, leaving their "
+                "schema behind it undropped. Resolve the role per tenant "
+                "(tenant_id -> str) as well.",
+                code="tenant_role_shared_across_schemas",
+                details={"role": repr(self.role)},
+            )
 
     async def provision(self, tenant: TenantIdentity) -> None:
         name = await resolve_value(self.schema, tenant.tenant_id)
