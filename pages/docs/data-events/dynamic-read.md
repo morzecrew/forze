@@ -227,6 +227,22 @@ or database it runs inside.
     independent and a route clears both: the role answers *who authored this*,
     the container answers *what the text may reach*.
 
+!!! danger "A role shared across tenants confines to nothing"
+
+    Resolve the role per tenant (`tenant_id -> str`) whenever `query_schema` is
+    per-tenant. `PostgresSchemaTenantProvisioner` resolves the role per tenant and
+    grants it `USAGE` + `SELECT` on that tenant's schema, so a *static* name
+    collects read access to every schema it is onboarded with. Since `search_path`
+    is routing rather than a boundary, a statement reaches the others by naming
+    them — and the role meant to stop a cross-schema reference is what permits it.
+    Wiring that combination raises `dynamic_read_shared_role_across_tenants`.
+
+    For the same reason the provisioner refuses to adopt an existing role that can
+    log in or is a superuser (`tenant_role_not_confinable`). Statements run *as*
+    this role, so pointing `role` at an application user would hand them that
+    identity's reach and add the tenant's schema on top. Reusing an existing
+    `NOLOGIN` role is fine — that is the idempotent onboarding path.
+
 The tenant id is still bound as `%(tenant)s` when the statement references it, so
 a trusted statement can carry a predicate *in addition to* its container. That is
 convenience, not the boundary — referencing a placeholder proves reference, never

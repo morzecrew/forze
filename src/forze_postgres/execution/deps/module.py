@@ -132,6 +132,25 @@ def _validate_dynamic_read_route(
     not see the client would demand a role it does not need.
     """
 
+    if (
+        callable(config.query_schema)
+        and config.role is not None
+        and not callable(config.role)
+        and not client_is_routed
+    ):
+        raise exc.configuration(
+            f"Postgres dynamic-read route {route!r} resolves a per-tenant query_schema but a "
+            "single shared role. PostgresSchemaTenantProvisioner resolves the role per tenant "
+            "and grants it USAGE + SELECT on that tenant's schema, so a static name collects "
+            "read access to every schema it is onboarded with — and search_path is routing, "
+            "not a boundary, so a statement reaches the others by naming them. The role that "
+            "was meant to stop a cross-schema reference is then the thing permitting it. "
+            "Resolve the role per tenant as well (tenant_id -> str), or route the client per "
+            "tenant so credentials draw the boundary instead.",
+            code="dynamic_read_shared_role_across_tenants",
+            details={"route": route},
+        )
+
     if config.provenance == "untrusted" and not (config.role is not None or client_is_routed):
         raise exc.configuration(
             f"Postgres dynamic-read route {route!r} declares untrusted provenance with no "

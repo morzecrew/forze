@@ -173,16 +173,24 @@ async def test_an_oversized_statement_never_reaches_the_engine() -> None:
 
 
 async def test_the_byte_cap_counts_bytes_not_characters() -> None:
-    """A multi-byte statement is measured the way the wire measures it."""
+    """A multi-byte statement is measured the way the wire measures it.
 
-    adapter = _adapter(spec_kwargs={"max_statement_bytes": 10})
+    The cap is set to the statement's **character** count, so a length check would let this
+    through and only a byte check refuses it. A cap below both would be refused either way
+    and prove nothing about which one is being counted.
+    """
 
-    # Ten characters, twenty bytes in UTF-8.
+    statement = "SELECT 'ЖЖЖЖ'"
+    assert len(statement) == 13
+    assert len(statement.encode("utf-8")) == 17
+
+    adapter = _adapter(spec_kwargs={"max_statement_bytes": len(statement)})
+
     with pytest.raises(CoreException) as ei:
-        await adapter.run("SELECT 'ЖЖЖЖ'")
+        await adapter.run(statement)
 
     assert ei.value.details is not None
-    assert ei.value.details["size"] > 10
+    assert ei.value.details["size"] == 17
 
 
 async def test_a_tenant_aware_route_fails_closed_before_the_engine() -> None:

@@ -25,6 +25,7 @@ from forze.application.contracts.resolution import (
     resolve_value,
 )
 from forze.application.contracts.tenancy import TenantIdentity, TenantProvisionerPort
+from forze.base.exceptions import exc
 
 from ..kernel.client import PostgresClientPort
 
@@ -149,9 +150,16 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
         onboardings racing on the same name is a real ordering, not a theoretical one. The
         existence probe keeps the common path quiet; catching the duplicate keeps the race from
         failing an onboarding that has nothing wrong with it.
+
+        Reuse is checked rather than assumed, because the same skip that makes onboarding
+        idempotent also adopts a name that already belongs to something else. What is checked
+        is only what stays true: ``NOLOGIN`` and not a superuser are attributes of the role,
+        while memberships and privileges can be granted the day after onboarding — a check on
+        those would read as a boundary and be a snapshot.
         """
 
         if await self._role_exists(role):
+            await self._refuse_privileged_role(role)
             return
 
         try:
@@ -165,6 +173,35 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
         except Exception as error:
             if not _is_duplicate_object(error):
                 raise
+
+    # ....................... #
+
+    async def _refuse_privileged_role(self, role: str) -> None:
+        """Refuse to adopt an existing role that can log in or is a superuser.
+
+        Both are disqualifying for the same reason: statements run *as* this role via ``SET
+        LOCAL ROLE``, so adopting an application login user or a superuser hands every
+        dynamic statement that identity's reach, and then grants it the tenant's schema on
+        top. The refusal comes before any grant, so a mistyped name changes nothing.
+        """
+
+        privileged = await self.client.fetch_value(
+            "SELECT 1 FROM pg_roles WHERE rolname = %(role)s AND (rolcanlogin OR rolsuper)",
+            {"role": role},
+        )
+
+        if privileged is None:
+            return
+
+        raise exc.configuration(
+            f"Role {role!r} already exists and can log in or is a superuser, so it cannot be "
+            "adopted as a tenant read role. Statements run as this role via SET LOCAL ROLE, "
+            "which would give them that identity's reach and then add the tenant's schema to "
+            "it. Point `role` at a name this provisioner owns, or create it NOLOGIN and "
+            "without superuser first.",
+            code="tenant_role_not_confinable",
+            details={"role": role},
+        )
 
     # ....................... #
 

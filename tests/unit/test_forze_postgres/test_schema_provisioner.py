@@ -9,16 +9,26 @@ import pytest
 from psycopg import sql
 
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_postgres import PostgresSchemaTenantProvisioner
 
 # ----------------------- #
 
 
 class _FakeClient:
-    def __init__(self, *, existing_role: bool = False, existing_schema: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        existing_role: bool = False,
+        existing_schema: bool = True,
+        role_can_login: bool = False,
+        role_is_superuser: bool = False,
+    ) -> None:
         self.executed: list[str] = []
         self.existing_role = existing_role
         self.existing_schema = existing_schema
+        self.role_can_login = role_can_login
+        self.role_is_superuser = role_is_superuser
 
     async def execute(self, query: Any, params: Any = None, **kwargs: Any) -> None:
         _ = params, kwargs
@@ -30,6 +40,20 @@ class _FakeClient:
 
         if "pg_namespace" in text:
             return 1 if self.existing_schema else None
+
+        # The attribute probe is a narrower query over the same catalog as the existence
+        # probe, so the fake has to tell them apart or an existing role would read as
+        # privileged and every reuse test would fail for the wrong reason.
+        #
+        # It answers on the attributes the query actually names, rather than on a single
+        # "is privileged" flag. A flag would make the fake agree with any probe at all —
+        # including one that stopped asking about superusers — and the test would go on
+        # passing while the check it exists for had shrunk.
+        if "rolcanlogin" in text or "rolsuper" in text:
+            hit = ("rolcanlogin" in text and self.role_can_login) or (
+                "rolsuper" in text and self.role_is_superuser
+            )
+            return 1 if (self.existing_role and hit) else None
 
         return 1 if self.existing_role else None
 
@@ -124,6 +148,71 @@ async def test_an_existing_role_is_not_recreated() -> None:
     assert "CREATE ROLE" not in statements
     # The grants still run: an existing role may not yet reach this tenant's schema.
     assert 'GRANT USAGE ON SCHEMA "acme" TO "shared_reader"' in statements
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("attributes", "role_name"),
+    [
+        ({"role_can_login": True}, "app_user"),
+        # NOLOGIN is not confinement on its own: a superuser bypasses every grant, so a
+        # NOLOGIN superuser is the shape that looks provisioned-for-purpose and is not.
+        ({"role_is_superuser": True}, "admin_reader"),
+        ({"role_can_login": True, "role_is_superuser": True}, "postgres"),
+    ],
+    ids=["login", "superuser", "both"],
+)
+async def test_reusing_a_privileged_role_is_refused(
+    attributes: dict[str, bool],
+    role_name: str,
+) -> None:
+    """The role is an identity statements run *as*, so reuse has to be checked.
+
+    ``_ensure_role`` skips creation when the name already exists, which is what makes
+    onboarding idempotent and survives the cluster-wide race. The same skip means a name that
+    already belongs to something else is adopted silently — point it at an application login
+    user and the grants below hand that user the tenant schema, while ``SET LOCAL ROLE`` runs
+    every dynamic statement with whatever else it can reach.
+
+    ``NOLOGIN`` is the checkable half of "a role provisioned for this purpose". Membership and
+    privileges are not: they can be granted after onboarding, so a check here would be a
+    guarantee with an expiry date rather than a boundary.
+    """
+
+    client = _FakeClient(existing_role=True, **attributes)
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=client,  # type: ignore[arg-type]
+        schema="acme",
+        role=role_name,
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await provisioner.provision(TenantIdentity(tenant_id=uuid4()))
+
+    assert ei.value.code == "tenant_role_not_confinable"
+    assert ei.value.kind == ExceptionKind.CONFIGURATION
+    # Nothing was granted: the refusal happens before the schema is handed over.
+    assert "GRANT" not in "\n".join(client.executed)
+
+
+@pytest.mark.asyncio
+async def test_reusing_a_nologin_role_still_onboards() -> None:
+    """The idempotent path the check must not break.
+
+    Re-onboarding, a retried job and a second tenant all land on an existing role, and all
+    three are ordinary. Only the attributes decide.
+    """
+
+    client = _FakeClient(existing_role=True, role_can_login=False)
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=client,  # type: ignore[arg-type]
+        schema="acme",
+        role="shared_reader",
+    )
+
+    await provisioner.provision(TenantIdentity(tenant_id=uuid4()))
+
+    assert 'GRANT USAGE ON SCHEMA "acme" TO "shared_reader"' in "\n".join(client.executed)
 
 
 @pytest.mark.asyncio

@@ -127,20 +127,86 @@ def test_untrusted_provenance_without_confinement_is_refused() -> None:
     assert ei.value.kind == ExceptionKind.CONFIGURATION
 
 
-def test_untrusted_provenance_is_satisfied_by_a_role() -> None:
+def test_untrusted_provenance_is_satisfied_by_a_per_tenant_role() -> None:
     """``SET LOCAL ROLE`` is the tier-B confinement the trust guard is asking for.
 
     The per-tenant schema is here because the two axes are separate and a route clears both:
     the role answers *who authored this*, the container answers *what the text may reach*.
     A role alone leaves the second unanswered.
+
+    The role resolves per tenant for the reason below: a shared one is granted into every
+    schema the provisioner creates, so it confines to none of them.
     """
 
     module = _module(
         PostgresDynamicReadConfig(
             provenance="untrusted",
-            role="widget_reader",
+            role=lambda tenant_id: f"reader_{tenant_id}",
             query_schema=lambda tenant_id: f"t_{tenant_id}",
         )
+    )
+
+    assert DynamicReadDepKey in module().routed_deps
+
+
+def test_a_shared_role_alongside_per_tenant_schemas_is_refused() -> None:
+    """The confinement that reads as confinement and is not.
+
+    ``PostgresSchemaTenantProvisioner`` resolves the role per tenant and then grants it
+    ``USAGE`` + ``SELECT`` on that tenant's schema. Resolve a *static* name and every
+    onboarding grants the same role another schema, so the role ends up holding read access
+    to all of them — and a statement reaches the others by naming them, since ``search_path``
+    is routing and not a boundary.
+
+    That combination is the one the plane most wants to refuse: the operator has done the
+    per-tenant work on the schema, so the wiring looks careful, and the role that was
+    supposed to stop a cross-schema reference is the thing granting it.
+    """
+
+    with pytest.raises(CoreException) as ei:
+        _module(
+            PostgresDynamicReadConfig(
+                provenance="untrusted",
+                role="widget_reader",
+                query_schema=lambda tenant_id: f"t_{tenant_id}",
+            )
+        )
+
+    assert ei.value.code == "dynamic_read_shared_role_across_tenants"
+    assert ei.value.kind == ExceptionKind.CONFIGURATION
+
+
+def test_a_shared_role_is_refused_on_a_trusted_route_too() -> None:
+    """Provenance does not change what the grants do.
+
+    The role is weaker on a trusted route — mistake-proofing rather than a boundary — but a
+    shared one inverts even that: the mistake it exists to catch is a statement naming the
+    wrong tenant's relation, and a role granted every schema makes that read *succeed*.
+    """
+
+    with pytest.raises(CoreException) as ei:
+        _module(
+            PostgresDynamicReadConfig(
+                provenance="trusted",
+                role="widget_reader",
+                query_schema=lambda tenant_id: f"t_{tenant_id}",
+            )
+        )
+
+    assert ei.value.code == "dynamic_read_shared_role_across_tenants"
+
+
+def test_a_routed_client_may_keep_a_static_role() -> None:
+    """With per-tenant credentials the connection is already the boundary.
+
+    The refusal is about a role shared *across tenant schemas on one connection*. A routed
+    client does not have that shape, and demanding a per-tenant role name there would be
+    ceremony with nothing behind it.
+    """
+
+    module = _module(
+        PostgresDynamicReadConfig(provenance="untrusted", role="widget_reader"),
+        routed=True,
     )
 
     assert DynamicReadDepKey in module().routed_deps
