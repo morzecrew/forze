@@ -154,7 +154,9 @@ def _fetch(url: str, timeout: float) -> tuple[int | None, str]:
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT}, method="GET")
 
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        # The scheme allowlist above is the audit B310 asks for: it runs on every call and
+        # returns before reaching here, which a syntactic rule cannot see.
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310
             response.read()
 
             return int(response.status), "ok"
