@@ -1,0 +1,705 @@
+/* =========================================================================
+   Forze — custom homepage styles
+   Drop into:  docs/stylesheets/forze-home.css
+   Register in mkdocs.yml:
+     extra_css:
+       - stylesheets/forze-home.css
+   All rules are namespaced under .fz-* so they won't leak into the docs theme.
+   ========================================================================= */
+
+.fz {
+    /* Cool steel base — the "billet" before it's heated */
+    --fz-bg: var(--md-default-bg-color);
+    --fz-bg-2: #0c0f15;
+    --fz-panel: rgba(126, 155, 196, 0.05);
+    --fz-panel-solid: #121620;
+    --fz-border: rgba(140, 165, 205, 0.12);
+    --fz-border-strong: var(--md-default-fg-color--lightest);
+    --fz-text: #e9edf4;
+    --fz-muted: rgba(206, 216, 232, 0.62);
+    --fz-faint: rgba(206, 216, 232, 0.4);
+
+    /* Steel accents (from the logo's cool lower stroke) */
+    --fz-steel: #7e9bc4;
+    --fz-steel-2: #41567a;
+    --fz-steel-soft: rgba(126, 155, 196, 0.13);
+    --fz-steel-line: rgba(126, 155, 196, 0.3);
+
+    /* Red-hot accents (reserved — used only where metal is "heated").
+       Tuned red-forward (not yellow): glowing-steel orange cooling to ember red. */
+    --fz-orange: var(--md-accent-fg-color);
+    --fz-orange-2: #f0461a;
+    --fz-orange-deep: #d2350f;
+    --fz-amber: #ff8a3a;
+    --fz-glow: rgba(255, 90, 30, 0.4);
+
+    color: var(--fz-text);
+    font-family: Inter, -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Tame Material/Zensical's .md-typeset sizing so the hero renders as designed */
+.fz :is(h1, h2, h3, h4, p, ul, ol, li) {
+    margin: 0;
+}
+
+.fz :is(h1, h2, h3, h4) {
+    font-weight: inherit;
+    letter-spacing: inherit;
+}
+
+/* The home content column is neutralized in extra.css (.forze-home), so the
+     hero just spans the full content width — no fragile 100vw breakout needed. */
+.fz {
+    position: relative;
+    width: 100%;
+    overflow-x: clip;
+    background: var(--fz-bg);
+}
+
+.fz *,
+.fz *::before,
+.fz *::after {
+    box-sizing: border-box;
+}
+
+.fz a {
+    text-decoration: none;
+    color: inherit;
+}
+
+/* rem (not px) so the whole hero scales uniformly with Material's root
+     font-size (125% / 137.5% / 150%) and stays proportional at every
+     breakpoint — keeping it consistent with the rest of the docs site.
+     73.75rem == 1180px at the 16px design base. */
+.fz-wrap {
+    max-width: 73.75rem;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+}
+
+/* =========================================================================
+     HERO
+     ========================================================================= */
+.fz-hero {
+    position: relative;
+    min-height: clamp(460px, 72vh, 920px);
+    display: flex;
+    align-items: center;
+    isolation: isolate;
+    padding: 3.25rem 0 3rem;
+}
+
+/* Animated hex grid canvas */
+.fz-hero__canvas {
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+/* Radial glow + vignette layered over the canvas */
+.fz-hero::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background:
+        linear-gradient(180deg, transparent 62%, #000 130%),
+        radial-gradient(40% 44% at 26% 66%, rgba(255, 110, 40, 0.03), transparent 62%),
+        radial-gradient(46% 52% at 82% 20%, rgba(90, 125, 180, 0.04), transparent 62%),
+        linear-gradient(0deg, transparent 62%, #000 150%);
+    /* background:
+      radial-gradient(40% 44% at 26% 66%, rgba(255, 110, 40, 0.13), transparent 62%),
+      radial-gradient(46% 52% at 82% 20%, rgba(90, 125, 180, 0.14), transparent 62%),
+      radial-gradient(70% 60% at 50% 120%, rgba(126, 155, 196, 0.06), transparent 60%); */
+    pointer-events: none;
+}
+
+.fz-hero__inner {
+    display: grid;
+    grid-template-columns: 1.05fr 0.95fr;
+    gap: 3rem;
+    align-items: center;
+    width: 100%;
+}
+
+@media (max-width: 900px) {
+    .fz-hero__inner {
+        grid-template-columns: 1fr;
+        gap: 2.5rem;
+    }
+}
+
+.fz-title {
+    margin: 1.25rem 0 0 !important;
+    font-size: clamp(1.6rem, 6vw, 3rem) !important;
+    line-height: 0.98 !important;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+}
+
+/* steel cooling into red-hot — mirrors the logo */
+.fz-title .fz-grad {
+    background: linear-gradient(114deg, #859dc1 0%, #8e7276 49%, var(--fz-orange) 79%, var(--fz-orange-2) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+}
+
+.fz-lede {
+    margin: 1.15rem 0 0 !important;
+    max-width: 33rem;
+    font-size: clamp(0.98rem, 1.25vw, 1.12rem) !important;
+    line-height: 1.62 !important;
+    color: var(--fz-muted);
+}
+
+.fz-lede strong {
+    color: var(--fz-text);
+    font-weight: 650;
+}
+
+/* CTAs */
+.fz-cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.85rem;
+    margin-top: 2.1rem;
+}
+
+.fz-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.8rem 1.4rem;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 0.98rem;
+    border: 1px solid transparent;
+    transition: transform .18s ease, box-shadow .25s ease, background .2s ease, border-color .2s ease;
+    will-change: transform;
+}
+
+.fz-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
+.fz-btn--primary {
+    color: #fff;
+    background: linear-gradient(100deg, var(--fz-orange) 0%, var(--fz-orange-2) 60%, var(--fz-orange-deep) 100%);
+    box-shadow: 0 8px 30px -10px var(--fz-glow);
+}
+
+.fz-btn--primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 38px -8px var(--fz-glow);
+    color: #fff !important;
+}
+
+.fz-btn--ghost {
+    color: var(--fz-text);
+    background: var(--fz-panel);
+    border-color: var(--fz-border);
+    backdrop-filter: blur(8px);
+}
+
+.fz-btn--ghost:hover {
+    border-color: var(--fz-border-strong);
+    transform: translateY(-2px);
+    background: rgba(140, 165, 205, 0.06);
+    color: #fff !important;
+}
+
+/* Tiny meta row under CTAs */
+.fz-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.25rem;
+    margin-top: 1.8rem;
+    font-size: 0.85rem;
+    color: var(--fz-faint);
+}
+
+.fz-meta span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.fz-meta svg {
+    width: 15px;
+    height: 15px;
+    color: var(--fz-steel);
+}
+
+/* =========================================================================
+     CODE WINDOW (right side of hero)
+     ========================================================================= */
+.fz-code {
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(20, 22, 28, 0.92), rgba(12, 13, 17, 0.92));
+    box-shadow: 0 30px 70px -30px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+    backdrop-filter: blur(12px);
+    overflow: hidden;
+}
+
+.fz-code__bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.7rem 1rem;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.fz-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+}
+
+.fz-dot--r {
+    background: #ff5f57;
+}
+
+.fz-dot--y {
+    background: #febc2e;
+}
+
+.fz-dot--g {
+    background: #28c840;
+}
+
+.fz-code__file {
+    margin-left: 0.4rem;
+    font-size: 0.78rem;
+    color: var(--fz-faint);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.fz-code pre {
+    margin: 0;
+    padding: 1rem 1rem 1.5rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.84rem;
+    line-height: 1.7;
+    overflow-x: auto;
+    tab-size: 2;
+}
+
+.fz-code .md-code__nav {
+    display: none;
+}
+
+.fz-code code {
+    white-space: pre;
+    background: transparent;
+}
+
+.tk-kw {
+    color: var(--md-accent-fg-color);
+}
+
+.tk-cls {
+    color: #e6b4a4
+}
+
+.tk-fn {
+    color: #7fb4ff;
+}
+
+.tk-str {
+    color: #7fdca4;
+}
+
+.tk-com {
+    color: rgba(231, 233, 238, 0.34);
+    font-style: italic;
+}
+
+.tk-dim {
+    color: rgba(231, 233, 238, 0.7);
+}
+
+/* the swappable adapter token */
+.fz-swap {
+    position: relative;
+    display: inline-block;
+    color: #ff8a4d;
+    font-weight: 600;
+}
+
+.fz-swap::after {
+    content: "";
+    position: absolute;
+    inset: -2px -5px;
+    border-radius: 5px;
+    background: rgba(255, 122, 24, 0.16);
+    box-shadow: 0 0 0 1px rgba(255, 122, 24, 0.4);
+    opacity: 0;
+    transition: opacity .35s ease;
+    z-index: -1;
+}
+
+.fz-swap .is-on::after {
+    opacity: 1;
+}
+
+/* caret used while "typing" the swap */
+.fz-caret {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    margin-left: 1px;
+    background: var(--fz-orange);
+    vertical-align: -2px;
+    animation: fz-blink 1s steps(2) infinite;
+}
+
+@keyframes fz-blink {
+
+    0%,
+    50% {
+        opacity: 1;
+    }
+
+    50.01%,
+    100% {
+        opacity: 0;
+    }
+}
+
+/* =========================================================================
+     MARQUEE — integrations
+     ========================================================================= */
+.fz-strip {
+    border-top: 1px solid var(--fz-border);
+    /* border-bottom: 1px solid var(--md-default-fg-color--lightest); */
+    background: var(--fz-bg);
+    padding: 1.5rem 0;
+}
+
+.fz-strip__label {
+    text-align: center;
+    font-size: 0.74rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--fz-faint);
+    margin-bottom: 1.5rem;
+}
+
+.fz-marquee {
+    position: relative;
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+}
+
+.fz-marquee__track {
+    display: flex;
+    gap: 0.75rem;
+    width: max-content;
+    animation: fz-scroll 38s linear infinite;
+}
+
+.fz-marquee:hover .fz-marquee__track {
+    animation-play-state: paused;
+}
+
+@keyframes fz-scroll {
+    to {
+        transform: translateX(-50%);
+    }
+}
+
+.fz-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 1rem;
+    border: 1px solid var(--fz-border);
+    border-radius: 10px;
+    background: var(--fz-panel);
+    font-size: 0.88rem;
+    color: var(--fz-muted);
+    white-space: nowrap;
+    text-decoration: none;
+    transition: color .2s ease, border-color .2s ease;
+}
+
+.fz-chip:hover {
+    border-color: var(--fz-border-strong);
+}
+
+/* brand logo rendered as a monochrome mask, tinted steel; heats to orange on hover */
+.fz-chip i {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    background-color: var(--fz-steel);
+    -webkit-mask: var(--logo) center / contain no-repeat;
+    mask: var(--logo) center / contain no-repeat;
+    opacity: 0.85;
+    transition: background-color .2s ease, opacity .2s ease;
+}
+
+.fz-chip:hover i {
+    background-color: var(--md-accent-fg-color);
+    opacity: 1;
+}
+
+/* =========================================================================
+     FEATURES
+     ========================================================================= */
+.fz-section {
+    padding: 5.5rem 0;
+}
+
+.fz-section__head {
+    max-width: 40rem;
+    margin-bottom: 2.8rem;
+}
+
+.fz-kicker {
+    font-size: 0.78rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--fz-orange);
+    font-weight: 600;
+}
+
+.fz-h2 {
+    margin: 0.7rem 0 0;
+    font-size: clamp(1.8rem, 4vw, 2.6rem);
+    font-weight: 750;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+}
+
+.fz-sub {
+    margin: 0.9rem 0 0;
+    color: var(--fz-muted);
+    font-size: 1.05rem;
+}
+
+.fz-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+}
+
+@media (max-width: 880px) {
+    .fz-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.fz-card {
+    position: relative;
+    padding: 1.6rem;
+    border: 1px solid var(--fz-border);
+    border-radius: 16px;
+    background: var(--fz-panel);
+    overflow: hidden;
+    transition: transform .25s ease, border-color .25s ease, background .25s ease;
+}
+
+.fz-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(120px 120px at var(--mx, 50%) var(--my, 0%), rgba(255, 122, 24, 0.14), transparent 70%);
+    opacity: 0;
+    transition: opacity .3s ease;
+    pointer-events: none;
+}
+
+.fz-card:hover {
+    transform: translateY(-4px);
+    border-color: var(--fz-border-strong);
+    background: rgba(255, 255, 255, 0.045);
+}
+
+.fz-card:hover::before {
+    opacity: 1;
+}
+
+.fz-card__ico {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 11px;
+    background: var(--fz-steel-soft);
+    border: 1px solid var(--fz-steel-line);
+    color: var(--fz-steel);
+    margin-bottom: 1rem;
+    transition: color .25s ease, background .25s ease, border-color .25s ease;
+}
+
+/* icon "heats up" when you hover the card */
+.fz-card:hover .fz-card__ico {
+    color: var(--fz-orange);
+    background: rgba(255, 122, 24, 0.12);
+    border-color: rgba(255, 122, 24, 0.28);
+}
+
+.fz-card__ico svg {
+    width: 22px;
+    height: 22px;
+}
+
+.fz-card h3 {
+    margin: 0 0 0.5rem;
+    font-size: 1.15rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+}
+
+.fz-card p {
+    margin: 0;
+    color: var(--fz-muted);
+    font-size: 0.95rem;
+}
+
+/* span helper for the wide card */
+.fz-card--wide {
+    grid-column: span 2;
+}
+
+@media (max-width: 880px) {
+    .fz-card--wide {
+        grid-column: span 1;
+    }
+}
+
+/* =========================================================================
+     STATS
+     ========================================================================= */
+.fz-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    border: 1px solid var(--fz-border);
+    border-radius: 18px;
+    background: var(--fz-panel);
+    padding: 2rem 1rem;
+}
+
+@media (max-width: 720px) {
+    .fz-stats {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1.5rem 1rem;
+    }
+}
+
+.fz-stat {
+    text-align: center;
+}
+
+.fz-stat__n {
+    font-size: clamp(2rem, 5vw, 2.9rem);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    background: linear-gradient(180deg, #fff, #aec4e2);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+}
+
+.fz-stat__l {
+    margin-top: 0.3rem;
+    font-size: 0.85rem;
+    color: var(--fz-muted);
+}
+
+/* =========================================================================
+     CTA BAND
+     ========================================================================= */
+.fz-band {
+    position: relative;
+    margin: 0 auto;
+    border: 1px solid rgba(255, 122, 24, 0.3);
+    border-radius: 22px;
+    background:
+        radial-gradient(120% 140% at 50% 0%, rgba(255, 122, 24, 0.18), transparent 60%),
+        linear-gradient(180deg, rgba(20, 22, 28, 0.9), rgba(12, 13, 17, 0.9));
+    padding: 3.5rem 1.5rem;
+    text-align: center;
+    overflow: hidden;
+}
+
+.fz-band h2 {
+    margin: 0;
+    font-size: clamp(1.8rem, 4.5vw, 2.8rem);
+    font-weight: 780;
+    letter-spacing: -0.02em;
+}
+
+.fz-band p {
+    margin: 0.9rem auto 0;
+    max-width: 32rem;
+    color: var(--fz-muted);
+}
+
+.fz-band .fz-cta {
+    justify-content: center;
+}
+
+.fz-foot-note {
+    text-align: center;
+    padding: 2.5rem 1.5rem 3.5rem;
+    color: var(--fz-faint);
+    font-size: 0.85rem;
+}
+
+/* =========================================================================
+     REVEAL ANIMATIONS (toggled by JS via .fz-in)
+     ========================================================================= */
+.fz-reveal {
+    opacity: 0;
+    transform: translateY(18px);
+    transition: opacity .7s cubic-bezier(.2, .7, .2, 1), transform .7s cubic-bezier(.2, .7, .2, 1);
+}
+
+.fz-reveal.fz-in {
+    opacity: 1;
+    transform: none;
+}
+
+.fz-reveal[data-d="1"] {
+    transition-delay: .08s;
+}
+
+.fz-reveal[data-d="2"] {
+    transition-delay: .16s;
+}
+
+.fz-reveal[data-d="3"] {
+    transition-delay: .24s;
+}
+
+.fz-reveal[data-d="4"] {
+    transition-delay: .32s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .fz-reveal {
+        opacity: 1;
+        transform: none;
+        transition: none;
+    }
+
+    .fz-marquee__track,
+    .fz-pill__dot,
+    .fz-caret {
+        animation: none !important;
+    }
+}
