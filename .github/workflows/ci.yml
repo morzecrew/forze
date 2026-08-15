@@ -79,6 +79,11 @@ jobs:
               # either table — and only ever runs when something unrelated touches src/.
               - "CONTRIBUTING.md"
               - ".claude/skills/gitmoji-conventional/**"
+              # Same shape for the skills-corpus gate: the corpus itself and its checker.
+              # A skills-only edit is precisely the change that can break the corpus, and
+              # without these it would be the change that never runs the gate.
+              - "skills/**"
+              - "tools/**"
 
   quality:
     name: Run quality checks

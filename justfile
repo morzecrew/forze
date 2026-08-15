@@ -76,6 +76,26 @@ docs-check:
 
     uv run python .github/scripts/docs_floors.py
 
+# Skills corpus integrity: every python example parses, every `forze*` symbol it imports
+# still exists, structure and index parity hold, and no link escapes the published tree.
+# The corpus ships into other people's repositories and is read by agents that write code
+# from it, so a renamed export there is a broken import somewhere nobody here can see.
+# Offline; part of `just quality`. Published-link liveness is `just skills-links`.
+skills-check *args='':
+    {{ _uv_sync }}
+
+    uv run python -m tools.skills_check {{ args }}
+
+# Sweep the corpus's published doc URLs for HTTP 200. Network-bound and rate-limited, so
+# it runs on a schedule rather than per change — docs links break for reasons a given
+# change does not control, which belongs on a queue and not in a merge gate.
+#
+# No `uv sync` and no venv, like the nightly verdict job: this mode reads Markdown and
+# speaks HTTP through the standard library alone, so the sweep cannot fail for want of an
+# extra — and the scheduled run executes the same line this recipe does.
+skills-links *args='':
+    python3 -m tools.skills_check --links {{ args }}
+
 # Run the differential conformance legs themselves and gate on what actually ran (needs
 # Docker for every real engine). CI does this across its per-integration shards instead of
 # one job — starting every engine's containers at once peaks well past a 16 GB runner,
@@ -246,6 +266,7 @@ quality strict="false":
     just _uv_cmd "CI matrix" {{ strict }} pytest "tests/unit/test_ci_matrix_guard.py" -q
     just _uv_cmd "Gitmoji excerpt" {{ strict }} pytest "tests/unit/test_gitmoji_excerpt_guard.py" -q
     just _uv_cmd "Docs floors" {{ strict }} python .github/scripts/docs_floors.py
+    just _uv_cmd "Skills corpus" {{ strict }} python -m tools.skills_check
     just _uv_cmd "Dead code" {{ strict }} vulture
     just _uv_cmd "Dependencies" {{ strict }} deptry .
     just _uv_cmd "Security" {{ strict }} bandit -c pyproject.toml -r "src"
