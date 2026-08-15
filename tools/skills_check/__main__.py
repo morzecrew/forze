@@ -151,11 +151,27 @@ def _run_liveness(corpus: Corpus, fetcher: Fetcher | None = None) -> int:
         return 1
 
     outcomes = check_liveness(urls, LinkPolicy(), fetcher)
-    dead = [outcome for outcome in outcomes if not outcome.ok]
+    dead = [outcome for outcome in outcomes if outcome.checked and not outcome.ok]
+    unchecked = [outcome for outcome in outcomes if not outcome.checked]
 
     for outcome in dead:
         status = outcome.status if outcome.status is not None else "no response"
         print(f"  - {outcome.url} -> {status} ({outcome.detail}), {outcome.attempts} attempt(s)")
+
+    for outcome in unchecked:
+        print(f"  · not checked: {outcome.url}")
+
+    if unchecked:
+        # Reported separately because it is a different fact. Folding these into the dead
+        # count would claim the pages are gone; folding them into the live count would
+        # claim they answered. Neither happened.
+        print(
+            f"\nSkills links FAILED: the sweep ran out of its time budget with "
+            f"{len(unchecked)}/{len(urls)} URL(s) never checked"
+            f"{f', and {len(dead)} dead among those it reached' if dead else ''}."
+        )
+
+        return 1
 
     if dead:
         print(

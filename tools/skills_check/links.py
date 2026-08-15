@@ -42,6 +42,9 @@ DEFAULT_PACING_SECONDS = 0.4
 DEFAULT_TIMEOUT_SECONDS = 15.0
 DEFAULT_ATTEMPTS = 3
 DEFAULT_BACKOFF_SECONDS = 2.0
+DEFAULT_BUDGET_SECONDS = 900.0
+"""Wall-clock bound on a whole sweep. A green run takes well under a minute; this only
+bites when nearly every request is timing out, which is when a report is worth most."""
 
 _USER_AGENT = "forze-skills-check (+https://github.com/morzecrew/forze)"
 _RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
@@ -61,15 +64,37 @@ class LinkOutcome:
     def ok(self) -> bool:
         return self.status == 200
 
+    @property
+    def checked(self) -> bool:
+        """Whether the sweep got to this URL at all.
+
+        An unchecked URL is not a dead one and not a live one, and collapsing it into
+        either loses the only fact that matters about it.
+        """
+        return self.attempts > 0
+
 
 @dataclass(frozen=True)
 class LinkPolicy:
-    """Pacing, per-request duration bound, and retry budget — three separate knobs."""
+    """Pacing, per-request duration bound, retry budget, and a bound on the whole sweep.
+
+    The first three bound one request; none of them bounds the run. Multiply them out and
+    the worst case is real: 64 URLs x (3 attempts x 15s + 2s + 4s backoff) plus pacing is
+    about 55 minutes, which a total outage reaches exactly. A sweep that only prints after
+    finishing is then killed by the CI job's own limit having reported nothing at all —
+    the run costs an hour and produces no information.
+
+    ``budget_seconds`` is what makes the sweep's duration a property of this policy rather
+    than of whichever runner limit happens to kill it. When it runs out the remaining URLs
+    are reported **unchecked** and the sweep fails: unchecked is not passed, exactly as an
+    unresolved import is not a resolved one.
+    """
 
     pacing_seconds: float = DEFAULT_PACING_SECONDS
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     attempts: int = DEFAULT_ATTEMPTS
     backoff_seconds: float = DEFAULT_BACKOFF_SECONDS
+    budget_seconds: float = DEFAULT_BUDGET_SECONDS
 
 
 def collect_published_urls(corpus: Corpus) -> tuple[str, ...]:
@@ -101,8 +126,20 @@ def check_liveness(
     settings = policy or LinkPolicy()
     fetch = fetcher or _fetch
     outcomes: list[LinkOutcome] = []
+    started = time.monotonic()
 
     for index, url in enumerate(urls):
+        if time.monotonic() - started >= settings.budget_seconds:
+            # Everything from here on is reported, never dropped. A sweep that stopped
+            # early and said so is a partial answer; one that stopped early and returned
+            # the outcomes it happened to collect is a wrong answer.
+            outcomes.extend(
+                LinkOutcome(url=remaining, status=None, detail="sweep budget exhausted", attempts=0)
+                for remaining in urls[index:]
+            )
+
+            return outcomes
+
         if index and settings.pacing_seconds > 0:
             time.sleep(settings.pacing_seconds)
 

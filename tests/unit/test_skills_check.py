@@ -30,6 +30,7 @@ from tools.skills_check.checks import (
 )
 from tools.skills_check.corpus import load_corpus
 from tools.skills_check.links import (
+    LinkOutcome,
     LinkPolicy,
     _fetch,
     check_liveness,
@@ -552,6 +553,32 @@ def test_transport_failure_without_a_status_is_retried() -> None:
 
     assert outcomes[0].ok
     assert outcomes[0].attempts == 3
+
+
+def test_the_sweep_bounds_its_own_duration_and_reports_what_it_skipped() -> None:
+    """Worst case is 64 URLs x (3 x 15s + 6s backoff) — about 55 minutes.
+
+    A sweep that only prints after finishing gets killed by the job limit having reported
+    nothing, so the run costs an hour and yields no information. The budget makes the
+    duration a property of the policy, and every URL it did not reach is named.
+    """
+    urls = ("https://example.test/a", "https://example.test/b", "https://example.test/c")
+    spent = LinkPolicy(pacing_seconds=0.0, backoff_seconds=0.0, attempts=1, budget_seconds=0.0)
+
+    outcomes = check_liveness(urls, spent, _stub(200))
+
+    assert [outcome.checked for outcome in outcomes] == [False, False, False]
+    assert [outcome.url for outcome in outcomes] == list(urls), "none may be dropped"
+    assert all("budget exhausted" in outcome.detail for outcome in outcomes)
+
+
+def test_an_unchecked_url_is_neither_dead_nor_live(corpus_root: Path) -> None:
+    """Folding it into either count claims something the sweep never observed."""
+    _write(corpus_root, "See https://morzecrew.github.io/forze/latest/in-depth/dst/ too.")
+    outcome = LinkOutcome(url="https://example.test/a", status=None, detail="x", attempts=0)
+
+    assert not outcome.ok
+    assert not outcome.checked
 
 
 def test_a_non_http_url_is_never_fetched() -> None:

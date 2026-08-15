@@ -30,10 +30,12 @@ jobs:
   sweep:
     name: Sweep published doc links
     runs-on: ubuntu-latest
-    # A green sweep takes well under a minute. The worst case is bounded but far larger —
-    # every URL exhausting its retry budget at the full per-request timeout — and without
-    # a job bound the runner's own six-hour default is what stops it. Pacing and per-
-    # request timeouts bound the rate and each attempt; this bounds the whole job.
+    # A green sweep takes well under a minute. The sweep bounds its own duration with a
+    # 900s budget and reports every URL it did not reach, so this limit is a backstop for
+    # the job around it — checkout, `just`, the runner — and never the thing that decides
+    # how much of the corpus got checked. It must stay comfortably above that budget: set
+    # below it, the runner kills the sweep before it can report, which is the failure mode
+    # this number used to have.
     timeout-minutes: 20
     permissions:
       contents: read
