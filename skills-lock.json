@@ -22,7 +22,7 @@
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/flag-dont-flip/SKILL.md",
-      "computedHash": "8e8c4276b3ddf71ac08f27a0339052faf3f295ca53078721f69c4787df1cdab2"
+      "computedHash": "ec5f549919bc7d03857772d0bb64fe204f92a9aafede3b6cbe1d1872d10f85b2"
     },
     "gitmoji-conventional": {
       "source": "morzecrew/agent-skills",
@@ -70,7 +70,7 @@
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/pr-review-loop/SKILL.md",
-      "computedHash": "dd9f1cb9345b90d337014fac286b6616b26807c671b406650528e59c242b73cb"
+      "computedHash": "920e64657a063c4203fbe1443d591782bc1f7af42f53d5879e20b4264beeacdc"
     },
     "python-background-jobs": {
       "source": "wshobson/agents",
@@ -124,13 +124,13 @@
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/rfc-writer/SKILL.md",
-      "computedHash": "1048601ec78d4a7e7aaaac5b38b479ad5d02ee70b928228760ed040f3382605f"
+      "computedHash": "d782072d829a6a125f3b51fac5e22e5522e4a77857d78dc6e7e2a4004a6f8bb1"
     },
     "self-audit": {
       "source": "morzecrew/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/self-audit/SKILL.md",
-      "computedHash": "61a3171a779c3dc0cc7f8d12161a2f8e9922597d036055de9ff87ef756774f18"
+      "computedHash": "2793db4e0a627c6defb9734a5cb89c0a3039fb1cad00a9c6193435bb4311ffd0"
     },
     "self-documenting-code": {
       "source": "morzecrew/agent-skills",

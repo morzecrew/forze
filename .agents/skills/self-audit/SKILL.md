@@ -80,7 +80,7 @@ Distrust every "tested" and "covered" claim, including your own — reading a te
 
 ### 10. Conformance to the decision table
 
-If the work executed an RFC, spec or design doc, diff the branch against its decision table. **Every departure either appears in the deviation log or is a finding — and so does every `OPEN` row.**
+If the work executed an RFC, spec or design doc, diff the branch against its decision table. **Every departure either appears in the execution log or is a finding — and so does every `OPEN` row.**
 
 The `OPEN` half is easy to miss, because choosing one of the options an RFC delegated is not a departure from it: conformance can look perfect while the choice that was made, and why, exists nowhere but the code. Walk the `OPEN` rows separately and check each one has a logged decision with its rationale. An `OPEN` row that execution never answered is the other finding — the plan needed it and nobody noticed.
 
@@ -99,11 +99,12 @@ The passes generalize: spec fidelity (§1) and prose honesty (§7) apply verbati
 - **Fix as you find, on the same branch.** The work is your own and unmerged — clear defects get fixed immediately, then re-audited (§8). Leave open only what genuinely needs the user's decision (a spec change, a scope call), and say so.
 - **Report findings, not activities.** For each finding: where, what's wrong, why it matters (the concrete failure it causes), and its status — fixed or open. Rank by severity.
 - **State the scope and the residue.** What was audited, what wasn't, and what you'd still distrust. A no-findings audit is reported the same way: the scope, the checks actually performed, the evidence they produced, and the remaining uncertainty — that report is what lets a reader tell clean from shallow.
+- **Where the work executed an RFC, the report has a durable home:** a dated findings section in `EXECUTION-LOG.md` (`flag-dont-flip`). These findings are departures the executor did not notice, and filing them apart from the ones they did means nobody ever counts the two together.
 - **Distill rules.** When a finding generalizes, record it as a one-line rule ("any suffix/subset helper needs its empty case decided explicitly"; "test a wrapper against every state of the vocabulary it wraps") — these compound across future work. If the project keeps notes or memory, put them there.
 
 ## Related skills
 
 - `reading-isnt-proof` — pass 9's discipline expanded into a full method for multi-implementation contracts
 - `fewer-tests-more-proof` — when the audit's real finding is the suite itself: ritual tests, per-backend copies, flake-retry volume
-- `flag-dont-flip` — produces the deviation log pass 10 audits, and grades the decisions it audits against
+- `flag-dont-flip` — owns `EXECUTION-LOG.md`, the log pass 10 audits against, and grades the decisions it checks
 - `less-code-same-behavior` — pass 6 at codebase scale, with the same NO ACTION discipline
