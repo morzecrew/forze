@@ -244,6 +244,7 @@ quality strict="false":
     just _uv_cmd "Mock coverage" {{ strict }} pytest "tests/unit/test_mock_coverage_guard.py" -q
     just _uv_cmd "Conformance" {{ strict }} python .github/scripts/conformance_manifest.py --collect
     just _uv_cmd "CI matrix" {{ strict }} pytest "tests/unit/test_ci_matrix_guard.py" -q
+    just _uv_cmd "Gitmoji excerpt" {{ strict }} pytest "tests/unit/test_gitmoji_excerpt_guard.py" -q
     just _uv_cmd "Docs floors" {{ strict }} python .github/scripts/docs_floors.py
     just _uv_cmd "Dead code" {{ strict }} vulture
     just _uv_cmd "Dependencies" {{ strict }} deptry .

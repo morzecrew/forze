@@ -205,6 +205,8 @@ The validator is not wired into a git hook, so it is advisory unless you run it.
 
 An excerpt of the full table, for convenience. It is a strict subset with identical types — **not** a competing mapping. If you need an emoji that is not here, take it from the full table, not from intuition.
 
+`just quality` enforces that: a row here that the skill's mapping does not have, or one whose type disagrees with it, fails the build. Add the row upstream first.
+
 | Gitmoji | Type | Use for |
 |---|---|---|
 | ✨ | feat | new features |
