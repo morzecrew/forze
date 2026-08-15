@@ -2,6 +2,22 @@
 
 Thank you for your interest in contributing to **Forze**. This document describes the development workflow, coding conventions, and contribution guidelines.
 
+## Conventions and where they live
+
+This file is authoritative for how to *work in this repository* — what to run, where tests and docs go, what a release needs. It deliberately does **not** restate formats that are maintained elsewhere: a second copy of a format drifts, and then the two copies contradict each other.
+
+| Convention | Owner | What this file adds |
+|---|---|---|
+| Commit message and PR title format | [`gitmoji-conventional`](.claude/skills/gitmoji-conventional/SKILL.md) + [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) | the shape, this repo's scopes, how to check a subject |
+| `CHANGELOG.md` format | [`keep-a-changelog`](.claude/skills/keep-a-changelog/SKILL.md) + [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) | what counts as user-facing here, the house concision rule |
+| Documentation page structure | [`altitude-docs`](.claude/skills/altitude-docs/SKILL.md) | where pages live, how to build and serve them |
+| Python docstring style | **this file** — see [Documentation](#documentation) | no skill owns it; the rule below is the rule |
+| Commands, extras, layering contracts | `justfile`, `pyproject.toml` | pointers only |
+
+Where this file and a skill disagree about a **format**, the skill wins — fix this file, or open an issue, rather than following the stale copy. Where they disagree about a **repository fact** — a command, a path, a marker, a directory layout — this file wins.
+
+Skills live in `.claude/skills/` and are mirrored byte-for-byte to `.agent/skills/` and `.agents/skills/` for other tools; `AGENTS.md` routes agents to them.
+
 ## Reporting bugs
 
 If you encounter a bug, please report it using the GitHub issue tracker:
@@ -108,7 +124,7 @@ All checks must pass before submitting a pull request.
 
 ### Documentation
 
-Documentation lives in `pages/docs/` and is built with [Zensical](https://zensical.org/). See `pages/zensical.toml` for navigation and structure.
+Documentation lives in `pages/docs/` and is built with [Zensical](https://zensical.org/). See `pages/zensical.toml` for navigation and structure. Page structure, altitude, and Diátaxis placement are owned by the [`altitude-docs`](.claude/skills/altitude-docs/SKILL.md) skill.
 
 **Serving docs while editing**
 
@@ -131,7 +147,12 @@ just build-diagrams
 - Update documentation when behavior changes; keep docs aligned with code.
 - Add or update pages under `pages/docs/` and adjust `pages/zensical.toml` navigation as needed.
 - Follow markdownlint rules (see `.markdownlint.yaml`) for style consistency.
-- Python docstrings use Sphinx/reST roles (see the `python-rest-docstrings` skill).
+
+**Docstrings**
+
+Python docstrings use **Sphinx/reST field lists and roles** — `:param x:`, `:returns:`, `:raises:`, and cross-references such as ``:class:`SomeType` ``. This is the repository's convention; there is no skill for it, so this section is the authority.
+
+The installed `python-google-docstrings` skill **does not apply to this repository**. Google-style `Args:` / `Returns:` sections need Sphinx Napoleon, which this project does not use, and the skill's own guidance defers to a project that writes reST field lists. Do not convert existing docstrings.
 
 ### Integration dependency configs
 
@@ -146,103 +167,150 @@ App authors and tests construct configs explicitly, e.g. `MongoDocumentConfig(re
 
 ## Commit Messages
 
-Commits follow **Conventional Commits** with a **gitmoji** prefix:
+Commit subjects and PR titles use [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) with an [official gitmoji](https://gitmoji.dev/) prefix:
 
+```text
+<gitmoji> <type>[(scope)][!]: <description>
 ```
-<gitmoji> <type>[scope]: <description>
-```
-
-| Gitmoji | Type | Purpose |
-|---------|------|---------|
-| ✨ | feat | new features |
-| 🚸 | feat | UX improvements |
-| 📊 | feat | analytics / tracking |
-| 💬 | feat | text / literals |
-| 🌱 | feat | seed data |
-| 🗃 | feat | database changes |
-| 🧵 | feat | multithreading / concurrency |
-| 🦺 | feat | validation |
-| 🦖 | feat | backwards compatibility |
-| 🛂 | feat | authorization / permissions |
-| 🧭 | feat | feature flags |
-| 🩺 | feat | healthchecks |
-| 🥚 | feat | easter egg |
-| 💥 | feat | breaking changes |
-| 🐛 | fix | bug fix |
-| 🚑 | fix | critical hotfix |
-| 🩹 | fix | small fix |
-| 🚨 | fix | fix linter / compiler warnings |
-| 🎯 | fix | catch errors |
-| ♻️ | refactor | refactor code |
-| 🔥 | refactor | remove code/files |
-| 💩 | refactor | bad code needing improvement |
-| 🚚 | refactor | move/rename files |
-| 🗑 | refactor | deprecate code |
-| ⚰️ | refactor | remove dead code |
-| 🏗 | refactor | architectural changes |
-| 🎨 | style | code formatting / structure |
-| ⚡️ | perf | performance improvements |
-| 📝 | docs | documentation |
-| 💡 | docs | code comments |
-| ✏️ | docs | fix typos |
-| 🧪 | test | tests |
-| 🤡 | test | mocks |
-| 📸 | test | snapshots |
-| 📦 | build | packages / compiled files |
-| ⬆️ | build | upgrade dependencies |
-| ⬇️ | build | downgrade dependencies |
-| 📌 | build | pin dependencies |
-| ➕ | build | add dependency |
-| ➖ | build | remove dependency |
-| 🧱 | build | infrastructure |
-| 👷 | ci | CI configuration |
-| 💚 | ci | fix CI build |
-| 🔧 | chore | maintenance |
-| 🔨 | chore | dev scripts |
-| 🙈 | chore | .gitignore |
-| 🕵️ | chore | data exploration |
-| 🧑‍💻 | chore | developer experience |
-| 🔖 | chore | release / version tags |
-| 🚀 | chore | deployment |
-| 🚧 | chore | work in progress |
-| 🔀 | chore | merge branches |
-| 🔒 | security | security changes |
-| ⏪ | revert | revert commit |
-
-Examples:
 
 ```text
 ✨ feat(search): add fuzzy match option
 🐛 fix(postgres): correct ts_rank_cd signature
 📝 docs: add S3 integration guide
+💥 feat(tenancy)!: rename the statement origin floors
 ```
 
-Commits may include an optional body after the subject line. The body should be separated from the subject by a blank line and may contain additional context, rationale, or a list of changes:
+**This file does not define the emoji→type mapping.** The mapping is the official gitmoji set, and the copy this repository works from lives in the `gitmoji-conventional` skill:
+
+- complete table — [`references/gitmoji-mapping.md`](.claude/skills/gitmoji-conventional/references/gitmoji-mapping.md)
+- rules for scope, body, footers, breaking changes, and reverts — [`SKILL.md`](.claude/skills/gitmoji-conventional/SKILL.md)
+
+Agent tooling is generally told to prefer a repository's own convention over a skill. Here the convention *is* the skill, so there is nothing to override — follow the skill.
+
+### Checking a subject
+
+The skill ships a validator. Run it on a message you are about to use, or on a whole branch:
+
+```bash
+CHECK=.claude/skills/gitmoji-conventional/scripts/check_commit_msg.py
+python3 "$CHECK" --message "✨ feat(api): add OAuth login"
+python3 "$CHECK" --range main..HEAD
+```
+
+It **fails** on an unofficial gitmoji, an emoji that disagrees with the type, breaking-change signals that disagree with each other, a malformed `BREAKING CHANGE:` footer, a past-tense description, and a body over the hard cap. Subject length and body line width are **warnings**. Variation-selector differences (`🗃` vs `🗃️`) are normalized and never fail.
+
+The validator is not wired into a git hook, so it is advisory unless you run it. Commits predating the current convention do not all pass — expect noise from `--range` over old history.
+
+### Most used in this repository
+
+An excerpt of the full table, for convenience. It is a strict subset with identical types — **not** a competing mapping. If you need an emoji that is not here, take it from the full table, not from intuition.
+
+`just quality` enforces that: a row here that the skill's mapping does not have, or one whose type disagrees with it, fails the build. Add the row upstream first.
+
+| Gitmoji | Type | Use for |
+|---|---|---|
+| ✨ | feat | new features |
+| 🛂 | feat | authorization, roles, permissions |
+| 🦺 | feat | validation |
+| 🧵 | feat | multithreading / concurrency |
+| 🗃️ | feat | database-related changes |
+| 🚩 | feat | feature flags |
+| 📈 | feat | analytics / tracking |
+| 🩺 | feat | healthchecks |
+| 🐛 | fix | bug fix |
+| 🚑️ | fix | critical hotfix |
+| 🩹 | fix | simple, non-critical fix |
+| 🥅 | fix | catch errors |
+| 🔒️ | fix | security or privacy fix |
+| 🚨 | fix | fix linter / compiler warnings |
+| ♻️ | refactor | refactor code |
+| 🔥 | refactor | remove code or files |
+| ⚰️ | refactor | remove dead code |
+| 🚚 | refactor | move or rename resources |
+| 🏗️ | refactor | architectural changes |
+| 🎨 | style | code structure / formatting |
+| ⚡️ | perf | performance improvements |
+| 📝 | docs | documentation |
+| 💡 | docs | code comments |
+| ✏️ | docs | fix typos |
+| ✅ | test | add, update, or pass tests |
+| 🧪 | test | add a *failing* test |
+| 🤡 | test | mocks |
+| ⬆️ | build | upgrade dependencies |
+| ➕ ➖ | build | add / remove a dependency |
+| 🧱 | build | infrastructure |
+| 👷 | ci | CI configuration |
+| 💚 | ci | fix CI build |
+| 🔧 | chore | configuration files |
+| 🔨 | chore | development scripts |
+| 🧐 | chore | data exploration / inspection |
+| 🧑‍💻 | chore | developer experience |
+| 🔖 | chore | release / version tags |
+| 💥 | *underlying type* + `!` | breaking change — see below |
+| ⏪️ | revert | revert a commit |
+
+### Breaking changes
+
+Three signals must agree, or the validator rejects the subject:
+
+1. `💥` **replaces** the type's usual emoji — it is not a type of its own.
+2. `!` immediately before the colon.
+3. A `BREAKING CHANGE:` footer whenever the break needs more detail than the subject holds.
+
+The type underneath stays `feat`, `fix`, or `refactor`, so release tooling still reads the SemVer signal:
+
+```text
+💥 feat(tenancy)!: name the rung between built statements and raw ones
+
+BREAKING CHANGE: `StatementOrigin.RAW` is removed; declare the floor
+ explicitly on the spec instead.
+```
+
+A breaking commit also needs a `CHANGELOG.md` entry that names the break — see [Changelog](#changelog).
+
+### Security fixes
+
+`security` is **not** a Conventional Commits type. A security fix is `🔒️ fix(...)`, and its changelog entry goes under `Security`. Follow `SECURITY.md` for disclosure and keep public detail minimal.
+
+### Scope
+
+Optional, and a noun naming the affected area. Prefer the package or plane the change lives in: `core`, `execution`, `document`, `search`, `postgres`, `redis`, `mongo`, `fastapi`, `identity`, `authn`, `tenancy`, `kits`, `dst`, `realtime`, `deps`, `docs`, `skills`. Omit it when the change is genuinely cross-cutting. Never invent a scope to fill the slot.
+
+### Body
+
+Optional, separated from the subject by a blank line, for context the subject cannot carry — motivation, a mechanism, a rejected alternative, a consequence a reader would not predict. The full rules and the enforced caps are in the skill; the short version:
+
+- imperative mood, no trailing period on the subject
+- at most 4 bullets, `-` only
+- hard cap of 20 non-blank body lines (fences and footers excluded)
+- no session narrative, no evidence dumps, no restating the subject
 
 ```text
 ✨ feat(search): add fuzzy match option
 
 - implement trigram-based matching
 - add configuration flag for fuzzy mode
-- update search API documentation
 ```
 
-Guidelines:
+### Dependabot
 
-- Use **imperative mood** for the description
-- Keep the subject line concise (≤72 chars)
-- Do not end the subject line with a period
-- If additional context is needed, add a body separated by a blank line
-- Bullet lists are recommended for describing multiple changes
+Dependabot subjects are prefixed by [`.github/dependabot.yml`](.github/dependabot.yml) — `🔧 chore` for `uv`, `👷 ci` for GitHub Actions, `⬆️ build` for the devcontainer image. An ecosystem with no `commit-message.prefix` produces a subject with no gitmoji, which fails the convention; fix the config rather than rewriting bot commits.
 
 ## Pull Requests
 
-Pull request titles follow the same format as commit messages.
+PR titles use the same format as commit subjects, with tighter constraints — the title has to drop into GitHub unedited:
+
+- exactly one line: no body, bullets, or footers
+- no issue references in the title unless you are asked for them
+- a mixed PR gets one primary type, not an enumeration
+- a breaking PR carries `!`; migration notes go in the description, never the title
+
+Fill in [`.github/pull_request_template.md`](.github/pull_request_template.md) — it is the checklist for architecture boundaries, public-API impact, and downstream `skills/` updates.
 
 Guidelines:
 
 - Submit **one logical change per pull request**
-- Ensure tests and quality checks pass
+- `just test` and `just quality -s` green locally before you open it
 - Rebase or squash commits before merging if needed
 - Update documentation when behavior changes
 
@@ -278,7 +346,7 @@ Conventions:
 
 **Unit Tests**
 
-Avoid external i/o. Use mocks when necessary. Prefer `MagicMoc(spec=RealClass)`. One `TestX` class per tested type.
+Avoid external i/o. Use mocks when necessary. Prefer `MagicMock(spec=RealClass)`. One `TestX` class per tested type.
 
 **Integration Tests**
 
@@ -301,15 +369,11 @@ New pytest markers must be registered in `pyproject.toml` before use.
 
 ## Changelog
 
-User-facing changes must be recorded in `CHANGELOG.md` under the `[Unreleased]` section.
+User-facing changes go in `CHANGELOG.md` under `## [Unreleased]`, in [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) format. The six categories are `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, and `Security`; the [`keep-a-changelog`](.claude/skills/keep-a-changelog/SKILL.md) skill carries the full rules — where a breaking change goes, how a version section is cut, how a revert is recorded.
 
-Categories:
+What this repository adds on top of the spec:
 
-- **Added** — new APIs, features, modules
-- **Changed** — behavior changes, refactors affecting usage
-- **Fixed** — bug fixes
-
-Exclude internal changes such as CI updates, test-only changes, or trivial refactors.
+**Leave internal changes out.** CI updates, test-only changes, and trivial refactors do not belong here.
 
 **Keep entries concise.** One bullet = a headline, the key public API/migration, and any
 breaking note — not an essay. Leave out the *why*, the implementation mechanics, and
@@ -318,8 +382,9 @@ overlapping ones; group a multi-PR arc (e.g. a hardening initiative) under a bol
 rather than repeating context in each line. Always preserve **breaking** markers, new public
 symbol names, and any **Migration:** SQL. When the `[Unreleased]` section grows large or several
 bullets describe one feature, compact it: consolidate the overlap into grouped, single-line
-entries (keep every breaking/migration/public-API fact). Edit only `[Unreleased]` — never
-rewrite an already-released version section.
+entries (keep every breaking/migration/public-API fact).
+
+**Edit only `[Unreleased]`.** Never rewrite an already-released version section.
 
 ## Release Process
 
@@ -332,10 +397,6 @@ Creating a tag `vX.Y.Z` triggers GitHub Actions to:
 3. Create a GitHub release
 
 Before tagging a release, move the relevant entries from the `[Unreleased]` section to the new version section in `CHANGELOG.md`.
-
-## Questions
-
-If you have questions about contributing or the codebase, please open an issue or start a discussion on GitHub.
 
 ## Performance regression gate
 
@@ -362,3 +423,7 @@ names stable. Locally: `just perf-save` to snapshot a baseline, `just
 perf-check` to compare your changes against it (10% threshold). Mark a new
 benchmark with `perf_gate` only if it is in-process and deterministic (no
 Docker).
+
+## Questions
+
+If you have questions about contributing or the codebase, please open an issue or start a discussion on GitHub.

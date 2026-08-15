@@ -17,18 +17,58 @@ Forze is a Python library for Domain-Driven Design and Hexagonal Architecture in
 4. Run the relevant checks from `justfile`.
 5. Keep tests/docs/changelog aligned when behavior changes.
 
+## Who owns which rule
+
+Two kinds of authority meet in this repository, and confusing them produces contradictory
+guidance:
+
+- **Skills own formats.** A commit subject, a changelog entry, a docs page's structure —
+  the rule lives in `.claude/skills/<name>/SKILL.md` and nowhere else.
+- **Canonical repo files own repository facts.** Commands, paths, markers, layering,
+  directory layout — `CONTRIBUTING.md`, `justfile`, `pyproject.toml`.
+
+When a skill and a repo file appear to disagree, apply that split: format → skill,
+fact → repo file. If they genuinely conflict on the same thing, that is a defect in the
+docs — say so instead of picking one silently.
+
+Several skills defer to a repository that "enforces a conflicting convention." Do not read
+`CONTRIBUTING.md` as such an override: it delegates formats to the skills on purpose, so
+there is nothing to override.
+
 ## Source of truth map
 
-### Contribution process and conventions
+### Formats: commits, changelog, docs pages
+
+Read:
+- `.claude/skills/gitmoji-conventional/` — commit subjects and PR titles, plus
+  `scripts/check_commit_msg.py` to validate one
+- `.claude/skills/keep-a-changelog/` — `CHANGELOG.md` entries and version sections
+- `.claude/skills/altitude-docs/` — documentation page structure and placement
+
+Do not restate a mapping or a category list from these in another file; link to them.
+
+Two carve-outs:
+
+- `python-google-docstrings` does **not** apply. `src/` uses Sphinx/reST field lists
+  (`:param x:`, `:returns:`, `:class:`), not Napoleon sections; the skill's own guidance
+  defers to a reST project. The convention is stated in `CONTRIBUTING.md` → Documentation →
+  Docstrings, authoritative because no installed skill owns it.
+- `keep-a-changelog` maintains `[Unreleased]` and prepares version sections; tagging and
+  publishing stay with a human (see Release Process in `CONTRIBUTING.md`).
+
+The same skill set is mirrored byte-for-byte in `.agent/skills/` and `.agents/skills/` for
+other tools. Editing one copy alone silently forks them — change all three, or none.
+
+### Contribution process and repository facts
 
 Read:
 - `CONTRIBUTING.md`
 
 Use it for:
 - branch and contribution flow
-- commit and PR title format (Conventional Commits + gitmoji)
-- test expectations
-- changelog and release preparation
+- this repository's commit scopes, dependabot prefixes, and the subject validator's location
+- test expectations and layout
+- changelog scope (what counts as user-facing here) and release preparation
 
 ### Architecture, packaging, and tool config
 
@@ -98,27 +138,42 @@ Use them for:
 - `tests/perf/`: performance benchmarks (`-m perf`, excluded from `just test`; many use Docker, some in-process only).
 - `pages/`: documentation source and build files.
 - `examples/`: runnable, **test-backed** usage examples (each is exercised by a test under `tests/unit/test_examples/`, so examples can't silently rot). E.g. `order_fulfillment.py` runs the aggregate → event → saga → outbox → relay → inbox → downstream flow in-process.
-- `skills/`: published [Agent Skills](https://agentskills.io/) for **app authors** (`SKILL.md` per skill; see `skills/AUTHORING.md`); install via README **Agent Skills** (e.g. `npx skills add morzecrew/forze`). Framework contribution uses `.claude/skills/` and canonical docs.
+- `skills/`: published [Agent Skills](https://agentskills.io/) for **app authors** (`SKILL.md` per skill; see `skills/AUTHORING.md`); install via README **Agent Skills** (e.g. `npx skills add morzecrew/forze`). Consumer-facing — nothing here governs framework contribution.
+- `.claude/skills/`: skills for **contributors working in this repository** (the ones in the map above), tracked by `skills-lock.json` and mirrored to `.agent/skills/` and `.agents/skills/`. Distinct from `skills/` above despite the similar name.
 
 ## Operating rules for agents
 
 1. Prefer editing existing files over creating new top-level process documents.
-2. Do not duplicate policy text from canonical files; link and follow it instead.
+2. Do not duplicate policy text from canonical files; link and follow it instead. This applies
+   to skills too — a second copy of a format is how the two copies start disagreeing.
 3. Validate architecture and tool constraints in `pyproject.toml` before code changes.
-4. Use `justfile` commands as the default way to run tests and quality checks.
+4. Use `justfile` commands as the default way to run tests and quality checks. Do not invent
+   a recipe name — `just help` lists what exists.
 5. For user-visible behavior changes, update tests and docs together.
-6. Record user-facing changes in `CHANGELOG.md` under `[Unreleased]`, keeping entries concise (see `CONTRIBUTING.md` → Changelog: one tight bullet per change, group multi-PR arcs, compact the section when it grows; always keep breaking/migration/public-API facts).
-7. For security-sensitive work, follow `SECURITY.md` and minimize public detail.
+6. Record user-facing changes in `CHANGELOG.md` under `[Unreleased]` — scope and house
+   concision rule in `CONTRIBUTING.md` → Changelog, format in the `keep-a-changelog` skill.
+7. Write commit subjects and PR titles with the `gitmoji-conventional` skill; validate with
+   its `scripts/check_commit_msg.py` before proposing one.
+8. For security-sensitive work, follow `SECURITY.md` and minimize public detail. A security
+   fix is `🔒️ fix(...)` with a `Security` changelog entry — `security` is not a commit type.
 
 ## Cross-tool compatibility
 
-If tool-specific directories exist (for example `.agent/` or `.cursor/`), they
-should reference this routing file and canonical policy files, not redefine them.
+`CLAUDE.md` is a symlink to this file — one routing document, several names. Edit
+`AGENTS.md`; never replace the symlink with a second copy.
+
+Tool-specific directories (`.agent/`, `.agents/`, `.cursor/`, …) must not redefine policy —
+they point back at this file and the canonical files.
 
 Preferred pattern:
 - central routing in `AGENTS.md`
 - authoritative policy in canonical files
 - tool-specific overlays that only point back to those sources
+
+The one deliberate exception is `.agent/skills/` and `.agents/skills/`: skills cannot be
+symlinked into every tool's discovery path, so they are byte-identical mirrors of
+`.claude/skills/`. Treat the three as one unit — a change to any skill lands in all three, or
+the mirrors fork and agents start getting different rules depending on which tool loaded them.
 
 ## Cursor Cloud specific instructions
 

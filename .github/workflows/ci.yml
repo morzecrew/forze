@@ -74,6 +74,11 @@ jobs:
               - ".gitleaks.toml"
               - ".pre-commit-config.yaml"
               - ".github/workflows/ci.yml"
+              # Inputs to the gitmoji-excerpt guard in `just quality`. Without these two, the
+              # guard is skipped by exactly the edits that can break it — a docs-only change to
+              # either table — and only ever runs when something unrelated touches src/.
+              - "CONTRIBUTING.md"
+              - ".claude/skills/gitmoji-conventional/**"
 
   quality:
     name: Run quality checks

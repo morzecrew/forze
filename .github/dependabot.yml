@@ -88,3 +88,9 @@ updates:
       interval: daily
     cooldown:
       default-days: 7
+
+    # Without a prefix Dependabot opens `build(deps): …`, which carries no
+    # gitmoji and fails the commit-subject convention (see CONTRIBUTING.md).
+    commit-message:
+      prefix: "⬆️ build"
+      include: "scope"
