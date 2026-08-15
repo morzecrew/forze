@@ -223,7 +223,8 @@ migration fact.
 
 Adversarial pass over the whole branch: 5 commits, 15 files, +1985/-6, against merge base
 `381eb39d5`. Ran the suite, measured patch coverage over `tools/` specifically, and swept
-the real corpus with hand-injected mutations. Six findings, all fixed on the branch.
+the real corpus with hand-injected mutations. Seven findings, all fixed on the branch —
+the last of them found by re-auditing one of the fixes.
 
 | # | Severity | Finding | Status |
 |---|---|---|---|
@@ -232,6 +233,7 @@ the real corpus with hand-injected mutations. Six findings, all fixed on the bra
 | A-3 | Medium | `__main__.py` was 0% covered. Both its detection branches — the `--allow-skips` policy from D-004 and the empty-URL refusal in the liveness sweep — are code that only runs when something is wrong, which is exactly the code that must not be dead | Fixed — CLI tests, including a stub package that is installed and genuinely will not import, which drives the skip policy deterministically instead of skipping when the local environment happens to be complete |
 | A-4 | Low | `Document.section()` matched a heading by text at any depth, so `#### Anti-patterns` satisfied a check whose message says `## Anti-patterns`. The checker's own error message was untrue of what it required | Fixed — the level is matched, not just the text |
 | A-5 | Low | An unclosed fence silently absorbed the rest of the file, taking its headings and links out of every other check with it — a structural failure presenting as a missing `## Reference` section somewhere unrelated | Fixed — `CodeBlock.closed`, reported directly |
+| A-7 | Low | **Found by re-auditing the A-3 fix.** The CLI tests it added resolved `skills/` and `pyproject.toml` against the working directory, so `pytest` invoked from anywhere but the repository root failed three tests. Every sibling guard test in `tests/unit/` anchors on `Path(__file__).resolve().parents[2]`; these did not | Fixed — anchored the same way. Reproduced by running the suite from `tests/` (3 failed), then green from both directories |
 | A-6 | Low | The scheduled sweep had no `timeout-minutes`. Per-request timeouts and pacing bound the rate and each attempt, but the worst case (every URL exhausting its retry budget) is ~50 minutes, and nothing bounded the job below the runner's six-hour default | Fixed — `timeout-minutes: 20` |
 
 **Sabotage sweep: 8 mutations, 8 killed.** Against the real corpus, reverted after each:
@@ -290,6 +292,10 @@ environment-skip branches that need a partly-installed environment to reach.
 - **Where a check's message names a shape, check that shape — not a weaker one that
   happens to be easier to match.** `## Anti-patterns` was enforced as "a heading with this
   text at any depth", so the error message was a claim the code did not keep. (A-4.)
+- **An audit fix is new code and inherits the surroundings' discipline like any other.**
+  The tests added to close a coverage gap resolved paths against the working directory
+  while every sibling guard test anchors on `__file__` — a defect introduced by the pass
+  that was hunting defects, and found only because the fixes were audited too. (A-7.)
 - **Measure the property the gate will require, not the properties that are easy to
   count.** §1 measured blocks, imports, URLs and links and pronounced the corpus green;
   the one structural rule §3.3 went on to require was the one thing never counted, and it

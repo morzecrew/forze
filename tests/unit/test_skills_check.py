@@ -35,6 +35,10 @@ pytestmark = pytest.mark.unit
 
 # ----------------------- #
 
+_REPO = Path(__file__).resolve().parents[2]
+"""Anchored on this file, never on the working directory — the suite must say the same
+thing whichever directory pytest was invoked from, as every sibling guard test does."""
+
 SHIPPED = frozenset({"forze", "forze_kits", "forze_mock", "forze_postgres", "forze_gone"})
 
 _REFERENCE = """\
@@ -455,7 +459,7 @@ def test_census_reports_gaps_without_failing(corpus_root: Path) -> None:
 
 def test_census_is_keyed_on_wheel_packages() -> None:
     """Extras and packages are not interchangeable; imports are what the corpus claims."""
-    assert "forze_postgres" in load_shipped_packages(Path("pyproject.toml"))
+    assert "forze_postgres" in load_shipped_packages(_REPO / "pyproject.toml")
 
 
 # ----------------------- #
@@ -534,12 +538,12 @@ def test_published_urls_are_collected_from_prose_not_only_links(corpus_root: Pat
 
 
 def _run(root: Path, *args: str) -> int:
-    return main(["--corpus", str(root), "--pyproject", "pyproject.toml", *args])
+    return main(["--corpus", str(root), "--pyproject", str(_REPO / "pyproject.toml"), *args])
 
 
 def test_cli_passes_on_the_real_corpus() -> None:
     """The gate's own claim, made by the entry point CI and `just` actually invoke."""
-    assert _run(Path("skills")) == 0
+    assert _run(_REPO / "skills") == 0
 
 
 def test_cli_reports_a_missing_corpus_distinctly(tmp_path: Path) -> None:
