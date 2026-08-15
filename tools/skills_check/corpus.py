@@ -30,6 +30,15 @@ from pathlib import Path
 
 SKILL_FILENAME = "SKILL.md"
 
+PYTHON_LANGS = frozenset({"python", "py", "python3"})
+"""Every info-string spelling that means "this is Python".
+
+Not just ``python``. A block fenced ` ```py ` renders identically and reads identically
+to an agent, so recognizing only the long form leaves a spelling that is invisible to the
+syntax and import gates while looking checked — the gate would report a smaller
+denominator and call it green.
+"""
+
 _FENCE_OPEN = re.compile(r"^(?P<indent>[ \t]*)(?P<ticks>`{3,})(?P<info>.*)$")
 _HEADING = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<title>.+?)\s*$")
 _FRONTMATTER_KEY = re.compile(r"^(?P<key>[A-Za-z_][A-Za-z0-9_-]*):\s*(?P<value>.*)$")
@@ -54,6 +63,13 @@ class CodeBlock:
     """Remaining info-string tokens — ``fragment`` is the only one this repo defines."""
 
     source: str
+
+    closed: bool
+    """Whether a closing fence was found. An unclosed fence swallows the rest of the file."""
+
+    @property
+    def is_python(self) -> bool:
+        return self.lang in PYTHON_LANGS
 
 
 @dataclass(frozen=True)
@@ -94,13 +110,18 @@ class Document:
         """The directory name a ``SKILL.md`` lives in — the corpus's identity for it."""
         return self.path.parent.name
 
-    def section(self, title: str) -> str | None:
+    def section(self, title: str, level: int = 2) -> str | None:
         """Body of the ``## <title>`` section, or ``None`` when there is no such heading.
+
+        The level is matched, not merely the text. A heading of the right name at the
+        wrong depth is a different thing structurally — it nests under whatever precedes
+        it — and accepting it would make the checker's own message ("no ``## X`` section")
+        untrue of what it actually requires.
 
         The section ends at the next heading of the same or a shallower level, so a
         subsection stays part of its parent.
         """
-        return _section_body(self.text, title)
+        return _section_body(self.text, title, level)
 
 
 @dataclass(frozen=True)
@@ -120,9 +141,11 @@ class Corpus:
 
     @property
     def python_blocks(self) -> tuple[CodeBlock, ...]:
-        return tuple(
-            block for doc in self.documents for block in doc.blocks if block.lang == "python"
-        )
+        return tuple(block for doc in self.documents for block in doc.blocks if block.is_python)
+
+    @property
+    def unclosed_blocks(self) -> tuple[CodeBlock, ...]:
+        return tuple(block for doc in self.documents for block in doc.blocks if not block.closed)
 
 
 # ----------------------- #
@@ -203,6 +226,7 @@ def _extract_blocks(path: Path, lines: list[str]) -> tuple[list[CodeBlock], list
                 lang=info[0].lower() if info else "",
                 markers=tuple(token.lower() for token in info[1:]),
                 source="\n".join(body),
+                closed=end < len(lines),
             )
         )
 
@@ -268,10 +292,9 @@ def _parse_frontmatter(lines: list[str]) -> dict[str, str] | None:
     return parsed
 
 
-def _section_body(text: str, title: str) -> str | None:
+def _section_body(text: str, title: str, level: int) -> str | None:
     lines = text.split("\n")
     start: int | None = None
-    level = 0
 
     for index, line in enumerate(lines):
         heading = _HEADING.match(line)
@@ -279,14 +302,15 @@ def _section_body(text: str, title: str) -> str | None:
         if heading is None:
             continue
 
+        depth = len(heading.group("hashes"))
+
         if start is None:
-            if heading.group("title") == title:
+            if depth == level and heading.group("title") == title:
                 start = index + 1
-                level = len(heading.group("hashes"))
 
             continue
 
-        if len(heading.group("hashes")) <= level:
+        if depth <= level:
             return "\n".join(lines[start:index])
 
     return None if start is None else "\n".join(lines[start:])

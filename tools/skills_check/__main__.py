@@ -14,7 +14,13 @@ from .checks import (
     load_shipped_packages,
 )
 from .corpus import Corpus, load_corpus
-from .links import DEFAULT_ATTEMPTS, LinkPolicy, check_liveness, collect_published_urls
+from .links import (
+    DEFAULT_ATTEMPTS,
+    Fetcher,
+    LinkPolicy,
+    check_liveness,
+    collect_published_urls,
+)
 
 # ----------------------- #
 
@@ -120,7 +126,7 @@ def _run_offline(corpus: Corpus, pyproject: Path, allow_skips: bool) -> int:
     return 0
 
 
-def _run_liveness(corpus: Corpus) -> int:
+def _run_liveness(corpus: Corpus, fetcher: Fetcher | None = None) -> int:
     urls = collect_published_urls(corpus)
 
     if not urls:
@@ -130,7 +136,7 @@ def _run_liveness(corpus: Corpus) -> int:
 
         return 1
 
-    outcomes = check_liveness(urls, LinkPolicy())
+    outcomes = check_liveness(urls, LinkPolicy(), fetcher)
     dead = [outcome for outcome in outcomes if not outcome.ok]
 
     for outcome in dead:

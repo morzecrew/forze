@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from .corpus import CodeBlock, Corpus, Document
+from .corpus import SKILL_FILENAME, CodeBlock, Corpus, Document
 
 # ----------------------- #
 
@@ -106,6 +106,27 @@ def check_syntax(corpus: Corpus) -> Result:
     result = Result(name="syntax")
     marked = 0
     parsed = 0
+
+    # An empty denominator is not a pass. "0/0 blocks parsed, ok" is what this gate looks
+    # like once the extractor stops finding anything — a renamed fence convention, a glob
+    # that no longer matches — and it is indistinguishable from a corpus with no examples.
+    # The corpus has 127 blocks; zero means the checker broke, not that the corpus is
+    # clean. The refusal belongs here, at the seam that knows the denominator, rather than
+    # in whichever caller happens to look at the number.
+    if corpus.skills and not corpus.python_blocks:
+        result.violations.append(
+            f"{corpus.root}: {len(corpus.skills)} skill(s) but not one python block — "
+            f"the extractor found nothing to check, which is a checker failure, not a "
+            f"clean corpus"
+        )
+
+    for block in corpus.unclosed_blocks:
+        # An unclosed fence silently absorbs the rest of the document, taking its headings
+        # and links out of every other check with it.
+        result.violations.append(
+            f"{block.doc}:{block.line}: fence is never closed — it swallows the rest of "
+            f"the file, and every check below it stops seeing anything"
+        )
 
     for block in corpus.python_blocks:
         where = f"{block.doc}:{block.line}"
@@ -236,6 +257,11 @@ def check_structure(corpus: Corpus) -> Result:
     """
     result = Result(name="structure")
 
+    if not corpus.skills:
+        # Same refusal as the syntax gate's: nothing to check reads exactly like nothing
+        # wrong, and only one of those is a claim.
+        result.violations.append(f"{corpus.root}: no `*/{SKILL_FILENAME}` found at all")
+
     for doc in corpus.skills:
         where = str(doc.path)
 
@@ -259,17 +285,11 @@ def check_structure(corpus: Corpus) -> Result:
 
         result.violations.extend(_check_reference_section(doc))
 
+    result.violations.extend(_check_version_segment(corpus))
+
     for doc in corpus.documents:
         for link in doc.links:
             if link.is_external:
-                if PUBLISHED_DOCS_HOST in link.target and not link.target.startswith(
-                    PUBLISHED_DOCS_PREFIX
-                ):
-                    result.violations.append(
-                        f"{doc.path}:{link.line}: published-docs link without the "
-                        f"`latest` version segment (the bare form 404s) -> {link.target}"
-                    )
-
                 continue
 
             if link.target.startswith("/"):
@@ -452,6 +472,31 @@ def _symbol_exists(module: str, name: str) -> bool:
         return importlib.util.find_spec(f"{module}.{name}") is not None
     except (ImportError, AttributeError, ValueError):
         return False
+
+
+def _check_version_segment(corpus: Corpus) -> list[str]:
+    """Every published-docs URL carries the ``latest`` alias segment.
+
+    Scanned over the raw text rather than over parsed links. The bare form 404s whether
+    it was written as a Markdown link or dropped into a sentence, and checking only links
+    would leave the prose spelling — the easier one to write by accident — unguarded.
+    """
+    violations: list[str] = []
+
+    for doc in corpus.documents:
+        for number, line in enumerate(doc.text.split("\n"), start=1):
+            for match in PUBLISHED_URL_PATTERN.finditer(line):
+                url = match.group(0)
+
+                if url.startswith(PUBLISHED_DOCS_PREFIX):
+                    continue
+
+                violations.append(
+                    f"{doc.path}:{number}: published-docs URL without the `latest` "
+                    f"version segment (the bare form 404s) -> {url}"
+                )
+
+    return violations
 
 
 def _check_reference_section(doc: Document) -> list[str]:

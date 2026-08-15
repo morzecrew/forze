@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from tools.skills_check.__main__ import _run_liveness, main
 from tools.skills_check.checks import (
     check_census,
     check_imports,
@@ -80,18 +81,26 @@ def _index(*names: str) -> str:
     return f"# Skills\n\n| Name | Description |\n| ---- | ---- |\n{rows}\n"
 
 
+_BASELINE_BODY = "```python\nfrom forze.base.exceptions import CoreException\n```"
+
+
 @pytest.fixture
 def corpus_root(tmp_path: Path) -> Path:
-    """A minimal corpus that passes every gate, ready to be broken one way at a time."""
+    """A minimal corpus that passes every gate, ready to be broken one way at a time.
+
+    It carries a real python block on purpose: a corpus with none is itself a failure
+    (see `test_a_corpus_with_no_python_blocks_is_a_failure`), so a baseline without one
+    would be asserting the wrong green.
+    """
     root = tmp_path / "skills"
     (root / "forze-demo").mkdir(parents=True)
-    (root / "forze-demo" / "SKILL.md").write_text(_skill(), encoding="utf-8")
+    (root / "forze-demo" / "SKILL.md").write_text(_skill(_BASELINE_BODY), encoding="utf-8")
     (root / "README.md").write_text(_index("forze-demo"), encoding="utf-8")
 
     return root
 
 
-def _write(root: Path, body: str = "", **kwargs: str) -> None:
+def _write(root: Path, body: str = _BASELINE_BODY, **kwargs: str) -> None:
     (root / "forze-demo" / "SKILL.md").write_text(_skill(body, **kwargs), encoding="utf-8")
 
 
@@ -162,6 +171,51 @@ def test_indented_fence_is_dedented_before_parsing(corpus_root: Path) -> None:
     _write(corpus_root, "- A list item:\n\n  ```python\n  x = 1\n  ```\n")
 
     assert _violations(corpus_root, "syntax") == []
+
+
+@pytest.mark.parametrize("fence", ["python", "py", "python3"])
+def test_every_python_spelling_is_checked(corpus_root: Path, fence: str) -> None:
+    """A ` ```py ` block is Python to every reader; a gate that skips it checks less
+    than its denominator claims."""
+    _write(corpus_root, f"```{fence}\ndef broken(:\n```")
+
+    violations = _violations(corpus_root, "syntax")
+
+    assert len(violations) == 1
+    assert "does not parse" in violations[0]
+
+
+def test_a_corpus_with_no_python_blocks_is_a_failure(corpus_root: Path) -> None:
+    """The vacuous pass: "0/0 parsed, ok" is what a broken extractor looks like.
+
+    A corpus with skills in it and not one python block means nothing found them, which
+    is indistinguishable from a clean run unless the empty case is refused outright.
+    """
+    _write(corpus_root, "No examples here at all.")
+
+    violations = _violations(corpus_root, "syntax")
+
+    assert len(violations) == 1
+    assert "not one python block" in violations[0]
+
+
+def test_a_corpus_with_no_skills_is_a_failure(tmp_path: Path) -> None:
+    root = tmp_path / "skills"
+    root.mkdir()
+    (root / "README.md").write_text(_index(), encoding="utf-8")
+
+    violations = _violations(root, "structure")
+
+    assert any("no `*/SKILL.md` found at all" in violation for violation in violations)
+
+
+def test_an_unclosed_fence_is_reported(corpus_root: Path) -> None:
+    """It swallows the rest of the file, taking every heading and link below it."""
+    _write(corpus_root, "```python\nx = 1")
+
+    violations = _violations(corpus_root, "syntax")
+
+    assert any("never closed" in violation for violation in violations)
 
 
 # ----------------------- #
@@ -330,14 +384,37 @@ def test_links_inside_code_blocks_are_not_read_as_links(corpus_root: Path) -> No
     assert _violations(corpus_root, "structure") == []
 
 
-def test_published_link_without_the_latest_segment_is_reported(corpus_root: Path) -> None:
-    """The bare form 404s — a documented trap that nothing used to check."""
-    _write(corpus_root, "See [wiring](https://morzecrew.github.io/forze/writing-operation/).")
+@pytest.mark.parametrize(
+    "body",
+    [
+        "See [wiring](https://morzecrew.github.io/forze/writing-operation/).",
+        "See https://morzecrew.github.io/forze/writing-operation/ for details.",
+    ],
+    ids=["markdown-link", "bare-prose-url"],
+)
+def test_published_link_without_the_latest_segment_is_reported(
+    corpus_root: Path, body: str
+) -> None:
+    """The bare form 404s however it was written — checking only links leaves the
+    easier-to-write spelling unguarded."""
+    _write(corpus_root, body)
 
     violations = _violations(corpus_root, "structure")
 
-    assert len(violations) == 1
-    assert "`latest` version segment" in violations[0]
+    assert any("`latest` version segment" in violation for violation in violations)
+
+
+def test_required_section_at_the_wrong_heading_level_does_not_count(corpus_root: Path) -> None:
+    """`#### Anti-patterns` nests under whatever precedes it — it is not the section."""
+    path = corpus_root / "forze-demo" / "SKILL.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("## Anti-patterns", "#### Anti-patterns"),
+        encoding="utf-8",
+    )
+
+    violations = _violations(corpus_root, "structure")
+
+    assert any("no `## Anti-patterns` section" in violation for violation in violations)
 
 
 def test_reference_section_without_the_versioned_note_is_reported(corpus_root: Path) -> None:
@@ -450,3 +527,74 @@ def test_published_urls_are_collected_from_prose_not_only_links(corpus_root: Pat
     urls = collect_published_urls(load_corpus(corpus_root))
 
     assert "https://morzecrew.github.io/forze/latest/in-depth/dst/" in urls
+
+
+# ----------------------- #
+# The command line — the policy that decides what an exit code means.
+
+
+def _run(root: Path, *args: str) -> int:
+    return main(["--corpus", str(root), "--pyproject", "pyproject.toml", *args])
+
+
+def test_cli_passes_on_the_real_corpus() -> None:
+    """The gate's own claim, made by the entry point CI and `just` actually invoke."""
+    assert _run(Path("skills")) == 0
+
+
+def test_cli_reports_a_missing_corpus_distinctly(tmp_path: Path) -> None:
+    """Exit 2, not 1: "the corpus is not there" is not "the corpus is broken"."""
+    assert _run(tmp_path / "absent") == 2
+
+
+def test_cli_fails_on_a_broken_corpus(corpus_root: Path) -> None:
+    _write(corpus_root, "```python\nfrom forze.base.exceptions import NoSuchThing\n```")
+
+    assert _run(corpus_root) == 1
+
+
+def test_cli_fails_when_a_module_could_only_be_skipped(
+    corpus_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A skip is not a pass. Reporting one in the output of a green run persuades nobody,
+    because nobody reads the output of a green run.
+
+    Driven by a stub package that is genuinely installed and genuinely will not import —
+    the shape a missing extra has — rather than by skipping when the local environment
+    happens to be complete, which would leave this policy unproven exactly where it is
+    hardest to reach.
+    """
+    (tmp_path / "forze_stub").mkdir()
+    (tmp_path / "forze_stub" / "__init__.py").write_text(
+        "import a_third_party_package_that_is_not_installed\n", encoding="utf-8"
+    )
+    (tmp_path / "stub-pyproject.toml").write_text(
+        '[tool.hatch.build.targets.wheel]\npackages = ["src/forze", "src/forze_stub"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    _write(corpus_root, "```python\nimport forze_stub\n```")
+
+    stub = ["--corpus", str(corpus_root), "--pyproject", str(tmp_path / "stub-pyproject.toml")]
+
+    assert main(stub) == 1
+    assert main([*stub, "--allow-skips"]) == 0
+
+
+def test_cli_reports_dead_links_and_fails(corpus_root: Path) -> None:
+    _write(corpus_root, "See https://morzecrew.github.io/forze/latest/in-depth/dst/ too.")
+
+    assert _run_liveness(load_corpus(corpus_root), lambda _url, _timeout: (404, "gone")) == 1
+    assert _run_liveness(load_corpus(corpus_root), lambda _url, _timeout: (200, "ok")) == 0
+
+
+def test_cli_refuses_a_liveness_sweep_with_nothing_to_sweep(tmp_path: Path) -> None:
+    """The other vacuous pass: zero URLs checked is not zero URLs dead."""
+    root = tmp_path / "skills"
+    (root / "forze-demo").mkdir(parents=True)
+    (root / "forze-demo" / "SKILL.md").write_text(
+        _skill(_BASELINE_BODY, reference="## Reference\n\n> latest\n"), encoding="utf-8"
+    )
+    (root / "README.md").write_text(_index("forze-demo"), encoding="utf-8")
+
+    assert _run(root, "--links") == 1
