@@ -219,6 +219,49 @@ maintainer-facing `AUTHORING.md` edit. The one shipped-artifact change (D-003's
 anti-patterns section) is a small docs addition inside a skill, not a public API or
 migration fact.
 
+## Audit findings — 2026-08-15
+
+Adversarial pass over the whole branch: 5 commits, 15 files, +1985/-6, against merge base
+`381eb39d5`. Ran the suite, measured patch coverage over `tools/` specifically, and swept
+the real corpus with hand-injected mutations. Six findings, all fixed on the branch.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| A-1 | **High** | The gate passes green on a corpus it never read. Two ways in: a block fenced ` ```py ` (a normal spelling) matched no language and was invisible to both the syntax and import checks, so a corpus whose examples all used it reported `0/0 resolved · ok`; and a zero denominator was never itself refused, so any future extractor break — a renamed fence convention, a glob that stops matching — turns the gate silently green rather than red. Reproduced: a `py`-fenced `from forze_nonexistent import Broken` exited 0 | Fixed — `PYTHON_LANGS = {python, py, python3}`, and both `check_syntax` and `check_structure` refuse an empty denominator at the seam that knows it |
+| A-2 | Medium | §3.3 requires the `latest` segment on every published-docs link; the check read only parsed Markdown links, so a bare URL in prose — the easier spelling to write by accident — was unguarded and would 404 for every reader | Fixed — `_check_version_segment` scans the raw text, matching what `collect_published_urls` already did for the liveness sweep |
+| A-3 | Medium | `__main__.py` was 0% covered. Both its detection branches — the `--allow-skips` policy from D-004 and the empty-URL refusal in the liveness sweep — are code that only runs when something is wrong, which is exactly the code that must not be dead | Fixed — CLI tests, including a stub package that is installed and genuinely will not import, which drives the skip policy deterministically instead of skipping when the local environment happens to be complete |
+| A-4 | Low | `Document.section()` matched a heading by text at any depth, so `#### Anti-patterns` satisfied a check whose message says `## Anti-patterns`. The checker's own error message was untrue of what it required | Fixed — the level is matched, not just the text |
+| A-5 | Low | An unclosed fence silently absorbed the rest of the file, taking its headings and links out of every other check with it — a structural failure presenting as a missing `## Reference` section somewhere unrelated | Fixed — `CodeBlock.closed`, reported directly |
+| A-6 | Low | The scheduled sweep had no `timeout-minutes`. Per-request timeouts and pacing bound the rate and each attempt, but the worst case (every URL exhausting its retry budget) is ~50 minutes, and nothing bounded the job below the runner's six-hour default | Fixed — `timeout-minutes: 20` |
+
+**Sabotage sweep: 8 mutations, 8 killed.** Against the real corpus, reverted after each:
+a removed `src/` re-export (`VaultClient`), a broken cross-skill link, a link escaping the
+published tree, a `fragment` marker on a healthy block, a skill deleted from the index
+table, plus three against the fixes above — a `py`-fenced broken import, a `latest`
+segment dropped from a prose URL, and a required heading demoted to `####`. Each was
+reported with the file, line and specific cause; the corpus returned green after every
+revert. This is RFC §7's behavioral criterion, discharged against the real corpus rather
+than only the synthetic one the unit tests use.
+
+**Patch coverage over `tools/`: 79.9% → 94.2%** (52 tests). Residue: `links._fetch` (the
+real network call — exercised by `just skills-links`, not by the suite) and the
+environment-skip branches that need a partly-installed environment to reach.
+
+**What remains distrusted.**
+
+- **Nothing lints `tools/`.** `ruff`, `ruff format` and `mypy` were run over it by hand
+  and are clean, but `just quality` scopes all three to `src/`, so the next edit has no
+  gate. Same standing gap as `.github/scripts/`; see *Carried into the next unit*.
+- **The scheduled workflow has never run.** Its logic was exercised locally
+  (`just skills-links`: 64/64 live) and `zizmor` passes, but cron firing, the step summary
+  and the job timeout are unverified until the first scheduled run.
+- **The `--allow-skips` path is proven against a stub, not a real missing extra.** The
+  stub reproduces the failure shape (a shipped package whose third-party import is
+  absent), which is the mechanism that matters, but no run in a genuinely partial
+  environment has happened.
+- **Semantic staleness is out of scope by design** (RFC §5): an import can resolve while
+  the prose beside it describes behavior that changed. Nothing here narrows that.
+
 ## Rules distilled
 
 - **A doc-extraction bug and a doc defect are indistinguishable in the report, so
@@ -237,6 +280,16 @@ migration fact.
   over for the same change class, once by `ci.yml`'s `changes.code` filter and once by
   `.pre-commit-config.yaml`'s top-level exclude, and finding the first did not surface the
   second. (D-005, D-007.)
+- **A gate that selects what it checks has a spelling it does not recognize, and that
+  spelling is a hole shaped exactly like a pass.** ` ```py ` is Python to every reader and
+  was Python to nothing in the checker; the corpus happened not to use it, which is luck,
+  not coverage. Enumerate the aliases of anything you filter on. (A-1.)
+- **Refuse the empty denominator at the seam that computes it.** "0/0 checked, ok" is what
+  every extractor looks like after it breaks, and no caller downstream can tell it apart
+  from a clean corpus. (A-1.)
+- **Where a check's message names a shape, check that shape — not a weaker one that
+  happens to be easier to match.** `## Anti-patterns` was enforced as "a heading with this
+  text at any depth", so the error message was a claim the code did not keep. (A-4.)
 - **Measure the property the gate will require, not the properties that are easy to
   count.** §1 measured blocks, imports, URLs and links and pronounced the corpus green;
   the one structural rule §3.3 went on to require was the one thing never counted, and it
@@ -260,3 +313,5 @@ migration fact.
 - **The `fragment` marker has zero users.** If the corpus never acquires one, a later unit
   should decide whether the mechanism earns its place or the rule becomes "every block
   parses, full stop".
+- **The scheduled sweep is unproven in CI** until its first cron firing (audit residue).
+  Watch the first run for the step summary and the job timeout.
