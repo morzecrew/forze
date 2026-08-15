@@ -45,6 +45,7 @@ DEFAULT_BACKOFF_SECONDS = 2.0
 
 _USER_AGENT = "forze-skills-check (+https://github.com/morzecrew/forze)"
 _RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
+_PERMITTED_SCHEMES = frozenset({"http", "https"})
 
 
 @dataclass(frozen=True)
@@ -141,6 +142,15 @@ def _fetch(url: str, timeout: float) -> tuple[int | None, str]:
     timeout, which applies to establishing the connection and to every subsequent read.
     Both are therefore bounded; they simply share one number.
     """
+    # `urlopen` honours `file:`, `ftp:` and any scheme a handler is registered for, so a
+    # URL that reached here from somewhere other than the corpus could read the local
+    # filesystem and report it as a live link. Today's only caller matches against a
+    # pattern anchored to `https://<host>/`, which makes that unreachable — enforcing it
+    # here rather than relying on that keeps the guarantee with the function that needs
+    # it, instead of with whoever calls it next.
+    if urlsplit(url).scheme not in _PERMITTED_SCHEMES:
+        return None, f"refusing to fetch a non-HTTP(S) URL: {url}"
+
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT}, method="GET")
 
     try:

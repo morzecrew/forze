@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tomllib
 from pathlib import Path
 
 from .checks import (
@@ -67,14 +68,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.links:
         return _run_liveness(corpus)
 
-    return _run_offline(corpus, args.pyproject, allow_skips=args.allow_skips)
+    try:
+        shipped = load_shipped_packages(args.pyproject)
+    except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError) as error:
+        # Both paths this command takes are arguments, so both fail the same way. Letting
+        # one raise a traceback while the other returns a code means the caller has to
+        # know which argument it got wrong to know how to read the failure.
+        print(
+            f"skills-check: cannot read the wheel package list from {args.pyproject} "
+            f"({type(error).__name__}: {error})",
+            file=sys.stderr,
+        )
+
+        return 2
+
+    return _run_offline(corpus, shipped, allow_skips=args.allow_skips)
 
 
 # ----------------------- #
 
 
-def _run_offline(corpus: Corpus, pyproject: Path, allow_skips: bool) -> int:
-    shipped = load_shipped_packages(pyproject)
+def _run_offline(corpus: Corpus, shipped: frozenset[str], allow_skips: bool) -> int:
     results = [
         check_syntax(corpus),
         check_imports(corpus, shipped),

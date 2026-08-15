@@ -29,7 +29,12 @@ from tools.skills_check.checks import (
     load_shipped_packages,
 )
 from tools.skills_check.corpus import load_corpus
-from tools.skills_check.links import LinkPolicy, check_liveness, collect_published_urls
+from tools.skills_check.links import (
+    LinkPolicy,
+    _fetch,
+    check_liveness,
+    collect_published_urls,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -271,6 +276,31 @@ def test_missing_forze_submodule_is_a_defect_not_a_skip(corpus_root: Path) -> No
 
     assert len(violations) == 1
     assert "does not import" in violations[0]
+
+
+def test_submodule_that_cannot_initialise_is_not_reported_as_resolved(
+    corpus_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`find_spec` answers a weaker question than the corpus's line asks.
+
+    A submodule that exists on disk and raises during initialization has a spec and no
+    binding, so a spec-based check calls the example fine while the reader's copy of it
+    raises. The check has to run the same import the corpus does.
+    """
+    (tmp_path / "forze_probe").mkdir()
+    (tmp_path / "forze_probe" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "forze_probe" / "broken.py").write_text(
+        "raise RuntimeError('this submodule cannot initialise')\n", encoding="utf-8"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    _write(corpus_root, "```python\nfrom forze_probe import broken\n```")
+
+    result = check_imports(load_corpus(corpus_root), SHIPPED | {"forze_probe"})
+
+    assert result.ok, "unattributable init failures are skips, not corpus defects"
+    assert result.skips, "but they are never counted as resolved"
+    assert "1 skipped" in result.summary
+    assert "0/1" in result.summary
 
 
 def test_star_import_is_rejected(corpus_root: Path) -> None:
@@ -524,6 +554,19 @@ def test_transport_failure_without_a_status_is_retried() -> None:
     assert outcomes[0].attempts == 3
 
 
+def test_a_non_http_url_is_never_fetched() -> None:
+    """`urlopen` honours `file:` and any registered scheme.
+
+    Today's only caller matches against a pattern anchored to `https://<host>/`, which
+    makes this unreachable — the guarantee belongs with the function that needs it rather
+    than with whoever calls it next.
+    """
+    status, detail = _fetch("file:///etc/passwd", 1.0)
+
+    assert status is None
+    assert "refusing to fetch" in detail
+
+
 def test_published_urls_are_collected_from_prose_not_only_links(corpus_root: Path) -> None:
     """A bare URL in prose is as much a claim about a live page as a Markdown link."""
     _write(corpus_root, "Read https://morzecrew.github.io/forze/latest/in-depth/dst/ first.")
@@ -549,6 +592,31 @@ def test_cli_passes_on_the_real_corpus() -> None:
 def test_cli_reports_a_missing_corpus_distinctly(tmp_path: Path) -> None:
     """Exit 2, not 1: "the corpus is not there" is not "the corpus is broken"."""
     assert _run(tmp_path / "absent") == 2
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        ("absent.toml", None),
+        ("malformed.toml", "this is not = valid toml [[[\n"),
+        ("unrelated.toml", '[project]\nname = "something-else"\n'),
+    ],
+    ids=["missing", "malformed", "no-wheel-table"],
+)
+def test_cli_reports_an_unreadable_pyproject_distinctly(
+    corpus_root: Path, tmp_path: Path, name: str, content: str | None
+) -> None:
+    """Both paths this command takes are arguments, so both fail the same way.
+
+    One raising a traceback while the other returns a code makes the caller work out
+    which argument it got wrong before it can read the failure at all.
+    """
+    pyproject = tmp_path / name
+
+    if content is not None:
+        pyproject.write_text(content, encoding="utf-8")
+
+    assert main(["--corpus", str(corpus_root), "--pyproject", str(pyproject)]) == 2
 
 
 def test_cli_fails_on_a_broken_corpus(corpus_root: Path) -> None:

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import ast
 import importlib
-import importlib.util
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -228,8 +227,19 @@ def check_imports(corpus: Corpus, shipped_packages: frozenset[str]) -> Result:
                 continue
 
             for alias in node.names:
-                if _symbol_exists(module, alias.name):
+                symbol = f"{module}.{alias.name}"
+                status = _symbol_exists(module, alias.name)
+
+                if status == "ok":
                     tally.record("ok", count=1)
+                    continue
+
+                if status == "skip":
+                    # The submodule exists but would not initialize here. Whether that is
+                    # this environment's fault or the corpus's cannot be told apart, so it
+                    # is reported as unchecked — and unchecked fails, like any other skip.
+                    unresolved.setdefault(symbol, _import_status(symbol)[1])
+                    tally.record("skip", count=1)
                     continue
 
                 result.violations.append(
@@ -263,56 +273,11 @@ def check_structure(corpus: Corpus) -> Result:
         result.violations.append(f"{corpus.root}: no `*/{SKILL_FILENAME}` found at all")
 
     for doc in corpus.skills:
-        where = str(doc.path)
-
-        if doc.frontmatter is None:
-            result.violations.append(f"{where}: no YAML frontmatter")
-        else:
-            for key in ("name", "description"):
-                if not doc.frontmatter.get(key):
-                    result.violations.append(f"{where}: frontmatter has no `{key}`")
-
-            declared = doc.frontmatter.get("name")
-
-            if declared and declared != doc.skill_name:
-                result.violations.append(
-                    f"{where}: frontmatter name `{declared}` != directory `{doc.skill_name}`"
-                )
-
-        for section in REQUIRED_SECTIONS:
-            if doc.section(section) is None:
-                result.violations.append(f"{where}: no `## {section}` section")
-
+        result.violations.extend(_check_skill_shape(doc))
         result.violations.extend(_check_reference_section(doc))
 
     result.violations.extend(_check_version_segment(corpus))
-
-    for doc in corpus.documents:
-        for link in doc.links:
-            if link.is_external:
-                continue
-
-            if link.target.startswith("/"):
-                result.violations.append(
-                    f"{doc.path}:{link.line}: absolute path link -> {link.target}"
-                )
-                continue
-
-            if not link.path_part:
-                continue
-
-            target = (doc.path.parent / link.path_part).resolve()
-
-            if not target.exists():
-                result.violations.append(f"{doc.path}:{link.line}: dangling link -> {link.target}")
-                continue
-
-            if doc.is_skill and not target.is_relative_to(corpus.root.resolve()):
-                result.violations.append(
-                    f"{doc.path}:{link.line}: link escapes the published tree -> "
-                    f"{link.target} (installed skills are copied out of this repository)"
-                )
-
+    result.violations.extend(_check_relative_links(corpus))
     result.violations.extend(_check_index_parity(corpus))
     result.summary = (
         f"{len(corpus.skills)} skill(s), "
@@ -320,6 +285,64 @@ def check_structure(corpus: Corpus) -> Result:
     )
 
     return result
+
+
+def _check_skill_shape(doc: Document) -> list[str]:
+    """Frontmatter identity and the sections ``AUTHORING.md`` mandates."""
+    where = str(doc.path)
+    violations: list[str] = []
+
+    if doc.frontmatter is None:
+        violations.append(f"{where}: no YAML frontmatter")
+    else:
+        violations.extend(
+            f"{where}: frontmatter has no `{key}`"
+            for key in ("name", "description")
+            if not doc.frontmatter.get(key)
+        )
+        declared = doc.frontmatter.get("name")
+
+        if declared and declared != doc.skill_name:
+            violations.append(
+                f"{where}: frontmatter name `{declared}` != directory `{doc.skill_name}`"
+            )
+
+    violations.extend(
+        f"{where}: no `## {section}` section"
+        for section in REQUIRED_SECTIONS
+        if doc.section(section) is None
+    )
+
+    return violations
+
+
+def _check_relative_links(corpus: Corpus) -> list[str]:
+    """Every relative link resolves, and none of a skill's leaves the published tree."""
+    violations: list[str] = []
+    published = corpus.root.resolve()
+
+    for doc in corpus.documents:
+        for link in doc.links:
+            if link.is_external or not link.path_part:
+                continue
+
+            if link.target.startswith("/"):
+                violations.append(f"{doc.path}:{link.line}: absolute path link -> {link.target}")
+                continue
+
+            target = (doc.path.parent / link.path_part).resolve()
+
+            if not target.exists():
+                violations.append(f"{doc.path}:{link.line}: dangling link -> {link.target}")
+                continue
+
+            if doc.is_skill and not target.is_relative_to(published):
+                violations.append(
+                    f"{doc.path}:{link.line}: link escapes the published tree -> "
+                    f"{link.target} (installed skills are copied out of this repository)"
+                )
+
+    return violations
 
 
 def check_census(corpus: Corpus, shipped_packages: frozenset[str]) -> Result:
@@ -434,44 +457,63 @@ def _resolve_module(
     if module == root:
         return "ok"
 
-    try:
-        importlib.import_module(module)
-    except ModuleNotFoundError as error:
-        # The submodule's own imports may pull a third-party package this environment
-        # lacks; that is the harness again. A *forze* name going missing is not — it is
-        # the rename this gate exists to catch.
-        missing = error.name or ""
+    # The submodule's own imports may pull a third-party package this environment lacks;
+    # that is the harness again. A *forze* name going missing is not — it is the rename
+    # this gate exists to catch.
+    status, reason = _import_status(module)
 
-        if not missing or not is_forze_module(missing):
-            unresolved[module] = f"{type(error).__name__}: {error}"
+    if status == "defect":
+        result.violations.append(f"{block.doc}:{block.line}: `{module}` does not import — {reason}")
+    elif status == "skip":
+        unresolved[module] = reason
 
-            return "skip"
-
-        result.violations.append(
-            f"{block.doc}:{block.line}: `{module}` does not import — no module named `{missing}`"
-        )
-
-        return "defect"
-    except Exception as error:
-        unresolved[module] = f"{type(error).__name__}: {error}"
-
-        return "skip"
-
-    return "ok"
+    return status
 
 
-def _symbol_exists(module: str, name: str) -> bool:
+def _symbol_exists(module: str, name: str) -> ResolutionStatus:
+    """Whether ``from <module> import <name>`` would actually bind something.
+
+    The submodule branch **imports** rather than locating a spec. ``find_spec`` answers
+    "is there a file for this?", which is a weaker question than the corpus's line asks:
+    a submodule that exists on disk and raises during initialization has a spec and no
+    binding, so a spec-based check reports the example as fine while the reader's copy of
+    it fails. Running the same import the corpus does is the only thing that agrees with
+    the corpus by construction.
+
+    Failures are classified exactly as ``_resolve_module`` classifies them, so importing
+    for real does not turn a missing third-party extra into a corpus defect.
+    """
     imported = importlib.import_module(module)
 
     if hasattr(imported, name):
-        return True
+        return "ok"
 
-    # `from forze_kits import aggregates` names a submodule, which is an attribute only
-    # once something has imported it — so absence from the parent proves nothing.
+    # `from forze_kits import aggregates` names a submodule, which is an attribute of its
+    # parent only once something has imported it — so absence from the parent proves
+    # nothing until the import is tried.
+    return _import_status(f"{module}.{name}")[0]
+
+
+def _import_status(module: str) -> tuple[ResolutionStatus, str]:
+    """Import ``module``, separating a corpus defect from an environment artifact.
+
+    A `forze*` name going missing is the rename this gate exists to catch. A third-party
+    name going missing is an extra this run did not install, and says nothing about the
+    corpus. Anything else cannot be attributed, so it is reported rather than claimed.
+    """
     try:
-        return importlib.util.find_spec(f"{module}.{name}") is not None
-    except (ImportError, AttributeError, ValueError):
-        return False
+        importlib.import_module(module)
+    except ModuleNotFoundError as error:
+        missing = error.name or ""
+
+        if missing and is_forze_module(missing):
+            return "defect", f"no module named `{missing}`"
+
+        return "skip", f"{type(error).__name__}: {error}"
+    except Exception as error:
+        return "skip", f"{type(error).__name__}: {error}"
+
+    return "ok", ""
 
 
 def _check_version_segment(corpus: Corpus) -> list[str]:
