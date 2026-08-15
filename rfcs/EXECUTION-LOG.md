@@ -296,6 +296,31 @@ environment-skip branches that need a partly-installed environment to reach.
 - **Semantic staleness is out of scope by design** (RFC §5): an import can resolve while
   the prose beside it describes behavior that changed. Nothing here narrows that.
 
+## Review findings — 2026-08-15
+
+PR #376. Five findings from CodeRabbit, CodeAnt, Greptile and CodeFactor, all fixed; two
+of them are defects the self-audit above missed, which is why they are recorded beside it
+rather than only in the pull request.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | **High** | `_symbol_exists` resolved a submodule with `find_spec`, which locates a file without executing it. A submodule that exists and raises during initialization therefore has a spec and no binding, so the gate reported `1/1 resolved · ok` for an example that raises for any reader who runs it. Reproduced with a stub package whose `broken.py` raises at import time (CodeAnt) | Fixed — the check now runs the same import the corpus line does, classified through the shared `_import_status` so importing for real cannot reclassify a missing extra as a corpus defect |
+| R-2 | **High** | The scheduled sweep's `timeout-minutes: 20` is below its own worst case. 64 URLs x (3 attempts x 15 s + 6 s backoff) plus pacing is ~55 minutes, and `_run_liveness` prints only after finishing — so a total outage burned an hour and reported nothing. **The audit above computed the same ~50 minutes and then set 20 anyway**, which is the finding within the finding (Greptile, twice) | Fixed — `LinkPolicy.budget_seconds` (900 s) bounds the sweep itself and every URL it did not reach is reported **unchecked**, neither dead nor live; the job limit is now a backstop around the sweep rather than the thing deciding how much got checked |
+| R-3 | Medium | `--pyproject` passed straight to the loader, so a missing, malformed or structurally different file raised `FileNotFoundError` / `TOMLDecodeError` / `KeyError` while `--corpus` returned a controlled 2. Both are path arguments; only one failed like one (CodeAnt) | Fixed — guarded, exits 2 naming the file and the error |
+| R-4 | Medium | The log and `INDEX.md` both said an RFC's text is never edited, while this branch appended a decision table to RFC 0040 — consistent only because of the acceptance step neither of them named (CodeRabbit) | Fixed — the carve-out is stated in both: prose never, an accepted row citing its entry yes |
+| R-5 | Low | `INDEX.md`'s row for 0040 still described the pre-execution world in the present tense — "zero CI coverage", 236/236, 94/94 (CodeRabbit); plus bandit `B310` on `urlopen` and a complexity flag on `check_structure` (CodeFactor) | Fixed — row reframed as motivation with the gate's live denominators; scheme allowlist enforced in the fetcher and annotated for bandit; `check_structure` split into shape, link and parity passes |
+
+**Refused nothing.** Every finding this round was real. One reviewer suggestion was
+answered rather than applied: retiring RFC 0040 from `rfcs/` per the index's lifecycle
+rule, because that rule fires "once their work has landed" and the branch is unmerged —
+see *Carried into the next unit*.
+
+**R-2 is the entry worth re-reading.** The audit did not miss the number; it wrote the
+number down and then chose a bound that contradicted it. A residue note ("worst case ~50
+minutes") sitting next to a 20-minute limit is not a record of a decision, it is a defect
+with a paper trail — and nothing in the audit's own checks looks for a claim contradicting
+a value in the same document.
+
 ## Rules distilled
 
 - **A doc-extraction bug and a doc defect are indistinguishable in the report, so
@@ -324,6 +349,14 @@ environment-skip branches that need a partly-installed environment to reach.
 - **Where a check's message names a shape, check that shape — not a weaker one that
   happens to be easier to match.** `## Anti-patterns` was enforced as "a heading with this
   text at any depth", so the error message was a claim the code did not keep. (A-4.)
+- **A number in prose and a number in config are a claim and a setting, and nothing checks
+  them against each other.** The audit wrote "worst case ~50 minutes" into its own residue
+  and set a 20-minute job limit on the same branch; both survived a full self-audit because
+  no pass asks whether a document contradicts a value beside it. (R-2.)
+- **Bound the work where the work is, not where the runner kills it.** A sweep whose only
+  duration limit is the CI job's gets terminated mid-run having reported nothing — the
+  budget belongs in the policy, and everything past it is reported unchecked rather than
+  dropped. (R-2.)
 - **An audit fix is new code and inherits the surroundings' discipline like any other.**
   The tests added to close a coverage gap resolved paths against the working directory
   while every sibling guard test anchors on `__file__` — a defect introduced by the pass
