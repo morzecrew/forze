@@ -4,8 +4,12 @@ Where building something disagreed with the design for it, written down at the m
 happened. Nothing here is revised afterwards to agree with what was later settled, and
 nothing here has been folded back into an RFC's own text.
 
-The decision rows below are put forward for the author to accept or refuse. Execution
-does not write them into a decision table itself.
+Entries are appended, never revised. The decision rows in them are **proposals**: execution
+never writes one into an RFC on its own authority. Once the author accepts a row it is
+appended to that RFC's decision table citing the entry it came from, and the outcome — every
+acceptance and every refusal — is recorded here in a dated table, because a refusal is
+written down nowhere else. The RFC's prose still stands as designed; a row that overrides a
+section says so, and the section is left alone.
 
 ## Classes
 
