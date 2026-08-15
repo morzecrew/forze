@@ -219,6 +219,34 @@ maintainer-facing `AUTHORING.md` edit. The one shipped-artifact change (D-003's
 anti-patterns section) is a small docs addition inside a skill, not a public API or
 migration fact.
 
+## Decision-row outcomes — 2026-08-15
+
+All seven proposals accepted, one at a higher grade than proposed, plus one refusal that
+exists only here. RFC 0040 had no decision table before this; §8 is the table these rows
+opened, and every row in it carries the entry it came from.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0040 | 1 | Accepted | `ASSUMED` | Fenced blocks are dedented by the opening fence's own indentation before parsing | D-001 |
+| 0040 | 2 | Accepted | `ASSUMED` | §1's measured-state table is a snapshot superseded by the checker's output, not corrected in place | D-002 |
+| 0040 | 3 | Accepted, **grade raised** | `LOCKED` (proposed `ASSUMED`) | The corpus is fixed to meet a gate, never the gate softened to meet the corpus | D-003 |
+| 0040 | 4 | Accepted | `ASSUMED` | An unchecked import is a failed import; skips fail by default, `--allow-skips` never used in CI | D-004 |
+| 0040 | 5 | Accepted | `ASSUMED` | A gate in `just quality` is incomplete until its inputs are in the `changes.code` filter | D-005 |
+| 0040 | 6 | Accepted | `ASSUMED` | §3.4 runs in its own scheduled workflow, not as a job in `nightly.yml` | D-006 |
+| 0040 | 7 | Accepted | `ASSUMED` | A whole-repository gate is `always_run` in pre-commit | D-007 |
+| 0040 | — | **Refused** | — | Correcting §1's counts to 127 / 237 / 64 in place. A reader cannot distinguish a corrected measurement from a laundered one, and the distinction is the only thing this log protects — the numbers live in D-002 instead | D-002 |
+
+Two notes on the grades, because the reasoning is the part that does not survive in a
+table:
+
+- **Row 3 is the only `LOCKED` one, and deliberately.** It is §2's no-`baseline.txt`
+  argument in operational form, and the moment it binds is when an executor under time
+  pressure finds a pre-existing failure and relaxing one predicate looks obviously
+  correct. That is the case that wants a second reader, which is what the grade buys.
+- **Rows 4 and 6 are departures from the RFC's letter**, accepted as such rather than
+  quietly absorbed. §3.1's final paragraph stops at reporting a skip; §4 asks for a job in
+  an existing workflow. Both sections stand as written and both rows override them.
+
 ## Audit findings — 2026-08-15
 
 Adversarial pass over the whole branch: 5 commits, 15 files, +1985/-6, against merge base
@@ -321,3 +349,18 @@ environment-skip branches that need a partly-installed environment to reach.
   parses, full stop".
 - **The scheduled sweep is unproven in CI** until its first cron firing (audit residue).
   Watch the first run for the step summary and the job timeout.
+- **Mechanize row 5 rather than leaving it as prose.** Accepted 2026-08-15 with the
+  follow-up scheduled, not done: a guard test that fails when a `just quality` input is
+  absent from `ci.yml`'s `changes.code` filter. The rule was missed once already, and a
+  rule that lives only in a decision table will be missed again the same way.
+  `tests/unit/test_ci_matrix_guard.py` is the precedent for mechanizing a CI-config
+  invariant. Out of scope for RFC 0040.
+- **Row 6's trigger: a third scheduled check.** Folding the sweep into a renamed, general
+  nightly workflow with per-job meaning was considered and deferred — worth doing when
+  there is a third tenant, not a second, since it rewrites an unrelated workflow's
+  identity.
+- **The pre-commit exclude covers `.agents/skills/` but not `.agent/skills/` or
+  `.claude/skills/`**, so the three byte-identical mirrors `AGENTS.md` says to treat as one
+  unit get different pre-commit treatment. Predates this branch, left alone deliberately
+  (row 7 fixed the gate without disturbing the exclude), and worth a look by whoever next
+  touches the mirrors.
