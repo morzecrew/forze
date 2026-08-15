@@ -133,6 +133,13 @@ temporal_module = TemporalDepsModule(
 
 Register routes on the backend module (e.g. `PostgresDepsModule(tx={TxRoute.DEFAULT})`). Application code uses `async with ctx.tx_ctx.scope(TxRoute.DEFAULT):` and `registry.bind(...).bind_tx().set_route(TxRoute.DEFAULT).finish(deep=True).freeze()`.
 
+## Anti-patterns
+
+- **Naming physical infrastructure in application code.** A handler that mentions a table, bucket, queue or workflow-queue name has bypassed the spec. The logical `StrEnum` member is the only name application code should know; every physical name belongs in the deps module's routed map, where changing it is a wiring edit rather than a search-and-replace through handlers.
+- **Constructing a deps module with `client=` and nothing else.** `S3DepsModule(client=...)`, `SQSDepsModule(client=...)` and `TemporalDepsModule(client=...)` register the client key only. Without the routed map (`storages=`, `queue_readers=`/`queue_writers=`, `workflows=`) the spec resolves to nothing and the failure surfaces at call time as an unregistered dependency, far from the wiring that caused it.
+- **Reusing one `StrEnum` member across planes that do not share a backend.** One name is one route. Pointing a `DocumentSpec` and an unrelated `StorageSpec` at the same member couples two migrations that have no reason to move together, and makes "which config does this name mean?" a question about the reader's memory.
+- **Allocating a counter inside a transaction you expect to roll back.** Allocation runs on its own connection on every backend, so a rollback does not return the number. Code that treats a counter as transactional silently produces gaps — or worse, reuses a value it believed was released.
+
 ## Gotchas
 
 - Mismatch between `spec.name` and infra dict keys is a frequent wiring bug — check the spec enum and deps-module map when debugging “dependency not registered”.
