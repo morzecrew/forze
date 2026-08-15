@@ -9,12 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.6.0] - 2026-08-15
+
+### Added
+
 **Statement origin — a second tenancy floor, set by what wrote the statement.** `StatementOrigin` (`structured` → `none`, `compiled` → `namespace`, `raw` → `dedicated`), declared per route via `TenancyRouteSpec.origin` / `TenancyRouteGroup.origin` and enforced at freeze in `validate_module_tenancy`, independently of `required_tenant_isolation`. New `required_isolation_for_origin`, `validate_origin_isolation`, `ORIGIN_ISOLATION_FLOOR_CODE` (`"statement_origin_isolation_floor"`). Nothing that wires today changes: `structured` is the default and no shipped config declares an origin.
-**Governed dynamic read** — a separate, opt-in read plane for statements whose text is data (catalog SQL, a semantic layer's output, a report builder). New `contracts/dynamic_read/` + `ctx.dynamic_read.query(spec)`, resolvable in `QUERY` operations; Postgres and mock adapters:
+
+**Governed dynamic read** — an opt-in read plane for statements whose text is data (catalog SQL, a semantic layer's output, a report builder). New `contracts/dynamic_read/` + `ctx.dynamic_read.query(spec)`, resolvable in `QUERY` operations; Postgres and mock adapters:
 
 - `DynamicReadSpec` (`row_cap=10_000`, `max_statement_bytes=65_536`, `capture_statements=False`) and `DynamicReadPort.run` / `.select(return_type, …)`. No pagination, no `In`/`Out` generics, no encryption field — both shapes are runtime data, so a sealed column returns ciphertext. Per-call `DynamicReadOptions` clamp down only; exceeding `row_cap` raises rather than truncates.
 - `PostgresDynamicReadConfig` runs every statement in a `READ ONLY` root transaction on its own connection, with `SET LOCAL statement_timeout` / `search_path` / `ROLE`, streamed over the extended query protocol. No SQL is parsed anywhere: writes, multi-command strings and cross-schema reads are refused by Postgres. Taxonomy `dynamic_read_write_refused`, `_statement_invalid`, `_multi_statement`, `_permission_denied`, `_timeout`, `_row_cap_exceeded`, `_statement_too_large`, `_row_type_mismatch`, `_role_unavailable`.
-- **Wiring fails closed:** `provenance` (`"trusted"`/`"untrusted"`) has no default; routes declare `origin="compiled"`, so any tier below `namespace` raises `statement_origin_isolation_floor`; `untrusted` without a role or routed client raises `dynamic_read_untrusted_unconfined`; a per-tenant `query_schema` with a shared static `role` raises `dynamic_read_shared_role_across_tenants`. `PostgresSchemaTenantProvisioner` refuses a per-tenant schema paired with a shared static role (`tenant_role_shared_across_schemas`), a role already bound to another tenant's schema (`tenant_role_already_bound`, under a transaction-scoped advisory lock), and an existing role that already reaches somewhere — `LOGIN`, `SUPERUSER`, `BYPASSRLS`, or a member of another role (`tenant_role_not_confinable`); teardown drops the schema before the role and reports a cluster-wide dependency as `tenant_role_still_depended_on`.
+- **Wiring fails closed:** `provenance` (`"trusted"`/`"untrusted"`) has no default; routes declare `origin="compiled"`, so any tier below `namespace` raises `statement_origin_isolation_floor`. Also `dynamic_read_untrusted_unconfined` (untrusted with no role or routed client) and `dynamic_read_shared_role_across_tenants` (per-tenant `query_schema`, shared static `role`).
+- `PostgresSchemaTenantProvisioner` refuses a shared static role beside a per-tenant schema (`tenant_role_shared_across_schemas`), a role already bound elsewhere (`tenant_role_already_bound`), and one that already reaches somewhere — `LOGIN`, `SUPERUSER`, `BYPASSRLS`, or membership of another role (`tenant_role_not_confinable`). Teardown drops the schema first and reports a surviving dependency as `tenant_role_still_depended_on`.
 - `MockDynamicReadRegistry` answers routes from a handler; engine-enforced refusals are declared in the divergence catalog rather than faked. New `dynamic_read` conformance plane and `data-events/dynamic-read.md`.
 
 **Postgres `COPY` bulk load** — the engine-native bulk path, 20–79× faster than the multi-VALUES `INSERT` it replaces (10⁴–10⁵ rows × 6–20 columns, interleaved A/B):
@@ -46,7 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Operation progress** — long-running work gets an observable shape, kit-level (`forze_kits.integrations.progress`), no core-contract changes:
 
-- `job_record_spec()` (one `JobRecord` per job — status, fraction, message, `heartbeat_at`, `durable_run_id`; DDL documented), the declared `job.progress` realtime event, `ProgressReporter` (coalescing window, monotonic clamp, `track()`), `JobProgressProjector` (out-of-order merge, `find_stalled`/`count_stalled`) and `progress_spec_contributions()` for the inventory. `job_staleness_lifecycle_step()` + `instrument_job_progress()` export `forze.jobs.stalled`, `forze.jobs.stalled.oldest_silence` and `forze.jobs.staleness.scan_age`. Ticks ride the ephemeral lane, status transitions a dedicated outbox route (`progress_outbox_spec()`, relayed to the realtime stream); a job is task-grained and spans many durable runs (`waiting` is non-terminal).
+- `job_record_spec()` (one `JobRecord` per job — status, fraction, message, `heartbeat_at`, `durable_run_id`; DDL documented), the declared `job.progress` realtime event, `ProgressReporter` (coalescing window, monotonic clamp, `track()`), `JobProgressProjector` (`find_stalled`/`count_stalled`) and `progress_spec_contributions()`.
+- `job_staleness_lifecycle_step()` + `instrument_job_progress()` export `forze.jobs.stalled`, `forze.jobs.stalled.oldest_silence` and `forze.jobs.staleness.scan_age`. Ticks ride the ephemeral lane, status transitions a dedicated outbox route (`progress_outbox_spec()`); a job is task-grained and spans many durable runs (`waiting` is non-terminal).
 - `ArchiveExporter`/`export_archive` and `rebuild_search_index` take an optional `progress=` reporter.
 
 **Observability last mile** — SDK setup, probes, and a deployable Grafana stack; no instrumentation change (no metric added or renamed):
@@ -77,13 +94,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `forze_dst.stats`: exact Clopper–Pearson detection bounds in every clean verdict, plus a stdlib-only survival kernel (Kaplan–Meier, log-rank, Fisher exact); new `dirty_write`/`intermediate_read` anomaly cases with Adya labels.
 - `forze_dst.conformance` fidelity matrix and corpus transfer against real Postgres (`just dst-fidelity`/`dst-transfer`); `forze_dst.misuse` corpus; detection-time campaigns (`forze dst campaign`); mechanical depth extraction (`forze_dst.depth`).
 - Falsifiability witnesses and horizon accounting: `Simulation(witnesses=…, horizon=…)`, `mine_witnesses`/`replay_witnesses`/`account_invariants`, `named`/`name_of`, `FaultRule.at_call`. **Behaviour change:** `no_unclosed_transaction()` violations report their own name.
-- **Honest denominators** — every clean-run bound states what it divides by. New `stats.coverage_deficit`/`format_coverage_deficit` (Good–Turing + Chao1 over execution shapes), `stats.familywise_level`/`format_family_verdict` (union-bound family-wise control on the campaign scan; opt-in `--dst-family-verdict` / `--no-dst-family-verdict` / ini `dst_family_verdict`), `stats.flip_margin`, `stats.format_withheld_verdict`. The verdict names its weakest per-invariant denominator: new `CoverageStats.shape_counts`/`deficit`, `ConfidenceReport.at_risk_runs`/`unmeasured_exposure`/`shape_counts`/`redundant_seeds`/`weakest_exposure`, `HorizonProbe(invariants=…)`, `ConfidenceProbe(invariants=…)`. Seed redundancy is a warning, never a corrected denominator.
+- **Honest denominators** — every clean-run bound states what it divides by, and names its weakest per-invariant denominator. New `stats.coverage_deficit`/`format_coverage_deficit`, `stats.familywise_level`/`format_family_verdict` (opt-in `--dst-family-verdict` / ini `dst_family_verdict`), `stats.flip_margin`, `stats.format_withheld_verdict`, `CoverageStats.shape_counts`/`deficit`, `ConfidenceReport.at_risk_runs`/`unmeasured_exposure`/`shape_counts`/`redundant_seeds`/`weakest_exposure`, and `invariants=` on `HorizonProbe`/`ConfidenceProbe`. Seed redundancy is a warning, never a corrected denominator.
 
 **Serve your real app on in-memory backends** — the mock composes with real modules, and the whole app can be served on it:
 
-- **Hybrid deps contexts** — new keyword-only `fallback=` on `Deps.plain`/`Deps.routed`/`Deps.routed_group` marks registrations that yield to a real one instead of colliding, order-independently; `MockDepsModule` marks everything, so "real Postgres, mock everything else" is one deps list. Two real (or two fallback) registrations still raise. New `FallbackReport` from `ProviderStore.fallback_report()`, logged at freeze and on `check_wiring(...).fallbacks`; its `catch_all` names the keys where an unregistered route silently reaches the fallback.
-- **`forze_mock.server`** (new `mock-server` extra) — `forze mock serve module:attr` serves a declared `MockApp`: the app's own factory, routes and identity over `MockDepsModule`. A `/_mock` control plane beside it offers `reset`, `seed`, `state/{store}`, `fault` (a real `exc` kind), `latency`, `disarm`, `time`, `emit`, `health`. `serve` refuses without `FORZE_MOCK_SERVER=1` or a fallback-marked mock module; the control plane needs a `MockSession` only the builder mints. New `MockState.clear()`.
-- **`forze_mock.seeding`** — deterministic seed data across four planes: `SpecSeed`/`SearchSeed`/`StorageSeed`/`QueueSeed` on one `SeedPlan`, each through its own write path, with fixtures (`load_fixtures`) and inferred references (`SeedPlan.links`, `SearchSeed(ids_from=…)`). `rng_seed` + `SeedPlan.instant` reproduce a plan byte-identically across processes. Needs `polyfactory` (in the `dst` extra).
+- **Hybrid deps contexts** — keyword-only `fallback=` on `Deps.plain`/`Deps.routed`/`Deps.routed_group` marks registrations that yield to a real one instead of colliding, order-independently; `MockDepsModule` marks everything, so "real Postgres, mock everything else" is one deps list. Two real (or two fallback) registrations still raise. New `FallbackReport` from `ProviderStore.fallback_report()`, also on `check_wiring(...).fallbacks`; its `catch_all` names keys where an unregistered route silently reaches the fallback.
+- **`forze_mock.server`** (new `mock-server` extra) — `forze mock serve module:attr` serves a declared `MockApp` over `MockDepsModule`, with a `/_mock` control plane offering `reset`, `seed`, `state/{store}`, `fault`, `latency`, `disarm`, `time`, `emit`, `health`. Refuses without `FORZE_MOCK_SERVER=1` or a fallback-marked mock module; the control plane needs a `MockSession` only the builder mints. New `MockState.clear()`.
+- **`forze_mock.seeding`** — deterministic seed data across four planes: `SpecSeed`/`SearchSeed`/`StorageSeed`/`QueueSeed` on one `SeedPlan`, with fixtures (`load_fixtures`) and inferred references (`SeedPlan.links`, `SearchSeed(ids_from=…)`). `rng_seed` + `SeedPlan.instant` reproduce a plan byte-identically across processes. Needs `polyfactory` (in the `dst` extra).
 - Recipes `mock_server/` (with a container), `mock_workspace/`, `realtime_sse/served.py`; docs: *Serve your app on the mock*.
 
 **Server-side CSRF gate on cookie ingress, on by default** — `CookieTokenAuthn.csrf` (new `CookieCsrf`): an unsafe-method request using the cookie must prove a same-host or `allowed_origins` origin via `Origin`/`Referer`, refused as 403 `csrf_rejected`; `allow_missing_origin=True` admits header-less non-browser cookie clients, `csrf=None` opts out.
@@ -1659,6 +1676,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/morzecrew/forze/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/morzecrew/forze/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/morzecrew/forze/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/morzecrew/forze/compare/v0.4.0...v0.4.1
