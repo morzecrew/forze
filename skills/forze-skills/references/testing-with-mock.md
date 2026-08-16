@@ -32,6 +32,18 @@ from forze_postgres import PostgresDepsModule
 DepsRegistry.from_modules(PostgresDepsModule(...), MockDepsModule(state=shared_state))
 ```
 
+## Running the mock as a server
+
+In-process wiring covers your own tests. When something *outside* the process needs to talk to the app — a frontend in development, a contract test in another language — `forze_mock.server` serves the same mock-backed app over HTTP, with the same fallback rule:
+
+```python
+from forze_mock.server import MockApp
+
+mock_app = MockApp(build_app=build_app, deps=(), seed=seed_plan)
+```
+
+`seed` matters more than it looks: an unseeded plane answers every read successfully with an empty list, so a consumer tests green against a backend that holds nothing. Declare the fixtures the caller expects to find.
+
 ## Reference
 
 - [Mock integration](https://morzecrew.github.io/forze/latest/integrations/)

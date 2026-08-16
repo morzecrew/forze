@@ -47,7 +47,24 @@ deps = DepsRegistry.from_modules(
 lifecycle = LifecyclePlan.from_steps(awskms_lifecycle_step(region_name="eu-central-1"))
 ```
 
-GCP and Yandex Cloud follow the same shape (`GcpKmsClient` / `GcpKmsDepsModule` / `gcpkms_lifecycle_step`, `YcKmsClient` / `YcKmsDepsModule` / `yckms_lifecycle_step`). Leave `key_management` unset on the KMS deps module — `CryptoDepsModule` registers that port itself, and registering it twice conflicts.
+GCP and Yandex Cloud follow the same shape — same three pieces, different credential source:
+
+```python
+from forze_kms.gcp import GcpKmsClient, GcpKmsDepsModule, GcpKmsKeyManagement, gcpkms_lifecycle_step
+from forze_kms.yc import YcKmsClient, YcKmsDepsModule, YcKmsKeyManagement, yckms_lifecycle_step
+
+gcp = GcpKmsClient()
+gcp_deps = GcpKmsDepsModule(client=gcp)
+gcp_kms = GcpKmsKeyManagement(client=gcp)
+gcp_step = gcpkms_lifecycle_step()          # application-default credentials
+
+yc = YcKmsClient()
+yc_deps = YcKmsDepsModule(client=yc)
+yc_kms = YcKmsKeyManagement(client=yc)
+yc_step = yckms_lifecycle_step(service_account_key=sa_key)
+```
+
+Either `*KeyManagement` goes in `CryptoDepsModule(kms=...)` exactly as `AwsKmsKeyManagement` does above; only the `key_id` spelling differs, per the table. Leave `key_management` unset on the KMS deps module — `CryptoDepsModule` registers that port itself, and registering it twice conflicts.
 
 In tests, `MockDepsModule` wires the whole crypto stack in-memory, so encrypted specs run end-to-end with no KMS. The mock runs the **real** field-encryption path on every field plane — document, graph, search (hub, federated and snapshots), analytics and procedures all resolve the same fail-closed encrypting codecs as a real backend. Two consequences for your tests: a suite asserting on raw stored values now sees ciphertext, and a text query no longer matches sealed content. That is the point — a query that cannot work in production now fails under the mock too.
 
