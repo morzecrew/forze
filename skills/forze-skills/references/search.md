@@ -43,7 +43,7 @@ For faceted navigation and result highlighting, declare `facetable_fields` / `hi
 
 Use `HubSearchSpec` with `build_hub_search_registry` when one hub entity searches through weighted member legs — it yields the full `SearchFacade` surface. Use `FederatedSearchSpec` with `build_federated_search_registry` to merge independent specs; it registers only the typed `search` and `cursor_search` (no `projected_search` / `projected_cursor_search`). Keep snapshot storage and cursor/keyset behaviour in infrastructure config.
 
-Postgres serves search from the same relation as the documents. Meilisearch is a separate engine with its own index, so the index name and the per-attribute roles live in its deps config — and an attribute the engine was never told about cannot be filtered or sorted on, whatever the spec says:
+Postgres serves search from the same relation as the documents. Meilisearch is a separate engine with its own index, so the index name and the per-attribute roles live in its deps config:
 
 ```python
 from forze_meilisearch import (
@@ -72,6 +72,8 @@ search_module = MeilisearchDepsModule(
 )
 lifecycle = meilisearch_lifecycle_step(url="http://localhost:7700", api_key=meili_key)
 ```
+
+Leave the three attribute lists at `None` and they are derived from the `SearchSpec` — searchable from `fields`, filterable from the primary key plus `fields`. Pinning one **overrides** that derivation, so a field the spec declares but your list omits stops being filterable or sortable. Declared `facetable_fields` are the exception: faceting requires filterability in Meilisearch, so they are added back even to a pinned list.
 
 Federated search across independent indexes is the case with no other home: `members` weights each leg, and the merge policy decides how their scores reconcile into one ranked page.
 

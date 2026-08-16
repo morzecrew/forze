@@ -42,7 +42,7 @@ from forze_mock.server import MockApp
 mock_app = MockApp(build_app=build_app, deps=(), seed=seed_plan)
 ```
 
-`seed` matters more than it looks: an unseeded plane answers every read successfully with an empty list, so a consumer tests green against a backend that holds nothing. Declare the fixtures the caller expects to find.
+`seed` is applied once the runtime scope opens and re-applied by `POST /_mock/reset`, which is what lets a consumer's suite start each run from the same fixtures. Declare it: an unseeded plane still answers every read — successfully, with nothing in it — so a caller can pass against a backend that holds no data at all.
 
 ## Reference
 

@@ -454,6 +454,15 @@ def check_census(corpus: Corpus, manifest: Manifest) -> Result:
     covered = imported_units(corpus)
     prose = "\n".join(doc.text for doc in corpus.documents)
 
+    if not manifest.violations and not manifest.proven:
+        # A ratchet with nothing to prove is not a ratchet. Every unit sitting in D3 or D4
+        # would leave "0/0 proven" reading exactly like full coverage — the zero-denominator
+        # pass this checker refuses everywhere else.
+        result.violations.append(
+            "no unit carries D1 or D2, so the census proves nothing — a corpus where every "
+            "shipped package is out of scope or deferred is a decision worth making loudly"
+        )
+
     unproven = [unit for unit in manifest.proven if unit.name not in covered]
     result.violations.extend(
         f"{unit.name}: {unit.doctrine} requires an import the gate resolves, and the corpus "

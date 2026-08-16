@@ -691,6 +691,27 @@ def test_importing_a_submodule_proves_its_root_but_not_its_siblings(
     assert not any("forze_mock.server:" in violation for violation in violations)
 
 
+def test_a_census_with_nothing_to_prove_is_refused(corpus_root: Path, tmp_path: Path) -> None:
+    """A manifest where every unit is out of scope reads "0/0 proven" — full coverage.
+
+    The same zero-denominator pass the syntax and import gates already refuse. It cannot be
+    reached by deleting rows, because totality catches that; it is reached by triaging
+    everything into D3, which is a decision that should be loud rather than green.
+    """
+    manifest = _loaded(
+        tmp_path,
+        units='"forze" = { doctrine = "D3", rationale = "no" }\n'
+        '"forze_mock" = { doctrine = "D3", rationale = "no" }\n'
+        '"forze_mock.server" = { doctrine = "D3", rationale = "no" }\n',
+    )
+
+    result = check_census(load_corpus(corpus_root), manifest)
+
+    assert manifest.violations == [], "the manifest itself is valid — that is the point"
+    assert not result.ok
+    assert any("proves nothing" in violation for violation in result.violations)
+
+
 def test_census_is_keyed_on_wheel_packages() -> None:
     """Extras and packages are not interchangeable; imports are what the corpus claims."""
     assert "forze_postgres" in load_shipped_packages(_REPO / "pyproject.toml")

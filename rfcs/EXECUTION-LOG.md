@@ -622,3 +622,177 @@ for a check; until there is one, every number in that table is wrong by default.
   answer is to exempt historical prose, not to rewrite it.
 - **The reference-size reasons in D-010 are a record, not a check.** Nothing notices if
   `secrets` grows to 300 lines or `architecture` shrinks to 10.
+
+---
+
+# Unit 3 · Skills coverage ratchet
+
+Branch `feature/skills-coverage-ratchet`. RFC 0042, all of it — the 13-unit content tranche
+and the ratchet that holds it.
+
+**Drift count: 0.** Two halts on `LOCKED` material were surfaced before any file was
+written and resolved by the author (D-011, D-012); three further departures are `discovery`
+or `spec-gap`.
+
+## D-011 — A subdivided package keeps its own census unit
+
+- **Touches:** RFC 0042 §1.1 (the unit rule) and §4.1 ("the other 19 units"). `LOCKED` —
+  §Status locks the doctrine and the ratchet, so the executor halted rather than deciding.
+- **RFC said:** two things that do not reconcile. §1.1 defines the unit as "the import root,
+  subdivided wherever an extra draws a boundary inside a package". §4.1 then counts "the
+  other 19 units", which is the *package* count, and assigns them D1 by observation.
+- **Found:** the two readings give different denominators, and the difference is not
+  cosmetic — it decides what the no-doctrine rule fires on. Replacing a subdivided root with
+  its submodules drops `forze_kms` from the list entirely; keeping both makes 38 units where
+  §4.1's arithmetic implies 29.
+- **Because:** a package can gain an uncovered submodule while its root stays green on some
+  other submodule's import. That is the exact failure §1.1 exists to catch, and dropping the
+  root trades one blind spot for another.
+- **Class:** `spec-gap` — knowable from the document alone, and found by multiplying the
+  rule out against the real package and extras lists before writing the manifest.
+- **Consequence:** 38 units — 29 packages, 8 extra-drawn sub-units, and
+  `forze_identity.authz` on merit. §4.1's "19" is a stale figure describing the
+  package-keyed census that preceded the rule.
+- **Proposed row (RFC 0042):** `LOCKED` — subdivision *adds* a unit and never replaces the
+  root; the doctrine map is total over that combined list.
+
+## D-012 — `forze_mock.server` is a census unit nobody triaged
+
+- **Touches:** RFC 0042 §4 (triage) and §5.1 (the extras mapping). `LOCKED`.
+- **RFC said:** §5.1 left the row as *"`mock-server` — to be confirmed at execution, the
+  module is not named by the extra"*. §4 triages ten packages and four sub-units, and this
+  is in neither table.
+- **Found:** the module exists and is `forze_mock.server`, confirming the row. Nothing in
+  the corpus imports it. So the extras rule makes it a unit, §5's no-doctrine rule fails the
+  build on it, and the RFC supplies no answer — the build would have broken on day one over
+  a decision the document never made.
+- **Because:** §5.1's open row was read as a naming question. It was also a triage question,
+  because confirming the mapping creates a unit that then needs a doctrine.
+- **Class:** `spec-gap`.
+- **Consequence:** D2, and covered. Serving the mock over HTTP is a choice an application
+  author makes, which rules out D3, but it is reached like the rest of `forze_mock`, which
+  is already well covered — the anchor is the whole requirement.
+- **Proposed row (RFC 0042):** `ASSUMED` — confirming an extra's module mapping is also a
+  triage decision, and §5.1's open rows should carry a doctrine alongside the name.
+
+## D-013 — The triage table's evidence describes a corpus that no longer exists
+
+- **Touches:** RFC 0042 §2 and §4, which cite `forze-documents-search`,
+  `forze-graph-contracts`, `forze-fastapi-interface` and `forze-realtime`.
+- **RFC said:** for 12 of the 13 units, "the fix is a four-line import-plus-wiring block
+  next to a paragraph that already exists".
+- **Found:** those four skills were deleted by RFC 0041, so every destination had to be
+  re-derived against the 43 reference files. The premise survives the move — every backend
+  is still discussed by name — but five packages (`forze_mongo`, `forze_meilisearch`,
+  `forze_firestore`, `forze_kafka`, `forze_duckdb`) had **no occurrence of their package
+  name anywhere in the corpus**, only of the backend's human name.
+- **Class:** `discovery` — RFC 0042 was written against the pre-consolidation corpus and
+  §6 explicitly allows either sequencing.
+- **Consequence:** destinations re-derived; recorded here so the next reader does not try
+  to follow §4's links. Also: `forze_dst` was promoted to D1 by §4 and **satisfied by RFC
+  0041**, so the committed tranche is nine D1 units of new content, not ten — and lands at
+  13 again only because D-012 added one.
+
+## D-014 — Content committed before the gate that enforces it
+
+- **Touches:** RFC 0042 §6, execution steps 2 → 3 → 4.
+- **RFC said:** extend the census to the unit rule and re-measure *before* the content
+  work, "or the content work is aimed at the wrong list".
+- **Built:** the measurement came first, as instructed — the unit rule was implemented and
+  run, and it is what produced the list of 13. But it was **committed** after the content,
+  in the order content → mechanism.
+- **Because:** an enforcing census with 13 unproven units is a red build. Committing it
+  first leaves an intermediate commit that fails its own gate, which is the mirror image of
+  unit 2's D-010 note: there the risk was a green gate over an empty denominator, here it
+  is a red gate over incomplete content. Both are commits that cannot be checked out and
+  trusted.
+- **Class:** `discovery`.
+- **Consequence:** every commit on this branch is green. The RFC's ordering constraint is
+  about *aim*, and aim was preserved; only the commit boundary moved.
+
+**Deliberately not applied:** the two keyword-argument errors below argue for a gate that
+checks call kwargs against real signatures, and RFC 0040 §5 rules argument-level drift out
+of scope by design. It stays out of scope. A one-off script did the checking instead, and
+the case for promoting it is recorded under *Carried into the next unit* rather than
+acted on here.
+
+## Audit findings — 2026-08-16
+
+Adversarial pass over the branch: 3 commits, 14 files, against merge base `e9e909781`.
+Four findings, all fixed. Two are defects in content the import gate reports as green.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| C-1 | **Medium** | Two of the new blocks called a real function with **keyword arguments it does not accept** — `register_tools(exposed=…, auth=…)` and `ForzeSocketIOAdapter(server=…, router=…)`. Both import cleanly, so the gate resolved every symbol and reported green on a snippet that raises `TypeError` for anyone who runs it. RFC 0040 §5 rules argument-level drift out of scope by design, so **nothing in CI can see this** | Fixed against the real signatures and the authoritative docs page. Then swept: a one-off checker resolved every call in the corpus whose callee was imported from a `forze*` module and compared its keywords to the live signature — **284 calls, 0 bad keywords** remaining |
+| C-2 | **Medium** | A Meilisearch claim was wrong in the consequential direction. I wrote that an attribute the engine was never told about cannot be filtered — implying the lists must be declared. They **default** from the `SearchSpec`; the hazard is the opposite, that *pinning* one overrides the derivation and silently drops a declared field | Fixed by reading `_filterable_attributes` rather than the config docstring, which says only "override … for ensure_index". The corrected text also carries the facetable-field exception the adapter enforces |
+| C-3 | **Medium** | A manifest with every unit in D3 or D4 would report `0/0 D1+D2 unit(s) proven` and pass — the zero-denominator vacuous pass RFC 0040's A-1 refused everywhere else, reintroduced in the one check whose entire job is coverage. Not reachable by deleting rows (totality catches that), only by triaging everything out of scope | Fixed — a census with nothing to prove is refused, with a test that is red without it |
+| C-4 | Low | The summary line printed `37/37 D1+D2 unit(s) proven` while the check was failing on manifest violations — a ratio computed from a unit list that had just failed to validate | Fixed — a broken manifest is the headline, because the denominator is not yet trustworthy |
+
+**Sabotage sweep: 5 mutations, 5 killed.** Against the real corpus and the real manifest,
+reverted after each: a D1 unit losing its last import, a doctrine row deleted, a D3 with no
+rationale, a subdividing extra pointed at a module that does not exist, and a D2 anchor
+demoted from an import to a sentence.
+
+**§7's injected regression, run twice against this repository — not only against the
+fixture.** `src/forze_opensearch` added to the wheel targets fails with *"census unit
+`forze_opensearch` has no doctrine"*. A `kms-azure` extra added to
+`[project.optional-dependencies]` fails with *"extra `kms-azure` is in no table"* — and that
+is the one worth naming, because `forze_kms` is already green, so a wheel-targets-only
+ratchet sees nothing at all. **The first attempt at this injection silently did not
+apply** — the string it patched did not match the file's actual indentation, and the run
+came back green. A sabotage that does not land looks exactly like a gate that works.
+
+**What remains distrusted.**
+
+- **Nothing checks call arguments, and C-1 shows one hour of writing produces two errors.**
+  The 284-call sweep was a scratch script; the corpus can regress to a `TypeError` example
+  on the next edit with every gate green. This is the strongest candidate the skills work
+  has produced for a new gate, and it is deliberately not one here.
+- **Positional arguments and value types are unchecked even by that script.** It compares
+  keyword names only, so `MockApp(build_app=…, deps=(), seed=…)` is verified to have those
+  parameters and not that a `SeedPlan` is what `seed` wants.
+- **The prose beside each block is review-checked only.** Every distinctive claim was
+  traced to a source docstring or an adapter before being written — which is how C-2 was
+  caught — but that is a procedure, not a gate.
+
+## Rules distilled
+
+- **Confirming a mapping is also a triage decision.** §5.1's open row asked only what module
+  `mock-server` names. Answering it created a census unit, which then needed a doctrine the
+  RFC never assigned — and the build would have failed on day one over a decision nobody
+  made. An open row that produces a new entity leaves two questions open, not one. (D-012.)
+- **When a rule and a count disagree, the count is the stale one.** §1.1 stated the unit rule
+  and §4.1 counted units the old way. Prose survives a rule change; arithmetic derived from
+  the superseded rule does not, and reads as authoritative. (D-011.)
+- **A gate's blind spot migrates into whatever it green-lights.** The import gate checks
+  symbols, so the errors that survived were in arguments. Writing to a gate optimises for the
+  gate; the unchecked dimension is where the defects go. (C-1.)
+- **Read the implementation, not the field's docstring, before writing what a knob does.**
+  `filterable_attributes` is documented as "override … for ensure_index"; only the adapter
+  says what happens when it is `None`, which is the case every reader is in. (C-2.)
+- **Every new coverage number needs its zero case refused explicitly.** "0/0 proven" is a
+  passing ratio. This is A-1 from unit 1 arriving in a new check, which is the fourth time
+  the same shape has appeared in this file. (C-3.)
+- **A sabotage that does not apply reports green.** The first stub-package injection patched
+  a string that did not match the file, and the run passed. Assert that the mutation landed
+  before believing what the gate says about it. (Audit note.)
+
+## Carried into the next unit
+
+- **The skills epic closes here.** RFC 0040 built the gates, 0041 restructured the corpus,
+  0042 decided what it must cover and made that decision enforceable. `INDEX.md`'s next free
+  number is 0043 and no further RFC in this family exists.
+- **A call-argument gate is the outstanding candidate.** C-1 plus unit 2's B-3 are the same
+  category — a snippet that imports cleanly and cannot be run. B-3 was free names, C-1 is
+  keyword arguments; both were found by scratch scripts and neither is enforced. RFC 0040 §5
+  put argument-level drift out of scope deliberately, so promoting it is an RFC, not a patch.
+- **The extras suggestion in the failure message can be wrong.** `kms-azure` produces
+  *"perhaps `forze_kms_azure`"* where the answer is `forze_kms.azure`. It is labelled a
+  suggestion and rule 2 refuses a wrong guess, so this is a rough edge rather than a defect —
+  but the first thing a reader sees is a name that does not exist.
+- **~~RFC 0042's evidence table cites the deleted 21-skill corpus.~~** Closed by D-013: the
+  destinations were re-derived against the 43 reference files. The RFC's own links are left
+  as written, per the rule that historical prose is not rewritten.
+- **The doctrine map is now the thing that rots.** Nothing checks that a D1 unit's block is
+  still a *worked example* rather than a bare import that happens to resolve; the distinction
+  between D1 and D2 is enforced only by review.
