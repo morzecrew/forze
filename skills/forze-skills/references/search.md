@@ -43,6 +43,38 @@ For faceted navigation and result highlighting, declare `facetable_fields` / `hi
 
 Use `HubSearchSpec` with `build_hub_search_registry` when one hub entity searches through weighted member legs — it yields the full `SearchFacade` surface. Use `FederatedSearchSpec` with `build_federated_search_registry` to merge independent specs; it registers only the typed `search` and `cursor_search` (no `projected_search` / `projected_cursor_search`). Keep snapshot storage and cursor/keyset behaviour in infrastructure config.
 
+Postgres serves search from the same relation as the documents. Meilisearch is a separate engine with its own index, so the index name and the per-attribute roles live in its deps config — and an attribute the engine was never told about cannot be filtered or sorted on, whatever the spec says:
+
+```python
+from forze_meilisearch import (
+    MeilisearchClient,
+    MeilisearchDepsModule,
+    MeilisearchFederatedSearchConfig,
+    MeilisearchSearchConfig,
+    meilisearch_lifecycle_step,
+)
+
+search_module = MeilisearchDepsModule(
+    client=MeilisearchClient(),
+    searches={
+        ResourceName.PROJECTS: MeilisearchSearchConfig(
+            index_uid="projects",
+            searchable_attributes=("title", "summary"),
+            filterable_attributes=("status", "is_deleted"),
+            sortable_attributes=("created_at",),
+        ),
+    },
+    federated_searches={
+        ResourceName.EVERYTHING: MeilisearchFederatedSearchConfig(
+            members={ResourceName.PROJECTS: 0.7, ResourceName.NOTES: 0.3},
+        ),
+    },
+)
+lifecycle = meilisearch_lifecycle_step(url="http://localhost:7700", api_key=meili_key)
+```
+
+Federated search across independent indexes is the case with no other home: `members` weights each leg, and the merge policy decides how their scores reconcile into one ranked page.
+
 ## Rebuilding a search index
 
 An index is derived state — it can be refilled from the document plane at any time. `rebuild_search_index` is the idempotent, keyset-paged backfill: it upserts live rows and removes soft-deleted ones, so it converges the index toward the documents rather than merely filling it.

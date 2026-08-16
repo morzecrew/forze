@@ -96,6 +96,27 @@ Routes without verifier/resolver overrides fall back to the first-party defaults
 
 `forze_identity.authz` provides document-backed authorization (catalog, bindings, adapters for authz ports). `PrincipalRef` shares the `principal_id` UUID with `AuthnIdentity`, so authz bindings outlive the IdP choice.
 
+Every port is opt-in by route, so you wire only the surface you use — a service that checks permissions but issues no delegations registers `decision` and leaves `delegation` out:
+
+```python
+from forze_identity.authz import AuthzDepsModule, AuthzKernelConfig, AuthzResourceName
+
+authz_module = AuthzDepsModule(
+    kernel=AuthzKernelConfig(
+        # Permission keys that bypass the owner_id check. `admin` and
+        # `{resource_type}.admin` are the default — widen this and you have widened
+        # who can act on a record they do not own.
+        owner_override_permissions={"admin", "{resource_type}.admin"},
+    ),
+    principal_registry=[AuthzResourceName.POLICY_PRINCIPALS],
+    role_assignment=[AuthzResourceName.PRINCIPAL_ROLE_BINDINGS],
+    grant_query=[AuthzResourceName.ROLE_PERMISSION_BINDINGS],
+    decision=[AuthzResourceName.POLICY_PRINCIPALS],
+)
+```
+
+The `AuthzResourceName` members are document spec names, so each one you list needs a store wired under that name like any other `DocumentSpec` — and `POLICY_PRINCIPALS` must be tenant-unaware, since eligibility is checked before a tenant is bound.
+
 ## Anti-patterns
 
 - **Binding identity inside handlers** — bind at the boundary only.

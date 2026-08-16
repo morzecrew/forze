@@ -109,7 +109,26 @@ The facade runs each operation through the pipeline (mapping, hooks, transaction
 
 ## Exposing operations over MCP
 
-The same frozen registry can be projected to AI agents as MCP tools via `forze_mcp` (extra `mcp`, FastMCP-based): `register_tools(...)` + `exposed_operations(...)` project operation keys as tool names, `runtime_lifespan` scopes the runtime, and auth is **API-key-as-bearer** — `ForzeApiKeyVerifier` validates the inbound bearer through the same `AuthnSpec`/authn brain as your HTTP routes (pass both `auth=` and the identity binder). See [MCP integration](https://morzecrew.github.io/forze/latest/integrations/mcp/) and [Expose an aggregate over MCP](https://morzecrew.github.io/forze/latest/recipes/expose-an-aggregate-over-mcp/).
+The same frozen registry can be projected to AI agents as MCP tools via `forze_mcp` (extra `mcp`, FastMCP-based):
+
+```python
+from forze_mcp import AccessTokenIdentityResolver, ForzeApiKeyVerifier, build_mcp_server
+
+server = build_mcp_server(
+    registry,                       # the same frozen registry the HTTP routes use
+    ctx_factory,
+    name="projects",
+    # Read-only by default. Every write in the registry stays unexposed until you say
+    # otherwise — an agent that can call `projects.kill` is a decision, not a default.
+    include_writes=False,
+    auth=ForzeApiKeyVerifier(ctx_factory=ctx_factory, authn_spec=authn_spec),
+    identity=AccessTokenIdentityResolver(agent=AGENT_PRINCIPAL),
+)
+```
+
+For a FastMCP server you build yourself, `register_tools(server, registry, ctx_factory, ...)` attaches the same tools to it.
+
+`register_tools(...)` + `exposed_operations(...)` project operation keys as tool names, `runtime_lifespan` scopes the runtime, and auth is **API-key-as-bearer** — `ForzeApiKeyVerifier` validates the inbound bearer through the same `AuthnSpec`/authn brain as your HTTP routes (pass both `auth=` and the identity binder). See [MCP integration](https://morzecrew.github.io/forze/latest/integrations/mcp/) and [Expose an aggregate over MCP](https://morzecrew.github.io/forze/latest/recipes/expose-an-aggregate-over-mcp/).
 
 ## Anti-patterns
 

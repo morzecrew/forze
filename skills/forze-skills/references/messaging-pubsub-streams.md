@@ -38,7 +38,34 @@ stream = ctx.deps.resolve_configurable(
 entry_id = await stream.append("orders", payload, type="order.created")
 ```
 
-Use `StreamQueryDepKey` for `read` / `tail`. Consumer groups come in two disciplines: `AckStreamGroupQueryDepKey` for per-message ack + `claim` recovery (Redis-class), and `CommitStreamGroupQueryDepKey` for per-partition offset `commit` on a Kafka-class log (with a `CommitStreamGroupAdminDepKey` for `ensure_topic` / `ensure_group` / `reset_offsets` / `lag`). `MockDepsModule` registers all of them. In production, `RedisDepsModule` wires the ack discipline via `streams={route: RedisStreamConfig()}` (stream query/command + `AckStreamGroup*` keys), and `KafkaDepsModule` wires the commit discipline via `streams=` / `commit_groups=` (`CommitStreamGroupQueryDepKey` / `CommitStreamGroupAdminDepKey`).
+Use `StreamQueryDepKey` for `read` / `tail`. Consumer groups come in two disciplines: `AckStreamGroupQueryDepKey` for per-message ack + `claim` recovery (Redis-class), and `CommitStreamGroupQueryDepKey` for per-partition offset `commit` on a Kafka-class log (with a `CommitStreamGroupAdminDepKey` for `ensure_topic` / `ensure_group` / `reset_offsets` / `lag`). `MockDepsModule` registers all of them. In production, `RedisDepsModule` wires the ack discipline via `streams={route: RedisStreamConfig()}` (stream query/command + `AckStreamGroup*` keys), and `KafkaDepsModule` wires the commit discipline via `streams=` / `commit_groups=` (`CommitStreamGroupQueryDepKey` / `CommitStreamGroupAdminDepKey`):
+
+```python
+from forze_kafka import (
+    KafkaClient,
+    KafkaCommitStreamGroupConfig,
+    KafkaDepsModule,
+    KafkaStreamConfig,
+    kafka_lifecycle_step,
+)
+
+stream_module = KafkaDepsModule(
+    client=KafkaClient(),
+    streams={StreamName.ORDERS: KafkaStreamConfig(namespace="app")},
+    commit_groups={
+        StreamName.ORDERS: KafkaCommitStreamGroupConfig(
+            namespace="app",
+            # Where a brand-new group starts. "latest" skips everything already in the
+            # log, which is the setting that quietly loses a backfill.
+            auto_offset_reset="earliest",
+            max_poll_records=100,
+        ),
+    },
+)
+lifecycle = kafka_lifecycle_step(bootstrap_servers="localhost:9092")
+```
+
+Nothing transfers by analogy from the queue and pub/sub models above. A commit-discipline group tracks one offset per partition, so redelivery is "everything after the last commit" rather than "this one message again", and ordering is per-partition rather than global — a consumer written against the ack discipline does not port unchanged.
 
 ## Processing rules
 
