@@ -243,6 +243,23 @@ def _check_importable(path: Path, subdivides: dict[str, str]) -> list[str]:
     return violations
 
 
+def _string_field(body: dict[str, object], key: str, where: str, violations: list[str]) -> str:
+    """A string field, or the empty string plus a violation naming what it actually was.
+
+    Absent is legal and returns `""`; the caller decides whether the doctrine requires it.
+    Present-but-wrong-type is not the same thing and is reported here, because by the time
+    the caller asks "is it present" a coerced value already looks present.
+    """
+    value = body.get(key, "")
+
+    if isinstance(value, str):
+        return value
+
+    violations.append(f"{where}: `{key}` must be a string, not {type(value).__name__}")
+
+    return ""
+
+
 def _read_units(path: Path, declared: dict[str, object], violations: list[str]) -> list[Unit]:
     units: list[Unit] = []
 
@@ -251,7 +268,11 @@ def _read_units(path: Path, declared: dict[str, object], violations: list[str]) 
             violations.append(f"{path}: unit `{name}` is not a table")
             continue
 
-        doctrine = str(body.get("doctrine", ""))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        # Read, never coerce. `str()` turns `rationale = ["deferred"]` into the non-empty
+        # string `"['deferred']"`, which then satisfies "carries a rationale" — the check
+        # passes on a value that is not one. A required field has to be the right *type*
+        # before "is it present" means anything.
+        doctrine = _string_field(body, "doctrine", f"{path}: unit `{name}`", violations)
 
         if doctrine not in DOCTRINES:
             violations.append(
@@ -260,8 +281,8 @@ def _read_units(path: Path, declared: dict[str, object], violations: list[str]) 
             )
             continue
 
-        rationale = str(body.get("rationale", ""))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-        trigger = str(body.get("trigger", ""))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        rationale = _string_field(body, "rationale", f"{path}: unit `{name}`", violations)
+        trigger = _string_field(body, "trigger", f"{path}: unit `{name}`", violations)
 
         if doctrine in NEEDS_RATIONALE and not rationale:
             violations.append(f"{path}: `{name}` is {doctrine} and carries no rationale")

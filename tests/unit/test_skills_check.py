@@ -764,6 +764,31 @@ def test_a_section_of_the_wrong_shape_is_named_not_crashed_on(
     assert any(expected in violation for violation in manifest.violations), manifest.violations
 
 
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        ('"forze" = { doctrine = "D3", rationale = ["deferred"] }\n', "`rationale` must be a string"),
+        (
+            '"forze" = { doctrine = "D4", rationale = "x", trigger = ["soon"] }\n',
+            "`trigger` must be a string",
+        ),
+        ('"forze" = { doctrine = "D3", rationale = 7 }\n', "`rationale` must be a string"),
+        ('"forze" = { doctrine = ["D1"] }\n', "`doctrine` must be a string"),
+    ],
+    ids=["rationale-array", "trigger-array", "rationale-int", "doctrine-array"],
+)
+def test_doctrine_metadata_is_read_never_coerced(tmp_path: Path, row: str, expected: str) -> None:
+    """`str()` on a list yields a non-empty string, which then passes "carries a rationale".
+
+    The required-field checks ask whether a value is present, so a coerced value is
+    indistinguishable from a real one by the time they run — `rationale = ["deferred"]`
+    became `"['deferred']"` and satisfied a D3. Type first, presence second.
+    """
+    manifest = _loaded(tmp_path, units=row)
+
+    assert any(expected in violation for violation in manifest.violations), manifest.violations
+
+
 def test_a_census_with_nothing_to_prove_is_refused(corpus_root: Path, tmp_path: Path) -> None:
     """A manifest where every unit is out of scope reads "0/0 proven" — full coverage.
 
