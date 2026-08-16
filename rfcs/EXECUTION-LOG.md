@@ -564,7 +564,10 @@ make the RFC's own argument unreadable and is the laundering this log exists to 
   Verifying it means giving an agent only the index and a task, then seeing which references
   it fetches — for each of the six rows, since adding a row adds a case.
 - **RFC 0042 lands on this shape.** Its work is import blocks in existing reference files,
-  which §6.1 says needs no amendment; a new file does. The parity gate now enforces that.
+  which §6.1 says needs no amendment; a new file does. The parity gate now enforces that. Its
+  own evidence table still cites the 21-directory corpus (`forze-fastapi-interface/SKILL.md`
+  at §81), so whoever executes it re-measures against `references/` first — the D1/D2 grades
+  were assigned to files that no longer exist.
 - **RFC 0041 §1/§7 links dangle by design.** They describe the pre-execution state. If a
   future gate ever checks links under `rfcs/`, these are the expected failures and the
   answer is to exempt historical prose, not to rewrite it.
