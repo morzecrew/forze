@@ -94,6 +94,19 @@ forze-wiring
 
 Earlier retirements, merged before the consolidation: `forze-storage-s3` / `forze-storage-gcs` → `forze-object-storage`; `forze-analytics-bigquery` / `forze-analytics-clickhouse` → `forze-analytics`; `forze-deps-modules` (never published).
 
+## Coverage doctrine
+
+Every shipped package, and every boundary an extra draws inside one, is a **census unit** carrying a doctrine in [`tools/skills_check/coverage.toml`](../tools/skills_check/coverage.toml). A unit with no doctrine fails the build — so adding `src/forze_opensearch/` to the wheel targets, or adding a `kms-azure` extra that subdivides a package already covered, is a decision someone writes down rather than a gap nobody notices.
+
+| | Requires |
+|---|---|
+| **D1** worked example | an importable block showing the deps module and its config type |
+| **D2** import anchor | a resolved import plus the config type, for a unit reached identically to a covered sibling |
+| **D3** out of scope | a written rationale |
+| **D4** deferred | a rationale *and* a trigger that would move it to D1 or D2 |
+
+D1 and D2 differ in how much surrounding material is expected, **never in whether the import is verified** — both resolve under the same gate. Naming a symbol in prose, in a table, or in a frontmatter description counts for nothing: the census scores consumption, not declaration, because a corpus can describe a backend in detail while no gate can see a single one of its claims.
+
 ## Adding or changing content
 
 1. Edit the reference file that owns the job, or amend RFC 0041 §6 to add one.

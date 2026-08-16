@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Literal
 
 from .corpus import SKILL_FILENAME, CodeBlock, Corpus, Document
+from .manifest import NEEDS_RATIONALE, Manifest
 
 # ----------------------- #
 
@@ -402,19 +403,16 @@ def _check_relative_links(corpus: Corpus) -> list[str]:
     return violations
 
 
-def check_census(corpus: Corpus, shipped_packages: frozenset[str]) -> Result:
-    """Report-only: which shipped packages the corpus actually imports.
+def imported_units(corpus: Corpus) -> set[str]:
+    """Every module path the corpus imports, and each of its ancestors.
 
-    Keyed on wheel packages, never on extras. The two differ by more than naming —
-    several extras install submodules of one package, and a couple ship no package at
-    all — and it is imports the corpus makes claims about.
-
-    This check never fails. What the number must be, and when it may not regress, is
-    somebody else's decision; a coverage gate landing with pre-existing gaps is a gate
-    that acquires a tolerated-failure list on day one.
+    ``from forze_kms.aws import AwsKmsClient`` covers ``forze_kms.aws`` *and* ``forze_kms``:
+    the root is genuinely demonstrated by a submodule's import. The reverse does not hold,
+    which is the asymmetry the whole unit rule rests on — importing ``forze_kms.aws`` says
+    nothing about ``forze_kms.gcp``, and a package-keyed census that scored the root green
+    reported exactly that.
     """
-    result = Result(name="census")
-    imported: set[str] = set()
+    reached: set[str] = set()
 
     for block in corpus.python_blocks:
         parses, _ = _parses(block)
@@ -424,32 +422,84 @@ def check_census(corpus: Corpus, shipped_packages: frozenset[str]) -> Result:
 
         for node in ast.walk(ast.parse(block.source)):
             if isinstance(node, ast.Import):
-                imported.update(alias.name.split(".", 1)[0] for alias in node.names)
+                reached.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
-                imported.add(node.module.split(".", 1)[0])
+                reached.add(node.module)
 
+    covered: set[str] = set()
+
+    for module in reached:
+        parts = module.split(".")
+        covered.update(".".join(parts[: index + 1]) for index in range(len(parts)))
+
+    return {module for module in covered if module.split(".")[0].startswith("forze")}
+
+
+def check_census(corpus: Corpus, manifest: Manifest) -> Result:
+    """Every unit carries a doctrine, and every D1/D2 unit is reached by a resolved import.
+
+    **Consumption, not declaration.** A unit counts as covered only when a symbol from it
+    appears in a code block the import gate actually resolves. Naming it in prose, in a
+    table, or in a frontmatter description does not count — that is precisely the condition
+    the corpus was in when this was written, and precisely what a declaration-based census
+    would have scored green.
+
+    The manifest's own violations are reported here rather than separately: an unclassified
+    extra and an unproven unit are the same failure at different distances from the corpus,
+    and splitting them across two checks lets a reader fix one and think they are done.
+    """
+    result = Result(name="census")
+    result.violations.extend(manifest.violations)
+
+    covered = imported_units(corpus)
     prose = "\n".join(doc.text for doc in corpus.documents)
-    buckets: dict[str, list[str]] = {"imported": [], "prose only": [], "absent": []}
 
-    for package in sorted(shipped_packages):
-        if package in imported:
-            buckets["imported"].append(package)
-        elif re.search(rf"\b{re.escape(package)}\b", prose):
-            buckets["prose only"].append(package)
-        else:
-            buckets["absent"].append(package)
+    unproven = [unit for unit in manifest.proven if unit.name not in covered]
+    result.violations.extend(
+        f"{unit.name}: {unit.doctrine} requires an import the gate resolves, and the corpus "
+        f"has {'only prose' if re.search(rf'\b{re.escape(unit.name)}\b', prose) else 'nothing'}"
+        for unit in sorted(unproven, key=lambda unit: unit.name)
+    )
 
-    result.summary = ", ".join(f"{len(members)} {label}" for label, members in buckets.items())
+    by_doctrine: dict[str, int] = {}
+
+    for unit in manifest.units:
+        by_doctrine[unit.doctrine] = by_doctrine.get(unit.doctrine, 0) + 1
+
+    proven = len(manifest.proven)
+    # A manifest that failed to validate is reported *as* the headline rather than behind a
+    # coverage ratio, because the ratio is computed from it: "37/37 proven" above a broken
+    # unit list is a number describing a denominator nobody should trust yet.
+    counted = (
+        f"{proven - len(unproven)}/{proven} D1+D2 unit(s) proven, "
+        + ", ".join(f"{count} {doctrine}" for doctrine, count in sorted(by_doctrine.items()))
+    )
+    result.summary = (
+        f"{len(manifest.violations)} manifest problem(s) — the unit list is not trustworthy"
+        if manifest.violations
+        else counted
+    )
     result.skips = [
-        f"{label}: {' '.join(members)}"
-        for label, members in buckets.items()
-        if label != "imported" and members
+        f"{unit.doctrine} by decision: {unit.name} — {unit.rationale}"
+        for unit in sorted(manifest.units, key=lambda unit: unit.name)
+        if unit.doctrine in NEEDS_RATIONALE
     ]
 
     return result
 
 
 # ----------------------- #
+
+
+def load_extras(pyproject: Path) -> frozenset[str]:
+    """The declared extras — the repository's own record of where an author makes a choice.
+
+    Derived, never hand-maintained, for the same reason the package list is: an integration
+    nobody adds to a hand-written list is an integration the census cannot see.
+    """
+    config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+
+    return frozenset(config["project"]["optional-dependencies"])
 
 
 def load_shipped_packages(pyproject: Path) -> frozenset[str]:

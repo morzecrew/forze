@@ -12,6 +12,7 @@ from .checks import (
     check_imports,
     check_structure,
     check_syntax,
+    load_extras,
     load_shipped_packages,
 )
 from .corpus import Corpus, load_corpus
@@ -22,6 +23,7 @@ from .links import (
     check_liveness,
     collect_published_urls,
 )
+from .manifest import Manifest, default_manifest_path, load_manifest
 
 # ----------------------- #
 
@@ -42,6 +44,12 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_PYPROJECT,
         type=Path,
         help=f"pyproject.toml holding the wheel package list (default: {DEFAULT_PYPROJECT})",
+    )
+    parser.add_argument(
+        "--manifest",
+        default=None,
+        type=Path,
+        help="coverage doctrine manifest (default: coverage.toml beside the checker)",
     )
     parser.add_argument(
         "--links",
@@ -70,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         shipped = load_shipped_packages(args.pyproject)
+        extras = load_extras(args.pyproject)
     except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError) as error:
         # Both paths this command takes are arguments, so both fail the same way. Letting
         # one raise a traceback while the other returns a code means the caller has to
@@ -82,18 +91,32 @@ def main(argv: list[str] | None = None) -> int:
 
         return 2
 
-    return _run_offline(corpus, shipped, allow_skips=args.allow_skips)
+    manifest_path = args.manifest or default_manifest_path()
+
+    if not manifest_path.is_file():
+        # Same shape as --corpus and --pyproject: a path argument fails like one. A missing
+        # manifest is not an empty manifest — reporting "every unit lacks a doctrine" would
+        # be 38 violations describing one wrong path.
+        print(f"skills-check: no coverage manifest at {manifest_path}", file=sys.stderr)
+
+        return 2
+
+    manifest = load_manifest(manifest_path, shipped, extras)
+
+    return _run_offline(corpus, shipped, manifest, allow_skips=args.allow_skips)
 
 
 # ----------------------- #
 
 
-def _run_offline(corpus: Corpus, shipped: frozenset[str], allow_skips: bool) -> int:
+def _run_offline(
+    corpus: Corpus, shipped: frozenset[str], manifest: Manifest, allow_skips: bool
+) -> int:
     results = [
         check_syntax(corpus),
         check_imports(corpus, shipped),
         check_structure(corpus),
-        check_census(corpus, shipped),
+        check_census(corpus, manifest),
     ]
 
     width = max(len(result.name) for result in results)

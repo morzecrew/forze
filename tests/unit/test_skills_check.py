@@ -26,9 +26,11 @@ from tools.skills_check.checks import (
     check_structure,
     check_syntax,
     is_forze_module,
+    load_extras,
     load_shipped_packages,
 )
 from tools.skills_check.corpus import load_corpus
+from tools.skills_check.manifest import Manifest, default_manifest_path, load_manifest
 from tools.skills_check.links import (
     LinkOutcome,
     LinkPolicy,
@@ -546,21 +548,163 @@ def test_link_to_a_corpus_file_outside_the_skill_directory_is_reported(corpus_ro
 
 
 # ----------------------- #
-# Census (§3.5) — report-only, on purpose.
+# Coverage ratchet — every unit triaged, every D1/D2 unit proven by a resolved import.
+
+_MANIFEST_PACKAGES = frozenset({"forze", "forze_mock"})
+_MANIFEST_EXTRAS = frozenset({"mock-server", "postgres"})
 
 
-def test_census_reports_gaps_without_failing(corpus_root: Path) -> None:
-    _write(corpus_root, "```python\nfrom forze.base.exceptions import CoreException\n```")
+def _manifest(
+    tmp_path: Path,
+    units: str = '"forze" = { doctrine = "D1" }\n"forze_mock" = { doctrine = "D1" }\n'
+    '"forze_mock.server" = { doctrine = "D2" }\n',
+    subdivides: str = '"mock-server" = "forze_mock.server"\n',
+    whole: str = '["postgres"]',
+    dependency_only: str = "[]",
+) -> Path:
+    path = tmp_path / "coverage.toml"
+    path.write_text(
+        "[extras.subdivides]\n"
+        f"{subdivides}\n"
+        "[extras.whole-package]\n"
+        f"names = {whole}\n\n"
+        "[extras.dependency-only]\n"
+        f"names = {dependency_only}\n\n"
+        "[units]\n"
+        f"{units}",
+        encoding="utf-8",
+    )
 
-    result = check_census(load_corpus(corpus_root), SHIPPED)
+    return path
 
-    assert result.ok, "coverage is RFC 0042's decision; this check only reports"
-    assert any("absent" in skip for skip in result.skips)
+
+def _loaded(
+    tmp_path: Path,
+    packages: frozenset[str] = _MANIFEST_PACKAGES,
+    extras: frozenset[str] = _MANIFEST_EXTRAS,
+    **kwargs: str,
+) -> Manifest:
+    return load_manifest(_manifest(tmp_path, **kwargs), packages, extras)
+
+
+def test_a_manifest_that_matches_its_inputs_loads_clean(tmp_path: Path) -> None:
+    assert _loaded(tmp_path).violations == []
+
+
+def test_a_new_package_fails_until_someone_writes_down_a_doctrine(tmp_path: Path) -> None:
+    """§7's injected regression, first half: a stub package added to the wheel targets.
+
+    This is the whole mechanism — a new plane must not be able to ship with zero corpus
+    reach *and* zero decision. The failure is about the missing decision, not the missing
+    coverage: writing `D3, maintainer tooling` is a perfectly good way to make it pass.
+    """
+    manifest = _loaded(tmp_path, packages=_MANIFEST_PACKAGES | {"forze_opensearch"})
+
+    assert any(
+        "forze_opensearch` has no doctrine" in violation for violation in manifest.violations
+    )
+
+
+def test_a_new_extra_subdividing_a_covered_package_fails_too(tmp_path: Path) -> None:
+    """§7's injected regression, second half — the one a naive implementation passes.
+
+    `kms-azure` adds a census unit **without adding a package**, and the package it
+    subdivides is already green, so a wheel-targets-only ratchet sees nothing at all. That
+    is the conformance census's own lesson wearing new clothes: counting at the wrong
+    granularity reports green on an unseeded plane.
+    """
+    manifest = _loaded(tmp_path, extras=_MANIFEST_EXTRAS | {"kms-azure"})
+
+    assert any("extra `kms-azure` is in no table" in v for v in manifest.violations)
+    assert not any("forze_kms.azure" in v for v in manifest.violations), (
+        "the checker must not invent a submodule name from an extra name"
+    )
+
+
+def test_a_mapped_unit_that_does_not_import_is_refused(tmp_path: Path) -> None:
+    """Rule 2 — otherwise a renamed module silently drops a unit from the denominator."""
+    manifest = _loaded(tmp_path, subdivides='"mock-server" = "forze_mock.gone"\n')
+
+    assert any("does not import" in violation for violation in manifest.violations)
+
+
+def test_a_doctrine_row_for_something_that_is_not_a_unit_is_refused(tmp_path: Path) -> None:
+    manifest = _loaded(tmp_path, units='"forze" = { doctrine = "D1" }\n"nope" = { doctrine = "D1" }\n')
+
+    assert any("`nope` carries a doctrine but is not a census unit" in v for v in manifest.violations)
+
+
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        ('"forze" = { doctrine = "D9" }\n', "one of D1, D2, D3, D4"),
+        ('"forze" = { doctrine = "D3" }\n', "carries no rationale"),
+        ('"forze" = { doctrine = "D4", rationale = "later" }\n', "carries no trigger"),
+    ],
+    ids=["unknown-doctrine", "d3-without-rationale", "d4-without-trigger"],
+)
+def test_a_doctrine_must_carry_what_it_promises(tmp_path: Path, row: str, expected: str) -> None:
+    manifest = _loaded(tmp_path, units=row)
+
+    assert any(expected in violation for violation in manifest.violations)
+
+
+def test_a_d2_unit_named_only_in_prose_does_not_count(corpus_root: Path, tmp_path: Path) -> None:
+    """Consumption, not declaration — the condition the corpus was in when this was written.
+
+    D1 and D2 differ in how much surrounding material is expected, never in whether the
+    import is verified. A D2 anchor satisfied by a sentence would be the tolerated-failure
+    list this gate refuses to grow.
+    """
+    _write(corpus_root, "Wire it with `forze_mock.server`, which is a real module.")
+    manifest = _loaded(tmp_path)
+
+    result = check_census(load_corpus(corpus_root), manifest)
+
+    assert not result.ok
+    assert any(
+        "forze_mock.server: D2 requires an import" in violation and "only prose" in violation
+        for violation in result.violations
+    )
+
+
+def test_importing_a_submodule_proves_its_root_but_not_its_siblings(
+    corpus_root: Path, tmp_path: Path
+) -> None:
+    """The asymmetry the whole unit rule rests on.
+
+    A package-keyed census scored `forze_kms` green on `forze_kms.aws` while `gcp` and `yc`
+    had no code anywhere. The root really is demonstrated by a submodule's import; the
+    siblings are not.
+    """
+    _write(corpus_root, "```python\nfrom forze_mock.server import MockApp\n```")
+    manifest = _loaded(
+        tmp_path,
+        units='"forze" = { doctrine = "D2" }\n"forze_mock" = { doctrine = "D2" }\n'
+        '"forze_mock.server" = { doctrine = "D2" }\n',
+    )
+
+    violations = check_census(load_corpus(corpus_root), manifest).violations
+
+    assert any("forze:" in violation for violation in violations), "an unrelated root is not proven"
+    assert not any("forze_mock:" in violation for violation in violations)
+    assert not any("forze_mock.server:" in violation for violation in violations)
 
 
 def test_census_is_keyed_on_wheel_packages() -> None:
     """Extras and packages are not interchangeable; imports are what the corpus claims."""
     assert "forze_postgres" in load_shipped_packages(_REPO / "pyproject.toml")
+
+
+def test_the_shipped_manifest_is_total_over_the_real_inputs() -> None:
+    """The §10-style bundle test: the manifest committed here matches this repository."""
+    pyproject = _REPO / "pyproject.toml"
+    manifest = load_manifest(
+        default_manifest_path(), load_shipped_packages(pyproject), load_extras(pyproject)
+    )
+
+    assert manifest.violations == []
+    assert manifest.proven, "a manifest with nothing to prove would pass vacuously"
 
 
 # ----------------------- #
@@ -738,13 +882,33 @@ def test_cli_fails_when_a_module_could_only_be_skipped(
         "import a_third_party_package_that_is_not_installed\n", encoding="utf-8"
     )
     (tmp_path / "stub-pyproject.toml").write_text(
+        "[project.optional-dependencies]\n\n"
         '[tool.hatch.build.targets.wheel]\npackages = ["src/forze", "src/forze_stub"]\n',
         encoding="utf-8",
     )
+    # A manifest matching that stub world, so this test stays about a skipped import. The
+    # committed manifest describes the real package list and would fail the census here for
+    # reasons that have nothing to do with what is under test.
+    manifest = _manifest(
+        tmp_path,
+        units='"forze" = { doctrine = "D1" }\n"forze_stub" = { doctrine = "D1" }\n',
+        subdivides="",
+        whole="[]",
+    )
     monkeypatch.syspath_prepend(str(tmp_path))
-    _write(corpus_root, "```python\nimport forze_stub\n```")
+    _write(
+        corpus_root,
+        "```python\nimport forze_stub\nfrom forze.base.exceptions import CoreException\n```",
+    )
 
-    stub = ["--corpus", str(corpus_root), "--pyproject", str(tmp_path / "stub-pyproject.toml")]
+    stub = [
+        "--corpus",
+        str(corpus_root),
+        "--pyproject",
+        str(tmp_path / "stub-pyproject.toml"),
+        "--manifest",
+        str(manifest),
+    ]
 
     assert main(stub) == 1
     assert main([*stub, "--allow-skips"]) == 0
