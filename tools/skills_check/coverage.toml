@@ -1,0 +1,158 @@
+# Coverage doctrine for the published skills corpus.
+#
+# Every census unit carries a doctrine, and a unit with none is an error rather than a
+# default. That is the whole mechanism: adding `src/forze_opensearch/` to the wheel
+# targets, or adding a `kms-azure` extra that subdivides a package already covered, fails
+# the build until someone writes down which doctrine it falls under. A new plane must not
+# be able to ship with zero corpus reach *and* zero decision.
+#
+# The doctrines:
+#
+#   D1  Worked example required. A backend an application author chooses at wiring time,
+#       where choosing wrong is expensive and the config surface is not inferable from a
+#       sibling. At least one importable block showing its deps module and its config type.
+#   D2  Import anchor sufficient. Reached identically to an already-covered sibling,
+#       differing only in a config object. A smaller *example*, never a weaker *proof* —
+#       the import must resolve exactly as D1's does.
+#   D3  Out of app-author scope. Skills target engineers building applications on Forze,
+#       not contributors to it. Requires a written rationale.
+#   D4  Deliberately deferred. In scope, not yet worth the words. Requires a rationale
+#       *and* a trigger that would move it into D1 or D2.
+#
+# D4 is empty, and that is the healthier state: nothing in scope is currently being put
+# off. The vocabulary stays defined because the next integration to land will plausibly
+# want it.
+
+# --------------------------------------------------------------------------------------
+# Extras → census units.
+#
+# A census unit is the import root, subdivided wherever an extra draws a boundary inside a
+# package. Extras are this repository's own record of *where an application author makes a
+# choice*: `kms-aws` versus `kms-gcp` is a decision someone makes, which is why they are
+# separate extras, while packages remain the unit an import statement can be checked
+# against. Keying on packages alone scores `forze_kms` green the moment one submodule is
+# imported, hiding two backends that have no code anywhere.
+#
+# Every extra appears in exactly one of the three tables below, and the checker enforces
+# that — an extra in none of them fails the build, which is what makes a newly added extra
+# impossible to ignore. The dash-to-dot convention (`kms-gcp` → `forze_kms.gcp`) is a
+# suggestion when a new extra appears, never the answer: `mock-server` → `forze_mock.server`
+# reads obvious and is still a guess, `observability` and `zstd` correspond to no module at
+# all, and nothing prevents a future `kms-azure-gov` whose dashes do not decompose. So the
+# mapping is written out, and every mapped unit must be importable — a rename in `src/`
+# breaks this file loudly instead of silently dropping a unit from the denominator.
+
+[extras.subdivides]
+"authn" = "forze_identity.authn"
+"oidc" = "forze_identity.oidc"
+"inference-http" = "forze_inference.http"
+"inference-sagemaker" = "forze_inference.sagemaker"
+"kms-aws" = "forze_kms.aws"
+"kms-gcp" = "forze_kms.gcp"
+"kms-yc" = "forze_kms.yc"
+"mock-server" = "forze_mock.server"
+
+# The extra installs a whole package, which is already a unit on its own. Listed rather
+# than derived so that rule 1 has something to check for every extra.
+[extras.whole-package]
+names = [
+  "bigquery",
+  "cli",
+  "clickhouse",
+  "dst",
+  "duckdb",
+  "fastapi",
+  "firestore",
+  "gcs",
+  "http",
+  "inngest",
+  "kafka",
+  "mcp",
+  "meilisearch",
+  "mongo",
+  "neo4j",
+  "postgres",
+  "rabbitmq",
+  "redis",
+  "s3",
+  "socketio",
+  "sqs",
+  "temporal",
+  "vault",
+]
+
+# Ships no package: these pull third-party dependencies into an existing plane.
+[extras.dependency-only]
+names = ["observability", "zstd"]
+
+# --------------------------------------------------------------------------------------
+# Units beyond the derived set.
+#
+# The extras rule sets the floor; it does not cap judgement. `forze_identity.authz` is
+# subdivided by no extra and is a real gap on its own merit — authorization is a decision
+# every application makes — so it is triaged here rather than being allowed to fall through
+# the mechanism.
+
+[extra-units]
+"forze_identity.authz" = "authorization is a choice every application makes, and no extra marks it"
+
+# --------------------------------------------------------------------------------------
+# Doctrine per unit. Total over the derived unit list: every unit appears exactly once.
+#
+# A subdivided package keeps its own row. Subdivision *adds* units rather than replacing
+# the root, because a package can gain an uncovered submodule while its root stays green —
+# which is the failure the subdivision rule exists to catch, and would be reintroduced by
+# dropping the root.
+
+[units]
+
+# Core and always-installed planes. D1 by observation: each already meets D1's floor, which
+# is what being reached by a gate-resolved import means. Recorded rather than inferred — a
+# unit is D1 because someone decided it must be demonstrable, and *separately* it is
+# currently passing. Inferring "covered, so no doctrine needed" would let a unit that
+# silently loses its last import slip from covered to untriaged without anything failing.
+"forze" = { doctrine = "D1" }
+"forze_kits" = { doctrine = "D1" }
+"forze_mock" = { doctrine = "D1" }
+"forze_identity" = { doctrine = "D1" }
+"forze_inference" = { doctrine = "D1" }
+"forze_kms" = { doctrine = "D1" }
+
+# Integrations already reached by an executable import.
+"forze_bigquery" = { doctrine = "D1" }
+"forze_clickhouse" = { doctrine = "D1" }
+"forze_dst" = { doctrine = "D1" }
+"forze_fastapi" = { doctrine = "D1" }
+"forze_gcs" = { doctrine = "D1" }
+"forze_http" = { doctrine = "D1" }
+"forze_inngest" = { doctrine = "D1" }
+"forze_postgres" = { doctrine = "D1" }
+"forze_rabbitmq" = { doctrine = "D1" }
+"forze_redis" = { doctrine = "D1" }
+"forze_s3" = { doctrine = "D1" }
+"forze_sqs" = { doctrine = "D1" }
+"forze_temporal" = { doctrine = "D1" }
+"forze_vault" = { doctrine = "D1" }
+
+# The gap tranche.
+"forze_mongo" = { doctrine = "D1" }
+"forze_meilisearch" = { doctrine = "D1" }
+"forze_firestore" = { doctrine = "D1" }
+"forze_neo4j" = { doctrine = "D1" }
+"forze_socketio" = { doctrine = "D1" }
+"forze_kafka" = { doctrine = "D1" }
+"forze_mcp" = { doctrine = "D1" }
+"forze_duckdb" = { doctrine = "D2" }
+
+# Sub-units the extras rule makes visible.
+"forze_identity.authn" = { doctrine = "D1" }
+"forze_identity.oidc" = { doctrine = "D1" }
+"forze_identity.authz" = { doctrine = "D1" }
+"forze_inference.http" = { doctrine = "D1" }
+"forze_inference.sagemaker" = { doctrine = "D1" }
+"forze_kms.aws" = { doctrine = "D1" }
+"forze_kms.gcp" = { doctrine = "D2" }
+"forze_kms.yc" = { doctrine = "D2" }
+"forze_mock.server" = { doctrine = "D2" }
+
+"forze_cli" = { doctrine = "D3", rationale = "Maintainer tooling. Skills target engineers building applications on Forze; nothing here is reached from an application." }

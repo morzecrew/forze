@@ -39,6 +39,39 @@ pg_module = PostgresDepsModule(
 )
 ```
 
+The same spec routes to Mongo or Firestore by swapping the deps module — the spec above does not change, which is the whole point of it naming nothing physical. Relations are `(database, collection)` pairs rather than `(schema, table)`:
+
+```python
+from forze_firestore import (
+    FirestoreDepsModule,
+    FirestoreDocumentConfig,
+    FirestoreReadOnlyDocumentConfig,
+)
+from forze_mongo import MongoDepsModule, MongoDocumentConfig
+
+mongo_module = MongoDepsModule(
+    client=mongo_client,
+    rw_documents={
+        ResourceName.PROJECTS: MongoDocumentConfig(
+            read=("app", "projects"),
+            write=("app", "projects"),
+            history=("app", "projects_history"),
+        ),
+    },
+    tx={TxRoute.DEFAULT},
+)
+
+firestore_module = FirestoreDepsModule(
+    client=firestore_client,
+    # Firestore splits the two directions: a read-only route is its own config type rather
+    # than a flag, so a spec wired read-only cannot acquire a write port by accident.
+    rw_documents={ResourceName.PROJECTS: FirestoreDocumentConfig(read="projects", write="projects")},
+    ro_documents={ResourceName.AUDIT: FirestoreReadOnlyDocumentConfig(read="audit_events")},
+)
+```
+
+Two differences that are not inferable from the Postgres example. Firestore splits read-only from read-write at the **type** level, so a read-only route cannot acquire a write port by wiring alone. And Mongo sorts nulls smallest natively: a sort that asks for the other placement is **refused** with `query_feature_unsupported` unless you set `computed_null_ordering=True`, which sorts through an aggregation pipeline instead — a computed key no index can serve, so Mongo sorts in memory. The same spec and the same query DSL, one backend answering and the other refusing.
+
 ## Redis cache, counters, locks, and idempotency
 
 `CacheSpec(name=ResourceName.PROJECTS, ...)` must match the key in `RedisDepsModule.caches`. Use the same naming style for counters, distributed locks, idempotency routes, and search result snapshots:

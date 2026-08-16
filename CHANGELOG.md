@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **Every backend the published skill described now has code you can run.** Mongo, Firestore, Meilisearch, Neo4j, Socket.IO, Kafka, MCP, SageMaker, DuckDB, GCP and Yandex KMS, authz and the mock server were named in prose and imported nowhere; each now carries a wiring block the corpus gate resolves against the installed packages.
 
 ### Changed
 

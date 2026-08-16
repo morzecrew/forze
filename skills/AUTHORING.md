@@ -94,6 +94,15 @@ forze-wiring
 
 Earlier retirements, merged before the consolidation: `forze-storage-s3` / `forze-storage-gcs` → `forze-object-storage`; `forze-analytics-bigquery` / `forze-analytics-clickhouse` → `forze-analytics`; `forze-deps-modules` (never published).
 
+## Coverage doctrine
+
+Every shipped package, and every boundary an extra draws inside one, is a **census unit** carrying a doctrine. The doctrines and what each requires are defined once, in [`tools/skills_check/coverage.toml`](../tools/skills_check/coverage.toml), which is also the file the checker reads — restating them here would create a second copy to keep in step.
+
+What that means when you are writing:
+
+- **A unit with no doctrine fails the build.** Adding `src/forze_opensearch/` to the wheel targets, or a `kms-azure` extra subdividing a package already covered, is a decision someone writes down rather than a gap nobody notices.
+- **Naming a symbol in prose, in a table, or in a frontmatter description counts for nothing.** The census scores consumption, so coverage means a code block the import gate resolves — a corpus can describe a backend in detail while no gate can see a single one of its claims, which is the condition this check was built to end.
+
 ## Adding or changing content
 
 1. Edit the reference file that owns the job, or amend RFC 0041 §6 to add one.

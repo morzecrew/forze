@@ -88,6 +88,30 @@ module = HttpInferenceDepsModule(
 steps = [inference_http_lifecycle_step("http://mlserver:8080")]
 ```
 
+SageMaker is not the HTTP backend with a different URL. The endpoint is named rather than addressed, and the route must **acknowledge in wiring that it sends feature values in plaintext to an external endpoint** — a fail-closed flag with no counterpart on any other backend:
+
+```python
+from forze_inference.sagemaker import (
+    SageMakerInferenceConfig,
+    SageMakerInferenceDepsModule,
+    SageMakerRuntimeClient,
+    sagemaker_inference_lifecycle_step,
+)
+
+module = SageMakerInferenceDepsModule(
+    client=SageMakerRuntimeClient(),
+    models={
+        "fraud_scorer": SageMakerInferenceConfig(
+            endpoint_name="fraud-scorer-prod",
+            acknowledge_data_egress=True,   # must be True; the route refuses to wire otherwise
+            max_batch_size=100,             # the endpoint's own cap: predict_many refuses an
+                                            # oversized batch whole, predict_stream sub-batches
+        ),
+    },
+)
+steps = [sagemaker_inference_lifecycle_step(region_name="eu-central-1")]
+```
+
 Local models take a **callable, not an artifact format** — you supply a loader
 returning an object with a sync `predict_batch`, and the framework schedules it off
 the event loop under the CPU-offload seam. The framework never deserializes

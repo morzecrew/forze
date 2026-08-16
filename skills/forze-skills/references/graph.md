@@ -88,7 +88,29 @@ For bounded-memory reads over a whole kind — an export, a reindex, a migration
 
 ## Adapter guidance
 
-Prefer `forze_neo4j` when Neo4j fits: `Neo4jDepsModule(client=..., graphs={...}, tx={...})` registers query/command (plus raw-query and management) ports per graph module, supports keyed-edge `ensure_edge` identity (`identity="key"` with `key_field`) and native/weighted `k_shortest_paths`, and offers tenant isolation tiers (tagged property, per-tenant database, routed client). For custom adapters, keep Cypher, AQL, and engine-specific query strings inside the adapter and register providers as routed deps under `GraphQueryDepKey` and `GraphCommandDepKey`, keyed by `GraphModuleSpec.name`.
+Prefer `forze_neo4j` when Neo4j fits:
+
+```python
+from forze_neo4j import Neo4jClient, Neo4jDepsModule, Neo4jGraphConfig, neo4j_lifecycle_step
+
+graph_module = Neo4jDepsModule(
+    client=Neo4jClient(),
+    graphs={
+        GraphModule.SOCIAL: Neo4jGraphConfig(
+            tenant_aware=True,
+            # Every hop is checked, not just the anchor. `anchor` verifies the starting
+            # vertex and lets a traversal leave the tenant through an edge; the default
+            # refuses that, which is why it is the default.
+            traversal_isolation="full-path",
+            allow_raw_query=False,
+        ),
+    },
+    tx={TxRoute.DEFAULT},
+)
+lifecycle = neo4j_lifecycle_step(uri="neo4j://localhost:7687", auth=("neo4j", secret))
+```
+
+`Neo4jDepsModule(client=..., graphs={...}, tx={...})` registers query/command (plus raw-query and management) ports per graph module, supports keyed-edge `ensure_edge` identity (`identity="key"` with `key_field`) and native/weighted `k_shortest_paths`, and offers tenant isolation tiers (tagged property, per-tenant database, routed client). For custom adapters, keep Cypher, AQL, and engine-specific query strings inside the adapter and register providers as routed deps under `GraphQueryDepKey` and `GraphCommandDepKey`, keyed by `GraphModuleSpec.name`.
 
 ## Anti-patterns
 

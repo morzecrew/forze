@@ -13,6 +13,23 @@ connect, and take the same cumulative ack. Pick by client, not by feature:
 | SSE (`attach_realtime_sse_route`) | `text/event-stream` + `POST …/ack` | a browser only needs server push over plain HTTP |
 | Raw WebSocket (`attach_realtime_ws_route`) | JSON text frames, duplex | the client also sends governed commands, or cannot run Socket.IO |
 
+The SSE and WebSocket routes live in `forze_fastapi.realtime` and attach to your app. Socket.IO is a **server of its own**, mounted beside FastAPI rather than routed by it, which is why its wiring looks different from the other two:
+
+```python
+from forze_socketio import (
+    build_socketio_asgi_app,
+    build_socketio_server,
+    realtime_gateway_lifecycle_step,
+)
+
+sio = build_socketio_server(redis_url=REDIS_URL)   # omit redis_url for a single process
+asgi = build_socketio_asgi_app(sio)                # mount alongside the FastAPI app
+
+steps = [realtime_gateway_lifecycle_step(gateway, max_consecutive_crashes=5)]
+```
+
+`redis_url` is the multi-process switch: without it a Socket.IO room exists only inside one worker, so a second replica silently delivers to half your clients.
+
 ```python
 from forze_fastapi.realtime import (
     RealtimeSseHub,

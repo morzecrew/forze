@@ -78,6 +78,30 @@ lifecycle = LifecyclePlan.from_steps(
 
 ClickHouse keyset cursors need `cursor_column` on the query config plus a matching `{forze_after:Type}` placeholder in the SQL; `run_cursor` then pages by that key (you round-trip the opaque cursor token each call). Omit them and `run_cursor` falls back to offset-style cursors — unstable for large or changing result sets. `dry_run` skips execution.
 
+### DuckDB (in-process, no `dataset`/`database`)
+
+Same plane, same `AnalyticsSpec`, no server. The config is the smaller one — there is no warehouse namespace to name — and the lifecycle step is where a DuckDB deployment actually differs, because that is where extensions, object-store credentials and attached sources are declared:
+
+```python
+from forze_duckdb import (
+    DuckDbAnalyticsConfig,
+    DuckDbClient,
+    DuckDbDepsModule,
+    DuckDbQueryConfig,
+    duckdb_lifecycle_step,
+)
+
+module = DuckDbDepsModule(
+    client=DuckDbClient(),
+    analytics={
+        "events": DuckDbAnalyticsConfig(
+            queries={"daily": DuckDbQueryConfig(sql="SELECT day, count(*) AS n FROM events GROUP BY day")},
+        ),
+    },
+)
+lifecycle = duckdb_lifecycle_step(database=":memory:", sources={"events": "s3://bucket/events/*.parquet"})
+```
+
 ## Consuming analytics
 
 Open a runtime scope, resolve the query/ingest port, and call by query key (`DailyParams` is your query-params model and `EventRow` your ingest-row model — the same ones the `AnalyticsSpec` references):

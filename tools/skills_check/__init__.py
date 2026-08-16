@@ -28,10 +28,12 @@ from .checks import (
     check_imports,
     check_structure,
     check_syntax,
+    load_extras,
     load_shipped_packages,
 )
 from .corpus import CodeBlock, Corpus, Document, Link, load_corpus
 from .links import LinkOutcome, LinkPolicy, check_liveness, collect_published_urls
+from .manifest import Manifest, Unit, default_manifest_path, load_manifest
 
 __all__ = [
     "CodeBlock",
@@ -40,13 +42,18 @@ __all__ = [
     "Link",
     "LinkOutcome",
     "LinkPolicy",
+    "Manifest",
     "Result",
+    "Unit",
     "check_census",
     "check_imports",
     "check_liveness",
     "check_structure",
     "check_syntax",
     "collect_published_urls",
+    "default_manifest_path",
     "load_corpus",
+    "load_extras",
+    "load_manifest",
     "load_shipped_packages",
 ]
