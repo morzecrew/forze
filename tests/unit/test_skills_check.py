@@ -737,3 +737,98 @@ def test_cli_refuses_a_liveness_sweep_with_nothing_to_sweep(tmp_path: Path) -> N
     )
 
     assert _run(root, "--links") == 1
+
+
+# ----------------------- #
+# The consolidated shape (RFC 0041) — the post-conditions the split has to hold.
+
+
+def test_a_nested_skill_file_is_still_loaded(corpus_root: Path) -> None:
+    """Excluded by identity, not by filename.
+
+    A file called `SKILL.md` under `references/` matches no skill glob and, if the loader
+    skipped it by name, no reference either — unchecked content that an installer copying
+    recursively still ships.
+    """
+    nested = corpus_root / SKILL_DIR / "references" / "SKILL.md"
+    nested.write_text("# Sneaky\n\n```python\ndef broken(:\n```\n", encoding="utf-8")
+
+    corpus = load_corpus(corpus_root)
+
+    assert nested in {doc.path for doc in corpus.documents}
+    assert any("does not parse" in v for v in check_syntax(corpus).violations)
+
+
+def test_more_than_one_published_skill_is_reported(corpus_root: Path) -> None:
+    """§7's post-condition: an installer cannot prune what it is not overwriting."""
+    (corpus_root / "forze-leftover").mkdir()
+    (corpus_root / "forze-leftover" / "SKILL.md").write_text(
+        _skill(name="forze-leftover"), encoding="utf-8"
+    )
+
+    violations = _violations(corpus_root, "structure")
+
+    assert any("expected exactly one published skill" in v for v in violations)
+
+
+def test_an_index_with_no_references_is_reported(corpus_root: Path) -> None:
+    (corpus_root / SKILL_DIR / "references" / "demo.md").unlink()
+    _write_index(corpus_root, routes=())
+
+    violations = _violations(corpus_root, "structure")
+
+    assert any("none were found" in v for v in violations)
+
+
+# ----------------------- #
+# RFC 0041 §10 — the real corpus, not a synthetic one.
+
+_REFERENCES = _REPO / "skills" / "forze-skills" / "references"
+_INDEX = _REPO / "skills" / "forze-skills" / "SKILL.md"
+
+_BUNDLES = [
+    ("architecture", "spec-naming-and-routes", "deps-resolution", "runtime-lifecycle"),
+    (
+        "aggregate-models",
+        "document-spec",
+        "aggregate-kit",
+        "spec-to-backend-config",
+        "testing-with-mock",
+    ),
+    ("execution-context", "handlers", "query-dsl"),
+    ("fastapi-setup", "fastapi-generated-routes", "fastapi-identity"),
+    ("field-encryption", "kms-backends", "spec-to-backend-config"),
+    ("dst-simulation", "dst-invariants", "testing-with-mock"),
+]
+
+
+@pytest.mark.parametrize("bundle", _BUNDLES, ids=[b[0] for b in _BUNDLES])
+def test_every_routing_bundle_is_reachable(bundle: tuple[str, ...]) -> None:
+    """A bundle naming a reference that does not exist is a dead end for a cold reader.
+
+    This is the mechanical floor under §10's behavioural criterion, not the criterion
+    itself: it proves the row *can* be followed, not that an agent follows all of it.
+    """
+    index = _INDEX.read_text(encoding="utf-8")
+
+    for stem in bundle:
+        assert (_REFERENCES / f"{stem}.md").is_file(), f"{stem} is routed to but absent"
+        assert f"references/{stem}.md" in index, f"{stem} is bundled but not in the index"
+
+
+def test_the_index_states_the_read_more_than_one_norm() -> None:
+    """§5's compensation for losing the harness's own description matcher."""
+    index = _INDEX.read_text(encoding="utf-8").lower()
+
+    assert "reading one" in index or "read the bundle" in index
+
+
+def test_no_reference_exceeds_the_ceiling() -> None:
+    """Over 250 lines means it is two jobs — the defect the split existed to fix."""
+    oversized = {
+        path.stem: len(path.read_text(encoding="utf-8").split("\n"))
+        for path in _REFERENCES.glob("*.md")
+        if len(path.read_text(encoding="utf-8").split("\n")) > 250
+    }
+
+    assert oversized == {}

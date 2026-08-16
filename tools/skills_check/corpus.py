@@ -174,10 +174,15 @@ def load_corpus(root: Path) -> Corpus:
     """
     skills = tuple(parse_document(path) for path in sorted(root.glob(f"*/{SKILL_FILENAME}")))
     companions = tuple(parse_document(path) for path in sorted(root.glob("*.md")) if path.is_file())
+    # Excluded by *identity*, not by filename. Skipping every file called `SKILL.md` would
+    # leave one nested at `references/SKILL.md` in neither bucket — matched by no glob,
+    # loaded by no branch, and shipped by an installer that copies recursively. Unchecked
+    # published content is the one thing this loader must not be able to produce.
+    indexes = {doc.path for doc in skills}
     references = tuple(
         parse_document(path)
         for path in sorted(root.rglob("*.md"))
-        if path.name != SKILL_FILENAME and path.parent != root
+        if path.parent != root and path not in indexes
     )
 
     return Corpus(root=root, skills=skills, references=references, companions=companions)
