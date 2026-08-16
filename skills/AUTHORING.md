@@ -27,18 +27,20 @@ Framework contributors should use [`AGENTS.md`](../AGENTS.md), [canonical docs](
 
 - **Published docs:** `https://morzecrew.github.io/forze/latest/...` (see [`pages/zensical.toml`](../pages/zensical.toml) `site_url`). Docs are **versioned** with mike — the bare `.../forze/<page>/` form (no version segment) **404s**; always include the `latest` alias segment and a trailing slash, e.g. `.../forze/latest/integrations/inngest/`. Each skill's **Reference** section must open with the one-line note telling readers to swap `latest` for their pinned `forze` minor (or use the site version selector).
 - **Cross-skill:** relative paths only, e.g. [`forze-wiring`](forze-wiring/SKILL.md).
-- **Never** link to `../../src/`, `../../tests/`, or `../../pages/` — installed skills are copied outside the Forze repo and those paths break.
+- **Never** link anywhere outside `skills/` — not `../../src/`, `../../tests/`, `../../pages/` or `../../examples/`. Installed skills are copied outside the Forze repo, so every such path breaks there. Naming a repo path in prose is fine when it is qualified as such ("in the Forze repo"); making it a link is not.
 
 ## Skill structure
 
 Each `SKILL.md` should include:
 
-1. YAML frontmatter: `name`, `description` (when the agent should load it — app-focused).
+1. YAML frontmatter: `name` (matching the directory), `description` (when the agent should load it — app-focused).
 2. Body: patterns, minimal examples, gotchas.
 3. **Anti-patterns** — only mistakes an **app team** can make (not monorepo package boundaries).
-4. **Reference** — at least one published doc URL plus sibling skills when relevant.
+4. **Reference** — the versioned-docs note, then at least one published doc URL plus sibling skills when relevant.
 
 Optional **Gotchas** section for migration notes and debugging.
+
+`just skills-check` enforces every item above except the prose. A python example that is deliberately not a whole module — and therefore cannot be parsed — is marked at its fence as ` ```python fragment `; the check fails a marked block that parses fine, so the marker cannot be used to opt a block out.
 
 ## Anti-patterns policy
 
@@ -65,4 +67,6 @@ Do not re-create these — they were merged and removed (breaking change):
 1. Add `skills/<name>/SKILL.md` with app-scoped `description`.
 2. Link integration topics to an existing page under `pages/docs/` (add a doc page if missing).
 3. Update the [`skills/README.md`](README.md) table (the root [`README.md`](../README.md) Agent Skills section only links here).
-4. Grep: `rg '../../(pages|src|tests)' skills/` should return nothing in `SKILL.md` files.
+4. Run `just skills-check`. It parses every python block, resolves every `forze*` symbol against the installed packages, and checks structure, index parity and link integrity — including the escape rule above, which used to be a grep a maintainer was asked to remember.
+
+Published doc URLs are swept for liveness on a schedule rather than per change, because they break for reasons a given edit does not control (a page renamed in `pages/`, a mike alias moved).

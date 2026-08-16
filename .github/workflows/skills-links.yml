@@ -1,0 +1,64 @@
+# Published-link liveness for the skills corpus.
+#
+# Every other corpus gate runs in `just quality` on the pull request that could break it.
+# This one cannot: the URLs point at the deployed docs site, which moves for reasons no
+# single change controls — a page renamed in `pages/`, a mike alias re-pointed, a deploy
+# half-finished. Gating a merge on that makes an unrelated author responsible for a
+# failure they cannot fix, and the fix for *that* is always to stop believing the check.
+#
+# So it runs here, on a schedule, and simply fails. A red scheduled run is already a
+# queue; auto-filing an issue would add a second thing to close for every transient
+# network failure. Revisit if the corpus ever has more than one maintainer, where a red
+# job nobody owns goes unnoticed and an issue does not.
+name: Skills links
+
+on:
+  schedule:
+    # 05:00 UTC — after the nightly DST matrix at 04:00, so a slow sweep and a slow
+    # simulation never contend for the same runner minutes.
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: skills-links-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Sweep published doc links
+    runs-on: ubuntu-latest
+    # A green sweep takes well under a minute. The sweep bounds its own duration with a
+    # 900s budget and reports every URL it did not reach, so this limit is a backstop for
+    # the job around it — checkout, `just`, the runner — and never the thing that decides
+    # how much of the corpus got checked. It must stay comfortably above that budget: set
+    # below it, the runner kills the sweep before it can report, which is the failure mode
+    # this number used to have.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout code # zizmor: ignore[artipacked] no workspace/.git is uploaded as an artifact
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+
+      # No uv and no dependency install: this mode reads Markdown and speaks HTTP through
+      # the standard library alone. The sweep therefore cannot fail for want of an extra,
+      # and this is the same line `just skills-links` runs on a laptop.
+      #
+      # `tee` so the run page and the log carry the same bytes; `pipefail` because the
+      # exit code that matters is the sweep's, not tee's.
+      - name: Sweep the links
+        run: |
+          set -o pipefail
+          just skills-links | tee -a "${GITHUB_STEP_SUMMARY}"

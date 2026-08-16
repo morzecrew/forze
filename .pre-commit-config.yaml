@@ -35,6 +35,11 @@ repos:
     name: Run quality checks
     entry: just quality
     pass_filenames: false
+    # `just quality` gates the whole repository, not the staged files, so it must not be
+    # selected by them. Without this it inherits the top-level `exclude` above and a
+    # skills-only commit runs no hooks at all — which is precisely the commit the corpus
+    # gate inside `just quality` exists to catch.
+    always_run: true
     language: system
     stages: [pre-commit]
     args: [-s]
