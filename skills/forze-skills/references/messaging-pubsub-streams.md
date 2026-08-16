@@ -1,5 +1,7 @@
 # Pub/sub and streams
 
+Pub/sub and stream contracts, the consumer-group disciplines that differ per backend, and how processing and shutdown interact. Point-to-point queues are [queues](messaging-queues.md).
+
 ## Pub/sub contracts
 
 Use pub/sub for broadcast-style events where subscribers receive messages by topic.

@@ -1,5 +1,7 @@
 # Temporal workflows
 
+Durable workflows on Temporal: `DurableWorkflowSpec`, the client and worker lifecycle, schedules, and keeping SDK types out of handlers. Pick this **or** [Inngest](inngest.md) per use case.
+
 ## Workflow spec
 
 ```python

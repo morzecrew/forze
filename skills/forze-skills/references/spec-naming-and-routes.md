@@ -1,5 +1,7 @@
 # Spec naming and routes
 
+The `StrEnum` that names every resource once and routes deps to it, and the transaction routes that ride alongside. Nearly every wiring bug in this corpus is a mismatch between a name here and a key in a deps module.
+
 ## Prefer `StrEnum` names
 
 Use a shared `StrEnum` for spec names and dependency routes. `BaseSpec.name` and built-in deps modules accept `str | StrEnum`, so enum values keep application specs, deps-module maps, and transaction routes aligned during refactors.

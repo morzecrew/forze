@@ -1,5 +1,7 @@
 # Object storage
 
+Blobs through a `StorageSpec`: S3 and GCS wiring, tenant-aware buckets, presigned and multipart uploads, and the mock. Object semantics only — never transactional state.
+
 ## Spec and deps route
 
 `StorageSpec.name` is the logical route — prefer a shared `StrEnum` and register the **same** route under the backend module's `storages` map. The spec carries no bucket name; the deps config does.

@@ -1,5 +1,7 @@
 # Errors
 
+The exception model: `CoreException` and its kinds, mapping an adapter's provider exceptions onto it, and what a FastAPI client finally sees. Logging and metrics are [logging and metrics](logging-metrics.md).
+
 ## Error model
 
 Raise expected domain/application failures as `CoreException`, built through the `exc` factory. Each kind maps to an HTTP status in the FastAPI integration.

@@ -1,5 +1,7 @@
 # Tenancy
 
+Binding a tenant at the boundary and routing infrastructure per tenant: isolation tiers and the floor that fails wiring closed below them, the admin plane, and provisioning a new tenant's resources.
+
 ## Tenancy and routed clients
 
 `TenantIdentity` is the current tenant. Tenant-aware adapters derive routing from `ExecutionContext`, not from user DTO fields. Routed Postgres, Mongo, Redis, S3, RabbitMQ, SQS, Temporal, BigQuery, ClickHouse, Meilisearch, GCS, Firestore, and Inngest clients can choose per-tenant infrastructure at call time.

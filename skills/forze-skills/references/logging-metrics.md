@@ -1,5 +1,7 @@
 # Logging and metrics
 
+Structured logging bound to the call context, and the operation and resilience metrics a frozen registry emits. The exception model itself is [errors](errors.md).
+
 ## Logging
 
 Configure logging once at application startup — `bootstrap_logging` wires the framework loggers, named integration loggers, third-party stdlib loggers, and the uncaught-exception hook in one call:

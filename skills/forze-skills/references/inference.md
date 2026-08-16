@@ -1,5 +1,7 @@
 # Inference
 
+Invoking a model through an `InferenceSpec` — the spec names a task, wiring names the artifact. Covers local, HTTP and SageMaker backends, capability refusals, and the mock registry.
+
 ## Declare the task, not the artifact
 
 ```python

@@ -1,5 +1,7 @@
 # FastAPI identity
 
+Binding identity at the HTTP boundary — the middleware, cookie mode for browser clients, and which principals a route accepts. The plane behind it is [authentication](authn.md).
+
 ## FastAPI identity
 
 `SecurityContextMiddleware` binds `InvocationMetadata`, `AuthnIdentity`, and `TenantIdentity` at the boundary from an `AuthnRequirement` — a tuple of ingress methods — plus a `when_multiple_credentials` policy. Use `HeaderTokenAuthn` for `Authorization`-style bearer headers, `HeaderApiKeyAuthn` for API-key headers, and `CookieTokenAuthn` for cookie-held tokens; each ingress dispatches through an `AuthnSpec`. Wire only the sources you actually accept.

@@ -1,5 +1,7 @@
 # Document and search specs
 
+The logical `DocumentSpec` and `SearchSpec` that name a resource without naming a table, plus schema alignment and the DTOs composition needs. Physical backends are mapped in [spec to backend config](spec-to-backend-config.md).
+
 ## DocumentSpec (logical)
 
 `DocumentSpec` binds **model types** and logical `name`. It does **not** embed SQL `source` strings or Mongo collection names — those live on `PostgresDocumentConfig`, `MongoDocumentConfig`, etc., keyed by the same `name`.

@@ -1,5 +1,7 @@
 # Field encryption
 
+Sealing fields at rest with `FieldEncryption` — what gets encrypted, what that costs you at query time, and how to close the plaintext tolerance once a backfill is done. Choosing and rotating the key is [KMS backends](kms-backends.md).
+
 ## Wiring the keyring
 
 `CryptoDepsModule` composes the whole crypto stack from a key backend and a directory that maps a tenant to its KEK reference. Merge it into `DepsRegistry.from_modules` like any other module; integrations that opt into encryption resolve the keyring from it — never construct one by hand.

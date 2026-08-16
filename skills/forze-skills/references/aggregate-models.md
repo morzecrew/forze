@@ -1,5 +1,7 @@
 # Aggregate models
 
+The four models every document aggregate declares, the base fields it inherits, the mixins worth knowing, and where update validation belongs. Pure domain: nothing here imports a port or an adapter. The logical specs that name them live in [document and search specs](document-spec.md).
+
 ## Document aggregate structure
 
 Every document aggregate typically defines four model types:

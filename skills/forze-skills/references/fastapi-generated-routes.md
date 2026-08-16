@@ -1,5 +1,7 @@
 # FastAPI routes
 
+Generating routes from a frozen registry with `attach_*_routes`, writing your own beside them, the deadline and readiness headers they emit, and projecting the same registry to agents over MCP. Application setup comes first: [FastAPI setup](fastapi-setup.md).
+
 ## Generated routes
 
 `forze_fastapi.routes` projects a frozen operation registry (built with

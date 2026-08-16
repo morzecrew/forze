@@ -1,5 +1,7 @@
 # AggregateKit
 
+One `AggregateKit` declaration composes a governed vertical slice — CRUD, soft delete, search sync, cross-record invariants and transactional notifications — from models and a spec you already have. Declare those first ([aggregate models](aggregate-models.md), [document and search specs](document-spec.md)); reach for [operation composition](operation-composition.md) only when you need something the kit does not cover.
+
 ## Governed aggregates: AggregateKit
 
 For the governed-aggregate case — CRUD plus soft delete, search sync, cross-record invariants, and/or a transactional outbox — **lead with `AggregateKit`** instead of hand-assembling the registries below. One typed declaration composes the wiring (you still write the four models and the `DocumentSpec`; see [document and search specs](document-spec.md)):

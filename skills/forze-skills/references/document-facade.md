@@ -1,5 +1,7 @@
 # Document access
 
+Reading and writing documents from application code — the facade for standard CRUD, the raw ports for everything else, and cache-aware reads. Building the filter itself is [query DSL](query-dsl.md).
+
 ## Document access with `DocumentFacade`
 
 In ordinary application code (routes, services, scripts) drive documents through a **typed `DocumentFacade`**, not raw ports. Build a frozen registry from the spec and your boundary DTOs once, then construct a facade per execution context:

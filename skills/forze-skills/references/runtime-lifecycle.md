@@ -1,5 +1,7 @@
 # Runtime and lifecycle
 
+Assembling the runtime: deps modules, lifecycle steps that start and stop real connections, and the spec inventory that declares what exists. The entry point for a new service, after [architecture](architecture.md).
+
 ## Runtime setup
 
 Logical **specs** (`DocumentSpec`, `SearchSpec`, `CacheSpec`, …) declare model types and `name` only—no DSNs, table names, collection paths, or index DDL. **Deps modules** (`PostgresDepsModule`, `MongoDepsModule`, `RedisDepsModule`, …) map that same `name` to physical configs (read/write relations, Redis namespaces, `PostgresSearchConfig`, …). **`DepsRegistry.from_modules(...)`** merges those modules so `ExecutionContext` resolves factories by route `spec.name` (for example `DocumentQueryDepKey` / `DocumentCommandDepKey`). See [Specs and wiring](https://morzecrew.github.io/forze/latest/writing-operation/wiring/).

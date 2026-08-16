@@ -1,5 +1,7 @@
 # Search
 
+Full-text and faceted search through a `SearchFacade`, federated and hub indexes, and rebuilding an index without downtime. Structured filtering is [query DSL](query-dsl.md).
+
 ## Search with `SearchFacade`
 
 Drive search through a **`SearchFacade`** built from a `SearchSpec`, the same way:

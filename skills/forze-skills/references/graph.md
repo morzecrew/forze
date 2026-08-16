@@ -1,5 +1,7 @@
 # Graph
 
+Node and edge specs, the traversal ports they resolve, and wiring Neo4j or a custom engine. Graph traversal is its own plane: the document query DSL does not reach it.
+
 ## Module, node, and edge specs
 
 Use a `GraphModuleSpec` for a bounded graph area. Node and edge kind names are logical names and should come from shared enums.

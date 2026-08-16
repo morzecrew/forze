@@ -1,5 +1,7 @@
 # Spec to backend config
 
+Mapping a logical spec name onto a real backend — Postgres and Mongo relations, Redis caches, counters and locks, and storage, queue and workflow routes. The specs themselves stay logical: [document and search specs](document-spec.md).
+
 ## DocumentSpec vs Postgres / Mongo
 
 `DocumentSpec` has **no** SQL table or Mongo collection fields. Supply tuples like `("schema", "table")` or `(database, collection)` in `PostgresDocumentConfig` / `MongoDocumentConfig` under the aggregate’s `name`:

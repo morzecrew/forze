@@ -1,5 +1,7 @@
 # Dependency resolution
 
+How a handler gets a port: plain versus routed deps, why `route=spec.name` matters, and how to read a merge conflict between modules. The wiring that registers them is [runtime and lifecycle](runtime-lifecycle.md).
+
 ## Plain vs routed
 
 `Deps` registers providers in two shapes:

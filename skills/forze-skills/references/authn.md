@@ -1,5 +1,7 @@
 # Authentication
 
+Authenticating a request at the boundary and turning a credential into a principal: the verify-then-resolve pipeline, the dep keys it uses, how to wire it, and the authorization decision that follows. Binding it to FastAPI is [FastAPI identity](fastapi-identity.md); an external issuer is [OIDC](oidc.md).
+
 ## Boundary binding
 
 `ExecutionContext` stores call, authn, and tenancy state in context variables. Bind them in HTTP middleware, Socket.IO adapters, queue workers, or Temporal interceptors.

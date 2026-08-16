@@ -1,5 +1,7 @@
 # Realtime transports
 
+Socket.IO, SSE and WebSocket behind one wire protocol, plus the offline mailbox and per-device cursors that make delivery survive a disconnect. What gets published is [realtime catalog](realtime-catalog.md).
+
 ## Three transports, one protocol
 
 All three deliver the same `{id, data}` envelope, negotiate the protocol version at

@@ -1,5 +1,7 @@
 # Inngest durable functions
 
+Durable functions on Inngest: event and function specs, registration, steps, serving over FastAPI, and the self-hosted Postgres runner. Pick this **or** [Temporal](temporal.md) per use case, never both for the same work.
+
 ## Event spec
 
 ```python

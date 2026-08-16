@@ -1,5 +1,7 @@
 # Shutdown and fleet posture
 
+Bringing a service to rest: closing the admission gate, draining the planes, what `settled` and `attested` actually promise, and running the same app as N replicas. Per-call resilience is [resilience](resilience.md).
+
 ## Graceful shutdown & readiness
 
 `runtime.shutdown()` (and `runtime_lifespan` / `scope()` exit) drains before teardown: new top-level invocations fail with retryable `throttled` (`code="draining"`, 429), in-flight operations get `drain_timeout` (default 10s, a `build_runtime` kwarg) to finish. Expose readiness so the load balancer stops routing first:

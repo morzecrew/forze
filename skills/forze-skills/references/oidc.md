@@ -1,5 +1,7 @@
 # External IdPs (OIDC)
 
+Delegating authentication to an external issuer: token verifiers, claim mapping, and resolving an external subject to an internal principal. The pipeline it plugs into is [authentication](authn.md).
+
 ## External IdPs (forze_identity.oidc)
 
 `forze_identity.oidc` (extra `forze[oidc]`) provides `OidcTokenVerifier`, `JwksKeyProvider`, `StaticKeyProvider`, and `OidcClaimMapper`. Wrap the verifier in a routed factory and register it under `TokenVerifierDepKey` for the relevant routes; pair with `MappingTableResolver` (production SSO) or `DeterministicUuidResolver` (stateless prototyping).

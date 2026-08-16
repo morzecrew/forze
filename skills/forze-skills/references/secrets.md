@@ -1,5 +1,7 @@
 # Secrets
 
+Resolving configuration from a secret store rather than the environment, and the backends that back it.
+
 ## Secrets
 
 `SecretsDepKey` registers a `SecretsPort`. `SecretRef` is a logical path, and `resolve_structured()` validates JSON secrets into Pydantic models.

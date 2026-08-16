@@ -1,5 +1,7 @@
 # Queues
 
+Queue contracts and the SQS and RabbitMQ wiring behind them. Fan-out and log-shaped consumption are [pub/sub and streams](messaging-pubsub-streams.md).
+
 ## Queue contracts
 
 `QueueSpec.name` is the logical route. Resolve query/command ports with `ctx.deps.resolve_configurable`.

@@ -1,5 +1,7 @@
 # Testing with the mock
 
+Running the whole application against in-memory adapters — every port, no containers. The fastest feedback loop Forze offers, and the substrate [DST simulation](dst-simulation.md) builds on.
+
 ## Testing with Mock
 
 In-memory adapters — no external services:

@@ -1,5 +1,7 @@
 # Transactional notifications
 
+Emitting a notification that must not fire if the transaction rolls back: stage inside the transaction, relay after commit. One procedure, and the shape is load-bearing.
+
 ## Transactional notifications
 
 ```python

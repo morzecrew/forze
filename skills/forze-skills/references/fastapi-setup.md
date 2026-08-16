@@ -1,5 +1,7 @@
 # FastAPI setup
 
+Standing up the FastAPI application: the context dependency, lifespan, middleware order, and error handlers. Attaching routes is [FastAPI routes](fastapi-generated-routes.md).
+
 ## Context dependency and lifespan
 
 All routes need an active `ExecutionRuntime.scope()` and a `ctx_dep` that returns `runtime.get_context()`.

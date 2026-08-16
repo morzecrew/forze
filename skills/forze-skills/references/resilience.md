@@ -1,5 +1,7 @@
 # Resilience and deadlines
 
+Retry, circuit breaker, bulkhead, rate limit and hedging as named policies, and the invocation deadlines they run under. Draining and fleet-wide posture are [shutdown and fleet posture](shutdown-fleet.md).
+
 ## Resilience policies
 
 A `ResiliencePolicy` is an ordered stack of strategies (outer → inner: rate limit → bulkhead → circuit breaker → retry → per-attempt timeout, plus optional fallback/hedge). Built-ins `occ` (retry on `concurrency`) and `transient` (retry on `infrastructure`, 30s per-attempt timeout) ship ready to use.

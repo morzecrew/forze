@@ -1,5 +1,7 @@
 # KMS backends and key lifecycle
 
+Where the key lives and what happens when it changes: Vault and the cloud KMS backends, per-tenant keys, and the difference between rotating a key and replacing one — which is the distinction that makes ciphertext unreadable when confused. What gets sealed is [field encryption](field-encryption.md).
+
 ## Choosing a key backend
 
 | Backend | Extra | `kms=` | `key_id` names |

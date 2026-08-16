@@ -1,5 +1,7 @@
 # Realtime event catalog
 
+Declaring the events a service can emit and publishing them from a handler — including why a pre-commit emit is the wrong call. How they reach a browser is [realtime transports](realtime-transports.md).
+
 ## Declare the event catalog
 
 Events are declared once and shared by the publisher and every transport. The

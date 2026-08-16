@@ -1,5 +1,7 @@
 # Custom deps modules
 
+Writing your own `DepsModule` and `DepKey` for an integration Forze does not ship. The advanced case — start with [dependency resolution](deps-resolution.md), which covers the built-in modules that handle most applications.
+
 ## Container model
 
 | Mode | Shape | Use when |

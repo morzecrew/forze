@@ -1,5 +1,7 @@
 # Operation composition
 
+Building operation registries by hand — pipeline stages, hooks, transaction scoping and mapping steps. This is what [AggregateKit](aggregate-kit.md) composes for you; come here when you need something it does not cover.
+
 ## Document composition
 
 The registries below are what `AggregateKit` composes under the hood — reach for them directly for plain CRUD with no governed concerns, or for a fully bespoke operation surface.

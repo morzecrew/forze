@@ -1,5 +1,7 @@
 # Analytics
 
+Warehouse queries and streaming appends over an `AnalyticsSpec`: the spec names a query, the deps config carries the SQL and the dataset. Covers BigQuery and ClickHouse, whose placeholder syntaxes differ.
+
 ## Spec and deps route
 
 `AnalyticsSpec.name` is the logical route. Register the same key in the backend module's `analytics` map as a backend `*AnalyticsConfig` object (not a plain dict — the module freezes the mapping but does not coerce nested dicts) carrying the dataset/database, the named `queries` (each a `*QueryConfig`), and an optional `ingest` relation (`(namespace, table)`). SQL lives in the deps config (never in handlers); each query is referenced by key.

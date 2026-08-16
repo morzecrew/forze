@@ -1,5 +1,7 @@
 # Outbound HTTP
 
+Calling another service: declaring an integration and its operations, wiring the client, propagating deadlines, and routing per tenant. Transport details stay out of domain code.
+
 ## Declare a service and its operations
 
 Subclass `BaseHttpIntegration` and declare each remote call with `async_http_op`. Request/response are Pydantic models; `query_from` lists request fields serialized as query params.
