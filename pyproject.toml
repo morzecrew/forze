@@ -168,7 +168,11 @@ inference-sagemaker = [
     "aiobotocore>=2.13.0",
     "botocore>=1.34.0",
 ]
-mcp = ["fastmcp>=3.0.0", "mcp>=1.27.0"]
+# MCP SDK v2 renamed every protocol field to snake_case, and only FastMCP 4 speaks it — the
+# 3.x line caps the SDK at `mcp<2`, so these two floors move together or not at all. 4.0.0b3
+# is a pre-release; the specifier names it explicitly, which is what lets an installer pick
+# it up and still prefer 4.0.0 final the moment it ships.
+mcp = ["fastmcp>=4.0.0b3", "mcp>=2.0.0"]
 # The OTLP exporter `bootstrap_telemetry` reaches for. http/protobuf deliberately, not grpc:
 # the grpc variant drags in the whole grpcio wheel for a transport that buys nothing here.
 observability = ["opentelemetry-exporter-otlp-proto-http>=1.39.0"]

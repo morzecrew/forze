@@ -63,7 +63,7 @@ class TestMcpExample:
 
         async with Client(server) as client:
             templates = {
-                str(t.uriTemplate) for t in await client.list_resource_templates()
+                str(t.uri_template) for t in await client.list_resource_templates()
             }
             assert "notes://{id}" in templates
 

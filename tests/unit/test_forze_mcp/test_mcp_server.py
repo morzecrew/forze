@@ -189,9 +189,9 @@ class TestRegistration:
             tool = {t.name: t for t in await client.list_tools()}["calc.double"]
 
         # Flat: DTO fields are top-level properties, not nested under "args".
-        assert set(tool.inputSchema.get("properties", {})) == {"n", "label"}
+        assert set(tool.input_schema.get("properties", {})) == {"n", "label"}
         assert tool.annotations is not None
-        assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.read_only_hint is True
         assert tool.description == "double n"
 
     async def test_register_onto_existing_server_is_additive(self) -> None:
@@ -421,7 +421,7 @@ class TestResourceTemplates:
 
         async with Client(server) as client:
             templates = {
-                str(t.uriTemplate) for t in await client.list_resource_templates()
+                str(t.uri_template) for t in await client.list_resource_templates()
             }
             assert "notes://{id}" in templates
 
@@ -532,14 +532,14 @@ class TestWriteEnablement:
             write_tool = tools["calc.write"]
 
             assert read_tool.annotations is not None
-            assert read_tool.annotations.readOnlyHint is True
-            assert read_tool.annotations.destructiveHint is False
+            assert read_tool.annotations.read_only_hint is True
+            assert read_tool.annotations.destructive_hint is False
 
             assert write_tool.annotations is not None
-            assert write_tool.annotations.readOnlyHint is False
-            assert write_tool.annotations.destructiveHint is True
+            assert write_tool.annotations.read_only_hint is False
+            assert write_tool.annotations.destructive_hint is True
             # Flat arg schema applies to writes too.
-            assert set(write_tool.inputSchema.get("properties", {})) == {"n", "label"}
+            assert set(write_tool.input_schema.get("properties", {})) == {"n", "label"}
 
     async def test_client_calls_a_write_tool_end_to_end(self) -> None:
         server = build_mcp_server(
