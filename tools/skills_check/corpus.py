@@ -149,8 +149,21 @@ class Corpus:
 
     @property
     def published(self) -> tuple[Document, ...]:
-        """Everything an install copies out of this repository."""
-        return self.skills + self.references
+        """Everything an install copies out of this repository.
+
+        An install copies *a skill directory*, so a Markdown file parked elsewhere under
+        ``skills/`` is repository-only however deeply it is nested. It stays in
+        ``references`` — and so in ``documents``, where the syntax and import checks read
+        from — because unchecked content is the failure this loader exists to prevent; it
+        is simply not something a consumer ever receives.
+        """
+        homes = tuple(doc.path.parent.resolve() for doc in self.skills)
+
+        return self.skills + tuple(
+            doc
+            for doc in self.references
+            if any(doc.path.resolve().is_relative_to(home) for home in homes)
+        )
 
     @property
     def python_blocks(self) -> tuple[CodeBlock, ...]:
