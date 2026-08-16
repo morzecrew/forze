@@ -96,16 +96,12 @@ Earlier retirements, merged before the consolidation: `forze-storage-s3` / `forz
 
 ## Coverage doctrine
 
-Every shipped package, and every boundary an extra draws inside one, is a **census unit** carrying a doctrine in [`tools/skills_check/coverage.toml`](../tools/skills_check/coverage.toml). A unit with no doctrine fails the build — so adding `src/forze_opensearch/` to the wheel targets, or adding a `kms-azure` extra that subdivides a package already covered, is a decision someone writes down rather than a gap nobody notices.
+Every shipped package, and every boundary an extra draws inside one, is a **census unit** carrying a doctrine. The doctrines and what each requires are defined once, in [`tools/skills_check/coverage.toml`](../tools/skills_check/coverage.toml), which is also the file the checker reads — restating them here would create a second copy to keep in step.
 
-| | Requires |
-|---|---|
-| **D1** worked example | an importable block showing the deps module and its config type |
-| **D2** import anchor | a resolved import plus the config type, for a unit reached identically to a covered sibling |
-| **D3** out of scope | a written rationale |
-| **D4** deferred | a rationale *and* a trigger that would move it to D1 or D2 |
+What that means when you are writing:
 
-D1 and D2 differ in how much surrounding material is expected, **never in whether the import is verified** — both resolve under the same gate. Naming a symbol in prose, in a table, or in a frontmatter description counts for nothing: the census scores consumption, not declaration, because a corpus can describe a backend in detail while no gate can see a single one of its claims.
+- **A unit with no doctrine fails the build.** Adding `src/forze_opensearch/` to the wheel targets, or a `kms-azure` extra subdividing a package already covered, is a decision someone writes down rather than a gap nobody notices.
+- **Naming a symbol in prose, in a table, or in a frontmatter description counts for nothing.** The census scores consumption, so coverage means a code block the import gate resolves — a corpus can describe a backend in detail while no gate can see a single one of its claims, which is the condition this check was built to end.
 
 ## Adding or changing content
 
