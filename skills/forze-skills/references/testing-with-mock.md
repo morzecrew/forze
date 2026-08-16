@@ -1,0 +1,33 @@
+# Testing with the mock
+
+## Testing with Mock
+
+In-memory adapters — no external services:
+
+```python
+from uuid import uuid4
+
+from forze.application.execution import DepsRegistry, ExecutionRuntime
+from forze_kits.aggregates.document import DocumentFacade, DocumentIdDTO
+from forze_mock import MockDepsModule
+
+mock_module = MockDepsModule()
+runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(mock_module).freeze())
+
+async with runtime.scope():
+    ctx = runtime.get_context()
+    # project_spec + registry as built in "Document composition" above
+    facade = DocumentFacade(ctx=ctx, registry=registry, namespace=project_spec.default_namespace)
+    some_uuid = uuid4()  # in a real test, the id you created via facade.create(...)
+    result = await facade.get(DocumentIdDTO(id=some_uuid))
+```
+
+**Hybrid contexts** — pass `MockDepsModule` *alongside* real modules to get "real Postgres, mock everything else" in one list: everything the mock registers is a **fallback**, so a real registration of the same key or route wins instead of conflicting (order irrelevant; two real — or two mock — modules still raise). Caveat: an unregistered route then falls back to the mock instead of failing, so a spec-name typo resolves silently. Freeze logs that hazard set at INFO (`catch-all behind real routes: …`), also available as `check_wiring(...).fallbacks.catch_all`; to prove a test hit the real adapter, assert `"orders" in ctx.deps.store.routed_deps[DocumentQueryDepKey]`.
+
+```python
+DepsRegistry.from_modules(PostgresDepsModule(...), MockDepsModule(state=shared_state))
+```
+
+## Reference
+
+- [Mock integration](https://morzecrew.github.io/forze/latest/integrations/)

@@ -29,14 +29,29 @@ FORZE_ROOT = "forze"
 FRAGMENT_MARKER = "fragment"
 """Info-string token declaring a block is deliberately not a parseable module."""
 
-REQUIRED_SECTIONS = ("Anti-patterns", "Reference")
-"""Sections ``skills/AUTHORING.md`` mandates in prose, mechanized here."""
+REQUIRED_SECTIONS = ("Reference",)
+"""Sections every published file must carry.
+
+``Anti-patterns`` is deliberately **not** here. It was required back when a skill was one
+self-contained topic; the corpus now routes each anti-pattern to the reference that owns
+its subject, so a file with no mistake of its own legitimately has none, and requiring the
+heading everywhere would produce empty sections written to satisfy a check. What the rule
+protected — that the corpus states its mistakes — is now held by `check_structure`'s
+corpus-level floor instead of by a per-file heading.
+"""
+
+PUBLISHED_SKILL = "forze-skills"
+"""The one directory under ``skills/`` that holds a ``SKILL.md``.
+
+An installer copies a skill directory recursively and cannot prune a directory it is not
+overwriting, so a second skill left behind here becomes a stale copy in every consumer
+repository that installs. The post-condition is asserted rather than eyeballed.
+"""
 
 PUBLISHED_DOCS_HOST = "morzecrew.github.io"
 PUBLISHED_DOCS_PREFIX = f"https://{PUBLISHED_DOCS_HOST}/forze/latest/"
 
 _ALLOWED_MARKERS = frozenset({FRAGMENT_MARKER})
-_INDEX_ROW = re.compile(r"^\|\s*\*\*(?P<name>[a-z0-9-]+)\*\*\s*\|")
 PUBLISHED_URL_PATTERN = re.compile(rf"https?://{re.escape(PUBLISHED_DOCS_HOST)}/[^\s)>\"'`]*")
 
 
@@ -272,15 +287,42 @@ def check_structure(corpus: Corpus) -> Result:
         # wrong, and only one of those is a claim.
         result.violations.append(f"{corpus.root}: no `*/{SKILL_FILENAME}` found at all")
 
+    if not corpus.references:
+        result.violations.append(
+            f"{corpus.root}: the index routes to reference files and none were found — "
+            f"the loader saw an index with nothing behind it"
+        )
+
+    names = sorted(doc.skill_name for doc in corpus.skills)
+
+    if names not in ([], [PUBLISHED_SKILL]):
+        result.violations.append(
+            f"{corpus.root}: expected exactly one published skill (`{PUBLISHED_SKILL}`), "
+            f"found {names} — an installer cannot prune a directory it is not overwriting, "
+            f"so a leftover ships forever"
+        )
+
     for doc in corpus.skills:
         result.violations.extend(_check_skill_shape(doc))
-        result.violations.extend(_check_reference_section(doc))
+        result.violations.extend(_check_index_note(doc))
+
+    for doc in corpus.references:
+        result.violations.extend(_check_required_sections(doc))
+
+    if not any("## Anti-patterns" in doc.text for doc in corpus.references):
+        # Replaces the old per-file heading requirement. The corpus must still say what
+        # goes wrong; a routing rule that quietly emptied every one of them would
+        # otherwise pass every check here.
+        result.violations.append(
+            f"{corpus.root}: not one reference states an anti-pattern — they are routed by "
+            f"subject, not optional in aggregate"
+        )
 
     result.violations.extend(_check_version_segment(corpus))
     result.violations.extend(_check_relative_links(corpus))
     result.violations.extend(_check_index_parity(corpus))
     result.summary = (
-        f"{len(corpus.skills)} skill(s), "
+        f"{len(corpus.skills)} skill(s), {len(corpus.references)} reference(s), "
         f"{sum(len(doc.links) for doc in corpus.documents)} link(s) checked"
     )
 
@@ -320,6 +362,10 @@ def _check_relative_links(corpus: Corpus) -> list[str]:
     """Every relative link resolves, and none of a skill's leaves the published tree."""
     violations: list[str] = []
     published = corpus.root.resolve()
+    # Reference files ship exactly as the index does — the installer copies the skill
+    # directory recursively — so the escape rule is about being published, not about
+    # being a `SKILL.md`. Keying it on the filename would leave 43 of 44 files unguarded.
+    ships = {doc.path for doc in corpus.published}
 
     for doc in corpus.documents:
         for link in doc.links:
@@ -336,7 +382,7 @@ def _check_relative_links(corpus: Corpus) -> list[str]:
                 violations.append(f"{doc.path}:{link.line}: dangling link -> {link.target}")
                 continue
 
-            if doc.is_skill and not target.is_relative_to(published):
+            if doc.path in ships and not target.is_relative_to(published):
                 violations.append(
                     f"{doc.path}:{link.line}: link escapes the published tree -> "
                     f"{link.target} (installed skills are copied out of this repository)"
@@ -541,45 +587,76 @@ def _check_version_segment(corpus: Corpus) -> list[str]:
     return violations
 
 
-def _check_reference_section(doc: Document) -> list[str]:
+def _check_required_sections(doc: Document) -> list[str]:
+    """A reference carries the sections REQUIRED_SECTIONS names, and cites somewhere to go."""
+    violations = [
+        f"{doc.path}: no `## {section}` section"
+        for section in REQUIRED_SECTIONS
+        if doc.section(section) is None
+    ]
+    body = doc.section("Reference")
+
+    if body is not None and not PUBLISHED_URL_PATTERN.search(body) and "](" not in body:
+        violations.append(
+            f"{doc.path}: `## Reference` points nowhere — cite a published doc URL or a "
+            f"sibling reference"
+        )
+
+    return violations
+
+
+def _check_index_note(doc: Document) -> list[str]:
+    """The index carries the versioned-docs note, once, for the whole corpus.
+
+    It used to be repeated in every skill. Consolidating it is the point of having an
+    index — and it is also how the note stops being 21 copies that can disagree.
+    """
     body = doc.section("Reference")
 
     if body is None:
         return []
 
-    violations: list[str] = []
     note = next((line for line in body.split("\n") if line.strip().startswith(">")), None)
 
     if note is None or "latest" not in note:
-        violations.append(
-            f"{doc.path}: `## Reference` does not open with the versioned-docs note "
-            f"(a blockquote telling readers to swap `latest` for their pinned minor)"
-        )
+        return [
+            (
+                f"{doc.path}: `## Reference` does not open with the versioned-docs note "
+                f"(a blockquote telling readers to swap `latest` for their pinned minor)"
+            )
+        ]
 
-    if not PUBLISHED_URL_PATTERN.search(body):
-        violations.append(f"{doc.path}: `## Reference` cites no published doc URL")
-
-    return violations
+    return []
 
 
 def _check_index_parity(corpus: Corpus) -> list[str]:
-    """Every skill is in ``skills/README.md``'s table, and every table row is a skill."""
-    index = next((doc for doc in corpus.companions if doc.path.name == "README.md"), None)
+    """Index ↔ reference parity, both directions.
 
-    if index is None:
-        return [f"{corpus.root}: no README.md to check the index against"]
+    This is the check the consolidated structure cannot live without: an index is only
+    navigation, so a reference nothing links to is unreachable material that still ships,
+    and an index row with no file is a dead end the reader finds at the worst moment.
+    Neither is visible in a diff that only adds files.
+    """
+    violations: list[str] = []
 
-    listed = {
-        match.group("name")
-        for line in index.text.split("\n")
-        if (match := _INDEX_ROW.match(line)) is not None
-    }
-    present = {doc.skill_name for doc in corpus.skills}
+    for index in corpus.skills:
+        listed = {
+            Path(target).stem
+            for link in index.links
+            if not link.is_external and (target := link.path_part).endswith(".md")
+        }
+        present = {
+            doc.path.stem
+            for doc in corpus.references
+            if doc.path.parent.parent == index.path.parent
+        }
 
-    return [
-        f"{index.path}: `{name}` is in the index table but no such skill directory exists"
-        for name in sorted(listed - present)
-    ] + [
-        f"{index.path}: skill `{name}` is missing from the index table"
-        for name in sorted(present - listed)
-    ]
+        violations += [
+            f"{index.path}: routes to `{name}` but no such reference file exists"
+            for name in sorted(listed - present)
+        ] + [
+            f"{index.path}: reference `{name}` exists but the index routes to nothing"
+            for name in sorted(present - listed)
+        ]
+
+    return violations

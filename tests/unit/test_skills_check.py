@@ -57,15 +57,21 @@ _REFERENCE = """\
 """
 
 
-def _skill(body: str = "", name: str = "forze-demo", reference: str = _REFERENCE) -> str:
-    """Assemble a skill document.
+SKILL_DIR = "forze-skills"
+
+
+def _skill(
+    name: str = SKILL_DIR, routes: tuple[str, ...] = ("demo",), note: str = _REFERENCE
+) -> str:
+    """Assemble the routing index.
 
     Built by concatenation rather than by dedenting an interpolated template: a
-    multi-line ``body`` starting at column zero makes the common prefix empty, so the
-    dedent silently does nothing and every line — the frontmatter delimiter included —
-    stays indented. The resulting document then fails checks for reasons that have
-    nothing to do with what the test is about.
+    multi-line body starting at column zero makes the common prefix empty, so the dedent
+    silently does nothing and every line — the frontmatter delimiter included — stays
+    indented. The document then fails checks for reasons unrelated to the test.
     """
+    rows = "\n".join(f"| [{r}](references/{r}.md) | A demo reference. |" for r in routes)
+
     return (
         "---\n"
         f"name: {name}\n"
@@ -75,20 +81,21 @@ def _skill(body: str = "", name: str = "forze-demo", reference: str = _REFERENCE
         "\n"
         "# Demo\n"
         "\n"
-        f"{body}\n"
+        "| Reference | Covers |\n"
+        "|---|---|\n"
+        f"{rows}\n"
         "\n"
-        "## Anti-patterns\n"
-        "\n"
-        "- Doing the thing the wrong way.\n"
-        "\n"
-        f"{reference}"
+        f"{note}"
     )
 
 
-def _index(*names: str) -> str:
-    rows = "\n".join(f"| **{name}** | A demo skill. |" for name in names)
+def _reference(body: str, anti: bool = True) -> str:
+    tail = "\n\n## Anti-patterns\n\n- Doing the thing the wrong way." if anti else ""
 
-    return f"# Skills\n\n| Name | Description |\n| ---- | ---- |\n{rows}\n"
+    return (
+        f"# Demo reference\n\n{body}{tail}\n\n## Reference\n\n"
+        "- [Wiring](https://morzecrew.github.io/forze/latest/writing-operation/wiring/)\n"
+    )
 
 
 _BASELINE_BODY = "```python\nfrom forze.base.exceptions import CoreException\n```"
@@ -96,22 +103,33 @@ _BASELINE_BODY = "```python\nfrom forze.base.exceptions import CoreException\n``
 
 @pytest.fixture
 def corpus_root(tmp_path: Path) -> Path:
-    """A minimal corpus that passes every gate, ready to be broken one way at a time.
+    """A minimal corpus in the consolidated shape, ready to be broken one way at a time.
 
-    It carries a real python block on purpose: a corpus with none is itself a failure
-    (see `test_a_corpus_with_no_python_blocks_is_a_failure`), so a baseline without one
-    would be asserting the wrong green.
+    One published skill whose `SKILL.md` routes to `references/`, which is where the
+    material — and therefore nearly every check — actually lives. The reference carries a
+    real python block on purpose: a corpus with none is itself a failure, so a baseline
+    without one would be asserting the wrong green.
     """
     root = tmp_path / "skills"
-    (root / "forze-demo").mkdir(parents=True)
-    (root / "forze-demo" / "SKILL.md").write_text(_skill(_BASELINE_BODY), encoding="utf-8")
-    (root / "README.md").write_text(_index("forze-demo"), encoding="utf-8")
+    (root / SKILL_DIR / "references").mkdir(parents=True)
+    (root / SKILL_DIR / "SKILL.md").write_text(_skill(), encoding="utf-8")
+    (root / SKILL_DIR / "references" / "demo.md").write_text(
+        _reference(_BASELINE_BODY), encoding="utf-8"
+    )
+    (root / "README.md").write_text("# Skills\n\nInstall it.\n", encoding="utf-8")
 
     return root
 
 
-def _write(root: Path, body: str = _BASELINE_BODY, **kwargs: str) -> None:
-    (root / "forze-demo" / "SKILL.md").write_text(_skill(body, **kwargs), encoding="utf-8")
+def _write(root: Path, body: str = _BASELINE_BODY, anti: bool = True) -> None:
+    """Replace the reference's body — where the material under test lives."""
+    (root / SKILL_DIR / "references" / "demo.md").write_text(
+        _reference(body, anti=anti), encoding="utf-8"
+    )
+
+
+def _write_index(root: Path, **kwargs: object) -> None:
+    (root / SKILL_DIR / "SKILL.md").write_text(_skill(**kwargs), encoding="utf-8")  # type: ignore[arg-type]
 
 
 def _violations(root: Path, check: str) -> list[str]:
@@ -212,7 +230,7 @@ def test_a_corpus_with_no_python_blocks_is_a_failure(corpus_root: Path) -> None:
 def test_a_corpus_with_no_skills_is_a_failure(tmp_path: Path) -> None:
     root = tmp_path / "skills"
     root.mkdir()
-    (root / "README.md").write_text(_index(), encoding="utf-8")
+    (root / "README.md").write_text("# Skills\n", encoding="utf-8")
 
     violations = _violations(root, "structure")
 
@@ -374,17 +392,39 @@ def test_skipped_module_is_never_counted_as_resolved(corpus_root: Path) -> None:
 
 
 def test_missing_required_section_is_reported(corpus_root: Path) -> None:
-    path = corpus_root / "forze-demo" / "SKILL.md"
-    path.write_text(path.read_text(encoding="utf-8").replace("## Anti-patterns", "## Notes"))
+    path = corpus_root / SKILL_DIR / "references" / "demo.md"
+    path.write_text(path.read_text(encoding="utf-8").replace("## Reference", "## Notes"))
 
     violations = _violations(corpus_root, "structure")
 
     assert len(violations) == 1
-    assert "no `## Anti-patterns` section" in violations[0]
+    assert "no `## Reference` section" in violations[0]
+
+
+def test_a_reference_without_its_own_anti_pattern_is_fine(corpus_root: Path) -> None:
+    """Anti-patterns are routed by subject, so a file with no mistake of its own has none.
+
+    The corpus-level floor below is what stops that from emptying every file.
+    """
+    _write(corpus_root, anti=True)
+    (corpus_root / SKILL_DIR / "references" / "extra.md").write_text(
+        _reference("Nothing goes wrong here.", anti=False), encoding="utf-8"
+    )
+    _write_index(corpus_root, routes=("demo", "extra"))
+
+    assert _violations(corpus_root, "structure") == []
+
+
+def test_a_corpus_that_states_no_anti_pattern_at_all_is_a_failure(corpus_root: Path) -> None:
+    _write(corpus_root, anti=False)
+
+    violations = _violations(corpus_root, "structure")
+
+    assert any("not one reference states an anti-pattern" in v for v in violations)
 
 
 def test_frontmatter_name_must_match_the_directory(corpus_root: Path) -> None:
-    _write(corpus_root, name="forze-renamed")
+    _write_index(corpus_root, name="forze-renamed")
 
     violations = _violations(corpus_root, "structure")
 
@@ -404,7 +444,7 @@ def test_link_escaping_the_published_tree_is_reported(corpus_root: Path, tmp_pat
     """Installed skills are copied out of this repository, so such a path breaks there."""
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "forze.py").write_text("", encoding="utf-8")
-    _write(corpus_root, "See [the source](../../src/forze.py).")
+    _write(corpus_root, "See [the source](../../../src/forze.py).")
 
     violations = _violations(corpus_root, "structure")
 
@@ -440,25 +480,22 @@ def test_published_link_without_the_latest_segment_is_reported(
 
 
 def test_required_section_at_the_wrong_heading_level_does_not_count(corpus_root: Path) -> None:
-    """`#### Anti-patterns` nests under whatever precedes it — it is not the section."""
-    path = corpus_root / "forze-demo" / "SKILL.md"
+    """`#### Reference` nests under whatever precedes it — it is not the section."""
+    path = corpus_root / SKILL_DIR / "references" / "demo.md"
     path.write_text(
-        path.read_text(encoding="utf-8").replace("## Anti-patterns", "#### Anti-patterns"),
+        path.read_text(encoding="utf-8").replace("## Reference", "#### Reference"),
         encoding="utf-8",
     )
 
     violations = _violations(corpus_root, "structure")
 
-    assert any("no `## Anti-patterns` section" in violation for violation in violations)
+    assert any("no `## Reference` section" in violation for violation in violations)
 
 
-def test_reference_section_without_the_versioned_note_is_reported(corpus_root: Path) -> None:
-    _write(
-        corpus_root,
-        reference=(
-            "## Reference\n\n"
-            "- [Wiring](https://morzecrew.github.io/forze/latest/writing-operation/wiring/)\n"
-        ),
+def test_index_without_the_versioned_note_is_reported(corpus_root: Path) -> None:
+    """The note lives on the index once, for the whole corpus, instead of in every file."""
+    _write_index(
+        corpus_root, note="## Reference\n\n- [Docs](https://morzecrew.github.io/forze/latest/)\n"
     )
 
     violations = _violations(corpus_root, "structure")
@@ -467,12 +504,13 @@ def test_reference_section_without_the_versioned_note_is_reported(corpus_root: P
 
 
 def test_index_parity_is_checked_in_both_directions(corpus_root: Path) -> None:
-    (corpus_root / "README.md").write_text(_index("forze-ghost"), encoding="utf-8")
+    """An unrouted reference ships unreachable; a routed absence is a dead end."""
+    _write_index(corpus_root, routes=("ghost",))
 
     violations = _violations(corpus_root, "structure")
 
-    assert any("no such skill directory exists" in violation for violation in violations)
-    assert any("is missing from the index table" in violation for violation in violations)
+    assert any("no such reference file exists" in violation for violation in violations)
+    assert any("the index routes to nothing" in violation for violation in violations)
 
 
 # ----------------------- #
@@ -690,10 +728,12 @@ def test_cli_reports_dead_links_and_fails(corpus_root: Path) -> None:
 def test_cli_refuses_a_liveness_sweep_with_nothing_to_sweep(tmp_path: Path) -> None:
     """The other vacuous pass: zero URLs checked is not zero URLs dead."""
     root = tmp_path / "skills"
-    (root / "forze-demo").mkdir(parents=True)
-    (root / "forze-demo" / "SKILL.md").write_text(
-        _skill(_BASELINE_BODY, reference="## Reference\n\n> latest\n"), encoding="utf-8"
+    (root / SKILL_DIR / "references").mkdir(parents=True)
+    (root / SKILL_DIR / "SKILL.md").write_text(
+        _skill(note="## Reference\n\n> latest\n"), encoding="utf-8"
     )
-    (root / "README.md").write_text(_index("forze-demo"), encoding="utf-8")
+    (root / SKILL_DIR / "references" / "demo.md").write_text(
+        "# Demo\n\n## Reference\n\n- [x](../SKILL.md)\n", encoding="utf-8"
+    )
 
     assert _run(root, "--links") == 1

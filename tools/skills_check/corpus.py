@@ -126,18 +126,31 @@ class Document:
 
 @dataclass(frozen=True)
 class Corpus:
-    """Every Markdown file under ``skills/``, split by whether it ships."""
+    """Every Markdown file under ``skills/``, split by the role it plays.
+
+    The published skill is an index over lazily-read reference files, so the corpus is two
+    kinds of shipped document rather than one. Both ship — the installer copies the skill
+    directory recursively — and both therefore carry every rule about links and imports.
+    """
 
     root: Path
     skills: tuple[Document, ...]
-    """``*/SKILL.md`` — the files an installer copies into a consumer's repository."""
+    """``*/SKILL.md`` — the routing index an installer copies into a consumer's repository."""
+
+    references: tuple[Document, ...]
+    """``*/references/*.md`` — the material the index routes to. Ships with the skill."""
 
     companions: tuple[Document, ...]
     """``README.md`` and ``AUTHORING.md`` — corpus files that stay in this repository."""
 
     @property
     def documents(self) -> tuple[Document, ...]:
-        return self.skills + self.companions
+        return self.skills + self.references + self.companions
+
+    @property
+    def published(self) -> tuple[Document, ...]:
+        """Everything an install copies out of this repository."""
+        return self.skills + self.references
 
     @property
     def python_blocks(self) -> tuple[CodeBlock, ...]:
@@ -152,11 +165,22 @@ class Corpus:
 
 
 def load_corpus(root: Path) -> Corpus:
-    """Parse every Markdown file under ``root``."""
+    """Parse every Markdown file under ``root``.
+
+    Reference files are found by walking, not by naming a fixed depth. Missing them is the
+    failure this loader is most likely to have: the checks would run over an index that
+    holds almost no code, report the smaller denominator, and call it a pass — the corpus
+    would be unchecked and the gate green.
+    """
     skills = tuple(parse_document(path) for path in sorted(root.glob(f"*/{SKILL_FILENAME}")))
     companions = tuple(parse_document(path) for path in sorted(root.glob("*.md")) if path.is_file())
+    references = tuple(
+        parse_document(path)
+        for path in sorted(root.rglob("*.md"))
+        if path.name != SKILL_FILENAME and path.parent != root
+    )
 
-    return Corpus(root=root, skills=skills, companions=companions)
+    return Corpus(root=root, skills=skills, references=references, companions=companions)
 
 
 def parse_document(path: Path) -> Document:
