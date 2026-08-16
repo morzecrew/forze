@@ -384,6 +384,161 @@ a value in the same document.
 - **The `fragment` marker has zero users.** If the corpus never acquires one, a later unit
   should decide whether the mechanism earns its place or the rule becomes "every block
   parses, full stop".
+
+---
+
+# Unit 2 · Skills consolidation
+
+Branch `feature/skills-consolidation`. RFC 0041 in full — the §6 map, the §5 routing index,
+the §9 execution order, and the §7 hard cut. Extends RFC 0040's gate to the new shape.
+
+**Drift count: 0.** Three entries: one `spec-gap` pair that halted execution before any file
+was written (D-008, D-009), and one `discovery` (D-010).
+
+Both halts were surfaced and resolved by the author before execution started, which is the
+whole point of the plan gate — §6.1 makes RFC 0041 the sole authority over the file set, so
+neither was execution's to decide.
+
+## D-008 — The locked 48-file map contradicts §2's own splitting rules
+
+- **Touches:** RFC 0041 §6 (locked map), §2 rules 3 and 4, §10's size criterion.
+- **RFC said:** 48 reference files; and separately, "60–250 lines. Under 60 usually means it
+  belongs with its neighbour", plus "a file that is only ever read together with another is
+  not a separate file".
+- **Found:** projecting every mapped section before writing anything, **20 of the 46 mapped
+  files came out under 60 lines**, and `mcp` and `authz` at **4 lines each** — the exact
+  shape rule 4 exists to forbid. The two locked statements could not both hold.
+- **Because:** the map was built by routing sections, and §2's floor was written about the
+  files those routes produce. Nothing had multiplied the two together.
+- **Class:** `spec-gap`. Fully knowable at design time — it is arithmetic over the map and
+  the corpus, both of which existed when the RFC was written.
+- **Consequence:** halted before writing any file; the author merged five destinations named
+  in **no §5 bundle**, so the routing table is untouched: `mcp` → `fastapi-generated-routes`,
+  `authz` → `authn`, `deadlines` → `resilience`, `caching` → `document-facade`,
+  `tenancy-admin` → `tenancy`. Count 48 → 43. Ten files remain under 60 and are recorded in
+  D-010 rather than merged, because each is a distinct job or a §5 bundle member.
+- **Proposed row (RFC 0041):** `LOCKED` — the reference count is a *consequence* of §2's
+  splitting rules, never an input to them. A map is checked against the floor before it is
+  called locked.
+
+## D-009 — One section had no destination, so §6's "nothing is dropped" was false
+
+- **Touches:** RFC 0041 §6, first line.
+- **RFC said:** "Every current `##`/`###` section has exactly one destination; nothing is
+  dropped."
+- **Found:** `forze-resilience-deadlines` §Gotchas — 7 lines, four bullets — appears nowhere
+  in the map. Every other section of every other skill does.
+- **Because:** the map routes `resilience-deadlines` into three destinations by name and the
+  §Gotchas heading is not among them. A completeness claim was asserted rather than checked.
+- **Class:** `spec-gap`. A script over the map and the corpus finds it in seconds, and that
+  is what found it.
+- **Consequence:** amended §6 to route it — the retry, rate-limiter and bulkhead bullets to
+  `resilience.md`, the `mutates_shared_state` bullet to `shutdown-fleet.md`. The extraction
+  script now asserts zero orphaned sections, so the claim is mechanically true rather than
+  asserted.
+- **Proposed row (RFC 0041):** `ASSUMED` — a completeness claim over a map is checked by
+  script before the map is locked. "Nothing is dropped" is a testable statement.
+
+## D-010 — Eleven references remain under the 60-line floor, with reasons
+
+- **Touches:** RFC 0041 §10 ("none is under 60 without a recorded reason") and §2 rule 3.
+- **RFC said:** a reason must be recorded. This is that record.
+- **Found:** after the D-008 merges, seam repair, routed anti-patterns and reference links,
+  eleven files sit below the floor. Each is one complete job, and six of the eleven are named
+  in a §5 bundle — merging them would fold two jobs into one file to satisfy a line count.
+
+  Line counts as of `05d004c`, and they have already moved once inside this branch: B-3's
+  import repairs added a line or two to several of these files. That is the carried item
+  below arriving early rather than a separate defect — a hand-maintained table of numbers
+  nothing recomputes is wrong by default, and the reasons, not the counts, are the record.
+
+  | Lines | Reference | Why it stays |
+  |---|---|---|
+  | 34 | `architecture` | A primer, read first and once. Length is the point. |
+  | 37 | `testing-with-mock` | Named in two §5 bundles. "Test it with the mock" is a whole job that is genuinely short. |
+  | 43 | `outbox-notifications` | Stage-in-transaction/relay-after-commit is one procedure with one correct shape. |
+  | 47 | `deps-resolution` | §5 bundle member; folding it into `runtime-lifecycle` would recreate the over-large file this RFC split. |
+  | 47 | `oidc` | External IdPs are a distinct decision from the authn pipeline beside it. |
+  | 49 | `aggregate-kit` | §5 bundle member and the single-declaration story; deliberately not the models. |
+  | 51 | `shutdown-fleet` | Drain, quiesce and fleet posture are one operational procedure. |
+  | 51 | `spec-naming-and-routes` | §5 bundle member, and the rule the whole corpus leans on. |
+  | 52 | `secrets` | One lookup, cleanly separable from tenancy and authn. |
+  | 54 | `logging-metrics` | Instrumenting a registry is one job; splitting logging from metrics would create two files always read together. |
+  | 59 | `query-dsl` | §5 bundle member. Filter, sort, projection and paging are one vocabulary; the port that runs it is its own file. |
+
+- **Class:** `discovery`. The exact residue is only knowable once the text has been moved,
+  the seams repaired and the tails routed.
+- **Consequence:** §10's criterion is met by record rather than by merging. If a later unit
+  finds two of these always read together, rule 4 applies and they merge — that is the
+  trigger, not the line count on its own.
+- **Proposed row (RFC 0041):** `ASSUMED` — the 60-line floor is a smell, not a gate. A file
+  below it is kept when it is one job and merging would fold two jobs together; the reason
+  is recorded per file.
+
+**Deliberately not applied:** §9 step 2 asks for "one commit per group so review is
+tractable". The corpus move and the gate extension shipped as **one** commit instead. They
+are not separable: `load_corpus` could not see `references/` at all, so any ordering that
+splits them leaves a commit where the corpus is unchecked and the gate reports green over an
+empty denominator. That was observed, not reasoned about — pre-commit stashed the gate change
+and the old gate ran against the new corpus, reporting `0/0 python block(s) parsed`. RFC
+0040's zero-denominator refusal (unit 1, A-1) is what turned it into a failure instead of a
+pass.
+
+## Audit findings — 2026-08-16
+
+Adversarial pass over the branch: 3 commits, 60 files, +2952/-2603, against merge base
+`668ca42f4`. Two findings, both fixed. B-3 was added later, from the §10 agent runs rather
+than from this pass — three findings now, all fixed.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| B-1 | Medium | **39 of the 43 references opened cold on a `##` heading**, with no sentence saying what the file covers or when a sibling is the better read. §6 calls prose repair "the real work" and the execution did the mechanical half: sections were moved and links rewritten, but the orientation those sections had from their surrounding narrative was left behind. A reader arriving from the index landed mid-topic in 39 of 43 cases | Fixed — an orienting paragraph per file, each naming the neighbouring reference where the boundary is easy to get wrong |
+| B-2 | Medium | A file named `SKILL.md` nested under `references/` was matched by **no** loader branch: the skill glob is one level deep and the reference walk excluded by filename. It would ship — the installer copies the skill directory recursively — and be checked by nothing. Reproduced: a nested `SKILL.md` containing an unparseable block passed every gate | Fixed — references are excluded by *identity* (the set of loaded index paths) rather than by filename |
+| B-3 | Low | Examples **used framework symbols they never imported**, so they could not be pasted into a file and run. Neither gate can see this: `ast.parse` accepts an undefined name and the import check resolves only the imports that *are* written. Surfaced by the §10 agent runs, not by the audit — three of the six independently reported it as a gap in the skill | Fixed, corpus now at zero. Measured against `main` first, because that decides scope: 2 were introduced (`record_event`, `SimulationConfig`, both in the net-new DST prose — the split itself introduced none) and 11 were inherited (`build_runtime`, `PostgresDepsModule`, `RedisDepsModule`, `S3DepsModule`, `SQSDepsModule`, `TemporalDepsModule`, `RoutedPostgresClient`, `attach_authn_routes`, `temporal_worker_lifecycle_step`, `DocumentSpec`, `ExecutionContext`). The inherited eleven are outside this RFC's scope and were fixed on request after being reported |
+
+**Sabotage sweep: 5 mutations, 5 killed.** Against the real corpus, reverted after each: a
+reference dropped from the index, an unindexed reference added, a second skill directory left
+behind (§7's post-condition), a link escaping the published tree from a *reference* rather
+than the index, and a broken reference-to-reference link. The fourth is the one worth naming
+— it fails only because B-2's sibling defect was caught in the same pass: the escape rule was
+originally keyed on `is_skill`, which left 43 of 44 published files unguarded, and a synthetic
+test caught it before the sabotage did.
+
+**Fidelity, mechanically:** 127 python blocks and 302 import assertions before the move; 135
+and 318 immediately after it, with the deltas being exactly the new DST pair. All **237**
+distinct import pairs from the old corpus are present in the new one, and the extraction
+script asserts zero orphaned sections rather than trusting the map. The 318 is the figure at
+the move, which is what makes it a fidelity measurement; the branch now reports **336**,
+because B-3 added the fifteen imports those examples were calling without.
+
+**What remains distrusted.**
+
+- ~~**§10's behavioural criterion is not verified.**~~ **Verified 2026-08-16 — 6 of 6 rows,
+  zero missed references.** Six agents, one per row, each given an isolated copy of the skill,
+  a realistic request naming no file, and no access to this repository or the web. Measured
+  with an inotify watcher on the six directories rather than by self-report, because
+  `noatime` on both mounts rules out access times and an agent's account of what it read is
+  the thing under test. Every agent opened every reference its row promises. Each also read
+  1–10 beyond it, which is the routing table working as §5 describes rather than drift: run 3
+  added `operation-composition` to wire the operation, run 4 added `authn` for the plane under
+  the middleware, run 6 added `resilience` because the task mentioned retries. The self-reports
+  matched the watcher exactly in all six.
+
+  Two caveats on how much this establishes. The rows were exercised **one task each**, so what
+  is verified is that each row is followable and was followed once, not that it survives every
+  phrasing of its task. And the agents are the same model family as the author, which is the
+  standing limit on any evaluation of routing written by the thing being routed.
+- **The DST pair is new prose about a real API.** Every snippet in it was executed against
+  the installed `forze_dst` — three errors were found and fixed that way, including an
+  invented `probability=` kwarg — but the surrounding claims are review-checked only, and
+  RFC 0040 §5 rules argument-level drift out of scope by design.
+- **Ten references sit under the 60-line floor** with reasons recorded in D-010; nothing
+  mechanically re-checks those reasons if a file later grows or shrinks.
+
+**Also deliberately not applied:** RFC 0041 §1 and §7 still link to
+`../skills/forze-wiring/SKILL.md` and name the 21 directories. Those links now dangle. The
+prose describes the pre-execution state and is left exactly as written — correcting it would
+make the RFC's own argument unreadable and is the laundering this log exists to prevent.
 - **The scheduled sweep is unproven in CI** until its first cron firing (audit residue).
   Watch the first run for the step summary and the job timeout.
 - **Mechanize row 5 rather than leaving it as prose.** Accepted 2026-08-15 with the
@@ -401,3 +556,69 @@ a value in the same document.
   unit get different pre-commit treatment. Predates this branch, left alone deliberately
   (row 7 fixed the gate without disturbing the exclude), and worth a look by whoever next
   touches the mirrors.
+
+## Review findings — 2026-08-16
+
+PR #377. Five findings from CodeRabbit and Greptile, all fixed, none refuted. Two are code
+defects; three are the record contradicting itself.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-6 | **Medium** | Index parity matched references **one level** under the skill directory while the loader walks recursively, so a nested file was in neither set — routed by nothing, reported by nothing, and copied out by an installer that recurses. Every other check passes such a file (Greptile) | Fixed — parity compares paths relative to the skill directory at any depth. Reproduced first: the obvious repro is caught by *other* checks, so it took a nested file with a `## Reference` section and no relative links to show the hole |
+| R-7 | **Medium** | The link-escape rule drew its boundary at the corpus root, so a shipped link to `skills/README.md` or `skills/AUTHORING.md` resolved here and dangled wherever the skill is installed — an install copies `forze-skills/` and leaves its siblings behind (Greptile) | Fixed — the boundary is the skill directory, the unit the installer actually copies |
+| R-8 | Low | §6's opening still claimed every section has **exactly one** destination, which D-009's own fix falsified: routing `resilience-deadlines` §Gotchas split it by bullet across two files (CodeRabbit) | Fixed — "at least one", with the split named in the opening and its provenance already per-bullet in the map |
+| R-9 | Low | D-010 said "eight of the ten" references under the floor are named in a §5 bundle. Three things were wrong: the count is **six**, the set is **eleven** (`query-dsl`, 59 lines, was missing from the table entirely), and every line number had drifted (CodeRabbit found the first) | Fixed — table recomputed, `query-dsl` added with its reason, counts stamped with the commit they were taken at |
+| R-10 | Low | The audit summary said "Two findings, both fixed" above a table listing B-1 to B-3, and the fidelity paragraph reported 318 imports where the branch reports 336 (CodeRabbit) | Fixed — B-3's later provenance stated; 318 kept as the figure *at the move*, which is what makes it a fidelity measurement, with 336 named as the current count and why |
+
+**R-6 and R-7 are one defect wearing two faces, and it is B-2's.** B-2 taught the *loader*
+that a nested file ships. Neither downstream check learned it, so the audit fixed the
+component it was looking at and left two consumers holding the old assumption. A fix that
+changes what a shared structure means has to be followed to every reader of that structure —
+the audit checked that the loader was right, not that anything else still was.
+
+**R-9 is the cost of a hand-maintained table.** Its numbers went stale inside the same
+branch, from a commit whose subject says nothing about line counts. The carried item calls
+for a check; until there is one, every number in that table is wrong by default.
+
+## Rules distilled
+
+- **Multiply a locked map out against its own sizing rule before calling it locked.** Both
+  halves of RFC 0041 were written carefully and neither was checked against the other; the
+  arithmetic that showed 20 files under the floor and two at 4 lines took one script and
+  existed to be run at design time. (D-008.)
+- **A completeness claim over a map — "nothing is dropped" — is a testable statement, so
+  test it.** One section of one skill had no destination, and the sentence asserting
+  otherwise had been true of every earlier draft. (D-009.)
+- **Moving text is not migrating it.** Links can be rewritten mechanically and imports
+  verified mechanically, and the corpus can still be worse to read: 39 of 43 files kept
+  their content and lost the orientation their surrounding narrative gave them. The
+  mechanical half passing every gate is what makes this easy to call done. (B-1.)
+- **Exclude by identity, not by name.** A loader that skips "files called `SKILL.md`" leaves
+  one nested somewhere in neither bucket; a loader that skips "the index files I loaded"
+  cannot. The same shape as keying a published-file rule on `is_skill`. (B-2.)
+- **A structural change and the gate that checks it are one commit.** Splitting them leaves a
+  commit where the corpus is unchecked and the gate green over an empty denominator — which
+  is not a hypothetical here: pre-commit stashed the gate change and the old gate reported
+  `0/0 python block(s) parsed` against the new corpus. (D-010's note.)
+
+## Carried into the next unit
+
+- **Nothing mechanically catches a used-but-unimported symbol.** The corpus is now at zero
+  (B-3), but that was measured by a throwaway script, not a gate: the count can regress on the
+  next edit and no check would notice. A real check has to resolve each block's free names
+  against the imports its own file supplies, and must distinguish a framework symbol from the
+  reader's own placeholder — `Project` and `ResourceName` are *meant* to be undefined, which is
+  why the naive version reports 128 findings for 13 real ones. That discrimination is the whole
+  design problem, and it is why this is a note rather than a gate.
+- **A row is verified at one phrasing, not as a contract.** The §10 runs cover six tasks. A row
+  reworded, or a seventh added, is an unexercised case, and nothing re-runs the check.
+- **RFC 0042 lands on this shape.** Its work is import blocks in existing reference files,
+  which §6.1 says needs no amendment; a new file does. The parity gate now enforces that. Its
+  own evidence table still cites the 21-directory corpus (`forze-fastapi-interface/SKILL.md`
+  at §81), so whoever executes it re-measures against `references/` first — the D1/D2 grades
+  were assigned to files that no longer exist.
+- **RFC 0041 §1/§7 links dangle by design.** They describe the pre-execution state. If a
+  future gate ever checks links under `rfcs/`, these are the expected failures and the
+  answer is to exempt historical prose, not to rewrite it.
+- **The reference-size reasons in D-010 are a record, not a check.** Nothing notices if
+  `secrets` grows to 300 lines or `architecture` shrinks to 10.

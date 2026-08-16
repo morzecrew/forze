@@ -138,26 +138,28 @@ Postgres, a client, the relation config for the aggregate and a lifecycle module
 
 ## Skills for AI agents using Forze
 
-Forze ships [Agent Skills](https://agentskills.io/) for **applications that use Forze as a
+Forze ships an [Agent Skill](https://agentskills.io/) for **applications that use Forze as a
 dependency**, so an assistant working in your service repo wires ports, specs, and handlers the
 way the contracts actually expect rather than inventing a plausible shape.
 
 ```bash
-npx skills add morzecrew/forze                # all skills
-npx skills add morzecrew/forze@forze-wiring   # just one
+npx skills add morzecrew/forze
 ```
 
-A few of them:
+One skill, `forze-skills`: a routing index plus 43 reference files it reads only when a task
+needs them. The index is keyed by task and names every reference a task needs, because these are
+procedures rather than independent rules — an aggregate declared without its backend config is an
+app that does not start.
 
-| Skill | Covers |
+| I want to… | It routes to |
 | --- | --- |
-| `forze-wiring` | Runtime, `DepsRegistry`, lifecycle, governed aggregates, pipeline stages |
-| `forze-framework-usage` | `ExecutionContext`, ports, transactions, identity context, the query DSL |
-| `forze-domain-aggregates` | Document aggregates, mixins, validators, logical specs, composition DTOs |
-| `forze-deps-consumption` | Plain vs routed deps, `route=spec.name`, built-in `*DepsModule`, merge debugging |
-| `forze-custom-deps` | Custom `DepKey` and `DepsModule` for private integrations |
+| Bootstrap a new service | architecture → spec naming → deps resolution → runtime lifecycle |
+| Add a governed aggregate | models → document spec → `AggregateKit` → backend config → mock tests |
+| Write a custom handler | execution context → handlers → query DSL |
+| Expose it over HTTP | FastAPI setup → generated routes → identity |
+| Simulate under faults | DST simulation → invariants → mock tests |
 
-All 21, with descriptions, are in
+The full index is in
 [skills/README.md](https://github.com/morzecrew/forze/blob/main/skills/README.md).
 
 ## Writing an adapter
@@ -169,7 +171,7 @@ whole mechanism the shipped integrations use; being in this repo buys them nothi
 smallest one to read end to end is
 [`forze_vault`](https://github.com/morzecrew/forze/tree/main/src/forze_vault); the pattern is
 documented in the [wiring guide](https://morzecrew.github.io/forze/latest/writing-operation/wiring/)
-and the `forze-custom-deps` skill above.
+and the skill's `deps-custom-module` reference above.
 
 You do not have to take the contract on faith where it is hardest to satisfy: `forze_dst`
 ships backend-agnostic batteries for transactional isolation (the classic anomalies, with the

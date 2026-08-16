@@ -1,49 +1,34 @@
 # Agent Skills
 
-Forze ships with AI agent skills for **applications that use Forze as a dependency**. Install them so assistants follow correct wiring, specs, handlers, and integration patterns in your service repo.
+Forze ships an AI agent skill for **applications that use Forze as a dependency**. Install it so assistants follow correct wiring, specs, handlers, and integration patterns in your service repo.
 
-Skills follow the [Agent Skills](https://agentskills.io/) format. Maintainers: see [AUTHORING.md](AUTHORING.md).
+It follows the [Agent Skills](https://agentskills.io/) format. Maintainers: see [AUTHORING.md](AUTHORING.md).
 
 ## Installation
 
 ```bash
-# Install all skills
 npx skills add morzecrew/forze
-
-# Install a specific skill
-npx skills add morzecrew/forze@forze-wiring
 ```
+
+That installs `forze-skills` — one skill, one description in your agent's context, and 43 reference files it reads only when a task needs them.
+
+There is no per-skill install. Forze's material is a graph of mutually-dependent procedures rather than a set of independent rules, so installing a fragment of it produced dangling navigation and advice with its prerequisites missing.
 
 ## Usage
 
-Skills load automatically when the agent detects a relevant task (handlers, wiring, Temporal, auth, and so on).
+The skill loads when the agent detects a relevant task (handlers, wiring, Temporal, auth, and so on). Its `SKILL.md` is a routing index: a mental model, a task-keyed table naming **every** reference a task needs, and an index of all 43.
 
-## Available skills
+Most tasks need three to five references. The index says so explicitly, because reading one and stopping is the failure mode of this shape.
 
-| Name | Description |
-| -------- | -------- |
-| **forze-framework-usage** | ExecutionContext, ports, transactions, identity context, and query DSL in handlers. |
-| **forze-domain-aggregates** | Document aggregates, mixins, validators, logical `DocumentSpec` / `SearchSpec`, composition DTOs. |
-| **forze-wiring** | Runtime, `DepsRegistry`, lifecycle, `AggregateKit` governed aggregates, composition, operation pipeline stages, FastAPI attach. |
-| **forze-specs-infrastructure** | Map logical `StrEnum` spec names to Postgres/Mongo/Redis/S3/queue/workflow configs. |
-| **forze-deps-consumption** | Plain vs routed deps, `route=spec.name`, built-in `*DepsModule`, merge debugging. |
-| **forze-custom-deps** | Advanced: custom `DepKey` and `DepsModule` for private integrations. |
-| **forze-documents-search** | Document/search ports, query DSL, cache-aware specs, Postgres/Mongo/Firestore + Meilisearch behavior. |
-| **forze-fastapi-interface** | FastAPI context deps, generated routes (`attach_*_routes`), middleware, errors. |
-| **forze-object-storage** | `StorageSpec` + `StorageFacade`, S3 (`S3DepsModule`) and GCS (`GCSDepsModule`) backends, tenant-aware buckets, presigned/multipart uploads, mock tests. |
-| **forze-http-outbound** | Outbound HTTP: declarative `BaseHttpIntegration` / `async_http_op`, `HttpServiceSpec`, `HttpDepsModule`, auth, tenant routing. |
-| **forze-messaging-streaming** | Queue, pub/sub, stream contracts; SQS/RabbitMQ queues, Redis streams/pub-sub, Kafka commit-stream groups. |
-| **forze-realtime** | Realtime egress: event catalogs, `RealtimePublisher` (ephemeral vs durable), offline mailbox and device cursors, and the Socket.IO / SSE / WebSocket transports behind one wire protocol. |
-| **forze-inference** | Typed model invocation: `InferenceSpec`, `ctx.inference.model()`, local / HTTP (KServe-v2, MLflow) / SageMaker backends, capabilities, and the mock registry. |
-| **forze-temporal-workflows** | `DurableWorkflowSpec`, Temporal deps, workflow ports, schedules, worker context. |
-| **forze-inngest-durable-functions** | Durable functions: Inngest events/registration/steps/FastAPI serve, plus the self-hosted Postgres runner. |
-| **forze-auth-tenancy-secrets** | Authn/authz, tenancy, secrets, OIDC, FastAPI identity binding. |
-| **forze-encryption-kms** | Envelope encryption: `FieldEncryption`, `CryptoDepsModule`, KMS backends (Vault, AWS/GCP/Yandex Cloud), per-tenant KEKs (BYOK), key rotation/replacement, re-encryption sweeps. |
-| **forze-graph-contracts** | Graph specs and ports; Neo4j integration (`forze_neo4j`) or custom adapter wiring. |
-| **forze-observability-errors** | `CoreException` / `exc` factories, logging, call context, FastAPI error responses. |
-| **forze-resilience-deadlines** | Resilience policies, invocation deadlines, graceful drain/readiness, fleet deployment posture. |
-| **forze-analytics** | `AnalyticsSpec` query/ingest ports, BigQuery (`@param`) and ClickHouse (`{name:Type}`) backends, named SQL templates. |
+| I want to… | The skill routes to |
+|---|---|
+| Bootstrap a new service | architecture → spec naming → deps resolution → runtime lifecycle |
+| Add a governed aggregate | models → document spec → AggregateKit → backend config → mock tests |
+| Write a custom handler | execution context → handlers → query DSL |
+| Expose it over HTTP | FastAPI setup → generated routes → identity |
+| Encrypt a field | field encryption → KMS backends → backend config |
+| Simulate under faults | DST simulation → invariants → mock tests |
 
 ## Documentation
 
-Skills link to the published docs at [morzecrew.github.io/forze](https://morzecrew.github.io/forze/latest/), which are **versioned**: each skill's links use the `latest` alias, and the Reference section notes how to swap `latest` for an older pinned `forze` minor. Framework contribution is documented in the Forze repository (`AGENTS.md`, `CONTRIBUTING.md`), not in these skills.
+References link to the published docs at [morzecrew.github.io/forze](https://morzecrew.github.io/forze/latest/), which are **versioned**: links use the `latest` alias, and `SKILL.md` notes how to swap `latest` for an older pinned `forze` minor. Framework contribution is documented in the Forze repository (`AGENTS.md`, `CONTRIBUTING.md`), not in this skill.
