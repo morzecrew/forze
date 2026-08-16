@@ -439,26 +439,32 @@ neither was execution's to decide.
 - **Proposed row (RFC 0041):** `ASSUMED` — a completeness claim over a map is checked by
   script before the map is locked. "Nothing is dropped" is a testable statement.
 
-## D-010 — Ten references remain under the 60-line floor, with reasons
+## D-010 — Eleven references remain under the 60-line floor, with reasons
 
 - **Touches:** RFC 0041 §10 ("none is under 60 without a recorded reason") and §2 rule 3.
 - **RFC said:** a reason must be recorded. This is that record.
 - **Found:** after the D-008 merges, seam repair, routed anti-patterns and reference links,
-  ten files sit below the floor. Each is one complete job, and eight of the ten are named in
-  a §5 bundle — merging them would fold two jobs into one file to satisfy a line count.
+  eleven files sit below the floor. Each is one complete job, and six of the eleven are named
+  in a §5 bundle — merging them would fold two jobs into one file to satisfy a line count.
+
+  Line counts as of `05d004c`, and they have already moved once inside this branch: B-3's
+  import repairs added a line or two to several of these files. That is the carried item
+  below arriving early rather than a separate defect — a hand-maintained table of numbers
+  nothing recomputes is wrong by default, and the reasons, not the counts, are the record.
 
   | Lines | Reference | Why it stays |
   |---|---|---|
-  | 34 | `testing-with-mock` | Named in two §5 bundles. "Test it with the mock" is a whole job that is genuinely short. |
-  | 35 | `architecture` | A primer, read first and once. Length is the point. |
-  | 42 | `outbox-notifications` | Stage-in-transaction/relay-after-commit is one procedure with one correct shape. |
-  | 46 | `deps-resolution` | §5 bundle member; folding it into `runtime-lifecycle` would recreate the over-large file this RFC split. |
-  | 46 | `oidc` | External IdPs are a distinct decision from the authn pipeline beside it. |
-  | 48 | `aggregate-kit` | §5 bundle member and the single-declaration story; deliberately not the models. |
-  | 48 | `shutdown-fleet` | Drain, quiesce and fleet posture are one operational procedure. |
-  | 50 | `spec-naming-and-routes` | §5 bundle member, and the rule the whole corpus leans on. |
-  | 51 | `secrets` | One lookup, cleanly separable from tenancy and authn. |
-  | 53 | `logging-metrics` | Instrumenting a registry is one job; splitting logging from metrics would create two files always read together. |
+  | 34 | `architecture` | A primer, read first and once. Length is the point. |
+  | 37 | `testing-with-mock` | Named in two §5 bundles. "Test it with the mock" is a whole job that is genuinely short. |
+  | 43 | `outbox-notifications` | Stage-in-transaction/relay-after-commit is one procedure with one correct shape. |
+  | 47 | `deps-resolution` | §5 bundle member; folding it into `runtime-lifecycle` would recreate the over-large file this RFC split. |
+  | 47 | `oidc` | External IdPs are a distinct decision from the authn pipeline beside it. |
+  | 49 | `aggregate-kit` | §5 bundle member and the single-declaration story; deliberately not the models. |
+  | 51 | `shutdown-fleet` | Drain, quiesce and fleet posture are one operational procedure. |
+  | 51 | `spec-naming-and-routes` | §5 bundle member, and the rule the whole corpus leans on. |
+  | 52 | `secrets` | One lookup, cleanly separable from tenancy and authn. |
+  | 54 | `logging-metrics` | Instrumenting a registry is one job; splitting logging from metrics would create two files always read together. |
+  | 59 | `query-dsl` | §5 bundle member. Filter, sort, projection and paging are one vocabulary; the port that runs it is its own file. |
 
 - **Class:** `discovery`. The exact residue is only knowable once the text has been moved,
   the seams repaired and the tails routed.
@@ -481,7 +487,8 @@ pass.
 ## Audit findings — 2026-08-16
 
 Adversarial pass over the branch: 3 commits, 60 files, +2952/-2603, against merge base
-`668ca42f4`. Two findings, both fixed.
+`668ca42f4`. Two findings, both fixed. B-3 was added later, from the §10 agent runs rather
+than from this pass — three findings now, all fixed.
 
 | # | Severity | Finding | Status |
 |---|---|---|---|
@@ -498,9 +505,11 @@ originally keyed on `is_skill`, which left 43 of 44 published files unguarded, a
 test caught it before the sabotage did.
 
 **Fidelity, mechanically:** 127 python blocks and 302 import assertions before the move; 135
-and 318 after, with the deltas being exactly the new DST pair. All **237** distinct import
-pairs from the old corpus are present in the new one, and the extraction script asserts zero
-orphaned sections rather than trusting the map.
+and 318 immediately after it, with the deltas being exactly the new DST pair. All **237**
+distinct import pairs from the old corpus are present in the new one, and the extraction
+script asserts zero orphaned sections rather than trusting the map. The 318 is the figure at
+the move, which is what makes it a fidelity measurement; the branch now reports **336**,
+because B-3 added the fifteen imports those examples were calling without.
 
 **What remains distrusted.**
 
@@ -547,6 +556,29 @@ make the RFC's own argument unreadable and is the laundering this log exists to 
   unit get different pre-commit treatment. Predates this branch, left alone deliberately
   (row 7 fixed the gate without disturbing the exclude), and worth a look by whoever next
   touches the mirrors.
+
+## Review findings — 2026-08-16
+
+PR #377. Five findings from CodeRabbit and Greptile, all fixed, none refuted. Two are code
+defects; three are the record contradicting itself.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-6 | **Medium** | Index parity matched references **one level** under the skill directory while the loader walks recursively, so a nested file was in neither set — routed by nothing, reported by nothing, and copied out by an installer that recurses. Every other check passes such a file (Greptile) | Fixed — parity compares paths relative to the skill directory at any depth. Reproduced first: the obvious repro is caught by *other* checks, so it took a nested file with a `## Reference` section and no relative links to show the hole |
+| R-7 | **Medium** | The link-escape rule drew its boundary at the corpus root, so a shipped link to `skills/README.md` or `skills/AUTHORING.md` resolved here and dangled wherever the skill is installed — an install copies `forze-skills/` and leaves its siblings behind (Greptile) | Fixed — the boundary is the skill directory, the unit the installer actually copies |
+| R-8 | Low | §6's opening still claimed every section has **exactly one** destination, which D-009's own fix falsified: routing `resilience-deadlines` §Gotchas split it by bullet across two files (CodeRabbit) | Fixed — "at least one", with the split named in the opening and its provenance already per-bullet in the map |
+| R-9 | Low | D-010 said "eight of the ten" references under the floor are named in a §5 bundle. Three things were wrong: the count is **six**, the set is **eleven** (`query-dsl`, 59 lines, was missing from the table entirely), and every line number had drifted (CodeRabbit found the first) | Fixed — table recomputed, `query-dsl` added with its reason, counts stamped with the commit they were taken at |
+| R-10 | Low | The audit summary said "Two findings, both fixed" above a table listing B-1 to B-3, and the fidelity paragraph reported 318 imports where the branch reports 336 (CodeRabbit) | Fixed — B-3's later provenance stated; 318 kept as the figure *at the move*, which is what makes it a fidelity measurement, with 336 named as the current count and why |
+
+**R-6 and R-7 are one defect wearing two faces, and it is B-2's.** B-2 taught the *loader*
+that a nested file ships. Neither downstream check learned it, so the audit fixed the
+component it was looking at and left two consumers holding the old assumption. A fix that
+changes what a shared structure means has to be followed to every reader of that structure —
+the audit checked that the loader was right, not that anything else still was.
+
+**R-9 is the cost of a hand-maintained table.** Its numbers went stale inside the same
+branch, from a commit whose subject says nothing about line counts. The carried item calls
+for a check; until there is one, every number in that table is wrong by default.
 
 ## Rules distilled
 
