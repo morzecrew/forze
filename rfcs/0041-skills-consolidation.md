@@ -1,7 +1,7 @@
 # RFC 0041 — Skills consolidation: one published skill with lazy references
 
 - **Status:** 📝 Draft — design locked including the full reference-file map (§6) and a **hard-cut migration** (§7): the 21 directories are deleted, not deprecated, licensed by there being no external installed base. Breaking, and deliberately so. Depends on RFC 0040 only for its index-parity check; can be written in parallel but should land after it.
-- **Scope:** Replacing the 21 independently-published skills under [`skills/`](../skills/) with a single published skill, `skills/forze-skills/`, whose `SKILL.md` is a routing index over **48** lazily-read reference files. Covers the packaging decision, the installer constraints that bound it, the exact file map, the routing-table contract, and the migration for existing installs. Beyond the mechanical split and the seam-repair it forces, the only net-new writing is the **DST pair** (§6) — `forze_dst` is a key building block with a nine-page docs section and no skill at all today. Does **not** add coverage for the other currently-uncovered integrations (RFC 0042).
+- **Scope:** Replacing the 21 independently-published skills under [`skills/`](../skills/) with a single published skill, `skills/forze-skills/`, whose `SKILL.md` is a routing index over **43** lazily-read reference files. Covers the packaging decision, the installer constraints that bound it, the exact file map, the routing-table contract, and the migration for existing installs. Beyond the mechanical split and the seam-repair it forces, the only net-new writing is the **DST pair** (§6) — `forze_dst` is a key building block with a nine-page docs section and no skill at all today. Does **not** add coverage for the other currently-uncovered integrations (RFC 0042).
 - **Related:** [`skills/README.md`](../skills/README.md) — the published table and the per-skill install instruction this RFC retires. [`skills/AUTHORING.md`](../skills/AUTHORING.md) — maintainer rules that need rewriting for the new shape, including its "Retired (merged) skill names" section, which already establishes the precedent for this kind of breaking rename. RFC 0040 §3.3 supplies the index↔reference parity check without which this structure silently rots. RFC 0042 may need reference files this map does not contain; §6.1 defines who owns the map and how it changes.
 - **Origin:** A proposal to restructure `skills/` after [`leonardomso/rust-skills`](https://github.com/leonardomso/rust-skills) — one `SKILL.md` index over 265 lazily-loaded rule files. Assessing it produced a split verdict that this RFC encodes: the **packaging** transfers and is an improvement; the **rule atomization** does not transfer, because rust-skills' rules are orthogonal and normative while Forze's skills are compositional and procedural. Taking the first without the second is the whole design.
 
@@ -32,7 +32,7 @@ rust-skills is 265 rules across 26 prefix-namespaced categories. Each rule is **
 
 Forze's skills are **procedural** and **compositional**. Declaring a governed aggregate requires the models, the spec, the deps module, the kit and the runtime *together*, in order. The 55 cross-links are the evidence: this is a graph of mutually-dependent procedures, not a flat rule set. Shredding a procedure into rule-shaped atoms would fragment exactly the sequences an agent needs whole, and would replace one over-large read with six under-informative ones.
 
-So: **adopt the index-plus-lazy-references packaging; reject the rule granularity.** The target is ~48 reference files of *one job each*, where a job is a complete procedure or a complete lookup — not ~200 rules. Concretely, the splitting rules are:
+So: **adopt the index-plus-lazy-references packaging; reject the rule granularity.** The target is ~43 reference files of *one job each*, where a job is a complete procedure or a complete lookup — not ~200 rules. Concretely, the splitting rules are:
 
 1. **One job per file.** A job is something a reader came to do ("wire the runtime", "write a query", "rotate a key").
 2. **Never split a procedure across files.** If steps 1–5 must be followed in order, they are one file, however long.
@@ -88,7 +88,9 @@ Consequence for review: the index's routing table, not the file split, is where 
 
 ## 6. The reference map — locked
 
-48 files. Every current `##`/`###` section has exactly one destination; nothing is dropped. Provenance is given so execution is mechanical and so review can argue with the decomposition rather than with an abstraction. Two of the 48 — the DST pair — have **no source skill** and are net-new writing; see the note following the tables.
+**43 files.** Every current `##`/`###` section has exactly one destination; nothing is dropped. Provenance is given so execution is mechanical and so review can argue with the decomposition rather than with an abstraction. Two of the 43 — the DST pair — have **no source skill** and are net-new writing; see the note following the tables.
+
+> **Amended by execution 2026-08-16 — see EXECUTION-LOG.md D-008 and D-009.** The map was locked at 48 and measuring it against §2's own splitting rules before writing anything showed the two could not both hold: 20 of the 46 mapped files projected under §2 rule 3's 60-line floor, and `mcp` and `authz` projected at **4 lines each** — precisely what rule 4 calls a file that is only ever read with its neighbour. Five destinations named in no §5 bundle were merged into theirs, so the routing table is unchanged: `mcp` → `fastapi-generated-routes`, `authz` → `authn`, `deadlines` → `resilience`, `caching` → `document-facade`, `tenancy-admin` → `tenancy`. Count 48 → 43. Separately, `resilience-deadlines` §Gotchas had no destination at all, which made this section's "nothing is dropped" false as written; it is now routed (D-009). The tables below are the amended map.
 
 ### Foundations
 
@@ -122,10 +124,9 @@ Consequence for review: the index's routing table, not the file split, is where 
 
 | Reference | Source |
 |---|---|
-| `document-facade.md` | `documents-search` §Document access, §Custom operations and raw ports, §Adapter boundaries |
+| `document-facade.md` | `documents-search` §Document access, §Custom operations and raw ports, §Adapter boundaries, §Cache-aware documents |
 | `query-dsl.md` | `documents-search` §Query DSL (+ `###`), `framework-usage` §Query syntax |
 | `search.md` | `documents-search` §Search with `SearchFacade`, §Hub and federated search, §Rebuilding a search index; `wiring` §Search composition |
-| `caching.md` | `documents-search` §Cache-aware documents |
 
 ### Events, messaging, realtime
 
@@ -149,19 +150,16 @@ Consequence for review: the index's routing table, not the file split, is where 
 | Reference | Source |
 |---|---|
 | `fastapi-setup.md` | `fastapi-interface` §Context dependency and lifespan, §Middleware, errors, and docs; `wiring` §FastAPI integration |
-| `fastapi-generated-routes.md` | `fastapi-interface` §Generated routes, §Hand-written routes, §Readiness and deadline headers |
-| `mcp.md` | `fastapi-interface` §Exposing operations over MCP |
+| `fastapi-generated-routes.md` | `fastapi-interface` §Generated routes, §Hand-written routes, §Readiness and deadline headers, §Exposing operations over MCP |
 
 ### Identity — the 16-section file, split
 
 | Reference | Source |
 |---|---|
-| `authn.md` | `auth-tenancy-secrets` §Boundary binding, §Verify-then-resolve pipeline, §Authn dep keys, §AuthnDepsModule wiring, §Authn document specs |
+| `authn.md` | `auth-tenancy-secrets` §Boundary binding, §Verify-then-resolve pipeline, §Authn dep keys, §AuthnDepsModule wiring, §Authn document specs, §Authz |
 | `fastapi-identity.md` | `auth-tenancy-secrets` §FastAPI identity (+ Cookie mode, Principal eligibility) |
 | `oidc.md` | `auth-tenancy-secrets` §External IdPs |
-| `authz.md` | `auth-tenancy-secrets` §Authz |
-| `tenancy.md` | `auth-tenancy-secrets` §Tenancy and routed clients, §Isolation tiers and the declared floor, §Tenancy deps module |
-| `tenancy-admin.md` | `auth-tenancy-secrets` §Tenant selector and admin plane, §Tenant provisioning |
+| `tenancy.md` | `auth-tenancy-secrets` §Tenancy and routed clients, §Isolation tiers and the declared floor, §Tenancy deps module, §Tenant selector and admin plane, §Tenant provisioning |
 | `secrets.md` | `auth-tenancy-secrets` §Secrets (+ Backends) |
 
 ### Encryption
@@ -196,9 +194,8 @@ The only group with no source skill — see the note below.
 |---|---|
 | `errors.md` | `observability-errors` §Error model, §Adapter exception mapping, §FastAPI mapping |
 | `logging-metrics.md` | `observability-errors` §Logging, §Operation and resilience metrics |
-| `resilience.md` | `resilience-deadlines` §Resilience policies (all five `###`) |
-| `deadlines.md` | `resilience-deadlines` §Invocation deadlines |
-| `shutdown-fleet.md` | `resilience-deadlines` §Graceful shutdown & readiness, §Quiesce, §Fleet posture |
+| `resilience.md` | `resilience-deadlines` §Resilience policies (all five `###`), §Invocation deadlines, §Gotchas (retry, rate-limiter and bulkhead bullets) |
+| `shutdown-fleet.md` | `resilience-deadlines` §Graceful shutdown & readiness, §Quiesce, §Fleet posture, §Gotchas (`mutates_shared_state` bullet) |
 
 Each skill's `## Anti-patterns` entries follow their subject matter — an anti-pattern about `route=spec.name` lands in `deps-resolution.md`, not in a corpus-wide anti-pattern file. Each `## Reference` section's published-docs links likewise follow their subject; the versioned-`latest` note moves to the index once, rather than being repeated 21 times.
 
@@ -251,7 +248,7 @@ Recorded so the reasoning is not mistaken for a general policy: **this shortcut 
 ## 8. Risks
 
 - **Routing regression (§5).** The one that is not fully mitigable. Bundles reduce it; they do not eliminate model judgment. Accepted knowingly.
-- **The index becomes a maintenance surface.** 48 one-line summaries that must stay discriminating and in sync. RFC 0040 §3.3's parity check prevents *structural* drift (orphans, dead links); it cannot prevent a summary going vague. rust-skills solves this by generating the index from each rule's `> summary` line — worth adopting **only if** the reference count grows past ~60. At 48, generation is over-engineering and a hand-written index that CI checks for parity is the right call. Recorded as the trigger, not built.
+- **The index becomes a maintenance surface.** 43 one-line summaries that must stay discriminating and in sync. RFC 0040 §3.3's parity check prevents *structural* drift (orphans, dead links); it cannot prevent a summary going vague. rust-skills solves this by generating the index from each rule's `> summary` line — worth adopting **only if** the reference count grows past ~60. At 43, generation is over-engineering and a hand-written index that CI checks for parity is the right call. Recorded as the trigger, not built.
 - **One large PR.** The split touches all 21 files at once. Mitigation: land RFC 0040 first so the import and structure gates are green *before* the move, making the move's correctness mechanically checkable rather than review-checkable.
 - **Loss of per-skill install.** Real but small: §1 shows it was already broken, and nobody wants `forze-wiring` without `forze-specs-infrastructure`.
 
