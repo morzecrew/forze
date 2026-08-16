@@ -1,8 +1,8 @@
 """Model Context Protocol (MCP) integration for Forze.
 
 A toolkit for exposing operations from a frozen operation registry as MCP tools. Bring your
-own :class:`~mcp.server.fastmcp.FastMCP` server (with your auth, transport, and any
-hand-written tools) and call :func:`register_tools` to add Forze operations as tools —
+own :class:`~fastmcp.FastMCP` server (with your auth, transport, and any hand-written
+tools) and call :func:`register_tools` to add Forze operations as tools —
 each call runs through the same governed pipeline as any other entrypoint. The adapter
 holds no business logic and enforces no authorization; governance stays in the engine,
 upstream of this boundary. :func:`register_dsl_query_prompts` additionally attaches

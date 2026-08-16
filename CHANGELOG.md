@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING — `forze[mcp]` moves to FastMCP 4 and MCP SDK v2** (`fastmcp>=4.0.0b3`, `mcp>=2.0.0`). `build_mcp_server`, `register_tools` and the auth/identity classes are unchanged; the SDK's protocol fields are snake_case now, so client code reading `tool.inputSchema` / `template.uriTemplate` wants `input_schema` / `uri_template` — `fastmcp.settings.mcp_camelcase_compat = False` finds the reads that still rely on the old spellings. **Migration:** FastMCP 4 is a pre-release; pin `fastmcp<4` to stay on the 3.x line.
 - **BREAKING — the 21 published Agent Skills are merged into one, `forze-skills`.** `npx skills add morzecrew/forze` now installs a routing index over 43 lazily-read reference files instead of 21 top-level skills. Per-skill install (`@forze-wiring`) is removed: it left every cross-link dangling. Adds a reference pair for `forze_dst`, which had no skill. **Migration:** re-run `npx skills add morzecrew/forze`, then delete the stale directories by hand — `rm -rf .claude/skills/forze-*` — since the installer cannot prune a directory it is not overwriting.
 
 ### Fixed

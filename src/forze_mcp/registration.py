@@ -51,7 +51,7 @@ def _flat_tool_handler(
 ) -> Callable[..., Awaitable[Any]]:
     """Build a tool callable whose signature is the operation's input-DTO fields.
 
-    FastMCP derives the tool's ``inputSchema`` from the callable's signature, so a flat
+    FastMCP derives the tool's ``input_schema`` from the callable's signature, so a flat
     signature (one parameter per DTO field) yields top-level arguments rather than a single
     nested object. The body re-validates against the real DTO (applying its own validators)
     before dispatching, and translates a boundary :class:`CoreException` into a client-safe
@@ -274,8 +274,8 @@ def register_tools(
                 name=tool_name,
                 description=_tool_description(entry),
                 annotations=ToolAnnotations(
-                    readOnlyHint=entry.is_read_only,
-                    destructiveHint=not entry.is_read_only,
+                    read_only_hint=entry.is_read_only,
+                    destructive_hint=not entry.is_read_only,
                 ),
             )
 

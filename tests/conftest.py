@@ -62,6 +62,32 @@ def pytest_addoption(parser: Any) -> None:
     )
 
 
+def pytest_configure(config: Any) -> None:
+    """Turn off FastMCP's camelCase compatibility bridge for the whole session.
+
+    MCP SDK v2 renamed every protocol field from camelCase (``inputSchema``) to snake_case
+    (``input_schema``), and FastMCP bridges the old spellings with warn-once properties.
+    That bridge is a migration aid on its way out — a suite that leans on it passes today
+    and breaks when the shim is dropped, and the only signal in between is a
+    ``DeprecationWarning`` this repository's ``filterwarnings`` silences.
+
+    Switching it off makes an old spelling an ``AttributeError`` at the line that reads it,
+    which is what keeps the migration done rather than merely finished once.
+    """
+
+    del config
+
+    try:
+        import fastmcp
+    except ImportError:  # the `mcp` extra is optional; nothing to gate without it
+        return
+
+    # A FastMCP that no longer carries the setting no longer carries the bridge either, so
+    # the old spellings already fail on their own and there is nothing left to switch off.
+    if hasattr(fastmcp.settings, "mcp_camelcase_compat"):
+        fastmcp.settings.mcp_camelcase_compat = False
+
+
 def pytest_collection_modifyitems(
     config: Any,
     items: list[pytest.Item],
