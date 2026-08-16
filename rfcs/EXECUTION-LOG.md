@@ -487,6 +487,7 @@ Adversarial pass over the branch: 3 commits, 60 files, +2952/-2603, against merg
 |---|---|---|---|
 | B-1 | Medium | **39 of the 43 references opened cold on a `##` heading**, with no sentence saying what the file covers or when a sibling is the better read. §6 calls prose repair "the real work" and the execution did the mechanical half: sections were moved and links rewritten, but the orientation those sections had from their surrounding narrative was left behind. A reader arriving from the index landed mid-topic in 39 of 43 cases | Fixed — an orienting paragraph per file, each naming the neighbouring reference where the boundary is easy to get wrong |
 | B-2 | Medium | A file named `SKILL.md` nested under `references/` was matched by **no** loader branch: the skill glob is one level deep and the reference walk excluded by filename. It would ship — the installer copies the skill directory recursively — and be checked by nothing. Reproduced: a nested `SKILL.md` containing an unparseable block passed every gate | Fixed — references are excluded by *identity* (the set of loaded index paths) rather than by filename |
+| B-3 | Low | Two examples in `dst-invariants.md` **used a framework symbol they never imported** — `record_event` and `SimulationConfig`. Neither gate can see this: `ast.parse` accepts an undefined name and the import check resolves only the imports that are written, so an uncopyable snippet passes both. Surfaced by the §10 agent runs, not by the audit — three of the six independently reported it as a gap in the skill | Fixed — imports added (`forze_dst.markers`, `forze_dst`). Measured against `main`: 11 such names are inherited and 2 were introduced, both in the net-new DST prose. The split itself introduced none |
 
 **Sabotage sweep: 5 mutations, 5 killed.** Against the real corpus, reverted after each: a
 reference dropped from the index, an unindexed reference added, a second skill directory left
@@ -503,11 +504,21 @@ orphaned sections rather than trusting the map.
 
 **What remains distrusted.**
 
-- **§10's behavioural criterion is not verified.** "For each of the six bundles, a cold agent
-  given only the index reaches the complete bundle" needs an agent, not an assertion. What is
-  tested is the floor beneath it: every bundle's references exist and are routed to from the
-  index, and the index states the read-more-than-one norm. A row that is followable is not a
-  row that gets followed, and the difference is exactly where §5 said the risk concentrates.
+- ~~**§10's behavioural criterion is not verified.**~~ **Verified 2026-08-16 — 6 of 6 rows,
+  zero missed references.** Six agents, one per row, each given an isolated copy of the skill,
+  a realistic request naming no file, and no access to this repository or the web. Measured
+  with an inotify watcher on the six directories rather than by self-report, because
+  `noatime` on both mounts rules out access times and an agent's account of what it read is
+  the thing under test. Every agent opened every reference its row promises. Each also read
+  1–10 beyond it, which is the routing table working as §5 describes rather than drift: run 3
+  added `operation-composition` to wire the operation, run 4 added `authn` for the plane under
+  the middleware, run 6 added `resilience` because the task mentioned retries. The self-reports
+  matched the watcher exactly in all six.
+
+  Two caveats on how much this establishes. The rows were exercised **one task each**, so what
+  is verified is that each row is followable and was followed once, not that it survives every
+  phrasing of its task. And the agents are the same model family as the author, which is the
+  standing limit on any evaluation of routing written by the thing being routed.
 - **The DST pair is new prose about a real API.** Every snippet in it was executed against
   the installed `forze_dst` — three errors were found and fixed that way, including an
   invented `probability=` kwarg — but the surrounding claims are review-checked only, and
@@ -560,9 +571,15 @@ make the RFC's own argument unreadable and is the laundering this log exists to 
 
 ## Carried into the next unit
 
-- **§10's behavioural criterion is unverified** and is the one the RFC says actually matters.
-  Verifying it means giving an agent only the index and a task, then seeing which references
-  it fetches — for each of the six rows, since adding a row adds a case.
+- **Eleven examples use a framework symbol no import in their file supplies** — `build_runtime`,
+  `PostgresDepsModule`, `RedisDepsModule`, `S3DepsModule`, `SQSDepsModule`, `TemporalDepsModule`,
+  `RoutedPostgresClient`, `attach_authn_routes`, `temporal_worker_lifecycle_step`,
+  `DocumentSpec`, `ExecutionContext`. All eleven predate this branch (B-3 measured it), so they
+  are inherited debt rather than split damage and were left alone. Worth fixing: a snippet that
+  cannot be pasted is the defect the corpus gates exist to prevent, and **no current gate can
+  see it** — a check would have to resolve free names against the file's own imports.
+- **A row is verified at one phrasing, not as a contract.** The §10 runs cover six tasks. A row
+  reworded, or a seventh added, is an unexercised case, and nothing re-runs the check.
 - **RFC 0042 lands on this shape.** Its work is import blocks in existing reference files,
   which §6.1 says needs no amendment; a new file does. The parity gate now enforces that. Its
   own evidence table still cites the 21-directory corpus (`forze-fastapi-interface/SKILL.md`

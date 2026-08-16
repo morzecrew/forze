@@ -50,7 +50,9 @@ predicate over each. `observe` runs against the app's own ports, so the facts ar
 read model actually says.
 
 ```python
+from forze.application.execution import ExecutionContext
 from forze_dst.invariants import expect
+from forze_dst.markers import record_event
 
 async def _observe(ctx: ExecutionContext) -> None:
     total = await ctx.document.query(PAYMENT_SPEC).count()
@@ -81,6 +83,8 @@ Declare targets on the config. A sweep that never reaches one is reported as suc
 stops a green run over an unexercised fault from reading as proof.
 
 ```python
+from forze_dst import SimulationConfig
+
 config = SimulationConfig(seeds=range(256), reachability_targets=["charge_failed"])
 ```
 
