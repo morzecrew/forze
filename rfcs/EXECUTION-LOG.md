@@ -755,6 +755,20 @@ came back green. A sabotage that does not land looks exactly like a gate that wo
   traced to a source docstring or an adapter before being written — which is how C-2 was
   caught — but that is a procedure, not a gate.
 
+## Decision-row outcomes — 2026-08-16
+
+Both halts were put to the author before any file was written, with a recommendation and the
+alternatives. Both recommendations were accepted unchanged; the remaining three rows were
+proposed at reconciliation and accepted. Nothing was refused this unit.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0042 | 1 | accepted | `LOCKED` | Subdivision adds a unit, never replaces the root — 38 units | D-011 |
+| 0042 | 2 | accepted | `ASSUMED` | Confirming an extra's mapping also assigns a doctrine; `forze_mock.server` is D2 | D-012 |
+| 0042 | 3 | accepted | `ASSUMED` | `forze_dst` discharged by RFC 0041; §4's evidence links are stale | D-013 |
+| 0042 | 4 | accepted | `ASSUMED` | Measure before the content, commit after it | D-014 |
+| 0042 | 5 | accepted | `ASSUMED` | A census with no D1 or D2 unit is refused | C-3 |
+
 ## Rules distilled
 
 - **Confirming a mapping is also a triage decision.** §5.1's open row asked only what module
