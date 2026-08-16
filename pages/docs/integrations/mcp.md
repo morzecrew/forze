@@ -15,7 +15,10 @@ the normal Forze pipeline (DTO validation → operation → result).
 uv add 'forze[mcp]'
 ```
 
-Built on FastMCP v3; no backing service of its own.
+Built on FastMCP v4 and MCP SDK v2; no backing service of its own. FastMCP 4 is still a
+pre-release, and it is what speaks the SDK's v2 wire types — code reading protocol fields
+off a tool or resource wants their snake_case spellings (`input_schema`, `uri_template`),
+not the v1 camelCase ones.
 
 ## Expose operations as tools
 
