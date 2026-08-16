@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- **BREAKING — the 21 published Agent Skills are merged into one, `forze-skills`.** `npx skills add morzecrew/forze` now installs a routing index over 43 lazily-read reference files instead of 21 top-level skills. Per-skill install (`@forze-wiring`) is removed: it left every cross-link dangling. Adds a reference pair for `forze_dst`, which had no skill. **Migration:** re-run `npx skills add morzecrew/forze`, then delete the stale directories by hand — `rm -rf .claude/skills/forze-*` — since the installer cannot prune a directory it is not overwriting.
 
 ### Fixed
 
