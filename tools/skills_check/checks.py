@@ -425,6 +425,11 @@ def imported_units(corpus: Corpus) -> set[str]:
                 reached.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
                 reached.add(node.module)
+                # `from forze_kms import gcp` imports a *submodule*, and the import gate
+                # resolves it as one. Recording only `forze_kms` would leave the census
+                # calling `forze_kms.gcp` unproven while the gate beside it reports the
+                # same line resolved — two checks disagreeing about one import.
+                reached.update(f"{node.module}.{alias.name}" for alias in node.names)
 
     covered: set[str] = set()
 
@@ -505,10 +510,26 @@ def load_extras(pyproject: Path) -> frozenset[str]:
 
     Derived, never hand-maintained, for the same reason the package list is: an integration
     nobody adds to a hand-written list is an integration the census cannot see.
+
+    A project with no extras at all is a valid project, so a missing table is an empty set
+    rather than an error. That is not a hole: with no extras the manifest's own rows become
+    "`kms-aws` is not an extra in pyproject.toml", which fails loudly. Raising here instead
+    would report the *package* list as unreadable when the package list is fine.
     """
     config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    project = config.get("project", {})
 
-    return frozenset(config["project"]["optional-dependencies"])
+    if not isinstance(project, dict):
+        raise TypeError(f"[project] must be a table, not {type(project).__name__}")
+
+    declared = project.get("optional-dependencies", {})
+
+    if not isinstance(declared, dict):
+        raise TypeError(
+            f"[project.optional-dependencies] must be a table, not {type(declared).__name__}"
+        )
+
+    return frozenset(declared)
 
 
 def load_shipped_packages(pyproject: Path) -> frozenset[str]:

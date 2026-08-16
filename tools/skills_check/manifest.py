@@ -103,17 +103,22 @@ def load_manifest(path: Path, packages: frozenset[str], extras: frozenset[str]) 
         manifest.violations.append(f"{path}: unreadable manifest ({type(error).__name__}: {error})")
         return manifest
 
-    extras_table = raw.get("extras", {})
-    subdivides: dict[str, str] = dict(extras_table.get("subdivides", {}))
-    whole = list(extras_table.get("whole-package", {}).get("names", []))
-    dependency_only = list(extras_table.get("dependency-only", {}).get("names", []))
+    # Every section is shape-checked before it is used. Syntactically valid TOML can put a
+    # list where a table belongs, and reaching a `.get` or `.items` on it raises an
+    # AttributeError out of a build step — a traceback where the reader needed a sentence
+    # naming the section. Worse is the shape that does *not* raise: `subdivides = []` reads
+    # as an empty mapping, silently dropping every sub-unit from the denominator.
+    extras_table = _table(raw, "extras", path, manifest.violations)
+    subdivides = _string_map(extras_table, "subdivides", f"{path}: extras", manifest.violations)
+    whole = _names(extras_table, "whole-package", path, manifest.violations)
+    dependency_only = _names(extras_table, "dependency-only", path, manifest.violations)
 
     manifest.subdivides = subdivides
     manifest.violations.extend(_check_extras(path, extras, subdivides, whole, dependency_only))
     manifest.violations.extend(_check_importable(path, subdivides))
 
-    merit = set(raw.get("extra-units", {}))
-    declared = raw.get("units", {})
+    merit = set(_table(raw, "extra-units", path, manifest.violations))
+    declared = _table(raw, "units", path, manifest.violations)
     manifest.units = tuple(_read_units(path, declared, manifest.violations))
     manifest.violations.extend(
         _check_totality(path, derive_units(packages, subdivides, merit), manifest.units)
@@ -123,6 +128,59 @@ def load_manifest(path: Path, packages: frozenset[str], extras: frozenset[str]) 
 
 
 # ----------------------- #
+
+
+def _table(raw: object, key: str, where: object, violations: list[str]) -> dict[str, object]:
+    """A table, or an empty one plus a violation naming the section and what it actually is."""
+    if not isinstance(raw, dict):
+        return {}
+
+    value = raw.get(key, {})
+
+    if isinstance(value, dict):
+        return value
+
+    violations.append(
+        f"{where}: `{key}` must be a table, not {type(value).__name__} — "
+        "a section of the wrong shape is not an empty section"
+    )
+
+    return {}
+
+
+def _string_map(table: dict[str, object], key: str, where: str, violations: list[str]) -> dict[str, str]:
+    """A table of string → string. A non-string value is named, not coerced."""
+    found = _table(table, key, where, violations)
+    mapping: dict[str, str] = {}
+
+    for name, value in found.items():
+        if isinstance(value, str):
+            mapping[name] = value
+        else:
+            violations.append(f"{where}.{key}: `{name}` maps to {type(value).__name__}, not a string")
+
+    return mapping
+
+
+def _names(table: dict[str, object], key: str, path: Path, violations: list[str]) -> list[str]:
+    """The ``names`` list under a section.
+
+    A bare string is refused rather than iterated. Python would happily walk it character by
+    character, turning one typo into a violation per letter — loud, and about the wrong
+    thing.
+    """
+    found = _table(table, key, f"{path}: extras", violations)
+    value = found.get("names", [])
+
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return [item for item in value if isinstance(item, str)]
+
+    if "names" in found:
+        violations.append(
+            f"{path}: extras.{key}.names must be a list of strings, not {type(value).__name__}"
+        )
+
+    return []
 
 
 def _check_extras(

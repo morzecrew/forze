@@ -691,6 +691,79 @@ def test_importing_a_submodule_proves_its_root_but_not_its_siblings(
     assert not any("forze_mock.server:" in violation for violation in violations)
 
 
+def test_a_submodule_imported_by_name_proves_that_submodule(
+    corpus_root: Path, tmp_path: Path
+) -> None:
+    """`from forze_mock import server` imports a submodule, and the import gate resolves it.
+
+    Recording only the left-hand module left the census calling a unit unproven while the
+    gate beside it reported the same line resolved — two checks disagreeing about one
+    import, with the census the stricter of the two.
+    """
+    _write(corpus_root, "```python\nfrom forze_mock import server\n```")
+    manifest = _loaded(tmp_path)
+
+    result = check_census(load_corpus(corpus_root), manifest)
+
+    assert not any("forze_mock.server" in violation for violation in result.violations)
+
+
+def test_a_project_with_no_extras_is_a_valid_project(tmp_path: Path) -> None:
+    """A missing `[project.optional-dependencies]` is an empty set, not a read failure.
+
+    Raising here reported the *package* list as unreadable while the package list was
+    fine. It is not a hole either: with no extras the manifest's own rows become
+    "`kms-aws` is not an extra in pyproject.toml", which fails loudly.
+    """
+    pyproject = tmp_path / "no-extras.toml"
+    pyproject.write_text(
+        '[project]\nname = "x"\n[tool.hatch.build.targets.wheel]\npackages = ["src/forze"]\n',
+        encoding="utf-8",
+    )
+
+    assert load_extras(pyproject) == frozenset()
+    assert load_shipped_packages(pyproject) == frozenset({"forze"})
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("extras = []\n", "`extras` must be a table"),
+        ("units = []\n", "`units` must be a table"),
+        ("extra-units = []\n", "`extra-units` must be a table"),
+        ('[extras]\nsubdivides = []\n', "`subdivides` must be a table"),
+        ('[extras]\nwhole-package = "nope"\n', "`whole-package` must be a table"),
+        ('[extras.whole-package]\nnames = "postgres"\n', "must be a list of strings"),
+        ('[extras.subdivides]\n"kms-aws" = 3\n', "maps to int, not a string"),
+    ],
+    ids=[
+        "extras-array",
+        "units-array",
+        "extra-units-array",
+        "subdivides-array",
+        "whole-package-string",
+        "names-string",
+        "mapping-value-not-string",
+    ],
+)
+def test_a_section_of_the_wrong_shape_is_named_not_crashed_on(
+    tmp_path: Path, body: str, expected: str
+) -> None:
+    """Valid TOML can put a list where a table belongs.
+
+    Two failure modes, and the quieter one is worse. `units = []` reached `.items()` and
+    raised an `AttributeError` out of a build step — a traceback where the reader needed a
+    sentence naming the section. `subdivides = []` did not raise at all: it read as an empty
+    mapping and silently dropped every sub-unit from the denominator.
+    """
+    path = tmp_path / "shape.toml"
+    path.write_text(body, encoding="utf-8")
+
+    manifest = load_manifest(path, frozenset(), frozenset())
+
+    assert any(expected in violation for violation in manifest.violations), manifest.violations
+
+
 def test_a_census_with_nothing_to_prove_is_refused(corpus_root: Path, tmp_path: Path) -> None:
     """A manifest where every unit is out of scope reads "0/0 proven" — full coverage.
 
