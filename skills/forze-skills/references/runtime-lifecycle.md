@@ -114,6 +114,7 @@ Pass `specs=` and the runtime knows what your application consists of — the de
 
 ```python
 from forze.application.contracts.inventory import SpecRegistry
+from forze.application.execution import build_runtime
 
 specs = SpecRegistry().register(order_spec, order_search_spec, invoice_blob_spec)
 

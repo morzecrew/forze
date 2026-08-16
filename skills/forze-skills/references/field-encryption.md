@@ -30,6 +30,7 @@ Each surface opts in independently:
 
 ```python
 from forze.application.contracts.crypto import FieldEncryption
+from forze.application.contracts.document import DocumentSpec
 
 DocumentSpec(
     name="patients",

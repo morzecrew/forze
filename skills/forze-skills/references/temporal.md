@@ -177,6 +177,8 @@ Schedules require a Temporal server with the Schedules API (not the time-skippin
 Workflows only run once a worker polls their task queue. Run it as a lifecycle step in its own process rather than hand-writing the connect/shutdown loop:
 
 ```python
+from forze_temporal import temporal_worker_lifecycle_step
+
 temporal_worker_lifecycle_step(
     client=client,
     task_queue="project-tasks",

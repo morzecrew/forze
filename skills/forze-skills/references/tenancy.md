@@ -21,6 +21,8 @@ Every tenant-aware deps module reports the isolation tier its wiring reaches —
 Set `required_tenant_isolation` on a module to declare a **minimum** and fail wiring closed below it — checked once at startup, never per request:
 
 ```python
+from forze_postgres import PostgresDepsModule, RoutedPostgresClient
+
 PostgresDepsModule(
     client=RoutedPostgresClient(...),
     required_tenant_isolation="dedicated",

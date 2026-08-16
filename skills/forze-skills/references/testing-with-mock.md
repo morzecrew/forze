@@ -27,6 +27,8 @@ async with runtime.scope():
 **Hybrid contexts** — pass `MockDepsModule` *alongside* real modules to get "real Postgres, mock everything else" in one list: everything the mock registers is a **fallback**, so a real registration of the same key or route wins instead of conflicting (order irrelevant; two real — or two mock — modules still raise). Caveat: an unregistered route then falls back to the mock instead of failing, so a spec-name typo resolves silently. Freeze logs that hazard set at INFO (`catch-all behind real routes: …`), also available as `check_wiring(...).fallbacks.catch_all`; to prove a test hit the real adapter, assert `"orders" in ctx.deps.store.routed_deps[DocumentQueryDepKey]`.
 
 ```python
+from forze_postgres import PostgresDepsModule
+
 DepsRegistry.from_modules(PostgresDepsModule(...), MockDepsModule(state=shared_state))
 ```
 

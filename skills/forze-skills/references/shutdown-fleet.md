@@ -32,6 +32,8 @@ Read the report correctly: `settled` means nothing was moving; `attested` means 
 ## Fleet posture (N replicas)
 
 ```python
+from forze.application.execution import DeploymentProfile, build_runtime
+
 runtime = build_runtime(..., deployment=DeploymentProfile.FLEET)
 ```
 

@@ -23,7 +23,7 @@ project_spec = DocumentSpec(
     cache=CacheSpec(name=ResourceName.PROJECTS, ttl=timedelta(minutes=5)),
 )
 
-from forze_postgres import PostgresDocumentConfig
+from forze_postgres import PostgresDepsModule, PostgresDocumentConfig
 
 pg_module = PostgresDepsModule(
     client=pg_client,
@@ -44,7 +44,12 @@ pg_module = PostgresDepsModule(
 `CacheSpec(name=ResourceName.PROJECTS, ...)` must match the key in `RedisDepsModule.caches`. Use the same naming style for counters, distributed locks, idempotency routes, and search result snapshots:
 
 ```python
-from forze_redis import RedisCacheConfig, RedisCounterConfig, RedisDistributedLockConfig
+from forze_redis import (
+    RedisCacheConfig,
+    RedisCounterConfig,
+    RedisDepsModule,
+    RedisDistributedLockConfig,
+)
 
 redis_module = RedisDepsModule(
     client=redis_client,
@@ -65,9 +70,9 @@ from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.storage import StorageSpec
 from forze.application.contracts.durable.workflow import DurableWorkflowSpec
 from forze.base.serialization import PydanticModelCodec
-from forze_s3 import S3StorageConfig
-from forze_sqs import SQSQueueConfig
-from forze_temporal import TemporalWorkflowConfig
+from forze_s3 import S3DepsModule, S3StorageConfig
+from forze_sqs import SQSDepsModule, SQSQueueConfig
+from forze_temporal import TemporalDepsModule, TemporalWorkflowConfig
 
 attachments = StorageSpec(name=ResourceName.PROJECT_ATTACHMENTS)
 orders = QueueSpec(

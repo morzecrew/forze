@@ -36,6 +36,7 @@ Handlers read identity only from `ExecutionContext`. The ingress `scheme` and AP
 For browsers that must not hold a token in JavaScript, pair the inbound `CookieTokenAuthn` with the outbound `AuthnCookieCarrier`:
 
 ```python
+from forze_fastapi.routes import attach_authn_routes
 from forze_fastapi.security import AuthnCookieCarrier
 
 cookies = AuthnCookieCarrier(access_path="/api", refresh_path="/auth/refresh")

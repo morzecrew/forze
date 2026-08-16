@@ -60,6 +60,8 @@ Register the module with `DepsRegistry.from_modules(WidgetDepsModule(...), ...)`
 Spec-backed adapters usually register factories like:
 
 ```python
+from forze.application.execution import ExecutionContext
+
 def __call__(self, ctx: ExecutionContext, spec: WidgetSpec) -> WidgetPort:
     return WidgetAdapter(
         client=ctx.deps.provide(WidgetClientDepKey),

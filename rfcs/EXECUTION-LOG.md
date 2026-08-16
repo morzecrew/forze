@@ -487,7 +487,7 @@ Adversarial pass over the branch: 3 commits, 60 files, +2952/-2603, against merg
 |---|---|---|---|
 | B-1 | Medium | **39 of the 43 references opened cold on a `##` heading**, with no sentence saying what the file covers or when a sibling is the better read. §6 calls prose repair "the real work" and the execution did the mechanical half: sections were moved and links rewritten, but the orientation those sections had from their surrounding narrative was left behind. A reader arriving from the index landed mid-topic in 39 of 43 cases | Fixed — an orienting paragraph per file, each naming the neighbouring reference where the boundary is easy to get wrong |
 | B-2 | Medium | A file named `SKILL.md` nested under `references/` was matched by **no** loader branch: the skill glob is one level deep and the reference walk excluded by filename. It would ship — the installer copies the skill directory recursively — and be checked by nothing. Reproduced: a nested `SKILL.md` containing an unparseable block passed every gate | Fixed — references are excluded by *identity* (the set of loaded index paths) rather than by filename |
-| B-3 | Low | Two examples in `dst-invariants.md` **used a framework symbol they never imported** — `record_event` and `SimulationConfig`. Neither gate can see this: `ast.parse` accepts an undefined name and the import check resolves only the imports that are written, so an uncopyable snippet passes both. Surfaced by the §10 agent runs, not by the audit — three of the six independently reported it as a gap in the skill | Fixed — imports added (`forze_dst.markers`, `forze_dst`). Measured against `main`: 11 such names are inherited and 2 were introduced, both in the net-new DST prose. The split itself introduced none |
+| B-3 | Low | Examples **used framework symbols they never imported**, so they could not be pasted into a file and run. Neither gate can see this: `ast.parse` accepts an undefined name and the import check resolves only the imports that *are* written. Surfaced by the §10 agent runs, not by the audit — three of the six independently reported it as a gap in the skill | Fixed, corpus now at zero. Measured against `main` first, because that decides scope: 2 were introduced (`record_event`, `SimulationConfig`, both in the net-new DST prose — the split itself introduced none) and 11 were inherited (`build_runtime`, `PostgresDepsModule`, `RedisDepsModule`, `S3DepsModule`, `SQSDepsModule`, `TemporalDepsModule`, `RoutedPostgresClient`, `attach_authn_routes`, `temporal_worker_lifecycle_step`, `DocumentSpec`, `ExecutionContext`). The inherited eleven are outside this RFC's scope and were fixed on request after being reported |
 
 **Sabotage sweep: 5 mutations, 5 killed.** Against the real corpus, reverted after each: a
 reference dropped from the index, an unindexed reference added, a second skill directory left
@@ -571,13 +571,13 @@ make the RFC's own argument unreadable and is the laundering this log exists to 
 
 ## Carried into the next unit
 
-- **Eleven examples use a framework symbol no import in their file supplies** — `build_runtime`,
-  `PostgresDepsModule`, `RedisDepsModule`, `S3DepsModule`, `SQSDepsModule`, `TemporalDepsModule`,
-  `RoutedPostgresClient`, `attach_authn_routes`, `temporal_worker_lifecycle_step`,
-  `DocumentSpec`, `ExecutionContext`. All eleven predate this branch (B-3 measured it), so they
-  are inherited debt rather than split damage and were left alone. Worth fixing: a snippet that
-  cannot be pasted is the defect the corpus gates exist to prevent, and **no current gate can
-  see it** — a check would have to resolve free names against the file's own imports.
+- **Nothing mechanically catches a used-but-unimported symbol.** The corpus is now at zero
+  (B-3), but that was measured by a throwaway script, not a gate: the count can regress on the
+  next edit and no check would notice. A real check has to resolve each block's free names
+  against the imports its own file supplies, and must distinguish a framework symbol from the
+  reader's own placeholder — `Project` and `ResourceName` are *meant* to be undefined, which is
+  why the naive version reports 128 findings for 13 real ones. That discrimination is the whole
+  design problem, and it is why this is a note rather than a gate.
 - **A row is verified at one phrasing, not as a contract.** The §10 runs cover six tasks. A row
   reworded, or a seventh added, is an unexercised case, and nothing re-runs the check.
 - **RFC 0042 lands on this shape.** Its work is import blocks in existing reference files,
