@@ -193,7 +193,7 @@ def _read_units(path: Path, declared: dict[str, object], violations: list[str]) 
             violations.append(f"{path}: unit `{name}` is not a table")
             continue
 
-        doctrine = str(body.get("doctrine", ""))
+        doctrine = str(body.get("doctrine", ""))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
         if doctrine not in DOCTRINES:
             violations.append(
@@ -202,8 +202,8 @@ def _read_units(path: Path, declared: dict[str, object], violations: list[str]) 
             )
             continue
 
-        rationale = str(body.get("rationale", ""))
-        trigger = str(body.get("trigger", ""))
+        rationale = str(body.get("rationale", ""))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        trigger = str(body.get("trigger", ""))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
         if doctrine in NEEDS_RATIONALE and not rationale:
             violations.append(f"{path}: `{name}` is {doctrine} and carries no rationale")
