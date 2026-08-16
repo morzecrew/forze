@@ -513,6 +513,38 @@ def test_index_parity_is_checked_in_both_directions(corpus_root: Path) -> None:
     assert any("the index routes to nothing" in violation for violation in violations)
 
 
+def test_parity_sees_a_reference_nested_below_the_top_level(corpus_root: Path) -> None:
+    """The loader walks recursively, so parity has to as well.
+
+    Matching one level down put a nested file in neither set: routed by nothing, reported
+    by nothing, and copied out by an installer that recurses. Every other check passes it,
+    which is what made it invisible — this file satisfies the section rule and carries no
+    relative links to break at the deeper path.
+    """
+    nested = corpus_root / SKILL_DIR / "references" / "nested"
+    nested.mkdir()
+    (nested / "orphan.md").write_text(_reference("Nothing routes here."), encoding="utf-8")
+
+    violations = _violations(corpus_root, "structure")
+
+    assert any("nested/orphan.md` exists but the index routes to nothing" in v for v in violations)
+
+
+def test_link_to_a_corpus_file_outside_the_skill_directory_is_reported(corpus_root: Path) -> None:
+    """`skills/README.md` resolves here and is absent wherever the skill is installed.
+
+    The boundary is the skill directory, not the corpus root: an install copies
+    `forze-skills/` and leaves its siblings behind, so a link that merely stays under
+    `skills/` is still a link that dangles for every consumer.
+    """
+    _write(corpus_root, "See [the corpus readme](../../README.md).")
+
+    violations = _violations(corpus_root, "structure")
+
+    assert len(violations) == 1
+    assert "escapes the published tree" in violations[0]
+
+
 # ----------------------- #
 # Census (§3.5) — report-only, on purpose.
 

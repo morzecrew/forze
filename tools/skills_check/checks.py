@@ -359,13 +359,22 @@ def _check_skill_shape(doc: Document) -> list[str]:
 
 
 def _check_relative_links(corpus: Corpus) -> list[str]:
-    """Every relative link resolves, and none of a skill's leaves the published tree."""
+    """Every relative link resolves, and none of a skill's leaves the tree that ships."""
     violations: list[str] = []
-    published = corpus.root.resolve()
-    # Reference files ship exactly as the index does — the installer copies the skill
-    # directory recursively — so the escape rule is about being published, not about
-    # being a `SKILL.md`. Keying it on the filename would leave 43 of 44 files unguarded.
-    ships = {doc.path for doc in corpus.published}
+    # The boundary is the *skill directory*, not the corpus root. An install copies one
+    # skill directory; `skills/README.md` and `skills/AUTHORING.md` sit beside it and stay
+    # here. Drawing the line at the root accepts a link to those two — resolvable in this
+    # repository, dangling the moment the skill is installed anywhere else.
+    homes = tuple(sorted({doc.path.parent.resolve() for doc in corpus.skills}))
+    # Reference files ship exactly as the index does — the installer copies the directory
+    # recursively — so the rule is about being published, not about being a `SKILL.md`.
+    # Keying it on the filename would leave 43 of 44 files unguarded.
+    ships = {
+        doc.path: home
+        for doc in corpus.published
+        for home in homes
+        if doc.path.resolve().is_relative_to(home)
+    }
 
     for doc in corpus.documents:
         for link in doc.links:
@@ -382,7 +391,9 @@ def _check_relative_links(corpus: Corpus) -> list[str]:
                 violations.append(f"{doc.path}:{link.line}: dangling link -> {link.target}")
                 continue
 
-            if doc.path in ships and not target.is_relative_to(published):
+            home = ships.get(doc.path)
+
+            if home is not None and not target.is_relative_to(home):
                 violations.append(
                     f"{doc.path}:{link.line}: link escapes the published tree -> "
                     f"{link.target} (installed skills are copied out of this repository)"
@@ -640,15 +651,21 @@ def _check_index_parity(corpus: Corpus) -> list[str]:
     violations: list[str] = []
 
     for index in corpus.skills:
+        home = index.path.parent.resolve()
+        # Keyed on the path relative to the skill directory, not on the filename stem, and
+        # matched at any depth rather than one level down. The loader walks recursively, so
+        # a reference in a subdirectory ships; comparing stems one level deep left it in no
+        # set at all — routed by nothing, reported by nothing, and installed anyway.
         listed = {
-            Path(target).stem
+            resolved.relative_to(home).as_posix()
             for link in index.links
-            if not link.is_external and (target := link.path_part).endswith(".md")
+            if not link.is_external and link.path_part.endswith(".md")
+            if (resolved := (index.path.parent / link.path_part).resolve()).is_relative_to(home)
         }
         present = {
-            doc.path.stem
+            doc.path.resolve().relative_to(home).as_posix()
             for doc in corpus.references
-            if doc.path.parent.parent == index.path.parent
+            if doc.path.resolve().is_relative_to(home)
         }
 
         violations += [
