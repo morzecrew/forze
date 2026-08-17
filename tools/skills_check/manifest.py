@@ -135,20 +135,22 @@ def _table(raw: object, key: str, where: object, violations: list[str]) -> dict[
     if not isinstance(raw, dict):
         return {}
 
-    value = raw.get(key, {})
+    value = raw.get(key, {})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
     if isinstance(value, dict):
-        return value
+        return value  # pyright: ignore[reportUnknownVariableType]
 
     violations.append(
-        f"{where}: `{key}` must be a table, not {type(value).__name__} — "
+        f"{where}: `{key}` must be a table, not {type(value).__name__} — "  # pyright: ignore[reportUnknownArgumentType]
         "a section of the wrong shape is not an empty section"
     )
 
     return {}
 
 
-def _string_map(table: dict[str, object], key: str, where: str, violations: list[str]) -> dict[str, str]:
+def _string_map(
+    table: dict[str, object], key: str, where: str, violations: list[str]
+) -> dict[str, str]:
     """A table of string → string. A non-string value is named, not coerced."""
     found = _table(table, key, where, violations)
     mapping: dict[str, str] = {}
@@ -157,7 +159,9 @@ def _string_map(table: dict[str, object], key: str, where: str, violations: list
         if isinstance(value, str):
             mapping[name] = value
         else:
-            violations.append(f"{where}.{key}: `{name}` maps to {type(value).__name__}, not a string")
+            violations.append(
+                f"{where}.{key}: `{name}` maps to {type(value).__name__}, not a string"
+            )
 
     return mapping
 
@@ -172,12 +176,12 @@ def _names(table: dict[str, object], key: str, path: Path, violations: list[str]
     found = _table(table, key, f"{path}: extras", violations)
     value = found.get("names", [])
 
-    if isinstance(value, list) and all(isinstance(item, str) for item in value):
-        return [item for item in value if isinstance(item, str)]
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):  # pyright: ignore[reportUnknownVariableType]
+        return [item for item in value if isinstance(item, str)]  # pyright: ignore[reportUnknownVariableType]
 
     if "names" in found:
         violations.append(
-            f"{path}: extras.{key}.names must be a list of strings, not {type(value).__name__}"
+            f"{path}: extras.{key}.names must be a list of strings, not {type(value).__name__}"  # pyright: ignore[reportUnknownArgumentType]
         )
 
     return []
@@ -272,7 +276,7 @@ def _read_units(path: Path, declared: dict[str, object], violations: list[str]) 
         # string `"['deferred']"`, which then satisfies "carries a rationale" — the check
         # passes on a value that is not one. A required field has to be the right *type*
         # before "is it present" means anything.
-        doctrine = _string_field(body, "doctrine", f"{path}: unit `{name}`", violations)
+        doctrine = _string_field(body, "doctrine", f"{path}: unit `{name}`", violations)  # pyright: ignore[reportUnknownArgumentType]
 
         if doctrine not in DOCTRINES:
             violations.append(
@@ -281,8 +285,8 @@ def _read_units(path: Path, declared: dict[str, object], violations: list[str]) 
             )
             continue
 
-        rationale = _string_field(body, "rationale", f"{path}: unit `{name}`", violations)
-        trigger = _string_field(body, "trigger", f"{path}: unit `{name}`", violations)
+        rationale = _string_field(body, "rationale", f"{path}: unit `{name}`", violations)  # pyright: ignore[reportUnknownArgumentType]
+        trigger = _string_field(body, "trigger", f"{path}: unit `{name}`", violations)  # pyright: ignore[reportUnknownArgumentType]
 
         if doctrine in NEEDS_RATIONALE and not rationale:
             violations.append(f"{path}: `{name}` is {doctrine} and carries no rationale")

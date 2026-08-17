@@ -484,9 +484,8 @@ def check_census(corpus: Corpus, manifest: Manifest) -> Result:
     # A manifest that failed to validate is reported *as* the headline rather than behind a
     # coverage ratio, because the ratio is computed from it: "37/37 proven" above a broken
     # unit list is a number describing a denominator nobody should trust yet.
-    counted = (
-        f"{proven - len(unproven)}/{proven} D1+D2 unit(s) proven, "
-        + ", ".join(f"{count} {doctrine}" for doctrine, count in sorted(by_doctrine.items()))
+    counted = f"{proven - len(unproven)}/{proven} D1+D2 unit(s) proven, " + ", ".join(
+        f"{count} {doctrine}" for doctrine, count in sorted(by_doctrine.items())
     )
     result.summary = (
         f"{len(manifest.violations)} manifest problem(s) — the unit list is not trustworthy"
@@ -522,14 +521,14 @@ def load_extras(pyproject: Path) -> frozenset[str]:
     if not isinstance(project, dict):
         raise TypeError(f"[project] must be a table, not {type(project).__name__}")
 
-    declared = project.get("optional-dependencies", {})
+    declared = project.get("optional-dependencies", {})  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
     if not isinstance(declared, dict):
         raise TypeError(
-            f"[project.optional-dependencies] must be a table, not {type(declared).__name__}"
+            f"[project.optional-dependencies] must be a table, not {type(declared).__name__}"  # pyright: ignore[reportUnknownArgumentType]
         )
 
-    return frozenset(declared)
+    return frozenset(declared)  # pyright: ignore[reportUnknownArgumentType]
 
 
 def load_shipped_packages(pyproject: Path) -> frozenset[str]:
