@@ -11,12 +11,12 @@ Design proposals for <project>. <If applicable: **This directory is
 gitignored** (`.gitignore` → `rfcs/`) — these are local working notes, not
 pushed to the repo.>
 
-<Once EXECUTION-LOG.md exists — written by the first completed execution
-unit, not by this template:
-[EXECUTION-LOG.md](EXECUTION-LOG.md) holds what execution found wherever the
-code and these designs disagreed, with the decision rows it puts forward in
-response. Entries are only ever added. It is not a design, so it has no number
-and no row in the table below.>
+<Once any task log exists — written by the task that executed, not by this
+template:
+`logs/` holds what execution found wherever the code and these designs
+disagreed, one file per task, with the decision rows each puts forward in
+response. Entries are only ever added. They are not designs, so they have no
+numbers and no rows in the table below.>
 
 ## Allocating a number
 
@@ -48,4 +48,4 @@ number in the filename in sync.
 - **The one-liner routes, it does not summarise.** One sentence naming the problem and the shape of the answer — enough to tell this design apart from the others, and no more. Aim for 200 characters, ceiling 300. What the RFC decides, how it works and what it excluded belong in the RFC.
 - **Never record history here.** No shipped dates, no phase progress, no defects found, no amendments. The Status column carries state; the RFC carries its own story. An entry that grows each time work lands turns the index into a changelog that every lookup has to read.
 - **Keep "next free number" honest.** Every RFC creation bumps it in the same change; when syncing a stale index, recompute it from the files actually present.
-- **`EXECUTION-LOG.md` never gets a table row.** It is not a design and has no status; it is linked in prose above the table, and only once it exists. `rfc_index.py` ignores it — only `NNNN-*.md` files are RFCs.
+- **Task logs never get table rows.** They are not designs and have no status; `logs/` is linked in prose above the table, and only once something is in it. `rfc_index.py` ignores them — only `NNNN-*.md` files in this directory are RFCs.

@@ -1,9 +1,6 @@
----
-name: never-nesting
-description: Flatten deeply nested code using guard clauses, early return/continue, function extraction, and error-handling redesign - and recognize when nesting should stay (symmetric branches, RAII/defer cleanup idioms). Use when writing or refactoring code with deep indentation, pyramid-of-doom or arrow-shaped if/else, nested loops or try/catch blocks, a buried happy path, or when the user mentions nesting, indentation, guard clauses, early returns, flattening or simplifying conditionals, or cyclomatic/cognitive complexity.
----
+# Nesting
 
-# Never Nesting
+How to flatten, and the cases where flattening makes code worse.
 
 Each level of indentation is one more condition the reader must hold as true to
 understand the innermost line. SonarSource's cognitive-complexity metric
@@ -17,20 +14,6 @@ program."
 Treat **three levels as a soft ceiling** and a fourth as a refactoring signal,
 not a formatting problem. The moves below flatten code; the last section covers
 the cases where flattening makes code worse.
-
-## Use this skill when
-
-- Writing a function that is growing nested `if`/`for`/`try` blocks.
-- Refactoring arrow code / pyramid-of-doom conditionals (`if { if { if { ... }}}`).
-- The happy path sits several indents deep with error handling wrapped around it.
-- Reviewing code for readability or a complexity-metric violation.
-- The user mentions nesting, guard clauses, early returns, or flattening conditionals.
-
-## Do not use this skill when
-
-- The user explicitly wants the existing structure preserved.
-- Both branches of a conditional are equally normal behavior (see "When not to flatten").
-- Manual resource cleanup makes early returns leak (see "When not to flatten").
 
 ## The move-set
 
@@ -180,18 +163,3 @@ moves from Ousterhout's *A Philosophy of Software Design*:
 
 The goal is fewer conditions held in the reader's head, not a zero-indent
 contest.
-
-## Quick checklist
-
-- Any function past ~3 levels? It's a candidate.
-- Can edge cases become guards so the happy path reaches base indent?
-- Is a nested block a nameable unit? Extract it.
-- Is the nesting caused by an API that throws where it could tolerate? Fix the API.
-- Is any branch you're about to guard actually normal behavior? Keep `if`/`else`.
-- Does an early return skip manual cleanup? Use the language's cleanup idiom first.
-
-## Related skills
-
-- `naming-things` — extraction only pays off if the new function's name informs; naming difficulty means the block isn't a coherent unit yet.
-- `self-documenting-code` — guard clauses and extracted functions document intent that comments would otherwise carry.
-- `less-code-same-behavior` — flattening often reveals duplicate branches that can be merged or deleted.

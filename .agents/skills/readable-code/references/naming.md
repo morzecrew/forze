@@ -1,9 +1,8 @@
----
-name: naming-things
-description: Choose clear names for variables, functions, classes, and modules - length proportional to scope, problem-domain vocabulary, honest booleans, units in names or types - and catch the anti-patterns (single letters, abbreviations, Hungarian type prefixes, negated booleans, Base/Abstract, Utils/Helper grab-bags, vague Manager/Handler words). Use when naming or renaming anything in code, reviewing identifiers in a diff, or when the user mentions naming, identifiers, variable names, renames, readability, "what should I call this", or that a name feels off.
----
+# Naming
 
-# Naming Things in Code
+A name is read far more often than its definition. Its job is to tell the
+reader what something *is* and *means* at the point of use, without a jump to
+the declaration.
 
 A name is read far more often than its definition. Its job is to tell the
 reader what something *is* and *means* at the point of use, without a jump to
@@ -11,18 +10,6 @@ the declaration. Most good naming is achievable by following a few positive
 rules and refusing a known catalog of anti-patterns — and when a good name
 still won't come, that difficulty is design feedback: the **structure**, not
 the vocabulary, is usually the real problem.
-
-## Use this skill when
-
-- Naming new variables, functions, classes, types, or modules.
-- Renaming during a refactor or cleanup.
-- Reviewing a diff where a name reads unclear, abbreviated, generic, or misleading.
-- The user mentions naming, identifiers, readability, or asks what to call something.
-
-## Do not use this skill when
-
-- A name is dictated by an external contract (serialized field, API schema, protocol) you cannot change.
-- A convention is enforced by the ecosystem (`i`/`j` in a tight numeric loop, `T` for a generic type parameter, `self`/`this`).
 
 ## Positive rules
 
@@ -123,19 +110,3 @@ read the difficulty as feedback. A function you can only call
 `DataManager` has no single responsibility: reshape it. A variable you can
 only call `temp` or `result2` marks a computation that should be its own named
 step or function.
-
-## Quick checklist
-
-- Would this name still be clear at its farthest point of use? Scale length to scope.
-- Would a domain expert recognize the vocabulary? Prefer problem-domain words.
-- Does every boolean read as a positive true/false claim at the `if` site?
-- Does every unit-bearing number carry its unit in name or type?
-- Same concept, same word everywhere? Pairs symmetric?
-- Does the name promise exactly what the code does — no hidden creation, mutation, I/O?
-- Any entry from the anti-pattern table? Apply its fix.
-- Still stuck after real effort? Change the structure, not just the name.
-
-## Related skills
-
-- `never-nesting` — extraction creates functions that need names; an unnameable block isn't ready to extract.
-- `self-documenting-code` — precise names are the main tool that makes "what" comments deletable.

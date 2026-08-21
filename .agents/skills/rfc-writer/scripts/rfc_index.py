@@ -70,6 +70,18 @@ TEMPLATE_TITLE = "RFC NNNN — <Title>"
 ONE_LINER_TARGET = 200
 ONE_LINER_CEILING = 300
 
+GRADES = ("LOCKED", "ASSUMED", "OPEN")
+# The Decisions section, whatever number it carries — the skill lets an RFC use
+# a different section set, and says the decision table is the one part a
+# minimal RFC still keeps.
+DECISIONS_HEADING = re.compile(r"^#{2,3}\s*(?:\d+\.\s*)?Decisions\b.*$", re.M | re.I)
+TABLE_ROW = re.compile(rf"^\|({CELL})\|({CELL})\|({CELL})\|", re.M)
+# A markdown link that points inside the repository. Any URI scheme at all, and
+# a protocol-relative `//host/x`, belong to somebody else — matching only http
+# and mailto meant `ftp:` and `tel:` were checked as if they were file paths.
+URI_OR_PROTOCOL_RELATIVE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//)")
+LOCAL_LINK = re.compile(r"\[[^\]]*\]\((?!#)([^)\s]+)")
+
 
 def fail(message: str) -> None:
     sys.exit(f"error: {message}")
@@ -172,6 +184,92 @@ def claimed_next(index_text: str) -> int | None:
     return int(match.group(2)) if match else None
 
 
+def decision_rows(text: str) -> list[tuple[str, str]] | None:
+    """(number cell, grade cell) per decision row, or None if there is no table.
+
+    An empty list means the section exists with a header row and nothing under
+    it, which is a different failure from having no section at all.
+    """
+    heading = DECISIONS_HEADING.search(text)
+    if not heading:
+        return None
+    section = text[heading.end():]
+    following = re.search(r"^#{2,3}\s", section, re.M)
+    if following:
+        section = section[: following.start()]
+    # Only the table whose header names a grade column. A Decisions section may
+    # also carry an alternatives table or a trailing risks table, and reading
+    # every three-column table under the heading turned those into decision rows
+    # — failing a sound RFC, and passing one whose real table was missing.
+    rows = []
+    inside = False
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            if inside and stripped:
+                break  # prose after the table ends it
+            continue
+        match = TABLE_ROW.match(stripped)
+        if not match:
+            continue
+        first, second = match.group(1).strip(), match.group(2).strip()
+        if not inside:
+            if first.strip("* `").lower() in {"#", "no", "num"} and \
+                    second.strip("* `").lower() == "grade":
+                inside = True
+            continue
+        if first and set(first) <= set("- :"):
+            continue  # the |---|---| separator
+        rows.append((first, second))
+    if not inside:
+        return []
+    return rows
+
+
+def check_decisions(path: Path, text: str) -> list[str]:
+    rows = decision_rows(text)
+    if rows is None:
+        return [f"{path.name}: no Decisions section — it is the one section a minimal RFC keeps"]
+    if not rows:
+        return [f"{path.name}: Decisions section has no table with '#' and 'Grade' columns"]
+    problems = []
+    for number, grade in rows:
+        bare = grade.strip("`* ")
+        if bare not in GRADES:
+            # An ungraded row tells an executor nothing about what to do when
+            # the code disagrees with it, which is the table's entire job.
+            problems.append(
+                f"{path.name}: decision row {number!r} has grade {bare!r}, "
+                f"not one of {', '.join(GRADES)}"
+            )
+    return problems
+
+
+def check_links(path: Path, text: str, rfc_dir: Path, root: Path) -> list[str]:
+    """Relative links whose targets do not resolve inside the repository.
+
+    A candidate has to both exist and stay under `root`: `../../../../etc/hosts`
+    exists on most machines and is not a link into this repository, so accepting
+    it would let a Complete RFC pass while citing nothing anyone can read.
+    """
+    base = root.resolve()
+    missing = []
+    for match in LOCAL_LINK.finditer(text):
+        target = match.group(1).split("#", 1)[0]
+        if not target or URI_OR_PROTOCOL_RELATIVE.match(target):
+            continue
+        for start in (rfc_dir, root):
+            try:
+                resolved = (start / target).resolve()
+            except OSError:
+                continue
+            if resolved.is_relative_to(base) and resolved.exists():
+                break
+        else:
+            missing.append(f"{path.name}: link target {target!r} does not resolve inside the repository")
+    return missing
+
+
 def cmd_check(rfc_dir: Path) -> int:
     index_path = find_index(rfc_dir)
     index_text = index_path.read_text(encoding="utf-8")
@@ -181,6 +279,7 @@ def cmd_check(rfc_dir: Path) -> int:
     files = {number: paths[0] for number, paths in found.items()}
     rows = index_rows(index_text)
     problems: list[str] = []
+    content_warnings: list[str] = []
 
     for number, paths in sorted(found.items()):
         if len(paths) > 1:
@@ -217,6 +316,16 @@ def cmd_check(rfc_dir: Path) -> int:
                 f"{number:04d}: header status {header_status} != index status {rows[number]['status']}"
             )
 
+        problems += check_decisions(path, text)
+        # A design may cite a file it proposes to create, so a dangling link is
+        # only a defect once the design claims to have shipped. Before that it
+        # is a warning, which is the honest reading of the same fact.
+        dangling = check_links(path, text, rfc_dir, rfc_dir.parent)
+        if header_status == "\u2705":
+            problems += [f"{d} (RFC is Complete)" for d in dangling]
+        else:
+            content_warnings.extend(dangling)
+
     claimed = claimed_next(index_text)
     highest = max(files) if files else 0
     if claimed is None:
@@ -231,7 +340,7 @@ def cmd_check(rfc_dir: Path) -> int:
     # Reported, never fatal: an index entry that runs long is a cost, not a
     # broken collection, and the writer is better placed than the tool to judge
     # whether this particular design needs the extra words.
-    warnings: list[str] = []
+    warnings: list[str] = list(content_warnings)
     for number in sorted(rows):
         one_liner = rows[number].get("oneLiner", "")
         length = len(one_liner)

@@ -1,6 +1,9 @@
 ---
 name: less-code-same-behavior
-description: Deep divergence and DRY audit that shrinks a codebase without changing behavior — find copy-paste, same-concern-drift, scattered responsibilities, type-lying configs, wrong abstractions, and bloated public surfaces, then consolidate (or unwind) while respecting the project's declared layers and import contracts. Use when the user asks to deduplicate, DRY up, consolidate, converge divergent code, do a divergence analysis, shrink or simplify a codebase, reduce code size, or wants "less code with the same functionality".
+description: Use when asked to deduplicate, DRY up, consolidate, or converge divergent code, or to shrink a codebase without changing behavior. Not when behavior is meant to change, and not for reviewing a single fresh diff.
+roles: [implement]
+gate: none
+gate_reason: scripts/usage_census.py answers who calls this; whether two things are one concern is the judgement
 ---
 
 # Less Code, Same Behavior
@@ -9,48 +12,25 @@ A divergence-and-DRY audit hunts for places where a codebase spends more code th
 
 Two disciplines make this safe instead of destructive. First, every consolidation must respect the project's declared architecture: its layers, import contracts, and package boundaries are hard constraints, not obstacles. Second, the audit must be able to conclude **"leave it"** — a DRY pass that cannot reject its own findings produces churn, not consolidation.
 
-## Use this skill when
-
-- The user asks to deduplicate, DRY up, consolidate, or "converge" code
-- The user asks for a divergence analysis — same concern implemented differently in several places
-- A codebase or subsystem should get smaller without behavior change
-- Reviewing structure: scattered modules, bloated facades, config surfaces that grew by accretion
-
-## Do not use this skill when
-
-- Behavior is supposed to change — that's a feature or fix, and mixing it with consolidation makes both unverifiable
-- Reviewing a single fresh diff — use a diff-scoped review; this skill audits an existing body of code
-- The duplication is across repositories with independent release cycles — extracting a shared dependency is an architecture decision for the user, not a refactor
-
 ## Map the constraints before proposing anything
 
 Read the project's declared architecture first: layer definitions, import/dependency contracts (whatever tool enforces them — import linters, module-boundary rules, package manifests), and the public API surface (exported symbols, documented entry points, semver promises). These determine *where* consolidated code may live and *what* may not break. A consolidation plan written before this map is guesswork; the gate at the end must re-run whatever enforces these rules.
 
-## The finding passes
+## The six passes
 
-### 1. Literal duplication
+Run them in order; the cheap structural ones narrow what the expensive ones have
+to read. Each in full, with the shape that gives it away and where the
+consolidation should land, is in
+[references/finding-passes.md](references/finding-passes.md).
 
-The same block, byte-identical or near-identical, in several places — engine skeletons, setup stanzas, classify-and-reraise ladders, wiring blocks. Highest-confidence targets: extract once, point all sites at it. Copies found late have usually already begun to diverge; diff them carefully — an *intentional* difference hiding in a near-copy is a finding of its own (which one is right?).
-
-### 2. Same concern, divergent shapes
-
-N implementations of one mechanism, each hand-rolled: three proxy classes each owning their own method-dispatch boilerplate, five call sites each rebuilding the same conditional factory. The consolidation is a shared base or helper with override hooks — the variants keep their behavior, the mechanism exists once. This is where the largest wins hide, because no single site *looks* duplicated.
-
-### 3. Scatter
-
-One responsibility spread across many small modules, or its pieces misplaced across layers. Group by responsibility, not by accident of authorship. Preserve inbound import paths that are widely used (see churn containment).
-
-### 4. Surface bloat
-
-Facades and `__init__`-style export surfaces that grew by accretion. **Census actual external imports before cutting** — the decision between "cull", "tier into namespaces", and "leave it" is an evidence question, not taste. Symbols nobody imports externally get demoted (still reachable via submodules), not deleted.
-
-### 5. Type lies and config smells
-
-Structures whose types misdescribe their rules: a mode/kind discriminator field gating which "optional" fields are actually required (validated in a big post-init blob); ≥3 fields sharing a prefix (a struct wanting to exist); legacy dual fields reconciled by a resolver method duplicated per consumer. Consolidate into tagged unions / nested value objects on the *public construction* surface while keeping internal readers untouched via shims.
-
-### 6. Parallel vocabularies
-
-Two names for one concept across packages, or one name for two concepts. Sometimes the fix is a rename with a two-layer vocabulary (public spec vs internal mechanism); sometimes it's recognizing two things genuinely differ and must *not* be merged.
+| # | Pass | Looks for |
+|---|---|---|
+| 1 | Literal duplication | The same code in two places, copied |
+| 2 | Same concern, divergent shapes | One job solved three ways, none of them wrong |
+| 3 | Scatter | One responsibility spread across modules that each hold a piece |
+| 4 | Surface bloat | A public API wider than anything calls |
+| 5 | Type lies and config smells | A declared type the values do not honour |
+| 6 | Parallel vocabularies | Two names for one concept, both live |
 
 ## Verify every claim before acting
 
@@ -67,26 +47,13 @@ python3 scripts/usage_census.py Helper --internal src/pkg/ --json
 
 Exit 3 means nothing references it (a deletion candidate — the report then names what the tool still cannot see: dynamic dispatch by computed name, generated code, other repositories). The numbers are evidence for a verdict, not the verdict.
 
-## Placement rules
+## NO ACTION is a first-class verdict
 
-- Extracted shared code lives in the **lowest layer that every consumer may legally import** — a neutral leaf with minimal dependencies. Shared vocabulary types (value objects used across packages) belong in the contract/shared layer, exported from one canonical location, not re-exported per consumer.
-- **Never invert a layer or create a cycle to dedup.** If two copies can only be unified by violating a boundary, the duplication is the correct current state — record it, and surface the boundary question to the user as an architecture decision, separately from the refactor.
-- A helper too small to justify its home is a smell in the other direction: don't mint a new top-level package for two classes when an existing leaf module fits.
-
-## Churn containment
-
-Consolidate internals; keep public surfaces stable.
-
-- Widely-imported paths keep working via re-export shims — moving a helper with hundreds of importers should repoint **zero** of them.
-- Public constructors keep their kwargs via aliases, converters, and property shims that dispatch into the new shape; internal readers keep their expressions.
-- When call sites must move, repoint them mechanically (scripted, verified by grep audit), and keep the mechanical commit separate from any judgment commit.
-
-## Calibration — when to say no
-
-- **NO ACTION is a first-class verdict.** Record it with the reason: "correctly placed", "load-bearing facade", "justified by the runtime model", "false positive of the analysis tool". A third of honest audit findings die on inspection; that is the audit working.
-- **Unwind wrong abstractions already in place.** An extraction serving two masters — flag parameters, mode conditionals, callers each exercising a different slice — is Metz's wrong abstraction, and her exit is the fastest way forward: inline it back into its callers, delete what each doesn't use, and let the honest shape re-emerge, or not. *More* code, same behavior, is sometimes this audit's correct verdict.
-- **Don't churn for purity.** Idiomatic bare structures, deliberate re-exports, and small asymmetries that harm nothing stay. The metric is behavior-per-line, not style conformance.
-- **Stop at diminishing returns, and say so.** When remaining targets are high-churn/low-density, the honest recommendation is "stop unless X specifically hurts" — an audit that can't end recommends its own busywork.
+Most findings are not worth acting on, and saying so is the output. Duplication
+that has never drifted, two implementations whose divergence is the point, an
+abstraction that would need three parameters to cover both callers — each is a
+finding whose correct verdict is to leave it. Calibration in full in
+[references/finding-passes.md](references/finding-passes.md).
 
 ## The gate
 

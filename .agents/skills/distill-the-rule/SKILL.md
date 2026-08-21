@@ -1,6 +1,9 @@
 ---
 name: distill-the-rule
-description: Convert surprising findings into durable one-line rules — after a debugging session, audit finding, review surprise, or incident, strip the specifics down to the transferable mechanism and file it where future work will actually recall it. Use when a session ends with a hard-won discovery, when a defect's shape will clearly recur, when a sabotage or test passes unexpectedly, after a postmortem, when the user says "remember this" or "lesson learned", or when the same class of mistake shows up a second time.
+description: Use when a session ends in a genuine surprise, when a defect's shape will clearly recur, when a sabotage or test passes unexpectedly, after a postmortem, or when the same mistake class shows up twice. Not for one-off trivia, or anything the repo already records.
+roles: [author]
+gate: none
+gate_reason: whether a finding generalises is the judgement; a check counting rules would reward writing more of them
 ---
 
 # Distill the Rule
@@ -8,20 +11,6 @@ description: Convert surprising findings into durable one-line rules — after a
 Findings are perishable; rules compound. A debugging session that ends with "fixed it" has produced one repaired instance. The same session ending with *"any suffix/subset helper needs its empty case decided explicitly"* has produced a check that prevents the whole class — in every future codebase, forever, for the cost of one sentence. Distillation is the deliberate last step of any surprising piece of work: strip the finding's specifics down to the transferable mechanism, phrase it as a one-line rule with its trigger, and file it where future work will actually meet it.
 
 This is how individual experience becomes leverage — and for an agent with persistent memory, it is the difference between having sessions and having judgment.
-
-## Use this skill when
-
-- A debugging session, audit, or review ends with a genuine surprise ("huh — I didn't expect that")
-- A defect turns out to be an instance of a shape that will recur (wrapper × state, empty case, drifted invariant)
-- A sabotage/mutation passes, a test fails to fail, or anything transitions unexplained-then-explained
-- Closing an incident or postmortem — the corrective actions want a distilled rule each
-- The user says "remember this", "lesson learned", or you notice the same mistake class twice
-
-## Do not use this skill when
-
-- The finding is one-off trivia with no recurring shape (a typo, a vendor's quirk you'll never meet again)
-- The repo already records it — code comments, CLAUDE.md, existing rules; check before writing (a duplicate rule dilutes the collection it joins)
-- The "rule" would just restate what happened — if it can't outlive its incident, it isn't a rule yet (see the test below)
 
 ## What qualifies
 
@@ -48,29 +37,28 @@ Strip every specific that doesn't carry the mechanism — file names, project na
 
 One line, imperative, with its trigger condition built in — "when/any/before X, do Y" — so the rule fires on recognition, not on recall. Optionally: one sentence of *why* (the failure it prevents), and a link to the incident that produced it (the evidence is what separates a rule from an opinion, and the link keeps it re-examinable).
 
-## Where rules live — the escalation ladder
+## Filing it
 
-File the rule at the level matching its audience and authority; promote it when reality proves it out:
+A rule filed where nobody will meet it again has not been distilled, only
+written. The ladder — session note, project memory, `CLAUDE.md`, a skill, a check
+— and the maintenance that keeps the set worth reading are in
+[references/filing.md](references/filing.md).
 
-1. **Session note** — it dies with the context. Only for rules still being tested.
-2. **Durable memory / decision log** — the default landing place; recallable in future sessions, linkable from later findings.
-3. **Team convention** — CLAUDE.md/AGENTS.md, a review checklist, a skill: now it instructs everyone (and every agent), not just you.
-4. **Enforcement** — a lint rule, a CI gate, a fail-closed guard. The ultimate distillation is one that no longer relies on being remembered (`ratchet-what-you-build` — the rule's final form is a ratchet).
+The rule that decides the rung: **file it where the work that would break it
+happens.** A rule about commit messages belongs in the commit path, not in a
+document someone reads at onboarding.
 
-A rule that keeps firing usefully earns promotion up the ladder; the promotion itself is cheap because the rule is already phrased as a trigger + action.
+## Prefer a gate to a new rule
 
-## Maintenance — rules are claims
+Before writing the rule down, ask whether a **program could refuse instead**. A
+rule is a hope that the next reader remembers; a gate is a thing that says no.
+Where the leak is mechanically detectable — a format, a missing field, a check
+that was widened rather than satisfied — the distilled output is a check, and the
+one-line rule is its error message (`drift-to-gate`).
 
-- **Re-verify on contact.** When a rule fires, check it still matches reality before applying it; codebases move, and a stale rule confidently applied is worse than no rule (the recalled-memory problem — verify the flag/file/behavior still exists).
-- **Delete disproven rules.** A rule contradicted by evidence gets removed or rewritten *with the new evidence linked* — a collection that only grows becomes noise that buries its own best entries.
-- **Dedup before adding.** New finding, existing rule → link the finding as further evidence and sharpen the rule if needed; don't mint a near-duplicate (`error-taxonomy`'s canonical-codes discipline, applied to knowledge).
-
-## Anti-patterns
-
-- **The diary entry** — recording what happened instead of what transfers; activity logs are not rules.
-- **The platitude** — "test edge cases", "be careful with concurrency": no trigger, no action, fires never.
-- **Rule hoarding** — collecting rules into a pile nothing recalls from; a rule that can't be *met* (wrong file, no index, no trigger phrasing) might as well not exist.
-- **Distilling everything** — the three-property filter exists because a collection's value density is what makes it worth consulting; ten sharp rules beat two hundred observations.
+Rules are for what no program can decide. Writing one for something a gate could
+have caught is how a collection of rules grows past the point where anyone reads
+it, and every rule added after that dilutes the ones that were load-bearing.
 
 ## Related skills
 

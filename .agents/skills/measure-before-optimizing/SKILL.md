@@ -1,6 +1,9 @@
 ---
 name: measure-before-optimizing
-description: Optimize only what measurement proves matters - carry both halves of Knuth's rule (skip the 97%, do not pass up the critical 3%), profile first because Amdahl's law caps every speedup, benchmark without warmup/noise/mean-vs-percentile traps, take data-structure and algorithm wins before micro-tweaks, and make architectural performance calls (query shape, data layout) at design time because they can't be profiled in later. Use when optimizing or profiling code, reviewing "X is faster than Y" claims, benchmarking, or when the user mentions performance, slow code, bottlenecks, latency, throughput, speed, or efficiency.
+description: Use when about to optimize code or asked to make something faster, when reviewing an "X is faster than Y" claim, when writing or reading a benchmark, or when a design call carries performance consequences. Not when the problem is already measured and reproduced.
+roles: [implement]
+gate: none
+gate_reason: a profile is evidence, not a verdict; a budget gate belongs to the project, not to this skill
 ---
 
 # Measure Before Optimizing
@@ -14,18 +17,6 @@ find and fix the critical fraction. Knuth adds how to tell them apart: it's "oft
 a mistake to make a priori judgments" about what's critical, because programmers'
 intuitive guesses fail once measurement tools are applied. Hence the discipline:
 reproduce, measure, fix the highest-leverage cause, measure again.
-
-## Use this skill when
-
-- About to optimize code, or asked to "make this faster".
-- Reviewing a change or suggestion justified as "X is faster than Y".
-- Writing or interpreting a benchmark.
-- Making design decisions with performance consequences (query shape, data layout, API granularity).
-
-## Do not use this skill when
-
-- There is a measured, reproduced problem and you're inside the loop below — that's not premature, proceed.
-- A hard real-time or throughput budget is an explicit, stated constraint of the task.
 
 ## Why profile first: Amdahl's law
 
@@ -71,6 +62,11 @@ seen = set()               # O(1) membership; O(n^2) loop becomes O(n)
 4. **Profile for hotspots.** Let the profiler assign `p`; it is frequently not where you guessed.
 5. **Micro-optimize last**, only on confirmed hotspots — one change at a time, measuring each, and stop when the budget is met.
 
+A stated hard budget is not premature optimization. Where a real-time deadline
+or throughput floor is an explicit constraint of the task, designing to it is
+the requirement — the rule above governs *unmeasured* speculation, not work
+against a number someone wrote down first.
+
 ## Benchmark honestly
 
 Bad measurement is worse than none — it justifies the wrong change with a number.
@@ -115,6 +111,6 @@ tweaks before measurement — those still wait for the profiler.
 
 ## Related skills
 
-- `never-nesting`, `naming-things`, `self-documenting-code` — keep code clear first; optimize measured hotspots second.
+- `readable-code` — keep code clear first; optimize measured hotspots second. Absent it, the ordering is the rule that matters: an unreadable hotspot is optimized blind.
 - `composition-over-inheritance` — the adaptability whose small indirection cost is usually worth paying.
 - `reading-isnt-proof` — a benchmark you ran beats a speedup you inferred from reading the code.

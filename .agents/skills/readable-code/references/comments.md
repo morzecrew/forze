@@ -1,9 +1,6 @@
----
-name: self-documenting-code
-description: Decide when to refactor a comment away and when a comment is required - express the "what" through names, extracted predicates, constants, and types, and reserve comments for what code cannot say - intent, invariants, units, ranges, and interface contracts. Use when writing or reviewing comments, deciding whether a comment is needed, deleting or fixing stale or redundant comments, refactoring hard-to-follow logic, or when the user mentions comments, docstrings, self-documenting code, code clarity, or readability.
----
+# Comments
 
-# Self-Documenting Code
+What to refactor away, and what no rewrite can express.
 
 The test for any comment: **does it say something at the same level of
 abstraction as the code next to it?** If yes, it duplicates the code — refactor
@@ -15,19 +12,6 @@ This is not "never comment." Ousterhout's *A Philosophy of Software Design* is
 the sharp counterpoint to comment-minimalism: "comments should describe things
 that aren't obvious from the code" — and for interfaces, plenty isn't. The
 skill is telling redundant comments from load-bearing ones.
-
-## Use this skill when
-
-- Writing or reviewing comments in a diff.
-- A comment seems needed to explain what a line or condition does.
-- Deciding whether to keep, delete, or rewrite an existing comment.
-- Refactoring dense logic that is hard to follow.
-- The user mentions comments, docstrings, self-documenting code, or readability.
-
-## Do not use this skill when
-
-- The user explicitly wants explanatory/teaching comments (tutorials, examples, learning codebases).
-- You'd delete a comment because it's *inconvenient* rather than redundant — a wrong comment gets fixed, not removed.
 
 ## Refactor the "what" into the code
 
@@ -136,18 +120,3 @@ A clean one-sentence comment is evidence of a clean abstraction.
 | What a public function does for callers | Keep — interface contract |
 | Why this design / workaround / tuning | Keep — rationale |
 | Corrects a misleading name | Fix the name, then delete |
-
-## Quick checklist
-
-- Could a reader reconstruct this comment from the code alone? Delete it (refactor first if needed).
-- Commented condition or literal? Extract a predicate / name the constant.
-- Could a type enforce the claim? Encode it there.
-- Does the declaration leave units, bounds, or invariants open? Add the precision comment.
-- Public interface without a caller-level summary? Write one, free of implementation detail.
-- Hard to write that summary in a sentence? Suspect the abstraction, not the prose.
-
-## Related skills
-
-- `naming-things` — precise names are the primary mechanism for deleting "what" comments.
-- `never-nesting` — extracted, well-named functions document structure that comments would otherwise narrate.
-- `python-google-docstrings` / `python-rest-docstrings` — formats for the interface documentation this skill says to keep.
