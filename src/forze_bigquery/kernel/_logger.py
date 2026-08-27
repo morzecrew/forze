@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_bigquery._logging import ForzeBigQueryLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeBigQueryLogger.KERNEL)
+logger = Logger("forze_bigquery.kernel")
 """BigQuery kernel logger."""

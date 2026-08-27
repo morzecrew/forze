@@ -6,11 +6,11 @@ from typing import Generic, Literal, overload
 from uuid import UUID
 
 from forze.application.contracts.document import KeyedCreate, KeyedUpdate, UpsertItem
+from forze.application.contracts.domain import drain_domain_events
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD, REV_FIELD
-from forze.domain.models import AggregateRoot, DomainEvent
 
 from ..._logger import logger
 from ._base import DocumentAdapterMixinBase, DocumentQueryDelegateMixin
@@ -43,34 +43,6 @@ class DocumentCommandMixin(
     :class:`~.adapter.DocumentAdapter` (query mixin first in the MRO) so
     :meth:`project_many` is available to :meth:`update_matching_strict`.
     """
-
-    async def _dispatch_domain_events(self, domains: Sequence[D | None]) -> None:
-        """Drain and dispatch domain events from any aggregate-root domains, in-tx.
-
-        A no-op for non-aggregate documents (the common case). Raises if an aggregate
-        emitted events but no dispatcher is registered, so events are never dropped.
-        """
-
-        events: list[DomainEvent] = []
-
-        for domain in domains:
-            if isinstance(domain, AggregateRoot) and domain.has_pending_events:
-                events.extend(domain.collect_events())
-
-        if not events:
-            return
-
-        dispatcher = self.dispatcher_provider()
-
-        if dispatcher is None:
-            raise exc.configuration(
-                f"Aggregate emitted domain events for document {self.spec.name!r} but "
-                "no DomainEventsDepsModule is registered to dispatch them."
-            )
-
-        await dispatcher.dispatch(events)
-
-    # ....................... #
 
     @overload
     async def create(
@@ -354,7 +326,11 @@ class DocumentCommandMixin(
             self.document_cache.invalidate_keys_now(pk),
         )
 
-        await self._dispatch_domain_events([domain])
+        await drain_domain_events(
+            [domain],
+            dispatcher_provider=lambda: self.dispatcher_provider(),
+            document_name=self.spec.name,
+        )
 
         if not return_new:
             if return_diff:
@@ -447,7 +423,11 @@ class DocumentCommandMixin(
             self.document_cache.invalidate_keys_now(*pks),
         )
 
-        await self._dispatch_domain_events(domains)
+        await drain_domain_events(
+            domains,
+            dispatcher_provider=lambda: self.dispatcher_provider(),
+            document_name=self.spec.name,
+        )
 
         if not return_new:
             if return_diff:

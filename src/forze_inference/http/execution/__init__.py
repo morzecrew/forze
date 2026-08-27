@@ -11,7 +11,6 @@ from .lifecycle import (
     InferenceHttpShutdownHook,
     InferenceHttpStartupHook,
     inference_http_lifecycle_step,
-    routed_inference_http_lifecycle_step,
 )
 
 # ----------------------- #
@@ -25,5 +24,4 @@ __all__ = [
     "InferenceHttpStartupHook",
     "InferenceWireProtocolName",
     "inference_http_lifecycle_step",
-    "routed_inference_http_lifecycle_step",
 ]

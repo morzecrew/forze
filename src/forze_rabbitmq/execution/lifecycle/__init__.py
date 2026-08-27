@@ -4,7 +4,6 @@ from .pool import (
     RabbitMQShutdownHook,
     RabbitMQStartupHook,
     rabbitmq_lifecycle_step,
-    routed_rabbitmq_lifecycle_step,
 )
 
 # ----------------------- #
@@ -12,6 +11,5 @@ from .pool import (
 __all__ = [
     "RabbitMQShutdownHook",
     "RabbitMQStartupHook",
-    "routed_rabbitmq_lifecycle_step",
     "rabbitmq_lifecycle_step",
 ]

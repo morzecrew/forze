@@ -13,7 +13,6 @@ from .execution import (
     MeilisearchFederation,
     MeilisearchSearchConfig,
     meilisearch_lifecycle_step,
-    routed_meilisearch_lifecycle_step,
 )
 from .execution.deps import (
     ConfigurableMeilisearchFederatedSearch,
@@ -45,7 +44,6 @@ __all__ = [
     "MeilisearchConfig",
     "MeilisearchClientDepKey",
     "meilisearch_lifecycle_step",
-    "routed_meilisearch_lifecycle_step",
     "MeilisearchSearchConfig",
     "MeilisearchFederatedSearchConfig",
     "MeilisearchFederation",

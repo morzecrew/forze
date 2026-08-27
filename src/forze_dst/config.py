@@ -92,16 +92,6 @@ class PartitionSchedule:
 
     # ....................... #
 
-    def isolated_at(self, node_id: int, at: float) -> bool:
-        """Whether *node_id* is cut off from the cluster at virtual time *at*."""
-
-        return any(
-            window.start <= at < window.end and node_id in window.isolated
-            for window in self.windows
-        )
-
-    # ....................... #
-
     def loss_at(self, node_id: int, at: float) -> float:
         """The drop probability for *node_id*'s gated calls at virtual time *at*.
 

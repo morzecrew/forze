@@ -58,15 +58,6 @@ journal manager)."""
 # ....................... #
 
 
-def mock_tx_is_read_only() -> bool:
-    """Return whether the current task is inside a read-only mock transaction."""
-
-    return _mock_tx_read_only.get()
-
-
-# ....................... #
-
-
 def ensure_mock_tx_writable(*, store: str) -> None:
     """Raise when a participating store is written inside a strict read-only root.
 

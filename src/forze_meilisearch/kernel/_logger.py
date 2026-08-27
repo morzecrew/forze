@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_meilisearch._logging import ForzeMeilisearchLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeMeilisearchLogger.KERNEL)
+logger = Logger("forze_meilisearch.kernel")
 """Meilisearch kernel logger."""

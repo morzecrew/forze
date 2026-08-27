@@ -1,9 +1,9 @@
-"""Typing protocol for document adapter mixins."""
+"""Shared bases for the document adapter mixins."""
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
-from typing import TYPE_CHECKING, Generic, Protocol
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Generic
 from uuid import UUID
 
 from forze.application.contracts.document import DocumentSpec
@@ -24,72 +24,6 @@ if TYPE_CHECKING:
         QuerySortExpression,
     )
     from forze.base.primitives import JsonDict
-
-# ----------------------- #
-
-
-class DocumentAdapterProtocol(Protocol, Generic[R, D, C, U]):
-    """Structural type for the composed :class:`~.adapter.DocumentAdapter`."""
-
-    spec: DocumentSpec[R, D, C, U]
-    read_gw: DocumentReadGatewayPort[R]
-    write_gw: DocumentWriteGatewayPort[D, C, U] | None
-    document_cache: DocumentCache[R]
-    batch_size: int
-    enforce_primary_key_cursor_sort: bool
-    hydrate_from_write: bool
-    max_scan_pages: int | None
-    max_stream_pages: int | None
-    max_chunked_command_pages: int | None
-    dispatcher_provider: Callable[[], DomainEventDispatcherPort | None]
-
-    @property
-    def _read_fields(self) -> frozenset[str]: ...
-
-    @property
-    def eff_batch_size(self) -> int: ...
-
-    def _eff_stream_chunk_size(self, chunk_size: int) -> int: ...
-
-    def _resolve_sorts(
-        self,
-        sorts: QuerySortExpression | None,
-    ) -> QuerySortExpression: ...
-
-    def _to_read(self, domain: D | None, *, pk: UUID | None = None) -> Awaitable[R]: ...
-
-    def _to_read_many(
-        self,
-        domains: Sequence[D | None],
-        *,
-        pks: Sequence[UUID] | None = None,
-    ) -> Awaitable[Sequence[R]]: ...
-
-    def _require_write(self) -> DocumentWriteGatewayPort[D, C, U]: ...
-
-    def _finalize_single_write(
-        self,
-        domain: D,
-        *,
-        return_new: bool,
-        pk: UUID | None = None,
-    ) -> Awaitable[R | None]: ...
-
-    def _finalize_bulk_write(
-        self,
-        domains: Sequence[D],
-        *,
-        return_new: bool,
-        pks: Sequence[UUID] | None = None,
-    ) -> Awaitable[Sequence[R] | None]: ...
-
-    def project_many(
-        self,
-        fields: Sequence[str],
-        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
-        pagination: PaginationExpression | None = None,
-        sorts: QuerySortExpression | None = None,
-    ) -> Awaitable[CountlessPage[JsonDict]]: ...
 
 
 # ....................... #

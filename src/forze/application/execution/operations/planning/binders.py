@@ -243,15 +243,6 @@ class TransactionScopeBinder[P: _Parent, R](ScopeBinder[P, R]):
 
     # ....................... #
 
-    def reset_route(self) -> Self:
-        """Reset the transaction route."""
-
-        new_acc = attrs.evolve(self._acc, route=None)
-
-        return self._patch_acc(new_acc)
-
-    # ....................... #
-
     def set_isolation(self, isolation: IsolationLevel) -> Self:
         """Require an explicit isolation level for this transaction.
 

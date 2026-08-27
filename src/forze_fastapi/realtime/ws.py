@@ -78,7 +78,6 @@ from forze.base.logging import Logger
 from forze.base.primitives import HlcTimestamp, utcnow, uuid7
 from forze.base.scrubbing import sanitize_pydantic_errors
 
-from .._logging import ForzeFastAPILogger
 from ..middlewares.raw_websocket import GOVERNED_WEBSOCKET_ATTR
 from ..security.value_objects import origin_authority
 from .hub import RealtimeSseHub, SseSubscription, presence_rooms
@@ -92,7 +91,7 @@ from .sse import (
 
 # ----------------------- #
 
-_logger = Logger(ForzeFastAPILogger.ERRORS)
+_logger = Logger("fastapi.errors")
 
 __all__ = [
     "WsConnect",

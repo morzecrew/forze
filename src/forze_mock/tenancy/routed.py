@@ -59,12 +59,6 @@ class MockRoutedStateRegistry:
     async def close(self) -> None:
         await self.__pool.close()
 
-    # ....................... #
-
-    async def state_for(self, tenant_id: UUID) -> MockState:
-        async with self.__pool.use(tenant_id) as state:
-            return state
-
     def use(self, tenant_id: UUID) -> AbstractAsyncContextManager[MockState]:
         if self.__pool.get_fingerprint(tenant_id) is None:
             self.__pool.set_fingerprint(tenant_id, str(tenant_id))

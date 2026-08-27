@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_clickhouse._logging import ForzeClickHouseLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeClickHouseLogger.KERNEL)
+logger = Logger("forze_clickhouse.kernel")
 """ClickHouse kernel logger."""

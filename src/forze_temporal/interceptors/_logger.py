@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_temporal._logging import ForzeTemporalLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeTemporalLogger.INTERCEPTORS)
+logger = Logger("forze_temporal.interceptors")
 """Temporal interceptors logger."""

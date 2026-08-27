@@ -341,22 +341,6 @@ class ForzeSocketIOAdapter:
 
         return self
 
-    # ....................... #
-
-    def include_routers(
-        self,
-        *routers: SocketIONamespaceRouter,
-    ) -> "ForzeSocketIOAdapter":
-        """Attach multiple namespace routers in order.
-
-        :param routers: Namespace routers to attach.
-        :returns: Current adapter for chaining.
-        """
-        for router in routers:
-            self.include_router(router)
-
-        return self
-
 
 # ....................... #
 

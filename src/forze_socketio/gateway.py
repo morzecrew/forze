@@ -72,7 +72,6 @@ from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.logging import Logger
 from forze.base.primitives import HlcTimestamp, JsonDict, StrKey, utcnow
 
-from ._logging import ForzeSocketIOLogger
 from .mailbox import RealtimeMailbox
 from .observability import RealtimeGatewayStats
 
@@ -81,7 +80,7 @@ if TYPE_CHECKING:
 
 # ----------------------- #
 
-_logger = Logger(ForzeSocketIOLogger.ERRORS)
+_logger = Logger("socketio.errors")
 
 _IDLE_FLOOR = 0.05
 """Seconds: a small idle pause floor so a non-blocking backend can't hot-loop."""

@@ -24,7 +24,6 @@ from forze.base.exceptions import CoreException
 from forze.base.logging import configure_logging
 from forze.base.primitives import StrKeyNamespace
 from forze.base.serialization import PydanticModelCodec
-from forze_fastapi._logging import ForzeFastAPILogger
 from forze_fastapi.exceptions import ERROR_CODE_HEADER, register_exception_handlers
 from forze_fastapi.middlewares import (
     InvocationMetadataMiddleware,
@@ -436,7 +435,7 @@ class TestAuthnRoutesThroughMiddlewares:
         buf = io.StringIO()
         configure_logging(
             level="info",
-            logger_names=[str(ForzeFastAPILogger.ACCESS)],
+            logger_names=["fastapi.access"],
             stream=buf,
             render_mode="json",
         )

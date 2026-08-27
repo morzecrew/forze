@@ -15,7 +15,6 @@ from .execution import (
     get_function_bindings,
     inngest_lifecycle_step,
     register_functions,
-    routed_inngest_lifecycle_step,
 )
 from .kernel.client import (
     InngestClient,
@@ -38,6 +37,5 @@ __all__ = [
     "InngestFunctionConfig",
     "get_function_bindings",
     "inngest_lifecycle_step",
-    "routed_inngest_lifecycle_step",
     "register_functions",
 ]

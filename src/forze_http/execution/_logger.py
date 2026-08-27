@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_http._logging import ForzeHttpLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeHttpLogger.EXECUTION)
+logger = Logger("forze_http.execution")
 """HTTP execution logger."""

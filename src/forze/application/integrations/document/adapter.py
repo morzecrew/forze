@@ -17,7 +17,7 @@ from forze.application.contracts.document.gateways import (
     DocumentReadGatewayPort,
     DocumentWriteGatewayPort,
 )
-from forze.application.contracts.domain import DomainEventDispatcherPort
+from forze.application.contracts.domain import DomainEventDispatcherPort, drain_domain_events
 from forze.application.contracts.querying import (
     QuerySortExpression,
     read_fields_for_model,
@@ -271,7 +271,11 @@ class DocumentAdapter(
         return_new: bool,
         pk: UUID | None = None,
     ) -> R | None:
-        await self._dispatch_domain_events([domain])
+        await drain_domain_events(
+            [domain],
+            dispatcher_provider=lambda: self.dispatcher_provider(),
+            document_name=self.spec.name,
+        )
 
         if not return_new:
             return None
@@ -291,7 +295,11 @@ class DocumentAdapter(
         return_new: bool,
         pks: Sequence[UUID] | None = None,
     ) -> Sequence[R] | None:
-        await self._dispatch_domain_events(domains)
+        await drain_domain_events(
+            domains,
+            dispatcher_provider=lambda: self.dispatcher_provider(),
+            document_name=self.spec.name,
+        )
 
         if not return_new:
             return None

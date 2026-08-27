@@ -10,11 +10,10 @@ from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution.context import ExecutionContext
 from forze.application.execution.lifecycle.builtin import (
     ClientShutdownHook,
-    routed_client_lifecycle_step,
 )
 from forze.base.serialization.pydantic import pydantic_secret_converter
 
-from ...kernel.client import RoutedSQSClient, SQSClient, SQSConfig
+from ...kernel.client import SQSClient, SQSConfig
 from ..deps import SQSClientDepKey
 
 # ----------------------- #
@@ -96,19 +95,3 @@ def sqs_lifecycle_step(
     shutdown_hook = SQSShutdownHook()
 
     return LifecycleStep(id=name, startup=startup_hook, shutdown=shutdown_hook)
-
-
-# ....................... #
-
-
-def routed_sqs_lifecycle_step(
-    name: str = "routed_sqs_lifecycle",
-    *,
-    client: RoutedSQSClient,
-) -> LifecycleStep:
-    """Lifecycle for :class:`RoutedSQSClient` registered as :data:`SQSClientDepKey`.
-
-    Do not combine with :func:`sqs_lifecycle_step` on the same instance.
-    """
-
-    return routed_client_lifecycle_step(name, client=client)

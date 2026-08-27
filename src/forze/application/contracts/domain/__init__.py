@@ -5,7 +5,7 @@ from .deps import (
     DomainEventDispatcherDepKey,
     DomainEventDispatcherDepPort,
 )
-from .ports import DomainEventDispatcherPort
+from .ports import DomainEventDispatcherPort, drain_domain_events
 
 # ----------------------- #
 
@@ -14,4 +14,5 @@ __all__ = [
     "DomainEventDispatcherDepKey",
     "DomainEventDispatcherDepPort",
     "DomainEventDispatcherPort",
+    "drain_domain_events",
 ]

@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING
 
 from forze.application.contracts.crypto import KeyringDepKey
-from forze.application.contracts.search import SearchResultSnapshotDepKey
+from forze.application.contracts.search import resolve_result_snapshot
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     resolve_snapshot_cipher,
@@ -11,28 +11,9 @@ from forze.application.integrations.search import (
 
 if TYPE_CHECKING:
     from forze.application.contracts.search import (
-        SearchResultSnapshotPort,
         SearchResultSnapshotSpec,
     )
     from forze.application.execution.context import ExecutionContext
-
-# ----------------------- #
-
-
-def resolve_result_snapshot(
-    context: "ExecutionContext",
-    spec: "SearchResultSnapshotSpec | None",
-) -> "SearchResultSnapshotPort | None":
-    if spec is None:
-        return None
-
-    if not (
-        context.deps.exists(SearchResultSnapshotDepKey, route=spec.name)
-        or context.deps.exists(SearchResultSnapshotDepKey)
-    ):
-        return None
-
-    return context.deps.provide(SearchResultSnapshotDepKey, route=spec.name)(context, spec)
 
 
 # ....................... #

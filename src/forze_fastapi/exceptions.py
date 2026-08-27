@@ -17,41 +17,15 @@ from forze.base.exceptions import (
     exc,
     unhandled_error_envelope,
 )
-from forze.base.logging import Logger
-from forze_fastapi._logging import ForzeFastAPILogger
+from forze.base.logging import Logger, log_server_error
 
 # ----------------------- #
 
 ERROR_CODE_HEADER: Final[str] = "X-Error-Code"
 """Key of the header used for error code."""
 
-error_logger = Logger(ForzeFastAPILogger.ERRORS)
+error_logger = Logger("fastapi.errors")
 """Logger for FastAPI server-side error diagnostics."""
-
-# ....................... #
-
-
-def _log_server_error(exc: BaseException, *, core: CoreException | None = None) -> None:
-    """Log a server-side error with appropriate severity and traceback policy."""
-
-    if core is not None and core.__cause__ is not None:
-        error_logger.critical_exception(
-            "Server error",
-            exc=core.__cause__,
-            error_code=core.code,
-            error_kind=core.kind.value,
-        )
-
-    elif core is not None:
-        error_logger.error(
-            "Server error",
-            error_code=core.code,
-            error_kind=core.kind.value,
-            detail=core.summary,
-        )
-
-    else:
-        error_logger.critical_exception("Unhandled exception", exc=exc)
 
 
 # ....................... #
@@ -69,7 +43,7 @@ def build_core_exception_response(exc: CoreException) -> JSONResponse:
     envelope = error_envelope(exc)
 
     if envelope.server_error:
-        _log_server_error(exc, core=exc)
+        log_server_error(error_logger, exc, core=exc)
 
     content: JsonDict = {"detail": envelope.detail}
 
@@ -98,7 +72,7 @@ async def _forze_exception_handler(_: Request, exc: CoreException) -> JSONRespon
 async def _unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
     """FastAPI exception handler for unhandled non-:class:`CoreException` errors."""
 
-    _log_server_error(exc)
+    log_server_error(error_logger, exc)
 
     envelope = unhandled_error_envelope()
 

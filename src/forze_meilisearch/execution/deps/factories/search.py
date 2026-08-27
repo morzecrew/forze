@@ -16,9 +16,9 @@ from forze.application.contracts.search import (
     SearchManagementPort,
     SearchQueryDepPort,
     SearchQueryPort,
-    SearchResultSnapshotDepKey,
     SearchResultSnapshotSpec,
     SearchSpec,
+    resolve_result_snapshot,
 )
 from forze.application.execution import ExecutionContext
 from forze.application.integrations.search import (
@@ -37,28 +37,6 @@ from forze_meilisearch.adapters.search._simple_base import (
 from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
 from forze_meilisearch.execution.deps.keys import MeilisearchClientDepKey
 
-# ----------------------- #
-
-
-def _resolve_result_snapshot(
-    context: ExecutionContext,
-    spec: SearchResultSnapshotSpec | None,
-) -> Any:
-    if spec is None:
-        return None
-
-    if not (
-        context.deps.exists(SearchResultSnapshotDepKey, route=spec.name)
-        or context.deps.exists(SearchResultSnapshotDepKey)
-    ):
-        return None
-
-    return context.deps.provide(SearchResultSnapshotDepKey, route=spec.name)(
-        context,
-        spec,
-    )
-
-
 # ....................... #
 
 
@@ -68,7 +46,7 @@ def result_snapshot(
     *,
     encrypted: bool = False,
 ) -> SearchResultSnapshot | None:
-    port = _resolve_result_snapshot(context, spec)
+    port = resolve_result_snapshot(context, spec)
 
     if port is None:
         return None

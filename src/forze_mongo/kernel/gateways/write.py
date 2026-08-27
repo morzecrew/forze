@@ -15,6 +15,7 @@ import attrs
 from bson import Decimal128
 from pymongo import UpdateOne
 
+from forze.application.contracts.document import domains_from_create_payloads
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.resilience import ResilienceExecutorPort
 from forze.application.execution.resilience import default_resilience_executor
@@ -229,23 +230,6 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    def _from_cdto_many(
-        self,
-        payloads: Sequence[C],
-        ids: Sequence[UUID] | None = None,
-    ) -> Sequence[D]:
-        models = list(self.create_codec.transform_many(payloads))
-
-        if ids is not None:
-            models = [
-                m.model_copy(update={ID_FIELD: i}, deep=True)
-                for m, i in zip(models, ids, strict=True)
-            ]
-
-        return models
-
-    # ....................... #
-
     def _patch_codec(self) -> ModelCodec[Any, Any]:
         if self.update_codec is not None:
             return self.update_codec
@@ -314,7 +298,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if not payloads:
             return []
 
-        models = self._from_cdto_many(payloads)
+        models = domains_from_create_payloads(self.create_codec, payloads)
         raw_payloads = await self._encode_domain_many(models)
         write_payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         docs = list(map(self._storage_doc, write_payloads))
@@ -364,7 +348,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if not payloads:
             return []
 
-        models = self._from_cdto_many(payloads, ids)
+        models = domains_from_create_payloads(self.create_codec, payloads, ids)
         raw_payloads = await self._encode_domain_many(models)
         write_payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
 
@@ -439,7 +423,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if not creates:
             return []
 
-        models = self._from_cdto_many(creates, ids)
+        models = domains_from_create_payloads(self.create_codec, creates, ids)
         raw_payloads = await self._encode_domain_many(models)
         payloads = self.adapt_many_payload_for_write(raw_payloads, create=True)
         u_all = list(updates)

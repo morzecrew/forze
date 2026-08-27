@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_redis._logging import ForzeRedisLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeRedisLogger.KERNEL)
+logger = Logger("forze_redis.kernel")
 """Redis kernel logger."""

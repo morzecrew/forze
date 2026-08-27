@@ -15,12 +15,11 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from forze.base.exceptions import CoreException
 from forze.base.logging import DEFAULT_HEALTH_PATHS, AccessLogSampler, Logger
-from forze_fastapi._logging import ForzeFastAPILogger
 from forze_fastapi.exceptions import build_core_exception_response
 
 # ----------------------- #
 
-logger = Logger(ForzeFastAPILogger.ACCESS)
+logger = Logger("fastapi.access")
 """The logger for the logging middleware."""
 
 

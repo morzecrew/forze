@@ -23,6 +23,7 @@ work.
 ## The client
 
 ```python
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze_kafka import KafkaClient
 
 kafka = KafkaClient()
@@ -30,7 +31,7 @@ kafka = KafkaClient()
 
 The client owns one shared producer and admin client, and pools data-plane
 consumers per `(group, member, topics)`. `RoutedKafkaClient` resolves a
-per-tenant cluster instead (with `routed_kafka_lifecycle_step`).
+per-tenant cluster instead (with `routed_client_lifecycle_step`).
 
 ## Wire it
 

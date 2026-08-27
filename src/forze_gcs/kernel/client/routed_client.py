@@ -33,7 +33,7 @@ class RoutedGCSClient(RoutedObjectStorageClientBase[GCSClient], GCSClientPort):
     :func:`~forze.application.contracts.secrets.resolve_structured`.
 
     Register under :data:`~forze_gcs.execution.deps.GCSClientDepKey` and use
-    :func:`~forze_gcs.execution.lifecycle.routed_gcs_lifecycle_step` for startup/shutdown.
+    :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step` for startup/shutdown.
     """
 
     secrets: SecretsPort

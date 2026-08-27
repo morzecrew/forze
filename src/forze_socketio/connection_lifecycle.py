@@ -24,13 +24,12 @@ from forze.application.execution.background import periodic_lifecycle_step
 from forze.base.logging import Logger
 from forze.base.primitives import StrKey
 
-from ._logging import ForzeSocketIOLogger
 from .connection import RealtimePresence, refresh_presence, sweep_expired_connections
 from .observability import BackplaneHealth
 
 # ----------------------- #
 
-_logger = Logger(ForzeSocketIOLogger.ERRORS)
+_logger = Logger("socketio.errors")
 
 
 def _periodic_step(

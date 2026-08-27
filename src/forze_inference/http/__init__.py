@@ -22,7 +22,6 @@ from .execution import (
     InferenceHttpStartupHook,
     InferenceWireProtocolName,
     inference_http_lifecycle_step,
-    routed_inference_http_lifecycle_step,
 )
 from .kernel import (
     DEFAULT_REQUEST_TIMEOUT_S,
@@ -53,5 +52,4 @@ __all__ = [
     "RoutedInferenceHttpClient",
     "WireProtocol",
     "inference_http_lifecycle_step",
-    "routed_inference_http_lifecycle_step",
 ]

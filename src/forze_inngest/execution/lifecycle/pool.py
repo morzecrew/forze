@@ -6,9 +6,6 @@ import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
-from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
-
-from ...kernel.client import RoutedInngestClient
 
 # ----------------------- #
 
@@ -47,13 +44,3 @@ def inngest_lifecycle_step(name: str = "inngest_lifecycle") -> LifecycleStep:
         startup=InngestStartupHook(),
         shutdown=InngestShutdownHook(),
     )
-
-
-def routed_inngest_lifecycle_step(
-    name: str = "routed_inngest_lifecycle",
-    *,
-    client: RoutedInngestClient,
-) -> LifecycleStep:
-    """Lifecycle for :class:`RoutedInngestClient` registered as :data:`InngestClientDepKey`."""
-
-    return routed_client_lifecycle_step(name, client=client)

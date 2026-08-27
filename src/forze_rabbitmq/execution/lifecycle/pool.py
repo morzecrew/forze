@@ -10,11 +10,10 @@ from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution.context import ExecutionContext
 from forze.application.execution.lifecycle.builtin import (
     ClientShutdownHook,
-    routed_client_lifecycle_step,
 )
 from forze.base.serialization.pydantic import pydantic_secret_converter
 
-from ...kernel.client import RabbitMQClient, RabbitMQConfig, RoutedRabbitMQClient
+from ...kernel.client import RabbitMQClient, RabbitMQConfig
 from ..deps import RabbitMQClientDepKey
 
 # ----------------------- #
@@ -60,19 +59,3 @@ def rabbitmq_lifecycle_step(
     shutdown_hook = RabbitMQShutdownHook()
 
     return LifecycleStep(id=name, startup=startup_hook, shutdown=shutdown_hook)
-
-
-# ....................... #
-
-
-def routed_rabbitmq_lifecycle_step(
-    name: str = "routed_rabbitmq_lifecycle",
-    *,
-    client: RoutedRabbitMQClient,
-) -> LifecycleStep:
-    """Lifecycle for :class:`RoutedRabbitMQClient` registered as :data:`RabbitMQClientDepKey`.
-
-    Do not combine with :func:`rabbitmq_lifecycle_step` on the same instance.
-    """
-
-    return routed_client_lifecycle_step(name, client=client)

@@ -12,8 +12,6 @@ if TYPE_CHECKING:
 import attrs
 from psycopg import sql
 
-from forze.application.contracts.querying import QueryExpr
-
 from ._pipeline_sql import (
     PipelineAliases,
     build_filtered_cte,
@@ -223,20 +221,3 @@ def ranked_parts_to_sql(
         candidate_limit=parts.candidate_limit,
         highlight=highlight,
     )
-
-
-def coalesced_heap_filter_parts(
-    parsed_filters: QueryExpr | None,
-    *,
-    trivial: bool,
-    fw: sql.Composable,
-    fp: list[Any],
-    heap_fw: sql.Composable | None,
-    heap_fp: list[Any],
-) -> tuple[sql.Composable | None, list[Any]]:
-    """Resolve heap-side filter SQL for coalesced read==heap pipelines."""
-
-    if not trivial and heap_fw is not None:
-        return heap_fw, heap_fp
-
-    return None, []

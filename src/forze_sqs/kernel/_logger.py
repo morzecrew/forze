@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_sqs._logging import ForzeSQSLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeSQSLogger.KERNEL)
+logger = Logger("forze_sqs.kernel")
 """SQS kernel logger."""

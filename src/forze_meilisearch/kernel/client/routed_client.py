@@ -40,7 +40,7 @@ class RoutedMeilisearchClient(
     :func:`~forze.application.contracts.secrets.resolve_structured`.
 
     Register under :data:`~forze_meilisearch.execution.deps.MeilisearchClientDepKey` and use
-    :func:`~forze_meilisearch.execution.lifecycle.routed_meilisearch_lifecycle_step`.
+    :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step`.
     """
 
     secrets: SecretsPort

@@ -9,6 +9,7 @@ from _kafka_fakes import Msg
 from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.stream import StreamSpec
 from forze.application.execution import Deps
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
 from forze_kafka import (
@@ -21,7 +22,6 @@ from forze_kafka import (
     RoutedKafkaClient,
     kafka_lifecycle_step,
     resolve_kafka_topic,
-    routed_kafka_lifecycle_step,
 )
 from forze_kafka.adapters import (
     KafkaCommitStreamGroupAdapter,
@@ -174,7 +174,7 @@ async def test_routed_lifecycle_step_built() -> None:
         secret_ref_for_tenant=lambda tid: SecretRef(path=f"tenants/{tid}/kafka"),
         tenant_provider=lambda: None,
     )
-    step = routed_kafka_lifecycle_step(client=routed)
+    step = routed_client_lifecycle_step("routed_kafka_lifecycle", client=routed)
 
     assert step.id == "routed_kafka_lifecycle"
 

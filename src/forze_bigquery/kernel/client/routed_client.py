@@ -40,7 +40,7 @@ class RoutedBigQueryClient(
     :func:`~forze.application.contracts.secrets.resolve_structured`.
 
     Register this instance under :data:`~forze_bigquery.execution.deps.BigQueryClientDepKey` and
-    use :func:`~forze_bigquery.execution.lifecycle.routed_bigquery_lifecycle_step` for
+    use :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step` for
     startup/shutdown.
 
     Do not combine with :func:`~forze_bigquery.execution.lifecycle.bigquery_lifecycle_step` on

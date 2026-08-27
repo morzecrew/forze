@@ -39,7 +39,7 @@ class RoutedMongoClient(DsnRoutedTenantClientBase[MongoClient], MongoClientPort)
     ``database_name_for_tenant``.
 
     Call :meth:`startup` during application startup (see
-    :func:`~forze_mongo.execution.lifecycle.routed_mongo_lifecycle_step`).
+    :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step`).
     """
 
     secrets: SecretsPort

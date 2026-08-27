@@ -379,12 +379,12 @@ def bootstrap_logging(
     """One-call logging setup: framework loggers + integrations + foreign + excepthook.
 
     Wraps the three steps an app otherwise wires by hand — :func:`configure_logging`
-    over the framework's own logger roots (plus any integration ``FORZE_*_LOGGER_NAMES``
-    passed in ``logger_names``), :func:`attach_foreign_loggers` for third-party stdlib
+    over the framework's own logger roots (plus any integration roots passed in
+    ``logger_names``), :func:`attach_foreign_loggers` for third-party stdlib
     loggers (uvicorn, sqlalchemy, …), and :func:`install_excepthook`.
 
-    :param logger_names: Integration logger names/enums to configure alongside the core,
-        e.g. ``[FORZE_POSTGRES_LOGGER_NAMES, FORZE_REDIS_LOGGER_NAMES]``.
+    :param logger_names: Integration logger roots to configure alongside the core,
+        e.g. ``["forze_postgres", "forze_redis"]``. A root covers its children.
     :param third_party: Foreign stdlib logger names to route through the Forze formatter.
     :param install_uncaught: Install the ``forze.uncaught`` excepthook for unhandled errors.
 

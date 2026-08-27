@@ -35,7 +35,7 @@ class RoutedS3Client(RoutedObjectStorageClientBase[S3Client], S3ClientPort):
     :func:`~forze.application.contracts.secrets.resolve_str` / ``resolve_structured``.
 
     Register this instance under :data:`~forze_s3.execution.deps.S3ClientDepKey` and
-    use :func:`~forze_s3.execution.lifecycle.routed_s3_lifecycle_step` for startup/shutdown.
+    use :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step` for startup/shutdown.
 
     Do not combine with :func:`~forze_s3.execution.lifecycle.s3_lifecycle_step` on the same
     registered instance.

@@ -4,7 +4,6 @@ from .pool import (
     MongoShutdownHook,
     MongoStartupHook,
     mongo_lifecycle_step,
-    routed_mongo_lifecycle_step,
 )
 
 # ----------------------- #
@@ -13,5 +12,4 @@ __all__ = [
     "MongoShutdownHook",
     "MongoStartupHook",
     "mongo_lifecycle_step",
-    "routed_mongo_lifecycle_step",
 ]

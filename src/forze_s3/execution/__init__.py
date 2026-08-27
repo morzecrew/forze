@@ -6,7 +6,7 @@ from .deps import (
     S3ServerSideEncryption,
     S3StorageConfig,
 )
-from .lifecycle import routed_s3_lifecycle_step, s3_lifecycle_step
+from .lifecycle import s3_lifecycle_step
 
 # ----------------------- #
 
@@ -14,7 +14,6 @@ __all__ = [
     "S3DepsModule",
     "S3ClientDepKey",
     "s3_lifecycle_step",
-    "routed_s3_lifecycle_step",
     "S3StorageConfig",
     "S3ServerSideEncryption",
 ]

@@ -187,16 +187,18 @@ formatter, and the uncaught-exception hook.
 
 ```python
 from forze import bootstrap_logging
-from forze_postgres import FORZE_POSTGRES_LOGGER_NAMES
-from forze_redis import FORZE_REDIS_LOGGER_NAMES
 
 bootstrap_logging(
     level="info",
     render_mode="json",  # "console" for local dev
-    logger_names=[FORZE_POSTGRES_LOGGER_NAMES, FORZE_REDIS_LOGGER_NAMES],
+    logger_names=["forze_postgres", "forze_redis"],
     third_party=["uvicorn", "sqlalchemy.engine"],
 )
 ```
+
+Name a package root and the stdlib logger hierarchy carries the setting to every
+logger under it (`forze_postgres.kernel`, `forze_postgres.adapters`, …), so there
+is nothing per-subpackage to enumerate.
 
 `configure_logging` remains the lower-level entry point when you want to wire the
 pieces yourself. Either way, pass `otel_config=...` and the active span's

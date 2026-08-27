@@ -27,6 +27,7 @@ ignore:
   - ~/.local
   - tests
   - pages
+  - .vulture
 
 metrics:
   quality_threshold: 30.0

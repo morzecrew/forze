@@ -56,8 +56,8 @@ Two carve-outs:
 - `keep-a-changelog` maintains `[Unreleased]` and prepares version sections; tagging and
   publishing stay with a human (see Release Process in `CONTRIBUTING.md`).
 
-The same skill set is mirrored byte-for-byte in `.agent/skills/` and `.agents/skills/` for
-other tools. Editing one copy alone silently forks them — change all three, or none.
+`.claude/skills/` and `.agent/skills/` are symlinks to `.agents/skills/`, so other tools
+discover the same skills. Edit the files under `.agents/skills/`.
 
 ### Contribution process and repository facts
 
@@ -139,7 +139,7 @@ Use them for:
 - `pages/`: documentation source and build files.
 - `examples/`: runnable, **test-backed** usage examples (each is exercised by a test under `tests/unit/test_examples/`, so examples can't silently rot). E.g. `order_fulfillment.py` runs the aggregate → event → saga → outbox → relay → inbox → downstream flow in-process.
 - `skills/`: published [Agent Skills](https://agentskills.io/) for **app authors** (`SKILL.md` per skill; see `skills/AUTHORING.md`); install via README **Agent Skills** (e.g. `npx skills add morzecrew/forze`). Consumer-facing — nothing here governs framework contribution.
-- `.claude/skills/`: skills for **contributors working in this repository** (the ones in the map above), tracked by `skills-lock.json` and mirrored to `.agent/skills/` and `.agents/skills/`. Distinct from `skills/` above despite the similar name.
+- `.agents/skills/`: skills for **contributors working in this repository** (the ones in the map above), tracked by `skills-lock.json`. `.claude/skills/` and `.agent/skills/` are symlinks to it. Distinct from `skills/` above despite the similar name.
 
 ## Operating rules for agents
 
@@ -170,10 +170,8 @@ Preferred pattern:
 - authoritative policy in canonical files
 - tool-specific overlays that only point back to those sources
 
-The one deliberate exception is `.agent/skills/` and `.agents/skills/`: skills cannot be
-symlinked into every tool's discovery path, so they are byte-identical mirrors of
-`.claude/skills/`. Treat the three as one unit — a change to any skill lands in all three, or
-the mirrors fork and agents start getting different rules depending on which tool loaded them.
+Skills are the one shared payload: `.claude/skills/` and `.agent/skills/` are symlinks to
+`.agents/skills/`, so every tool reads one set of files.
 
 ## Cursor Cloud specific instructions
 

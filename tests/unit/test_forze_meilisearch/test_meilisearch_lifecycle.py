@@ -6,12 +6,12 @@ import pytest
 from pydantic import SecretStr
 
 from forze.application.execution import Deps, LifecyclePlan
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze_meilisearch.execution.deps.keys import MeilisearchClientDepKey
 from forze_meilisearch.execution.lifecycle import (
     MeilisearchShutdownHook,
     MeilisearchStartupHook,
     meilisearch_lifecycle_step,
-    routed_meilisearch_lifecycle_step,
 )
 from forze_meilisearch.kernel.client import MeilisearchClient, MeilisearchConfig
 from tests.support.execution_context import context_from_deps
@@ -71,10 +71,10 @@ class _MockRoutedMeilisearch:
 
 
 @pytest.mark.asyncio
-async def test_routed_meilisearch_lifecycle_step_invokes_client() -> None:
+async def test_routed_client_lifecycle_step_invokes_client() -> None:
     client = _MockRoutedMeilisearch()
     ctx = context_from_deps(Deps.plain({MeilisearchClientDepKey: client}))
-    plan = LifecyclePlan.from_steps(routed_meilisearch_lifecycle_step(client=client))
+    plan = LifecyclePlan.from_steps(routed_client_lifecycle_step("routed_meilisearch_lifecycle", client=client))
     frozen = plan.freeze()
 
     await frozen.startup(ctx)

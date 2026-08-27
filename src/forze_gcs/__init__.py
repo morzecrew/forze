@@ -11,7 +11,6 @@ from .execution import (
     GCSDepsModule,
     GCSStorageConfig,
     gcs_lifecycle_step,
-    routed_gcs_lifecycle_step,
 )
 from .kernel.client import (
     GCSClient,
@@ -38,7 +37,6 @@ __all__ = [
     "GCSConfig",
     "GCSClientDepKey",
     "gcs_lifecycle_step",
-    "routed_gcs_lifecycle_step",
     "GCSStorageConfig",
     "NamedResourceSpec",
     "coerce_named_resource_spec",

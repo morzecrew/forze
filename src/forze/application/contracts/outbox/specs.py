@@ -114,11 +114,3 @@ class OutboxSpec[M](BaseSpec):
         """Whether payloads are encrypted at staging (``at_rest`` or ``end_to_end``)."""
 
         return self.encryption != "none"
-
-    # ....................... #
-
-    @property
-    def relay_decrypts(self) -> bool:
-        """Whether the relay decrypts before publish (``at_rest`` only)."""
-
-        return self.encryption == "at_rest"

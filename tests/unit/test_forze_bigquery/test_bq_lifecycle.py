@@ -5,12 +5,12 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from forze.application.execution import Deps, LifecyclePlan
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze_bigquery.execution.deps import BigQueryClientDepKey
 from forze_bigquery.execution.lifecycle import (
     BigQueryShutdownHook,
     BigQueryStartupHook,
     bigquery_lifecycle_step,
-    routed_bigquery_lifecycle_step,
 )
 from forze_bigquery.kernel.client import BigQueryClient, BigQueryConfig
 from tests.support.execution_context import context_from_deps
@@ -70,10 +70,10 @@ class _MockRoutedBigQuery:
 
 
 @pytest.mark.asyncio
-async def test_routed_bigquery_lifecycle_step_invokes_client() -> None:
+async def test_routed_client_lifecycle_step_invokes_client() -> None:
     client = _MockRoutedBigQuery()
     ctx = context_from_deps(Deps.plain({BigQueryClientDepKey: client}))
-    plan = LifecyclePlan.from_steps(routed_bigquery_lifecycle_step(client=client))
+    plan = LifecyclePlan.from_steps(routed_client_lifecycle_step("routed_bigquery_lifecycle", client=client))
     frozen = plan.freeze()
 
     await frozen.startup(ctx)

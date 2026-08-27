@@ -25,11 +25,10 @@ from fastmcp.server.middleware import (
 
 from forze.base.exceptions import CoreException
 from forze.base.logging import AccessLogSampler, Logger
-from forze_mcp._logging import ForzeMCPLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeMCPLogger.ACCESS)
+logger = Logger("mcp.access")
 """The logger for the MCP access middleware."""
 
 # ....................... #

@@ -138,10 +138,3 @@ class Manifest(BaseModel):
     """A full-system export embeds its :class:`QuiesceReport` here as a JSON snapshot; absent for a
     per-tenant export. Kept JSON-native (not the attrs report itself) so the manifest stays a pure
     document — the report is dumped in when full-system scope lands (RFC §10 P2)."""
-
-    # ....................... #
-
-    def file_for(self, path: str) -> ArchiveFile | None:
-        """The recorded entry for a data file, or ``None`` when the manifest never listed it."""
-
-        return next((f for f in self.files if f.path == path), None)

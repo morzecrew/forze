@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_duckdb._logging import ForzeDuckDBLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeDuckDBLogger.KERNEL)
+logger = Logger("forze_duckdb.kernel")
 """DuckDB kernel logger."""

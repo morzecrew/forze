@@ -1075,6 +1075,7 @@ forbidden_modules = [
 
 [tool.vulture]
 paths = [
+    ".vulture/whitelist.py",
     "src/forze",
     "src/forze_kits",
     "src/forze_fastapi",
@@ -1106,7 +1107,7 @@ paths = [
     "src/forze_mcp",
 ]
 sort_by_size = true
-min_confidence = 80
+min_confidence = 60
 
 # ....................... #
 # Maintainability and complexity

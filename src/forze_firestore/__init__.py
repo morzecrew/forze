@@ -12,7 +12,6 @@ from .execution import (
     FirestoreDocumentConfig,
     FirestoreReadOnlyDocumentConfig,
     firestore_lifecycle_step,
-    routed_firestore_lifecycle_step,
 )
 from .kernel.client import (
     FirestoreClient,
@@ -38,7 +37,6 @@ __all__ = [
     "FirestoreRoutingCredentials",
     "FirestoreClientDepKey",
     "firestore_lifecycle_step",
-    "routed_firestore_lifecycle_step",
     "FirestoreDocumentConfig",
     "FirestoreReadOnlyDocumentConfig",
     "RelationSpec",

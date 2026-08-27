@@ -9,10 +9,9 @@ from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
 from forze.application.execution.lifecycle.builtin import (
     ClientShutdownHook,
-    routed_client_lifecycle_step,
 )
 
-from ...kernel.client import FirestoreClient, RoutedFirestoreClient
+from ...kernel.client import FirestoreClient
 from ..deps import FirestoreClientDepKey
 
 # ----------------------- #
@@ -74,13 +73,3 @@ def firestore_lifecycle_step(
         ),
         shutdown=FirestoreShutdownHook(),
     )
-
-
-def routed_firestore_lifecycle_step(
-    name: str = "routed_firestore_lifecycle",
-    *,
-    client: RoutedFirestoreClient,
-) -> LifecycleStep:
-    """Lifecycle for :class:`RoutedFirestoreClient` registered as :data:`FirestoreClientDepKey`."""
-
-    return routed_client_lifecycle_step(name, client=client)

@@ -9,7 +9,6 @@ from starlette.testclient import TestClient
 
 from forze.base.exceptions import exc
 from forze.base.logging import configure_logging
-from forze_fastapi._logging import ForzeFastAPILogger
 from forze_fastapi.exceptions import ERROR_CODE_HEADER
 from forze_fastapi.middlewares.logging import LoggingMiddleware
 
@@ -94,7 +93,7 @@ class TestLoggingMiddleware:
         buf = io.StringIO()
         configure_logging(
             level="info",
-            logger_names=[str(ForzeFastAPILogger.ACCESS)],
+            logger_names=["fastapi.access"],
             stream=buf,
             render_mode="json",
         )

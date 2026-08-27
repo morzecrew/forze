@@ -15,11 +15,9 @@ from fastmcp.exceptions import FastMCPError
 from forze.base.exceptions import CoreException, error_envelope
 from forze.base.logging import Logger
 
-from ._logging import ForzeMCPLogger
-
 # ----------------------- #
 
-_error_logger = Logger(ForzeMCPLogger.ERRORS)
+_error_logger = Logger("mcp.errors")
 """Server-side error diagnostics (mirrors the HTTP edge's error logging)."""
 
 # ....................... #

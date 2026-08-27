@@ -9,10 +9,9 @@ from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
 from forze.application.execution.lifecycle.builtin import (
     ClientShutdownHook,
-    routed_client_lifecycle_step,
 )
 
-from ...kernel.client import BigQueryClient, BigQueryConfig, RoutedBigQueryClient
+from ...kernel.client import BigQueryClient, BigQueryConfig
 from ..deps import BigQueryClientDepKey
 
 # ----------------------- #
@@ -75,19 +74,3 @@ def bigquery_lifecycle_step(
         ),
         shutdown=BigQueryShutdownHook(),
     )
-
-
-# ....................... #
-
-
-def routed_bigquery_lifecycle_step(
-    name: str = "routed_bigquery_lifecycle",
-    *,
-    client: RoutedBigQueryClient,
-) -> LifecycleStep:
-    """Lifecycle for :class:`RoutedBigQueryClient` registered as :data:`BigQueryClientDepKey`.
-
-    Do not combine with :func:`bigquery_lifecycle_step` on the same instance.
-    """
-
-    return routed_client_lifecycle_step(name, client=client)

@@ -419,13 +419,6 @@ class OperationRegistry:
 
     # ....................... #
 
-    def _resolve_plan(self, op: str) -> OperationPlan:
-        """Resolve the effective plan for an operation key."""
-
-        return self._resolution().resolve(op)
-
-    # ....................... #
-
     def extend_plan(
         self,
         op: StrKey,

@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_kits._logging import ForzeKitsLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeKitsLogger.INTEGRATIONS)
+logger = Logger("forze_kits.integrations")
 """Kits integrations (outbox relay, consumer/inbox, notify) logger."""

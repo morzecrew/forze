@@ -62,24 +62,6 @@ def is_query_constraint(expr: QueryFilterExpression) -> TypeGuard[QueryConstrain
 # ....................... #
 
 
-def has_query_values(expr: QueryFilterExpression) -> bool:  # type: ignore[valid-type]
-    """Return ``True`` when ``$values`` is present."""
-
-    return "$values" in expr  # type: ignore[attr-defined]
-
-
-# ....................... #
-
-
-def has_query_fields(expr: QueryFilterExpression) -> bool:  # type: ignore[valid-type]
-    """Return ``True`` when field-to-field ``$fields`` is present."""
-
-    return "$fields" in expr  # type: ignore[attr-defined]
-
-
-# ....................... #
-
-
 def is_query_element_quantifier(
     map_: QueryValueMapValue,
 ) -> TypeGuard[QueryElementQuantifierExpression]:

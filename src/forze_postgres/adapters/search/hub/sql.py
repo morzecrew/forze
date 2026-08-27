@@ -164,35 +164,6 @@ class HubSearchSqlMixin[M: BaseModel]:
 
     # ....................... #
 
-    async def _hub_order_sql_for_search(
-        self,
-        do_legs: bool,
-        sorts: QuerySortExpression | None,  # type: ignore[valid-type]
-    ) -> sql.Composable:
-        """Backward-compatible wrapper; prefer :meth:`render_hub_order_sql` with a plan."""
-
-        plan = HubSearchPlan(
-            terms=(),
-            do_legs=do_legs,
-            active=(),
-            leg_options={},  # type: ignore[arg-type]
-            member_weights_list=(),
-            combine=self._hub_host.combine,  # type: ignore[arg-type]
-            score_merge=self._hub_host.score_merge,  # type: ignore[arg-type]
-            read_fields=self._hub_host.read_fields,
-            rank_field=HUB_RANK,
-            per_leg_limit=self._hub_host.per_leg_limit,
-            resolved_combo=None,
-            effective_sorts=sorts if sorts else self._hub_host.hub_spec.default_sort,
-            order_key_spec=(),
-            use_parallel=False,
-            count_policy="none",
-            execution="sql",
-        )
-        return await self.render_hub_order_sql(plan)
-
-    # ....................... #
-
     async def _hub_combo_top_order_by(
         self,
         sorts: QuerySortExpression | None,  # type: ignore[valid-type]
@@ -419,55 +390,6 @@ class HubSearchSqlMixin[M: BaseModel]:
         )
 
         return with_clause, params, do_legs, count_relation, data_relation
-
-    # ....................... #
-
-    async def _hub_build_with_clause(
-        self,
-        *,
-        query_terms: tuple[str, ...],
-        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
-        leg_options: Any,
-        member_weights_list: Sequence[float],
-        per_leg_limit: int | None,
-        combo_limit: int | None = None,
-        sorts: QuerySortExpression | None = None,  # type: ignore[valid-type]
-    ) -> tuple[sql.Composable, list[Any], bool, str, str]:
-        active = tuple(
-            (i, leg, float(member_weights_list[i]))
-            for i, leg in enumerate(self._hub_host.members)
-            if member_weights_list[i] > 0.0
-        )
-        do_legs = bool(query_terms) and bool(active)
-        effective_sorts = sorts if sorts else self._hub_host.hub_spec.default_sort
-        key_spec = self._hub_cursor_key_spec(do_legs=do_legs, sorts=sorts)
-        plan = HubSearchPlan(
-            terms=query_terms,
-            do_legs=do_legs,
-            active=active,
-            leg_options=leg_options,
-            member_weights_list=tuple(float(w) for w in member_weights_list),
-            combine=self._hub_host.combine,  # type: ignore[arg-type]
-            score_merge=self._hub_host.score_merge,  # type: ignore[arg-type]
-            read_fields=self._hub_host.read_fields,
-            rank_field=HUB_RANK,
-            per_leg_limit=(
-                self._hub_host.per_leg_limit if per_leg_limit is None else per_leg_limit
-            ),
-            resolved_combo=combo_limit,
-            effective_sorts=effective_sorts,
-            order_key_spec=tuple(key_spec),
-            use_parallel=False,
-            count_policy="none",
-            execution="sql",
-        )
-
-        return await self._hub_build_with_clause_from_plan(
-            plan,
-            filters=filters,
-            combo_limit=combo_limit,
-            uncapped_legs=per_leg_limit is None,
-        )
 
     # ....................... #
 

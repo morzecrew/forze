@@ -1,6 +1,5 @@
 from forze.base.logging import Logger
-from forze_neo4j._logging import ForzeNeo4jLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeNeo4jLogger.ADAPTERS)
+logger = Logger("forze_neo4j.adapters")

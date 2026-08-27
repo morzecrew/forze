@@ -20,6 +20,7 @@ Needs a reachable Redis or Valkey server.
 ## The client
 
 ```python
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze_redis import RedisClient
 
 redis = RedisClient()
@@ -185,5 +186,5 @@ it to fenced exclusion.
   accordingly.
 - **Idempotency** needs stable keys and a TTL longer than client retries; every
   worker that can handle an operation must share the same namespace.
-- **Routed clients** use `routed_redis_lifecycle_step` — don't mix routed and
+- **Routed clients** use `routed_client_lifecycle_step` — don't mix routed and
   non-routed lifecycle steps for one client.

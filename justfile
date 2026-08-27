@@ -275,6 +275,16 @@ quality strict="false":
     just _uv_cmd "Secrets" {{ strict }} pre-commit run gitleaks --all-files
 
 
+# Run after an intentional API removal — never to silence a fresh finding
+# Regenerate .vulture/whitelist.py, carrying over the pragmas --make-whitelist drops
+vulture-baseline:
+    {{ _uv_sync }}
+    @awk '{print} /^"""$/ {print ""; exit}' .vulture/whitelist.py > .vulture/whitelist.py.new
+    @uv run vulture --make-whitelist "src" >> .vulture/whitelist.py.new || true
+    @mv .vulture/whitelist.py.new .vulture/whitelist.py
+    @echo "Baseline regenerated: $(grep -cve '^$' .vulture/whitelist.py) entries + header"
+
+
 # ----------------------- #
 # Docs
 

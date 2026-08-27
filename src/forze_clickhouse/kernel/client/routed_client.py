@@ -38,7 +38,7 @@ class RoutedClickHouseClient(
     via :func:`~forze.application.contracts.secrets.resolve_structured`.
 
     Register this instance under :data:`~forze_clickhouse.execution.deps.ClickHouseClientDepKey`
-    and use :func:`~forze_clickhouse.execution.lifecycle.routed_clickhouse_lifecycle_step` for
+    and use :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step` for
     startup/shutdown.
 
     Do not combine with :func:`~forze_clickhouse.execution.lifecycle.clickhouse_lifecycle_step`

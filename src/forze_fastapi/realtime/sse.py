@@ -61,12 +61,11 @@ from forze.base.exceptions import exc
 from forze.base.logging import Logger
 from forze.base.primitives import HlcTimestamp, uuid7
 
-from .._logging import ForzeFastAPILogger
 from .hub import RealtimeSseHub, SseSubscription, presence_rooms
 
 # ----------------------- #
 
-_logger = Logger(ForzeFastAPILogger.ERRORS)
+_logger = Logger("fastapi.errors")
 
 __all__ = [
     "attach_realtime_sse_route",

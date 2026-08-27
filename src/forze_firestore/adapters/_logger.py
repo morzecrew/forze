@@ -1,6 +1,5 @@
 from forze.base.logging import Logger
-from forze_firestore._logging import ForzeFirestoreLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeFirestoreLogger.ADAPTERS)
+logger = Logger("forze_firestore.adapters")

@@ -3,7 +3,6 @@
 from .pool import (
     S3ShutdownHook,
     S3StartupHook,
-    routed_s3_lifecycle_step,
     s3_lifecycle_step,
 )
 
@@ -12,6 +11,5 @@ from .pool import (
 __all__ = [
     "S3ShutdownHook",
     "S3StartupHook",
-    "routed_s3_lifecycle_step",
     "s3_lifecycle_step",
 ]

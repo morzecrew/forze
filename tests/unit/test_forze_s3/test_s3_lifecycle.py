@@ -6,11 +6,11 @@ import pytest
 from pydantic import SecretStr
 
 from forze.application.execution import Deps, LifecyclePlan
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze_s3.execution.deps import S3ClientDepKey
 from forze_s3.execution.lifecycle import (
     S3ShutdownHook,
     S3StartupHook,
-    routed_s3_lifecycle_step,
     s3_lifecycle_step,
 )
 from forze_s3.kernel.client import S3Client, S3Config
@@ -77,10 +77,10 @@ class _MockRoutedS3:
 
 
 @pytest.mark.asyncio
-async def test_routed_s3_lifecycle_step_invokes_client() -> None:
+async def test_routed_client_lifecycle_step_invokes_client() -> None:
     client = _MockRoutedS3()
     ctx = context_from_deps(Deps.plain({S3ClientDepKey: client}))
-    plan = LifecyclePlan.from_steps(routed_s3_lifecycle_step(client=client))
+    plan = LifecyclePlan.from_steps(routed_client_lifecycle_step("routed_s3_lifecycle", client=client))
     frozen = plan.freeze()
 
     await frozen.startup(ctx)
