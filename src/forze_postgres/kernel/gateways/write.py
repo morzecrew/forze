@@ -16,6 +16,7 @@ from uuid import UUID
 import attrs
 from psycopg import sql
 
+from forze.application.contracts.document import domains_from_create_payloads
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.resilience import ResilienceExecutorPort
 from forze.application.execution.resilience import default_resilience_executor
@@ -199,23 +200,6 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    def _from_create_dto_many(
-        self,
-        payloads: Sequence[C],
-        ids: Sequence[UUID] | None = None,
-    ) -> Sequence[D]:
-        models = list(self.create_codec.transform_many(payloads))
-
-        if ids is not None:
-            models = [
-                m.model_copy(update={ID_FIELD: i}, deep=True)
-                for m, i in zip(models, ids, strict=True)
-            ]
-
-        return models
-
-    # ....................... #
-
     def _patch_codec(self) -> ModelCodec[Any, Any]:
         if self.update_codec is not None:
             return self.update_codec
@@ -344,7 +328,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
             for offset in range(0, len(payloads), batch_size):
                 payload_batch = payloads[offset : offset + batch_size]
-                models = self._from_create_dto_many(payload_batch)
+                models = domains_from_create_payloads(self.create_codec, payload_batch)
                 insert_data_raw = await self._encode_domain_many(models)
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,
@@ -530,7 +514,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             for offset in range(0, len(payloads), batch_size):
                 id_batch = ids[offset : offset + batch_size]
                 payload_batch = payloads[offset : offset + batch_size]
-                models = self._from_create_dto_many(payload_batch, id_batch)
+                models = domains_from_create_payloads(self.create_codec, payload_batch, id_batch)
                 insert_data_raw = await self._encode_domain_many(models)
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,
@@ -729,7 +713,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 id_batch = ids[offset : offset + batch_size]
                 create_batch = creates[offset : offset + batch_size]
                 update_batch = updates[offset : offset + batch_size]
-                models = self._from_create_dto_many(create_batch, id_batch)
+                models = domains_from_create_payloads(self.create_codec, create_batch, id_batch)
                 insert_data_raw = await self._encode_domain_many(models)
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,

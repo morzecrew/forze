@@ -611,13 +611,12 @@ class TestStoragePresignRoutes:
         import json
 
         from forze.base.logging import configure_logging
-        from forze_fastapi._logging import ForzeFastAPILogger
         from forze_fastapi.middlewares.logging import LoggingMiddleware
 
         buf = io.StringIO()
         configure_logging(
             level="info",
-            logger_names=[str(ForzeFastAPILogger.ACCESS)],
+            logger_names=["fastapi.access"],
             stream=buf,
             render_mode="json",
         )

@@ -47,7 +47,7 @@ class RoutedSQSClient(StructuredSecretRoutedTenantClientBase[SQSClient], SQSClie
     down with the evicted client.
 
     Register this instance under :data:`~forze_sqs.execution.deps.SQSClientDepKey` and
-    use :func:`~forze_sqs.execution.lifecycle.routed_sqs_lifecycle_step` for startup/shutdown.
+    use :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step` for startup/shutdown.
 
     Do not combine with :func:`~forze_sqs.execution.lifecycle.sqs_lifecycle_step` on the same
     registered instance.

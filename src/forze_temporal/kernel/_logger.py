@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_temporal._logging import ForzeTemporalLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeTemporalLogger.KERNEL)
+logger = Logger("forze_temporal.kernel")
 """Temporal kernel logger."""

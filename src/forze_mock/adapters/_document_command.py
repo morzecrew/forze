@@ -14,11 +14,11 @@ from typing import (
 from uuid import UUID
 
 from forze.application.contracts.document import KeyedCreate, KeyedUpdate, UpsertItem
+from forze.application.contracts.domain import drain_domain_events
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow
 from forze.domain.constants import ID_FIELD, REV_FIELD
-from forze.domain.models import AggregateRoot
 from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.query._types import C, D, R, U
 
@@ -31,7 +31,6 @@ if TYPE_CHECKING:
         QuerySortExpression,
     )
     from forze.base.serialization import ModelCodec
-    from forze.domain.models import DomainEvent
     from forze_mock.state import MockState
 
 # ----------------------- #
@@ -109,34 +108,6 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     # ....................... #
 
-    async def _dispatch_domain_events(self, domains: Sequence[D | None]) -> None:
-        """Drain and dispatch domain events from any aggregate-root domains, in-tx.
-
-        Mirrors the integration adapter: a no-op for non-aggregate documents; raises if
-        an aggregate emitted events but no dispatcher is registered.
-        """
-
-        events: list[DomainEvent] = []
-
-        for domain in domains:
-            if isinstance(domain, AggregateRoot) and domain.has_pending_events:
-                events.extend(domain.collect_events())
-
-        if not events:
-            return
-
-        dispatcher = self.dispatcher_provider()
-
-        if dispatcher is None:
-            raise exc.configuration(
-                f"Aggregate emitted domain events for document {self.spec.name!r} but "
-                "no DomainEventsDepsModule is registered to dispatch them."
-            )
-
-        await dispatcher.dispatch(events)
-
-    # ....................... #
-
     def _build_domain(self, payload: C, id: UUID | None = None) -> D:
         """Build the domain model from a create payload, injecting an explicit id if given.
 
@@ -207,7 +178,11 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             if conflict_on_duplicate:
                 self._mark_created(domain.id)
 
-        await self._dispatch_domain_events([domain])
+        await drain_domain_events(
+            [domain],
+            dispatcher_provider=lambda: self.dispatcher_provider(),
+            document_name=self.spec.name,
+        )
 
         return self._to_read(serialized) if return_new else None
 
@@ -504,7 +479,11 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
             write_diff = {**dict(diff), REV_FIELD: updated.rev} if diff else {}
 
-        await self._dispatch_domain_events([updated])
+        await drain_domain_events(
+            [updated],
+            dispatcher_provider=lambda: self.dispatcher_provider(),
+            document_name=self.spec.name,
+        )
 
         if not return_new:
             return write_diff if return_diff else None
@@ -676,7 +655,11 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 if return_new:
                     results.append(self._to_read(serialized))
 
-        await self._dispatch_domain_events(mutated)
+        await drain_domain_events(
+            mutated,
+            dispatcher_provider=lambda: self.dispatcher_provider(),
+            document_name=self.spec.name,
+        )
 
         return results if return_new else n
 

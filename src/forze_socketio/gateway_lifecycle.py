@@ -35,12 +35,11 @@ from forze.base.exceptions import exc
 from forze.base.logging import Logger
 from forze.base.primitives import StrKey
 
-from ._logging import ForzeSocketIOLogger
 from .gateway import RealtimeGateway
 
 # ----------------------- #
 
-_logger = Logger(ForzeSocketIOLogger.ERRORS)
+_logger = Logger("socketio.errors")
 
 
 @final

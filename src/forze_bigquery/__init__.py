@@ -12,7 +12,6 @@ from .execution import (
     BigQueryDepsModule,
     BigQueryQueryConfig,
     bigquery_lifecycle_step,
-    routed_bigquery_lifecycle_step,
 )
 from .kernel.client import (
     BigQueryClient,
@@ -38,7 +37,6 @@ __all__ = [
     "BigQueryConfig",
     "BigQueryClientDepKey",
     "bigquery_lifecycle_step",
-    "routed_bigquery_lifecycle_step",
     "BigQueryAnalyticsConfig",
     "BigQueryQueryConfig",
     "RelationSpec",

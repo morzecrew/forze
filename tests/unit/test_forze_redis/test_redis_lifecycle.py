@@ -6,12 +6,12 @@ import pytest
 from pydantic import SecretStr
 
 from forze.application.execution import Deps, LifecyclePlan
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze_redis.execution.deps import RedisClientDepKey
 from forze_redis.execution.lifecycle import (
     RedisShutdownHook,
     RedisStartupHook,
     redis_lifecycle_step,
-    routed_redis_lifecycle_step,
 )
 from forze_redis.kernel.client import RedisClient, RedisConfig
 from tests.support.execution_context import context_from_deps
@@ -66,10 +66,10 @@ class _MockRoutedRedis:
 
 
 @pytest.mark.asyncio
-async def test_routed_redis_lifecycle_step_invokes_client() -> None:
+async def test_routed_client_lifecycle_step_invokes_client() -> None:
     client = _MockRoutedRedis()
     ctx = context_from_deps(Deps.plain({RedisClientDepKey: client}))
-    plan = LifecyclePlan.from_steps(routed_redis_lifecycle_step(client=client))
+    plan = LifecyclePlan.from_steps(routed_client_lifecycle_step("routed_redis_lifecycle", client=client))
     frozen = plan.freeze()
 
     await frozen.startup(ctx)

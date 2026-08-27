@@ -10,11 +10,10 @@ from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
 from forze.application.execution.lifecycle.builtin import (
     ClientShutdownHook,
-    routed_client_lifecycle_step,
 )
 from forze.base.serialization.pydantic import pydantic_secret_converter
 from forze_http.execution.deps.keys import HttpClientDepKey
-from forze_http.kernel.client import HttpClient, HttpConfig, RoutedHttpClient
+from forze_http.kernel.client import HttpClient, HttpConfig
 
 # ----------------------- #
 
@@ -87,16 +86,3 @@ def http_lifecycle_step(
         ),
         shutdown=HttpShutdownHook(),
     )
-
-
-# ....................... #
-
-
-def routed_http_lifecycle_step(
-    name: str = "routed_http_lifecycle",
-    *,
-    client: RoutedHttpClient,
-) -> LifecycleStep:
-    """Lifecycle for :class:`RoutedHttpClient` registered as :data:`HttpClientDepKey`."""
-
-    return routed_client_lifecycle_step(name, client=client)

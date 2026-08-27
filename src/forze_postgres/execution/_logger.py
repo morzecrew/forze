@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_postgres._logging import ForzePostgresLogger
 
 # ----------------------- #
 
-logger = Logger(ForzePostgresLogger.EXECUTION)
+logger = Logger("forze_postgres.execution")
 """Postgres execution logger."""

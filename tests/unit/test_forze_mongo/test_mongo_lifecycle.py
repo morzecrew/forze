@@ -6,12 +6,12 @@ import pytest
 from pydantic import SecretStr
 
 from forze.application.execution import Deps, LifecyclePlan
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze_mongo.execution.deps import MongoClientDepKey
 from forze_mongo.execution.lifecycle import (
     MongoShutdownHook,
     MongoStartupHook,
     mongo_lifecycle_step,
-    routed_mongo_lifecycle_step,
 )
 from forze_mongo.kernel.client import MongoClient, MongoConfig
 from tests.support.execution_context import context_from_deps
@@ -71,10 +71,10 @@ class _MockRoutedMongo:
 
 
 @pytest.mark.asyncio
-async def test_routed_mongo_lifecycle_step_invokes_client() -> None:
+async def test_routed_client_lifecycle_step_invokes_client() -> None:
     client = _MockRoutedMongo()
     ctx = context_from_deps(Deps.plain({MongoClientDepKey: client}))
-    plan = LifecyclePlan.from_steps(routed_mongo_lifecycle_step(client=client))
+    plan = LifecyclePlan.from_steps(routed_client_lifecycle_step("routed_mongo_lifecycle", client=client))
     frozen = plan.freeze()
 
     await frozen.startup(ctx)

@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_kms.gcp._logging import ForzeKmsGcpLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeKmsGcpLogger.KERNEL)
+logger = Logger("forze_kms.gcp.kernel")
 """GCP KMS kernel logger."""

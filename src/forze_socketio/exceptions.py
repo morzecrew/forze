@@ -26,6 +26,8 @@ require_socketio()
 
 # ....................... #
 
+from functools import partial
+
 from forze.application.integrations.realtime import jsonable_frame
 from forze.base.exceptions import (
     GENERIC_INTERNAL_DETAIL,
@@ -37,9 +39,8 @@ from forze.base.exceptions import (
     unhandled_error_envelope,
 )
 from forze.base.logging import Logger
+from forze.base.logging import log_server_error as _log_server_error
 from forze.base.primitives import JsonDict
-
-from ._logging import ForzeSocketIOLogger
 
 # ----------------------- #
 
@@ -57,33 +58,11 @@ __all__ = [
     "build_unhandled_exception_ack",
 ]
 
-error_logger = Logger(ForzeSocketIOLogger.ERRORS)
+error_logger = Logger("socketio.errors")
 """Logger for Socket.IO server-side error diagnostics."""
 
-# ....................... #
-
-
-def log_server_error(exc: BaseException, *, core: CoreException | None = None) -> None:
-    """Log a server-side error with appropriate severity and traceback policy."""
-
-    if core is not None and core.__cause__ is not None:
-        error_logger.critical_exception(
-            "Server error",
-            exc=core.__cause__,
-            error_code=core.code,
-            error_kind=core.kind.value,
-        )
-
-    elif core is not None:
-        error_logger.error(
-            "Server error",
-            error_code=core.code,
-            error_kind=core.kind.value,
-            detail=core.summary,
-        )
-
-    else:
-        error_logger.critical_exception("Unhandled exception", exc=exc)
+log_server_error = partial(_log_server_error, error_logger)
+"""Log a Socket.IO server-side error; severity policy is shared across transports."""
 
 
 # ....................... #

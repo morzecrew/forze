@@ -9,10 +9,9 @@ from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution import ExecutionContext
 from forze.application.execution.lifecycle.builtin import (
     ClientShutdownHook,
-    routed_client_lifecycle_step,
 )
 
-from ...kernel.client import ClickHouseClient, ClickHouseConfig, RoutedClickHouseClient
+from ...kernel.client import ClickHouseClient, ClickHouseConfig
 from ..deps import ClickHouseClientDepKey
 
 # ----------------------- #
@@ -59,19 +58,3 @@ def clickhouse_lifecycle_step(
         startup=ClickHouseStartupHook(connection=connection),
         shutdown=ClickHouseShutdownHook(),
     )
-
-
-# ....................... #
-
-
-def routed_clickhouse_lifecycle_step(
-    name: str = "routed_clickhouse_lifecycle",
-    *,
-    client: RoutedClickHouseClient,
-) -> LifecycleStep:
-    """Lifecycle for :class:`RoutedClickHouseClient` registered as :data:`ClickHouseClientDepKey`.
-
-    Do not combine with :func:`clickhouse_lifecycle_step` on the same instance.
-    """
-
-    return routed_client_lifecycle_step(name, client=client)

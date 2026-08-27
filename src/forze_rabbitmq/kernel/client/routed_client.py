@@ -39,7 +39,7 @@ class RoutedRabbitMQClient(DsnRoutedTenantClientBase[RabbitMQClient], RabbitMQCl
 
     DSN strings are resolved via :meth:`SecretsPort.resolve_str` and
     ``secret_ref_for_tenant``. Use
-    :func:`~forze_rabbitmq.execution.lifecycle.routed_rabbitmq_lifecycle_step`
+    :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step`
     after registering the same instance under :data:`RabbitMQClientDepKey`.
 
     Every operation runs inside a pool scope (``client_scope``), so ``guarded=True`` is

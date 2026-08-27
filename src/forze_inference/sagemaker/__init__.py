@@ -21,7 +21,6 @@ from .execution import (
     SageMakerInferenceShutdownHook,
     SageMakerInferenceStartupHook,
     SageMakerRuntimeClientDepKey,
-    routed_sagemaker_inference_lifecycle_step,
     sagemaker_inference_lifecycle_step,
 )
 from .kernel import (
@@ -46,6 +45,5 @@ __all__ = [
     "SageMakerRuntimeClient",
     "SageMakerRuntimeClientDepKey",
     "SageMakerRuntimeClientPort",
-    "routed_sagemaker_inference_lifecycle_step",
     "sagemaker_inference_lifecycle_step",
 ]

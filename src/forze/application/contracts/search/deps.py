@@ -1,6 +1,6 @@
 """Search dependency keys and routers."""
 
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel
 
@@ -19,6 +19,9 @@ from .specs import (
     SearchSpec,
 )
 from .types import MultiSourceSearchOptions
+
+if TYPE_CHECKING:
+    from forze.application.execution.context import ExecutionContext
 
 # ----------------------- #
 
@@ -162,3 +165,33 @@ class SearchDeps(ConvenientDeps):
             spec,
             route=spec.name,
         )
+
+
+# ....................... #
+
+
+def resolve_result_snapshot(
+    context: "ExecutionContext",
+    spec: SearchResultSnapshotSpec | None,
+) -> SearchResultSnapshotPort | None:
+    """Resolve the snapshot port a search spec asks for, or ``None`` when unavailable.
+
+    A spec that names no snapshot, and a spec whose snapshot nothing registered, both
+    resolve to ``None`` — a snapshot is an optional accelerator, so a search adapter
+    falls back to querying rather than refusing.
+
+    :param context: Execution context holding the dependency registry.
+    :param spec: The snapshot spec to resolve, if the search declared one.
+    :returns: The registered snapshot port, or ``None``.
+    """
+
+    if spec is None:
+        return None
+
+    if not (
+        context.deps.exists(SearchResultSnapshotDepKey, route=spec.name)
+        or context.deps.exists(SearchResultSnapshotDepKey)
+    ):
+        return None
+
+    return context.deps.provide(SearchResultSnapshotDepKey, route=spec.name)(context, spec)

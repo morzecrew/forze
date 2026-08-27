@@ -301,9 +301,10 @@ class LeaderFollowerLane[T]:
 @final
 @attrs.define(slots=True)
 class CachedInflightLane[K: Hashable, V]:
-    """Cache hit → return; miss → singleflight; optional auto-store on success.
-    * ``coalesce``: factory may call ``lane.store`` itself (Postgres introspector).
-    * ``get_or_load``: primitive stores ``await factory()`` on miss.
+    """Cache hit → return; miss → singleflight.
+
+    ``coalesce`` leaves storing to the factory, which calls ``lane.store`` itself
+    (Postgres introspector).
     """
 
     _inflight: InflightLane[V] = attrs.field(factory=InflightLane, init=False)
@@ -325,34 +326,6 @@ class CachedInflightLane[K: Hashable, V]:
             return hit
 
         return await self._inflight.run(inflight_key, factory, timeout=timeout)
-
-    # ....................... #
-
-    async def get_or_load(
-        self,
-        *,
-        cache_key: K,
-        inflight_key: tuple[Any, ...],
-        lane: CacheLane[K, V],
-        factory: Callable[[], Coroutine[Any, Any, V]],
-        timeout: float | None = None,
-    ) -> V:
-        hit = lane.lookup(cache_key)
-
-        if hit is not None:
-            return hit
-
-        async def _load_and_store() -> V:
-            value = await factory()
-            lane.store(cache_key, value)
-
-            return value
-
-        return await self._inflight.run(
-            inflight_key,
-            _load_and_store,
-            timeout=timeout,
-        )
 
     # ....................... #
 

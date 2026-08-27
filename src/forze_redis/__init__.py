@@ -6,7 +6,6 @@ require_redis()
 
 # ....................... #
 
-from ._logging import FORZE_REDIS_LOGGER_NAMES, ForzeRedisLogger
 from .adapters.circuit_breaker import (
     RedisCircuitBreakerStore,
     redis_circuit_breaker_store,
@@ -32,7 +31,6 @@ from .execution import (
     RedisStreamGroupConfig,
     RedisUniversalConfig,
     redis_lifecycle_step,
-    routed_redis_lifecycle_step,
 )
 from .kernel.client import RedisClient, RedisClientPort, RedisConfig, RoutedRedisClient
 from .kernel.relation import (
@@ -44,8 +42,6 @@ from .kernel.relation import (
 # ----------------------- #
 
 __all__ = [
-    "FORZE_REDIS_LOGGER_NAMES",
-    "ForzeRedisLogger",
     "RedisClient",
     "RedisClientPort",
     "RedisConfig",
@@ -54,7 +50,6 @@ __all__ = [
     "RedisBlockingClientDepKey",
     "RedisDepsModule",
     "redis_lifecycle_step",
-    "routed_redis_lifecycle_step",
     "RedisCacheConfig",
     "RedisCounterConfig",
     "RedisDistributedLockConfig",

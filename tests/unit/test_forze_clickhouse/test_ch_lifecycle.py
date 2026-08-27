@@ -5,12 +5,12 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from forze.application.execution import Deps, LifecyclePlan
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze_clickhouse.execution.deps import ClickHouseClientDepKey
 from forze_clickhouse.execution.lifecycle import (
     ClickHouseShutdownHook,
     ClickHouseStartupHook,
     clickhouse_lifecycle_step,
-    routed_clickhouse_lifecycle_step,
 )
 from forze_clickhouse.kernel.client import ClickHouseClient, ClickHouseConfig
 from tests.support.execution_context import context_from_deps
@@ -63,10 +63,10 @@ class _MockRoutedClickHouse:
 
 
 @pytest.mark.asyncio
-async def test_routed_clickhouse_lifecycle_step_invokes_client() -> None:
+async def test_routed_client_lifecycle_step_invokes_client() -> None:
     client = _MockRoutedClickHouse()
     ctx = context_from_deps(Deps.plain({ClickHouseClientDepKey: client}))
-    plan = LifecyclePlan.from_steps(routed_clickhouse_lifecycle_step(client=client))
+    plan = LifecyclePlan.from_steps(routed_client_lifecycle_step("routed_clickhouse_lifecycle", client=client))
     frozen = plan.freeze()
 
     await frozen.startup(ctx)

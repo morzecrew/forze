@@ -2,6 +2,7 @@ from .codecs import (
     DocumentCodecs,
     document_codecs_for_spec,
     document_codecs_for_write_types,
+    domains_from_create_payloads,
 )
 from .deps import (
     DocumentCommandDepKey,
@@ -19,6 +20,7 @@ from .write_types import DocumentWriteTypes
 # ----------------------- #
 
 __all__ = [
+    "domains_from_create_payloads",
     "DocumentReadGatewayPort",
     "DocumentWriteGatewayPort",
     "BaseDocumentPort",

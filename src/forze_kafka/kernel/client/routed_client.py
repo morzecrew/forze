@@ -29,7 +29,7 @@ class RoutedKafkaClient(DsnRoutedTenantClientBase[KafkaClient], KafkaClientPort)
     Bootstrap-server strings are resolved via :meth:`SecretsPort.resolve_str` and
     ``secret_ref_for_tenant`` — the ``dedicated`` tenancy tier for offset-log
     streams. Use
-    :func:`~forze_kafka.execution.lifecycle.routed_kafka_lifecycle_step` after
+    :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step` after
     registering the same instance under :data:`KafkaClientDepKey`.
 
     Every operation runs inside a pool scope (``client_scope``), so ``guarded=True`` is

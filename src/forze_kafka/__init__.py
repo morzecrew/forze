@@ -12,7 +12,6 @@ from .execution import (
     KafkaDepsModule,
     KafkaStreamConfig,
     kafka_lifecycle_step,
-    routed_kafka_lifecycle_step,
 )
 from .kernel.client import (
     KafkaClient,
@@ -36,7 +35,6 @@ __all__ = [
     "KafkaClientDepKey",
     "KafkaDepsModule",
     "kafka_lifecycle_step",
-    "routed_kafka_lifecycle_step",
     "KafkaStreamConfig",
     "KafkaCommitStreamGroupConfig",
     "NamedResourceSpec",

@@ -3,12 +3,12 @@
 import pytest
 
 from forze.application.execution import Deps, LifecyclePlan
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze_inngest.execution.deps import InngestClientDepKey
 from forze_inngest.execution.lifecycle import (
     InngestShutdownHook,
     InngestStartupHook,
     inngest_lifecycle_step,
-    routed_inngest_lifecycle_step,
 )
 from tests.support.execution_context import context_from_deps
 
@@ -51,10 +51,10 @@ class _MockRoutedInngest:
 
 
 @pytest.mark.asyncio
-async def test_routed_inngest_lifecycle_step_invokes_client() -> None:
+async def test_routed_client_lifecycle_step_invokes_client() -> None:
     client = _MockRoutedInngest()
     ctx = context_from_deps(Deps.plain({InngestClientDepKey: client}))
-    plan = LifecyclePlan.from_steps(routed_inngest_lifecycle_step(client=client))
+    plan = LifecyclePlan.from_steps(routed_client_lifecycle_step("routed_inngest_lifecycle", client=client))
     frozen = plan.freeze()
 
     await frozen.startup(ctx)

@@ -11,9 +11,9 @@ from forze.application.contracts.crypto import (
 from forze.application.contracts.embeddings import EmbeddingsSpec
 from forze.application.contracts.search import (
     SearchQueryDepPort,
-    SearchResultSnapshotDepKey,
     SearchResultSnapshotSpec,
     SearchSpec,
+    resolve_result_snapshot,
 )
 from forze.application.contracts.search.ports import SearchQueryPort
 from forze.application.execution import ExecutionContext
@@ -33,28 +33,6 @@ from ....adapters import (
 from ..configs import MongoSearchConfig
 from ..keys import MongoClientDepKey
 
-# ----------------------- #
-
-
-def _resolve_result_snapshot(
-    context: ExecutionContext,
-    spec: SearchResultSnapshotSpec | None,
-) -> Any:
-    if spec is None:
-        return None
-
-    if not (
-        context.deps.exists(SearchResultSnapshotDepKey, route=spec.name)
-        or context.deps.exists(SearchResultSnapshotDepKey)
-    ):
-        return None
-
-    return context.deps.provide(SearchResultSnapshotDepKey, route=spec.name)(
-        context,
-        spec,
-    )
-
-
 # ....................... #
 
 
@@ -64,7 +42,7 @@ def _result_snapshot(
     *,
     encrypted: bool = False,
 ) -> SearchResultSnapshot | None:
-    port = _resolve_result_snapshot(context, spec)
+    port = resolve_result_snapshot(context, spec)
 
     if port is None:
         return None

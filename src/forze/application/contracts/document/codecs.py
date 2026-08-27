@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Generic, TypeVar, cast, final
+from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
 
 from forze.base.serialization import ModelCodec, default_model_codec, model_codec_for
+from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, Document, DocumentHistory
 
 from .write_types import DocumentWriteTypes
@@ -114,3 +117,33 @@ def document_codecs_for_write_types(
         write=write_types,
         history_enabled=history_enabled,
     )
+
+
+# ....................... #
+
+
+def domains_from_create_payloads(
+    codec: ModelCodec[Any, Any],
+    payloads: Sequence[Any],
+    ids: Sequence[UUID] | None = None,
+) -> Sequence[Any]:
+    """Transform create payloads into domain models, stamping caller-supplied ids.
+
+    ``ids`` is how a write gateway keeps a batch's generated keys aligned with its
+    payloads — the position in ``ids`` is the position in ``payloads``, which is why
+    the zip is strict.
+
+    :param codec: Create-DTO codec for the document.
+    :param payloads: Create payloads to transform.
+    :param ids: Per-payload ids to stamp, positionally aligned with ``payloads``.
+    :returns: The domain models, with ids applied when given.
+    """
+
+    models = list(codec.transform_many(payloads))
+
+    if ids is not None:
+        models = [
+            m.model_copy(update={ID_FIELD: i}, deep=True) for m, i in zip(models, ids, strict=True)
+        ]
+
+    return models

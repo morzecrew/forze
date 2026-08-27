@@ -15,7 +15,6 @@ from .execution import (
     S3DepsModule,
     S3ServerSideEncryption,
     S3StorageConfig,
-    routed_s3_lifecycle_step,
     s3_lifecycle_step,
 )
 from .kernel.client import (
@@ -43,7 +42,6 @@ __all__ = [
     "S3RoutingCredentials",
     "S3ClientDepKey",
     "s3_lifecycle_step",
-    "routed_s3_lifecycle_step",
     "S3StorageConfig",
     "S3ServerSideEncryption",
     "NamedResourceSpec",

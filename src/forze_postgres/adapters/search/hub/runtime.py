@@ -228,24 +228,6 @@ class HubLegRuntime:
 
         return sql.SQL(" ").join(parts)
 
-    # ....................... #
-
-    def merge_coalesce(self, leg_index: int) -> sql.Composable:
-        """Per-leg match score: single FK uses one join; multi-FK uses ``GREATEST`` of K joins."""
-
-        from .semantics import sql_leg_coalesce
-
-        return sql_leg_coalesce(self, leg_index)
-
-    # ....................... #
-
-    def merge_matched(self, leg_index: int) -> sql.Composable:
-        """Whether this leg matched: non-null leg ``eid`` on any FK join branch."""
-
-        from .semantics import sql_leg_matched
-
-        return sql_leg_matched(self, leg_index)
-
 
 # ....................... #
 

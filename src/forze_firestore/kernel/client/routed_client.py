@@ -41,7 +41,7 @@ class RoutedFirestoreClient(
     resolved via :func:`~forze.application.contracts.secrets.resolve_structured`.
 
     Register under :data:`~forze_firestore.execution.deps.FirestoreClientDepKey` and use
-    :func:`~forze_firestore.execution.lifecycle.routed_firestore_lifecycle_step`.
+    :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step`.
     """
 
     secrets: SecretsPort

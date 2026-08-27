@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_temporal._logging import ForzeTemporalLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeTemporalLogger.EXECUTION)
+logger = Logger("forze_temporal.execution")
 """Temporal execution (saga/compensation, lifecycle) logger."""

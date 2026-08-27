@@ -19,6 +19,7 @@ from pydantic import BaseModel, SecretStr
 
 from forze.application.contracts.inference import InferenceSpec
 from forze.application.contracts.secrets import SecretRef
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze.base.exceptions import CoreException
 from forze.testing import context_from_modules
 from forze_inference.http import (
@@ -27,7 +28,6 @@ from forze_inference.http import (
     InferenceHttpClient,
     InferenceHttpRoutingCredentials,
     RoutedInferenceHttpClient,
-    routed_inference_http_lifecycle_step,
 )
 from forze_inference.http.kernel.routing_credentials import credential_headers
 from forze_inference.sagemaker import (
@@ -333,5 +333,5 @@ def test_routed_http_step_id_is_stable_and_overridable() -> None:
         tenant_provider=lambda: _T1,
     )
 
-    assert routed_inference_http_lifecycle_step(routed).id == "routed_inference_http_client"
-    assert routed_inference_http_lifecycle_step(routed, name="custom").id == "custom"
+    assert routed_client_lifecycle_step("routed_inference_http_client", client=routed).id == "routed_inference_http_client"
+    assert routed_client_lifecycle_step("custom", client=routed).id == "custom"

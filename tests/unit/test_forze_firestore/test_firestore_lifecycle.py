@@ -5,12 +5,12 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from forze.application.execution import Deps, LifecyclePlan
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze_firestore.execution.deps import FirestoreClientDepKey
 from forze_firestore.execution.lifecycle import (
     FirestoreShutdownHook,
     FirestoreStartupHook,
     firestore_lifecycle_step,
-    routed_firestore_lifecycle_step,
 )
 from forze_firestore.kernel.client import FirestoreClient
 from tests.support.execution_context import context_from_deps
@@ -65,10 +65,10 @@ class _MockRoutedFirestore:
 
 
 @pytest.mark.asyncio
-async def test_routed_firestore_lifecycle_step_invokes_client() -> None:
+async def test_routed_client_lifecycle_step_invokes_client() -> None:
     client = _MockRoutedFirestore()
     ctx = context_from_deps(Deps.plain({FirestoreClientDepKey: client}))
-    plan = LifecyclePlan.from_steps(routed_firestore_lifecycle_step(client=client))
+    plan = LifecyclePlan.from_steps(routed_client_lifecycle_step("routed_firestore_lifecycle", client=client))
     frozen = plan.freeze()
 
     await frozen.startup(ctx)

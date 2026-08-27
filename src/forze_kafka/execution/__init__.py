@@ -6,7 +6,7 @@ from .deps import (
     KafkaDepsModule,
     KafkaStreamConfig,
 )
-from .lifecycle import kafka_lifecycle_step, routed_kafka_lifecycle_step
+from .lifecycle import kafka_lifecycle_step
 
 # ----------------------- #
 
@@ -14,7 +14,6 @@ __all__ = [
     "KafkaDepsModule",
     "KafkaClientDepKey",
     "kafka_lifecycle_step",
-    "routed_kafka_lifecycle_step",
     "KafkaStreamConfig",
     "KafkaCommitStreamGroupConfig",
 ]

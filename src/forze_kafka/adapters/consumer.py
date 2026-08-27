@@ -23,7 +23,6 @@ from forze.application.contracts.stream import (
 from forze.application.contracts.tenancy import TenantProviderPort
 from forze.base.logging import Logger
 
-from .._logging import ForzeKafkaLogger
 from ..kernel.client import KafkaClientPort
 from ..kernel.rebalance import KafkaCommitRebalanceListener
 from ..kernel.relation import NamedResourceSpec, resolve_kafka_topic
@@ -31,7 +30,7 @@ from .codecs import KafkaStreamCodec
 
 # ----------------------- #
 
-logger = Logger(ForzeKafkaLogger.ADAPTERS)
+logger = Logger("forze_kafka.adapters")
 """Kafka adapters logger."""
 
 _DEFAULT_POLL_MS = 1_000

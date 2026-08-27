@@ -10,11 +10,10 @@ from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution.context import ExecutionContext
 from forze.application.execution.lifecycle.builtin import (
     ClientShutdownHook,
-    routed_client_lifecycle_step,
 )
 from forze.base.serialization.pydantic import pydantic_secret_converter
 
-from ...kernel.client import RoutedS3Client, S3Client, S3Config
+from ...kernel.client import S3Client, S3Config
 from ..deps import S3ClientDepKey
 
 # ----------------------- #
@@ -105,19 +104,3 @@ def s3_lifecycle_step(
     )
     shutdown_hook = S3ShutdownHook()
     return LifecycleStep(id=name, startup=startup_hook, shutdown=shutdown_hook)
-
-
-# ....................... #
-
-
-def routed_s3_lifecycle_step(
-    name: str = "routed_s3_lifecycle",
-    *,
-    client: RoutedS3Client,
-) -> LifecycleStep:
-    """Lifecycle for :class:`RoutedS3Client` registered as :data:`S3ClientDepKey`.
-
-    Do not combine with :func:`s3_lifecycle_step` on the same instance.
-    """
-
-    return routed_client_lifecycle_step(name, client=client)

@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_kits._logging import ForzeKitsLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeKitsLogger.AGGREGATES)
+logger = Logger("forze_kits.aggregates")
 """Kits aggregates (document/search/soft-delete wiring) logger."""

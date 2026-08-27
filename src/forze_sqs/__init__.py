@@ -14,7 +14,6 @@ from .execution import (
     SQSClientDepKey,
     SQSDepsModule,
     SQSQueueConfig,
-    routed_sqs_lifecycle_step,
     sqs_lifecycle_step,
 )
 from .kernel.client import (
@@ -43,7 +42,6 @@ __all__ = [
     "SQSDepsModule",
     "SQSClientDepKey",
     "sqs_lifecycle_step",
-    "routed_sqs_lifecycle_step",
     "SQSQueueConfig",
     "NamedResourceSpec",
     "coerce_named_resource_spec",

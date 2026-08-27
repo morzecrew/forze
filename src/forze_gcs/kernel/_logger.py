@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_gcs._logging import ForzeGcsLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeGcsLogger.KERNEL)
+logger = Logger("forze_gcs.kernel")
 """GCS kernel logger."""

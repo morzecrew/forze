@@ -21,7 +21,6 @@ from .execution import (
     Neo4jShutdownHook,
     Neo4jStartupHook,
     neo4j_lifecycle_step,
-    routed_neo4j_lifecycle_step,
 )
 from .kernel.client import (
     Neo4jClient,
@@ -53,7 +52,6 @@ __all__ = [
     "Neo4jStartupHook",
     "Neo4jShutdownHook",
     "neo4j_lifecycle_step",
-    "routed_neo4j_lifecycle_step",
     "RoutedNeo4jClient",
     "Neo4jRoutingCredentials",
     "NamedResourceSpec",

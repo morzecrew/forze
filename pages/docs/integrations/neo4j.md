@@ -18,6 +18,7 @@ Needs a Neo4j server.
 ## The client
 
 ```python
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze_neo4j import Neo4jClient
 
 neo4j = Neo4jClient()
@@ -64,7 +65,7 @@ lifecycle = LifecyclePlan.from_steps(
   (default `tenant_id`) is stamped on writes and matched on reads (raw `run` fails closed
   without a bound tenant). `namespace` — set `Neo4jGraphConfig.database` to a
   `(tenant_id) -> str` resolver to route each query to the tenant's own database (Neo4j 4+
-  multi-database). `dedicated` — wire `RoutedNeo4jClient` (+ `routed_neo4j_lifecycle_step`)
+  multi-database). `dedicated` — wire `RoutedNeo4jClient` (+ `routed_client_lifecycle_step`)
   for a per-tenant instance/credentials resolved from secrets. Declare the minimum you
   require with `Neo4jDepsModule(required_tenant_isolation=...)`.
 - Credentials are passed at lifecycle time (`auth=`), not held on `Neo4jConfig`.

@@ -5,7 +5,6 @@ import io
 import pytest
 
 from forze.base.logging import configure_logging
-from forze_socketio._logging import ForzeSocketIOLogger
 
 # ----------------------- #
 
@@ -17,7 +16,7 @@ def error_log_buf() -> io.StringIO:
     buf = io.StringIO()
     configure_logging(
         level="info",
-        logger_names=[str(ForzeSocketIOLogger.ERRORS)],
+        logger_names=["socketio.errors"],
         stream=buf,
         render_mode="json",
     )

@@ -5,12 +5,12 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from forze.application.execution import Deps, LifecyclePlan
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze_gcs.execution.deps import GCSClientDepKey
 from forze_gcs.execution.lifecycle import (
     GCSShutdownHook,
     GCSStartupHook,
     gcs_lifecycle_step,
-    routed_gcs_lifecycle_step,
 )
 from forze_gcs.kernel.client import GCSClient, GCSConfig
 from tests.support.execution_context import context_from_deps
@@ -70,10 +70,10 @@ class _MockRoutedGCS:
 
 
 @pytest.mark.asyncio
-async def test_routed_gcs_lifecycle_step_invokes_client() -> None:
+async def test_routed_client_lifecycle_step_invokes_client() -> None:
     client = _MockRoutedGCS()
     ctx = context_from_deps(Deps.plain({GCSClientDepKey: client}))
-    plan = LifecyclePlan.from_steps(routed_gcs_lifecycle_step(client=client))
+    plan = LifecyclePlan.from_steps(routed_client_lifecycle_step("routed_gcs_lifecycle", client=client))
     frozen = plan.freeze()
 
     await frozen.startup(ctx)

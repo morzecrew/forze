@@ -12,7 +12,6 @@ from .execution import (
     ClickHouseDepsModule,
     ClickHouseQueryConfig,
     clickhouse_lifecycle_step,
-    routed_clickhouse_lifecycle_step,
 )
 from .kernel.client import (
     ClickHouseClient,
@@ -38,7 +37,6 @@ __all__ = [
     "ClickHouseConfig",
     "ClickHouseClientDepKey",
     "clickhouse_lifecycle_step",
-    "routed_clickhouse_lifecycle_step",
     "ClickHouseAnalyticsConfig",
     "ClickHouseQueryConfig",
     "RelationSpec",

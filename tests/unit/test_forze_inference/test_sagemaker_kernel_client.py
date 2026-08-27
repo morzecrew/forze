@@ -17,13 +17,13 @@ from botocore.exceptions import ClientError, EndpointConnectionError
 from pydantic import SecretStr
 
 from forze.application.contracts.secrets import SecretRef
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze.base.exceptions import CoreException
 from forze_inference.sagemaker import (
     RoutedSageMakerRuntimeClient,
     SageMakerInferenceConfig,
     SageMakerInferenceDepsModule,
     SageMakerRuntimeClient,
-    routed_sagemaker_inference_lifecycle_step,
     sagemaker_inference_lifecycle_step,
 )
 from forze_inference.sagemaker.kernel import client as client_module
@@ -648,6 +648,6 @@ class TestLifecycleSteps:
         )
 
         assert (
-            routed_sagemaker_inference_lifecycle_step(routed).id
+            routed_client_lifecycle_step("routed_sagemaker_inference_client", client=routed).id
             == "routed_sagemaker_inference_client"
         )

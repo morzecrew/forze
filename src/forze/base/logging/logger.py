@@ -83,13 +83,6 @@ class Logger:
 
     # ....................... #
 
-    def notset(self, event: str, *sub: Any, **extras: Any) -> None:
-        """Log at NOTSET level."""
-
-        self.backend.log(LogLevelToRank["notset"], event, *sub, **extras)
-
-    # ....................... #
-
     def trace(self, event: str, *sub: Any, **extras: Any) -> None:
         """Log at TRACE level (below DEBUG). Use for noisy per-op details.
 

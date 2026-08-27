@@ -1,9 +1,8 @@
 """Vault kernel logger."""
 
 from forze.base.logging import Logger
-from forze_vault._logging import ForzeVaultLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeVaultLogger.KERNEL)
+logger = Logger("forze_vault.kernel")
 """Vault kernel logger."""

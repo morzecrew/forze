@@ -235,28 +235,6 @@ class PostgresGateway[M: BaseModel](
         )
 
     # ....................... #
-
-    @property
-    def source_qname(self) -> PostgresQualifiedName:
-        """Best-effort sync access when :attr:`relation` is a static tuple.
-
-        Search adapters and legacy call sites use this for static configs. Dynamic
-        resolvers require :meth:`_qname` on async paths.
-        """
-
-        resolved = self._qname_cell.peek()
-
-        if resolved is not None:
-            return resolved
-
-        if is_static_relation(self.relation):
-            return PostgresQualifiedName(*self.relation)
-
-        raise exc.internal(
-            "source_qname is only available for static relations; use await _qname()",
-        )
-
-    # ....................... #
     # Tenancy/schema compatibility (tenant column present, uuid, NOT NULL) is
     # verified by introspection in ``kernel.catalog.validation.validate_schema``.
 

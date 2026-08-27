@@ -3,7 +3,6 @@
 from .pool import (
     SQSShutdownHook,
     SQSStartupHook,
-    routed_sqs_lifecycle_step,
     sqs_lifecycle_step,
 )
 
@@ -12,6 +11,5 @@ from .pool import (
 __all__ = [
     "SQSShutdownHook",
     "SQSStartupHook",
-    "routed_sqs_lifecycle_step",
     "sqs_lifecycle_step",
 ]

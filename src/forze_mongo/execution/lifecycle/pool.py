@@ -10,11 +10,10 @@ from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution.context import ExecutionContext
 from forze.application.execution.lifecycle.builtin import (
     ClientShutdownHook,
-    routed_client_lifecycle_step,
 )
 from forze.base.serialization.pydantic import pydantic_secret_converter
 
-from ...kernel.client import MongoClient, MongoConfig, RoutedMongoClient
+from ...kernel.client import MongoClient, MongoConfig
 from ..deps import MongoClientDepKey
 
 # ----------------------- #
@@ -71,19 +70,3 @@ def mongo_lifecycle_step(
     shutdown_hook = MongoShutdownHook()
 
     return LifecycleStep(id=name, startup=startup_hook, shutdown=shutdown_hook)
-
-
-# ....................... #
-
-
-def routed_mongo_lifecycle_step(
-    name: str = "routed_mongo_lifecycle",
-    *,
-    client: RoutedMongoClient,
-) -> LifecycleStep:
-    """Lifecycle for :class:`RoutedMongoClient` registered as :data:`MongoClientDepKey`.
-
-    Do not combine with :func:`mongo_lifecycle_step` on the same client instance.
-    """
-
-    return routed_client_lifecycle_step(name, client=client)

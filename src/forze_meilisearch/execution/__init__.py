@@ -7,7 +7,7 @@ from .deps import (
     MeilisearchFederation,
     MeilisearchSearchConfig,
 )
-from .lifecycle import meilisearch_lifecycle_step, routed_meilisearch_lifecycle_step
+from .lifecycle import meilisearch_lifecycle_step
 
 # ----------------------- #
 
@@ -18,5 +18,4 @@ __all__ = [
     "MeilisearchFederatedSearchConfig",
     "MeilisearchFederation",
     "meilisearch_lifecycle_step",
-    "routed_meilisearch_lifecycle_step",
 ]

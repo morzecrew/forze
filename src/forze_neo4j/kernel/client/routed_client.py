@@ -39,7 +39,7 @@ class RoutedNeo4jClient(
     ``ctx.inv_ctx.get_tenant``).
 
     Wire it as :data:`~forze_neo4j.Neo4jClientDepKey` with
-    :func:`~forze_neo4j.routed_neo4j_lifecycle_step`; do **not** also use
+    :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step`; do **not** also use
     :func:`~forze_neo4j.neo4j_lifecycle_step` with a routed client.
     """
 

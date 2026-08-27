@@ -1,7 +1,6 @@
 from forze.base.logging import Logger
-from forze_mongo._logging import ForzeMongoLogger
 
 # ----------------------- #
 
-logger = Logger(ForzeMongoLogger.EXECUTION)
+logger = Logger("forze_mongo.execution")
 """Mongo execution logger."""

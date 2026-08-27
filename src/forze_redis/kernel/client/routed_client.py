@@ -35,7 +35,7 @@ class RoutedRedisClient(DsnRoutedTenantClientBase[RedisClient], RedisClientPort)
     """Routes each call to a lazily created :class:`RedisClient` for the current tenant.
 
     DSN strings are resolved via :meth:`SecretsPort.resolve_str` and
-    ``secret_ref_for_tenant``. Use :func:`~forze_redis.execution.lifecycle.routed_redis_lifecycle_step`
+    ``secret_ref_for_tenant``. Use :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step`
     after registering the same instance under :data:`RedisClientDepKey`.
     """
 

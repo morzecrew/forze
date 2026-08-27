@@ -6,7 +6,6 @@ require_psycopg()
 
 # ....................... #
 
-from ._logging import FORZE_POSTGRES_LOGGER_NAMES, ForzePostgresLogger
 from .adapters import (
     PostgresRotatingCredentialStore,
     PostgresRotationTarget,
@@ -55,8 +54,6 @@ from .kernel.relation import (
 # ----------------------- #
 
 __all__ = [
-    "FORZE_POSTGRES_LOGGER_NAMES",
-    "ForzePostgresLogger",
     "PostgresDepsModule",
     "PostgresRotationTarget",
     "PostgresRotatingCredentialStore",

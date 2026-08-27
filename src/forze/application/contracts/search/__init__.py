@@ -27,6 +27,7 @@ from .deps import (
     SearchQueryDepPort,
     SearchResultSnapshotDepKey,
     SearchResultSnapshotDepPort,
+    resolve_result_snapshot,
 )
 from .facet_highlight import (
     DEFAULT_FACET_SIZE,
@@ -145,6 +146,7 @@ __all__ = [
     "SearchResultSnapshotSpec",
     "SearchResultSnapshotOptions",
     "SearchResultSnapshotDepKey",
+    "resolve_result_snapshot",
     "SearchResultSnapshotDepPort",
     "effective_phrase_combine",
     "SearchQueryPort",

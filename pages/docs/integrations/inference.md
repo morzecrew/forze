@@ -102,17 +102,15 @@ still travel over one shared client and one shared credential. `dedicated`
 resolves a whole client per tenant from that tenant's own secret:
 
 ```python
-from forze_inference.http import (
-    RoutedInferenceHttpClient,
-    routed_inference_http_lifecycle_step,
-)
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
+from forze_inference.http import RoutedInferenceHttpClient
 
 client = RoutedInferenceHttpClient(
     secrets=secrets,                                   # SecretsPort
     secret_ref_for_tenant=lambda t: SecretRef(path=f"tenants/{t}/inference"),
     tenant_provider=current_tenant,
 )
-steps = [routed_inference_http_lifecycle_step(client)]
+steps = [routed_client_lifecycle_step("routed_inference_http_client", client=client)]
 ```
 
 The secret holds `InferenceHttpRoutingCredentials` — `base_url` plus optional

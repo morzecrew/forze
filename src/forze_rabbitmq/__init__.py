@@ -11,7 +11,6 @@ from .execution import (
     RabbitMQDepsModule,
     RabbitMQQueueConfig,
     rabbitmq_lifecycle_step,
-    routed_rabbitmq_lifecycle_step,
 )
 from .kernel.client import (
     RabbitMQClient,
@@ -37,7 +36,6 @@ __all__ = [
     "RabbitMQClientDepKey",
     "RabbitMQDepsModule",
     "rabbitmq_lifecycle_step",
-    "routed_rabbitmq_lifecycle_step",
     "RabbitMQQueueConfig",
     "NamedResourceSpec",
     "coerce_named_resource_spec",

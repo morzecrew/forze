@@ -13,7 +13,7 @@ from .deps import (
     RedisStreamGroupConfig,
     RedisUniversalConfig,
 )
-from .lifecycle import redis_lifecycle_step, routed_redis_lifecycle_step
+from .lifecycle import redis_lifecycle_step
 
 # ----------------------- #
 
@@ -22,7 +22,6 @@ __all__ = [
     "RedisClientDepKey",
     "RedisBlockingClientDepKey",
     "redis_lifecycle_step",
-    "routed_redis_lifecycle_step",
     "RedisCacheConfig",
     "RedisCounterConfig",
     "RedisDistributedLockConfig",
