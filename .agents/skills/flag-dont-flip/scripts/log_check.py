@@ -5,9 +5,13 @@ Reads `logs/<task-id>.md`, finds every ```divergence block in it, and answers
 the questions a reviewer would otherwise have to answer by hand:
 
   schema     every required field present, every vocabulary word known, `at` a
-             UTC RFC 3339 stamp, `attempt` a positive integer
+             UTC RFC 3339 stamp, `attempt` a positive integer; an entry carries
+             `kind` (what happened to the decision) or `class` (what it says
+             about the design process) or both — the axes are orthogonal
   legality   the action is the one the grade licenses — checked both ways, so
-             halting on ASSUMED fails as loudly as departing from LOCKED
+             halting on ASSUMED fails as loudly as departing from LOCKED; a
+             `kind: resolved` close-out is exempt, because it attests
+             compliance rather than reporting a contradiction
   drift      the declared `Drift count: N` equals the entries classed `drift`
   evidence   every citation resolves: a real file under --root, a line or range
              inside it, or a backticked command carrying its output
@@ -57,13 +61,16 @@ RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(?:Z|\+00:00)
 CITATION = re.compile(r"^(?P<path>[^\s:][^:]*):(?P<start>\d+)(?:-(?P<end>\d+))?$")
 BACKTICKED = re.compile(r"^`(?P<command>[^`]+)`(?P<rest>.*)$", re.S)
 
-REQUIRED = ("decision", "grade", "class", "at", "attempt", "claim", "evidence", "action")
+REQUIRED = ("decision", "grade", "at", "attempt", "claim", "evidence", "action")
 GRADES = {"LOCKED", "ASSUMED", "OPEN", "UNLISTED"}
+KINDS = {"contradicted", "departed", "resolved", "blocked"}
 CLASSES = {"discovery", "spec-gap", "drift", "irreducible"}
 ACTIONS = {"halted", "departed", "decided"}
 # The one table the skill and this script must agree on. Read in both
 # directions: a grade licenses exactly one action, and an action is licensed by
-# exactly the grades that map to it.
+# exactly the grades that map to it. A downstream gate may mirror this table
+# and the kind exemptions below; two implementations of one contract must not
+# diverge, so change them together.
 LEGAL = {"LOCKED": "halted", "ASSUMED": "departed", "OPEN": "decided", "UNLISTED": "decided"}
 
 
@@ -260,6 +267,22 @@ def check_schema(line: int, fields: dict[str, str]) -> list[Problem]:
     klass = fields.get("class", "")
     if klass and klass not in CLASSES:
         problems.append(Problem("S5", where, f"class {klass!r} is not one of {sorted(CLASSES)}"))
+    kind = fields.get("kind", "")
+    if kind and kind not in KINDS:
+        problems.append(Problem("S11", where, f"kind {kind!r} is not one of {sorted(KINDS)}"))
+    if not kind and not klass:
+        # One axis is required: `kind` records what happened to the decision,
+        # `class` records what it says about the design process.
+        problems.append(Problem("S10", where, "neither 'kind' nor 'class' present"))
+    if kind == "resolved" and klass:
+        # `class` classifies a departure; a close-out is by definition not one.
+        # Left legal, the pair is a route around the grade table: `resolved`
+        # skips it, so `class: drift` would record a contradiction and take the
+        # attesting exemption in the same entry. Mixed axes stay legal for
+        # every other kind.
+        problems.append(Problem("S12", where,
+                                f"kind resolved carries no class, and this one carries {klass!r} — "
+                                "a close-out attests compliance, it does not classify a departure"))
     action = fields.get("action", "")
     if action and action not in ACTIONS:
         problems.append(Problem("S6", where, f"action {action!r} is not one of {sorted(ACTIONS)}"))
@@ -281,6 +304,23 @@ def check_legality(line: int, fields: dict[str, str]) -> list[Problem]:
     if grade not in GRADES or action not in ACTIONS:
         return []  # already reported by the schema check
     where = f"block at line {line}"
+    kind = fields.get("kind", "")
+    if kind == "resolved":
+        # A close-out attests compliance, or records that an open question got
+        # settled; it does not contradict, so the grade table does not apply.
+        # This is the only legal entry for compliant work in a touched LOCKED
+        # area — which the silence check demands an entry for.
+        if action not in {"decided", "departed"}:
+            return [Problem("L1", where,
+                            f"kind resolved licenses 'decided' or 'departed', not {action!r} — "
+                            "a close-out attests, it does not halt")]
+        return []
+    if kind == "blocked":
+        if action != "halted":
+            return [Problem("L1", where,
+                            f"kind blocked licenses 'halted', not {action!r} — "
+                            "blocked work that carries on is not blocked")]
+        return []
     expected = LEGAL[grade]
     if action != expected:
         return [Problem("L1", where,

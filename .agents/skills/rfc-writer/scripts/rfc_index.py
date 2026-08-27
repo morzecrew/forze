@@ -75,7 +75,12 @@ GRADES = ("LOCKED", "ASSUMED", "OPEN")
 # a different section set, and says the decision table is the one part a
 # minimal RFC still keeps.
 DECISIONS_HEADING = re.compile(r"^#{2,3}\s*(?:\d+\.\s*)?Decisions\b.*$", re.M | re.I)
-TABLE_ROW = re.compile(rf"^\|({CELL})\|({CELL})\|({CELL})\|", re.M)
+# A fence opens a block whose contents are a sample of something else, so
+# its brackets and parentheses are not this document's markup. Indented up
+# to three spaces, per CommonMark; closed by at least as many of the same
+# character, or by end of file.
+FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
 # A markdown link that points inside the repository. Any URI scheme at all, and
 # a protocol-relative `//host/x`, belong to somebody else — matching only http
 # and mailto meant `ftp:` and `tel:` were checked as if they were file paths.
@@ -184,6 +189,70 @@ def claimed_next(index_text: str) -> int | None:
     return int(match.group(2)) if match else None
 
 
+def split_row(line: str) -> list[str]:
+    """The cells of one markdown table row, honouring `\\|` inside a cell."""
+    stripped = line.strip()
+    if not stripped.startswith("|"):
+        return []
+    cells: list[str] = []
+    current: list[str] = []
+    i = 1
+    while i < len(stripped):
+        char = stripped[i]
+        # Only a pipe is unescaped. Markdown escapes punctuation, so `\\LOCKED`
+        # renders as literal text and is not a grade; consuming every backslash
+        # made the checker accept what its reader sees rejected.
+        if char == "\\" and i + 1 < len(stripped) and stripped[i + 1] == "|":
+            current.append("|")
+            i += 2
+            continue
+        if char == "|":
+            cells.append("".join(current).strip())
+            current = []
+            i += 1
+            continue
+        current.append(char)
+        i += 1
+    tail = "".join(current).strip()
+    if tail:
+        cells.append(tail)
+    return cells
+
+
+def strip_fences(text: str) -> str:
+    """`text` with fenced blocks blanked out, one blank line per line removed.
+
+    A fenced block quotes something that is not this document: a signature, a
+    manifest, a sample of the file some other tool will generate. Reading it as
+    markup reported the Go generic `Register[T any](v View[T])` as a link to
+    `v`, and reported a markdown sample's own relative links as this RFC's —
+    when they resolve from the directory of the file being sampled, not from
+    this one. Line structure is preserved so nothing downstream shifts.
+    """
+    out: list[str] = []
+    closing: re.Pattern[str] | None = None
+    for line in text.splitlines():
+        if closing is None:
+            opening = FENCE.match(line)
+            if opening:
+                # What closes this block: the same character, no shorter,
+                # alone on its line, and indented at most three — the rule that
+                # opens a fence also closes one. Accepting a marker indented
+                # four ended the block early and handed the code below it to
+                # the link scanner. Built once here, not once per line.
+                marker = opening.group(1)
+                closing = re.compile(
+                    rf" {{0,3}}{re.escape(marker[0])}{{{len(marker)},}}[ \t]*")
+                out.append("")
+                continue
+            out.append(line)
+            continue
+        out.append("")
+        if closing.fullmatch(line):
+            closing = None
+    return "\n".join(out)
+
+
 def decision_rows(text: str) -> list[tuple[str, str]] | None:
     """(number cell, grade cell) per decision row, or None if there is no table.
 
@@ -201,27 +270,39 @@ def decision_rows(text: str) -> list[tuple[str, str]] | None:
     # also carry an alternatives table or a trailing risks table, and reading
     # every three-column table under the heading turned those into decision rows
     # — failing a sound RFC, and passing one whose real table was missing.
+    #
+    # The columns are found by their headings rather than by position. Requiring
+    # Grade second failed every table that puts it behind the decision it
+    # grades, which is the commoner house style and grades its rows correctly;
+    # a positional rule made those indistinguishable from a table carrying no
+    # grades at all.
     rows = []
-    inside = False
+    number_at: int | None = None
+    grade_at: int | None = None
     for line in section.splitlines():
         stripped = line.strip()
         if not stripped.startswith("|"):
-            if inside and stripped:
-                break  # prose after the table ends it
+            if grade_at is not None:
+                # A markdown table holds no blank line, so anything that is not
+                # a row ends it — prose or blank alike. Breaking only on prose
+                # merged a table separated by one blank into the decision rows,
+                # and read its header as a row whose second cell was a grade.
+                break
             continue
-        match = TABLE_ROW.match(stripped)
-        if not match:
+        cells = split_row(stripped)
+        if grade_at is None:
+            headings = [cell.strip("* `").lower() for cell in cells]
+            numbered = [i for i, h in enumerate(headings) if h in {"#", "no", "num"}]
+            if "grade" in headings and numbered:
+                grade_at = headings.index("grade")
+                number_at = numbered[0]
             continue
-        first, second = match.group(1).strip(), match.group(2).strip()
-        if not inside:
-            if first.strip("* `").lower() in {"#", "no", "num"} and \
-                    second.strip("* `").lower() == "grade":
-                inside = True
-            continue
-        if first and set(first) <= set("- :"):
+        if set("".join(cells)) <= set("- :"):
             continue  # the |---|---| separator
-        rows.append((first, second))
-    if not inside:
+        if number_at >= len(cells) or grade_at >= len(cells):
+            continue  # a row too short to carry the columns the header named
+        rows.append((cells[number_at], cells[grade_at]))
+    if grade_at is None:
         return []
     return rows
 
@@ -254,7 +335,7 @@ def check_links(path: Path, text: str, rfc_dir: Path, root: Path) -> list[str]:
     """
     base = root.resolve()
     missing = []
-    for match in LOCAL_LINK.finditer(text):
+    for match in LOCAL_LINK.finditer(strip_fences(text)):
         target = match.group(1).split("#", 1)[0]
         if not target or URI_OR_PROTOCOL_RELATIVE.match(target):
             continue

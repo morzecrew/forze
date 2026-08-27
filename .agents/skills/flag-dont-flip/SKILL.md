@@ -140,6 +140,12 @@ decision governs. So when in doubt about whether a contradiction is worth
 reporting, report it. A surplus entry costs a reader ten seconds; a missing one
 is an unexplained divergence found months later.
 
+The check cannot tell honored-quietly from worked-around-quietly, so compliant
+work in a touched `LOCKED` area owes an entry too: a **close-out** — `kind:
+resolved`, `action: decided`, no `class`, evidence locating the compliant
+implementation. Shape and legality in
+[references/entry-format.md](references/entry-format.md).
+
 ## Checking the log
 
 ```bash
