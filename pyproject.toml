@@ -1075,7 +1075,7 @@ forbidden_modules = [
 
 [tool.vulture]
 paths = [
-    "vulture_whitelist.py",
+    ".vulture/whitelist.py",
     "src/forze",
     "src/forze_kits",
     "src/forze_fastapi",

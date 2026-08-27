@@ -1,19 +1,22 @@
+# ruff: noqa
+# mypy: ignore-errors
+# pyright: reportUndefinedVariable=false, reportUnusedExpression=false, reportMissingImports=false
 """Vulture baseline: names vulture cannot see used, but that are.
 
 Forze is a library, so most of this is public API — a port method, a spec field, or a
 config knob whose only caller is an application vulture never scans. The rest is
-declarative: pydantic/attrs field declarations, framework callbacks (``model_validator``,
-pytest hooks, ``BaseEventLoop`` overrides) invoked by name from outside the codebase.
+declarative: pydantic/attrs field declarations and framework callbacks
+(``model_validator``, pytest hooks, ``BaseEventLoop`` overrides) invoked by name from
+outside the codebase.
 
 This file is what makes ``min_confidence = 60`` usable: with the baseline pinned here,
-any *newly* unused function, class, or method fails the gate instead of being invisible.
+any *newly* unused function, class or method fails the gate instead of being invisible.
 
-Regenerate after an intentional API change:
-
-    uv run vulture --make-whitelist src/ > vulture_whitelist.py
-
-and re-add this header. Do not regenerate to silence a fresh finding — delete the dead
-code instead.
+It is bare names by design, so every type checker reads it as undefined — hence the
+pragmas above, and the dot-directory (checkers skip ``.*`` by default). Regenerate with
+``just vulture-baseline`` after an intentional API change; that recipe carries the
+pragmas over, which ``vulture --make-whitelist`` does not write. Never regenerate to
+silence a fresh finding — delete the dead code instead.
 """
 
 token_profile  # unused variable (src/forze/application/contracts/authn/specs.py:33)
