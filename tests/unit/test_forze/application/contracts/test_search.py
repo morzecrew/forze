@@ -10,8 +10,12 @@ from forze.application.contracts.search import (
     HubSearchSpec,
     SearchFuzzySpec,
     SearchQueryDepKey,
+    SearchResultSnapshotDepKey,
+    SearchResultSnapshotSpec,
     SearchSpec,
+    resolve_result_snapshot,
 )
+from forze.application.execution import Deps
 from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
@@ -501,3 +505,55 @@ class TestSearchFuzzySpec:
         )
         assert spec.fuzzy is not None
         assert spec.fuzzy.max_distance_ratio == 0.2
+
+
+# ....................... #
+
+
+class TestResolveResultSnapshot:
+    """The shared resolver the Postgres, Mongo and Meilisearch search factories call.
+
+    One implementation behind three adapters, so its branches are pinned here rather
+    than left to whichever backend's tests happen to reach them.
+    """
+
+    def _ctx(self, deps: object) -> object:
+        from forze.testing import context_from_deps
+
+        return context_from_deps(deps)  # type: ignore[arg-type]
+
+    # ....................... #
+
+    def test_a_spec_that_names_no_snapshot_resolves_to_none(self) -> None:
+        assert resolve_result_snapshot(self._ctx(Deps.plain({})), None) is None  # type: ignore[arg-type]
+
+    # ....................... #
+
+    def test_an_unregistered_snapshot_resolves_to_none_rather_than_raising(self) -> None:
+        """A snapshot is an optional accelerator: the search falls back to querying."""
+
+        spec = SearchResultSnapshotSpec(name="snap")
+
+        assert resolve_result_snapshot(self._ctx(Deps.plain({})), spec) is None  # type: ignore[arg-type]
+
+    # ....................... #
+
+    def test_a_registered_snapshot_is_built_from_the_spec(self) -> None:
+        port = object()
+        spec = SearchResultSnapshotSpec(name="snap")
+        ctx = self._ctx(Deps.plain({SearchResultSnapshotDepKey: lambda _ctx, _spec: port}))
+
+        assert resolve_result_snapshot(ctx, spec) is port  # type: ignore[arg-type]
+
+    # ....................... #
+
+    def test_a_route_scoped_registration_is_resolved_by_spec_name(self) -> None:
+        """Routes are how two search surfaces keep separate snapshot stores."""
+
+        port = object()
+        spec = SearchResultSnapshotSpec(name="snap")
+        ctx = self._ctx(
+            Deps.routed({SearchResultSnapshotDepKey: {"snap": lambda _ctx, _spec: port}})
+        )
+
+        assert resolve_result_snapshot(ctx, spec) is port  # type: ignore[arg-type]
