@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.53">
+      <meta name="generator" content="zensical-0.0.55">
     
     
       
@@ -6430,13 +6430,14 @@ acknowledge by committed offset. It is the production backend for the
 compatibility is what matters, not the vendor — Apache Kafka and Redpanda both
 work.</p>
 <h2 id="the-client">The client<a class="headerlink" href="#the-client" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kafka</span><span class="w"> </span><span class="kn">import</span> <span class="n">KafkaClient</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution.lifecycle.builtin</span><span class="w"> </span><span class="kn">import</span> <span class="n">routed_client_lifecycle_step</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_kafka</span><span class="w"> </span><span class="kn">import</span> <span class="n">KafkaClient</span>
 
 <span class="n">kafka</span> <span class="o">=</span> <span class="n">KafkaClient</span><span class="p">()</span>
 </code></pre></div>
 <p>The client owns one shared producer and admin client, and pools data-plane
 consumers per <code>(group, member, topics)</code>. <code>RoutedKafkaClient</code> resolves a
-per-tenant cluster instead (with <code>routed_kafka_lifecycle_step</code>).</p>
+per-tenant cluster instead (with <code>routed_client_lifecycle_step</code>).</p>
 <h2 id="wire-it">Wire it<a class="headerlink" href="#wire-it" title="Permanent link">&para;</a></h2>
 <p>Register produce routes (<code>streams</code>) and consumer-group routes (<code>commit_groups</code>),
 keyed by <code>StreamSpec.name</code>; connect from the lifecycle plan:</p>
@@ -6729,7 +6730,7 @@ other integration.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.69c251d7.min.js"></script>
+      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

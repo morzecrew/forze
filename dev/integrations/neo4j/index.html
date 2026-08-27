@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.53">
+      <meta name="generator" content="zensical-0.0.55">
     
     
       
@@ -6293,7 +6293,8 @@ Bolt driver) — nodes, edges, and traversals behind the graph ports.</p>
 </code></pre></div>
 <p>Needs a Neo4j server.</p>
 <h2 id="the-client">The client<a class="headerlink" href="#the-client" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_neo4j</span><span class="w"> </span><span class="kn">import</span> <span class="n">Neo4jClient</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution.lifecycle.builtin</span><span class="w"> </span><span class="kn">import</span> <span class="n">routed_client_lifecycle_step</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_neo4j</span><span class="w"> </span><span class="kn">import</span> <span class="n">Neo4jClient</span>
 
 <span class="n">neo4j</span> <span class="o">=</span> <span class="n">Neo4jClient</span><span class="p">()</span>
 </code></pre></div>
@@ -6345,7 +6346,7 @@ Bolt driver) — nodes, edges, and traversals behind the graph ports.</p>
   (default <code>tenant_id</code>) is stamped on writes and matched on reads (raw <code>run</code> fails closed
   without a bound tenant). <code>namespace</code> — set <code>Neo4jGraphConfig.database</code> to a
   <code>(tenant_id) -&gt; str</code> resolver to route each query to the tenant's own database (Neo4j 4+
-  multi-database). <code>dedicated</code> — wire <code>RoutedNeo4jClient</code> (+ <code>routed_neo4j_lifecycle_step</code>)
+  multi-database). <code>dedicated</code> — wire <code>RoutedNeo4jClient</code> (+ <code>routed_client_lifecycle_step</code>)
   for a per-tenant instance/credentials resolved from secrets. Declare the minimum you
   require with <code>Neo4jDepsModule(required_tenant_isolation=...)</code>.</li>
 <li>Credentials are passed at lifecycle time (<code>auth=</code>), not held on <code>Neo4jConfig</code>.</li>
@@ -6459,7 +6460,7 @@ Bolt driver) — nodes, edges, and traversals behind the graph ports.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.69c251d7.min.js"></script>
+      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

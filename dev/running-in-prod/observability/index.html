@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.53">
+      <meta name="generator" content="zensical-0.0.55">
     
     
       
@@ -6691,16 +6691,17 @@ in-box W-TinyLFU store or raise <code>capacity</code>.</p>
 integration loggers you name, third-party stdlib loggers routed through the same
 formatter, and the uncaught-exception hook.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze</span><span class="w"> </span><span class="kn">import</span> <span class="n">bootstrap_logging</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">FORZE_POSTGRES_LOGGER_NAMES</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_redis</span><span class="w"> </span><span class="kn">import</span> <span class="n">FORZE_REDIS_LOGGER_NAMES</span>
 
 <span class="n">bootstrap_logging</span><span class="p">(</span>
     <span class="n">level</span><span class="o">=</span><span class="s2">&quot;info&quot;</span><span class="p">,</span>
     <span class="n">render_mode</span><span class="o">=</span><span class="s2">&quot;json&quot;</span><span class="p">,</span>  <span class="c1"># &quot;console&quot; for local dev</span>
-    <span class="n">logger_names</span><span class="o">=</span><span class="p">[</span><span class="n">FORZE_POSTGRES_LOGGER_NAMES</span><span class="p">,</span> <span class="n">FORZE_REDIS_LOGGER_NAMES</span><span class="p">],</span>
+    <span class="n">logger_names</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;forze_postgres&quot;</span><span class="p">,</span> <span class="s2">&quot;forze_redis&quot;</span><span class="p">],</span>
     <span class="n">third_party</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;uvicorn&quot;</span><span class="p">,</span> <span class="s2">&quot;sqlalchemy.engine&quot;</span><span class="p">],</span>
 <span class="p">)</span>
 </code></pre></div>
+<p>Name a package root and the stdlib logger hierarchy carries the setting to every
+logger under it (<code>forze_postgres.kernel</code>, <code>forze_postgres.adapters</code>, …), so there
+is nothing per-subpackage to enumerate.</p>
 <p><code>configure_logging</code> remains the lower-level entry point when you want to wire the
 pieces yourself. Either way, pass <code>otel_config=...</code> and the active span's
 <code>trace_id</code> and <code>span_id</code> are injected into every log line — because
@@ -6968,7 +6969,7 @@ shipping — see <a href="../../testing/overview/">Testing</a>.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.69c251d7.min.js"></script>
+      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       
