@@ -1,5 +1,6 @@
 """Unit tests for the Vault Transit JWT signer (real RSA key, mocked Vault transport)."""
 
+import base64
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -17,6 +18,25 @@ from forze_vault import VaultTransitSigner
 from forze_vault.kernel.client import VaultClientPort
 
 # ----------------------- #
+
+
+def _tamper_signature(token: str) -> str:
+    """The token with one signature *byte* flipped.
+
+    Rewriting base64url characters is not enough: the last character of an unpadded
+    signature carries spare bits that decode to nothing, so a fixed substitution
+    sometimes leaves the signature bytes intact and the assertion passes vacuously
+    against a token that was never tampered with.
+    """
+
+    head, payload, sig = token.split(".")
+    raw = base64.urlsafe_b64decode(sig + "=" * (-len(sig) % 4))
+    flipped = base64.urlsafe_b64encode(bytes([raw[0] ^ 0xFF]) + raw[1:]).rstrip(b"=")
+
+    return f"{head}.{payload}.{flipped.decode('ascii')}"
+
+
+# ....................... #
 
 
 def _pem(public_key: object) -> str:
@@ -108,11 +128,8 @@ async def test_tampered_token_rejected() -> None:
     svc = AccessTokenService(signer=signer)
     token = await svc.issue_token(principal_id=uuid4())
 
-    head, payload, sig = token.split(".")
-    tampered = f"{head}.{payload}.{sig[:-2]}xx"
-
     with pytest.raises(CoreException):
-        await svc.verify_token(tampered)
+        await svc.verify_token(_tamper_signature(token))
 
 
 # ....................... #
@@ -164,11 +181,8 @@ async def test_es256_tampered_token_rejected() -> None:
     svc = AccessTokenService(signer=signer)
     token = await svc.issue_token(principal_id=uuid4())
 
-    head, payload, sig = token.split(".")
-    tampered = f"{head}.{payload}.{sig[:-2]}xx"
-
     with pytest.raises(CoreException):
-        await svc.verify_token(tampered)
+        await svc.verify_token(_tamper_signature(token))
 
 
 def test_unsupported_algorithm_rejected() -> None:
