@@ -421,7 +421,7 @@ class TestSeedRedundancy:
         # One shape in 21 seeds *is* below the ratio (0.048), so only the seed floor keeps this
         # quiet — the case has to sit under the floor and over the ratio, or the floor is never
         # the deciding condition and could be deleted with the suite still green.
-        assert 1 / 21 < REDUNDANCY_RATIO
+        assert REDUNDANCY_RATIO > 1 / 21
         assert not self._report(seeds=21, shapes=1).redundant_seeds
         # One seed over the floor, same ratio: now it fires.
         assert self._report(seeds=REDUNDANCY_MIN_SEEDS, shapes=1).redundant_seeds

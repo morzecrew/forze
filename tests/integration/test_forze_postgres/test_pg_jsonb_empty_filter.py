@@ -7,21 +7,11 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.document import (
-    DocumentCommandDepKey,
-    DocumentQueryDepKey,
     DocumentSpec,
 )
-from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_postgres.execution.deps import ConfigurablePostgresDocument
-from forze_postgres.execution.deps.configs import PostgresDocumentConfig
-from forze_postgres.execution.deps.keys import (
-    PostgresClientDepKey,
-    PostgresIntrospectorDepKey,
-)
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from tests.support.execution_context import context_from_deps
+from tests.integration.test_forze_postgres._document_fixtures import document_context
 
 
 class _ListDoc(Document):
@@ -42,25 +32,6 @@ class _ListUpdate(BaseDTO):
 class _ListRead(ReadDocument):
     title: str
     characteristics: list[str]
-
-
-def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
-    doc = ConfigurablePostgresDocument(
-        config=PostgresDocumentConfig(
-            read=("public", table),
-            write=("public", table),
-            bookkeeping_strategy="application",
-        )
-    )
-    return context_from_deps(Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-                DocumentQueryDepKey: doc,
-                DocumentCommandDepKey: doc,
-            }
-        )
-    )
 
 
 def _spec() -> DocumentSpec:
@@ -91,7 +62,7 @@ async def test_empty_filter_jsonb_array_column(pg_client: PostgresClient) -> Non
         );
         """
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     spec = _spec()
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
@@ -133,7 +104,7 @@ async def test_empty_filter_json_column(pg_client: PostgresClient) -> None:
         );
         """
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     spec = _spec()
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
@@ -187,7 +158,7 @@ async def test_empty_filter_native_pg_array_unaffected(pg_client: PostgresClient
             "update_cmd": _ArrUpdate,
         },
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     cmd = ctx.document.command(arr_spec)
     query = ctx.document.query(arr_spec)
 

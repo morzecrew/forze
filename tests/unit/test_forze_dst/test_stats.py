@@ -25,6 +25,7 @@ from forze_dst.stats import (
     binomial_ci,
     coverage_deficit,
     detection_upper_bound,
+    familywise_level,
     fisher_exact,
     flip_margin,
     format_clean_verdict,
@@ -33,7 +34,6 @@ from forze_dst.stats import (
     format_withheld_verdict,
     geometric_p_hat,
     log_rank,
-    familywise_level,
 )
 
 # The Gehan (1965) 6-MP leukemia trial — the canonical Kaplan–Meier worked example. Remission
@@ -308,9 +308,9 @@ class TestFamilywiseLevel:
     def test_the_family_wise_error_it_buys(self) -> None:
         # What the correction is for: uncorrected, m statements at 95% each leave a spurious flag
         # likelier than not by 15 comparisons.
-        assert 1.0 - 0.95**5 == pytest.approx(0.2262, abs=5e-4)
-        assert 1.0 - 0.95**15 == pytest.approx(0.5367, abs=5e-4)
-        assert 1.0 - 0.95**60 == pytest.approx(0.9539, abs=5e-4)
+        assert pytest.approx(0.2262, abs=5e-4) == 1.0 - 0.95**5
+        assert pytest.approx(0.5367, abs=5e-4) == 1.0 - 0.95**15
+        assert pytest.approx(0.9539, abs=5e-4) == 1.0 - 0.95**60
 
     def test_rejects_a_nonpositive_comparison_count(self) -> None:
         with pytest.raises(ValueError, match="comparisons must be >= 1"):

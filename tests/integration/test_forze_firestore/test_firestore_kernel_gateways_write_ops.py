@@ -7,19 +7,16 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
-from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.execution.deps.utils import doc_write_gw, read_gw
 from forze_firestore.kernel.client import FirestoreClient
+from tests.integration.test_forze_firestore._fixtures import client_context
 from tests.support import (
     IntegrationCreateCmd,
     IntegrationDocument,
     IntegrationUpdateCmd,
     make_create_cmd,
-)
-from tests.support.execution_context import (
-    context_from_deps,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -33,10 +30,6 @@ _WRITE_TYPES = {
 
 class _NameOnly(BaseModel):
     name: str
-
-
-def _ctx(client: FirestoreClient) -> ExecutionContext:
-    return context_from_deps(Deps.plain({FirestoreClientDepKey: client}))
 
 
 def _write(ctx: ExecutionContext, collection: str) -> object:
@@ -64,7 +57,7 @@ async def test_write_gateway_upsert_insert_then_update(
 ) -> None:
     """``upsert`` creates when missing, then applies ``update_dto`` when the doc exists."""
     collection = f"gw_upsert_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = _write(ctx, collection)
     read = _read(ctx, collection)
 
@@ -96,7 +89,7 @@ async def test_write_gateway_upsert_many_mixed_batch(
 ) -> None:
     """``upsert_many`` inserts fresh docs and updates existing ones in the same batch."""
     collection = f"gw_upsert_many_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = _write(ctx, collection)
 
     id_a = UUID("51000000-0000-0000-0000-000000000001")
@@ -122,7 +115,7 @@ async def test_write_gateway_touch_bumps_revision(
     unique_collection: str,
 ) -> None:
     collection = f"gw_touch_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = _write(ctx, collection)
 
     created = await write.create(make_create_cmd(name="touch-me"))
@@ -140,7 +133,7 @@ async def test_write_gateway_touch_many_duplicate_pk_raises(
     unique_collection: str,
 ) -> None:
     collection = f"gw_touch_dup_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = _write(ctx, collection)
 
     created = await write.create(make_create_cmd(name="dup"))
@@ -154,7 +147,7 @@ async def test_read_gateway_get_many_empty(
     unique_collection: str,
 ) -> None:
     collection = f"gw_empty_many_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     read = _read(ctx, collection)
 
     assert await read.get_many([]) == []
@@ -165,7 +158,7 @@ async def test_read_gateway_find_with_return_model(
     unique_collection: str,
 ) -> None:
     collection = f"gw_find_model_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = _write(ctx, collection)
     read = _read(ctx, collection)
 
@@ -184,7 +177,7 @@ async def test_read_gateway_aggregates_not_supported(
     unique_collection: str,
 ) -> None:
     collection = f"gw_aggr_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     read = _read(ctx, collection)
 
     with pytest.raises(CoreException, match="aggregates"):
@@ -205,7 +198,7 @@ async def test_write_gateway_update_matching_not_supported(
     unique_collection: str,
 ) -> None:
     collection = f"gw_match_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = _write(ctx, collection)
 
     with pytest.raises(CoreException, match="update_matching"):

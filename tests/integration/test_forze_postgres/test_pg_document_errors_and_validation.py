@@ -7,23 +7,13 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.document import (
-    DocumentCommandDepKey,
-    DocumentQueryDepKey,
     DocumentSpec,
 )
-from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
-from forze_postgres.execution.deps import ConfigurablePostgresDocument
-from forze_postgres.execution.deps.configs import PostgresDocumentConfig
-from forze_postgres.execution.deps.keys import (
-    PostgresClientDepKey,
-    PostgresIntrospectorDepKey,
-)
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from tests.support.execution_context import context_from_deps
+from tests.integration.test_forze_postgres._document_fixtures import document_context
 
 
 class _Doc(Document):
@@ -48,24 +38,6 @@ class _SoftRead(ReadDocument):
     title: str
     is_deleted: bool = False
 
-def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
-    doc = ConfigurablePostgresDocument(
-        config=PostgresDocumentConfig(
-            read=("public", table),
-            write=("public", table),
-            bookkeeping_strategy="application",
-        )
-    )
-    return context_from_deps(Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-                DocumentQueryDepKey: doc,
-                DocumentCommandDepKey: doc,
-            }
-        )
-    )
-
 def _spec() -> DocumentSpec:
     return DocumentSpec(
         name="err_ns",
@@ -87,7 +59,7 @@ async def test_get_missing_raises_not_found(pg_client: PostgresClient) -> None:
         );
         """
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     query = ctx.document.query(_spec())
     with pytest.raises(CoreException, match="Record not found"):
         await query.get(uuid4())
@@ -106,7 +78,7 @@ async def test_find_missing_returns_none(pg_client: PostgresClient) -> None:
         );
         """
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     query = ctx.document.query(_spec())
     assert (
         await query.find({"$values": {"title": "does-not-exist"}}) is None
@@ -126,7 +98,7 @@ async def test_update_with_stale_rev_raises_conflict(pg_client: PostgresClient) 
         );
         """
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     cmd = ctx.document.command(_spec())
     doc = await cmd.create(_Create(title="v1"))
     await cmd.update(doc.id, doc.rev, _Update(title="v2"))
@@ -147,7 +119,7 @@ async def test_touch_missing_raises_not_found(pg_client: PostgresClient) -> None
         );
         """
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     cmd = ctx.document.command(_spec())
     with pytest.raises(CoreException):
         await cmd.touch(uuid4())
@@ -174,7 +146,7 @@ async def test_cannot_update_non_deleted_fields_when_soft_deleted(
         read=_SoftRead,
         write={"domain": _SoftDoc, "create_cmd": _Create, "update_cmd": _SoftUpdate},
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     cmd = ctx.document.command(spec)
     doc = await cmd.create(_Create(title="live"))
     deleted = await cmd.update(doc.id, doc.rev, _SoftUpdate(is_deleted=True))
@@ -195,7 +167,7 @@ async def test_count_and_find_many_on_empty_table(pg_client: PostgresClient) -> 
         );
         """
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     spec = _spec()
     query = ctx.document.query(spec)
     assert await query.count() == 0
@@ -222,7 +194,7 @@ async def test_count_with_field_filter(pg_client: PostgresClient) -> None:
         );
         """
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     cmd = ctx.document.command(_spec())
     await cmd.create(_Create(title="red"))
     await cmd.create(_Create(title="blue"))

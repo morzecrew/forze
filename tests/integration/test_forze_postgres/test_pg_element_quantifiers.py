@@ -8,40 +8,11 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.document import (
-    DocumentCommandDepKey,
-    DocumentQueryDepKey,
     DocumentSpec,
 )
-from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_postgres.execution.deps import ConfigurablePostgresDocument
-from forze_postgres.execution.deps.configs import PostgresDocumentConfig
-from forze_postgres.execution.deps.keys import (
-    PostgresClientDepKey,
-    PostgresIntrospectorDepKey,
-)
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from tests.support.execution_context import context_from_deps
-
-
-def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
-    doc = ConfigurablePostgresDocument(
-        config=PostgresDocumentConfig(
-            read=("public", table),
-            write=("public", table),
-            bookkeeping_strategy="application",
-        )
-    )
-    return context_from_deps(Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-                DocumentQueryDepKey: doc,
-                DocumentCommandDepKey: doc,
-            }
-        )
-    )
+from tests.integration.test_forze_postgres._document_fixtures import document_context
 
 
 @pytest.mark.asyncio
@@ -81,7 +52,7 @@ async def test_element_any_on_native_text_array(pg_client: PostgresClient) -> No
         read=_Read,
         write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
 
@@ -134,7 +105,7 @@ async def test_not_combinator(pg_client: PostgresClient) -> None:
         read=_Read,
         write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
 
@@ -188,7 +159,7 @@ async def test_element_any_on_jsonb_object_array(pg_client: PostgresClient) -> N
         read=_Read,
         write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
 
@@ -264,7 +235,7 @@ async def test_element_any_scalar_ordering(pg_client: PostgresClient) -> None:
         read=_Read,
         write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
 
@@ -319,7 +290,7 @@ async def test_element_any_decimal_on_jsonb_scalar_array(pg_client: PostgresClie
         read=_Read,
         write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
 
@@ -383,7 +354,7 @@ async def test_element_any_int_operand_on_decimal_typed_jsonb_array(
         read=_Read,
         write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
 
@@ -434,7 +405,7 @@ async def test_not_with_nested_or(pg_client: PostgresClient) -> None:
         read=_Read,
         write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
 
@@ -492,7 +463,7 @@ async def test_element_quantifiers_combined_with_and(pg_client: PostgresClient) 
         read=_Read,
         write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
 
@@ -547,7 +518,7 @@ async def test_element_none_on_scalar_array(pg_client: PostgresClient) -> None:
         read=_Read,
         write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
 

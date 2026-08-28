@@ -29,6 +29,7 @@ from forze_firestore.execution.deps import (
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.execution.deps.utils import doc_write_gw, read_gw
 from forze_firestore.kernel.client import FirestoreClient
+from tests.integration.test_forze_firestore._fixtures import client_context
 from tests.support import (
     IntegrationCreateCmd,
     IntegrationDocument,
@@ -46,10 +47,6 @@ _WRITE_TYPES = {
 }
 
 _IDS = [UUID(f"30000000-0000-0000-0000-00000000000{i}") for i in range(1, 6)]
-
-
-def _ctx(client: FirestoreClient) -> ExecutionContext:
-    return context_from_deps(Deps.plain({FirestoreClientDepKey: client}))
 
 
 def _token(doc_id: UUID, direction: str = "asc") -> str:
@@ -91,7 +88,7 @@ async def test_cursor_after_returns_exact_windows(
     """``after`` pages return the rows strictly past the cursor, over-fetched by one."""
 
     collection = f"cur_after_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     await _seed(ctx, collection)
     read = _read(ctx, collection)
 
@@ -127,7 +124,7 @@ async def test_cursor_before_returns_window_preceding_cursor(
     """
 
     collection = f"cur_before_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     await _seed(ctx, collection)
     read = _read(ctx, collection)
 
@@ -154,7 +151,7 @@ async def test_cursor_desc_sort_paginates_both_directions(
     """Descending id sort seeks correctly in both directions."""
 
     collection = f"cur_desc_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     await _seed(ctx, collection)
     read = _read(ctx, collection)
 
@@ -185,7 +182,7 @@ async def test_cursor_over_deleted_anchor_fails_closed(
     """A cursor pointing at a deleted document is a caller-caused precondition error."""
 
     collection = f"cur_gone_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = await _seed(ctx, collection)
     read = _read(ctx, collection)
 

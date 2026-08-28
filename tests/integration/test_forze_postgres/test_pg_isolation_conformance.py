@@ -33,10 +33,10 @@ from forze_dst.conformance import (
     write_matrix,
 )
 from forze_mock.adapters.resilience import PassthroughResilienceExecutor
-from tests.support.isolation_conformance import MockConformanceBackend
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.support.isolation_conformance import MockConformanceBackend
 
 # ----------------------- #
 

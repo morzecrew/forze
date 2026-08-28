@@ -13,18 +13,17 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.execution.deps.utils import doc_write_gw, read_gw
 from forze_firestore.kernel.client import FirestoreClient
+from tests.integration.test_forze_firestore._fixtures import client_context
 from tests.support import (
     IntegrationCreateCmd,
     IntegrationDocument,
     IntegrationUpdateCmd,
     make_create_cmd,
 )
-from tests.support.execution_context import context_from_deps
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -33,10 +32,6 @@ _WRITE_TYPES = {
     "create_cmd": IntegrationCreateCmd,
     "update_cmd": IntegrationUpdateCmd,
 }
-
-
-def _ctx(client: FirestoreClient) -> ExecutionContext:
-    return context_from_deps(Deps.plain({FirestoreClientDepKey: client}))
 
 
 def _write(ctx: ExecutionContext, collection: str) -> object:
@@ -65,7 +60,7 @@ async def test_create_rejects_existing_id(
     """``create`` with an id that already exists conflicts and leaves the row intact."""
 
     collection = f"gw_create_fc_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = _write(ctx, collection)
     read = _read(ctx, collection)
 
@@ -134,7 +129,7 @@ async def test_ensure_returns_existing_without_overwrite(
     """``ensure`` on a present id returns it unchanged rather than overwriting."""
 
     collection = f"gw_ensure_fc_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = _write(ctx, collection)
 
     doc_id = UUID("60000000-0000-0000-0000-000000000002")

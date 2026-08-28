@@ -12,19 +12,13 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import encode_keyset_v1
-from forze.application.execution import Deps
 from forze.base.exceptions import CoreException
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import Document
-from forze_postgres.execution.deps.keys import (
-    PostgresClientDepKey,
-    PostgresIntrospectorDepKey,
-)
 from forze_postgres.execution.deps.utils import read_gw
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from forze_postgres.kernel.gateways.read import _for_update_sql
-from tests.support.execution_context import context_from_deps
+from tests.integration.test_forze_postgres._document_fixtures import gateway_context
 
 
 class RvDoc(Document):
@@ -35,17 +29,6 @@ class RvDoc(Document):
 class RvNameOnly(BaseModel):
     id: UUID
     name: str
-
-
-def _ctx(pg_client: PostgresClient):
-    return context_from_deps(
-        Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-            }
-        )
-    )
 
 
 async def _make_table_with_rows(pg_client: PostgresClient, rows: int) -> str:
@@ -96,7 +79,7 @@ async def test_read_gateway_get_for_update_lock_modes(
 
     table = await _make_table_with_rows(pg_client, 1)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=RvDoc,
         read_relation=("public", table),
         tenant_aware=False,
@@ -116,7 +99,7 @@ async def test_read_gateway_find_return_model(pg_client: PostgresClient) -> None
 
     table = await _make_table_with_rows(pg_client, 3)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=RvDoc,
         read_relation=("public", table),
         tenant_aware=False,
@@ -139,7 +122,7 @@ async def test_read_gateway_find_many_dispatches_to_aggregates(
 
     table = await _make_table_with_rows(pg_client, 4)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=RvDoc,
         read_relation=("public", table),
         tenant_aware=False,
@@ -166,7 +149,7 @@ async def test_read_gateway_find_many_chunked_plain_multichunk(
 
     table = await _make_table_with_rows(pg_client, 5)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=RvDoc,
         read_relation=("public", table),
         tenant_aware=False,
@@ -196,7 +179,7 @@ async def test_read_gateway_find_many_chunked_return_model(
 
     table = await _make_table_with_rows(pg_client, 3)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=RvDoc,
         read_relation=("public", table),
         tenant_aware=False,
@@ -223,7 +206,7 @@ async def test_read_gateway_find_many_chunked_return_fields(
 
     table = await _make_table_with_rows(pg_client, 3)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=RvDoc,
         read_relation=("public", table),
         tenant_aware=False,
@@ -250,7 +233,7 @@ async def test_read_gateway_find_many_chunked_rejects_model_and_fields(
 
     table = await _make_table_with_rows(pg_client, 1)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=RvDoc,
         read_relation=("public", table),
         tenant_aware=False,
@@ -274,7 +257,7 @@ async def test_read_gateway_find_many_chunked_with_offset(
 
     table = await _make_table_with_rows(pg_client, 5)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=RvDoc,
         read_relation=("public", table),
         tenant_aware=False,
@@ -303,7 +286,7 @@ async def test_read_gateway_cursor_rejects_order_mismatch(
 
     table = await _make_table_with_rows(pg_client, 3)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=RvDoc,
         read_relation=("public", table),
         tenant_aware=False,
@@ -332,7 +315,7 @@ async def test_read_gateway_count_with_parsed_and_filters(
 
     table = await _make_table_with_rows(pg_client, 6)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=RvDoc,
         read_relation=("public", table),
         tenant_aware=False,

@@ -7,20 +7,10 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.document import (
-    DocumentCommandDepKey,
-    DocumentQueryDepKey,
     DocumentSpec,
 )
-from forze.application.execution import Deps, ExecutionContext
-from forze_postgres.execution.deps import ConfigurablePostgresDocument
-from forze_postgres.execution.deps.configs import PostgresDocumentConfig
-from forze_postgres.execution.deps.keys import (
-    PostgresClientDepKey,
-    PostgresIntrospectorDepKey,
-)
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from tests.support.execution_context import context_from_deps
+from tests.integration.test_forze_postgres._document_fixtures import document_context
 from tests.support.scenarios.document_nested_filters import (
     NestedFilterMeta as Meta,
 )
@@ -39,25 +29,6 @@ from tests.support.scenarios.document_nested_filters import (
 from tests.support.scenarios.document_nested_filters import (
     expected_scores_ascending,
 )
-
-
-def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
-    doc = ConfigurablePostgresDocument(
-        config=PostgresDocumentConfig(
-            read=("public", table),
-            write=("public", table),
-            bookkeeping_strategy="application",
-        )
-    )
-    return context_from_deps(Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-                DocumentQueryDepKey: doc,
-                DocumentCommandDepKey: doc,
-            }
-        )
-    )
 
 
 def _spec() -> DocumentSpec:
@@ -83,7 +54,7 @@ async def test_sort_by_nested_jsonb_field(pg_client: PostgresClient) -> None:
         );
         """
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     spec = _spec()
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
@@ -123,7 +94,7 @@ async def test_filter_on_nested_jsonb_scalar(pg_client: PostgresClient) -> None:
         );
         """
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     spec = _spec()
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
@@ -162,7 +133,7 @@ async def test_filter_and_sort_nested_decimal_compares_numerically(
         );
         """
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     spec = _spec()
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
@@ -204,7 +175,7 @@ async def test_logical_and_across_top_level_and_nested_paths(
         );
         """
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     spec = _spec()
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
@@ -240,7 +211,7 @@ async def test_logical_or_nested_and_top_level(pg_client: PostgresClient) -> Non
         );
         """
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     spec = _spec()
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
@@ -280,7 +251,7 @@ async def test_filter_on_nested_string_leaf(pg_client: PostgresClient) -> None:
         );
         """
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     spec = _spec()
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
@@ -311,7 +282,7 @@ async def test_multi_field_sort_nested_then_scalar(pg_client: PostgresClient) ->
         );
         """
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     spec = _spec()
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)

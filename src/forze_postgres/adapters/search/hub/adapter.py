@@ -40,7 +40,6 @@ from .._pipeline_sql import SEARCH_SCORE_ALIAS
 from .._port import PostgresSearchPortMixin
 from .._search_count import resolve_ranked_approximate_total
 from ._facets_highlights import attach_hub_highlights
-from ._typing_host import HubSearchHost
 from .constants import COMBO_ALIAS, HUB_RANK
 from .cursor import HubSearchCursorMixin
 from .plan import build_hub_search_plan, hub_members_weighted
@@ -51,7 +50,7 @@ from .runtime import HubLegRuntime
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresHubSearchAdapter[M: BaseModel](
+class PostgresHubSearchAdapter[M: BaseModel](  # pyright: ignore[reportIncompatibleVariableOverride]
     PostgresGateway[M],
     HubSearchCursorMixin[M],
     PostgresSearchPortMixin[M],
@@ -131,7 +130,7 @@ class PostgresHubSearchAdapter[M: BaseModel](
             backend="postgres_hub",
         )
         plan = await build_hub_search_plan(
-            cast(HubSearchHost[Any], self),
+            self,
             query=query,
             options=options,
             sorts=sorts,

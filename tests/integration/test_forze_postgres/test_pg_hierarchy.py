@@ -14,22 +14,12 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.document import (
-    DocumentCommandDepKey,
-    DocumentQueryDepKey,
     DocumentSpec,
     DocumentWriteTypes,
 )
-from forze.application.execution import Deps, ExecutionContext
 from forze_mock.adapters import MockDocumentAdapter, MockState
-from forze_postgres.execution.deps import ConfigurablePostgresDocument
-from forze_postgres.execution.deps.configs import PostgresDocumentConfig
-from forze_postgres.execution.deps.keys import (
-    PostgresClientDepKey,
-    PostgresIntrospectorDepKey,
-)
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from tests.support.execution_context import context_from_deps
+from tests.integration.test_forze_postgres._document_fixtures import document_context
 from tests.support.hierarchy import (
     TreeCreate,
     TreeDoc,
@@ -37,26 +27,6 @@ from tests.support.hierarchy import (
     assert_hierarchy_parity,
     seed_tree_corpus,
 )
-
-
-def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
-    doc = ConfigurablePostgresDocument(
-        config=PostgresDocumentConfig(
-            read=("public", table),
-            write=("public", table),
-            bookkeeping_strategy="application",
-        )
-    )
-    return context_from_deps(
-        Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-                DocumentQueryDepKey: doc,
-                DocumentCommandDepKey: doc,
-            }
-        )
-    )
 
 
 def _spec() -> DocumentSpec:
@@ -91,7 +61,7 @@ async def _run_parity(pg_client: PostgresClient, table: str, path_type: str) -> 
         """
     )
 
-    ctx = _ctx(pg_client, table)
+    ctx = document_context(pg_client, table)
     spec = _spec()
 
     await seed_tree_corpus(ctx.document.command(spec))

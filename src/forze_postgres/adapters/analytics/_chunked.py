@@ -40,7 +40,7 @@ class PostgresAnalyticsChunkedMixin[R: BaseModel, Ing: BaseModel](
         return_type: type[BaseModel] | None,
     ) -> AsyncGenerator[Sequence[BaseModel]]:
         validate_fetch_batch_size(fetch_batch_size)
-        host = self._host
+        host = self
         params = host._validated_params(query_key, params)  # type: ignore[protected-access]
 
         if dry_run_enabled(options):

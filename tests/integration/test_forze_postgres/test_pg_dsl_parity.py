@@ -13,24 +13,14 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.document import (
-    DocumentCommandDepKey,
-    DocumentQueryDepKey,
     DocumentSpec,
     DocumentWriteTypes,
 )
 from forze.application.contracts.querying import OPERATOR_TYPE_MISMATCH_CODE
-from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException
-from forze_postgres.execution.deps import ConfigurablePostgresDocument
-from forze_postgres.execution.deps.configs import PostgresDocumentConfig
-from forze_postgres.execution.deps.keys import (
-    PostgresClientDepKey,
-    PostgresIntrospectorDepKey,
-)
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from forze_postgres.kernel.sql.query.render import POSTGRES_QUERY_CAPABILITIES
-from tests.support.execution_context import context_from_deps
+from tests.integration.test_forze_postgres._document_fixtures import document_context
 from tests.support.query_dsl_corpus import (
     CombinedDocPort,
     CorpusCreate,
@@ -38,26 +28,6 @@ from tests.support.query_dsl_corpus import (
     CorpusRead,
     run_parity_cases,
 )
-
-
-def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
-    doc = ConfigurablePostgresDocument(
-        config=PostgresDocumentConfig(
-            read=("public", table),
-            write=("public", table),
-            bookkeeping_strategy="application",
-        )
-    )
-    return context_from_deps(
-        Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-                DocumentQueryDepKey: doc,
-                DocumentCommandDepKey: doc,
-            }
-        )
-    )
 
 
 @pytest.mark.integration
@@ -89,7 +59,7 @@ async def test_dsl_parity_postgres(pg_client: PostgresClient) -> None:
         read=CorpusRead,
         write=DocumentWriteTypes(domain=CorpusDoc, create_cmd=CorpusCreate),
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     doc = CombinedDocPort(
         command=ctx.document.command(spec),
         query=ctx.document.query(spec),

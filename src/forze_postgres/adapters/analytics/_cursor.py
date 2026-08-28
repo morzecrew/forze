@@ -50,7 +50,7 @@ class PostgresAnalyticsCursorMixin[R: BaseModel, Ing: BaseModel](
         return_type: type[BaseModel] | None,
         return_fields: Sequence[str] | None,
     ) -> CursorPage[Any]:
-        host = self._host
+        host = self
         params = host._validated_params(query_key, params)  # type: ignore[protected-access]
 
         if dry_run_enabled(options):

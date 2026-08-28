@@ -7,20 +7,17 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.application.contracts.querying import encode_keyset_v1
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
 from forze.domain.constants import ID_FIELD
-from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.execution.deps.utils import doc_write_gw, read_gw
 from forze_firestore.kernel.client import FirestoreClient
+from tests.integration.test_forze_firestore._fixtures import client_context
 from tests.support import (
     IntegrationCreateCmd,
     IntegrationDocument,
     IntegrationUpdateCmd,
     make_create_cmd,
-)
-from tests.support.execution_context import (
-    context_from_deps,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -30,10 +27,6 @@ _WRITE_TYPES = {
     "create_cmd": IntegrationCreateCmd,
     "update_cmd": IntegrationUpdateCmd,
 }
-
-
-def _ctx(client: FirestoreClient) -> ExecutionContext:
-    return context_from_deps(Deps.plain({FirestoreClientDepKey: client}))
 
 
 def _write(
@@ -66,7 +59,7 @@ async def test_firestore_read_gateway_get_many_preserves_order(
     unique_collection: str,
 ) -> None:
     collection = f"gw_many_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = _write(ctx, collection)
     read = _read(ctx, collection)
 
@@ -87,7 +80,7 @@ async def test_firestore_read_gateway_get_many_missing_raises(
     unique_collection: str,
 ) -> None:
     collection = f"gw_miss_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = _write(ctx, collection)
     read = _read(ctx, collection)
 
@@ -103,7 +96,7 @@ async def test_firestore_read_gateway_find_many_with_cursor(
     unique_collection: str,
 ) -> None:
     collection = f"gw_cur_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = _write(ctx, collection)
     read = _read(ctx, collection)
 
@@ -145,7 +138,7 @@ async def test_firestore_read_gateway_count(
     unique_collection: str,
 ) -> None:
     collection = f"gw_cnt_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = _write(ctx, collection)
     read = _read(ctx, collection)
 
@@ -161,7 +154,7 @@ async def test_firestore_write_gateway_create_many_and_update_many(
     unique_collection: str,
 ) -> None:
     collection = f"gw_batch_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = _write(ctx, collection)
 
     created = await write.create_many(
@@ -189,7 +182,7 @@ async def test_firestore_write_gateway_ensure_and_kill(
     unique_collection: str,
 ) -> None:
     collection = f"gw_ens_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = _write(ctx, collection)
     read = _read(ctx, collection)
 
@@ -224,7 +217,7 @@ async def test_firestore_write_gateway_history_reads_prior_revision(
 ) -> None:
     collection = f"gw_hist_{unique_collection}"
     history = f"{collection}_history"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write = _write(ctx, collection, history=history)
 
     created = await write.create(make_create_cmd(name="v1"))

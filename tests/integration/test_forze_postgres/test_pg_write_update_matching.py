@@ -16,17 +16,11 @@ import attrs
 import pytest
 
 from forze.application.contracts.document import DocumentWriteTypes
-from forze.application.execution import Deps
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
-from forze_postgres.execution.deps.keys import (
-    PostgresClientDepKey,
-    PostgresIntrospectorDepKey,
-)
 from forze_postgres.execution.deps.utils import doc_write_gw
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from tests.support.execution_context import context_from_deps
+from tests.integration.test_forze_postgres._document_fixtures import gateway_context
 
 
 class WmDoc(Document):
@@ -52,17 +46,6 @@ def _write_types() -> DocumentWriteTypes[WmDoc, WmCreate, WmUpdate]:
     )
 
 
-def _ctx(pg_client: PostgresClient):
-    return context_from_deps(
-        Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-            }
-        )
-    )
-
-
 async def _make_gw(pg_client: PostgresClient):
     table = f"pg_wm_{uuid4().hex[:8]}"
     await pg_client.execute(
@@ -78,7 +61,7 @@ async def _make_gw(pg_client: PostgresClient):
         """
     )
     return doc_write_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         write_types=_write_types(),
         write_relation=("public", table),
         bookkeeping_strategy="application",

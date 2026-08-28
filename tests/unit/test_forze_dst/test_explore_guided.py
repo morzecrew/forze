@@ -11,23 +11,13 @@ budget, and that a planted violation is caught.
 
 from __future__ import annotations
 
-import asyncio
 import random
 
-import attrs
-from pydantic import BaseModel
-
-from forze.application.contracts.execution import Handler
-from forze.application.execution import ExecutionContext
-from forze.application.execution.operations.descriptors import OperationDescriptor
-from forze.application.execution.operations.registry import OperationRegistry
-from forze_dst import OperationCase, Simulation, SimulationConfig
+from forze_dst import OperationCase, SimulationConfig
 from forze_dst.explore_guided import Genome, coverage_guided_search, mutate
-from forze_dst.invariants import expect
-from forze_dst.markers import record_event
 from forze_dst.oracle.coverage import behavioral_coverage
 from forze_dst.oracle.recorder import Event, History
-from forze_mock import MockDepsModule
+from tests.unit.test_forze_dst._racy_ledger import DepositDTO, racy_sim
 
 # ----------------------- #
 
@@ -177,52 +167,6 @@ class TestFindsViolation:
 # Integration: the real Simulation.coverage_guided over an op catalog.
 
 
-class DepositDTO(BaseModel):
-    amount: int
-
-
-@attrs.define(slots=True, kw_only=True)
-class _Deposit(Handler[DepositDTO, None]):
-    """A non-atomic deposit — concurrent calls race on read-modify-write (lost update)."""
-
-    ledger: dict[str, int]
-
-    async def __call__(self, args: DepositDTO) -> None:
-        self.ledger["expected"] += args.amount
-        current = self.ledger["balance"]
-        await asyncio.sleep(0)  # yield → concurrent deposits race here
-        self.ledger["balance"] = current + args.amount
-
-
-def _racy_sim() -> Simulation:
-    ledger = {"balance": 0, "expected": 0}
-    registry = OperationRegistry(
-        handlers={"deposit": lambda _c: _Deposit(ledger=ledger)},
-        descriptors={
-            "deposit": OperationDescriptor(
-                input_type=DepositDTO, output_type=None, description="x"
-            )
-        },
-    ).freeze()
-
-    async def reset(_ctx: ExecutionContext) -> None:
-        ledger["balance"] = ledger["expected"] = 0
-
-    async def observe(_ctx: ExecutionContext) -> None:
-        record_event("balance", final=ledger["balance"], expected=ledger["expected"])
-
-    return Simulation(
-        operations=registry,
-        deps=lambda: MockDepsModule(),
-        setup=reset,
-        observe=observe,
-        invariants=[
-            expect("balance", lambda e: e.fields["final"] == e.fields["expected"],
-                   message="lost deposit")
-        ],
-    )
-
-
 _CASES = [OperationCase(op="deposit", inputs=lambda _rng: DepositDTO(amount=1))]
 
 
@@ -233,7 +177,7 @@ class TestCoverageGuidedIntegration:
         )
 
     def test_finds_the_lost_update_and_minimizes(self) -> None:
-        stats = _racy_sim().coverage_guided(self._config(), cases=_CASES)
+        stats = racy_sim().coverage_guided(self._config(), cases=_CASES)
 
         assert stats.violation is not None
         assert stats.violation.violations[0].message == "lost deposit"
@@ -244,8 +188,8 @@ class TestCoverageGuidedIntegration:
         assert stats.violation.registry_fingerprint is not None
 
     def test_reproducible_from_the_master_seed(self) -> None:
-        a = _racy_sim().coverage_guided(self._config(), cases=_CASES)
-        b = _racy_sim().coverage_guided(self._config(), cases=_CASES)
+        a = racy_sim().coverage_guided(self._config(), cases=_CASES)
+        b = racy_sim().coverage_guided(self._config(), cases=_CASES)
 
         assert a.violation is not None and b.violation is not None
         assert a.violation.seed == b.violation.seed
@@ -256,4 +200,4 @@ class TestCoverageGuidedIntegration:
         import pytest
 
         with pytest.raises(ValueError):
-            _racy_sim().coverage_guided(self._config(), cases=[])
+            racy_sim().coverage_guided(self._config(), cases=[])
