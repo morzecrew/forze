@@ -19,7 +19,7 @@ from forze.application.integrations.search import SearchResultSnapshot
 
 from .._pgroonga_plan import effective_combo_limit
 from .._search_count import effective_search_count
-from ._typing_host import HubSearchHost
+from ._mixin_base import HubSearchMixinBase
 from .constants import HUB_RANK
 from .runtime import HubLegRuntime
 from .semantics import HubCombine, HubScoreMerge, hub_order_key_spec
@@ -70,7 +70,7 @@ def hub_members_weighted(
 
 
 async def build_hub_search_plan(
-    host: HubSearchHost[Any],
+    host: HubSearchMixinBase[Any],
     *,
     query: str | Sequence[str],
     options: SearchOptions | None,

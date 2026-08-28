@@ -88,11 +88,11 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
 
         resolve_fusion(
             cast("MultiSourceSearchOptions", options or {}).get("fusion"),
-            self._hub_host.search_capabilities,
+            self.search_capabilities,
             backend="postgres_hub",
         )
         plan = await build_hub_search_plan(
-            self._hub_host,
+            self,
             query=query,
             options=options,
             sorts=sorts,
@@ -105,14 +105,14 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         if plan.use_parallel:
             # Parallel execution merges per-leg results in Python; facets reuse the ``sql``
             # companion GROUP BY (identical distribution), highlights are marked on the hits.
-            facet_fields = resolve_facet_fields(self._hub_host.hub_spec, options)
+            facet_fields = resolve_facet_fields(self.hub_spec, options)
             parallel_page = await self._hub_parallel_cursor_search(
                 plan=plan,
                 filters=filters,
                 cursor=cursor,
                 return_type=return_type,
                 return_fields=return_fields,
-                hub_spec=self._hub_host.hub_spec,
+                hub_spec=self.hub_spec,
             )
             if facet_fields:
                 parallel_facets = await self._hub_parallel_facets(
@@ -125,7 +125,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
                 parallel_page = attrs.evolve(parallel_page, facets=parallel_facets)
             return attach_hub_highlights(
                 parallel_page,
-                hub_spec=self._hub_host.hub_spec,
+                hub_spec=self.hub_spec,
                 query=query,
                 options=options,
                 return_fields=return_fields,
@@ -133,7 +133,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
 
         # ``sql`` execution: facets via a companion over the merged set; highlights marked
         # on the returned page (field validation runs in both helpers).
-        facet_fields = resolve_facet_fields(self._hub_host.hub_spec, options)
+        facet_fields = resolve_facet_fields(self.hub_spec, options)
 
         c = dict(cursor or {})
         lim, use_after, use_before = parse_search_cursor(cursor)
@@ -163,11 +163,11 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         # seek/limit params are appended below; the companion runs without the keyset bound.
         facets = (
             await fetch_hub_facets(
-                self._hub_host.client,
+                self.client,
                 with_clause=with_clause,
                 count_relation=count_rel,
                 combo_alias=COMBO_ALIAS,
-                read_relation=await self._hub_host._qname(),  # pyright: ignore[reportPrivateUsage]
+                read_relation=await self._qname(),  # pyright: ignore[reportPrivateUsage]
                 params=list(params),
                 fields=facet_fields,
                 size=facet_size_of(options),
@@ -181,15 +181,15 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
 
         binding = (
             build_cursor_binding(
-                spec_name=self._hub_host.hub_spec.name,
-                tenant_id=self._hub_host._tenant_id_for_resolve(),  # pyright: ignore[reportPrivateUsage]
-                filter_expr=self._hub_host.compile_filters(filters),
+                spec_name=self.hub_spec.name,
+                tenant_id=self._tenant_id_for_resolve(),  # pyright: ignore[reportPrivateUsage]
+                filter_expr=self.compile_filters(filters),
             )
             if cursor_protection_active()
             else None
         )
 
-        types = await self._hub_host.column_types()
+        types = await self.column_types()
         exprs: list[sql.Composable] = []
 
         for k in sort_keys:
@@ -200,8 +200,8 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
                     sort_key_expr(
                         field=k,
                         column_types=types,
-                        model_type=self._hub_host.model_type,
-                        nested_field_hints=self._hub_host.nested_field_hints,
+                        model_type=self.model_type,
+                        nested_field_hints=self.nested_field_hints,
                         table_alias=COMBO_ALIAS,
                     ),
                 )
@@ -257,7 +257,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
             # for the page after the keyset bounds are computed.
             cols = sql.SQL(", ").join(sql.Identifier(COMBO_ALIAS, f) for f in thin_fields)
         else:
-            cols = self._hub_host.return_clause(
+            cols = self.return_clause(
                 return_type,
                 return_fields_sql,
                 table_alias=COMBO_ALIAS,
@@ -297,7 +297,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         params.append(lim + 1)
 
         raw_rows = list(
-            await self._hub_host.client.fetch_all(data_stmt, params, row_factory="dict"),
+            await self.client.fetch_all(data_stmt, params, row_factory="dict"),
         )  # type: ignore[assignment, arg-type]
 
         rows, has_more, nxt, prv = keyset_page_bounds(
@@ -314,7 +314,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         # as the per-hit score before hydration/projection drops it. Browse has no score.
         scores = [float(r[HUB_RANK]) for r in rows] if do_legs else None
 
-        trust = search_trust_source(self._hub_host.read_validation)
+        trust = search_trust_source(self.read_validation)
 
         # Phase B: the keyset bounds (and next/prev cursors) were computed from the thin
         # sort-key values above; hydrate the heavy read-model columns for the page only.
@@ -323,7 +323,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         if thin:
             page_ids = [r[ID_FIELD] for r in rows]
             source_rows = await hydrate_rows_by_id(
-                cast(PostgresGateway[Any], self._hub_host),
+                cast(PostgresGateway[Any], self),
                 page_ids=page_ids,
                 return_type=return_type,
                 return_fields=return_fields,
@@ -341,7 +341,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
                     facets=facets,
                     scores=scores,
                 ),
-                hub_spec=self._hub_host.hub_spec,
+                hub_spec=self.hub_spec,
                 query=query,
                 options=options,
                 return_fields=return_fields,
@@ -349,8 +349,8 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
 
         hits = decode_search_hits(
             rows=source_rows,
-            model_type=self._hub_host.model_type,
-            codec=self._hub_host.hub_spec.resolved_read_codec,
+            model_type=self.model_type,
+            codec=self.hub_spec.resolved_read_codec,
             return_type=return_type,
             trust_source=trust,
         )
@@ -364,7 +364,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
                 facets=facets,
                 scores=scores,
             ),
-            hub_spec=self._hub_host.hub_spec,
+            hub_spec=self.hub_spec,
             query=query,
             options=options,
         )

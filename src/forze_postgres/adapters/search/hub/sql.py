@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from typing import Any
 
 from forze_postgres._compat import require_psycopg
 
@@ -23,7 +23,7 @@ from ._leg_sql import HubLegSqlContext, build_hub_cte, build_hub_leg_sql_parts
 
 # Re-export for parallel and tests.
 from ._leg_sql import hub_leg_order_limit as hub_leg_order_limit
-from ._typing_host import HubSearchHost
+from ._mixin_base import HubSearchMixinBase
 from .constants import (
     COMBO_ALIAS,
     COMBO_TOP_RELATION,
@@ -39,14 +39,8 @@ from .semantics import hub_order_key_spec, sql_combine_where, sql_merge_expr
 # ----------------------- #
 
 
-class HubSearchSqlMixin[M: BaseModel]:
+class HubSearchSqlMixin[M: BaseModel](HubSearchMixinBase[M]):
     """SQL building methods shared by hub offset and cursor search."""
-
-    @property
-    def _hub_host(self) -> HubSearchHost[M]:
-        return cast(HubSearchHost[M], self)
-
-    # ....................... #
 
     def _hub_thin_projection(self, plan: HubSearchPlan) -> list[str] | None:
         """Minimal ``hf``/``combo`` projection for late materialization.
@@ -60,7 +54,7 @@ class HubSearchSqlMixin[M: BaseModel]:
         applied in ``hf``'s ``WHERE`` over the full hub relation, independent of its SELECT.
         """
 
-        read = self._hub_host.read_fields
+        read = self.read_fields
 
         if ID_FIELD not in read:
             return None
@@ -93,7 +87,7 @@ class HubSearchSqlMixin[M: BaseModel]:
         include_groonga_sys: bool,
         fields: Sequence[str] | None = None,
     ) -> sql.Composable:
-        host = self._hub_host
+        host = self
         use = sorted(host.read_fields) if fields is None else list(fields)
         base = sql.SQL(", ").join(sql.Identifier(HUB_ROW_ALIAS, f) for f in use)
 
@@ -116,7 +110,7 @@ class HubSearchSqlMixin[M: BaseModel]:
         *,
         table_alias: str = COMBO_ALIAS,
     ) -> sql.Composable | None:
-        return await self._hub_host.order_by_clause(sorts, table_alias=table_alias)
+        return await self.order_by_clause(sorts, table_alias=table_alias)
 
     # ....................... #
 
@@ -145,7 +139,7 @@ class HubSearchSqlMixin[M: BaseModel]:
         if ob is not None:
             order_parts = [ob]
 
-        elif ID_FIELD in self._hub_host.read_fields:
+        elif ID_FIELD in self.read_fields:
             order_parts = [
                 sql.SQL("{} ASC").format(
                     sql.Identifier(table_alias, ID_FIELD),
@@ -153,7 +147,7 @@ class HubSearchSqlMixin[M: BaseModel]:
             ]
 
         else:
-            first = sorted(self._hub_host.read_fields)[0]
+            first = sorted(self.read_fields)[0]
             order_parts = [
                 sql.SQL("{} ASC").format(
                     sql.Identifier(table_alias, first),
@@ -173,7 +167,7 @@ class HubSearchSqlMixin[M: BaseModel]:
         if not sorts:
             return None
 
-        host = self._hub_host
+        host = self
         types = await host.column_types()
         parts: list[sql.Composable] = []
 
@@ -228,18 +222,18 @@ class HubSearchSqlMixin[M: BaseModel]:
         uncapped_legs: bool = False,
         thin: bool = False,
     ) -> tuple[sql.Composable, list[Any], bool, str, str]:
-        fw, fp = await self._hub_host.where_clause(filters)
+        fw, fp = await self.where_clause(filters)
         tenant_id = (
-            self._hub_host._tenant_id_for_resolve()  # pyright: ignore[reportPrivateUsage]
+            self._tenant_id_for_resolve()  # pyright: ignore[reportPrivateUsage]
         )
-        hub_qn = await self._hub_host._qname()  # pyright: ignore[reportPrivateUsage]
+        hub_qn = await self._qname()  # pyright: ignore[reportPrivateUsage]
 
         do_legs = plan.do_legs
         active = list(plan.active)
         need_groonga_sys = False
 
         thin_fields = self._hub_thin_projection(plan) if thin else None
-        proj_fields = thin_fields if thin_fields is not None else sorted(self._hub_host.read_fields)
+        proj_fields = thin_fields if thin_fields is not None else sorted(self.read_fields)
 
         hub_cte = build_hub_cte(
             hub_cols=self._hub_select_list(
@@ -252,7 +246,7 @@ class HubSearchSqlMixin[M: BaseModel]:
 
         params: list[Any] = [*fp]
         leg_cte_parts: list[sql.Composable] = []
-        leg_aliases = [f"lr{i}" for i in range(len(self._hub_host.members))]
+        leg_aliases = [f"lr{i}" for i in range(len(self.members))]
 
         leg_per_leg_limit = None if uncapped_legs else plan.per_leg_limit
 
@@ -263,8 +257,8 @@ class HubSearchSqlMixin[M: BaseModel]:
             query_terms=plan.terms,
             leg_options=plan.leg_options,
             per_leg_limit=leg_per_leg_limit,
-            introspector=self._hub_host.introspector,
-            vector_embedders=dict(self._hub_host.vector_embedders),
+            introspector=self.introspector,
+            vector_embedders=dict(self.vector_embedders),
         )
 
         if do_legs:
@@ -444,7 +438,7 @@ class HubSearchSqlMixin[M: BaseModel]:
             ca=sql.Identifier(combo_alias),
         )
         return int(
-            await self._hub_host.client.fetch_value(count_stmt, params, default=0),
+            await self.client.fetch_value(count_stmt, params, default=0),
         )
 
     # ....................... #
@@ -462,7 +456,7 @@ class HubSearchSqlMixin[M: BaseModel]:
     ) -> int:
         active = tuple(
             (i, leg, float(member_weights_list[i]))
-            for i, leg in enumerate(self._hub_host.members)
+            for i, leg in enumerate(self.members)
             if member_weights_list[i] > 0.0
         )
         do_legs = bool(query_terms) and bool(active)
@@ -473,13 +467,13 @@ class HubSearchSqlMixin[M: BaseModel]:
             active=active,
             leg_options=leg_options,
             member_weights_list=tuple(float(w) for w in member_weights_list),
-            combine=self._hub_host.combine,  # type: ignore[arg-type]
-            score_merge=self._hub_host.score_merge,  # type: ignore[arg-type]
-            read_fields=self._hub_host.read_fields,
+            combine=self.combine,  # type: ignore[arg-type]
+            score_merge=self.score_merge,  # type: ignore[arg-type]
+            read_fields=self.read_fields,
             rank_field=HUB_RANK,
             per_leg_limit=per_leg_limit,
             resolved_combo=None,
-            effective_sorts=sorts if sorts else self._hub_host.hub_spec.default_sort,
+            effective_sorts=sorts if sorts else self.hub_spec.default_sort,
             order_key_spec=tuple(key_spec),
             use_parallel=False,
             count_policy="none",
@@ -502,9 +496,9 @@ class HubSearchSqlMixin[M: BaseModel]:
         return hub_order_key_spec(
             do_legs=do_legs,
             sorts=sorts,
-            default_sort=self._hub_host.hub_spec.default_sort,
-            read_fields=self._hub_host.read_fields,
-            spec_name=self._hub_host.hub_spec.name,
+            default_sort=self.hub_spec.default_sort,
+            read_fields=self.read_fields,
+            spec_name=self.hub_spec.name,
             rank_field=HUB_RANK,
-            model=self._hub_host.model_type,
+            model=self.model_type,
         )

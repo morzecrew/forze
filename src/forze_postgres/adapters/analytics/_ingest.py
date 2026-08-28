@@ -25,7 +25,7 @@ class PostgresAnalyticsIngestMixin[R: BaseModel, Ing: BaseModel](
     """Batch ingest into a configured table."""
 
     async def append(self, rows: Sequence[Ing]) -> AnalyticsAppendResult | None:
-        host = self._host
+        host = self
 
         if host.spec.ingest is None:
             raise exc.internal(f"Analytics ingest is not configured for route {host.spec.name!r}.")

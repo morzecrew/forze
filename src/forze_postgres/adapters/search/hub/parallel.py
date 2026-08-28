@@ -42,7 +42,6 @@ from .._materialize_hits import decode_search_hits, materialize_search_page, sea
 from .._offset_run import hydrate_rows_by_id
 from .._search_count import resolve_ranked_approximate_total
 from ._leg_sql import HubLegSqlContext, build_hub_cte, build_hub_leg_sql_parts
-from ._typing_host import HubSearchHost
 from .constants import COMBO_ALIAS, HUB_CTE, HUB_RANK, HUB_ROW_ALIAS, LEG_EID, LEG_SCORE
 from .merge import hub_row_for_materialize
 from .plan import HubSearchPlan
@@ -64,7 +63,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         *,
         filters: QueryFilterExpression | None,
     ) -> list[dict[str, Any]]:
-        host = cast(HubSearchHost[M], self)
+        host = self
 
         if not plan.do_legs:
             return []
@@ -329,7 +328,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         the ``sql`` path's, keeping facets identical across execution modes.
         """
 
-        host = cast(HubSearchHost[M], self)
+        host = self
         with_clause, params, _, count_relation, _ = await self._hub_build_with_clause_from_plan(
             plan,
             filters=filters,
@@ -367,7 +366,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         result_snapshot: SearchResultSnapshot | None,
     ) -> Any:
         _ = query, sorts, options, snapshot
-        host = cast(HubSearchHost[M], self)
+        host = self
 
         merged = await self._hub_parallel_merged_rows(plan, filters=filters)
 
@@ -450,7 +449,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         return_fields: Sequence[str] | None,
         hub_spec: Any,
     ) -> Any:
-        host = cast(HubSearchHost[M], self)
+        host = self
 
         c = dict(cursor or {})
         lim, use_after, use_before = parse_search_cursor(cursor)
