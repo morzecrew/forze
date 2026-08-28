@@ -17,21 +17,12 @@ import attrs
 import pytest
 
 from forze.application.contracts.document import (
-    DocumentCommandDepKey,
-    DocumentQueryDepKey,
     DocumentSpec,
     DocumentWriteTypes,
 )
-from forze.application.execution import Deps, ExecutionContext
 from forze_mock.adapters import MockDocumentAdapter, MockState
-from forze_postgres.execution.deps import ConfigurablePostgresDocument
-from forze_postgres.execution.deps.configs import PostgresDocumentConfig
-from forze_postgres.execution.deps.keys import (
-    PostgresClientDepKey,
-    PostgresIntrospectorDepKey,
-)
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.integration.test_forze_postgres._document_fixtures import document_context
 from tests.support.cursor_parity import (
     CursorCreate,
     CursorDoc,
@@ -40,7 +31,6 @@ from tests.support.cursor_parity import (
     assert_cursor_parity,
     seed_cursor_corpus,
 )
-from tests.support.execution_context import context_from_deps
 
 
 @attrs.define
@@ -55,26 +45,6 @@ class _CursorPort:
 
     async def find_cursor(self, *, filters: Any, cursor: Any, sorts: Any) -> Any:
         return await self.query.find_cursor(filters, cursor=cursor, sorts=sorts)
-
-
-def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
-    doc = ConfigurablePostgresDocument(
-        config=PostgresDocumentConfig(
-            read=("public", table),
-            write=("public", table),
-            bookkeeping_strategy="application",
-        )
-    )
-    return context_from_deps(
-        Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-                DocumentQueryDepKey: doc,
-                DocumentCommandDepKey: doc,
-            }
-        )
-    )
 
 
 def _mock_port() -> MockDocumentAdapter[Any, Any, Any, Any]:
@@ -116,7 +86,7 @@ async def test_cursor_parity_postgres(pg_client: PostgresClient) -> None:
         read=CursorRead,
         write=DocumentWriteTypes(domain=CursorDoc, create_cmd=CursorCreate),
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     real = _CursorPort(
         command=ctx.document.command(spec),
         query=ctx.document.query(spec),
@@ -158,7 +128,7 @@ async def test_signed_cursor_binding_on_real_postgres(pg_client: PostgresClient)
         read=CursorRead,
         write=DocumentWriteTypes(domain=CursorDoc, create_cmd=CursorCreate),
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     real = _CursorPort(
         command=ctx.document.command(spec),
         query=ctx.document.query(spec),
@@ -229,7 +199,7 @@ async def test_encrypted_cursor_on_real_postgres(pg_client: PostgresClient) -> N
         read=CursorRead,
         write=DocumentWriteTypes(domain=CursorDoc, create_cmd=CursorCreate),
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     real = _CursorPort(
         command=ctx.document.command(spec),
         query=ctx.document.query(spec),

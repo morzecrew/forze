@@ -10,17 +10,11 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.document import DocumentWriteTypes
-from forze.application.execution import Deps
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
-from forze_postgres.execution.deps.keys import (
-    PostgresClientDepKey,
-    PostgresIntrospectorDepKey,
-)
 from forze_postgres.execution.deps.utils import doc_write_gw
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from tests.support.execution_context import context_from_deps
+from tests.integration.test_forze_postgres._document_fixtures import gateway_context
 
 
 class OmitDomain(Document):
@@ -58,24 +52,13 @@ async def _make_table(pg_client: PostgresClient) -> str:
     return table
 
 
-def _ctx(pg_client: PostgresClient):
-    return context_from_deps(
-        Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-            }
-        )
-    )
-
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_write_omit_field_stripped_and_hydrated(
     pg_client: PostgresClient,
 ) -> None:
     table = await _make_table(pg_client)
-    ctx = _ctx(pg_client)
+    ctx = gateway_context(pg_client)
 
     write = doc_write_gw(
         ctx,
@@ -110,7 +93,7 @@ async def test_write_without_omit_fails_on_missing_column(
     pg_client: PostgresClient,
 ) -> None:
     table = await _make_table(pg_client)
-    ctx = _ctx(pg_client)
+    ctx = gateway_context(pg_client)
 
     # No write_omit_fields → the INSERT references ``label``, which is not a column.
     write = doc_write_gw(

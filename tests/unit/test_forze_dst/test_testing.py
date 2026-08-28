@@ -4,11 +4,8 @@ opt-in plugin scales sweeps via ``--dst-seeds`` and registers the ``dst`` marker
 
 from __future__ import annotations
 
-import asyncio
-
 import attrs
 import pytest
-from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.execution import Handler
@@ -30,6 +27,7 @@ from forze_dst.testing._options import (
 )
 from forze_dst.testing.assertions import _resolve_config
 from forze_mock import MockDepsModule
+from tests.unit.test_forze_dst._racy_ledger import DepositDTO, racy_sim
 
 # ----------------------- #
 # A clean sim (one document-creating op) and a racy sim (lost update under concurrency).
@@ -77,50 +75,6 @@ def _clean_sim() -> Simulation:
 
 
 _MAKE_SCENARIO = Scenario(state=ModelState, act=(Rule(op="make"),))
-
-
-class DepositDTO(BaseModel):
-    amount: int
-
-
-@attrs.define(slots=True, kw_only=True)
-class _Deposit(Handler[DepositDTO, None]):
-    ledger: dict[str, int]
-
-    async def __call__(self, args: DepositDTO) -> None:
-        self.ledger["expected"] += args.amount
-        current = self.ledger["balance"]
-        await asyncio.sleep(0)  # yield: concurrent deposits race here
-        self.ledger["balance"] = current + args.amount
-
-
-def _racy_sim() -> Simulation:
-    ledger = {"balance": 0, "expected": 0}
-    registry = OperationRegistry(
-        handlers={"deposit": lambda _c: _Deposit(ledger=ledger)},
-        descriptors={
-            "deposit": OperationDescriptor(
-                input_type=DepositDTO, output_type=None, description="x"
-            )
-        },
-    ).freeze()
-
-    async def reset(_ctx: ExecutionContext) -> None:
-        ledger["balance"] = ledger["expected"] = 0
-
-    async def observe(_ctx: ExecutionContext) -> None:
-        record_event("balance", final=ledger["balance"], expected=ledger["expected"])
-
-    return Simulation(
-        operations=registry,
-        deps=lambda: MockDepsModule(),
-        setup=reset,
-        observe=observe,
-        invariants=[
-            expect("balance", lambda e: e.fields["final"] == e.fields["expected"],
-                   message="lost deposit")
-        ],
-    )
 
 
 @attrs.define(slots=True, kw_only=True)
@@ -183,7 +137,7 @@ class TestAssertNoViolation:
     def test_fails_with_the_counterexample_on_a_bug(self) -> None:
         with pytest.raises(AssertionError) as excinfo:
             assert_no_violation(
-                _racy_sim(),
+                racy_sim(),
                 SimulationConfig(seeds=range(40), act_count=6, concurrency=6),
                 scenario=_DEPOSIT_SCENARIO,
             )
@@ -193,7 +147,7 @@ class TestAssertNoViolation:
     def test_defaults_to_thorough_when_no_config(self) -> None:
         # No config → SimulationConfig.thorough() (256 seeds); the racy sim is still caught.
         with pytest.raises(AssertionError, match="lost deposit"):
-            assert_no_violation(_racy_sim(), scenario=_DEPOSIT_SCENARIO)
+            assert_no_violation(racy_sim(), scenario=_DEPOSIT_SCENARIO)
 
 
 class TestSeedOverride:
@@ -246,7 +200,7 @@ class TestCleanRunVerdicts:
         try:
             with pytest.raises(AssertionError, match="lost deposit"):
                 assert_no_violation(
-                    _racy_sim(),
+                    racy_sim(),
                     SimulationConfig(seeds=range(40), act_count=6, concurrency=6),
                     scenario=_DEPOSIT_SCENARIO,
                 )
@@ -507,7 +461,7 @@ class TestBundles:
         try:
             with pytest.raises(AssertionError):
                 assert_no_violation(
-                    _racy_sim(),
+                    racy_sim(),
                     SimulationConfig(seeds=range(40), act_count=6, concurrency=6),
                     scenario=_DEPOSIT_SCENARIO,
                 )
@@ -523,7 +477,7 @@ class TestBundles:
         try:
             with pytest.raises(AssertionError):
                 assert_no_violation(
-                    _racy_sim(),
+                    racy_sim(),
                     SimulationConfig(seeds=range(40), act_count=6, concurrency=6),
                     scenario=_DEPOSIT_SCENARIO,
                 )
@@ -531,7 +485,7 @@ class TestBundles:
             set_active(None)
 
         with pytest.raises(AssertionError, match="still violates"):
-            assert_no_regressions(_racy_sim(), bundles=tmp_path)
+            assert_no_regressions(racy_sim(), bundles=tmp_path)
 
     def test_replay_passes_against_the_fixed_sim(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         # The bundle was found against the racy sim; the fixed sim reproduces it clean.
@@ -539,7 +493,7 @@ class TestBundles:
         try:
             with pytest.raises(AssertionError):
                 assert_no_violation(
-                    _racy_sim(),
+                    racy_sim(),
                     SimulationConfig(seeds=range(40), act_count=6, concurrency=6),
                     scenario=_DEPOSIT_SCENARIO,
                 )
@@ -582,7 +536,7 @@ class TestBundles:
         try:
             with pytest.raises(AssertionError):
                 assert_no_violation(
-                    _racy_sim(),
+                    racy_sim(),
                     SimulationConfig(seeds=range(40), act_count=6, concurrency=6),
                     scenario=_DEPOSIT_SCENARIO,
                 )
@@ -592,7 +546,7 @@ class TestBundles:
         self._op_case_bundle().save(tmp_path / "aaa_opcase.json")  # sorts before the real bundle
 
         with pytest.raises(AssertionError) as excinfo:
-            assert_no_regressions(_racy_sim(), bundles=tmp_path)
+            assert_no_regressions(racy_sim(), bundles=tmp_path)
 
         message = str(excinfo.value)
         assert "not a self-contained" in message  # the OP_CASE bundle reported, not crashed

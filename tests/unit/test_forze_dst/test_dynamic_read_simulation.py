@@ -18,9 +18,9 @@ from datetime import timedelta
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.deps import DepsModule
 from forze.application.contracts.dynamic_read import DynamicReadDepKey, DynamicReadSpec
 from forze.application.contracts.execution import Handler
-from forze.application.contracts.deps import DepsModule
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry

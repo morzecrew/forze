@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from forze.application.contracts.base import CursorPage
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
 from forze_postgres.adapters.search import PostgresFTSSearchAdapter
 from forze_postgres.execution.deps import ConfigurablePostgresSearch
 from forze_postgres.execution.deps.configs import FtsEngine, PostgresSearchConfig
@@ -18,6 +18,7 @@ from forze_postgres.execution.deps.keys import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.integration.test_forze_postgres._search_fixtures import fts_search_context
 from tests.support.execution_context import context_from_deps
 
 
@@ -25,33 +26,6 @@ class FtsArticle(BaseModel):
     id: UUID
     title: str
     content: str
-
-
-def _fts_context(
-    pg_client: PostgresClient,
-    *,
-    table: str,
-    index_name: str,
-) -> ExecutionContext:
-    return context_from_deps(Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-                SearchQueryDepKey: ConfigurablePostgresSearch(
-                    config=PostgresSearchConfig(
-                        index=("public", index_name),
-                        read=("public", table),
-                        engine=FtsEngine(
-                            groups={
-                                "A": ("title",),
-                                "B": ("content",),
-                            }
-                        ),
-                    )
-                ),
-            }
-        )
-    )
 
 
 @pytest.mark.asyncio
@@ -100,7 +74,7 @@ async def test_fts_search_counts_and_ranks(pg_client: PostgresClient) -> None:
             row,
         )
 
-    ctx = _fts_context(pg_client, table=table, index_name=index_name)
+    ctx = fts_search_context(pg_client, table=table, index_name=index_name)
     spec = SearchSpec(
         name="fts_ns",
         model_type=FtsArticle,
@@ -211,7 +185,7 @@ async def test_fts_search_with_filters_and_empty_query(
         {"a": uuid4(), "b": uuid4()},
     )
 
-    ctx = _fts_context(pg_client, table=table, index_name=index_name)
+    ctx = fts_search_context(pg_client, table=table, index_name=index_name)
     spec = SearchSpec(
         name="fts_filter_ns",
         model_type=FtsArticle,
@@ -458,7 +432,7 @@ async def test_fts_search_with_cursor_ranked_and_browse(
             {"id": uuid4(), "title": t},
         )
 
-    ctx = _fts_context(pg_client, table=table, index_name=index_name)
+    ctx = fts_search_context(pg_client, table=table, index_name=index_name)
     spec = SearchSpec(
         name="fts_cur",
         model_type=FtsArticle,
@@ -529,7 +503,7 @@ async def test_fts_phrase_combine_any_vs_all_multi_term(
         """,
         {"a": uuid4(), "b": uuid4(), "c": uuid4()},
     )
-    ctx = _fts_context(pg_client, table=table, index_name=index_name)
+    ctx = fts_search_context(pg_client, table=table, index_name=index_name)
     spec = SearchSpec(
         name="fts_pc",
         model_type=FtsArticle,
@@ -583,7 +557,7 @@ async def test_fts_search_with_cursor_return_type_and_before(
             """,
             {"id": uuid4(), "t": t},
         )
-    ctx = _fts_context(pg_client, table=table, index_name=index_name)
+    ctx = fts_search_context(pg_client, table=table, index_name=index_name)
     spec = SearchSpec(
         name="fts_cb",
         model_type=FtsArticle,
@@ -659,7 +633,7 @@ async def test_fts_v2_ranked_count_zero_short_circuits(
         """,
         {"id": uuid4()},
     )
-    ctx = _fts_context(pg_client, table=table, index_name=index_name)
+    ctx = fts_search_context(pg_client, table=table, index_name=index_name)
     spec = SearchSpec(
         name="fts_zc",
         model_type=FtsArticle,
@@ -703,7 +677,7 @@ async def test_fts_v2_search_with_cursor_ranked_return_type_and_fields(
             """,
             {"id": uuid4(), "t": t},
         )
-    ctx = _fts_context(pg_client, table=table, index_name=index_name)
+    ctx = fts_search_context(pg_client, table=table, index_name=index_name)
     spec = SearchSpec(
         name="fts_rtf",
         model_type=FtsArticle,
@@ -831,7 +805,7 @@ async def test_fts_search_stream_exports_in_bounded_chunks(
             {"id": uuid4(), "title": f"search doc {i}", "content": "full text search"},
         )
 
-    ctx = _fts_context(pg_client, table=table, index_name=index_name)
+    ctx = fts_search_context(pg_client, table=table, index_name=index_name)
     spec = SearchSpec(name="fts_stream_ns", model_type=FtsArticle, fields=["title", "content"])
     adapter = ctx.search.query(spec)
     assert adapter.search_capabilities.supports_stream is True

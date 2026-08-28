@@ -449,18 +449,17 @@ async def test_a_sealed_mailbox_round_trips_a_json_boundary_payload(
     # naming the field. UUID and datetime survive (orjson serializes both natively), which
     # is why only this one is pinned. Change this assertion when the boundary is fixed —
     # it is documenting a defect, not a guarantee.
-    with pytest.raises(TypeError, match="Decimal"):
-        with _bind(ctx, _T1):
-            await mb.store(
-                principal="u1",
-                event_id=_eid(2),
-                hlc=_hlc(2),
-                signal=RealtimeSignal.of(
-                    Audience.principal("u1"),
-                    "order.shipped",
-                    {"amount": Decimal("10.05")},
-                ),
-            )
+    with pytest.raises(TypeError, match="Decimal"), _bind(ctx, _T1):
+        await mb.store(
+            principal="u1",
+            event_id=_eid(2),
+            hlc=_hlc(2),
+            signal=RealtimeSignal.of(
+                Audience.principal("u1"),
+                "order.shipped",
+                {"amount": Decimal("10.05")},
+            ),
+        )
 
 
 @pytest.mark.asyncio

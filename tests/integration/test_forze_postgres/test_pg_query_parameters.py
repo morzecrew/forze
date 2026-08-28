@@ -18,17 +18,11 @@ import attrs
 import pytest
 from pydantic import BaseModel
 
-from forze.application.execution import Deps
 from forze.base.exceptions import CoreException
 from forze.domain.models import Document
-from forze_postgres.execution.deps.keys import (
-    PostgresClientDepKey,
-    PostgresIntrospectorDepKey,
-)
 from forze_postgres.execution.deps.utils import read_gw
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from tests.support.execution_context import context_from_deps
+from tests.integration.test_forze_postgres._document_fixtures import gateway_context
 
 
 class Standing(Document):
@@ -50,17 +44,6 @@ _RESULTS = [
     ("us", "dot", 70, date(2026, 1, 15)),
     ("us", "el", 60, date(2026, 3, 1)),
 ]
-
-
-def _ctx(pg_client: PostgresClient):
-    return context_from_deps(
-        Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-            }
-        )
-    )
 
 
 async def _make_view(pg_client: PostgresClient, namespace: str = "forze") -> str:
@@ -127,7 +110,7 @@ async def test_bound_parameter_round_trips_through_current_setting(
 
     view = await _make_view(pg_client)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=Standing,
         read_relation=("public", view),
         tenant_aware=False,
@@ -149,7 +132,7 @@ async def test_a_later_binding_reshuffles_the_ranking(
 
     view = await _make_view(pg_client)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=Standing,
         read_relation=("public", view),
         tenant_aware=False,
@@ -171,7 +154,7 @@ async def test_bound_params_do_not_leak_past_the_read(
 
     view = await _make_view(pg_client)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=Standing,
         read_relation=("public", view),
         tenant_aware=False,
@@ -204,7 +187,7 @@ async def test_failed_read_surfaces_the_query_error_not_the_reset_failure(
 
     view = await _make_view(pg_client)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=Standing,
         read_relation=("public", view),
         tenant_aware=False,
@@ -226,7 +209,7 @@ async def test_failed_read_leaves_the_caller_transaction_usable(
 
     view = await _make_view(pg_client)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=Standing,
         read_relation=("public", view),
         tenant_aware=False,
@@ -252,7 +235,7 @@ async def test_count_composes_over_the_bound_view(pg_client: PostgresClient) -> 
 
     view = await _make_view(pg_client)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=Standing,
         read_relation=("public", view),
         tenant_aware=False,
@@ -273,7 +256,7 @@ async def test_required_parameter_unbound_fails_closed(
 
     view = await _make_view(pg_client)
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=Standing,
         read_relation=("public", view),
         tenant_aware=False,
@@ -291,7 +274,7 @@ async def test_custom_namespace_round_trips(pg_client: PostgresClient) -> None:
 
     view = await _make_view(pg_client, namespace="myapp")
     gw = read_gw(
-        _ctx(pg_client),
+        gateway_context(pg_client),
         read_type=Standing,
         read_relation=("public", view),
         tenant_aware=False,

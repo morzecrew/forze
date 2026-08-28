@@ -18,13 +18,12 @@ from uuid import UUID
 import pytest
 from pydantic import Field
 
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document
-from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.execution.deps.utils import doc_write_gw, read_gw
 from forze_firestore.kernel.client import FirestoreClient
-from tests.support.execution_context import context_from_deps
+from tests.integration.test_forze_firestore._fixtures import client_context
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -41,10 +40,6 @@ class DecimalCreate(CreateDocumentCmd):
 
 class DecimalUpdate(BaseDTO):
     total: Decimal | None = None
-
-
-def _ctx(client: FirestoreClient) -> ExecutionContext:
-    return context_from_deps(Deps.plain({FirestoreClientDepKey: client}))
 
 
 async def _assert_absent(read: Any, doc_id: UUID) -> None:
@@ -81,7 +76,7 @@ async def test_create_refuses_decimal_overflowing_double(
     """``Decimal("1e400")`` passes a typed model but must not persist as ``inf``."""
 
     collection = f"gw_nonfinite_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write, read = _gateways(ctx, collection)
 
     doc_id = UUID("70000000-0000-0000-0000-000000000001")
@@ -100,7 +95,7 @@ async def test_create_refuses_non_finite_in_untyped_dict_field(
     non-finite refusal; the write seam is the last guard before the SoR."""
 
     collection = f"gw_nonfinite_dict_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write, read = _gateways(ctx, collection)
 
     doc_id = UUID("70000000-0000-0000-0000-000000000002")
@@ -121,7 +116,7 @@ async def test_finite_decimal_round_trips(
     and reads back at double precision."""
 
     collection = f"gw_nonfinite_ok_{unique_collection}"
-    ctx = _ctx(firestore_client)
+    ctx = client_context(firestore_client)
     write, read = _gateways(ctx, collection)
 
     created = await write.create(DecimalCreate(total=Decimal("19.99")))

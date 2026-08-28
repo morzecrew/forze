@@ -11,18 +11,10 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.contracts.search import SearchSpec
 from forze.base.exceptions import CoreException
-from forze_postgres.execution.deps import ConfigurablePostgresSearch
-from forze_postgres.execution.deps.configs import FtsEngine, PostgresSearchConfig
-from forze_postgres.execution.deps.keys import (
-    PostgresClientDepKey,
-    PostgresIntrospectorDepKey,
-)
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
-from tests.support.execution_context import context_from_deps
+from tests.integration.test_forze_postgres._search_fixtures import fts_search_context
 
 
 class LenientArticle(BaseModel):
@@ -30,24 +22,6 @@ class LenientArticle(BaseModel):
     title: str
     content: str
     summary: str = "n/a"  # returned, no column on the relation
-
-
-def _ctx(pg_client: PostgresClient, *, table: str, index_name: str) -> ExecutionContext:
-    return context_from_deps(
-        Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-                SearchQueryDepKey: ConfigurablePostgresSearch(
-                    config=PostgresSearchConfig(
-                        index=("public", index_name),
-                        read=("public", table),
-                        engine=FtsEngine(groups={"A": ("title",), "B": ("content",)}),
-                    )
-                ),
-            }
-        )
-    )
 
 
 async def _make_index_with_row(pg_client: PostgresClient) -> tuple[str, str]:
@@ -84,7 +58,7 @@ async def test_search_lenient_field_hydrates_from_default(
     pg_client: PostgresClient,
 ) -> None:
     table, index_name = await _make_index_with_row(pg_client)
-    ctx = _ctx(pg_client, table=table, index_name=index_name)
+    ctx = fts_search_context(pg_client, table=table, index_name=index_name)
 
     spec = SearchSpec(
         name="lenient_search",
@@ -111,7 +85,7 @@ async def test_read_conformity_lenient_auto_derives_end_to_end(
     # No explicit lenient_read_fields — read_conformity="lenient" derives ``summary``
     # (defaulted, non-indexed) and the factory threads the resolved set to the adapter.
     table, index_name = await _make_index_with_row(pg_client)
-    ctx = _ctx(pg_client, table=table, index_name=index_name)
+    ctx = fts_search_context(pg_client, table=table, index_name=index_name)
 
     spec = SearchSpec(
         name="auto_lenient_search",
@@ -133,7 +107,7 @@ async def test_strict_search_of_missing_column_fails(
     pg_client: PostgresClient,
 ) -> None:
     table, index_name = await _make_index_with_row(pg_client)
-    ctx = _ctx(pg_client, table=table, index_name=index_name)
+    ctx = fts_search_context(pg_client, table=table, index_name=index_name)
 
     # Without leniency the projection selects ``summary``, which is not a column.
     spec = SearchSpec(

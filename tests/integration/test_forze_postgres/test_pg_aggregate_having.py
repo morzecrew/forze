@@ -13,21 +13,12 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.document import (
-    DocumentCommandDepKey,
-    DocumentQueryDepKey,
     DocumentSpec,
     DocumentWriteTypes,
 )
-from forze.application.execution import Deps, ExecutionContext
 from forze_mock.adapters import MockDocumentAdapter, MockState
-from forze_postgres.execution.deps import ConfigurablePostgresDocument
-from forze_postgres.execution.deps.configs import PostgresDocumentConfig
-from forze_postgres.execution.deps.keys import (
-    PostgresClientDepKey,
-    PostgresIntrospectorDepKey,
-)
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.integration.test_forze_postgres._document_fixtures import document_context
 from tests.support.aggregate_functions import assert_aggregate_function_parity
 from tests.support.aggregate_having import (
     AggCreate,
@@ -36,27 +27,6 @@ from tests.support.aggregate_having import (
     assert_aggregate_having_parity,
     seed_aggregate_corpus,
 )
-from tests.support.execution_context import context_from_deps
-
-
-def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
-    doc = ConfigurablePostgresDocument(
-        config=PostgresDocumentConfig(
-            read=("public", table),
-            write=("public", table),
-            bookkeeping_strategy="application",
-        )
-    )
-    return context_from_deps(
-        Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-                DocumentQueryDepKey: doc,
-                DocumentCommandDepKey: doc,
-            }
-        )
-    )
 
 
 def _mock_oracle() -> MockDocumentAdapter[Any, Any, Any, Any]:
@@ -98,7 +68,7 @@ async def test_aggregate_having_postgres(pg_client: PostgresClient) -> None:
         read=AggRead,
         write=DocumentWriteTypes(domain=AggDoc, create_cmd=AggCreate),
     )
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
 
     await seed_aggregate_corpus(ctx.document.command(spec))
 

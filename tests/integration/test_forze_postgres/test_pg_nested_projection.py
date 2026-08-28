@@ -16,7 +16,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import (
@@ -25,6 +25,7 @@ from forze_postgres.execution.deps.keys import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from tests.integration.test_forze_postgres._document_fixtures import document_context
 from tests.support.execution_context import context_from_deps
 from tests.support.scenarios.document_nested_filters import (
     NestedArrayItem as Item,
@@ -58,26 +59,6 @@ from tests.support.scenarios.document_nested_filters import (
 )
 
 
-def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
-    doc = ConfigurablePostgresDocument(
-        config=PostgresDocumentConfig(
-            read=("public", table),
-            write=("public", table),
-            bookkeeping_strategy="application",
-        )
-    )
-    return context_from_deps(
-        Deps.plain(
-            {
-                PostgresClientDepKey: pg_client,
-                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
-                DocumentQueryDepKey: doc,
-                DocumentCommandDepKey: doc,
-            }
-        )
-    )
-
-
 def _spec() -> DocumentSpec:
     return DocumentSpec(
         name="nested_pg_proj_ns",
@@ -105,7 +86,7 @@ async def _create_table(pg_client: PostgresClient, t: str) -> None:
 async def test_project_nested_jsonb_leaf_reshapes(pg_client: PostgresClient) -> None:
     t = f"nest_proj_{uuid4().hex[:12]}"
     await _create_table(pg_client, t)
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     spec = _spec()
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
@@ -123,7 +104,7 @@ async def test_project_sibling_leaves_merge_and_mix_with_top(
 ) -> None:
     t = f"nest_proj_{uuid4().hex[:12]}"
     await _create_table(pg_client, t)
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     spec = _spec()
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
@@ -141,7 +122,7 @@ async def test_project_sibling_leaves_merge_and_mix_with_top(
 async def test_project_many_nested_over_rows(pg_client: PostgresClient) -> None:
     t = f"nest_proj_{uuid4().hex[:12]}"
     await _create_table(pg_client, t)
-    ctx = _ctx(pg_client, t)
+    ctx = document_context(pg_client, t)
     spec = _spec()
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)

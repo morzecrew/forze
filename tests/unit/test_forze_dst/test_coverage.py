@@ -8,11 +8,9 @@ the sweep hits one).
 
 from __future__ import annotations
 
-import asyncio
 from types import MappingProxyType
 
 import attrs
-from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.execution import Handler
@@ -29,8 +27,7 @@ from forze_dst import (
     SimulationConfig,
     Strategy,
 )
-from forze_dst.invariants import expect, operation_succeeds
-from forze_dst.markers import record_event
+from forze_dst.invariants import operation_succeeds
 from forze_dst.oracle import behavioral_coverage
 from forze_dst.oracle.confidence import ConfidenceReport
 from forze_dst.oracle.coverage import CoverageStats, behavioral_fingerprint
@@ -38,6 +35,7 @@ from forze_dst.oracle.reachability import ReachabilityReport
 from forze_dst.oracle.recorder import Event, History
 from forze_dst.stats import format_clean_verdict
 from forze_mock import MockDepsModule
+from tests.unit.test_forze_dst._racy_ledger import DepositDTO, racy_sim
 
 # ----------------------- #
 
@@ -131,50 +129,6 @@ _MAKE_SCENARIO = Scenario(state=ModelState, act=(Rule(op="make"),))
 # A racy ledger (lost update under concurrency) — coverage finds the violating seed.
 
 
-class DepositDTO(BaseModel):
-    amount: int
-
-
-@attrs.define(slots=True, kw_only=True)
-class _Deposit(Handler[DepositDTO, None]):
-    ledger: dict[str, int]
-
-    async def __call__(self, args: DepositDTO) -> None:
-        self.ledger["expected"] += args.amount
-        current = self.ledger["balance"]
-        await asyncio.sleep(0)  # yield: concurrent deposits race here
-        self.ledger["balance"] = current + args.amount
-
-
-def _racy_sim() -> Simulation:
-    ledger = {"balance": 0, "expected": 0}
-    registry = OperationRegistry(
-        handlers={"deposit": lambda _c: _Deposit(ledger=ledger)},
-        descriptors={
-            "deposit": OperationDescriptor(
-                input_type=DepositDTO, output_type=None, description="x"
-            )
-        },
-    ).freeze()
-
-    async def reset(_ctx: ExecutionContext) -> None:
-        ledger["balance"] = ledger["expected"] = 0
-
-    async def observe(_ctx: ExecutionContext) -> None:
-        record_event("balance", final=ledger["balance"], expected=ledger["expected"])
-
-    return Simulation(
-        operations=registry,
-        deps=lambda: MockDepsModule(),
-        setup=reset,
-        observe=observe,
-        invariants=[
-            expect("balance", lambda e: e.fields["final"] == e.fields["expected"],
-                   message="lost deposit")
-        ],
-    )
-
-
 # ....................... #
 
 
@@ -240,7 +194,7 @@ class TestCoverageGuidedSweep:
         assert not stats.plateaued
 
     def test_surfaces_a_violation_and_stops(self) -> None:
-        stats = _racy_sim().coverage(
+        stats = racy_sim().coverage(
             SimulationConfig(
                 strategy=Strategy.SCENARIO, seeds=range(20), act_count=6, concurrency=6
             ),
