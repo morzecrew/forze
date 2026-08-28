@@ -50,7 +50,7 @@ from .runtime import HubLegRuntime
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresHubSearchAdapter[M: BaseModel](
+class PostgresHubSearchAdapter[M: BaseModel](  # pyright: ignore[reportIncompatibleVariableOverride]
     PostgresGateway[M],
     HubSearchCursorMixin[M],
     PostgresSearchPortMixin[M],
