@@ -1,6 +1,7 @@
 {
   "recommendations": [
     "emeraldwalk.runonsave",
-    "nefrob.vscode-just-syntax"
+    "nefrob.vscode-just-syntax",
+    "repowise-dev.repowise"
   ]
 }
