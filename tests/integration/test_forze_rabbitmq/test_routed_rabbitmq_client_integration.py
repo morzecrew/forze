@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from contextlib import aclosing
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
@@ -12,7 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException
 
 pytest.importorskip("aio_pika")
 
@@ -25,71 +24,23 @@ from forze_rabbitmq.kernel.client import (
     RoutedRabbitMQClient,
 )
 from tests.integration._routed_lru_helpers import rabbitmq_dsns_for_lru_eviction
+from tests.support.secrets_fixtures import (
+    MemSecretsByPath,
+    MemSecretsTenantByPath,
+    tenant_holder,
+    tenant_secret_ref,
+)
 
 
-def _ref(tid: UUID) -> SecretRef:
-    return SecretRef(path=f"tenants/{tid}/rabbitmq")
+def _tenant_ref(tid: UUID) -> SecretRef:
+    return tenant_secret_ref(tid, "rabbitmq")
+
 
 def _dsn(container: RabbitMqContainer) -> str:
     host = container.get_container_host_ip()
     port = container.get_exposed_port(container.port)
     vhost = quote(container.vhost, safe="")
     return f"amqp://{container.username}:{container.password}@{host}:{port}/{vhost}"
-
-class _MemSecretsDsn:
-    def __init__(
-        self,
-        paths: dict[str, str],
-        *,
-        missing_path: str | None = None,
-        broken_path: str | None = None,
-    ) -> None:
-        self._paths = paths
-        self._missing_path = missing_path
-        self._broken_path = broken_path
-
-    async def resolve_str(self, ref: SecretRef) -> str:
-        if self._broken_path is not None and ref.path == self._broken_path:
-            raise RuntimeError("vault unavailable")
-        if self._missing_path is not None and ref.path == self._missing_path:
-            raise exc.not_found(
-                f"No secret for {ref.path!r}",
-                details={"ref": ref.path},
-            )
-        try:
-            return self._paths[ref.path]
-        except KeyError as e:
-            raise exc.not_found(
-                f"No secret for {ref.path!r}",
-                details={"ref": ref.path},
-            ) from e
-
-    async def exists(self, ref: SecretRef) -> bool:
-        return ref.path in self._paths
-
-class _MemSecretsTenantDsn(_MemSecretsDsn):
-    def __init__(
-        self,
-        dsns: dict[UUID, str],
-        *,
-        missing_tenant: UUID | None = None,
-        broken_tenant: UUID | None = None,
-    ) -> None:
-        paths = {f"tenants/{tid}/rabbitmq": d for tid, d in dsns.items()}
-        mp = f"tenants/{missing_tenant}/rabbitmq" if missing_tenant else None
-        bp = f"tenants/{broken_tenant}/rabbitmq" if broken_tenant else None
-        super().__init__(paths, missing_path=mp, broken_path=bp)
-
-def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None], None]]:
-    slot: list[UUID | None] = [None]
-
-    def getter() -> UUID | None:
-        return slot[0]
-
-    def setter(value: UUID | None) -> None:
-        slot[0] = value
-
-    return getter, setter
 
 async def _receive_until(
     client: RoutedRabbitMQClient,
@@ -132,8 +83,10 @@ async def test_routed_rabbitmq_queue_roundtrip(
 ) -> None:
     dsn = _dsn(rabbitmq_container)
     t1 = uuid4()
-    secrets = _MemSecretsTenantDsn({t1: dsn})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantByPath(
+        resource_suffix="rabbitmq",
+        values_by_tenant={t1: dsn})
+    tenant_get, tenant_set = tenant_holder()
     cfg = RabbitMQConfig(
         prefetch_count=20,
         connect_timeout=timedelta(seconds=10.0),
@@ -141,7 +94,7 @@ async def test_routed_rabbitmq_queue_roundtrip(
 
     routed = RoutedRabbitMQClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         connection_config=cfg,
         max_cached_tenants=4,
@@ -203,8 +156,8 @@ async def test_routed_rabbitmq_mapping_secret_ref(
     dsn = _dsn(rabbitmq_container)
     t1 = uuid4()
     custom = SecretRef(path=f"cfg/amqp/{uuid4().hex[:12]}")
-    secrets = _MemSecretsDsn({custom.path: dsn})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsByPath({custom.path: dsn})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedRabbitMQClient(
         secrets=secrets,
@@ -226,12 +179,14 @@ async def test_routed_rabbitmq_startup_and_tenant_guards(
 ) -> None:
     dsn = _dsn(rabbitmq_container)
     t1 = uuid4()
-    secrets = _MemSecretsTenantDsn({t1: dsn})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantByPath(
+        resource_suffix="rabbitmq",
+        values_by_tenant={t1: dsn})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedRabbitMQClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -254,12 +209,14 @@ async def test_routed_rabbitmq_secret_errors(
 ) -> None:
     dsn = _dsn(rabbitmq_container)
     t_ok, t_miss, t_break = uuid4(), uuid4(), uuid4()
-    tenant_get, tenant_set = _tenant_holder()
+    tenant_get, tenant_set = tenant_holder()
 
-    miss = _MemSecretsTenantDsn({t_ok: dsn}, missing_tenant=t_miss)
+    miss = MemSecretsTenantByPath(
+        resource_suffix="rabbitmq",
+        values_by_tenant={t_ok: dsn}, missing_tenant=t_miss)
     r1 = RoutedRabbitMQClient(
         secrets=miss,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -271,10 +228,12 @@ async def test_routed_rabbitmq_secret_errors(
     finally:
         await r1.close()
 
-    br = _MemSecretsTenantDsn({t_ok: dsn}, broken_tenant=t_break)
+    br = MemSecretsTenantByPath(
+        resource_suffix="rabbitmq",
+        values_by_tenant={t_ok: dsn}, broken_tenant=t_break)
     r2 = RoutedRabbitMQClient(
         secrets=br,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -294,12 +253,14 @@ async def test_routed_rabbitmq_lru_and_evict(
 ) -> None:
     dsn = _dsn(rabbitmq_container)
     t1, t2, t3 = uuid4(), uuid4(), uuid4()
-    secrets = _MemSecretsTenantDsn(rabbitmq_dsns_for_lru_eviction(dsn, t1, t2, t3))
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantByPath(
+        resource_suffix="rabbitmq",
+        values_by_tenant=rabbitmq_dsns_for_lru_eviction(dsn, t1, t2, t3))
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedRabbitMQClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=2,
     )
@@ -350,12 +311,14 @@ async def test_routed_rabbitmq_consume_survives_rotation_eviction(
 
     dsn = _dsn(rabbitmq_container)
     t1 = uuid4()
-    secrets = _MemSecretsTenantDsn({t1: dsn})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantByPath(
+        resource_suffix="rabbitmq",
+        values_by_tenant={t1: dsn})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedRabbitMQClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -434,12 +397,14 @@ async def test_routed_rabbitmq_consume_survives_eviction_mid_fetch(
 
     dsn = _dsn(rabbitmq_container)
     t1 = uuid4()
-    secrets = _MemSecretsTenantDsn({t1: dsn})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantByPath(
+        resource_suffix="rabbitmq",
+        values_by_tenant={t1: dsn})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedRabbitMQClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -479,12 +444,14 @@ async def test_routed_rabbitmq_consume_timeout_excludes_caller_processing(
 
     dsn = _dsn(rabbitmq_container)
     t1 = uuid4()
-    secrets = _MemSecretsTenantDsn({t1: dsn})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantByPath(
+        resource_suffix="rabbitmq",
+        values_by_tenant={t1: dsn})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedRabbitMQClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -533,12 +500,14 @@ async def test_routed_rabbitmq_guarded_registry_full_facade(
 
     dsn = _dsn(rabbitmq_container)
     t1 = uuid4()
-    secrets = _MemSecretsTenantDsn({t1: dsn})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantByPath(
+        resource_suffix="rabbitmq",
+        values_by_tenant={t1: dsn})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedRabbitMQClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
         guarded=True,

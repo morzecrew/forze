@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
 from contextlib import aclosing
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
@@ -21,10 +20,17 @@ from forze.application.contracts.secrets import SecretRef
 from forze_sqs.kernel.client import RoutedSQSClient, SQSClient
 from tests.integration._routed_lru_helpers import sqs_payloads_for_lru_eviction
 from tests.support.floci import FlociContainer
+from tests.support.secrets_fixtures import (
+    MemSecretsByPath,
+    MemSecretsTenantJson,
+    tenant_holder,
+    tenant_secret_ref,
+)
 
 
-def _ref(tid: UUID) -> SecretRef:
-    return SecretRef(path=f"tenants/{tid}/sqs")
+def _tenant_ref(tid: UUID) -> SecretRef:
+    return tenant_secret_ref(tid, "sqs")
+
 
 def _payload(endpoint: str) -> dict[str, str]:
     return {
@@ -33,64 +39,6 @@ def _payload(endpoint: str) -> dict[str, str]:
         "access_key_id": "test",
         "secret_access_key": "test",
     }
-
-class _MemSecretsJson:
-    def __init__(
-        self,
-        path_to_json: dict[str, str],
-        *,
-        missing_path: str | None = None,
-        broken_path: str | None = None,
-    ) -> None:
-        self._paths = path_to_json
-        self._missing_path = missing_path
-        self._broken_path = broken_path
-
-    async def resolve_str(self, ref: SecretRef) -> str:
-        if self._broken_path is not None and ref.path == self._broken_path:
-            raise RuntimeError("vault unavailable")
-        if self._missing_path is not None and ref.path == self._missing_path:
-            raise exc.not_found(
-                f"No secret for {ref.path!r}",
-                details={"ref": ref.path},
-            )
-        try:
-            return self._paths[ref.path]
-        except KeyError as e:
-            raise exc.not_found(
-                f"No secret for {ref.path!r}",
-                details={"ref": ref.path},
-            ) from e
-
-    async def exists(self, ref: SecretRef) -> bool:
-        return ref.path in self._paths
-
-class _MemSecretsTenantJson(_MemSecretsJson):
-    def __init__(
-        self,
-        payloads: dict[UUID, dict[str, str]],
-        *,
-        missing_tenant: UUID | None = None,
-        broken_tenant: UUID | None = None,
-    ) -> None:
-        paths = {
-            f"tenants/{tid}/sqs": json.dumps(payload)
-            for tid, payload in payloads.items()
-        }
-        mp = f"tenants/{missing_tenant}/sqs" if missing_tenant else None
-        bp = f"tenants/{broken_tenant}/sqs" if broken_tenant else None
-        super().__init__(paths, missing_path=mp, broken_path=bp)
-
-def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None], None]]:
-    slot: list[UUID | None] = [None]
-
-    def getter() -> UUID | None:
-        return slot[0]
-
-    def setter(value: UUID | None) -> None:
-        slot[0] = value
-
-    return getter, setter
 
 async def _receive_until(
     client: RoutedSQSClient,
@@ -130,12 +78,14 @@ async def test_routed_sqs_enqueue_receive_consume_ack(
 ) -> None:
     endpoint = floci_container.get_url()
     t1 = uuid4()
-    secrets = _MemSecretsTenantJson({t1: _payload(endpoint)})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantJson(
+        resource_suffix="sqs",
+        payloads_by_tenant={t1: _payload(endpoint)})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedSQSClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -195,8 +145,8 @@ async def test_routed_sqs_mapping_secret_ref(
     endpoint = floci_container.get_url()
     t1 = uuid4()
     custom = SecretRef(path=f"cfg/sqs/{uuid4().hex[:12]}")
-    secrets = _MemSecretsJson({custom.path: json.dumps(_payload(endpoint))})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsByPath({custom.path: json.dumps(_payload(endpoint))})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedSQSClient(
         secrets=secrets,
@@ -218,12 +168,14 @@ async def test_routed_sqs_requires_startup_and_tenant(
 ) -> None:
     endpoint = floci_container.get_url()
     t1 = uuid4()
-    secrets = _MemSecretsTenantJson({t1: _payload(endpoint)})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantJson(
+        resource_suffix="sqs",
+        payloads_by_tenant={t1: _payload(endpoint)})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedSQSClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -246,12 +198,14 @@ async def test_routed_sqs_secret_errors(
 ) -> None:
     endpoint = floci_container.get_url()
     t_ok, t_miss, t_break = uuid4(), uuid4(), uuid4()
-    tenant_get, tenant_set = _tenant_holder()
+    tenant_get, tenant_set = tenant_holder()
 
-    miss = _MemSecretsTenantJson({t_ok: _payload(endpoint)}, missing_tenant=t_miss)
+    miss = MemSecretsTenantJson(
+        resource_suffix="sqs",
+        payloads_by_tenant={t_ok: _payload(endpoint)}, missing_tenant=t_miss)
     r1 = RoutedSQSClient(
         secrets=miss,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -263,10 +217,12 @@ async def test_routed_sqs_secret_errors(
     finally:
         await r1.close()
 
-    br = _MemSecretsTenantJson({t_ok: _payload(endpoint)}, broken_tenant=t_break)
+    br = MemSecretsTenantJson(
+        resource_suffix="sqs",
+        payloads_by_tenant={t_ok: _payload(endpoint)}, broken_tenant=t_break)
     r2 = RoutedSQSClient(
         secrets=br,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -285,14 +241,14 @@ async def test_routed_sqs_invalid_json_raises_core_error(
 ) -> None:
     # endpoint = floci_container.get_url()
     t1 = uuid4()
-    secrets = _MemSecretsJson(
+    secrets = MemSecretsByPath(
         {f"tenants/{t1}/sqs": "{bad-json"},
     )
-    tenant_get, tenant_set = _tenant_holder()
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedSQSClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -317,12 +273,14 @@ async def test_routed_sqs_consume_survives_rotation_eviction(
 
     endpoint = floci_container.get_url()
     t1 = uuid4()
-    secrets = _MemSecretsTenantJson({t1: _payload(endpoint)})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantJson(
+        resource_suffix="sqs",
+        payloads_by_tenant={t1: _payload(endpoint)})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedSQSClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -424,12 +382,14 @@ async def test_routed_sqs_guarded_registry_full_facade(
 
     endpoint = floci_container.get_url()
     t1 = uuid4()
-    secrets = _MemSecretsTenantJson({t1: _payload(endpoint)})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantJson(
+        resource_suffix="sqs",
+        payloads_by_tenant={t1: _payload(endpoint)})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedSQSClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
         guarded=True,
@@ -474,12 +434,14 @@ async def test_routed_sqs_consume_retries_transient_receive_failures(
 
     endpoint = floci_container.get_url()
     t1 = uuid4()
-    secrets = _MemSecretsTenantJson({t1: _payload(endpoint)})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantJson(
+        resource_suffix="sqs",
+        payloads_by_tenant={t1: _payload(endpoint)})
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedSQSClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -523,10 +485,10 @@ async def test_routed_sqs_consume_retries_retryable_resolution_failures() -> Non
         async def exists(self, ref: SecretRef) -> bool:
             return False
 
-    tenant_get, tenant_set = _tenant_holder()
+    tenant_get, tenant_set = tenant_holder()
     routed = RoutedSQSClient(
         secrets=_DownSecrets(),
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -550,14 +512,15 @@ async def test_routed_sqs_consume_raises_terminal_resolution_errors() -> None:
     the pre-rotation-fix contract, where resolution happened before the loop."""
 
     t_known, t_missing = uuid4(), uuid4()
-    secrets = _MemSecretsTenantJson(
-        {t_known: _payload("http://sqs.invalid:1")}, missing_tenant=t_missing
+    secrets = MemSecretsTenantJson(
+        resource_suffix="sqs",
+        payloads_by_tenant={t_known: _payload("http://sqs.invalid:1")}, missing_tenant=t_missing
     )
-    tenant_get, tenant_set = _tenant_holder()
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedSQSClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -588,12 +551,14 @@ async def test_routed_sqs_lru_and_evict(
     endpoint = floci_container.get_url()
     p = _payload(endpoint)
     t1, t2, t3 = uuid4(), uuid4(), uuid4()
-    secrets = _MemSecretsTenantJson(sqs_payloads_for_lru_eviction(p, t1, t2, t3))
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantJson(
+        resource_suffix="sqs",
+        payloads_by_tenant=sqs_payloads_for_lru_eviction(p, t1, t2, t3))
+    tenant_get, tenant_set = tenant_holder()
 
     routed = RoutedSQSClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=2,
     )

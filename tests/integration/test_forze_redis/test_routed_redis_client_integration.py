@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from contextlib import suppress
 from datetime import timedelta
 from unittest.mock import patch
@@ -11,7 +10,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException
 
 pytest.importorskip("redis")
 
@@ -19,82 +18,33 @@ from testcontainers.redis import RedisContainer
 
 from forze.application.contracts.secrets import SecretRef
 from forze_redis.kernel.client import RedisClient, RedisConfig, RoutedRedisClient
+from tests.support.secrets_fixtures import (
+    MemSecretsTenantByPath,
+    tenant_holder,
+    tenant_secret_ref,
+)
 
 
-def _ref(tid: UUID) -> SecretRef:
-    return SecretRef(path=f"tenants/{tid}/redis")
+def _tenant_ref(tid: UUID) -> SecretRef:
+    return tenant_secret_ref(tid, "redis")
+
 
 def _dsn(redis_container: RedisContainer, db: int) -> str:
     host = redis_container.get_container_host_ip()
     port = redis_container.get_exposed_port(6379)
     return f"redis://{host}:{port}/{db}"
 
-class _MemSecrets:
-    def __init__(
-        self,
-        dsns: dict[UUID, str],
-        *,
-        missing_tenant: UUID | None = None,
-        broken_tenant: UUID | None = None,
-    ) -> None:
-        self._dsns = dsns
-        self._missing_tenant = missing_tenant
-        self._broken_tenant = broken_tenant
-
-    async def resolve_str(self, ref: SecretRef) -> str:
-        if self._broken_tenant is not None:
-            tid = self._tid_for_ref(ref)
-            if tid == self._broken_tenant:
-                raise RuntimeError("vault unavailable")
-        if self._missing_tenant is not None:
-            tid = self._tid_for_ref(ref)
-            if tid == self._missing_tenant:
-                raise exc.not_found(
-                    f"No secret for {ref.path!r}",
-                    details={"ref": ref.path},
-                )
-        for tid, dsn in self._dsns.items():
-            if ref.path == f"tenants/{tid}/redis":
-                return dsn
-        raise exc.not_found(
-            f"No secret for {ref.path!r}",
-            details={"ref": ref.path},
-        )
-
-    def _tid_for_ref(self, ref: SecretRef) -> UUID | None:
-        prefix = "tenants/"
-        suffix = "/redis"
-        if not ref.path.startswith(prefix) or not ref.path.endswith(suffix):
-            return None
-        try:
-            return UUID(ref.path[len(prefix) : -len(suffix)])
-        except ValueError:
-            return None
-
-    async def exists(self, ref: SecretRef) -> bool:
-        tid = self._tid_for_ref(ref)
-        return tid is not None and tid in self._dsns
-
-def _tenant_holder() -> tuple[Callable[[], UUID | None], Callable[[UUID | None], None]]:
-    slot: list[UUID | None] = [None]
-
-    def getter() -> UUID | None:
-        return slot[0]
-
-    def setter(value: UUID | None) -> None:
-        slot[0] = value
-
-    return getter, setter
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_redis_health_pipeline_kv(redis_container: RedisContainer) -> None:
     t1 = uuid4()
-    secrets = _MemSecrets({t1: _dsn(redis_container, 0)})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantByPath(
+        resource_suffix="redis",
+        values_by_tenant={t1: _dsn(redis_container, 0)})
+    tenant_get, tenant_set = tenant_holder()
     routed = RoutedRedisClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         pool_config=RedisConfig(max_size=5),
         max_cached_tenants=4,
@@ -119,11 +69,13 @@ async def test_routed_redis_port_delegators(redis_container: RedisContainer) -> 
     """Exercise routed wrappers over :class:`RedisClient` command helpers."""
 
     t1 = uuid4()
-    secrets = _MemSecrets({t1: _dsn(redis_container, 0)})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantByPath(
+        resource_suffix="redis",
+        values_by_tenant={t1: _dsn(redis_container, 0)})
+    tenant_get, tenant_set = tenant_holder()
     routed = RoutedRedisClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         pool_config=RedisConfig(max_size=5),
         max_cached_tenants=4,
@@ -226,17 +178,18 @@ async def test_routed_redis_port_delegators(redis_container: RedisContainer) -> 
 @pytest.mark.asyncio
 async def test_routed_redis_lru_different_db_indexes(redis_container: RedisContainer) -> None:
     t1, t2, t3 = uuid4(), uuid4(), uuid4()
-    secrets = _MemSecrets(
-        {
+    secrets = MemSecretsTenantByPath(
+        resource_suffix="redis",
+        values_by_tenant={
             t1: _dsn(redis_container, 0),
             t2: _dsn(redis_container, 1),
             t3: _dsn(redis_container, 2),
         }
     )
-    tenant_get, tenant_set = _tenant_holder()
+    tenant_get, tenant_set = tenant_holder()
     routed = RoutedRedisClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         pool_config=RedisConfig(max_size=5),
         max_cached_tenants=2,
@@ -279,16 +232,17 @@ async def test_routed_redis_key_isolation_across_db_indexes(
     redis_container: RedisContainer,
 ) -> None:
     ta, tb = uuid4(), uuid4()
-    secrets = _MemSecrets(
-        {
+    secrets = MemSecretsTenantByPath(
+        resource_suffix="redis",
+        values_by_tenant={
             ta: _dsn(redis_container, 0),
             tb: _dsn(redis_container, 1),
         }
     )
-    tenant_get, tenant_set = _tenant_holder()
+    tenant_get, tenant_set = tenant_holder()
     routed = RoutedRedisClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         pool_config=RedisConfig(max_size=5),
         max_cached_tenants=4,
@@ -307,11 +261,13 @@ async def test_routed_redis_key_isolation_across_db_indexes(
 @pytest.mark.asyncio
 async def test_routed_redis_stream_touchpoint(redis_container: RedisContainer) -> None:
     t1 = uuid4()
-    secrets = _MemSecrets({t1: _dsn(redis_container, 0)})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantByPath(
+        resource_suffix="redis",
+        values_by_tenant={t1: _dsn(redis_container, 0)})
+    tenant_get, tenant_set = tenant_holder()
     routed = RoutedRedisClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         pool_config=RedisConfig(max_size=5),
         max_cached_tenants=4,
@@ -332,11 +288,13 @@ async def test_routed_redis_stream_touchpoint(redis_container: RedisContainer) -
 async def test_routed_redis_secret_errors(redis_container: RedisContainer) -> None:
     uri = _dsn(redis_container, 0)
     t_ok, t_miss, t_break = uuid4(), uuid4(), uuid4()
-    secrets_miss = _MemSecrets({t_ok: uri}, missing_tenant=t_miss)
-    tenant_get, tenant_set = _tenant_holder()
+    secrets_miss = MemSecretsTenantByPath(
+        resource_suffix="redis",
+        values_by_tenant={t_ok: uri}, missing_tenant=t_miss)
+    tenant_get, tenant_set = tenant_holder()
     routed_miss = RoutedRedisClient(
         secrets=secrets_miss,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -348,10 +306,12 @@ async def test_routed_redis_secret_errors(redis_container: RedisContainer) -> No
     finally:
         await routed_miss.close()
 
-    secrets_break = _MemSecrets({t_ok: uri}, broken_tenant=t_break)
+    secrets_break = MemSecretsTenantByPath(
+        resource_suffix="redis",
+        values_by_tenant={t_ok: uri}, broken_tenant=t_break)
     routed_break = RoutedRedisClient(
         secrets=secrets_break,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
@@ -367,11 +327,13 @@ async def test_routed_redis_secret_errors(redis_container: RedisContainer) -> No
 @pytest.mark.asyncio
 async def test_routed_redis_evict_and_close(redis_container: RedisContainer) -> None:
     t1 = uuid4()
-    secrets = _MemSecrets({t1: _dsn(redis_container, 0)})
-    tenant_get, tenant_set = _tenant_holder()
+    secrets = MemSecretsTenantByPath(
+        resource_suffix="redis",
+        values_by_tenant={t1: _dsn(redis_container, 0)})
+    tenant_get, tenant_set = tenant_holder()
     routed = RoutedRedisClient(
         secrets=secrets,
-        secret_ref_for_tenant=_ref,
+        secret_ref_for_tenant=_tenant_ref,
         tenant_provider=tenant_get,
         max_cached_tenants=4,
     )
