@@ -12,6 +12,24 @@ from forze_fastapi.routes import attach_readiness_route
 attach_readiness_route(router, runtime)   # GET /readyz → 200 / 503 draining
 ```
 
+The drain gate says nothing about whether dependencies are reachable — an un-drained process whose database is gone still answers `ready`. Name the clients you cannot serve without and each is asked its `health()`:
+
+```python
+from datetime import timedelta
+
+from forze_postgres import PostgresClientDepKey
+from forze_redis import RedisClientDepKey
+
+attach_readiness_route(
+    router,
+    runtime,
+    probes={"postgres": PostgresClientDepKey, "redis": RedisClientDepKey},
+    probe_timeout=timedelta(seconds=2),   # per probe, not for the sweep
+)
+```
+
+Any failed check makes the response `503 {"status": "degraded", "checks": {...}}`, with `{"ok": bool, "detail": str}` per dependency. `probe_timeout` is per probe deliberately: a sweep-wide deadline cancels every probe when one dependency's driver retries past it, and answers with an empty breakdown.
+
 Background loops the runtime owns stop **between units of work** rather than being cancelled mid-flight, and register as drainable. A custom loop or consumer must accept the stop signal to take part.
 
 ## Quiesce: bring the planes to rest

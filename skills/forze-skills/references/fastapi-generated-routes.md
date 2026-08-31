@@ -102,7 +102,10 @@ The facade runs each operation through the pipeline (mapping, hooks, transaction
 
 - `attach_readiness_route(router, runtime)` (from `forze_fastapi.routes`) adds
   `GET /readyz`: `200` while serving, `503` once shutdown starts draining —
-  point the load balancer's readiness check here.
+  point the load balancer's readiness check here. Pass
+  `probes={"postgres": PostgresClientDepKey, ...}` to also sweep each named
+  client's `health()` and answer `503 degraded` with a per-dependency `checks`
+  breakdown; see the shutdown/readiness reference.
 - `InvocationMetadataMiddleware(..., bind_deadline_from_header=True)` opts in
   to honoring an upstream `X-Forze-Deadline-Budget` header (tighten-only, so a
   forged value can only shorten the sender's own request).

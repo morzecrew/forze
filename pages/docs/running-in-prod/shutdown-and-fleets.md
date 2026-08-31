@@ -69,6 +69,63 @@ Stdlib `asyncio`, no HTTP framework, same runtime state, same drain semantics: i
 reports `draining` for the whole window and closes only after. See
 [The Grafana stack](grafana-stack.md#probes) for the Kubernetes mapping.
 
+### Are the dependencies reachable?
+
+The drain gate answers whether the process is *willing* to take traffic. It says
+nothing about whether it can serve one: an un-drained process whose database is gone
+answers `ready`, the load balancer keeps routing, and every request 500s.
+
+Name the clients you cannot serve without and each is resolved from the deps
+container and asked `health()` — the signature every forze client port already
+declares:
+
+```python
+from datetime import timedelta
+
+from forze_postgres import PostgresClientDepKey
+from forze_redis import RedisClientDepKey
+
+attach_readiness_route(
+    router,
+    runtime,
+    probes={"postgres": PostgresClientDepKey, "redis": RedisClientDepKey},
+    probe_timeout=timedelta(seconds=2),
+)
+```
+
+The response then carries a per-dependency breakdown, and any failed check makes the
+whole probe a `503`:
+
+```json
+{"status": "degraded",
+ "checks": {"postgres": {"ok": true,  "detail": "ok"},
+            "redis":    {"ok": false, "detail": "timed out after 2.0s"}}}
+```
+
+`probe_timeout` is the budget for **each** probe, not for the sweep — deliberately.
+The two look equivalent, since the probes run concurrently and the wall clock is the
+same either way. They are not: when a dependency is unreachable its driver retries
+past the deadline, and a sweep-wide timeout then cancels *every* probe and answers
+`503` with `checks: {}` — no breakdown, in exactly the situation the breakdown exists
+for. Per probe, a hanging dependency is one failed check with a name on it.
+
+A probe reports failures and never becomes one. A client whose `health()` raises is
+reported as `{"ok": false, "detail": "<ExceptionType>"}` — the type and not the
+message, because a driver's connection error routinely carries the DSN and this body
+is served to anything that can reach the probe. Nothing is auto-discovered: the
+integrations satisfy `health()` structurally, with no base port to enumerate, and a
+sweep of every registered dependency would probe things readiness does not depend on.
+A `probe_timeout` that is not positive is refused at attach time.
+
+Keep the endpoint internal, as you would `/metrics`. `detail` is the client's own
+summary, and a failing driver's is its exception text — which routinely names the
+host, the port and the user it failed to authenticate as. That is exactly what the
+breakdown is for and exactly what should not reach the public internet. Every request
+also runs every probe, so the probe period is a real query rate against each
+dependency.
+
+No `probes` (the default) leaves the drain-gate-only behaviour untouched.
+
 ## Declare the fleet posture
 
 Some startup work is safe in one process and a stampede in twenty — N replicas
