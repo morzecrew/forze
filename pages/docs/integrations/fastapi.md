@@ -103,6 +103,15 @@ a route *under* a bypassed path stays governed — and they are the full mounted
 path, since middleware runs before routing: list `/api/livez`, not `/livez`, for a
 router mounted under `/api`.
 
+`check_bypass_paths` (run automatically by `runtime_lifespan`) fails the boot on
+the three ways that goes wrong: a bypassed path serving a **generated operation
+route** (it would read and write tenant data with nothing bound), the two
+middlewares carrying **different sets** (the one still resolving the context fails
+the request anyway, so the bypass reads as configured and does nothing), and a
+non-empty set matching **no route at all** — the prefix mistake above. A superset
+is fine and expected: `DEFAULT_HEALTH_PATHS` names ten paths and most apps serve
+three.
+
 When an upstream Forze service forwards its remaining [time
 budget](../running-in-prod/deadlines.md) as `X-Forze-Deadline-Budget`, opt in to
 honoring it with `InvocationMetadataMiddleware(...,

@@ -94,7 +94,8 @@ class InvocationMetadataMiddleware:
     exists to observe. Exact paths, never prefixes. Entries are the **full mounted
     path** (router prefixes included), the same as ``allowed_websocket_paths``: this
     middleware runs before routing, so a prefix mismatch simply never matches and the
-    probe goes on failing."""
+    probe goes on failing — :func:`~forze_fastapi.middlewares.check_bypass_paths` (run
+    by ``runtime_lifespan``) fails the boot on that rather than letting the probe 500."""
 
     # ....................... #
 

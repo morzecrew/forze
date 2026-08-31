@@ -97,7 +97,10 @@ class SecurityContextMiddleware:
     the softer tool: it still runs this middleware and still binds a *valid*
     credential). Entries are the **full mounted path** (router prefixes included),
     the same as ``allowed_websocket_paths``: this middleware runs before routing, so
-    a prefix mismatch simply never matches and the probe goes on failing."""
+    a prefix mismatch simply never matches and the probe goes on failing.
+    :func:`~forze_fastapi.middlewares.check_bypass_paths` (run by ``runtime_lifespan``)
+    fails the boot on that, on a bypassed path that serves a generated operation route,
+    and on the two middlewares carrying different sets."""
 
     # ....................... #
 

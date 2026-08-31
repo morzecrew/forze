@@ -7,11 +7,12 @@ require_fastapi()
 from collections.abc import Iterable, Mapping
 from typing import Any, Final, cast
 
-from fastapi.routing import iter_route_contexts
 from starlette.routing import WebSocketRoute
 from starlette.types import Receive, Scope, Send
 
 from forze.base.exceptions import exc
+
+from ._routes import iter_effective_routes
 
 # ----------------------- #
 
@@ -115,14 +116,7 @@ def check_websocket_allowlist(app: Any) -> None:
 
     websocket_routes: dict[str, list[Any]] = {}
 
-    # iter_route_contexts flattens nested router includes. The public path accessors
-    # are empty for websocket routes, so the effective (all-prefixes-applied) route
-    # is taken from the include context when present; a flat top-level route has no
-    # include context and its own path is already the full one.
-    for context in iter_route_contexts(list(getattr(app, "routes", ()))):
-        effective = getattr(getattr(context, "_route_context", None), "starlette_route", None)
-        route = effective if effective is not None else context.route
-
+    for route in iter_effective_routes(app):
         if isinstance(route, WebSocketRoute):
             websocket_routes.setdefault(route.path, []).append(route.endpoint)
 
