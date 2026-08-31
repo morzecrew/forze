@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6345,8 +6345,8 @@ nowhere does a handler learn which backend answered.</p>
 <span class="n">redis</span> <span class="o">=</span> <span class="n">RedisClient</span><span class="p">()</span>
 
 <span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
-    <span class="n">PostgresDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">rw_documents</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;orders&quot;</span><span class="p">:</span> <span class="n">orders_pg</span><span class="p">},</span> <span class="n">tx</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;orders&quot;</span><span class="p">}),</span>
-    <span class="n">RedisDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">redis</span><span class="p">,</span> <span class="n">caches</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;orders&quot;</span><span class="p">:</span> <span class="n">orders_cache</span><span class="p">}),</span>
+    <span class="n">PostgresDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">rw_documents</span><span class="o">=</span><span class="p">{</span><span class="s2">"orders"</span><span class="p">:</span> <span class="n">orders_pg</span><span class="p">},</span> <span class="n">tx</span><span class="o">=</span><span class="p">{</span><span class="s2">"orders"</span><span class="p">}),</span>
+    <span class="n">RedisDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">redis</span><span class="p">,</span> <span class="n">caches</span><span class="o">=</span><span class="p">{</span><span class="s2">"orders"</span><span class="p">:</span> <span class="n">orders_cache</span><span class="p">}),</span>
 <span class="p">)</span>
 </code></pre></div>
 <div class="admonition warning">
@@ -6377,11 +6377,11 @@ pure and cheap, while opening a pool is an ordered, fallible startup step.</p>
     <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
         <span class="n">PostgresLifecycleModule</span><span class="p">(</span>
             <span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span>
-            <span class="n">dsn</span><span class="o">=</span><span class="s2">&quot;postgresql://forze:forze@localhost:5432/forze&quot;</span><span class="p">,</span>
+            <span class="n">dsn</span><span class="o">=</span><span class="s2">"postgresql://forze:forze@localhost:5432/forze"</span><span class="p">,</span>
             <span class="n">config</span><span class="o">=</span><span class="n">PostgresConfig</span><span class="p">(</span><span class="n">min_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_size</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>
         <span class="p">),</span>
     <span class="p">)</span>
-    <span class="o">.</span><span class="n">with_steps</span><span class="p">(</span><span class="n">redis_lifecycle_step</span><span class="p">(</span><span class="n">dsn</span><span class="o">=</span><span class="s2">&quot;redis://localhost:6379/0&quot;</span><span class="p">))</span>
+    <span class="o">.</span><span class="n">with_steps</span><span class="p">(</span><span class="n">redis_lifecycle_step</span><span class="p">(</span><span class="n">dsn</span><span class="o">=</span><span class="s2">"redis://localhost:6379/0"</span><span class="p">))</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>Each step declares what it <code>requires</code> and <code>provides</code>, so the plan orders startup
@@ -6535,7 +6535,7 @@ alternative — is the subject of <a href="../../identity-tenancy-enc/multi-tena
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

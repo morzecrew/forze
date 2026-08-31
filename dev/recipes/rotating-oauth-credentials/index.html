@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6424,7 +6424,7 @@ rotate. Going the other way is not symmetric: rows already sealed still need the
 store wired without a cipher refuses them rather than returning garbage.</p>
 <p>Storing credentials in the clear is possible and has to be said out loud:</p>
 <div class="highlight"><pre><span></span><code><span class="n">PostgresRotatingCredentialsConfig</span><span class="p">(</span>
-    <span class="n">relation</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;public&quot;</span><span class="p">,</span> <span class="s2">&quot;rotating_credentials&quot;</span><span class="p">),</span>
+    <span class="n">relation</span><span class="o">=</span><span class="p">(</span><span class="s2">"public"</span><span class="p">,</span> <span class="s2">"rotating_credentials"</span><span class="p">),</span>
     <span class="n">exchanger</span><span class="o">=</span><span class="n">CrmTokenExchanger</span><span class="p">(</span><span class="n">http</span><span class="o">=...</span><span class="p">),</span>
     <span class="n">encrypt</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
     <span class="n">acknowledge_plaintext</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>   <span class="c1"># required — `encrypt=False` alone is refused</span>
@@ -6435,11 +6435,11 @@ store wired without a cipher refuses them rather than returning garbage.</p>
 obligation beyond being bounded is <strong>classification</strong>, because the store treats the two
 cases oppositely.</p>
 <div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">DemoOAuthProvider</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Stands in for the third party: rotates refresh tokens, and punishes reuse.</span>
+<span class="w">    </span><span class="sd">"""Stands in for the third party: rotates refresh tokens, and punishes reuse.</span>
 
 <span class="sd">    A production provider behaves this way whether or not you are ready for it — which is</span>
 <span class="sd">    the whole reason this plane exists.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">live_access</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
@@ -6450,11 +6450,11 @@ cases oppositely.</p>
         <span class="bp">self</span><span class="o">.</span><span class="n">_generation</span> <span class="o">=</span> <span class="mi">0</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">authorize</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;What a human completing the consent flow hands you, once.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""What a human completing the consent flow hands you, once."""</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">_generation</span> <span class="o">+=</span> <span class="mi">1</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">live_access</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;access-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_generation</span><span class="si">}</span><span class="s2">&quot;</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">live_refresh</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;refresh-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_generation</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">live_access</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"access-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_generation</span><span class="si">}</span><span class="s2">"</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">live_refresh</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"refresh-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_generation</span><span class="si">}</span><span class="s2">"</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">grant_revoked</span> <span class="o">=</span> <span class="kc">False</span>
 
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">live_access</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">live_refresh</span>
@@ -6463,7 +6463,7 @@ cases oppositely.</p>
         <span class="k">return</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">grant_revoked</span> <span class="ow">and</span> <span class="n">access_token</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">live_access</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">expire_access_token</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Time passing, from the provider&#39;s point of view.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">"""Time passing, from the provider's point of view."""</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">live_access</span> <span class="o">=</span> <span class="kc">None</span>
 
@@ -6474,16 +6474,16 @@ cases oppositely.</p>
         <span class="bp">self</span><span class="o">.</span><span class="n">exchanges</span> <span class="o">+=</span> <span class="mi">1</span>
 
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">grant_revoked</span><span class="p">:</span>
-            <span class="k">raise</span> <span class="ne">PermissionError</span><span class="p">(</span><span class="s2">&quot;invalid_grant: the grant was revoked&quot;</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="ne">PermissionError</span><span class="p">(</span><span class="s2">"invalid_grant: the grant was revoked"</span><span class="p">)</span>
 
         <span class="k">if</span> <span class="n">refresh_token</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">spent</span><span class="p">:</span>
             <span class="c1"># Reuse detection: the whole family dies, not just this call.</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">grant_revoked</span> <span class="o">=</span> <span class="kc">True</span>
 
-            <span class="k">raise</span> <span class="ne">PermissionError</span><span class="p">(</span><span class="s2">&quot;invalid_grant: refresh token reuse detected&quot;</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="ne">PermissionError</span><span class="p">(</span><span class="s2">"invalid_grant: refresh token reuse detected"</span><span class="p">)</span>
 
         <span class="k">if</span> <span class="n">refresh_token</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">live_refresh</span><span class="p">:</span>
-            <span class="k">raise</span> <span class="ne">PermissionError</span><span class="p">(</span><span class="s2">&quot;invalid_grant: unknown refresh token&quot;</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="ne">PermissionError</span><span class="p">(</span><span class="s2">"invalid_grant: unknown refresh token"</span><span class="p">)</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">spent</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">refresh_token</span><span class="p">)</span>
 
@@ -6491,12 +6491,12 @@ cases oppositely.</p>
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">DemoTokenExchanger</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;The application&#39;s half: one bounded call to the provider&#39;s token endpoint.</span>
+<span class="w">    </span><span class="sd">"""The application's half: one bounded call to the provider's token endpoint.</span>
 
 <span class="sd">    A production exchanger issues an HTTP request (typically over ``forze_http``). The only</span>
 <span class="sd">    thing it must get right beyond that is the classification below — a transient failure</span>
 <span class="sd">    reported as an invalid grant destroys a working credential.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">provider</span><span class="p">:</span> <span class="n">DemoOAuthProvider</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">provider</span> <span class="o">=</span> <span class="n">provider</span>
@@ -6534,7 +6534,7 @@ transient.</p>
 
 <span class="n">module</span> <span class="o">=</span> <span class="n">PostgresDepsModule</span><span class="p">(</span>
     <span class="n">rotating_credentials</span><span class="o">=</span><span class="n">PostgresRotatingCredentialsConfig</span><span class="p">(</span>
-        <span class="n">relation</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;public&quot;</span><span class="p">,</span> <span class="s2">&quot;rotating_credentials&quot;</span><span class="p">),</span>
+        <span class="n">relation</span><span class="o">=</span><span class="p">(</span><span class="s2">"public"</span><span class="p">,</span> <span class="s2">"rotating_credentials"</span><span class="p">),</span>
         <span class="n">exchanger</span><span class="o">=</span><span class="n">CrmTokenExchanger</span><span class="p">(</span><span class="n">http</span><span class="o">=...</span><span class="p">),</span>
         <span class="n">exchange_timeout</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">15</span><span class="p">),</span>
     <span class="p">),</span>
@@ -6548,22 +6548,22 @@ successful exchange and its commit — manufacturing precisely the lockout the p
 exists to prevent. There is no unbounded setting.</p>
 <h2 id="using-it">Using it<a class="headerlink" href="#using-it" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">call_api</span><span class="p">(</span><span class="n">store</span><span class="p">:</span> <span class="n">RotatingCredentialStorePort</span><span class="p">,</span> <span class="n">provider</span><span class="p">:</span> <span class="n">DemoOAuthProvider</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Use the credential, refreshing it when the provider stops accepting it.</span>
+<span class="w">    </span><span class="sd">"""Use the credential, refreshing it when the provider stops accepting it.</span>
 
 <span class="sd">    The whole pattern: read, and if the token is spent, hand the version you read back to</span>
-<span class="sd">    ``refresh``. That version is what lets the store tell &quot;nobody has rotated yet&quot; from</span>
-<span class="sd">    &quot;somebody already did&quot; — the loser of a race gets the winner&#39;s credential instead of</span>
+<span class="sd">    ``refresh``. That version is what lets the store tell "nobody has rotated yet" from</span>
+<span class="sd">    "somebody already did" — the loser of a race gets the winner's credential instead of</span>
 <span class="sd">    burning a token twice.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
 
     <span class="n">credential</span> <span class="o">=</span> <span class="k">await</span> <span class="n">store</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">GRANT_REF</span><span class="p">)</span>
 
     <span class="k">if</span> <span class="n">provider</span><span class="o">.</span><span class="n">accepts</span><span class="p">(</span><span class="n">credential</span><span class="o">.</span><span class="n">access_token</span><span class="p">):</span>
-        <span class="k">return</span> <span class="s2">&quot;ok&quot;</span>
+        <span class="k">return</span> <span class="s2">"ok"</span>
 
     <span class="n">fresh</span> <span class="o">=</span> <span class="k">await</span> <span class="n">store</span><span class="o">.</span><span class="n">refresh</span><span class="p">(</span><span class="n">GRANT_REF</span><span class="p">,</span> <span class="n">observed</span><span class="o">=</span><span class="n">credential</span><span class="o">.</span><span class="n">version</span><span class="p">)</span>
 
-    <span class="k">return</span> <span class="s2">&quot;ok&quot;</span> <span class="k">if</span> <span class="n">provider</span><span class="o">.</span><span class="n">accepts</span><span class="p">(</span><span class="n">fresh</span><span class="o">.</span><span class="n">access_token</span><span class="p">)</span> <span class="k">else</span> <span class="s2">&quot;rejected&quot;</span>
+    <span class="k">return</span> <span class="s2">"ok"</span> <span class="k">if</span> <span class="n">provider</span><span class="o">.</span><span class="n">accepts</span><span class="p">(</span><span class="n">fresh</span><span class="o">.</span><span class="n">access_token</span><span class="p">)</span> <span class="k">else</span> <span class="s2">"rejected"</span>
 </code></pre></div>
 <p>The <code>observed</code> version is the entire single-flight mechanism. Under the per-credential
 lock the store re-reads first: if the stored version has moved past yours, someone
@@ -6575,7 +6575,7 @@ and the store hands the refresh token straight to the exchanger. You cannot repl
 rotated token because you never have one.</p>
 <h2 id="getting-the-first-grant-and-getting-back-from-a-burn">Getting the first grant, and getting back from a burn<a class="headerlink" href="#getting-the-first-grant-and-getting-back-from-a-burn" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">authorize</span><span class="p">(</span><span class="n">store</span><span class="p">:</span> <span class="n">RotatingCredentialStorePort</span><span class="p">,</span> <span class="n">provider</span><span class="p">:</span> <span class="n">DemoOAuthProvider</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Store a freshly consented grant — the entry point, and the only way back from a burn.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Store a freshly consented grant — the entry point, and the only way back from a burn."""</span>
 
     <span class="n">access</span><span class="p">,</span> <span class="n">refresh</span> <span class="o">=</span> <span class="n">provider</span><span class="o">.</span><span class="n">authorize</span><span class="p">()</span>
 
@@ -6587,7 +6587,7 @@ rotated token because you never have one.</p>
             <span class="n">expires_at</span><span class="o">=</span><span class="n">utcnow</span><span class="p">()</span> <span class="o">+</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">hours</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span>
             <span class="c1"># Carried forward on every rotation, so an account-specific endpoint stays</span>
             <span class="c1"># addressable without a second lookup.</span>
-            <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;host&quot;</span><span class="p">:</span> <span class="s2">&quot;crm.example&quot;</span><span class="p">},</span>
+            <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">"host"</span><span class="p">:</span> <span class="s2">"crm.example"</span><span class="p">},</span>
         <span class="p">),</span>
     <span class="p">)</span>
 </code></pre></div>
@@ -6645,10 +6645,10 @@ on-demand refresh. The refresh token's clock is idleness, and it is what
     <span class="n">refresh_if_idle_for</span><span class="p">:</span> <span class="n">timedelta</span> <span class="o">=</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">30</span><span class="p">),</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">ExecutionContext</span><span class="p">,</span> <span class="n">MockState</span><span class="p">,</span> <span class="n">DurableFunctionRunner</span><span class="p">,</span> <span class="n">CredentialSweeper</span><span class="p">]:</span>
     <span class="c1"># The exchanger is the one thing the framework cannot default: it is a call to someone</span>
-    <span class="c1"># else&#39;s provider, so passing it is what registers the store at all.</span>
+    <span class="c1"># else's provider, so passing it is what registers the store at all.</span>
     <span class="n">state</span> <span class="o">=</span> <span class="n">MockState</span><span class="p">()</span>
 
-    <span class="c1"># The sweeper is two durable functions on the app&#39;s registry: a per-tenant sweep that</span>
+    <span class="c1"># The sweeper is two durable functions on the app's registry: a per-tenant sweep that</span>
     <span class="c1"># scans for idle grants, and a per-grant refresh it enqueues — so one dead provider</span>
     <span class="c1"># costs one failing run, never a stalled pass. The idle window is per-provider</span>
     <span class="c1"># configuration: set it well inside their documented inactivity limit.</span>
@@ -6675,16 +6675,16 @@ on-demand refresh. The refresh token's clock is idleness, and it is what
     <span class="n">sweeper</span><span class="p">:</span> <span class="n">CredentialSweeper</span><span class="p">,</span>
     <span class="n">provider</span><span class="p">:</span> <span class="n">DemoOAuthProvider</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;The half on-demand refresh cannot do: keep a grant alive that nobody is using.</span>
+<span class="w">    </span><span class="sd">"""The half on-demand refresh cannot do: keep a grant alive that nobody is using.</span>
 
 <span class="sd">    Providers expire refresh tokens from *non-use* — weeks to months, reset by every</span>
 <span class="sd">    exchange — so a tenant that goes quiet loses its grant permanently unless something</span>
 <span class="sd">    exchanges on its behalf before the deadline. Nothing in this act calls the API.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
 
     <span class="c1"># Production wires the cadence once; each firing becomes a durable sweep run.</span>
-    <span class="n">schedule</span> <span class="o">=</span> <span class="k">await</span> <span class="n">sweeper</span><span class="o">.</span><span class="n">ensure_cron</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">cron</span><span class="o">=</span><span class="s2">&quot;0 4 * * *&quot;</span><span class="p">)</span>
-    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;sweep scheduled&quot;</span><span class="p">,</span> <span class="n">schedule_id</span><span class="o">=</span><span class="n">schedule</span><span class="o">.</span><span class="n">schedule_id</span><span class="p">)</span>
+    <span class="n">schedule</span> <span class="o">=</span> <span class="k">await</span> <span class="n">sweeper</span><span class="o">.</span><span class="n">ensure_cron</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">cron</span><span class="o">=</span><span class="s2">"0 4 * * *"</span><span class="p">)</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"sweep scheduled"</span><span class="p">,</span> <span class="n">schedule_id</span><span class="o">=</span><span class="n">schedule</span><span class="o">.</span><span class="n">schedule_id</span><span class="p">)</span>
 
     <span class="c1"># A quarter with no traffic goes by (compressed: the demo window is milliseconds</span>
     <span class="c1"># where production uses days, purely so this example runs in the blink of an eye).</span>
@@ -6699,12 +6699,12 @@ on-demand refresh. The refresh token's clock is idleness, and it is what
 
     <span class="n">outcome</span> <span class="o">=</span> <span class="n">record</span><span class="o">.</span><span class="n">output_json</span> <span class="ow">or</span> <span class="p">{}</span>
     <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
-        <span class="s2">&quot;idle grant kept alive without a single API call&quot;</span><span class="p">,</span>
-        <span class="n">due</span><span class="o">=</span><span class="n">outcome</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;due&quot;</span><span class="p">),</span>
+        <span class="s2">"idle grant kept alive without a single API call"</span><span class="p">,</span>
+        <span class="n">due</span><span class="o">=</span><span class="n">outcome</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"due"</span><span class="p">),</span>
         <span class="n">exchanges_spent</span><span class="o">=</span><span class="n">provider</span><span class="o">.</span><span class="n">exchanges</span> <span class="o">-</span> <span class="n">exchanges_before</span><span class="p">,</span>
         <span class="c1"># Not named *authorization*: the log masker redacts matching keys, and this is a</span>
         <span class="c1"># list of ref paths — operator routing data, never a secret.</span>
-        <span class="n">re_consent_needed</span><span class="o">=</span><span class="n">outcome</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;needs_reauthorization&quot;</span><span class="p">),</span>
+        <span class="n">re_consent_needed</span><span class="o">=</span><span class="n">outcome</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"needs_reauthorization"</span><span class="p">),</span>
     <span class="p">)</span>
 </code></pre></div>
 <p>Daily is almost always right for the cadence: the idle window is weeks, so it only has to
@@ -6841,7 +6841,7 @@ implementation that stores documents correctly while getting the ordering wrong 
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

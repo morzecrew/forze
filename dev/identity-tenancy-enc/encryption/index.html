@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6529,7 +6529,7 @@ that maps a tenant to its KEK reference:</p>
 
 <span class="n">CryptoDepsModule</span><span class="p">(</span>
     <span class="n">kms</span><span class="o">=</span><span class="n">VaultTransitKeyManagement</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">vault</span><span class="p">),</span>  <span class="c1"># mount lives on the client config</span>
-    <span class="n">directory</span><span class="o">=</span><span class="n">StaticKeyDirectory</span><span class="p">(</span><span class="n">KeyRef</span><span class="p">(</span><span class="n">key_id</span><span class="o">=</span><span class="s2">&quot;app-kek&quot;</span><span class="p">)),</span>  <span class="c1"># one KEK for the deployment</span>
+    <span class="n">directory</span><span class="o">=</span><span class="n">StaticKeyDirectory</span><span class="p">(</span><span class="n">KeyRef</span><span class="p">(</span><span class="n">key_id</span><span class="o">=</span><span class="s2">"app-kek"</span><span class="p">)),</span>  <span class="c1"># one KEK for the deployment</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>That registers the key manager, the AEAD, the directory, and the composed
@@ -6600,11 +6600,11 @@ page is the per-surface detail.</p>
 <p>A document spec names the fields to seal. Tiers run weakest to strongest —
 <code>none</code> &lt; <code>field</code> &lt; <code>envelope</code> — and a spec derives its tier from what it marks:</p>
 <div class="highlight"><pre><span></span><code><span class="n">DocumentSpec</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;patients&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"patients"</span><span class="p">,</span>
     <span class="n">read</span><span class="o">=</span><span class="n">Patient</span><span class="p">,</span>
     <span class="n">encryption</span><span class="o">=</span><span class="n">FieldEncryption</span><span class="p">(</span>
-        <span class="n">encrypted</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;ssn&quot;</span><span class="p">,</span> <span class="s2">&quot;diagnosis&quot;</span><span class="p">}),</span>
-        <span class="n">searchable</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;email&quot;</span><span class="p">}),</span>   <span class="c1"># deterministic — see below</span>
+        <span class="n">encrypted</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">"ssn"</span><span class="p">,</span> <span class="s2">"diagnosis"</span><span class="p">}),</span>
+        <span class="n">searchable</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">"email"</span><span class="p">}),</span>   <span class="c1"># deterministic — see below</span>
         <span class="n">binds_record_id</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>              <span class="c1"># bind the row id into the AAD</span>
     <span class="p">),</span>
 <span class="p">)</span>
@@ -6649,7 +6649,7 @@ snapshot store never re-exposes what the document sealed — automatic, no extra
 <h3 id="object-storage">Object storage<a class="headerlink" href="#object-storage" title="Permanent link">&para;</a></h3>
 <p>Object bytes encrypt per route with a single flag — the stored object is the
 envelope, decrypted transparently on read:</p>
-<div class="highlight"><pre><span></span><code><span class="n">S3StorageConfig</span><span class="p">(</span><span class="n">bucket</span><span class="o">=</span><span class="s2">&quot;uploads&quot;</span><span class="p">,</span> <span class="n">encrypt</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">S3StorageConfig</span><span class="p">(</span><span class="n">bucket</span><span class="o">=</span><span class="s2">"uploads"</span><span class="p">,</span> <span class="n">encrypt</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </code></pre></div>
 <p>The flag covers streaming too: <code>upload_stream</code> seals the object chunk by chunk
 in bounded memory, and <code>download_range</code> on such an object decrypts only the
@@ -6684,7 +6684,7 @@ cannot be sliced — read it back whole, via <code>download</code> or <code>down
 </tr>
 </tbody>
 </table>
-<div class="highlight"><pre><span></span><code><span class="n">OutboxSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;events&quot;</span><span class="p">,</span> <span class="n">codec</span><span class="o">=</span><span class="n">codec</span><span class="p">,</span> <span class="n">encryption</span><span class="o">=</span><span class="s2">&quot;end_to_end&quot;</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">OutboxSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"events"</span><span class="p">,</span> <span class="n">codec</span><span class="o">=</span><span class="n">codec</span><span class="p">,</span> <span class="n">encryption</span><span class="o">=</span><span class="s2">"end_to_end"</span><span class="p">)</span>
 </code></pre></div>
 <p>At <code>at_rest</code> the payload is ciphertext in your database and plaintext on the
 wire; at <code>end_to_end</code> it stays sealed through the broker and is opened only by
@@ -6697,7 +6697,7 @@ backend. Legacy plaintext rows written before a tier was raised still relay.</p>
 request, so a Forze-owned store (Redis/Postgres) holds that return value at rest.
 Seal it with one flag — the result is sealed on commit and opened on replay
 (metadata stays plaintext), bound to <code>(tenant, op:key)</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="n">IdempotencySpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;orders&quot;</span><span class="p">,</span> <span class="n">encrypt_result</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">IdempotencySpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"orders"</span><span class="p">,</span> <span class="n">encrypt_result</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="searchable-fields-and-rotation">Searchable fields and rotation<a class="headerlink" href="#searchable-fields-and-rotation" title="Permanent link">&para;</a></h2>
 <p>Deterministic (searchable) fields need a stable root secret, set on the crypto
@@ -6706,8 +6706,8 @@ lets equality queries hit:</p>
 <div class="highlight"><pre><span></span><code><span class="n">CryptoDepsModule</span><span class="p">(</span>
     <span class="n">kms</span><span class="o">=...</span><span class="p">,</span>
     <span class="n">directory</span><span class="o">=...</span><span class="p">,</span>
-    <span class="n">deterministic_root</span><span class="o">=</span><span class="n">load_secret</span><span class="p">(</span><span class="s2">&quot;search-root&quot;</span><span class="p">),</span>          <span class="c1"># &gt;= 32 bytes</span>
-    <span class="n">deterministic_previous_root</span><span class="o">=</span><span class="n">load_secret</span><span class="p">(</span><span class="s2">&quot;search-root-prev&quot;</span><span class="p">),</span>  <span class="c1"># rotation only</span>
+    <span class="n">deterministic_root</span><span class="o">=</span><span class="n">load_secret</span><span class="p">(</span><span class="s2">"search-root"</span><span class="p">),</span>          <span class="c1"># &gt;= 32 bytes</span>
+    <span class="n">deterministic_previous_root</span><span class="o">=</span><span class="n">load_secret</span><span class="p">(</span><span class="s2">"search-root-prev"</span><span class="p">),</span>  <span class="c1"># rotation only</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>Rotating the root is a two-phase overlap: set <code>deterministic_previous_root</code> to
@@ -6748,7 +6748,7 @@ whose derived tier is weaker — a fail-closed floor checked once, at startup,
 never per request:</p>
 <div class="highlight"><pre><span></span><code><span class="n">PostgresDepsModule</span><span class="p">(</span>
     <span class="n">client</span><span class="o">=...</span><span class="p">,</span>
-    <span class="n">required_encryption</span><span class="o">=</span><span class="s2">&quot;field&quot;</span><span class="p">,</span>  <span class="c1"># every document route must seal something</span>
+    <span class="n">required_encryption</span><span class="o">=</span><span class="s2">"field"</span><span class="p">,</span>  <span class="c1"># every document route must seal something</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>A spec that forgot to mark a field, or a storage route left in the clear, fails
@@ -6761,8 +6761,8 @@ Swap the static directory for a per-tenant one:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.crypto</span><span class="w"> </span><span class="kn">import</span> <span class="n">TenantTemplateKeyDirectory</span>
 
 <span class="n">directory</span> <span class="o">=</span> <span class="n">TenantTemplateKeyDirectory</span><span class="p">(</span>
-    <span class="n">template</span><span class="o">=</span><span class="s2">&quot;tenant/</span><span class="si">{tenant_id}</span><span class="s2">/kek&quot;</span><span class="p">,</span>
-    <span class="n">default_key_id</span><span class="o">=</span><span class="s2">&quot;shared-kek&quot;</span><span class="p">,</span>  <span class="c1"># used when no tenant is bound</span>
+    <span class="n">template</span><span class="o">=</span><span class="s2">"tenant/</span><span class="si">{tenant_id}</span><span class="s2">/kek"</span><span class="p">,</span>
+    <span class="n">default_key_id</span><span class="o">=</span><span class="s2">"shared-kek"</span><span class="p">,</span>  <span class="c1"># used when no tenant is bound</span>
 <span class="p">)</span>
 
 <span class="n">CryptoDepsModule</span><span class="p">(</span><span class="n">kms</span><span class="o">=</span><span class="n">VaultTransitKeyManagement</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">vault</span><span class="p">),</span> <span class="n">directory</span><span class="o">=</span><span class="n">directory</span><span class="p">)</span>
@@ -6776,7 +6776,7 @@ directory and creates its Transit key on onboarding (teardown opt-in via
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_vault.adapters</span><span class="w"> </span><span class="kn">import</span> <span class="n">VaultTransitTenantProvisioner</span>
 
 <span class="n">TenancyDepsModule</span><span class="p">(</span>
-    <span class="n">tenant_management</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;main&quot;</span><span class="p">},</span>
+    <span class="n">tenant_management</span><span class="o">=</span><span class="p">{</span><span class="s2">"main"</span><span class="p">},</span>
     <span class="n">tenant_provisioner</span><span class="o">=</span><span class="n">VaultTransitTenantProvisioner</span><span class="p">(</span>
         <span class="n">client</span><span class="o">=</span><span class="n">vault</span><span class="p">,</span> <span class="n">directory</span><span class="o">=</span><span class="n">directory</span>  <span class="c1"># same directory the keyring resolves with</span>
     <span class="p">),</span>
@@ -6800,9 +6800,9 @@ even be read back in order to migrate it.</p>
 <p>Name the outgoing key as the <strong>previous</strong> one instead. Reads then accept both while writes
 go only to the new key, so a sweep can move the data across:</p>
 <div class="highlight"><pre><span></span><code><span class="n">directory</span> <span class="o">=</span> <span class="n">TenantTemplateKeyDirectory</span><span class="p">(</span>
-    <span class="n">template</span><span class="o">=</span><span class="s2">&quot;tenant/</span><span class="si">{tenant_id}</span><span class="s2">/kek-v2&quot;</span><span class="p">,</span>           <span class="c1"># new writes land here</span>
-    <span class="n">previous_template</span><span class="o">=</span><span class="s2">&quot;tenant/</span><span class="si">{tenant_id}</span><span class="s2">/kek-v1&quot;</span><span class="p">,</span>  <span class="c1"># ...and old reads still work</span>
-    <span class="n">default_key_id</span><span class="o">=</span><span class="s2">&quot;shared-kek&quot;</span><span class="p">,</span>
+    <span class="n">template</span><span class="o">=</span><span class="s2">"tenant/</span><span class="si">{tenant_id}</span><span class="s2">/kek-v2"</span><span class="p">,</span>           <span class="c1"># new writes land here</span>
+    <span class="n">previous_template</span><span class="o">=</span><span class="s2">"tenant/</span><span class="si">{tenant_id}</span><span class="s2">/kek-v1"</span><span class="p">,</span>  <span class="c1"># ...and old reads still work</span>
+    <span class="n">default_key_id</span><span class="o">=</span><span class="s2">"shared-kek"</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>Run the <a href="#re-encrypting-stored-data">sweeps</a>, drop <code>previous_template</code>, and the old key is
@@ -6934,7 +6934,7 @@ unwrap calls, cache hits, and cold misses, the signal for whether
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

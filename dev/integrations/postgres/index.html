@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6325,7 +6325,7 @@
 inbox, idempotency, and durable execution on PostgreSQL. Persistence stays behind
 Forze contracts; PostgreSQL tables, indexes, and pools live at the edge.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">&#39;forze[postgres]&#39;</span>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">'forze[postgres]'</span>
 </code></pre></div>
 <p>Needs a reachable PostgreSQL. Search engines may need extensions (PGroonga for
 ranked text, pgvector for similarity).</p>
@@ -6340,8 +6340,8 @@ ranked text, pgvector for similarity).</p>
 <p><code>copy_rows</code> runs <code>COPY … FROM STDIN</code>, the engine's own bulk path — no bind-parameter
 ceiling, and 20–79× faster than a multi-VALUES <code>INSERT</code> at 10⁴–10⁵ rows:</p>
 <div class="highlight"><pre><span></span><code><span class="n">loaded</span> <span class="o">=</span> <span class="k">await</span> <span class="n">pg</span><span class="o">.</span><span class="n">copy_rows</span><span class="p">(</span>
-    <span class="p">(</span><span class="s2">&quot;analytics&quot;</span><span class="p">,</span> <span class="s2">&quot;events&quot;</span><span class="p">),</span>          <span class="c1"># (schema, table)</span>
-    <span class="p">(</span><span class="s2">&quot;id&quot;</span><span class="p">,</span> <span class="s2">&quot;occurred_at&quot;</span><span class="p">,</span> <span class="s2">&quot;payload&quot;</span><span class="p">),</span> <span class="c1"># columns, in row order</span>
+    <span class="p">(</span><span class="s2">"analytics"</span><span class="p">,</span> <span class="s2">"events"</span><span class="p">),</span>          <span class="c1"># (schema, table)</span>
+    <span class="p">(</span><span class="s2">"id"</span><span class="p">,</span> <span class="s2">"occurred_at"</span><span class="p">,</span> <span class="s2">"payload"</span><span class="p">),</span> <span class="c1"># columns, in row order</span>
     <span class="n">rows</span><span class="p">,</span>                             <span class="c1"># tuples, sync or async iterable</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -6368,16 +6368,16 @@ module, and open the pool from the lifecycle plan:</p>
 <span class="p">)</span>
 
 <span class="n">orders_pg</span> <span class="o">=</span> <span class="n">PostgresDocumentConfig</span><span class="p">(</span>
-    <span class="n">write</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;public&quot;</span><span class="p">,</span> <span class="s2">&quot;orders&quot;</span><span class="p">),</span>
-    <span class="n">read</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;public&quot;</span><span class="p">,</span> <span class="s2">&quot;orders&quot;</span><span class="p">),</span>
-    <span class="n">bookkeeping_strategy</span><span class="o">=</span><span class="s2">&quot;application&quot;</span><span class="p">,</span>  <span class="c1"># or &quot;database&quot; with an UPDATE trigger</span>
+    <span class="n">write</span><span class="o">=</span><span class="p">(</span><span class="s2">"public"</span><span class="p">,</span> <span class="s2">"orders"</span><span class="p">),</span>
+    <span class="n">read</span><span class="o">=</span><span class="p">(</span><span class="s2">"public"</span><span class="p">,</span> <span class="s2">"orders"</span><span class="p">),</span>
+    <span class="n">bookkeeping_strategy</span><span class="o">=</span><span class="s2">"application"</span><span class="p">,</span>  <span class="c1"># or "database" with an UPDATE trigger</span>
 <span class="p">)</span>
 
 <span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
-    <span class="n">PostgresDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">rw_documents</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;orders&quot;</span><span class="p">:</span> <span class="n">orders_pg</span><span class="p">},</span> <span class="n">tx</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;orders&quot;</span><span class="p">}),</span>
+    <span class="n">PostgresDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">rw_documents</span><span class="o">=</span><span class="p">{</span><span class="s2">"orders"</span><span class="p">:</span> <span class="n">orders_pg</span><span class="p">},</span> <span class="n">tx</span><span class="o">=</span><span class="p">{</span><span class="s2">"orders"</span><span class="p">}),</span>
 <span class="p">)</span>
 <span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
-    <span class="n">PostgresLifecycleModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">dsn</span><span class="o">=</span><span class="s2">&quot;postgresql://…&quot;</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">PostgresConfig</span><span class="p">()),</span>
+    <span class="n">PostgresLifecycleModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">dsn</span><span class="o">=</span><span class="s2">"postgresql://…"</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">PostgresConfig</span><span class="p">()),</span>
 <span class="p">)</span>
 </code></pre></div>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
@@ -6559,7 +6559,7 @@ module, and open the pool from the lifecycle plan:</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

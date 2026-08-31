@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6502,14 +6502,14 @@ what each generator produces.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">APIRouter</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_document_routes</span>
 
-<span class="n">router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;/notes&quot;</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;notes&quot;</span><span class="p">])</span>
+<span class="n">router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">"/notes"</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">"notes"</span><span class="p">])</span>
 
 <span class="n">attach_document_routes</span><span class="p">(</span>
     <span class="n">router</span><span class="p">,</span>
     <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span>  <span class="c1"># build_document_registry(spec, dtos).freeze()</span>
     <span class="n">ns</span><span class="o">=</span><span class="n">spec</span><span class="o">.</span><span class="n">default_namespace</span><span class="p">,</span>
     <span class="n">ctx_dep</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">,</span>
-    <span class="n">style</span><span class="o">=</span><span class="s2">&quot;rest&quot;</span><span class="p">,</span>
+    <span class="n">style</span><span class="o">=</span><span class="s2">"rest"</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="n">app</span><span class="o">.</span><span class="n">include_router</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
@@ -6558,7 +6558,7 @@ filter/query bodies with no natural REST verb, so there is no style choice —
 every operation is <code>POST /&lt;op&gt;</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_search_routes</span>
 
-<span class="n">search_router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;/notes/search&quot;</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;notes&quot;</span><span class="p">])</span>
+<span class="n">search_router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">"/notes/search"</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">"notes"</span><span class="p">])</span>
 
 <span class="n">attach_search_routes</span><span class="p">(</span>
     <span class="n">search_router</span><span class="p">,</span>
@@ -6583,14 +6583,14 @@ contain slashes. The style only decides paths and verbs:</p>
 </ul>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_storage_routes</span>
 
-<span class="n">files_router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;/files&quot;</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;files&quot;</span><span class="p">])</span>
+<span class="n">files_router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">"/files"</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">"files"</span><span class="p">])</span>
 
 <span class="n">attach_storage_routes</span><span class="p">(</span>
     <span class="n">files_router</span><span class="p">,</span>
     <span class="n">registry</span><span class="o">=</span><span class="n">storage_registry</span><span class="p">,</span>  <span class="c1"># build_storage_registry(storage_spec).freeze()</span>
     <span class="n">ns</span><span class="o">=</span><span class="n">storage_spec</span><span class="o">.</span><span class="n">default_namespace</span><span class="p">,</span>
     <span class="n">ctx_dep</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">,</span>
-    <span class="n">style</span><span class="o">=</span><span class="s2">&quot;rest&quot;</span><span class="p">,</span>
+    <span class="n">style</span><span class="o">=</span><span class="s2">"rest"</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
 <h3 id="downloads-streaming-ranges-caching">Downloads: streaming, ranges &amp; caching<a class="headerlink" href="#downloads-streaming-ranges-caching" title="Permanent link">&para;</a></h3>
@@ -6740,8 +6740,8 @@ idempotently.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.security</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnCookieCarrier</span>
 
 <span class="n">cookies</span> <span class="o">=</span> <span class="n">AuthnCookieCarrier</span><span class="p">(</span>
-    <span class="n">access_path</span><span class="o">=</span><span class="s2">&quot;/api&quot;</span><span class="p">,</span>              <span class="c1"># the access cookie rides ordinary API calls</span>
-    <span class="n">refresh_path</span><span class="o">=</span><span class="s2">&quot;/auth/refresh&quot;</span><span class="p">,</span>    <span class="c1"># the long-lived one rides exactly one route</span>
+    <span class="n">access_path</span><span class="o">=</span><span class="s2">"/api"</span><span class="p">,</span>              <span class="c1"># the access cookie rides ordinary API calls</span>
+    <span class="n">refresh_path</span><span class="o">=</span><span class="s2">"/auth/refresh"</span><span class="p">,</span>    <span class="c1"># the long-lived one rides exactly one route</span>
 <span class="p">)</span>
 
 <span class="n">attach_authn_routes</span><span class="p">(</span><span class="n">router</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx_dep</span><span class="p">,</span> <span class="n">cookies</span><span class="o">=</span><span class="n">cookies</span><span class="p">)</span>
@@ -6794,8 +6794,11 @@ transaction route the deps module registers.</p>
 <li><code>attach_jwks_route(router, jwks_provider, *, path="/.well-known/jwks.json",
   cache_max_age=300)</code> — the <abbr title="JSON Web Key Set">JWKS</abbr> document for token verification; excluded from the
   OpenAPI schema.</li>
-<li><code>attach_readiness_route(router, runtime, *, path="/readyz")</code> — 200 while the
-  runtime is active and not draining, 503 otherwise; excluded from the schema.</li>
+<li><code>attach_readiness_route(router, runtime, *, path="/readyz", probes=None,
+  probe_timeout=timedelta(seconds=2))</code> — 200 while the runtime is active and not
+  draining, 503 otherwise; excluded from the schema. <code>probes</code> maps a name to the
+  deps key of a client to ask <code>health()</code>, adding a <code>checks</code> breakdown and a
+  <code>degraded</code> 503 when a dependency is unreachable — see <a href="../../running-in-prod/shutdown-and-fleets/#readiness">Readiness</a>.</li>
 <li><code>attach_liveness_route(router, *, path="/livez")</code> — 200 unconditionally; reaching
   the handler is the check. Deliberately blind to drain, so a draining pod reads as
   alive-but-not-ready instead of dead. Excluded from the schema.</li>
@@ -6819,11 +6822,11 @@ once:</p>
     <span class="n">apply_openapi_security</span><span class="p">,</span>
 <span class="p">)</span>
 
-<span class="c1"># Your authn aggregate&#39;s spec — the same one your routes and the engine resolve.</span>
-<span class="n">API</span> <span class="o">=</span> <span class="n">AuthnSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;api&quot;</span><span class="p">,</span> <span class="n">enabled_methods</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;token&quot;</span><span class="p">}))</span>
+<span class="c1"># Your authn aggregate's spec — the same one your routes and the engine resolve.</span>
+<span class="n">API</span> <span class="o">=</span> <span class="n">AuthnSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"api"</span><span class="p">,</span> <span class="n">enabled_methods</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">"token"</span><span class="p">}))</span>
 
 <span class="n">requirement</span> <span class="o">=</span> <span class="n">AuthnRequirement</span><span class="p">(</span>
-    <span class="n">ingress</span><span class="o">=</span><span class="p">(</span><span class="n">HeaderTokenAuthn</span><span class="p">(</span><span class="n">authn_spec</span><span class="o">=</span><span class="n">API</span><span class="p">,</span> <span class="n">header_name</span><span class="o">=</span><span class="s2">&quot;Authorization&quot;</span><span class="p">),),</span>
+    <span class="n">ingress</span><span class="o">=</span><span class="p">(</span><span class="n">HeaderTokenAuthn</span><span class="p">(</span><span class="n">authn_spec</span><span class="o">=</span><span class="n">API</span><span class="p">,</span> <span class="n">header_name</span><span class="o">=</span><span class="s2">"Authorization"</span><span class="p">),),</span>
 <span class="p">)</span>
 <span class="n">app</span><span class="o">.</span><span class="n">add_middleware</span><span class="p">(</span><span class="n">SecurityContextMiddleware</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">,</span> <span class="n">authn</span><span class="o">=</span><span class="n">requirement</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
 
@@ -6948,7 +6951,7 @@ open. Use <code>exclude={"orders.deactivate", ...}</code> to leave a flagged ope
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

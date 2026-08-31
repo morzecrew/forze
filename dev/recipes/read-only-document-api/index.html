@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6259,19 +6259,19 @@ timestamps from <code>ReadDocument</code>:</p>
     <span class="n">body</span><span class="p">:</span> <span class="nb">str</span>
 
 
-<span class="n">article_spec</span> <span class="o">=</span> <span class="n">DocumentSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;articles&quot;</span><span class="p">,</span> <span class="n">read</span><span class="o">=</span><span class="n">ArticleRead</span><span class="p">,</span> <span class="n">write</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<span class="n">article_spec</span> <span class="o">=</span> <span class="n">DocumentSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"articles"</span><span class="p">,</span> <span class="n">read</span><span class="o">=</span><span class="n">ArticleRead</span><span class="p">,</span> <span class="n">write</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="wire-it-read-only">Wire it read-only<a class="headerlink" href="#wire-it-read-only" title="Permanent link">&para;</a></h2>
 <p>Register the document under <strong><code>ro_documents</code></strong> (not <code>rw_documents</code>) with a
 <code>PostgresReadOnlyDocumentConfig</code> — it carries only the read relation, no write
 tables or bookkeeping, and no transaction route is needed:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># Read-only config: just the read relation — no write side, no bookkeeping.</span>
-<span class="n">ARTICLE_PG</span> <span class="o">=</span> <span class="n">PostgresReadOnlyDocumentConfig</span><span class="p">(</span><span class="n">read</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;public&quot;</span><span class="p">,</span> <span class="s2">&quot;articles&quot;</span><span class="p">))</span>
+<span class="n">ARTICLE_PG</span> <span class="o">=</span> <span class="n">PostgresReadOnlyDocumentConfig</span><span class="p">(</span><span class="n">read</span><span class="o">=</span><span class="p">(</span><span class="s2">"public"</span><span class="p">,</span> <span class="s2">"articles"</span><span class="p">))</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">build_runtime</span><span class="p">(</span><span class="n">pg</span><span class="p">:</span> <span class="n">PostgresClient</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dsn</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExecutionRuntime</span><span class="p">:</span>
     <span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
-        <span class="n">PostgresDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">ro_documents</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;articles&quot;</span><span class="p">:</span> <span class="n">ARTICLE_PG</span><span class="p">}),</span>
+        <span class="n">PostgresDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">ro_documents</span><span class="o">=</span><span class="p">{</span><span class="s2">"articles"</span><span class="p">:</span> <span class="n">ARTICLE_PG</span><span class="p">}),</span>
     <span class="p">)</span>
     <span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
         <span class="n">PostgresLifecycleModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">dsn</span><span class="o">=</span><span class="n">dsn</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">PostgresConfig</span><span class="p">()),</span>
@@ -6293,7 +6293,7 @@ rows directly through the client just to be self-contained.</p>
 <span class="nd">@asynccontextmanager</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">lifespan</span><span class="p">(</span><span class="n">app</span><span class="p">:</span> <span class="n">FastAPI</span><span class="p">):</span>
     <span class="n">pg</span> <span class="o">=</span> <span class="n">PostgresClient</span><span class="p">()</span>
-    <span class="n">dsn</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;POSTGRES_DSN&quot;</span><span class="p">,</span> <span class="s2">&quot;postgresql://forze:forze@localhost:5432/forze&quot;</span><span class="p">)</span>
+    <span class="n">dsn</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"POSTGRES_DSN"</span><span class="p">,</span> <span class="s2">"postgresql://forze:forze@localhost:5432/forze"</span><span class="p">)</span>
     <span class="n">_rt</span><span class="o">.</span><span class="n">set_once</span><span class="p">(</span><span class="n">build_runtime</span><span class="p">(</span><span class="n">pg</span><span class="p">,</span> <span class="n">dsn</span><span class="o">=</span><span class="n">dsn</span><span class="p">))</span>
     <span class="k">async</span> <span class="k">with</span> <span class="n">_rt</span><span class="o">.</span><span class="n">get</span><span class="p">()</span><span class="o">.</span><span class="n">scope</span><span class="p">():</span>
         <span class="k">await</span> <span class="n">pg</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">SCHEMA</span><span class="p">)</span>
@@ -6301,7 +6301,7 @@ rows directly through the client just to be self-contained.</p>
         <span class="k">yield</span>
 
 
-<span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s2">&quot;Articles API (read-only)&quot;</span><span class="p">,</span> <span class="n">lifespan</span><span class="o">=</span><span class="n">lifespan</span><span class="p">)</span>
+<span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s2">"Articles API (read-only)"</span><span class="p">,</span> <span class="n">lifespan</span><span class="o">=</span><span class="n">lifespan</span><span class="p">)</span>
 <span class="n">register_exception_handlers</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
 
 
@@ -6313,13 +6313,13 @@ rows directly through the client just to be self-contained.</p>
     <span class="p">)</span>
 
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/articles/</span><span class="si">{article_id}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"/articles/</span><span class="si">{article_id}</span><span class="s2">"</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_article</span><span class="p">(</span><span class="n">article_id</span><span class="p">:</span> <span class="n">UUID</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ArticleRead</span><span class="p">:</span>
     <span class="c1"># `get` raises not_found (→ 404) on a miss.</span>
     <span class="k">return</span> <span class="k">await</span> <span class="n">articles</span><span class="p">()</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">DocumentIdDTO</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">article_id</span><span class="p">))</span>
 
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/articles&quot;</span><span class="p">)</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"/articles"</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">list_articles</span><span class="p">(</span><span class="n">page</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="n">size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">20</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Paginated</span><span class="p">[</span><span class="n">ArticleRead</span><span class="p">]:</span>
     <span class="k">return</span> <span class="k">await</span> <span class="n">articles</span><span class="p">()</span><span class="o">.</span><span class="n">list</span><span class="p">(</span><span class="n">ListRequestDTO</span><span class="p">(</span><span class="n">page</span><span class="o">=</span><span class="n">page</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">size</span><span class="p">))</span>
 </code></pre></div>
@@ -6457,7 +6457,7 @@ the <a href="../../reference/query-syntax/">query DSL</a>.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6289,7 +6289,7 @@
 <p><code>forze[gcs]</code> implements object storage on Google Cloud Storage — the same
 storage contracts as <a href="../s3/">S3</a>, on GCS buckets.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">&#39;forze[gcs]&#39;</span>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">'forze[gcs]'</span>
 </code></pre></div>
 <p>Needs GCS (or <code>fake-gcs-server</code> via <code>STORAGE_EMULATOR_HOST</code>).</p>
 <h2 id="the-client">The client<a class="headerlink" href="#the-client" title="Permanent link">&para;</a></h2>
@@ -6305,9 +6305,9 @@ projects/credentials.</p>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_gcs</span><span class="w"> </span><span class="kn">import</span> <span class="n">GCSClient</span><span class="p">,</span> <span class="n">GCSDepsModule</span><span class="p">,</span> <span class="n">GCSStorageConfig</span><span class="p">,</span> <span class="n">gcs_lifecycle_step</span>
 
 <span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
-    <span class="n">GCSDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">gcs</span><span class="p">,</span> <span class="n">storages</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;assets&quot;</span><span class="p">:</span> <span class="n">GCSStorageConfig</span><span class="p">(</span><span class="n">bucket</span><span class="o">=</span><span class="s2">&quot;my-assets&quot;</span><span class="p">)}),</span>
+    <span class="n">GCSDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">gcs</span><span class="p">,</span> <span class="n">storages</span><span class="o">=</span><span class="p">{</span><span class="s2">"assets"</span><span class="p">:</span> <span class="n">GCSStorageConfig</span><span class="p">(</span><span class="n">bucket</span><span class="o">=</span><span class="s2">"my-assets"</span><span class="p">)}),</span>
 <span class="p">)</span>
-<span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_steps</span><span class="p">(</span><span class="n">gcs_lifecycle_step</span><span class="p">(</span><span class="n">project_id</span><span class="o">=</span><span class="s2">&quot;my-project&quot;</span><span class="p">))</span>
+<span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_steps</span><span class="p">(</span><span class="n">gcs_lifecycle_step</span><span class="p">(</span><span class="n">project_id</span><span class="o">=</span><span class="s2">"my-project"</span><span class="p">))</span>
 </code></pre></div>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <table>
@@ -6458,7 +6458,7 @@ serves by default.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

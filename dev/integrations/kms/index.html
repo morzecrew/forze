@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6319,15 +6319,15 @@ over operator-provided master keys, with no extra to install — see
 <div class="tabbed-set tabbed-alternate" data-tabs="1:3"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">AWS</label><label for="__tabbed_1_2">Google Cloud</label><label for="__tabbed_1_3">Yandex Cloud</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">&#39;forze[kms-aws]&#39;</span>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">'forze[kms-aws]'</span>
 </code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">&#39;forze[kms-gcp]&#39;</span>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">'forze[kms-gcp]'</span>
 </code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">&#39;forze[kms-yc]&#39;</span>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">'forze[kms-yc]'</span>
 </code></pre></div>
 </div>
 </div>
@@ -6354,10 +6354,10 @@ adapter and registers <code>KeyManagementDepKey</code> itself:</p>
     <span class="n">AwsKmsDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">kms</span><span class="p">),</span>
     <span class="n">CryptoDepsModule</span><span class="p">(</span>
         <span class="n">kms</span><span class="o">=</span><span class="n">AwsKmsKeyManagement</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">kms</span><span class="p">),</span>
-        <span class="n">directory</span><span class="o">=</span><span class="n">StaticKeyDirectory</span><span class="p">(</span><span class="n">KeyRef</span><span class="p">(</span><span class="n">key_id</span><span class="o">=</span><span class="s2">&quot;alias/app-kek&quot;</span><span class="p">)),</span>
+        <span class="n">directory</span><span class="o">=</span><span class="n">StaticKeyDirectory</span><span class="p">(</span><span class="n">KeyRef</span><span class="p">(</span><span class="n">key_id</span><span class="o">=</span><span class="s2">"alias/app-kek"</span><span class="p">)),</span>
     <span class="p">),</span>
 <span class="p">)</span>
-<span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_steps</span><span class="p">(</span><span class="n">awskms_lifecycle_step</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="s2">&quot;eu-central-1&quot;</span><span class="p">))</span>
+<span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_steps</span><span class="p">(</span><span class="n">awskms_lifecycle_step</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="s2">"eu-central-1"</span><span class="p">))</span>
 </code></pre></div>
 </div>
 <div class="tabbed-block">
@@ -6371,7 +6371,7 @@ adapter and registers <code>KeyManagementDepKey</code> itself:</p>
 <span class="p">)</span>
 
 <span class="n">kms</span> <span class="o">=</span> <span class="n">GcpKmsClient</span><span class="p">()</span>
-<span class="n">key</span> <span class="o">=</span> <span class="s2">&quot;projects/acme/locations/europe-west1/keyRings/app/cryptoKeys/app-kek&quot;</span>
+<span class="n">key</span> <span class="o">=</span> <span class="s2">"projects/acme/locations/europe-west1/keyRings/app/cryptoKeys/app-kek"</span>
 
 <span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
     <span class="n">GcpKmsDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">kms</span><span class="p">),</span>
@@ -6399,7 +6399,7 @@ adapter and registers <code>KeyManagementDepKey</code> itself:</p>
     <span class="n">YcKmsDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">kms</span><span class="p">),</span>
     <span class="n">CryptoDepsModule</span><span class="p">(</span>
         <span class="n">kms</span><span class="o">=</span><span class="n">YcKmsKeyManagement</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">kms</span><span class="p">),</span>
-        <span class="n">directory</span><span class="o">=</span><span class="n">StaticKeyDirectory</span><span class="p">(</span><span class="n">KeyRef</span><span class="p">(</span><span class="n">key_id</span><span class="o">=</span><span class="s2">&quot;abjq…&quot;</span><span class="p">)),</span>
+        <span class="n">directory</span><span class="o">=</span><span class="n">StaticKeyDirectory</span><span class="p">(</span><span class="n">KeyRef</span><span class="p">(</span><span class="n">key_id</span><span class="o">=</span><span class="s2">"abjq…"</span><span class="p">)),</span>
     <span class="p">),</span>
 <span class="p">)</span>
 <span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_steps</span><span class="p">(</span><span class="n">yckms_lifecycle_step</span><span class="p">())</span>
@@ -6419,10 +6419,10 @@ so the provisioned key and the encrypt-path key can never drift:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.crypto</span><span class="w"> </span><span class="kn">import</span> <span class="n">TenantTemplateKeyDirectory</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_kms.aws</span><span class="w"> </span><span class="kn">import</span> <span class="n">AwsKmsTenantProvisioner</span>
 
-<span class="c1"># KMS mints the CMK id, so a tenant&#39;s key is addressed by a caller-chosen alias.</span>
+<span class="c1"># KMS mints the CMK id, so a tenant's key is addressed by a caller-chosen alias.</span>
 <span class="n">directory</span> <span class="o">=</span> <span class="n">TenantTemplateKeyDirectory</span><span class="p">(</span>
-    <span class="n">template</span><span class="o">=</span><span class="s2">&quot;alias/tenant-</span><span class="si">{tenant_id}</span><span class="s2">&quot;</span><span class="p">,</span>
-    <span class="n">default_key_id</span><span class="o">=</span><span class="s2">&quot;alias/shared-kek&quot;</span><span class="p">,</span>
+    <span class="n">template</span><span class="o">=</span><span class="s2">"alias/tenant-</span><span class="si">{tenant_id}</span><span class="s2">"</span><span class="p">,</span>
+    <span class="n">default_key_id</span><span class="o">=</span><span class="s2">"alias/shared-kek"</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="n">provisioner</span> <span class="o">=</span> <span class="n">AwsKmsTenantProvisioner</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">kms</span><span class="p">,</span> <span class="n">directory</span><span class="o">=</span><span class="n">directory</span><span class="p">)</span>
 </code></pre></div>
@@ -6431,10 +6431,10 @@ so the provisioned key and the encrypt-path key can never drift:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.crypto</span><span class="w"> </span><span class="kn">import</span> <span class="n">TenantTemplateKeyDirectory</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_kms.gcp</span><span class="w"> </span><span class="kn">import</span> <span class="n">GcpKmsTenantProvisioner</span>
 
-<span class="n">ring</span> <span class="o">=</span> <span class="s2">&quot;projects/acme/locations/europe-west1/keyRings/app&quot;</span>
+<span class="n">ring</span> <span class="o">=</span> <span class="s2">"projects/acme/locations/europe-west1/keyRings/app"</span>
 <span class="n">directory</span> <span class="o">=</span> <span class="n">TenantTemplateKeyDirectory</span><span class="p">(</span>
-    <span class="n">template</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">ring</span><span class="si">}</span><span class="s2">/cryptoKeys/tenant-</span><span class="se">{{</span><span class="s2">tenant_id</span><span class="se">}}</span><span class="s2">&quot;</span><span class="p">,</span>
-    <span class="n">default_key_id</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">ring</span><span class="si">}</span><span class="s2">/cryptoKeys/shared-kek&quot;</span><span class="p">,</span>
+    <span class="n">template</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">ring</span><span class="si">}</span><span class="s2">/cryptoKeys/tenant-</span><span class="se">{{</span><span class="s2">tenant_id</span><span class="se">}}</span><span class="s2">"</span><span class="p">,</span>
+    <span class="n">default_key_id</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">ring</span><span class="si">}</span><span class="s2">/cryptoKeys/shared-kek"</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="c1"># The key ring is shared and long-lived; only the CryptoKey is per-tenant.</span>
 <span class="n">provisioner</span> <span class="o">=</span> <span class="n">GcpKmsTenantProvisioner</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">kms</span><span class="p">,</span> <span class="n">directory</span><span class="o">=</span><span class="n">directory</span><span class="p">)</span>
@@ -6443,9 +6443,9 @@ so the provisioned key and the encrypt-path key can never drift:</p>
 <div class="tabbed-block">
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kms.yc</span><span class="w"> </span><span class="kn">import</span> <span class="n">YcKmsKeyDirectory</span><span class="p">,</span> <span class="n">YcKmsTenantProvisioner</span>
 
-<span class="c1"># Yandex Cloud mints the key id, so a template cannot address a tenant&#39;s key —</span>
+<span class="c1"># Yandex Cloud mints the key id, so a template cannot address a tenant's key —</span>
 <span class="c1"># this directory looks it up by the name the provisioner creates.</span>
-<span class="n">directory</span> <span class="o">=</span> <span class="n">YcKmsKeyDirectory</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">kms</span><span class="p">,</span> <span class="n">folder_id</span><span class="o">=</span><span class="s2">&quot;b1g…&quot;</span><span class="p">,</span> <span class="n">template</span><span class="o">=</span><span class="s2">&quot;tenant-</span><span class="si">{tenant_id}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="n">directory</span> <span class="o">=</span> <span class="n">YcKmsKeyDirectory</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">kms</span><span class="p">,</span> <span class="n">folder_id</span><span class="o">=</span><span class="s2">"b1g…"</span><span class="p">,</span> <span class="n">template</span><span class="o">=</span><span class="s2">"tenant-</span><span class="si">{tenant_id}</span><span class="s2">"</span><span class="p">)</span>
 <span class="n">provisioner</span> <span class="o">=</span> <span class="n">YcKmsTenantProvisioner</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">kms</span><span class="p">,</span> <span class="n">directory</span><span class="o">=</span><span class="n">directory</span><span class="p">)</span>
 </code></pre></div>
 </div>
@@ -6465,8 +6465,8 @@ deps module, or lifecycle step:</p>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_kms.local</span><span class="w"> </span><span class="kn">import</span> <span class="n">LocalKeyManagement</span>
 
 <span class="n">CryptoDepsModule</span><span class="p">(</span>
-    <span class="n">kms</span><span class="o">=</span><span class="n">LocalKeyManagement</span><span class="p">({</span><span class="s2">&quot;k1&quot;</span><span class="p">:</span> <span class="n">load_master_key</span><span class="p">()}),</span>  <span class="c1"># key id → raw 32 bytes</span>
-    <span class="n">directory</span><span class="o">=</span><span class="n">StaticKeyDirectory</span><span class="p">(</span><span class="n">KeyRef</span><span class="p">(</span><span class="n">key_id</span><span class="o">=</span><span class="s2">&quot;k1&quot;</span><span class="p">)),</span>
+    <span class="n">kms</span><span class="o">=</span><span class="n">LocalKeyManagement</span><span class="p">({</span><span class="s2">"k1"</span><span class="p">:</span> <span class="n">load_master_key</span><span class="p">()}),</span>  <span class="c1"># key id → raw 32 bytes</span>
+    <span class="n">directory</span><span class="o">=</span><span class="n">StaticKeyDirectory</span><span class="p">(</span><span class="n">KeyRef</span><span class="p">(</span><span class="n">key_id</span><span class="o">=</span><span class="s2">"k1"</span><span class="p">)),</span>
 <span class="p">)</span>
 </code></pre></div>
 <p><strong>Know the trust model.</strong> The master keys live in process memory and in your
@@ -6488,10 +6488,10 @@ volume. Envelopes sealed by earlier builds remain readable.</p>
 with one extra rule: the outgoing key stays <strong>in the map</strong> until the sweep is
 done — the directory widens what reads accept; the map is what can unwrap:</p>
 <div class="highlight"><pre><span></span><code><span class="n">CryptoDepsModule</span><span class="p">(</span>
-    <span class="n">kms</span><span class="o">=</span><span class="n">LocalKeyManagement</span><span class="p">({</span><span class="s2">&quot;k2&quot;</span><span class="p">:</span> <span class="n">new_key</span><span class="p">,</span> <span class="s2">&quot;k1&quot;</span><span class="p">:</span> <span class="n">old_key</span><span class="p">}),</span>  <span class="c1"># old key still unwraps</span>
+    <span class="n">kms</span><span class="o">=</span><span class="n">LocalKeyManagement</span><span class="p">({</span><span class="s2">"k2"</span><span class="p">:</span> <span class="n">new_key</span><span class="p">,</span> <span class="s2">"k1"</span><span class="p">:</span> <span class="n">old_key</span><span class="p">}),</span>  <span class="c1"># old key still unwraps</span>
     <span class="n">directory</span><span class="o">=</span><span class="n">StaticKeyDirectory</span><span class="p">(</span>
-        <span class="n">KeyRef</span><span class="p">(</span><span class="n">key_id</span><span class="o">=</span><span class="s2">&quot;k2&quot;</span><span class="p">),</span>                                 <span class="c1"># new writes seal here</span>
-        <span class="n">previous_key_ref</span><span class="o">=</span><span class="n">KeyRef</span><span class="p">(</span><span class="n">key_id</span><span class="o">=</span><span class="s2">&quot;k1&quot;</span><span class="p">),</span>                <span class="c1"># old reads still accepted</span>
+        <span class="n">KeyRef</span><span class="p">(</span><span class="n">key_id</span><span class="o">=</span><span class="s2">"k2"</span><span class="p">),</span>                                 <span class="c1"># new writes seal here</span>
+        <span class="n">previous_key_ref</span><span class="o">=</span><span class="n">KeyRef</span><span class="p">(</span><span class="n">key_id</span><span class="o">=</span><span class="s2">"k1"</span><span class="p">),</span>                <span class="c1"># old reads still accepted</span>
     <span class="p">),</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -6737,7 +6737,7 @@ plus a sweep, the same procedure as replacing any key.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

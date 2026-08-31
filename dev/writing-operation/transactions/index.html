@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6370,7 +6370,7 @@ back on an exception — while the adapter does the real database work.</p>
 <h2 id="a-transaction-scope">A transaction scope<a class="headerlink" href="#a-transaction-scope" title="Permanent link">&para;</a></h2>
 <p>Open a scope by <strong>route</strong>, the same logical name the deps wiring registered
 under <code>tx={...}</code>. Everything inside commits together:</p>
-<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">tx_ctx</span><span class="o">.</span><span class="n">scope</span><span class="p">(</span><span class="s2">&quot;orders&quot;</span><span class="p">):</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">tx_ctx</span><span class="o">.</span><span class="n">scope</span><span class="p">(</span><span class="s2">"orders"</span><span class="p">):</span>
     <span class="n">order</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">order_spec</span><span class="p">)</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span>
     <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">line_spec</span><span class="p">)</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">line_cmd</span><span class="p">)</span>
 <span class="c1"># committed here; an exception inside would have rolled it all back</span>
@@ -6424,7 +6424,7 @@ but only for work that runs <em>before</em> that query. When an external call ha
         <span class="k">return</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">writer</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">WidgetCreate</span><span class="p">(</span><span class="n">price</span><span class="o">=</span><span class="n">price</span><span class="p">))</span>
 </code></pre></div>
 <p>Register it with <code>.two_phase()</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="n">registry</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="s2">&quot;quote&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">two_phase</span><span class="p">()</span><span class="o">.</span><span class="n">bind_tx</span><span class="p">()</span><span class="o">.</span><span class="n">set_route</span><span class="p">(</span><span class="s2">&quot;orders&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">finish</span><span class="p">()</span>
+<div class="highlight"><pre><span></span><code><span class="n">registry</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="s2">"quote"</span><span class="p">)</span><span class="o">.</span><span class="n">two_phase</span><span class="p">()</span><span class="o">.</span><span class="n">bind_tx</span><span class="p">()</span><span class="o">.</span><span class="n">set_route</span><span class="p">(</span><span class="s2">"orders"</span><span class="p">)</span><span class="o">.</span><span class="n">finish</span><span class="p">()</span>
 </code></pre></div>
 <p>The engine runs <code>prepare</code> in the outer scope — <strong>before</strong> the transaction opens —
 and threads its return value into <code>apply</code>, which runs inside the transaction. So
@@ -6445,10 +6445,10 @@ already produced.</p>
 <p>Scopes nest naturally. A nested scope of the <strong>same kind</strong> joins the outer
 transaction rather than starting a new one — with a savepoint where the backend
 supports it, so an inner failure can roll back without losing the outer work:</p>
-<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">tx_ctx</span><span class="o">.</span><span class="n">scope</span><span class="p">(</span><span class="s2">&quot;orders&quot;</span><span class="p">):</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">tx_ctx</span><span class="o">.</span><span class="n">scope</span><span class="p">(</span><span class="s2">"orders"</span><span class="p">):</span>
     <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">order_spec</span><span class="p">)</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span>
 
-    <span class="k">async</span> <span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">tx_ctx</span><span class="o">.</span><span class="n">scope</span><span class="p">(</span><span class="s2">&quot;orders&quot;</span><span class="p">):</span>   <span class="c1"># joins the same transaction</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">tx_ctx</span><span class="o">.</span><span class="n">scope</span><span class="p">(</span><span class="s2">"orders"</span><span class="p">):</span>   <span class="c1"># joins the same transaction</span>
         <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">line_spec</span><span class="p">)</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">line_cmd</span><span class="p">)</span>
 </code></pre></div>
 <p>A nested scope whose kind <strong>doesn't</strong> match the active transaction is a
@@ -6466,7 +6466,7 @@ and the kernel holds the backend to it:</p>
 <div class="highlight"><pre><span></span><code><span class="n">plan</span> <span class="o">=</span> <span class="p">(</span>
     <span class="n">OperationPlan</span><span class="p">()</span>
     <span class="o">.</span><span class="n">bind_tx</span><span class="p">()</span>
-    <span class="o">.</span><span class="n">set_route</span><span class="p">(</span><span class="s2">&quot;orders&quot;</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">set_route</span><span class="p">(</span><span class="s2">"orders"</span><span class="p">)</span>
     <span class="o">.</span><span class="n">set_isolation</span><span class="p">(</span><span class="n">IsolationLevel</span><span class="o">.</span><span class="n">SERIALIZABLE</span><span class="p">)</span>
     <span class="o">.</span><span class="n">finish</span><span class="p">()</span>
 <span class="p">)</span>
@@ -6629,7 +6629,7 @@ raised error becomes a response, is <a href="../errors/">Errors</a>.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

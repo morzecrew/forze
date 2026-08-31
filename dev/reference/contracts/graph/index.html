@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6448,7 +6448,7 @@ field absent from its own read model — is refused when the <code>GraphModuleSp
 hatch (or any writer that is not forze) still can. The pair cursor surfaces them for free —
 it yields one batch per <code>(from, to)</code> pair, so a batch with more than one edge <em>is</em> a
 violating pair:</p>
-<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">ctx</span><span class="o">.</span><span class="n">graph</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">SOCIAL</span><span class="p">)</span><span class="o">.</span><span class="n">find_edges_stream</span><span class="p">(</span><span class="s2">&quot;FOLLOWS&quot;</span><span class="p">,</span> <span class="n">chunk_size</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">ctx</span><span class="o">.</span><span class="n">graph</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">SOCIAL</span><span class="p">)</span><span class="o">.</span><span class="n">find_edges_stream</span><span class="p">(</span><span class="s2">"FOLLOWS"</span><span class="p">,</span> <span class="n">chunk_size</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
     <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
         <span class="o">...</span>  <span class="c1"># this pair carries parallel edges — decide which one is real</span>
 </code></pre></div>
@@ -6543,8 +6543,8 @@ produce the same artifact.</p>
 </tr>
 </tbody>
 </table>
-<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">ctx</span><span class="o">.</span><span class="n">graph</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">SOCIAL</span><span class="p">)</span><span class="o">.</span><span class="n">find_vertices_stream</span><span class="p">(</span><span class="s2">&quot;User&quot;</span><span class="p">,</span> <span class="n">chunk_size</span><span class="o">=</span><span class="mi">500</span><span class="p">):</span>
-    <span class="o">...</span>  <span class="c1"># memory is bounded by chunk_size, whatever the graph&#39;s size</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">ctx</span><span class="o">.</span><span class="n">graph</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">SOCIAL</span><span class="p">)</span><span class="o">.</span><span class="n">find_vertices_stream</span><span class="p">(</span><span class="s2">"User"</span><span class="p">,</span> <span class="n">chunk_size</span><span class="o">=</span><span class="mi">500</span><span class="p">):</span>
+    <span class="o">...</span>  <span class="c1"># memory is bounded by chunk_size, whatever the graph's size</span>
 </code></pre></div>
 <p><strong>What an edge bookmarks on.</strong> A keyed edge (<code>identity="key"</code>) bookmarks on its own key. An
 edge declared <code>identity="endpoints"</code> has no key of its own — that is what the declaration means
@@ -6775,7 +6775,7 @@ engine does <em>without</em> its constraints needs that engine.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../../_javascripts/theme.js"></script>
       

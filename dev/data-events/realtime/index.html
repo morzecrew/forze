@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6370,11 +6370,11 @@ on top. In a live app the gateway does this store as it processes the signal:</p
     <span class="n">hlc</span><span class="p">:</span> <span class="n">HlcTimestamp</span><span class="p">,</span>
     <span class="n">signal</span><span class="p">:</span> <span class="n">RealtimeSignal</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;What the gateway does for a durable principal signal: store it for replay.</span>
+<span class="w">    </span><span class="sd">"""What the gateway does for a durable principal signal: store it for replay.</span>
 
 <span class="sd">    (Online it would also ``sio.emit``; offline — no room members — the mailbox is the</span>
 <span class="sd">    only delivery, drained on reconnect.) No tenant here — the store scopes ambiently.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
 
     <span class="k">await</span> <span class="n">mailbox</span><span class="o">.</span><span class="n">store</span><span class="p">(</span><span class="n">principal</span><span class="o">=</span><span class="n">BOB</span><span class="p">,</span> <span class="n">event_id</span><span class="o">=</span><span class="n">event_id</span><span class="p">,</span> <span class="n">hlc</span><span class="o">=</span><span class="n">hlc</span><span class="p">,</span> <span class="n">signal</span><span class="o">=</span><span class="n">signal</span><span class="p">)</span>
 </code></pre></div>
@@ -6387,7 +6387,7 @@ and once every device has acked an entry it's trimmed away:</p>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">device</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">MailboxEntry</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;What the connection layer replays on connect: everything past this device&#39;s cursor.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""What the connection layer replays on connect: everything past this device's cursor."""</span>
 
     <span class="n">since</span> <span class="o">=</span> <span class="k">await</span> <span class="n">cursors</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">principal</span><span class="o">=</span><span class="n">BOB</span><span class="p">,</span> <span class="n">client_key</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
 
@@ -6401,7 +6401,7 @@ and once every device has acked an entry it's trimmed away:</p>
     <span class="n">device</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">event_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;What ``realtime.ack {up_to}`` does: advance the device cursor, trim what all acked.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""What ``realtime.ack {up_to}`` does: advance the device cursor, trim what all acked."""</span>
 
     <span class="n">position</span> <span class="o">=</span> <span class="k">await</span> <span class="n">mailbox</span><span class="o">.</span><span class="n">position_of</span><span class="p">(</span><span class="n">principal</span><span class="o">=</span><span class="n">BOB</span><span class="p">,</span> <span class="n">event_id</span><span class="o">=</span><span class="n">event_id</span><span class="p">)</span>
 
@@ -6562,7 +6562,7 @@ and the first symptom is a disk.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

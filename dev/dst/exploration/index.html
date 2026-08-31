@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6396,7 +6396,7 @@
 <div class="highlight"><pre><span></span><code><span class="n">stats</span> <span class="o">=</span> <span class="n">simulation</span><span class="o">.</span><span class="n">audit</span><span class="p">(</span><span class="n">SimulationConfig</span><span class="o">.</span><span class="n">thorough</span><span class="p">())</span>
 
 <span class="k">if</span> <span class="n">stats</span><span class="o">.</span><span class="n">violation</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">stats</span><span class="o">.</span><span class="n">confidence</span><span class="o">.</span><span class="n">format</span><span class="p">())</span>   <span class="c1"># what a green run did — and didn&#39;t — test</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">stats</span><span class="o">.</span><span class="n">confidence</span><span class="o">.</span><span class="n">format</span><span class="p">())</span>   <span class="c1"># what a green run did — and didn't — test</span>
 </code></pre></div>
 <p>The <code>ConfidenceReport</code> names the gaps a clean sweep still left:</p>
 <ul>
@@ -6423,7 +6423,7 @@
 
 <span class="n">stats</span> <span class="o">=</span> <span class="n">simulation</span><span class="o">.</span><span class="n">coverage_guided</span><span class="p">(</span>
     <span class="n">SimulationConfig</span><span class="p">(</span><span class="n">seeds</span><span class="o">=</span><span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span> <span class="n">count</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">concurrency</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">guided_budget</span><span class="o">=</span><span class="mi">512</span><span class="p">),</span>
-    <span class="n">cases</span><span class="o">=</span><span class="p">[</span><span class="n">OperationCase</span><span class="p">(</span><span class="n">op</span><span class="o">=</span><span class="s2">&quot;deposit&quot;</span><span class="p">),</span> <span class="n">OperationCase</span><span class="p">(</span><span class="n">op</span><span class="o">=</span><span class="s2">&quot;withdraw&quot;</span><span class="p">)],</span>
+    <span class="n">cases</span><span class="o">=</span><span class="p">[</span><span class="n">OperationCase</span><span class="p">(</span><span class="n">op</span><span class="o">=</span><span class="s2">"deposit"</span><span class="p">),</span> <span class="n">OperationCase</span><span class="p">(</span><span class="n">op</span><span class="o">=</span><span class="s2">"withdraw"</span><span class="p">)],</span>
 <span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">stats</span><span class="o">.</span><span class="n">format</span><span class="p">())</span>     <span class="c1"># behaviours covered, corpus size, any violation</span>
 <span class="n">report</span> <span class="o">=</span> <span class="n">stats</span><span class="o">.</span><span class="n">violation</span>  <span class="c1"># minimized + reproducible, if a run tripped an invariant</span>
@@ -6434,7 +6434,7 @@
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst.artifacts</span><span class="w"> </span><span class="kn">import</span> <span class="n">parallel_sweep</span><span class="p">,</span> <span class="n">SimulationSeedRunner</span>
 
 <span class="n">result</span> <span class="o">=</span> <span class="n">parallel_sweep</span><span class="p">(</span>
-    <span class="n">SimulationSeedRunner</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="s2">&quot;app:simulation&quot;</span><span class="p">,</span> <span class="n">fault_error</span><span class="o">=</span><span class="mf">0.1</span><span class="p">),</span>
+    <span class="n">SimulationSeedRunner</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="s2">"app:simulation"</span><span class="p">,</span> <span class="n">fault_error</span><span class="o">=</span><span class="mf">0.1</span><span class="p">),</span>
     <span class="n">seeds</span><span class="o">=</span><span class="nb">range</span><span class="p">(</span><span class="mi">10_000</span><span class="p">),</span>
     <span class="n">workers</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
 <span class="p">)</span>
@@ -6551,7 +6551,7 @@
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

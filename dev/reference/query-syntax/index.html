@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6593,10 +6593,10 @@ map:</p>
 </tbody>
 </table>
 <div class="highlight"><pre><span></span><code><span class="n">filters</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;$values&quot;</span><span class="p">:</span> <span class="p">{</span>
-        <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;active&quot;</span><span class="p">,</span>          <span class="c1"># → $eq</span>
-        <span class="s2">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;backend&quot;</span><span class="p">,</span> <span class="s2">&quot;api&quot;</span><span class="p">],</span>  <span class="c1"># → $in</span>
-        <span class="s2">&quot;deleted_at&quot;</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span>          <span class="c1"># → $null</span>
+    <span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">"status"</span><span class="p">:</span> <span class="s2">"active"</span><span class="p">,</span>          <span class="c1"># → $eq</span>
+        <span class="s2">"tags"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"backend"</span><span class="p">,</span> <span class="s2">"api"</span><span class="p">],</span>  <span class="c1"># → $in</span>
+        <span class="s2">"deleted_at"</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span>          <span class="c1"># → $null</span>
     <span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
@@ -6656,7 +6656,7 @@ map:</p>
 <code>%</code>/<code>_</code> wildcards (<code>\</code> escapes); a list of patterns becomes an OR on that field.</p>
 <h3 id="combining-operators-on-one-field">Combining operators on one field<a class="headerlink" href="#combining-operators-on-one-field" title="Permanent link">&para;</a></h3>
 <p>Multiple operators on the same field are <strong>ANDed</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="s2">&quot;$values&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;score&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$gte&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;$lt&quot;</span><span class="p">:</span> <span class="mi">10</span><span class="p">}}}</span>   <span class="c1"># score &gt;= 1 AND score &lt; 10</span>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"score"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$gte"</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">"$lt"</span><span class="p">:</span> <span class="mi">10</span><span class="p">}}}</span>   <span class="c1"># score &gt;= 1 AND score &lt; 10</span>
 </code></pre></div>
 <p>Two operators stand <strong>alone</strong> — <code>{"$null": true}</code> and <code>{"$empty": true}</code> can't be
 combined with anything else on that field (their <code>false</code> forms can). A
@@ -6668,9 +6668,9 @@ field.</p>
 <code>project*</code> calls (a dotted projection returns a nested shape, and a path crossing a
 list maps over each element). Depth is unbounded;
 each segment walks one level deeper:</p>
-<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="s2">&quot;$values&quot;</span><span class="p">:</span> <span class="p">{</span>
-    <span class="s2">&quot;address.city&quot;</span><span class="p">:</span> <span class="s2">&quot;Berlin&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;address.geo.lat&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$gte&quot;</span><span class="p">:</span> <span class="mf">52.0</span><span class="p">},</span>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span>
+    <span class="s2">"address.city"</span><span class="p">:</span> <span class="s2">"Berlin"</span><span class="p">,</span>
+    <span class="s2">"address.geo.lat"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$gte"</span><span class="p">:</span> <span class="mf">52.0</span><span class="p">},</span>
 <span class="p">}}</span>
 </code></pre></div>
 <p>The <strong>root</strong> segment must be a real column / read-model field; deeper segments
@@ -6712,22 +6712,22 @@ traverse a JSON/JSONB column. A few rules to know (Postgres):</p>
 </tr>
 </tbody>
 </table>
-<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="s2">&quot;$values&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;roles&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$superset&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;admin&quot;</span><span class="p">,</span> <span class="s2">&quot;ops&quot;</span><span class="p">]}}}</span>   <span class="c1"># has both roles</span>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"roles"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$superset"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"admin"</span><span class="p">,</span> <span class="s2">"ops"</span><span class="p">]}}}</span>   <span class="c1"># has both roles</span>
 </code></pre></div>
 <h3 id="element-quantifiers">Element quantifiers<a class="headerlink" href="#element-quantifiers" title="Permanent link">&para;</a></h3>
 <p><code>$any</code> / <code>$all</code> / <code>$none</code> apply a predicate to <em>individual</em> elements. <code>$all</code> and
 <code>$none</code> are vacuously true on a missing, null, or empty array. A quantifier holds
 <strong>exactly one</strong> of three operand forms:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># 1. scalar shortcut → element equality</span>
-<span class="p">{</span><span class="s2">&quot;$values&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;tags&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$any&quot;</span><span class="p">:</span> <span class="s2">&quot;urgent&quot;</span><span class="p">}}}</span>
+<span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"tags"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$any"</span><span class="p">:</span> <span class="s2">"urgent"</span><span class="p">}}}</span>
 
 <span class="c1"># 2. a single element operator (only $eq $neq $gt $gte $lt $lte $like $ilike $regex)</span>
-<span class="p">{</span><span class="s2">&quot;$values&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;scores&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$all&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$gte&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">}}}}</span>
+<span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"scores"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$all"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$gte"</span><span class="p">:</span> <span class="mi">1</span><span class="p">}}}}</span>
 
 <span class="c1"># 3. $values map for an array of objects — fields are element-relative</span>
-<span class="p">{</span><span class="s2">&quot;$values&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;line_items&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$any&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$values&quot;</span><span class="p">:</span> <span class="p">{</span>
-    <span class="s2">&quot;product_id&quot;</span><span class="p">:</span> <span class="s2">&quot;p-42&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;quantity&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$gt&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">},</span>
+<span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"line_items"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$any"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span>
+    <span class="s2">"product_id"</span><span class="p">:</span> <span class="s2">"p-42"</span><span class="p">,</span>
+    <span class="s2">"quantity"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$gt"</span><span class="p">:</span> <span class="mi">0</span><span class="p">},</span>
 <span class="p">}}}}}</span>
 </code></pre></div>
 <p>Quantifiers <strong>do not nest</strong> (<code>$any</code> inside <code>$any</code> is rejected), and inside an
@@ -6738,18 +6738,18 @@ only literal operators (which still AND together per field).</p>
 path</strong>, and only the equality/ordering operators apply (no membership, text, or
 set operators here):</p>
 <div class="highlight"><pre><span></span><code><span class="n">filters</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;$values&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;is_deleted&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">},</span>
-    <span class="s2">&quot;$fields&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;starts_at&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$lte&quot;</span><span class="p">:</span> <span class="s2">&quot;ends_at&quot;</span><span class="p">}},</span>
+    <span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"is_deleted"</span><span class="p">:</span> <span class="kc">False</span><span class="p">},</span>
+    <span class="s2">"$fields"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"starts_at"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$lte"</span><span class="p">:</span> <span class="s2">"ends_at"</span><span class="p">}},</span>
 <span class="p">}</span>
 </code></pre></div>
 <h2 id="combining-expressions-and-or-not">Combining expressions — <code>$and</code> / <code>$or</code> / <code>$not</code><a class="headerlink" href="#combining-expressions-and-or-not" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="s2">&quot;$and&quot;</span><span class="p">:</span> <span class="p">[</span>
-    <span class="p">{</span><span class="s2">&quot;$values&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;active&quot;</span><span class="p">,</span> <span class="s2">&quot;trial&quot;</span><span class="p">]}},</span>     <span class="c1"># $in shortcut</span>
-    <span class="p">{</span><span class="s2">&quot;$or&quot;</span><span class="p">:</span> <span class="p">[</span>
-        <span class="p">{</span><span class="s2">&quot;$values&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;region&quot;</span><span class="p">:</span> <span class="s2">&quot;eu&quot;</span><span class="p">}},</span>
-        <span class="p">{</span><span class="s2">&quot;$not&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$values&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;deleted_at&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$null&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">}}}},</span>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="s2">"$and"</span><span class="p">:</span> <span class="p">[</span>
+    <span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"status"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"active"</span><span class="p">,</span> <span class="s2">"trial"</span><span class="p">]}},</span>     <span class="c1"># $in shortcut</span>
+    <span class="p">{</span><span class="s2">"$or"</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"region"</span><span class="p">:</span> <span class="s2">"eu"</span><span class="p">}},</span>
+        <span class="p">{</span><span class="s2">"$not"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"deleted_at"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$null"</span><span class="p">:</span> <span class="kc">False</span><span class="p">}}}},</span>
     <span class="p">]},</span>
-    <span class="p">{</span><span class="s2">&quot;$fields&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;updated_at&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$gt&quot;</span><span class="p">:</span> <span class="s2">&quot;created_at&quot;</span><span class="p">}}},</span>
+    <span class="p">{</span><span class="s2">"$fields"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"updated_at"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$gt"</span><span class="p">:</span> <span class="s2">"created_at"</span><span class="p">}}},</span>
 <span class="p">]}</span>
 </code></pre></div>
 <p><code>$and</code>/<code>$or</code> take a list of expressions; <code>$not</code> takes a single expression.
@@ -6757,7 +6757,7 @@ Nesting depth is capped (see <a href="#limits">Limits</a>).</p>
 <h2 id="sorting">Sorting<a class="headerlink" href="#sorting" title="Permanent link">&para;</a></h2>
 <p>A map of field → direction (<code>"asc"</code> / <code>"desc"</code>); keys may be nested paths, and
 map order is sort priority:</p>
-<div class="highlight"><pre><span></span><code><span class="n">sorts</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;created_at&quot;</span><span class="p">:</span> <span class="s2">&quot;desc&quot;</span><span class="p">,</span> <span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;asc&quot;</span><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><span class="n">sorts</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"created_at"</span><span class="p">:</span> <span class="s2">"desc"</span><span class="p">,</span> <span class="s2">"id"</span><span class="p">:</span> <span class="s2">"asc"</span><span class="p">}</span>
 </code></pre></div>
 <p>A key may instead be an object to control null placement —
 <code>{"dir": "asc", "nulls": "first"}</code> (<code>"first"</code> / <code>"last"</code>). Omitted, nulls sort as
@@ -6776,12 +6776,12 @@ Cursor tokens can be HMAC-signed (<code>&lt;payload&gt;.&lt;hmac&gt;</code>) or 
 <code>$var_pop</code>, <code>$var_samp</code>. <code>$median</code> / <code>$percentile</code> are exact on Postgres and the
 mock but approximate on Mongo.</p>
 <div class="highlight"><pre><span></span><code><span class="n">aggregates</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;$groups&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="s2">&quot;category&quot;</span><span class="p">},</span>
-    <span class="s2">&quot;$computed&quot;</span><span class="p">:</span> <span class="p">{</span>
-        <span class="s2">&quot;products&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$count&quot;</span><span class="p">:</span> <span class="kc">None</span><span class="p">},</span>
-        <span class="s2">&quot;revenue&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$sum&quot;</span><span class="p">:</span> <span class="s2">&quot;price&quot;</span><span class="p">},</span>
-        <span class="s2">&quot;premium_revenue&quot;</span><span class="p">:</span> <span class="p">{</span>
-            <span class="s2">&quot;$sum&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;field&quot;</span><span class="p">:</span> <span class="s2">&quot;price&quot;</span><span class="p">,</span> <span class="s2">&quot;filter&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$values&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;price&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$gte&quot;</span><span class="p">:</span> <span class="mi">20</span><span class="p">}}}},</span>
+    <span class="s2">"$groups"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"category"</span><span class="p">:</span> <span class="s2">"category"</span><span class="p">},</span>
+    <span class="s2">"$computed"</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">"products"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$count"</span><span class="p">:</span> <span class="kc">None</span><span class="p">},</span>
+        <span class="s2">"revenue"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$sum"</span><span class="p">:</span> <span class="s2">"price"</span><span class="p">},</span>
+        <span class="s2">"premium_revenue"</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">"$sum"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"field"</span><span class="p">:</span> <span class="s2">"price"</span><span class="p">,</span> <span class="s2">"filter"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"price"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$gte"</span><span class="p">:</span> <span class="mi">20</span><span class="p">}}}},</span>
         <span class="p">},</span>
     <span class="p">},</span>
 <span class="p">}</span>
@@ -6794,7 +6794,7 @@ function requires one.</p>
 <p>Calendar bucketing uses <code>$trunc</code> as a group value — <code>unit</code> is one of <code>hour</code> /
 <code>day</code> / <code>week</code> (Monday-start) / <code>month</code>; <code>timezone</code> is an IANA name or fixed
 offset (default UTC):</p>
-<div class="highlight"><pre><span></span><code><span class="s2">&quot;$groups&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;day_start&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;$trunc&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;field&quot;</span><span class="p">:</span> <span class="s2">&quot;ts&quot;</span><span class="p">,</span> <span class="s2">&quot;unit&quot;</span><span class="p">:</span> <span class="s2">&quot;day&quot;</span><span class="p">,</span> <span class="s2">&quot;timezone&quot;</span><span class="p">:</span> <span class="s2">&quot;+3&quot;</span><span class="p">}}}</span>
+<div class="highlight"><pre><span></span><code><span class="s2">"$groups"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"day_start"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$trunc"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"field"</span><span class="p">:</span> <span class="s2">"ts"</span><span class="p">,</span> <span class="s2">"unit"</span><span class="p">:</span> <span class="s2">"day"</span><span class="p">,</span> <span class="s2">"timezone"</span><span class="p">:</span> <span class="s2">"+3"</span><span class="p">}}}</span>
 </code></pre></div>
 <h2 id="where-you-pass-them">Where you pass them<a class="headerlink" href="#where-you-pass-them" title="Permanent link">&para;</a></h2>
 <p>Document query ports take <code>filters</code>, <code>sorts</code>, <code>pagination</code>, and (where supported)
@@ -6803,16 +6803,16 @@ offset (default UTC):</p>
 <span class="n">page</span> <span class="o">=</span> <span class="k">await</span> <span class="n">doc</span><span class="o">.</span><span class="n">find_many</span><span class="p">(</span>
     <span class="n">filters</span><span class="o">=</span><span class="n">filters</span><span class="p">,</span>
     <span class="n">sorts</span><span class="o">=</span><span class="n">sorts</span><span class="p">,</span>
-    <span class="n">pagination</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;limit&quot;</span><span class="p">:</span> <span class="mi">20</span><span class="p">,</span> <span class="s2">&quot;offset&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">},</span>
+    <span class="n">pagination</span><span class="o">=</span><span class="p">{</span><span class="s2">"limit"</span><span class="p">:</span> <span class="mi">20</span><span class="p">,</span> <span class="s2">"offset"</span><span class="p">:</span> <span class="mi">0</span><span class="p">},</span>
 <span class="p">)</span>
 <span class="n">rows</span> <span class="o">=</span> <span class="n">page</span><span class="o">.</span><span class="n">hits</span>
 </code></pre></div>
 <p>Search requests take the same filter and sort expressions alongside the query
 text:</p>
 <div class="highlight"><pre><span></span><code><span class="n">page</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">search</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">project_search_spec</span><span class="p">)</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
-    <span class="s2">&quot;roadmap&quot;</span><span class="p">,</span>
+    <span class="s2">"roadmap"</span><span class="p">,</span>
     <span class="n">filters</span><span class="o">=</span><span class="n">filters</span><span class="p">,</span>
-    <span class="n">pagination</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;limit&quot;</span><span class="p">:</span> <span class="mi">20</span><span class="p">,</span> <span class="s2">&quot;offset&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">},</span>
+    <span class="n">pagination</span><span class="o">=</span><span class="p">{</span><span class="s2">"limit"</span><span class="p">:</span> <span class="mi">20</span><span class="p">,</span> <span class="s2">"offset"</span><span class="p">:</span> <span class="mi">0</span><span class="p">},</span>
 <span class="p">)</span>
 </code></pre></div>
 <h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
@@ -7001,7 +7001,7 @@ fields; object-array quantifiers render as <code>$elemMatch</code>.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

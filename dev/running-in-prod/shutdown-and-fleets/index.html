@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -2071,6 +2071,23 @@
       </span>
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Readiness">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#are-the-dependencies-reachable" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Are the dependencies reachable?
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -6155,6 +6172,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Readiness">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#are-the-dependencies-reachable" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Are the dependencies reachable?
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6346,6 +6380,51 @@ lifecycle step:</p>
 <p>Stdlib <code>asyncio</code>, no HTTP framework, same runtime state, same drain semantics: it
 reports <code>draining</code> for the whole window and closes only after. See
 <a href="../grafana-stack/#probes">The Grafana stack</a> for the Kubernetes mapping.</p>
+<h3 id="are-the-dependencies-reachable">Are the dependencies reachable?<a class="headerlink" href="#are-the-dependencies-reachable" title="Permanent link">&para;</a></h3>
+<p>The drain gate answers whether the process is <em>willing</em> to take traffic. It says
+nothing about whether it can serve one: an un-drained process whose database is gone
+answers <code>ready</code>, the load balancer keeps routing, and every request 500s.</p>
+<p>Name the clients you cannot serve without and each is resolved from the deps
+container and asked <code>health()</code> — the signature every forze client port already
+declares:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">PostgresClientDepKey</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_redis</span><span class="w"> </span><span class="kn">import</span> <span class="n">RedisClientDepKey</span>
+
+<span class="n">attach_readiness_route</span><span class="p">(</span>
+    <span class="n">router</span><span class="p">,</span>
+    <span class="n">runtime</span><span class="p">,</span>
+    <span class="n">probes</span><span class="o">=</span><span class="p">{</span><span class="s2">"postgres"</span><span class="p">:</span> <span class="n">PostgresClientDepKey</span><span class="p">,</span> <span class="s2">"redis"</span><span class="p">:</span> <span class="n">RedisClientDepKey</span><span class="p">},</span>
+    <span class="n">probe_timeout</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">2</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The response then carries a per-dependency breakdown, and any failed check makes the
+whole probe a <code>503</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"degraded"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"checks"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"postgres"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"ok"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w">  </span><span class="nt">"detail"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ok"</span><span class="p">},</span>
+<span class="w">            </span><span class="nt">"redis"</span><span class="p">:</span><span class="w">    </span><span class="p">{</span><span class="nt">"ok"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="nt">"detail"</span><span class="p">:</span><span class="w"> </span><span class="s2">"timed out after 2.0s"</span><span class="p">}}}</span>
+</code></pre></div>
+<p><code>probe_timeout</code> is the budget for <strong>each</strong> probe, not for the sweep — deliberately.
+The two look equivalent, since the probes run concurrently and the wall clock is the
+same either way. They are not: when a dependency is unreachable its driver retries
+past the deadline, and a sweep-wide timeout then cancels <em>every</em> probe and answers
+<code>503</code> with <code>checks: {}</code> — no breakdown, in exactly the situation the breakdown exists
+for. Per probe, a hanging dependency is one failed check with a name on it.</p>
+<p>A probe reports failures and never becomes one. A client whose <code>health()</code> raises is
+reported as <code>{"ok": false, "detail": "&lt;ExceptionType&gt;"}</code> — the type and not the
+message, because a driver's connection error routinely carries the DSN and this body
+is served to anything that can reach the probe. Nothing is auto-discovered: the
+integrations satisfy <code>health()</code> structurally, with no base port to enumerate, and a
+sweep of every registered dependency would probe things readiness does not depend on.
+A <code>probe_timeout</code> that is not positive is refused at attach time.</p>
+<p>Keep the endpoint internal, as you would <code>/metrics</code>. <code>detail</code> is the client's own
+summary, and a failing driver's is its exception text — which routinely names the
+host, the port and the user it failed to authenticate as. That is exactly what the
+breakdown is for and exactly what should not reach the public internet. Every request
+also runs every probe, so the probe period is a real query rate against each
+dependency.</p>
+<p>No <code>probes</code> (the default) leaves the drain-gate-only behaviour untouched.</p>
 <h2 id="declare-the-fleet-posture">Declare the fleet posture<a class="headerlink" href="#declare-the-fleet-posture" title="Permanent link">&para;</a></h2>
 <p>Some startup work is safe in one process and a stampede in twenty — N replicas
 all running <code>CREATE INDEX</code> or a data migration at the same moment. Declaring
@@ -6367,7 +6446,7 @@ one replica runs it and the rest skip —</p>
 
 <span class="n">step</span> <span class="o">=</span> <span class="n">singleton_lifecycle_step</span><span class="p">(</span>
     <span class="n">ensure_indexes_step</span><span class="p">,</span>
-    <span class="n">spec</span><span class="o">=</span><span class="n">DistributedLockSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;ensure-indexes&quot;</span><span class="p">),</span>  <span class="c1"># resolved from the scope</span>
+    <span class="n">spec</span><span class="o">=</span><span class="n">DistributedLockSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"ensure-indexes"</span><span class="p">),</span>  <span class="c1"># resolved from the scope</span>
     <span class="n">owner</span><span class="o">=</span><span class="n">instance_id</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -6533,7 +6612,7 @@ is something you confirm by watching it; that's <a href="../observability/">Obse
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

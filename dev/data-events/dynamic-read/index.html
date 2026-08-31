@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6480,8 +6480,8 @@ through it shares these caps and the route's wiring:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.dynamic_read</span><span class="w"> </span><span class="kn">import</span> <span class="n">DynamicReadSpec</span>
 
 <span class="n">WIDGETS</span> <span class="o">=</span> <span class="n">DynamicReadSpec</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;widgets&quot;</span><span class="p">,</span>
-    <span class="n">row_cap</span><span class="o">=</span><span class="mi">10_000</span><span class="p">,</span>            <span class="c1"># exceeding it raises; there is no &quot;unlimited&quot;</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"widgets"</span><span class="p">,</span>
+    <span class="n">row_cap</span><span class="o">=</span><span class="mi">10_000</span><span class="p">,</span>            <span class="c1"># exceeding it raises; there is no "unlimited"</span>
     <span class="n">max_statement_bytes</span><span class="o">=</span><span class="mi">65_536</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -6490,8 +6490,8 @@ data — that is the plane's definition. A handler resolves the port and passes
 text plus bound parameters:</p>
 <div class="highlight"><pre><span></span><code><span class="n">port</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">dynamic_read</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">WIDGETS</span><span class="p">)</span>
 
-<span class="n">rows</span> <span class="o">=</span> <span class="k">await</span> <span class="n">port</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">widget</span><span class="o">.</span><span class="n">sql</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;since&quot;</span><span class="p">:</span> <span class="n">since</span><span class="p">})</span>        <span class="c1"># list of mapping rows</span>
-<span class="n">typed</span> <span class="o">=</span> <span class="k">await</span> <span class="n">port</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">RevenueRow</span><span class="p">,</span> <span class="n">widget</span><span class="o">.</span><span class="n">sql</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;since&quot;</span><span class="p">:</span> <span class="n">since</span><span class="p">})</span>
+<span class="n">rows</span> <span class="o">=</span> <span class="k">await</span> <span class="n">port</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">widget</span><span class="o">.</span><span class="n">sql</span><span class="p">,</span> <span class="p">{</span><span class="s2">"since"</span><span class="p">:</span> <span class="n">since</span><span class="p">})</span>        <span class="c1"># list of mapping rows</span>
+<span class="n">typed</span> <span class="o">=</span> <span class="k">await</span> <span class="n">port</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">RevenueRow</span><span class="p">,</span> <span class="n">widget</span><span class="o">.</span><span class="n">sql</span><span class="p">,</span> <span class="p">{</span><span class="s2">"since"</span><span class="p">:</span> <span class="n">since</span><span class="p">})</span>
 </code></pre></div>
 <p><code>run</code> returns mapping rows in the statement's column order — the shape a widget
 renders from, and the only honest one when the columns are chosen at runtime.
@@ -6567,8 +6567,8 @@ sticky for the transaction's lifetime: writes stay impossible throughout.</p>
 the two never drift apart:</p>
 <div class="highlight"><pre><span></span><code><span class="n">PostgresSchemaTenantProvisioner</span><span class="p">(</span>
     <span class="n">client</span><span class="o">=</span><span class="n">pg_client</span><span class="p">,</span>
-    <span class="n">schema</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;project_</span><span class="si">{</span><span class="n">tid</span><span class="o">.</span><span class="n">hex</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-    <span class="n">role</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;project_</span><span class="si">{</span><span class="n">tid</span><span class="o">.</span><span class="n">hex</span><span class="si">}</span><span class="s2">_reader&quot;</span><span class="p">,</span>   <span class="c1"># NOLOGIN, USAGE + SELECT on that schema</span>
+    <span class="n">schema</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"project_</span><span class="si">{</span><span class="n">tid</span><span class="o">.</span><span class="n">hex</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
+    <span class="n">role</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"project_</span><span class="si">{</span><span class="n">tid</span><span class="o">.</span><span class="n">hex</span><span class="si">}</span><span class="s2">_reader"</span><span class="p">,</span>   <span class="c1"># NOLOGIN, USAGE + SELECT on that schema</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>Onboarding issues <code>GRANT USAGE</code>, <code>GRANT SELECT ON ALL TABLES</code>, and
@@ -6583,7 +6583,7 @@ facts the grants cannot cover on their own:</p>
   enough: since Postgres 16 the creator is granted <code>ADMIN OPTION</code> but
   <code>SET FALSE</code>, so a non-superuser needs one of</p>
 <div class="highlight"><pre><span></span><code><span class="k">GRANT</span><span class="w"> </span><span class="n">project_x_reader</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="n">app_user</span><span class="w"> </span><span class="k">WITH</span><span class="w"> </span><span class="k">SET</span><span class="w"> </span><span class="k">TRUE</span><span class="p">;</span><span class="w">   </span><span class="c1">-- explicitly, after creation</span>
-<span class="k">SET</span><span class="w"> </span><span class="n">createrole_self_grant</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;set, inherit&#39;</span><span class="p">;</span><span class="w">         </span><span class="c1">-- or, before creating roles</span>
+<span class="k">SET</span><span class="w"> </span><span class="n">createrole_self_grant</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'set, inherit'</span><span class="p">;</span><span class="w">         </span><span class="c1">-- or, before creating roles</span>
 </code></pre></div>
 <p>A superuser connection needs neither.
 - <code>ALTER DEFAULT PRIVILEGES</code> applies to relations created by <strong>the role that ran
@@ -6598,8 +6598,8 @@ facts the grants cannot cover on their own:</p>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres.execution.deps.configs</span><span class="w"> </span><span class="kn">import</span> <span class="n">PostgresDynamicReadConfig</span>
 
 <span class="n">PostgresDynamicReadConfig</span><span class="p">(</span>
-    <span class="n">provenance</span><span class="o">=</span><span class="s2">&quot;trusted&quot;</span><span class="p">,</span>                            <span class="c1"># mandatory — no default</span>
-    <span class="n">query_schema</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;project_</span><span class="si">{</span><span class="n">tid</span><span class="o">.</span><span class="n">hex</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>   <span class="c1"># SET LOCAL search_path</span>
+    <span class="n">provenance</span><span class="o">=</span><span class="s2">"trusted"</span><span class="p">,</span>                            <span class="c1"># mandatory — no default</span>
+    <span class="n">query_schema</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"project_</span><span class="si">{</span><span class="n">tid</span><span class="o">.</span><span class="n">hex</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>   <span class="c1"># SET LOCAL search_path</span>
     <span class="n">role</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>                                       <span class="c1"># SET LOCAL ROLE (tier B)</span>
     <span class="n">statement_timeout</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>          <span class="c1"># always on</span>
     <span class="n">tenant_aware</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
@@ -6724,7 +6724,7 @@ sits against the rest.</p>
 <p>Caps ship on with real values, and exceeding the row cap <strong>raises</strong> rather than
 truncating — a truncated page reads as a complete one, and a dashboard rendered
 from it is confidently wrong. Per-call options clamp down and never up:</p>
-<div class="highlight"><pre><span></span><code><span class="n">rows</span> <span class="o">=</span> <span class="k">await</span> <span class="n">port</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">sql</span><span class="p">,</span> <span class="n">params</span><span class="p">,</span> <span class="n">options</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;row_cap&quot;</span><span class="p">:</span> <span class="mi">500</span><span class="p">,</span> <span class="s2">&quot;timeout&quot;</span><span class="p">:</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">2</span><span class="p">)})</span>
+<div class="highlight"><pre><span></span><code><span class="n">rows</span> <span class="o">=</span> <span class="k">await</span> <span class="n">port</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">sql</span><span class="p">,</span> <span class="n">params</span><span class="p">,</span> <span class="n">options</span><span class="o">=</span><span class="p">{</span><span class="s2">"row_cap"</span><span class="p">:</span> <span class="mi">500</span><span class="p">,</span> <span class="s2">"timeout"</span><span class="p">:</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">2</span><span class="p">)})</span>
 </code></pre></div>
 <p>Every code below is caller-caused, because on this plane the statement <em>is</em> the
 caller's input — an undefined relation here is a malformed request, not a broken
@@ -6798,8 +6798,8 @@ covers every route on the plane:</p>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.resilience</span><span class="w"> </span><span class="kn">import</span> <span class="n">PortPolicy</span>
 
 <span class="n">ResilienceDepsModule</span><span class="p">(</span>
-    <span class="n">spec</span><span class="o">=</span><span class="n">my_policies</span><span class="p">,</span>                                        <span class="c1"># defines &quot;catalog_reads&quot;</span>
-    <span class="n">port_policies</span><span class="o">=</span><span class="p">(</span><span class="n">PortPolicy</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="n">DynamicReadDepKey</span><span class="p">,</span> <span class="n">policy</span><span class="o">=</span><span class="s2">&quot;catalog_reads&quot;</span><span class="p">),),</span>
+    <span class="n">spec</span><span class="o">=</span><span class="n">my_policies</span><span class="p">,</span>                                        <span class="c1"># defines "catalog_reads"</span>
+    <span class="n">port_policies</span><span class="o">=</span><span class="p">(</span><span class="n">PortPolicy</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="n">DynamicReadDepKey</span><span class="p">,</span> <span class="n">policy</span><span class="o">=</span><span class="s2">"catalog_reads"</span><span class="p">),),</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>A bulkhead is the one worth setting deliberately: each call holds its own pooled
@@ -6808,7 +6808,7 @@ is how this plane starves the pool everything else shares.</p>
 <h2 id="statements-in-traces">Statements in traces<a class="headerlink" href="#statements-in-traces" title="Permanent link">&para;</a></h2>
 <p>Simulation value capture masks the statement text by default:</p>
 <div class="highlight"><pre><span></span><code><span class="n">WIDGETS</span> <span class="o">=</span> <span class="n">DynamicReadSpec</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;widgets&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"widgets"</span><span class="p">,</span>
     <span class="n">capture_statements</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>   <span class="c1"># opt in to verbatim statements on captured traces</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -6826,8 +6826,8 @@ produced:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_mock</span><span class="w"> </span><span class="kn">import</span> <span class="n">MockDepsModule</span><span class="p">,</span> <span class="n">MockDynamicReadRegistry</span>
 
 <span class="n">registry</span> <span class="o">=</span> <span class="n">MockDynamicReadRegistry</span><span class="p">()</span><span class="o">.</span><span class="n">on</span><span class="p">(</span>
-    <span class="s2">&quot;widgets&quot;</span><span class="p">,</span>
-    <span class="k">lambda</span> <span class="n">request</span><span class="p">,</span> <span class="n">state</span><span class="p">:</span> <span class="p">[{</span><span class="s2">&quot;revenue&quot;</span><span class="p">:</span> <span class="mi">10</span><span class="p">}][:</span> <span class="n">request</span><span class="o">.</span><span class="n">row_probe</span><span class="p">],</span>
+    <span class="s2">"widgets"</span><span class="p">,</span>
+    <span class="k">lambda</span> <span class="n">request</span><span class="p">,</span> <span class="n">state</span><span class="p">:</span> <span class="p">[{</span><span class="s2">"revenue"</span><span class="p">:</span> <span class="mi">10</span><span class="p">}][:</span> <span class="n">request</span><span class="o">.</span><span class="n">row_probe</span><span class="p">],</span>
 <span class="p">)</span>
 <span class="n">module</span> <span class="o">=</span> <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">dynamic_reads</span><span class="o">=</span><span class="n">registry</span><span class="p">)</span>
 </code></pre></div>
@@ -6968,7 +6968,7 @@ threat tiers.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

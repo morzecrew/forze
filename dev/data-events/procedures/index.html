@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6384,21 +6384,21 @@ It names nothing about SQL or the backend — that lives in the wiring.</p>
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">RecomputeWindow</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
-    <span class="n">since</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;2026-01-01&quot;</span>
+    <span class="n">since</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"2026-01-01"</span>
 
 
 <span class="c1"># The batch lands via analytics append; the read side serves recomputed per-region totals.</span>
 <span class="n">SALES_SPEC</span> <span class="o">=</span> <span class="n">AnalyticsSpec</span><span class="p">[</span><span class="n">RegionTotal</span><span class="p">,</span> <span class="n">Sale</span><span class="p">](</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;sales&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"sales"</span><span class="p">,</span>
     <span class="n">read</span><span class="o">=</span><span class="n">RegionTotal</span><span class="p">,</span>
-    <span class="n">queries</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;by_region&quot;</span><span class="p">:</span> <span class="n">AnalyticsQueryDefinition</span><span class="p">(</span><span class="n">params</span><span class="o">=</span><span class="n">RegionQuery</span><span class="p">)},</span>
+    <span class="n">queries</span><span class="o">=</span><span class="p">{</span><span class="s2">"by_region"</span><span class="p">:</span> <span class="n">AnalyticsQueryDefinition</span><span class="p">(</span><span class="n">params</span><span class="o">=</span><span class="n">RegionQuery</span><span class="p">)},</span>
     <span class="n">ingest</span><span class="o">=</span><span class="n">Sale</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="c1"># The procedure is the whole handler-facing surface: typed params, no result model means</span>
 <span class="c1"># side-effect only (returns an affected-row count). Command-only — it mutates/computes.</span>
 <span class="n">RECOMPUTE_SPEC</span> <span class="o">=</span> <span class="n">ProcedureSpec</span><span class="p">[</span><span class="n">RecomputeWindow</span><span class="p">,</span> <span class="kc">None</span><span class="p">](</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;recompute_region_totals&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"recompute_region_totals"</span><span class="p">,</span>
     <span class="n">params</span><span class="o">=</span><span class="n">RecomputeWindow</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -6409,7 +6409,7 @@ recompute below replaces a swarm of per-row triggers with a single governed call
     <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">analytics</span><span class="o">.</span><span class="n">ingest</span><span class="p">(</span><span class="n">SALES_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">sales</span><span class="p">)</span>
 
 
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">recompute</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">,</span> <span class="n">since</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;2026-01-01&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">recompute</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">,</span> <span class="n">since</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"2026-01-01"</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="c1"># ONE governed set-based statement over the whole batch — no per-row triggers.</span>
     <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">procedure</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">RECOMPUTE_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
         <span class="n">RecomputeWindow</span><span class="p">(</span><span class="n">since</span><span class="o">=</span><span class="n">since</span><span class="p">)</span>
@@ -6418,7 +6418,7 @@ recompute below replaces a swarm of per-row triggers with a single governed call
 
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">region_totals</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">RegionTotal</span><span class="p">]:</span>
-    <span class="n">page</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">analytics</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">SALES_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;by_region&quot;</span><span class="p">,</span> <span class="n">RegionQuery</span><span class="p">())</span>
+    <span class="n">page</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">analytics</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">SALES_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">"by_region"</span><span class="p">,</span> <span class="n">RegionQuery</span><span class="p">())</span>
     <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="n">page</span><span class="o">.</span><span class="n">hits</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="what-comes-back">What comes back<a class="headerlink" href="#what-comes-back" title="Permanent link">&para;</a></h2>
@@ -6461,9 +6461,9 @@ placeholders:</p>
     <span class="c1"># (not `SELECT a_function(...)`, which returns one row — a count-returning function uses a</span>
     <span class="c1"># scalar result instead).</span>
     <span class="n">sql</span><span class="o">=</span><span class="p">(</span>
-        <span class="s2">&quot;INSERT INTO region_totals (region, total) &quot;</span>
-        <span class="s2">&quot;SELECT region, sum(amount) FROM sales WHERE since &gt;= </span><span class="si">%(since)s</span><span class="s2"> GROUP BY region &quot;</span>
-        <span class="s2">&quot;ON CONFLICT (region) DO UPDATE SET total = excluded.total&quot;</span>
+        <span class="s2">"INSERT INTO region_totals (region, total) "</span>
+        <span class="s2">"SELECT region, sum(amount) FROM sales WHERE since &gt;= </span><span class="si">%(since)s</span><span class="s2"> GROUP BY region "</span>
+        <span class="s2">"ON CONFLICT (region) DO UPDATE SET total = excluded.total"</span>
     <span class="p">),</span>
     <span class="n">in_transaction</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>            <span class="c1"># False for REFRESH MATERIALIZED VIEW CONCURRENTLY</span>
     <span class="n">statement_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>         <span class="c1"># SET LOCAL statement_timeout for long compute</span>
@@ -6527,18 +6527,18 @@ here modelled in-process so the recipe runs without a warehouse:</p>
     <span class="n">params</span><span class="p">:</span> <span class="n">RecomputeWindow</span><span class="p">,</span>
     <span class="n">state</span><span class="p">:</span> <span class="n">MockState</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExecResult</span><span class="p">[</span><span class="kc">None</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Model the set-based recompute the production SQL performs: read the ingested batch,</span>
+<span class="w">    </span><span class="sd">"""Model the set-based recompute the production SQL performs: read the ingested batch,</span>
 <span class="sd">    aggregate per region in one pass, materialize the read model. Returns the rows written.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
 
-    <span class="n">sales</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">analytics_ingest_log</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;sales&quot;</span><span class="p">,</span> <span class="p">[])</span>
+    <span class="n">sales</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">analytics_ingest_log</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"sales"</span><span class="p">,</span> <span class="p">[])</span>
 
     <span class="n">totals</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
     <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">sales</span><span class="p">:</span>
-        <span class="n">totals</span><span class="p">[</span><span class="n">row</span><span class="p">[</span><span class="s2">&quot;region&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="n">totals</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">&quot;region&quot;</span><span class="p">],</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="nb">int</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">&quot;amount&quot;</span><span class="p">])</span>
+        <span class="n">totals</span><span class="p">[</span><span class="n">row</span><span class="p">[</span><span class="s2">"region"</span><span class="p">]]</span> <span class="o">=</span> <span class="n">totals</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">"region"</span><span class="p">],</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="nb">int</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">"amount"</span><span class="p">])</span>
 
-    <span class="n">state</span><span class="o">.</span><span class="n">analytics_query_hits</span><span class="p">[</span><span class="s2">&quot;sales&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
-        <span class="s2">&quot;by_region&quot;</span><span class="p">:</span> <span class="p">[{</span><span class="s2">&quot;region&quot;</span><span class="p">:</span> <span class="n">r</span><span class="p">,</span> <span class="s2">&quot;total&quot;</span><span class="p">:</span> <span class="n">t</span><span class="p">}</span> <span class="k">for</span> <span class="n">r</span><span class="p">,</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">totals</span><span class="o">.</span><span class="n">items</span><span class="p">())]</span>
+    <span class="n">state</span><span class="o">.</span><span class="n">analytics_query_hits</span><span class="p">[</span><span class="s2">"sales"</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">"by_region"</span><span class="p">:</span> <span class="p">[{</span><span class="s2">"region"</span><span class="p">:</span> <span class="n">r</span><span class="p">,</span> <span class="s2">"total"</span><span class="p">:</span> <span class="n">t</span><span class="p">}</span> <span class="k">for</span> <span class="n">r</span><span class="p">,</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">totals</span><span class="o">.</span><span class="n">items</span><span class="p">())]</span>
     <span class="p">}</span>
 
     <span class="k">return</span> <span class="n">ExecResult</span><span class="p">(</span><span class="n">affected_count</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">totals</span><span class="p">))</span>
@@ -6656,7 +6656,7 @@ the document and analytics paths use.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

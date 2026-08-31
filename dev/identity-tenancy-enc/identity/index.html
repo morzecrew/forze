@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6378,10 +6378,10 @@ owning any vendor knowledge:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnSpec</span>
 
 <span class="n">api_authn</span> <span class="o">=</span> <span class="n">AuthnSpec</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;api&quot;</span><span class="p">,</span>
-    <span class="n">enabled_methods</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;token&quot;</span><span class="p">,</span> <span class="s2">&quot;api_key&quot;</span><span class="p">}),</span>
-    <span class="n">token_profile</span><span class="o">=</span><span class="s2">&quot;oidc&quot;</span><span class="p">,</span>
-    <span class="n">resolver_profile</span><span class="o">=</span><span class="s2">&quot;mapping&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"api"</span><span class="p">,</span>
+    <span class="n">enabled_methods</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">"token"</span><span class="p">,</span> <span class="s2">"api_key"</span><span class="p">}),</span>
+    <span class="n">token_profile</span><span class="o">=</span><span class="s2">"oidc"</span><span class="p">,</span>
+    <span class="n">resolver_profile</span><span class="o">=</span><span class="s2">"mapping"</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>Providers ship as integrations — see <a href="../../integrations/oidc/"><abbr title="OpenID Connect">OIDC</abbr></a> and
@@ -6439,7 +6439,7 @@ logout, password change, reset request/completion, principal deactivation:</p>
 
 <span class="n">authn_module</span> <span class="o">=</span> <span class="n">AuthnDepsModule</span><span class="p">(</span>
     <span class="n">kernel</span><span class="o">=</span><span class="n">kernel</span><span class="p">,</span>
-    <span class="n">authn</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;main&quot;</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">&quot;password&quot;</span><span class="p">,</span> <span class="s2">&quot;token&quot;</span><span class="p">})},</span>
+    <span class="n">authn</span><span class="o">=</span><span class="p">{</span><span class="s2">"main"</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">"password"</span><span class="p">,</span> <span class="s2">"token"</span><span class="p">})},</span>
     <span class="n">events</span><span class="o">=</span><span class="n">ConfigurableLoggingAuthnEventSink</span><span class="p">(),</span>  <span class="c1"># one log line per event</span>
     <span class="n">lockout</span><span class="o">=</span><span class="n">LockoutConfig</span><span class="p">(</span><span class="n">threshold</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">window</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">15</span><span class="p">)),</span>
 <span class="p">)</span>
@@ -6574,7 +6574,7 @@ server-side introspection against VK rather than a local signature check).</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

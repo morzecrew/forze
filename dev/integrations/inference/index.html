@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6306,14 +6306,14 @@ cannot represent is refused at wiring.</p>
 <span class="n">module</span> <span class="o">=</span> <span class="n">HttpInferenceDepsModule</span><span class="p">(</span>
     <span class="n">client</span><span class="o">=</span><span class="n">client</span><span class="p">,</span>
     <span class="n">models</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;fraud_scorer&quot;</span><span class="p">:</span> <span class="n">HttpInferenceConfig</span><span class="p">(</span>
-            <span class="n">protocol</span><span class="o">=</span><span class="s2">&quot;kserve_v2&quot;</span><span class="p">,</span>            <span class="c1"># or &quot;mlflow&quot;</span>
-            <span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;fraud-scorer&quot;</span><span class="p">,</span>       <span class="c1"># server-side model id</span>
+        <span class="s2">"fraud_scorer"</span><span class="p">:</span> <span class="n">HttpInferenceConfig</span><span class="p">(</span>
+            <span class="n">protocol</span><span class="o">=</span><span class="s2">"kserve_v2"</span><span class="p">,</span>            <span class="c1"># or "mlflow"</span>
+            <span class="n">model_name</span><span class="o">=</span><span class="s2">"fraud-scorer"</span><span class="p">,</span>       <span class="c1"># server-side model id</span>
             <span class="n">acknowledge_data_egress</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
         <span class="p">),</span>
     <span class="p">},</span>
 <span class="p">)</span>
-<span class="n">steps</span> <span class="o">=</span> <span class="p">[</span><span class="n">inference_http_lifecycle_step</span><span class="p">(</span><span class="s2">&quot;http://mlserver:8080&quot;</span><span class="p">)]</span>
+<span class="n">steps</span> <span class="o">=</span> <span class="p">[</span><span class="n">inference_http_lifecycle_step</span><span class="p">(</span><span class="s2">"http://mlserver:8080"</span><span class="p">)]</span>
 </code></pre></div>
 <p><code>protocol="kserve_v2"</code> is the default choice — it covers everything that speaks
 the Open Inference Protocol. Input fields map to named columnar tensors (the
@@ -6336,14 +6336,14 @@ database. A <code>tenant_aware=True</code> route with no bound tenant fails clos
 <span class="n">module</span> <span class="o">=</span> <span class="n">SageMakerInferenceDepsModule</span><span class="p">(</span>
     <span class="n">client</span><span class="o">=</span><span class="n">SageMakerRuntimeClient</span><span class="p">(),</span>
     <span class="n">models</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;fraud_scorer&quot;</span><span class="p">:</span> <span class="n">SageMakerInferenceConfig</span><span class="p">(</span>
-            <span class="n">endpoint_name</span><span class="o">=</span><span class="s2">&quot;fraud-scorer-prod&quot;</span><span class="p">,</span>
-            <span class="n">target_variant</span><span class="o">=</span><span class="s2">&quot;blue&quot;</span><span class="p">,</span>           <span class="c1"># optional variant pin</span>
+        <span class="s2">"fraud_scorer"</span><span class="p">:</span> <span class="n">SageMakerInferenceConfig</span><span class="p">(</span>
+            <span class="n">endpoint_name</span><span class="o">=</span><span class="s2">"fraud-scorer-prod"</span><span class="p">,</span>
+            <span class="n">target_variant</span><span class="o">=</span><span class="s2">"blue"</span><span class="p">,</span>           <span class="c1"># optional variant pin</span>
             <span class="n">acknowledge_data_egress</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
         <span class="p">),</span>
     <span class="p">},</span>
 <span class="p">)</span>
-<span class="n">steps</span> <span class="o">=</span> <span class="p">[</span><span class="n">sagemaker_inference_lifecycle_step</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="s2">&quot;eu-west-1&quot;</span><span class="p">)]</span>
+<span class="n">steps</span> <span class="o">=</span> <span class="p">[</span><span class="n">sagemaker_inference_lifecycle_step</span><span class="p">(</span><span class="n">region_name</span><span class="o">=</span><span class="s2">"eu-west-1"</span><span class="p">)]</span>
 </code></pre></div>
 <p>Requests send <code>{"instances": [...]}</code> and expect <code>{"predictions": [...]}</code> — the
 TF-Serving / sklearn container convention. Credentials default to the botocore
@@ -6369,10 +6369,10 @@ resolves a whole client per tenant from that tenant's own secret:</p>
 
 <span class="n">client</span> <span class="o">=</span> <span class="n">RoutedInferenceHttpClient</span><span class="p">(</span>
     <span class="n">secrets</span><span class="o">=</span><span class="n">secrets</span><span class="p">,</span>                                   <span class="c1"># SecretsPort</span>
-    <span class="n">secret_ref_for_tenant</span><span class="o">=</span><span class="k">lambda</span> <span class="n">t</span><span class="p">:</span> <span class="n">SecretRef</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;tenants/</span><span class="si">{</span><span class="n">t</span><span class="si">}</span><span class="s2">/inference&quot;</span><span class="p">),</span>
+    <span class="n">secret_ref_for_tenant</span><span class="o">=</span><span class="k">lambda</span> <span class="n">t</span><span class="p">:</span> <span class="n">SecretRef</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="sa">f</span><span class="s2">"tenants/</span><span class="si">{</span><span class="n">t</span><span class="si">}</span><span class="s2">/inference"</span><span class="p">),</span>
     <span class="n">tenant_provider</span><span class="o">=</span><span class="n">current_tenant</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="n">steps</span> <span class="o">=</span> <span class="p">[</span><span class="n">routed_client_lifecycle_step</span><span class="p">(</span><span class="s2">&quot;routed_inference_http_client&quot;</span><span class="p">,</span> <span class="n">client</span><span class="o">=</span><span class="n">client</span><span class="p">)]</span>
+<span class="n">steps</span> <span class="o">=</span> <span class="p">[</span><span class="n">routed_client_lifecycle_step</span><span class="p">(</span><span class="s2">"routed_inference_http_client"</span><span class="p">,</span> <span class="n">client</span><span class="o">=</span><span class="n">client</span><span class="p">)]</span>
 </code></pre></div>
 <p>The secret holds <code>InferenceHttpRoutingCredentials</code> — <code>base_url</code> plus optional
 <code>headers</code> / <code>bearer_token</code> — so a tenant's features reach <em>that tenant's</em> model
@@ -6512,7 +6512,7 @@ default.
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

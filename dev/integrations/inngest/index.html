@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6343,14 +6343,14 @@ handed to your function, so there is no equivalent of Temporal's escape hatch to
 the SDK's own objects are already in your hands. Parity between the two packages means
 the same discipline, not the same feature list.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">&#39;forze[inngest]&#39;</span>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">'forze[inngest]'</span>
 </code></pre></div>
 <p>Needs Inngest, and a served function endpoint. The FastAPI serve helper needs
 <code>forze[inngest,fastapi]</code>.</p>
 <h2 id="the-client">The client<a class="headerlink" href="#the-client" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_inngest</span><span class="w"> </span><span class="kn">import</span> <span class="n">InngestClient</span><span class="p">,</span> <span class="n">InngestConfig</span>
 
-<span class="n">inngest</span> <span class="o">=</span> <span class="n">InngestClient</span><span class="p">(</span><span class="n">app_id</span><span class="o">=</span><span class="s2">&quot;orders&quot;</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">InngestConfig</span><span class="p">())</span>
+<span class="n">inngest</span> <span class="o">=</span> <span class="n">InngestClient</span><span class="p">(</span><span class="n">app_id</span><span class="o">=</span><span class="s2">"orders"</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">InngestConfig</span><span class="p">())</span>
 </code></pre></div>
 <p><code>RoutedInngestClient</code> resolves per-tenant credentials.</p>
 <h2 id="wire-it">Wire it<a class="headerlink" href="#wire-it" title="Permanent link">&para;</a></h2>
@@ -6361,7 +6361,7 @@ the same discipline, not the same feature list.</p>
 <span class="n">bindings</span> <span class="o">=</span> <span class="p">[</span><span class="n">InngestFunctionBinding</span><span class="o">.</span><span class="n">for_registry_operation</span><span class="p">(</span><span class="n">fulfil_spec</span><span class="p">,</span> <span class="n">registry</span><span class="p">)]</span>
 
 <span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
-    <span class="n">InngestDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">inngest</span><span class="p">,</span> <span class="n">events</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;orders&quot;</span><span class="p">:</span> <span class="n">InngestEventConfig</span><span class="p">()},</span> <span class="n">function_bindings</span><span class="o">=</span><span class="n">bindings</span><span class="p">),</span>
+    <span class="n">InngestDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">inngest</span><span class="p">,</span> <span class="n">events</span><span class="o">=</span><span class="p">{</span><span class="s2">"orders"</span><span class="p">:</span> <span class="n">InngestEventConfig</span><span class="p">()},</span> <span class="n">function_bindings</span><span class="o">=</span><span class="n">bindings</span><span class="p">),</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>Serve the functions from FastAPI (registers them with Inngest):</p>
@@ -6515,7 +6515,7 @@ shutdown window.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

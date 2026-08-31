@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6485,14 +6485,14 @@ out:</p>
 <span class="n">reporter</span> <span class="o">=</span> <span class="n">build_progress_reporter</span><span class="p">(</span>
     <span class="n">ctx</span><span class="p">,</span>
     <span class="n">job_id</span><span class="o">=</span><span class="n">job_id</span><span class="p">,</span>
-    <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;export&quot;</span><span class="p">,</span>                                   <span class="c1"># your vocabulary, not ours</span>
+    <span class="n">kind</span><span class="o">=</span><span class="s2">"export"</span><span class="p">,</span>                                   <span class="c1"># your vocabulary, not ours</span>
     <span class="n">subject</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">destination</span><span class="p">),</span>
     <span class="n">projector</span><span class="o">=</span><span class="n">build_job_progress_projector</span><span class="p">(</span><span class="n">ctx</span><span class="p">),</span>     <span class="c1"># write the record inline</span>
     <span class="n">stream_spec</span><span class="o">=</span><span class="n">transport</span><span class="o">.</span><span class="n">stream_spec</span><span class="p">,</span>               <span class="c1"># and push it live</span>
     <span class="n">outbox_spec</span><span class="o">=</span><span class="n">progress_outbox_spec</span><span class="p">(),</span>              <span class="c1"># transitions, on their own route</span>
 <span class="p">)</span>
 
-<span class="k">async</span> <span class="k">with</span> <span class="n">reporter</span><span class="o">.</span><span class="n">track</span><span class="p">(</span><span class="s2">&quot;exporting&quot;</span><span class="p">):</span>
+<span class="k">async</span> <span class="k">with</span> <span class="n">reporter</span><span class="o">.</span><span class="n">track</span><span class="p">(</span><span class="s2">"exporting"</span><span class="p">):</span>
     <span class="k">await</span> <span class="n">export_archive</span><span class="p">(</span><span class="n">runtime</span><span class="p">,</span> <span class="n">destination</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="n">scope</span><span class="p">,</span> <span class="n">progress</span><span class="o">=</span><span class="n">reporter</span><span class="p">)</span>
 </code></pre></div>
 <p><code>track()</code> closes a job it opened, never one the block already spoke for: a block
@@ -6554,7 +6554,7 @@ refused. Run a relay for it next to the realtime one:</p>
     <span class="n">realtime_relay_lifecycle_step</span><span class="p">(</span>
         <span class="n">outbox_spec</span><span class="o">=</span><span class="n">progress_outbox_spec</span><span class="p">(),</span> <span class="n">stream_spec</span><span class="o">=</span><span class="n">transport</span><span class="o">.</span><span class="n">stream_spec</span>
     <span class="p">),</span>
-    <span class="c1"># ... the application&#39;s own realtime relay</span>
+    <span class="c1"># ... the application's own realtime relay</span>
 <span class="p">]</span>
 </code></pre></div>
 <p>A job's signals go to a <strong>topic</strong> (<code>job:&lt;id&gt;</code> by default), and who may join a topic
@@ -6578,18 +6578,18 @@ that <em>cannot</em> — an external process with no database access — publish
 and something on the other side projects. That something is the same projector,
 fed through <code>apply_signal</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># transitions relayed to a queue instead of the realtime stream</span>
-<span class="n">transitions</span> <span class="o">=</span> <span class="n">progress_outbox_spec</span><span class="p">(</span><span class="n">queue</span><span class="o">=</span><span class="s2">&quot;jobs&quot;</span><span class="p">)</span>
+<span class="n">transitions</span> <span class="o">=</span> <span class="n">progress_outbox_spec</span><span class="p">(</span><span class="n">queue</span><span class="o">=</span><span class="s2">"jobs"</span><span class="p">)</span>
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_project</span><span class="p">(</span><span class="n">message</span><span class="p">):</span>
     <span class="k">await</span> <span class="n">build_job_progress_projector</span><span class="p">(</span><span class="n">ctx</span><span class="p">)</span><span class="o">.</span><span class="n">apply_signal</span><span class="p">(</span><span class="n">message</span><span class="o">.</span><span class="n">payload</span><span class="p">)</span>
 
 <span class="n">steps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
     <span class="n">queue_consumer_background_lifecycle_step</span><span class="p">(</span>
-        <span class="n">queue</span><span class="o">=</span><span class="s2">&quot;jobs&quot;</span><span class="p">,</span>
+        <span class="n">queue</span><span class="o">=</span><span class="s2">"jobs"</span><span class="p">,</span>
         <span class="n">queue_spec</span><span class="o">=</span><span class="n">jobs_queue_spec</span><span class="p">,</span>
         <span class="n">handler</span><span class="o">=</span><span class="n">_project</span><span class="p">,</span>
         <span class="n">inbox_spec</span><span class="o">=</span><span class="n">jobs_inbox_spec</span><span class="p">,</span>
-        <span class="n">tx_route</span><span class="o">=</span><span class="s2">&quot;default&quot;</span><span class="p">,</span>
+        <span class="n">tx_route</span><span class="o">=</span><span class="s2">"default"</span><span class="p">,</span>
     <span class="p">)</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -6896,7 +6896,7 @@ it — one job legitimately covers several sweeps.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

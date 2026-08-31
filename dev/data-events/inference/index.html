@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6362,7 +6362,7 @@ change with zero handler edits.</p>
     <span class="n">risk</span><span class="p">:</span> <span class="nb">float</span>
 
 <span class="n">FRAUD_SCORER</span> <span class="o">=</span> <span class="n">InferenceSpec</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;fraud_scorer&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"fraud_scorer"</span><span class="p">,</span>
     <span class="nb">input</span><span class="o">=</span><span class="n">FraudFeatures</span><span class="p">,</span>
     <span class="n">output</span><span class="o">=</span><span class="n">FraudScore</span><span class="p">,</span>
 <span class="p">)</span>
@@ -6371,7 +6371,7 @@ change with zero handler edits.</p>
 parameters propagate, so predictions are fully typed with zero annotations:</p>
 <div class="highlight"><pre><span></span><code><span class="n">port</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">inference</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">FRAUD_SCORER</span><span class="p">)</span>
 
-<span class="n">score</span> <span class="o">=</span> <span class="k">await</span> <span class="n">port</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">FraudFeatures</span><span class="p">(</span><span class="n">amount</span><span class="o">=</span><span class="mf">120.0</span><span class="p">,</span> <span class="n">country</span><span class="o">=</span><span class="s2">&quot;NL&quot;</span><span class="p">,</span> <span class="n">velocity_24h</span><span class="o">=</span><span class="mi">3</span><span class="p">))</span>
+<span class="n">score</span> <span class="o">=</span> <span class="k">await</span> <span class="n">port</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">FraudFeatures</span><span class="p">(</span><span class="n">amount</span><span class="o">=</span><span class="mf">120.0</span><span class="p">,</span> <span class="n">country</span><span class="o">=</span><span class="s2">"NL"</span><span class="p">,</span> <span class="n">velocity_24h</span><span class="o">=</span><span class="mi">3</span><span class="p">))</span>
 <span class="n">scores</span> <span class="o">=</span> <span class="k">await</span> <span class="n">port</span><span class="o">.</span><span class="n">predict_many</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span>          <span class="c1"># vectorized, order-preserving</span>
 </code></pre></div>
 <p>The port is <strong>read-plane</strong>: invoking a model is a pure read of it, so a <code>QUERY</code>
@@ -6421,11 +6421,11 @@ the CPU-offload seam (bounded pool, deadline enforcement, cancellation):</p>
 <span class="p">)</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">load_fraud_model</span><span class="p">():</span>
-    <span class="kn">import</span><span class="w"> </span><span class="nn">joblib</span>                      <span class="c1"># your dependency, not the framework&#39;s</span>
-    <span class="k">return</span> <span class="n">joblib</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;fraud-v3.bin&quot;</span><span class="p">)</span> <span class="c1"># exposes predict_batch(instances)</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">joblib</span>                      <span class="c1"># your dependency, not the framework's</span>
+    <span class="k">return</span> <span class="n">joblib</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"fraud-v3.bin"</span><span class="p">)</span> <span class="c1"># exposes predict_batch(instances)</span>
 
 <span class="n">inference_module</span> <span class="o">=</span> <span class="n">LocalInferenceDepsModule</span><span class="p">(</span>
-    <span class="n">models</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;fraud_scorer&quot;</span><span class="p">:</span> <span class="n">LocalInferenceConfig</span><span class="p">(</span><span class="n">loader</span><span class="o">=</span><span class="n">load_fraud_model</span><span class="p">)},</span>
+    <span class="n">models</span><span class="o">=</span><span class="p">{</span><span class="s2">"fraud_scorer"</span><span class="p">:</span> <span class="n">LocalInferenceConfig</span><span class="p">(</span><span class="n">loader</span><span class="o">=</span><span class="n">load_fraud_model</span><span class="p">)},</span>
 <span class="p">)</span>
 <span class="n">steps</span> <span class="o">=</span> <span class="p">[</span><span class="n">local_inference_lifecycle_step</span><span class="p">(</span><span class="n">inference_module</span><span class="p">)]</span>
 </code></pre></div>
@@ -6451,8 +6451,8 @@ register — deterministic by contract, so simulation replays stay exact:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_mock</span><span class="w"> </span><span class="kn">import</span> <span class="n">MockDepsModule</span><span class="p">,</span> <span class="n">MockInferenceRegistry</span>
 
 <span class="n">registry</span> <span class="o">=</span> <span class="n">MockInferenceRegistry</span><span class="p">()</span><span class="o">.</span><span class="n">on</span><span class="p">(</span>
-    <span class="s2">&quot;fraud_scorer&quot;</span><span class="p">,</span>
-    <span class="k">lambda</span> <span class="n">instances</span><span class="p">:</span> <span class="p">[{</span><span class="s2">&quot;risk&quot;</span><span class="p">:</span> <span class="nb">min</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">i</span><span class="o">.</span><span class="n">amount</span> <span class="o">/</span> <span class="mi">1000</span><span class="p">)}</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">instances</span><span class="p">],</span>
+    <span class="s2">"fraud_scorer"</span><span class="p">,</span>
+    <span class="k">lambda</span> <span class="n">instances</span><span class="p">:</span> <span class="p">[{</span><span class="s2">"risk"</span><span class="p">:</span> <span class="nb">min</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">i</span><span class="o">.</span><span class="n">amount</span> <span class="o">/</span> <span class="mi">1000</span><span class="p">)}</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">instances</span><span class="p">],</span>
 <span class="p">)</span>
 <span class="n">module</span> <span class="o">=</span> <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">inference</span><span class="o">=</span><span class="n">registry</span><span class="p">)</span>
 </code></pre></div>
@@ -6520,7 +6520,7 @@ is a memory bound, not an atomicity request).</p>
 <h2 id="features-in-traces">Features in traces<a class="headerlink" href="#features-in-traces" title="Permanent link">&para;</a></h2>
 <p>Simulation value capture masks every input field by default:</p>
 <div class="highlight"><pre><span></span><code><span class="n">FRAUD_SCORER</span> <span class="o">=</span> <span class="n">InferenceSpec</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;fraud_scorer&quot;</span><span class="p">,</span> <span class="nb">input</span><span class="o">=</span><span class="n">FraudFeatures</span><span class="p">,</span> <span class="n">output</span><span class="o">=</span><span class="n">FraudScore</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"fraud_scorer"</span><span class="p">,</span> <span class="nb">input</span><span class="o">=</span><span class="n">FraudFeatures</span><span class="p">,</span> <span class="n">output</span><span class="o">=</span><span class="n">FraudScore</span><span class="p">,</span>
     <span class="n">capture_inputs</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>   <span class="c1"># opt in to verbatim features on captured traces</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -6540,8 +6540,8 @@ port runs under it:</p>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.resilience</span><span class="w"> </span><span class="kn">import</span> <span class="n">PortPolicy</span>
 
 <span class="n">ResilienceDepsModule</span><span class="p">(</span>
-    <span class="n">spec</span><span class="o">=</span><span class="n">my_policies</span><span class="p">,</span>                       <span class="c1"># defines &quot;model_calls&quot;</span>
-    <span class="n">port_policies</span><span class="o">=</span><span class="p">(</span><span class="n">PortPolicy</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="n">InferenceDepKey</span><span class="p">,</span> <span class="n">policy</span><span class="o">=</span><span class="s2">&quot;model_calls&quot;</span><span class="p">),),</span>
+    <span class="n">spec</span><span class="o">=</span><span class="n">my_policies</span><span class="p">,</span>                       <span class="c1"># defines "model_calls"</span>
+    <span class="n">port_policies</span><span class="o">=</span><span class="p">(</span><span class="n">PortPolicy</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="n">InferenceDepKey</span><span class="p">,</span> <span class="n">policy</span><span class="o">=</span><span class="s2">"model_calls"</span><span class="p">),),</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>Three things are worth tuning deliberately:</p>
@@ -6687,7 +6687,7 @@ consumes.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

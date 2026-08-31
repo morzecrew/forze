@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6326,7 +6326,7 @@
     <span class="n">deps</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">MockDepsModule</span><span class="p">(),</span>
     <span class="n">invariants</span><span class="o">=</span><span class="p">[</span>
         <span class="n">no_unexpected_error</span><span class="p">(),</span>                       <span class="c1"># any non-domain crash is a bug</span>
-        <span class="n">no_duplicate_effect</span><span class="p">(</span><span class="s2">&quot;charge&quot;</span><span class="p">,</span> <span class="n">by</span><span class="o">=</span><span class="s2">&quot;order&quot;</span><span class="p">),</span>   <span class="c1"># at most one charge per order</span>
+        <span class="n">no_duplicate_effect</span><span class="p">(</span><span class="s2">"charge"</span><span class="p">,</span> <span class="n">by</span><span class="o">=</span><span class="s2">"order"</span><span class="p">),</span>   <span class="c1"># at most one charge per order</span>
     <span class="p">],</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -6368,12 +6368,12 @@ is masked to <code>&lt;redacted&gt;</code> even when captured.</p>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst.invariants</span><span class="w"> </span><span class="kn">import</span> <span class="n">assess_reachability</span>
 
 <span class="c1"># in the scenario, where the hard state happens:</span>
-<span class="n">reached</span><span class="p">(</span><span class="s2">&quot;lock-contended&quot;</span><span class="p">)</span>     <span class="c1"># a peer held the lock — genuine contention occurred</span>
-<span class="n">reached</span><span class="p">(</span><span class="s2">&quot;write-partitioned&quot;</span><span class="p">)</span>  <span class="c1"># the partition struck during the guarded write</span>
+<span class="n">reached</span><span class="p">(</span><span class="s2">"lock-contended"</span><span class="p">)</span>     <span class="c1"># a peer held the lock — genuine contention occurred</span>
+<span class="n">reached</span><span class="p">(</span><span class="s2">"write-partitioned"</span><span class="p">)</span>  <span class="c1"># the partition struck during the guarded write</span>
 
 <span class="c1"># after the sweep — cluster.histories() runs every seed (no short-circuit):</span>
 <span class="n">report</span> <span class="o">=</span> <span class="n">assess_reachability</span><span class="p">(</span><span class="n">cluster</span><span class="o">.</span><span class="n">histories</span><span class="p">(</span><span class="n">config</span><span class="p">),</span> <span class="n">targets</span><span class="o">=</span><span class="p">{</span>
-    <span class="s2">&quot;lock-contended&quot;</span><span class="p">,</span> <span class="s2">&quot;write-partitioned&quot;</span><span class="p">,</span>
+    <span class="s2">"lock-contended"</span><span class="p">,</span> <span class="s2">"write-partitioned"</span><span class="p">,</span>
 <span class="p">})</span>
 <span class="k">assert</span> <span class="n">report</span><span class="o">.</span><span class="n">satisfied</span><span class="p">,</span> <span class="n">report</span><span class="o">.</span><span class="n">format</span><span class="p">()</span>   <span class="c1"># a target no seed reached is a failure</span>
 </code></pre></div>
@@ -6398,11 +6398,11 @@ is masked to <code>&lt;redacted&gt;</code> even when captured.</p>
 <span class="n">sim</span> <span class="o">=</span> <span class="n">Simulation</span><span class="p">(</span>
     <span class="n">operations</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span> <span class="n">deps</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">MockDepsModule</span><span class="p">(),</span>
     <span class="n">invariants</span><span class="o">=</span><span class="p">[</span><span class="n">settled_once</span><span class="p">,</span> <span class="n">external_charge_once</span><span class="p">],</span>
-    <span class="n">witnesses</span><span class="o">=</span><span class="n">load_witnesses</span><span class="p">(</span><span class="s2">&quot;dst/witnesses.jsonl&quot;</span><span class="p">),</span>   <span class="c1"># settled_once: mined + replayed</span>
+    <span class="n">witnesses</span><span class="o">=</span><span class="n">load_witnesses</span><span class="p">(</span><span class="s2">"dst/witnesses.jsonl"</span><span class="p">),</span>   <span class="c1"># settled_once: mined + replayed</span>
     <span class="n">horizon</span><span class="o">=</span><span class="p">[</span><span class="n">HorizonDeclaration</span><span class="p">(</span>                        <span class="c1"># external_charge_once: out of horizon</span>
-        <span class="n">invariant</span><span class="o">=</span><span class="s2">&quot;external_charge_once&quot;</span><span class="p">,</span>
+        <span class="n">invariant</span><span class="o">=</span><span class="s2">"external_charge_once"</span><span class="p">,</span>
         <span class="n">horizon</span><span class="o">=</span><span class="n">HorizonClass</span><span class="o">.</span><span class="n">EXTERNAL_EFFECT</span><span class="p">,</span>
-        <span class="n">covered_by</span><span class="o">=</span><span class="s2">&quot;tests/integration/test_billing.py::test_charge_idempotent&quot;</span><span class="p">,</span>
+        <span class="n">covered_by</span><span class="o">=</span><span class="s2">"tests/integration/test_billing.py::test_charge_idempotent"</span><span class="p">,</span>
     <span class="p">)],</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -6519,7 +6519,7 @@ is masked to <code>&lt;redacted&gt;</code> even when captured.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

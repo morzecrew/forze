@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6302,26 +6302,26 @@ end for <strong>durable</strong> signals.</p>
 <p>Wire only the realtime <strong>stream</strong> route <code>tenant_aware</code> (each tenant gets its own key). The
 <strong>outbox stays tenant-global</strong> — a shared table whose rows are tagged with their tenant —
 so the tenant-less relay can drain every tenant from one place:</p>
-<div class="highlight"><pre><span></span><code><span class="n">ACME</span> <span class="o">=</span> <span class="n">UUID</span><span class="p">(</span><span class="s2">&quot;11111111-1111-1111-1111-111111111111&quot;</span><span class="p">)</span>  <span class="c1"># tenant A</span>
-<span class="n">GLOBEX</span> <span class="o">=</span> <span class="n">UUID</span><span class="p">(</span><span class="s2">&quot;22222222-2222-2222-2222-222222222222&quot;</span><span class="p">)</span>  <span class="c1"># tenant B</span>
+<div class="highlight"><pre><span></span><code><span class="n">ACME</span> <span class="o">=</span> <span class="n">UUID</span><span class="p">(</span><span class="s2">"11111111-1111-1111-1111-111111111111"</span><span class="p">)</span>  <span class="c1"># tenant A</span>
+<span class="n">GLOBEX</span> <span class="o">=</span> <span class="n">UUID</span><span class="p">(</span><span class="s2">"22222222-2222-2222-2222-222222222222"</span><span class="p">)</span>  <span class="c1"># tenant B</span>
 
 <span class="n">STREAM</span> <span class="o">=</span> <span class="n">realtime_stream_spec</span><span class="p">()</span>  <span class="c1"># the per-tenant stream (wired tenant_aware below)</span>
 <span class="c1"># The outbox keeps its own name so it can stay tenant-global while the stream is tenant-aware</span>
 <span class="c1"># (the mock keys routes by spec name; in production they are separate backends).</span>
-<span class="n">OUTBOX</span> <span class="o">=</span> <span class="n">realtime_outbox_spec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;realtime-outbox&quot;</span><span class="p">,</span> <span class="n">stream</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">STREAM</span><span class="o">.</span><span class="n">name</span><span class="p">))</span>
+<span class="n">OUTBOX</span> <span class="o">=</span> <span class="n">realtime_outbox_spec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"realtime-outbox"</span><span class="p">,</span> <span class="n">stream</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">STREAM</span><span class="o">.</span><span class="n">name</span><span class="p">))</span>
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">_OrderShipped</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
     <span class="n">order</span><span class="p">:</span> <span class="nb">str</span>
 
 
-<span class="n">SHIPPED</span> <span class="o">=</span> <span class="n">RealtimeEvent</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;order.shipped&quot;</span><span class="p">,</span> <span class="n">payload_type</span><span class="o">=</span><span class="n">_OrderShipped</span><span class="p">)</span>
+<span class="n">SHIPPED</span> <span class="o">=</span> <span class="n">RealtimeEvent</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"order.shipped"</span><span class="p">,</span> <span class="n">payload_type</span><span class="o">=</span><span class="n">_OrderShipped</span><span class="p">)</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_context</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">ExecutionContext</span><span class="p">:</span>
     <span class="n">routes</span> <span class="o">=</span> <span class="p">{</span>
         <span class="nb">str</span><span class="p">(</span><span class="n">STREAM</span><span class="o">.</span><span class="n">name</span><span class="p">):</span> <span class="n">MockRouteConfig</span><span class="p">(</span><span class="n">tenant_aware</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>  <span class="c1"># per-tenant stream key</span>
-        <span class="c1"># &quot;realtime-outbox&quot; is intentionally absent → tenant-global (tagged) outbox</span>
+        <span class="c1"># "realtime-outbox" is intentionally absent → tenant-global (tagged) outbox</span>
     <span class="p">}</span>
     <span class="k">return</span> <span class="n">ExecutionContext</span><span class="p">(</span>
         <span class="n">deps</span><span class="o">=</span><span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span><span class="n">MockDepsModule</span><span class="p">(</span><span class="n">routes</span><span class="o">=</span><span class="n">routes</span><span class="p">))</span><span class="o">.</span><span class="n">freeze</span><span class="p">()</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span>
@@ -6331,31 +6331,31 @@ so the tenant-less relay can drain every tenant from one place:</p>
 <p>A handler stages the signal with no realtime or tenant plumbing — the staging tenant is
 ambient, and the outbox row is tagged with it:</p>
 <div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">publish_durable</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">tenant</span><span class="p">:</span> <span class="n">UUID</span><span class="p">,</span> <span class="n">order</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;A handler stages a durable signal under its tenant — no realtime/tenant plumbing.</span>
+<span class="w">    </span><span class="sd">"""A handler stages a durable signal under its tenant — no realtime/tenant plumbing.</span>
 
 <span class="sd">    The signal is addressed to a principal; the staging tenant is ambient. The outbox row</span>
 <span class="sd">    is tagged with that tenant, which the relay later uses to route it. (A real handler</span>
 <span class="sd">    flushes in its own transaction; here both tenants stage into one buffer, flushed once</span>
 <span class="sd">    by :func:`relay` so the in-process demo shares a single mock store.)</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
 
     <span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">inv_ctx</span><span class="o">.</span><span class="n">bind_identity</span><span class="p">(</span><span class="n">tenant</span><span class="o">=</span><span class="n">TenantIdentity</span><span class="p">(</span><span class="n">tenant_id</span><span class="o">=</span><span class="n">tenant</span><span class="p">)):</span>
         <span class="n">publisher</span> <span class="o">=</span> <span class="n">build_realtime_publisher</span><span class="p">(</span>
             <span class="n">ctx</span><span class="p">,</span> <span class="n">stream_spec</span><span class="o">=</span><span class="n">STREAM</span><span class="p">,</span> <span class="n">outbox_spec</span><span class="o">=</span><span class="n">OUTBOX</span>
         <span class="p">)</span>
         <span class="k">await</span> <span class="n">publisher</span><span class="o">.</span><span class="n">stage</span><span class="p">(</span>
-            <span class="n">Audience</span><span class="o">.</span><span class="n">principal</span><span class="p">(</span><span class="s2">&quot;alice&quot;</span><span class="p">),</span> <span class="n">SHIPPED</span><span class="p">,</span> <span class="n">_OrderShipped</span><span class="p">(</span><span class="n">order</span><span class="o">=</span><span class="n">order</span><span class="p">)</span>
+            <span class="n">Audience</span><span class="o">.</span><span class="n">principal</span><span class="p">(</span><span class="s2">"alice"</span><span class="p">),</span> <span class="n">SHIPPED</span><span class="p">,</span> <span class="n">_OrderShipped</span><span class="p">(</span><span class="n">order</span><span class="o">=</span><span class="n">order</span><span class="p">)</span>
         <span class="p">)</span>
 </code></pre></div>
 <h2 id="the-relay-routes-each-row-to-its-tenants-stream">The relay routes each row to its tenant's stream<a class="headerlink" href="#the-relay-routes-each-row-to-its-tenants-stream" title="Permanent link">&para;</a></h2>
 <p>The relay runs with <strong>no</strong> tenant bound, yet routes correctly: it binds each row's staged
 tenant before appending, so a durable signal lands on that tenant's stream key.</p>
 <div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">relay</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;The background relay drains the (tenant-global) outbox and forwards each row.</span>
+<span class="w">    </span><span class="sd">"""The background relay drains the (tenant-global) outbox and forwards each row.</span>
 
-<span class="sd">    It runs with **no** tenant bound, yet routes correctly: it binds each row&#39;s staged</span>
-<span class="sd">    tenant before appending, so the durable signal lands on that tenant&#39;s stream key.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    It runs with **no** tenant bound, yet routes correctly: it binds each row's staged</span>
+<span class="sd">    tenant before appending, so the durable signal lands on that tenant's stream key.</span>
+<span class="sd">    """</span>
 
     <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">outbox</span><span class="o">.</span><span class="n">command</span><span class="p">(</span>
         <span class="n">OUTBOX</span>
@@ -6369,17 +6369,17 @@ check. This is what <code>TenantShardedSignalSource</code> runs once per assigne
 <div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">read_tenant_stream</span><span class="p">(</span>
     <span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">,</span> <span class="n">tenant</span><span class="p">:</span> <span class="n">UUID</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">RealtimeSignal</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;What ``TenantShardedSignalSource`` does per assigned tenant: bind it, read its stream.</span>
+<span class="w">    </span><span class="sd">"""What ``TenantShardedSignalSource`` does per assigned tenant: bind it, read its stream.</span>
 
-<span class="sd">    Binding the tenant resolves the stream adapter to *that tenant&#39;s* key, so this only ever</span>
-<span class="sd">    sees the bound tenant&#39;s signals — the isolation is the stream&#39;s, not a header check.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    Binding the tenant resolves the stream adapter to *that tenant's* key, so this only ever</span>
+<span class="sd">    sees the bound tenant's signals — the isolation is the stream's, not a header check.</span>
+<span class="sd">    """</span>
 
     <span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">inv_ctx</span><span class="o">.</span><span class="n">bind_identity</span><span class="p">(</span><span class="n">tenant</span><span class="o">=</span><span class="n">TenantIdentity</span><span class="p">(</span><span class="n">tenant_id</span><span class="o">=</span><span class="n">tenant</span><span class="p">)):</span>
         <span class="n">stream</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">deps</span><span class="o">.</span><span class="n">resolve_configurable</span><span class="p">(</span>
             <span class="n">ctx</span><span class="p">,</span> <span class="n">StreamQueryDepKey</span><span class="p">,</span> <span class="n">STREAM</span><span class="p">,</span> <span class="n">route</span><span class="o">=</span><span class="n">STREAM</span><span class="o">.</span><span class="n">name</span>
         <span class="p">)</span>
-        <span class="n">messages</span> <span class="o">=</span> <span class="k">await</span> <span class="n">stream</span><span class="o">.</span><span class="n">read</span><span class="p">({</span><span class="nb">str</span><span class="p">(</span><span class="n">STREAM</span><span class="o">.</span><span class="n">name</span><span class="p">):</span> <span class="s2">&quot;0&quot;</span><span class="p">})</span>
+        <span class="n">messages</span> <span class="o">=</span> <span class="k">await</span> <span class="n">stream</span><span class="o">.</span><span class="n">read</span><span class="p">({</span><span class="nb">str</span><span class="p">(</span><span class="n">STREAM</span><span class="o">.</span><span class="n">name</span><span class="p">):</span> <span class="s2">"0"</span><span class="p">})</span>
 
     <span class="k">return</span> <span class="p">[</span><span class="n">m</span><span class="o">.</span><span class="n">payload</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">messages</span><span class="p">]</span>
 </code></pre></div>
@@ -6506,7 +6506,7 @@ check. This is what <code>TenantShardedSignalSource</code> runs once per assigne
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

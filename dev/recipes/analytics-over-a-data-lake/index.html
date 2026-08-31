@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6315,9 +6315,9 @@ Parquet, or where the data lives.</p>
 <span class="c1"># The spec is the whole handler-facing surface: a named query + its params + read model.</span>
 <span class="c1"># It says nothing about DuckDB, Parquet, or where the data lives.</span>
 <span class="n">SALES_SPEC</span> <span class="o">=</span> <span class="n">AnalyticsSpec</span><span class="p">[</span><span class="n">RegionTotal</span><span class="p">,</span> <span class="kc">None</span><span class="p">](</span>  <span class="c1"># type: ignore[reportUnknownReturnType]</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;sales&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"sales"</span><span class="p">,</span>
     <span class="n">read</span><span class="o">=</span><span class="n">RegionTotal</span><span class="p">,</span>
-    <span class="n">queries</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;by_region&quot;</span><span class="p">:</span> <span class="n">AnalyticsQueryDefinition</span><span class="p">(</span><span class="n">params</span><span class="o">=</span><span class="n">SalesQuery</span><span class="p">)},</span>
+    <span class="n">queries</span><span class="o">=</span><span class="p">{</span><span class="s2">"by_region"</span><span class="p">:</span> <span class="n">AnalyticsQueryDefinition</span><span class="p">(</span><span class="n">params</span><span class="o">=</span><span class="n">SalesQuery</span><span class="p">)},</span>
 <span class="p">)</span>
 </code></pre></div>
 <h2 id="map-it-to-duckdb">Map it to DuckDB<a class="headerlink" href="#map-it-to-duckdb" title="Permanent link">&para;</a></h2>
@@ -6327,10 +6327,10 @@ a source registered at startup. Params bind by name (<code>$min_total</code>):</
 <span class="c1"># source view registered at startup. `$min_total` binds from the params model.</span>
 <span class="n">SALES_CONFIG</span> <span class="o">=</span> <span class="n">DuckDbAnalyticsConfig</span><span class="p">(</span>
     <span class="n">queries</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">&quot;by_region&quot;</span><span class="p">:</span> <span class="n">DuckDbQueryConfig</span><span class="p">(</span>
+        <span class="s2">"by_region"</span><span class="p">:</span> <span class="n">DuckDbQueryConfig</span><span class="p">(</span>
             <span class="n">sql</span><span class="o">=</span><span class="p">(</span>
-                <span class="s2">&quot;SELECT region, sum(total) AS total FROM sales &quot;</span>
-                <span class="s2">&quot;GROUP BY region HAVING sum(total) &gt;= $min_total ORDER BY region&quot;</span>
+                <span class="s2">"SELECT region, sum(total) AS total FROM sales "</span>
+                <span class="s2">"GROUP BY region HAVING sum(total) &gt;= $min_total ORDER BY region"</span>
             <span class="p">),</span>
         <span class="p">),</span>
     <span class="p">},</span>
@@ -6346,15 +6346,15 @@ from your secrets backend:</p>
     <span class="n">client</span> <span class="o">=</span> <span class="n">DuckDbClient</span><span class="p">()</span>
 
     <span class="c1"># The lifecycle step opens the engine and registers the lake source as a view;</span>
-    <span class="c1"># in production `ParquetSource(&quot;s3://bucket/sales/*.parquet&quot;)` + S3 credentials.</span>
+    <span class="c1"># in production `ParquetSource("s3://bucket/sales/*.parquet")` + S3 credentials.</span>
     <span class="k">return</span> <span class="n">ExecutionRuntime</span><span class="p">(</span>
         <span class="n">deps</span><span class="o">=</span><span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
-            <span class="n">DuckDbDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">client</span><span class="p">,</span> <span class="n">analytics</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;sales&quot;</span><span class="p">:</span> <span class="n">SALES_CONFIG</span><span class="p">})</span>
+            <span class="n">DuckDbDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">client</span><span class="p">,</span> <span class="n">analytics</span><span class="o">=</span><span class="p">{</span><span class="s2">"sales"</span><span class="p">:</span> <span class="n">SALES_CONFIG</span><span class="p">})</span>
         <span class="p">)</span><span class="o">.</span><span class="n">freeze</span><span class="p">(),</span>
         <span class="n">lifecycle</span><span class="o">=</span><span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_steps</span><span class="p">(</span>
             <span class="n">duckdb_lifecycle_step</span><span class="p">(</span>
                 <span class="n">extensions</span><span class="o">=</span><span class="p">(),</span>  <span class="c1"># local file: no httpfs needed</span>
-                <span class="n">sources</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;sales&quot;</span><span class="p">:</span> <span class="n">ParquetSource</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">parquet</span><span class="p">))},</span>
+                <span class="n">sources</span><span class="o">=</span><span class="p">{</span><span class="s2">"sales"</span><span class="p">:</span> <span class="n">ParquetSource</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">parquet</span><span class="p">))},</span>
             <span class="p">),</span>
         <span class="p">)</span><span class="o">.</span><span class="n">freeze</span><span class="p">(),</span>
     <span class="p">)</span>
@@ -6365,7 +6365,7 @@ rows out, engine-agnostic:</p>
 <div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">top_regions</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">,</span> <span class="n">min_total</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">RegionTotal</span><span class="p">]:</span>
     <span class="c1"># The handler names the query and gets typed rows back — engine-agnostic.</span>
     <span class="n">page</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">analytics</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">SALES_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
-        <span class="s2">&quot;by_region&quot;</span><span class="p">,</span> <span class="n">SalesQuery</span><span class="p">(</span><span class="n">min_total</span><span class="o">=</span><span class="n">min_total</span><span class="p">)</span>
+        <span class="s2">"by_region"</span><span class="p">,</span> <span class="n">SalesQuery</span><span class="p">(</span><span class="n">min_total</span><span class="o">=</span><span class="n">min_total</span><span class="p">)</span>
     <span class="p">)</span>
     <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="n">page</span><span class="o">.</span><span class="n">hits</span><span class="p">)</span>
 </code></pre></div>
@@ -6489,7 +6489,7 @@ rows out, engine-agnostic:</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

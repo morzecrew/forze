@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6465,9 +6465,9 @@ containers, point a route's relation — or its named resource, a bucket / datas
 / index — at a <strong>resolver</strong> instead of a static value, evaluated per request
 against the bound tenant:</p>
 <div class="highlight"><pre><span></span><code><span class="n">PostgresDocumentConfig</span><span class="p">(</span>
-    <span class="n">read</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="p">(</span><span class="sa">f</span><span class="s2">&quot;tenant_</span><span class="si">{</span><span class="n">tid</span><span class="o">.</span><span class="n">hex</span><span class="p">[:</span><span class="mi">8</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="s2">&quot;orders&quot;</span><span class="p">),</span>
-    <span class="n">write</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="p">(</span><span class="sa">f</span><span class="s2">&quot;tenant_</span><span class="si">{</span><span class="n">tid</span><span class="o">.</span><span class="n">hex</span><span class="p">[:</span><span class="mi">8</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="s2">&quot;orders&quot;</span><span class="p">),</span>
-    <span class="n">bookkeeping_strategy</span><span class="o">=</span><span class="s2">&quot;application&quot;</span><span class="p">,</span>
+    <span class="n">read</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="p">(</span><span class="sa">f</span><span class="s2">"tenant_</span><span class="si">{</span><span class="n">tid</span><span class="o">.</span><span class="n">hex</span><span class="p">[:</span><span class="mi">8</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="s2">"orders"</span><span class="p">),</span>
+    <span class="n">write</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="p">(</span><span class="sa">f</span><span class="s2">"tenant_</span><span class="si">{</span><span class="n">tid</span><span class="o">.</span><span class="n">hex</span><span class="p">[:</span><span class="mi">8</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="s2">"orders"</span><span class="p">),</span>
+    <span class="n">bookkeeping_strategy</span><span class="o">=</span><span class="s2">"application"</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>Because the name is only known per request, startup schema validation (which
@@ -6530,7 +6530,7 @@ anything weaker — a fail-closed floor checked once, at startup, never per
 request.</p>
 <div class="highlight"><pre><span></span><code><span class="n">PostgresDepsModule</span><span class="p">(</span>
     <span class="n">client</span><span class="o">=</span><span class="n">RoutedPostgresClient</span><span class="p">(</span><span class="o">...</span><span class="p">),</span>
-    <span class="n">required_tenant_isolation</span><span class="o">=</span><span class="s2">&quot;dedicated&quot;</span><span class="p">,</span>  <span class="c1"># nothing short of a per-tenant connection</span>
+    <span class="n">required_tenant_isolation</span><span class="o">=</span><span class="s2">"dedicated"</span><span class="p">,</span>  <span class="c1"># nothing short of a per-tenant connection</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>Each module derives the tier it actually reaches from the config it already
@@ -6558,10 +6558,10 @@ it down. <code>TenantProvisionerPort</code> is that seam, wired through the tena
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.tenancy.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">TenancyDepsModule</span>
 
 <span class="n">TenancyDepsModule</span><span class="p">(</span>
-    <span class="n">tenant_management</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;main&quot;</span><span class="p">},</span>
+    <span class="n">tenant_management</span><span class="o">=</span><span class="p">{</span><span class="s2">"main"</span><span class="p">},</span>
     <span class="n">tenant_provisioner</span><span class="o">=</span><span class="n">ObjectStorageTenantProvisioner</span><span class="p">(</span>
         <span class="n">client</span><span class="o">=</span><span class="n">s3_client</span><span class="p">,</span>
-        <span class="n">bucket</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;tenant-</span><span class="si">{</span><span class="n">tid</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+        <span class="n">bucket</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"tenant-</span><span class="si">{</span><span class="n">tid</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
     <span class="p">),</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -6687,7 +6687,7 @@ sealing each tenant's data under its own keys is <a href="../encryption/">Encryp
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

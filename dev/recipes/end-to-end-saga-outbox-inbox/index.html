@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6324,24 +6324,24 @@ explains <em>why</em> each piece works; this is the assembled flow.</p>
 <p><code>Order</code> extends <code>AggregateRoot</code>, so it can record a domain event the moment its
 state transitions — declared next to the data it watches:</p>
 <div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">Order</span><span class="p">(</span><span class="n">Document</span><span class="p">,</span> <span class="n">AggregateRoot</span><span class="p">):</span>
-    <span class="n">status</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;pending&quot;</span>
+    <span class="n">status</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"pending"</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">confirm</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;OrderUpdate&quot;</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Decide the ``pending`` -&gt; ``confirmed`` transition (illegal from any other status).</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">confirm</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"OrderUpdate"</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Decide the ``pending`` -&gt; ``confirmed`` transition (illegal from any other status).</span>
 
 <span class="sd">        A pure decision method on the aggregate: it guards the transition and returns the merge-patch</span>
-<span class="sd">        the repository persists under the order&#39;s revision. The rule lives here once — the saga step</span>
+<span class="sd">        the repository persists under the order's revision. The rule lives here once — the saga step</span>
 <span class="sd">        and the ``_on_confirm`` emitter both key on it instead of re-encoding it.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
+<span class="sd">        """</span>
 
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">status</span> <span class="o">!=</span> <span class="s2">&quot;pending&quot;</span><span class="p">:</span>
-            <span class="k">raise</span> <span class="n">exc</span><span class="o">.</span><span class="n">domain</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;cannot confirm an order in status </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">status</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">status</span> <span class="o">!=</span> <span class="s2">"pending"</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">exc</span><span class="o">.</span><span class="n">domain</span><span class="p">(</span><span class="sa">f</span><span class="s2">"cannot confirm an order in status </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">status</span><span class="si">!r}</span><span class="s2">"</span><span class="p">)</span>
 
-        <span class="k">return</span> <span class="n">OrderUpdate</span><span class="p">(</span><span class="n">status</span><span class="o">=</span><span class="s2">&quot;confirmed&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">OrderUpdate</span><span class="p">(</span><span class="n">status</span><span class="o">=</span><span class="s2">"confirmed"</span><span class="p">)</span>
 
-    <span class="nd">@event_emitter</span><span class="p">(</span><span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;status&quot;</span><span class="p">})</span>
+    <span class="nd">@event_emitter</span><span class="p">(</span><span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">"status"</span><span class="p">})</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">_on_confirm</span><span class="p">(</span><span class="n">before</span><span class="p">,</span> <span class="n">after</span><span class="p">:</span> <span class="n">Self</span><span class="p">,</span> <span class="n">diff</span><span class="p">:</span> <span class="n">JsonDict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DomainEvent</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>  <span class="c1"># type: ignore[no-untyped-def]</span>
-        <span class="k">if</span> <span class="n">after</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">&quot;confirmed&quot;</span> <span class="ow">and</span> <span class="n">before</span><span class="o">.</span><span class="n">status</span> <span class="o">!=</span> <span class="s2">&quot;confirmed&quot;</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">after</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">"confirmed"</span> <span class="ow">and</span> <span class="n">before</span><span class="o">.</span><span class="n">status</span> <span class="o">!=</span> <span class="s2">"confirmed"</span><span class="p">:</span>
             <span class="k">return</span> <span class="n">OrderConfirmed</span><span class="p">(</span><span class="n">aggregate_id</span><span class="o">=</span><span class="n">after</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
 
         <span class="k">return</span> <span class="kc">None</span>
@@ -6352,19 +6352,19 @@ everything before the pivot is compensatable, the pivot commits the outcome.
 Reserve inventory first; confirming the order is the pivot.</p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">build_checkout_saga</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">SagaDefinition</span><span class="p">[</span><span class="n">CheckoutCtx</span><span class="p">]:</span>
     <span class="k">return</span> <span class="n">SagaDefinition</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;checkout&quot;</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">"checkout"</span><span class="p">,</span>
         <span class="n">steps</span><span class="o">=</span><span class="p">(</span>
             <span class="n">SagaStep</span><span class="p">(</span>
-                <span class="n">name</span><span class="o">=</span><span class="s2">&quot;reserve&quot;</span><span class="p">,</span>
+                <span class="n">name</span><span class="o">=</span><span class="s2">"reserve"</span><span class="p">,</span>
                 <span class="n">action</span><span class="o">=</span><span class="n">_reserve</span><span class="p">,</span>
                 <span class="n">compensation</span><span class="o">=</span><span class="n">_release</span><span class="p">,</span>
-                <span class="n">tx_route</span><span class="o">=</span><span class="s2">&quot;mock&quot;</span><span class="p">,</span>
+                <span class="n">tx_route</span><span class="o">=</span><span class="s2">"mock"</span><span class="p">,</span>
             <span class="p">),</span>
             <span class="n">SagaStep</span><span class="p">(</span>
-                <span class="n">name</span><span class="o">=</span><span class="s2">&quot;confirm&quot;</span><span class="p">,</span>
+                <span class="n">name</span><span class="o">=</span><span class="s2">"confirm"</span><span class="p">,</span>
                 <span class="n">action</span><span class="o">=</span><span class="n">_confirm</span><span class="p">,</span>
                 <span class="n">kind</span><span class="o">=</span><span class="n">SagaStepKind</span><span class="o">.</span><span class="n">PIVOT</span><span class="p">,</span>
-                <span class="n">tx_route</span><span class="o">=</span><span class="s2">&quot;mock&quot;</span><span class="p">,</span>
+                <span class="n">tx_route</span><span class="o">=</span><span class="s2">"mock"</span><span class="p">,</span>
             <span class="p">),</span>
         <span class="p">),</span>
     <span class="p">)</span>
@@ -6376,12 +6376,12 @@ integration event. State change and event are one atomic write:</p>
 <div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_confirm</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">,</span> <span class="n">s</span><span class="p">:</span> <span class="n">CheckoutCtx</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">CheckoutCtx</span><span class="p">:</span>
     <span class="c1"># Pivot. A pre-commit failure (e.g. payment declined) compensates `reserve`.</span>
     <span class="k">if</span> <span class="n">s</span><span class="o">.</span><span class="n">simulate_failure</span><span class="p">:</span>
-        <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;payment declined — failing the pivot step&quot;</span><span class="p">)</span>
-        <span class="k">raise</span> <span class="n">exc</span><span class="o">.</span><span class="n">domain</span><span class="p">(</span><span class="s2">&quot;payment declined&quot;</span><span class="p">)</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">"payment declined — failing the pivot step"</span><span class="p">)</span>
+        <span class="k">raise</span> <span class="n">exc</span><span class="o">.</span><span class="n">domain</span><span class="p">(</span><span class="s2">"payment declined"</span><span class="p">)</span>
 
     <span class="c1"># Load the aggregate, let it decide the transition, persist the patch under its rev (OCC).</span>
     <span class="c1"># confirm() single-sources the pending-&gt;confirmed rule (+ guards it); the resulting status</span>
-    <span class="c1"># change fires @event_emitter -&gt; OrderConfirmed, dispatched in THIS step&#39;s transaction (the</span>
+    <span class="c1"># change fires @event_emitter -&gt; OrderConfirmed, dispatched in THIS step's transaction (the</span>
     <span class="c1"># command flow), which the outbox bridge stages.</span>
     <span class="n">orders</span> <span class="o">=</span> <span class="n">aggregate_repository</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">ORDER_SPEC</span><span class="p">)</span>
     <span class="n">order</span> <span class="o">=</span> <span class="k">await</span> <span class="n">orders</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">order_id</span><span class="p">)</span>
@@ -6390,7 +6390,7 @@ integration event. State change and event are one atomic write:</p>
     <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">outbox</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">OUTBOX_SPEC</span><span class="p">)</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
 
     <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
-        <span class="s2">&quot;order confirmed — OrderConfirmed staged to outbox&quot;</span><span class="p">,</span> <span class="n">order_id</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">order_id</span><span class="p">)</span>
+        <span class="s2">"order confirmed — OrderConfirmed staged to outbox"</span><span class="p">,</span> <span class="n">order_id</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">order_id</span><span class="p">)</span>
     <span class="p">)</span>
     <span class="k">return</span> <span class="n">s</span>
 </code></pre></div>
@@ -6405,7 +6405,7 @@ integration event. State change and event are one atomic write:</p>
             <span class="n">emits</span><span class="o">=</span><span class="p">(</span>
                 <span class="n">EmitMapping</span><span class="p">(</span>
                     <span class="n">event</span><span class="o">=</span><span class="n">OrderConfirmed</span><span class="p">,</span>
-                    <span class="n">event_type</span><span class="o">=</span><span class="s2">&quot;order.confirmed&quot;</span><span class="p">,</span>
+                    <span class="n">event_type</span><span class="o">=</span><span class="s2">"order.confirmed"</span><span class="p">,</span>
                     <span class="n">to_payload</span><span class="o">=</span><span class="k">lambda</span> <span class="n">e</span><span class="p">:</span> <span class="n">OrderConfirmedPayload</span><span class="p">(</span><span class="n">order_id</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">aggregate_id</span><span class="p">)),</span>
                 <span class="p">),</span>
             <span class="p">),</span>
@@ -6422,14 +6422,14 @@ plus the outbox relay worker:</p>
     <span class="n">claims</span> <span class="o">=</span> <span class="k">await</span> <span class="n">query</span><span class="o">.</span><span class="n">claim_pending</span><span class="p">()</span>
 
     <span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
-        <span class="n">RelayMessage</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">event_id</span><span class="p">),</span> <span class="n">order_id</span><span class="o">=</span><span class="n">UUID</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">payload</span><span class="p">[</span><span class="s2">&quot;order_id&quot;</span><span class="p">]))</span>
+        <span class="n">RelayMessage</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">event_id</span><span class="p">),</span> <span class="n">order_id</span><span class="o">=</span><span class="n">UUID</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">payload</span><span class="p">[</span><span class="s2">"order_id"</span><span class="p">]))</span>
         <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">claims</span>
     <span class="p">]</span>
 
     <span class="k">if</span> <span class="n">claims</span><span class="p">:</span>
         <span class="k">await</span> <span class="n">query</span><span class="o">.</span><span class="n">mark_published</span><span class="p">([</span><span class="n">c</span><span class="o">.</span><span class="n">id</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">claims</span><span class="p">])</span>
 
-    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;relayed events from outbox&quot;</span><span class="p">,</span> <span class="n">count</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">messages</span><span class="p">))</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"relayed events from outbox"</span><span class="p">,</span> <span class="n">count</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">messages</span><span class="p">))</span>
     <span class="k">return</span> <span class="n">messages</span>
 </code></pre></div>
 <h2 id="the-inbox-makes-delivery-exactly-once">The inbox makes delivery exactly-once<a class="headerlink" href="#the-inbox-makes-delivery-exactly-once" title="Permanent link">&para;</a></h2>
@@ -6437,18 +6437,18 @@ plus the outbox relay worker:</p>
 each message id in the <strong>inbox</strong> and skips duplicates, so the <code>Shipment</code> is created
 once no matter how many times the event is delivered:</p>
 <div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">deliver</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">RelayMessage</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Process one relayed message exactly-once. Returns False if it was a duplicate.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">"""Process one relayed message exactly-once. Returns False if it was a duplicate."""</span>
 
     <span class="n">processed</span> <span class="o">=</span> <span class="k">await</span> <span class="n">process_with_inbox</span><span class="p">(</span>
         <span class="n">ctx</span><span class="p">,</span>
         <span class="n">message</span><span class="p">,</span>
         <span class="n">inbox_spec</span><span class="o">=</span><span class="n">INBOX_SPEC</span><span class="p">,</span>
         <span class="n">handler</span><span class="o">=</span><span class="k">lambda</span> <span class="n">m</span><span class="p">:</span> <span class="n">_fulfill</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">m</span><span class="p">),</span>
-        <span class="n">tx_route</span><span class="o">=</span><span class="s2">&quot;mock&quot;</span><span class="p">,</span>
+        <span class="n">tx_route</span><span class="o">=</span><span class="s2">"mock"</span><span class="p">,</span>
     <span class="p">)</span>
 
     <span class="k">if</span> <span class="ow">not</span> <span class="n">processed</span><span class="p">:</span>
-        <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;duplicate message skipped by inbox&quot;</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="n">message</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">"duplicate message skipped by inbox"</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="n">message</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
 
     <span class="k">return</span> <span class="n">processed</span>
 </code></pre></div>
@@ -6573,7 +6573,7 @@ once no matter how many times the event is delivered:</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

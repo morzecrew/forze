@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6458,10 +6458,10 @@ Both calls run inside a scope you already own:</p>
 <span class="p">)</span>
 
 <span class="k">async</span> <span class="k">with</span> <span class="n">source</span><span class="o">.</span><span class="n">scope</span><span class="p">():</span>
-    <span class="k">await</span> <span class="n">export_archive</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">Path</span><span class="p">(</span><span class="s2">&quot;/tmp/acme&quot;</span><span class="p">),</span> <span class="n">scope</span><span class="o">=</span><span class="n">TenantScope</span><span class="p">(</span><span class="n">tenant_id</span><span class="o">=</span><span class="n">acme</span><span class="p">))</span>
+    <span class="k">await</span> <span class="n">export_archive</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"/tmp/acme"</span><span class="p">),</span> <span class="n">scope</span><span class="o">=</span><span class="n">TenantScope</span><span class="p">(</span><span class="n">tenant_id</span><span class="o">=</span><span class="n">acme</span><span class="p">))</span>
 
 <span class="k">async</span> <span class="k">with</span> <span class="n">target</span><span class="o">.</span><span class="n">scope</span><span class="p">():</span>
-    <span class="k">await</span> <span class="n">import_archive</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">Path</span><span class="p">(</span><span class="s2">&quot;/tmp/acme&quot;</span><span class="p">),</span> <span class="n">tenant</span><span class="o">=</span><span class="n">acme</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">import_archive</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"/tmp/acme"</span><span class="p">),</span> <span class="n">tenant</span><span class="o">=</span><span class="n">acme</span><span class="p">)</span>
 </code></pre></div>
 <p>Rows are the <strong>decrypted read models</strong>, so the artifact never depends on the
 source's keys and the target re-seals every sealed field under its own. Ids and
@@ -6649,7 +6649,7 @@ in-flight window, the loops that stop between units of work — which is
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

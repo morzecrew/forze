@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6321,7 +6321,7 @@ partial update — plus a read model:</p>
 <p>One spec names the aggregate and its write types. <code>"products"</code> is the logical
 name shared by the adapter wiring:</p>
 <div class="highlight"><pre><span></span><code><span class="n">product_spec</span> <span class="o">=</span> <span class="n">DocumentSpec</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;products&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"products"</span><span class="p">,</span>
     <span class="n">read</span><span class="o">=</span><span class="n">ProductRead</span><span class="p">,</span>
     <span class="n">write</span><span class="o">=</span><span class="n">DocumentWriteTypes</span><span class="p">(</span>
         <span class="n">domain</span><span class="o">=</span><span class="n">Product</span><span class="p">,</span> <span class="n">create_cmd</span><span class="o">=</span><span class="n">ProductCreate</span><span class="p">,</span> <span class="n">update_cmd</span><span class="o">=</span><span class="n">ProductUpdate</span>
@@ -6335,7 +6335,7 @@ the connection pool:</p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">build_runtime</span><span class="p">(</span><span class="n">pg</span><span class="p">:</span> <span class="n">PostgresClient</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dsn</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExecutionRuntime</span><span class="p">:</span>
     <span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
         <span class="n">PostgresDepsModule</span><span class="p">(</span>
-            <span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">rw_documents</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;products&quot;</span><span class="p">:</span> <span class="n">PRODUCT_PG</span><span class="p">},</span> <span class="n">tx</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;products&quot;</span><span class="p">}</span>
+            <span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">rw_documents</span><span class="o">=</span><span class="p">{</span><span class="s2">"products"</span><span class="p">:</span> <span class="n">PRODUCT_PG</span><span class="p">},</span> <span class="n">tx</span><span class="o">=</span><span class="p">{</span><span class="s2">"products"</span><span class="p">}</span>
         <span class="p">),</span>
     <span class="p">)</span>
     <span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
@@ -6353,21 +6353,21 @@ rows, it doesn't manage DDL. The columns <code>id</code>, <code>rev</code>, <cod
 <h2 id="the-routes">The routes<a class="headerlink" href="#the-routes" title="Permanent link">&para;</a></h2>
 <p>The registry turns the spec and boundary DTOs into typed operations. The runtime
 opens inside the app's lifespan; each route calls the resulting facade:</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># DTOs are derived from the spec&#39;s read + write models.</span>
+<div class="highlight"><pre><span></span><code><span class="c1"># DTOs are derived from the spec's read + write models.</span>
 <span class="n">registry</span> <span class="o">=</span> <span class="n">build_document_registry</span><span class="p">(</span><span class="n">product_spec</span><span class="p">)</span><span class="o">.</span><span class="n">freeze</span><span class="p">()</span>
 
 
 <span class="nd">@asynccontextmanager</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">lifespan</span><span class="p">(</span><span class="n">app</span><span class="p">:</span> <span class="n">FastAPI</span><span class="p">):</span>
     <span class="n">pg</span> <span class="o">=</span> <span class="n">PostgresClient</span><span class="p">()</span>
-    <span class="n">dsn</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;POSTGRES_DSN&quot;</span><span class="p">,</span> <span class="s2">&quot;postgresql://forze:forze@localhost:5432/forze&quot;</span><span class="p">)</span>
+    <span class="n">dsn</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"POSTGRES_DSN"</span><span class="p">,</span> <span class="s2">"postgresql://forze:forze@localhost:5432/forze"</span><span class="p">)</span>
     <span class="n">_rt</span><span class="o">.</span><span class="n">set_once</span><span class="p">(</span><span class="n">build_runtime</span><span class="p">(</span><span class="n">pg</span><span class="p">,</span> <span class="n">dsn</span><span class="o">=</span><span class="n">dsn</span><span class="p">))</span>
     <span class="k">async</span> <span class="k">with</span> <span class="n">_rt</span><span class="o">.</span><span class="n">get</span><span class="p">()</span><span class="o">.</span><span class="n">scope</span><span class="p">():</span>
         <span class="k">await</span> <span class="n">pg</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">SCHEMA</span><span class="p">)</span>  <span class="c1"># demo bootstrap (real apps migrate instead)</span>
         <span class="k">yield</span>
 
 
-<span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s2">&quot;Products API&quot;</span><span class="p">,</span> <span class="n">lifespan</span><span class="o">=</span><span class="n">lifespan</span><span class="p">)</span>
+<span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s2">"Products API"</span><span class="p">,</span> <span class="n">lifespan</span><span class="o">=</span><span class="n">lifespan</span><span class="p">)</span>
 <span class="n">register_exception_handlers</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>  <span class="c1"># CoreException → HTTP (not_found → 404, conflict → 409)</span>
 
 
@@ -6379,23 +6379,23 @@ opens inside the app's lifespan; each route calls the resulting facade:</p>
     <span class="p">)</span>
 
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/products&quot;</span><span class="p">)</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">"/products"</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">create_product</span><span class="p">(</span><span class="n">cmd</span><span class="p">:</span> <span class="n">ProductCreate</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ProductRead</span><span class="p">:</span>
     <span class="k">return</span> <span class="k">await</span> <span class="n">products</span><span class="p">()</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span>
 
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/products/</span><span class="si">{product_id}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"/products/</span><span class="si">{product_id}</span><span class="s2">"</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_product</span><span class="p">(</span><span class="n">product_id</span><span class="p">:</span> <span class="n">UUID</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ProductRead</span><span class="p">:</span>
     <span class="k">return</span> <span class="k">await</span> <span class="n">products</span><span class="p">()</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">DocumentIdDTO</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">product_id</span><span class="p">))</span>
 
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/products&quot;</span><span class="p">)</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"/products"</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">list_products</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">ProductRead</span><span class="p">]:</span>
     <span class="n">page</span> <span class="o">=</span> <span class="k">await</span> <span class="n">products</span><span class="p">()</span><span class="o">.</span><span class="n">list</span><span class="p">(</span><span class="n">ListRequestDTO</span><span class="p">())</span>
     <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="n">page</span><span class="o">.</span><span class="n">hits</span><span class="p">)</span>
 
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="s2">&quot;/products/</span><span class="si">{product_id}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="s2">"/products/</span><span class="si">{product_id}</span><span class="s2">"</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">update_product</span><span class="p">(</span><span class="n">product_id</span><span class="p">:</span> <span class="n">UUID</span><span class="p">,</span> <span class="n">rev</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">patch</span><span class="p">:</span> <span class="n">ProductUpdate</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ProductRead</span><span class="p">:</span>
     <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">products</span><span class="p">()</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
         <span class="n">DocumentUpdateDTO</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">product_id</span><span class="p">,</span> <span class="n">rev</span><span class="o">=</span><span class="n">rev</span><span class="p">,</span> <span class="n">dto</span><span class="o">=</span><span class="n">patch</span><span class="p">)</span>
@@ -6403,7 +6403,7 @@ opens inside the app's lifespan; each route calls the resulting facade:</p>
     <span class="k">return</span> <span class="n">result</span><span class="o">.</span><span class="n">data</span>
 
 
-<span class="nd">@app</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="s2">&quot;/products/</span><span class="si">{product_id}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">status_code</span><span class="o">=</span><span class="mi">204</span><span class="p">)</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="s2">"/products/</span><span class="si">{product_id}</span><span class="s2">"</span><span class="p">,</span> <span class="n">status_code</span><span class="o">=</span><span class="mi">204</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">delete_product</span><span class="p">(</span><span class="n">product_id</span><span class="p">:</span> <span class="n">UUID</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="k">await</span> <span class="n">products</span><span class="p">()</span><span class="o">.</span><span class="n">kill</span><span class="p">(</span><span class="n">DocumentIdDTO</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">product_id</span><span class="p">))</span>
 </code></pre></div>
@@ -6533,7 +6533,7 @@ just<span class="w"> </span>run
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

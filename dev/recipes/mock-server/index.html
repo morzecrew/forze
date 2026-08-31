@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6470,13 +6470,13 @@ same frozen registry production serves.</p>
 <h2 id="the-swap">The swap<a class="headerlink" href="#the-swap" title="Permanent link">&para;</a></h2>
 <p>Everything below is an ordinary app. The only mock-specific line is the deps module:</p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">build_runtime</span><span class="p">(</span><span class="n">identity</span><span class="p">:</span> <span class="n">LocalIdentityConfig</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ExecutionRuntime</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;The only thing a mock server changes: which modules answer the ports.</span>
+<span class="w">    </span><span class="sd">"""The only thing a mock server changes: which modules answer the ports.</span>
 
-<span class="sd">    `MockDepsModule` registers every port as a *fallback*, so the app&#39;s real</span>
+<span class="sd">    `MockDepsModule` registers every port as a *fallback*, so the app's real</span>
 <span class="sd">    identity wiring composes on top of it in one registry — the local API-key verifier and</span>
 <span class="sd">    tenant resolver win their routes, the mock keeps the other ~45 planes. Before that,</span>
 <span class="sd">    this pairing raised at freeze and a mock context could not carry real identity at all.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
 
     <span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span><span class="n">MockDepsModule</span><span class="p">(</span><span class="n">state</span><span class="o">=</span><span class="n">MockState</span><span class="p">()))</span><span class="o">.</span><span class="n">with_deps</span><span class="p">(</span>
         <span class="n">local_identity_deps</span><span class="p">(</span><span class="n">identity</span><span class="p">,</span> <span class="n">authn_route</span><span class="o">=</span><span class="n">AUTHN</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">tenancy_route</span><span class="o">=</span><span class="n">AUTHN</span><span class="o">.</span><span class="n">name</span><span class="p">),</span>
@@ -6500,18 +6500,18 @@ to the list and documents go to Postgres while search, queues and storage stay i
     <span class="o">*</span><span class="p">,</span>
     <span class="n">lifespan</span><span class="p">:</span> <span class="n">Lifespan</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FastAPI</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;The app&#39;s own factory — production writes exactly this and passes a real runtime.</span>
+<span class="w">    </span><span class="sd">"""The app's own factory — production writes exactly this and passes a real runtime.</span>
 
 <span class="sd">    Keeping the factory parameterized by runtime is what makes the swap total: routes,</span>
 <span class="sd">    middleware, exception handlers and identity ingress are shared verbatim between the</span>
 <span class="sd">    served mock and the deployed service. *lifespan* defaults to the production one</span>
 <span class="sd">    (`runtime_lifespan`); the mock server passes a variant that seeds once the scope is</span>
 <span class="sd">    open, which is the only seam it needs — the routes below never learn about it.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
 
     <span class="n">ctx</span> <span class="o">=</span> <span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span>
 
-    <span class="n">router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;/products&quot;</span><span class="p">)</span>
+    <span class="n">router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">"/products"</span><span class="p">)</span>
     <span class="c1"># Generated from the operation catalog — one route per registered kernel operation,</span>
     <span class="c1"># `operation_id` equal to the operation key (`products.get`, `products.list`, …).</span>
     <span class="n">attach_document_routes</span><span class="p">(</span>
@@ -6519,11 +6519,11 @@ to the list and documents go to Postgres while search, queues and storage stay i
         <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span>
         <span class="n">ns</span><span class="o">=</span><span class="n">product_spec</span><span class="o">.</span><span class="n">default_namespace</span><span class="p">,</span>
         <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx</span><span class="p">,</span>
-        <span class="n">style</span><span class="o">=</span><span class="s2">&quot;rest&quot;</span><span class="p">,</span>
+        <span class="n">style</span><span class="o">=</span><span class="s2">"rest"</span><span class="p">,</span>
     <span class="p">)</span>
 
     <span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span>
-        <span class="n">title</span><span class="o">=</span><span class="s2">&quot;Products API (mock)&quot;</span><span class="p">,</span>
+        <span class="n">title</span><span class="o">=</span><span class="s2">"Products API (mock)"</span><span class="p">,</span>
         <span class="n">lifespan</span><span class="o">=</span><span class="n">lifespan</span> <span class="ow">or</span> <span class="n">runtime_lifespan</span><span class="p">(</span><span class="n">runtime</span><span class="p">),</span>
     <span class="p">)</span>
     <span class="n">app</span><span class="o">.</span><span class="n">include_router</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
@@ -6533,9 +6533,9 @@ to the list and documents go to Postgres while search, queues and storage stay i
         <span class="n">SecurityContextMiddleware</span><span class="p">,</span>
         <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx</span><span class="p">,</span>
         <span class="n">authn</span><span class="o">=</span><span class="n">AuthnRequirement</span><span class="p">(</span>
-            <span class="n">ingress</span><span class="o">=</span><span class="p">(</span><span class="n">HeaderApiKeyAuthn</span><span class="p">(</span><span class="n">authn_spec</span><span class="o">=</span><span class="n">AUTHN</span><span class="p">,</span> <span class="n">header_name</span><span class="o">=</span><span class="s2">&quot;X-API-Key&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">),),</span>
+            <span class="n">ingress</span><span class="o">=</span><span class="p">(</span><span class="n">HeaderApiKeyAuthn</span><span class="p">(</span><span class="n">authn_spec</span><span class="o">=</span><span class="n">AUTHN</span><span class="p">,</span> <span class="n">header_name</span><span class="o">=</span><span class="s2">"X-API-Key"</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">),),</span>
         <span class="p">),</span>
-        <span class="n">when_multiple_credentials</span><span class="o">=</span><span class="s2">&quot;first_in_order&quot;</span><span class="p">,</span>
+        <span class="n">when_multiple_credentials</span><span class="o">=</span><span class="s2">"first_in_order"</span><span class="p">,</span>
     <span class="p">)</span>
 
     <span class="k">return</span> <span class="n">app</span>
@@ -6547,23 +6547,23 @@ deliberate: the mock server has no way to mint a principal, so there is no dev-o
 bypass to accidentally ship.</p>
 <h2 id="seed-it">Seed it<a class="headerlink" href="#seed-it" title="Permanent link">&para;</a></h2>
 <p>An API that answers <code>[]</code> is one no frontend can build against:</p>
-<div class="highlight"><pre><span></span><code><span class="n">_CATALOG</span> <span class="o">=</span> <span class="p">((</span><span class="s2">&quot;Espresso&quot;</span><span class="p">,</span> <span class="mi">250</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;Cortado&quot;</span><span class="p">,</span> <span class="mi">320</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;Filter&quot;</span><span class="p">,</span> <span class="mi">280</span><span class="p">))</span>
+<div class="highlight"><pre><span></span><code><span class="n">_CATALOG</span> <span class="o">=</span> <span class="p">((</span><span class="s2">"Espresso"</span><span class="p">,</span> <span class="mi">250</span><span class="p">),</span> <span class="p">(</span><span class="s2">"Cortado"</span><span class="p">,</span> <span class="mi">320</span><span class="p">),</span> <span class="p">(</span><span class="s2">"Filter"</span><span class="p">,</span> <span class="mi">280</span><span class="p">))</span>
 
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">seed</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Fill the empty store — an API that answers `[]` is one no frontend can build against.</span>
+<span class="w">    </span><span class="sd">"""Fill the empty store — an API that answers `[]` is one no frontend can build against.</span>
 
 <span class="sd">    Seeds go through the **write path**, never into `MockState` directly, so `rev`,</span>
 <span class="sd">    timestamps, materialized fields and field encryption are produced by the same code</span>
 <span class="sd">    that serves the reads.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
+<span class="sd">    """</span>
 
-    <span class="c1"># The app&#39;s own eligibility gate reads a `policy_principal` document, so the dev key</span>
-    <span class="c1"># needs one or authentication fails with &quot;Principal not found&quot;. It has to be this</span>
-    <span class="c1"># document write: the mock&#39;s `PrincipalRegistryPort.ensure_principal` is a no-op that</span>
+    <span class="c1"># The app's own eligibility gate reads a `policy_principal` document, so the dev key</span>
+    <span class="c1"># needs one or authentication fails with "Principal not found". It has to be this</span>
+    <span class="c1"># document write: the mock's `PrincipalRegistryPort.ensure_principal` is a no-op that</span>
     <span class="c1"># returns a ref without storing anything the real gate can then read.</span>
     <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">doc</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">policy_principal_spec</span><span class="p">)</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
-        <span class="n">CreatePolicyPrincipalCmd</span><span class="p">(</span><span class="n">kind</span><span class="o">=</span><span class="s2">&quot;user&quot;</span><span class="p">),</span>
+        <span class="n">CreatePolicyPrincipalCmd</span><span class="p">(</span><span class="n">kind</span><span class="o">=</span><span class="s2">"user"</span><span class="p">),</span>
         <span class="nb">id</span><span class="o">=</span><span class="n">DEV_PRINCIPAL</span><span class="p">,</span>
     <span class="p">)</span>
 
@@ -6580,11 +6580,11 @@ for the rows a demo actually shows, and references that point at documents the s
 <span class="n">plan</span> <span class="o">=</span> <span class="n">SeedPlan</span><span class="p">(</span>
     <span class="n">specs</span><span class="o">=</span><span class="p">(</span>
         <span class="n">spec_seed</span><span class="p">(</span><span class="n">project_spec</span><span class="p">,</span> <span class="n">count</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>
-        <span class="n">spec_seed</span><span class="p">(</span><span class="n">task_spec</span><span class="p">,</span> <span class="n">count</span><span class="o">=</span><span class="mi">40</span><span class="p">,</span> <span class="n">fixtures</span><span class="o">=</span><span class="n">load_fixtures</span><span class="p">(</span><span class="s2">&quot;tasks.json&quot;</span><span class="p">)),</span>
+        <span class="n">spec_seed</span><span class="p">(</span><span class="n">task_spec</span><span class="p">,</span> <span class="n">count</span><span class="o">=</span><span class="mi">40</span><span class="p">,</span> <span class="n">fixtures</span><span class="o">=</span><span class="n">load_fixtures</span><span class="p">(</span><span class="s2">"tasks.json"</span><span class="p">)),</span>
     <span class="p">),</span>
     <span class="n">rng_seed</span><span class="o">=</span><span class="mi">7</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">apply_seed</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">plan</span><span class="p">)</span>   <span class="c1"># result[&quot;tasks&quot;] -&gt; the created ids</span>
+<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">apply_seed</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">plan</span><span class="p">)</span>   <span class="c1"># result["tasks"] -&gt; the created ids</span>
 </code></pre></div>
 <p>A seeded <code>Task.project_id</code> names a seeded project — inferred from the field and spec names,
 corrected by <code>SeedPlan.links</code> where the names don't line up. The plan is reproducible: one
@@ -6610,7 +6610,7 @@ says which real modules to keep, what to seed, and nothing about the app itself:
 <div class="highlight"><pre><span></span><code><span class="n">mock_app</span> <span class="o">=</span> <span class="n">MockApp</span><span class="p">(</span>
     <span class="n">build_app</span><span class="o">=</span><span class="n">build_app</span><span class="p">,</span>
     <span class="c1"># Real modules would go in `modules=`; the mock composes under them as a fallback, so</span>
-    <span class="c1"># &quot;real Postgres for documents, mock for the rest&quot; is this list and nothing else.</span>
+    <span class="c1"># "real Postgres for documents, mock for the rest" is this list and nothing else.</span>
     <span class="n">deps</span><span class="o">=</span><span class="p">(</span><span class="n">local_identity_deps</span><span class="p">(</span><span class="n">from_json_path</span><span class="p">(</span><span class="n">KEY_FILE</span><span class="p">),</span> <span class="n">authn_route</span><span class="o">=</span><span class="n">AUTHN</span><span class="o">.</span><span class="n">name</span><span class="p">),),</span>
     <span class="n">seed</span><span class="o">=</span><span class="n">seed_plan</span><span class="p">,</span>
 <span class="p">)</span>
@@ -6671,10 +6671,10 @@ it sits beside your app rather than inside it, so your own auth does not lock yo
 </table>
 <div class="highlight"><pre><span></span><code><span class="c1"># every products call fails as a real 409, once</span>
 curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>localhost:8000/_mock/fault<span class="w"> </span><span class="se">\</span>
-<span class="w">     </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;route&quot;: &quot;products&quot;, &quot;op&quot;: &quot;create&quot;, &quot;kind&quot;: &quot;conflict&quot;, &quot;times&quot;: 1}&#39;</span>
+<span class="w">     </span>-d<span class="w"> </span><span class="s1">'{"route": "products", "op": "create", "kind": "conflict", "times": 1}'</span>
 
 <span class="c1"># the expiry screen, without waiting a day</span>
-curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>localhost:8000/_mock/time<span class="w"> </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;action&quot;: &quot;advance&quot;, &quot;seconds&quot;: 86400}&#39;</span>
+curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>localhost:8000/_mock/time<span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"action": "advance", "seconds": 86400}'</span>
 </code></pre></div>
 <p>The fault's <code>kind</code> is a <strong>real</strong> <code>exc</code> kind, so your own exception handlers turn it into the
 real status and error envelope — an armed <code>conflict</code> reaches the client exactly as a genuine
@@ -6707,7 +6707,7 @@ opt-in. The port is published on <code>127.0.0.1</code> for the reason above.</p
 <p>If your specs are tenant-aware, the served mock partitions them the way a real relation's
 tenant <code>WHERE</code> clause does. Two API keys on two tenants, one server, disjoint data — the
 tenant comes from your identity wiring, so nothing about the app changes:</p>
-<div class="highlight"><pre><span></span><code><span class="n">mock</span> <span class="o">=</span> <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">routes</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;notes&quot;</span><span class="p">:</span> <span class="n">MockRouteConfig</span><span class="p">(</span><span class="n">tenant_aware</span><span class="o">=</span><span class="kc">True</span><span class="p">)})</span>
+<div class="highlight"><pre><span></span><code><span class="n">mock</span> <span class="o">=</span> <span class="n">MockDepsModule</span><span class="p">(</span><span class="n">routes</span><span class="o">=</span><span class="p">{</span><span class="s2">"notes"</span><span class="p">:</span> <span class="n">MockRouteConfig</span><span class="p">(</span><span class="n">tenant_aware</span><span class="o">=</span><span class="kc">True</span><span class="p">)})</span>
 </code></pre></div>
 <p>An unauthenticated request binds no tenant and is refused rather than shown everything.</p>
 <h2 id="what-you-get-that-a-schema-mock-cannot-give-you">What you get that a schema mock cannot give you<a class="headerlink" href="#what-you-get-that-a-schema-mock-cannot-give-you" title="Permanent link">&para;</a></h2>
@@ -6848,7 +6848,7 @@ across real backends, not one you discovered against the in-memory store.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

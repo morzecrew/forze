@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.55">
+      <meta name="generator" content="zensical-0.0.57">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -6301,8 +6301,8 @@
 <p>For a <strong>time-travel</strong> view, <code>report.timeline()</code> flattens the run into a virtual-time-ordered stream of steps — operations, port calls with their value flow, injected environment, recorded facts — that you scroll through like a debugger. <code>render_timeline(history)</code> renders it as text, and each <code>TimelineEntry.to_dict()</code> returns a JSON-serializable dictionary, so the timeline is a portable artifact a CLI or viewer steps through by virtual time:</p>
 <div class="highlight"><pre><span></span><code>DST timeline (by virtual time):
   @t=0.000000  ▸ update → ok
-  @t=0.000000  ↳ document_command[accounts].update key=42 wrote {&#39;balance&#39;: 6}
-  @t=0.100000  ↳ document_command[accounts].get key=42 read {&#39;balance&#39;: 5}   ← stale read
+  @t=0.000000  ↳ document_command[accounts].update key=42 wrote {'balance': 6}
+  @t=0.100000  ↳ document_command[accounts].get key=42 read {'balance': 5}   ← stale read
 </code></pre></div>
 <p>For an <em>interactive</em> scrub, <code>report.to_html("bug.html")</code> writes a self-contained viewer over that same timeline — open it in a browser and step through the run by virtual time, each step's structured detail beside it, the way a debugger walks a trace. It is one HTML file with no external assets, so it attaches to a CI artifact and a failed sweep ships its own debugger. From the command line, <code>forze dst run … --html bug.html</code> writes it on a violation.</p>
 <p>And every <code>report.format()</code> ends with a copy-pasteable repro — the seed already filled in — so going from a CI failure to a local reproduction is a paste, not a hunt:</p>
@@ -6321,7 +6321,7 @@
 <p>No plugin is needed for that — it is a plain assertion. It defaults to a <code>thorough()</code> sweep, and a clean run passes silently like any green test.</p>
 <p>The friction a <abbr title="Deterministic Simulation Testing">DST</abbr> test usually hits is that the right seed count differs by where it runs — a handful while you iterate, thousands in CI. Enable the optional plugin and one flag scales every sweep without touching the test:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># conftest.py</span>
-<span class="n">pytest_plugins</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;forze_dst.testing.plugin&quot;</span><span class="p">]</span>
+<span class="n">pytest_plugins</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"forze_dst.testing.plugin"</span><span class="p">]</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code>pytest<span class="w"> </span>-m<span class="w"> </span>dst<span class="w"> </span>--dst-seeds<span class="w"> </span><span class="m">16</span><span class="w">      </span><span class="c1"># quick, while iterating</span>
 pytest<span class="w"> </span>-m<span class="w"> </span>dst<span class="w"> </span>--dst-seeds<span class="w"> </span><span class="m">2000</span><span class="w">    </span><span class="c1"># exhaustive, in CI — same test, no code change</span>
@@ -6335,7 +6335,7 @@ pytest<span class="w"> </span>-m<span class="w"> </span>dst<span class="w"> </sp
 
 <span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">dst</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">test_known_bugs_stay_fixed</span><span class="p">():</span>
-    <span class="n">assert_no_regressions</span><span class="p">(</span><span class="n">payments_simulation</span><span class="p">,</span> <span class="n">bundles</span><span class="o">=</span><span class="s2">&quot;./dst-regressions&quot;</span><span class="p">)</span>
+    <span class="n">assert_no_regressions</span><span class="p">(</span><span class="n">payments_simulation</span><span class="p">,</span> <span class="n">bundles</span><span class="o">=</span><span class="s2">"./dst-regressions"</span><span class="p">)</span>
 </code></pre></div>
 <p>A bundle whose registry fingerprint no longer matches the simulation is flagged rather than passed silently — the catalog moved, so a clean replay can no longer be trusted to exercise the original path.</p>
 <h2 id="reproduce-and-regress-from-the-command-line">Reproduce and regress from the command line<a class="headerlink" href="#reproduce-and-regress-from-the-command-line" title="Permanent link">&para;</a></h2>
@@ -6362,9 +6362,9 @@ forze<span class="w"> </span>dst<span class="w"> </span>topology<span class="w">
 <p>A found bug travels. <code>FailureBundle</code> serialises the seed <em>and the full config that produced it</em> (faults, latency, partitions, crash, scheduler) to one JSON file, and <code>replay_bundle</code> re-runs it anywhere:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst.artifacts</span><span class="w"> </span><span class="kn">import</span> <span class="n">bundle_from_report</span><span class="p">,</span> <span class="n">replay_bundle</span><span class="p">,</span> <span class="n">FailureBundle</span>
 
-<span class="n">bundle_from_report</span><span class="p">(</span><span class="n">report</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="s2">&quot;app:simulation&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">&quot;bug.json&quot;</span><span class="p">)</span>
+<span class="n">bundle_from_report</span><span class="p">(</span><span class="n">report</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="s2">"app:simulation"</span><span class="p">)</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">"bug.json"</span><span class="p">)</span>
 <span class="c1"># … on another machine, another day …</span>
-<span class="n">report</span> <span class="o">=</span> <span class="n">replay_bundle</span><span class="p">(</span><span class="n">FailureBundle</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;bug.json&quot;</span><span class="p">))</span>   <span class="c1"># reproduces, from one command</span>
+<span class="n">report</span> <span class="o">=</span> <span class="n">replay_bundle</span><span class="p">(</span><span class="n">FailureBundle</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"bug.json"</span><span class="p">))</span>   <span class="c1"># reproduces, from one command</span>
 </code></pre></div>
 <h2 id="extending-it">Extending it<a class="headerlink" href="#extending-it" title="Permanent link">&para;</a></h2>
 <p><abbr title="Deterministic Simulation Testing">DST</abbr> is built from small seams, so you extend it without forking — each plugs in as a
@@ -6491,7 +6491,7 @@ delegates to an engine.</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.e886cdf1.min.js"></script>
+      <script src="../../assets/javascripts/bundle.49251538.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       
