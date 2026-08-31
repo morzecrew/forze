@@ -54,47 +54,15 @@ def check_bypass_paths(app: Any) -> None:
     check these gates rely on.
     """
 
-    # A gating middleware is detected structurally (it declares the field), the same
-    # way check_websocket_allowlist finds them: a middleware added without the kwarg
-    # still runs on every request, so presence of the kwarg alone would miss it.
-    gates: list[tuple[str, frozenset[str]]] = []
-
-    for middleware in getattr(app, "user_middleware", ()):
-        cls = getattr(middleware, "cls", None)
-        fields = getattr(cls, "__attrs_attrs__", ())
-
-        if not any(getattr(field, "name", "") == "bypass_paths" for field in fields):
-            continue
-
-        kwargs = cast("Mapping[str, Any]", getattr(middleware, "kwargs", None) or {})
-        gates.append(
-            (
-                getattr(cls, "__name__", str(cls)),
-                frozenset(cast("Iterable[str]", kwargs.get("bypass_paths") or ())),
-            )
-        )
-
-    bypassed: set[str] = set()
-
-    for _, paths in gates:
-        bypassed.update(paths)
+    gates = _gating_middlewares(app)
+    bypassed = {path for _, paths in gates for path in paths}
 
     if not bypassed:
         return
 
     _check_gates_agree(gates)
 
-    governed: dict[str, str] = {}
-    served: set[str] = set()
-
-    for path, route in iter_effective_routes(app):
-        if not isinstance(route, Route):
-            continue
-
-        served.add(path)
-
-        if getattr(route.endpoint, GOVERNED_OPERATION_ATTR, False):
-            governed[path] = getattr(route, "name", path)
+    served, governed = _http_routes(app)
 
     for path in sorted(bypassed & governed.keys()):
         raise exc.configuration(
@@ -114,6 +82,52 @@ def check_bypass_paths(app: Any) -> None:
             "be seen from here — bypass it on that application's own middlewares. Drop "
             "the argument if the probes are served elsewhere entirely."
         )
+
+
+def _gating_middlewares(app: Any) -> list[tuple[str, frozenset[str]]]:
+    """Each middleware declaring the field, with the paths it was given.
+
+    Detected structurally, the same way ``check_websocket_allowlist`` finds them: a
+    middleware added without the kwarg still runs on every request, so presence of the
+    kwarg alone would miss it.
+    """
+
+    gates: list[tuple[str, frozenset[str]]] = []
+
+    for middleware in getattr(app, "user_middleware", ()):
+        cls = getattr(middleware, "cls", None)
+        fields = getattr(cls, "__attrs_attrs__", ())
+
+        if not any(getattr(field, "name", "") == "bypass_paths" for field in fields):
+            continue
+
+        kwargs = cast("Mapping[str, Any]", getattr(middleware, "kwargs", None) or {})
+        gates.append(
+            (
+                getattr(cls, "__name__", str(cls)),
+                frozenset(cast("Iterable[str]", kwargs.get("bypass_paths") or ())),
+            )
+        )
+
+    return gates
+
+
+def _http_routes(app: Any) -> tuple[set[str], dict[str, str]]:
+    """Every served HTTP path, and the names of the generated operations among them."""
+
+    served: set[str] = set()
+    governed: dict[str, str] = {}
+
+    for path, route in iter_effective_routes(app):
+        if not isinstance(route, Route):
+            continue
+
+        served.add(path)
+
+        if getattr(route.endpoint, GOVERNED_OPERATION_ATTR, False):
+            governed[path] = getattr(route, "name", path)
+
+    return served, governed
 
 
 def _check_gates_agree(gates: list[tuple[str, frozenset[str]]]) -> None:
