@@ -80,6 +80,29 @@ server fault, not a missing credential. This matters most in
 cookie rides every request including the one that would replace it. Paths are
 exact, never prefixes.
 
+Probe paths want the opposite treatment. Both middlewares resolve the execution
+context on every HTTP request, so in front of `/livez` they answer 500 while the
+runtime scope is not yet open — precisely the window a liveness probe exists to
+observe. Name the paths neither middleware should run for at all:
+
+```python
+from forze.base.logging import DEFAULT_HEALTH_PATHS
+
+app.add_middleware(
+    InvocationMetadataMiddleware,
+    ctx_dep=runtime.get_context,
+    bypass_paths=DEFAULT_HEALTH_PATHS,
+)
+```
+
+A bypassed path serves with no identity, no tenant and no invocation envelope
+bound, and no error shaping — list probe and scrape paths, never anything that
+reads or writes tenant data. `anonymous_paths` is the softer tool: it still runs
+the middleware, and still binds a valid credential. Paths are exact here too, so
+a route *under* a bypassed path stays governed — and they are the full mounted
+path, since middleware runs before routing: list `/api/livez`, not `/livez`, for a
+router mounted under `/api`.
+
 When an upstream Forze service forwards its remaining [time
 budget](../running-in-prod/deadlines.md) as `X-Forze-Deadline-Budget`, opt in to
 honoring it with `InvocationMetadataMiddleware(...,

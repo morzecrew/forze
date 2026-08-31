@@ -52,9 +52,10 @@ register_scalar_docs(app, path="/docs")
 
 `SecurityContextMiddleware` binds `InvocationMetadata`, `AuthnIdentity`, and `TenantIdentity` at the boundary from an `AuthnRequirement`; handlers only read identity from `ExecutionContext`. `CustomHeadersMiddleware` adds response headers from `static_headers` and/or `dynamic_headers` (callables may be sync or async) and raises `CoreException` if a header is already set. `register_exception_handlers(app)` maps `CoreException` to JSON responses (and unhandled exceptions to 500) — see [errors](errors.md).
 
-Two middleware settings you will need:
+Three middleware settings you will need:
 
 - **`anonymous_paths={"/auth/login", "/auth/refresh"}`** — exact paths where an *authentication-kind* failure binds no identity instead of 401ing. Without it a stale credential (a cookie especially) is refused on the very route that would replace it. A valid credential still binds; every other failure kind still errors. Exact paths, never prefixes.
+- **`bypass_paths=DEFAULT_HEALTH_PATHS`** (from `forze.base.logging`) — exact HTTP paths neither middleware runs for. Both resolve the execution context on every request, so in front of `/livez` they answer 500 while the runtime scope is not yet open — the window a liveness probe exists to observe. A bypassed path serves with no identity, tenant or envelope bound and no error shaping: probe and scrape paths only. Exact paths, never prefixes.
 - **`allowed_websocket_paths={"/realtime/ws"}`** — both middlewares **refuse raw WebSocket scopes** unless the exact mounted path (router prefixes included) is allowlisted, because identity and tenancy resolve for HTTP scopes only. The boot check fails if an allowlisted path does not serve exactly one governed route. `allow_raw_websockets=True` opts out app-wide and hands you identity, tenancy and error shaping on every socket.
 
 For browser clients, `attach_authn_routes(cookies=AuthnCookieCarrier(...))` puts the tokens in `HttpOnly` cookies instead of the response body; pair it with `anonymous_paths` as above. The realtime SSE and WebSocket routes (`attach_realtime_sse_route`, `attach_realtime_ws_route`) and the AsyncAPI document (`attach_asyncapi_route`) are in [realtime transports](realtime-transports.md).
