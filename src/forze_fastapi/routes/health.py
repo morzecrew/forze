@@ -145,12 +145,23 @@ async def _probe_dependencies(
             # a sweep-wide timeout cancels *every* probe when one dependency's driver
             # retries past the deadline, and answers 503 with `checks: {}`. Per probe, a
             # hanging dependency is one failed check with a name on it.
-            detail, ok = await asyncio.wait_for(deps.provide(key).health(), seconds)
+            budget = asyncio.timeout(seconds)
+
+            try:
+                async with budget:
+                    detail, ok = await deps.provide(key).health()
+
+            except TimeoutError:
+                # Only *our* budget is reported as ours. A driver with its own deadline
+                # raises `TimeoutError` too, and calling that "timed out after 2.0s" names
+                # a deadline that never elapsed — it goes to the handler below instead,
+                # which reports it by type like any other client failure.
+                if not budget.expired():
+                    raise
+
+                return name, {"ok": False, "detail": f"timed out after {seconds}s"}
 
             return name, {"ok": bool(ok), "detail": str(detail)}
-
-        except TimeoutError:
-            return name, {"ok": False, "detail": f"timed out after {seconds}s"}
 
         except Exception as error:
             _logger.warning("Readiness probe %s failed", name, exc_info=True)

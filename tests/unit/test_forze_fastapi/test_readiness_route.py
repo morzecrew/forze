@@ -266,3 +266,23 @@ class TestReadinessProbes:
 
         assert response.status_code == 503
         assert response.json() == {"status": "unavailable"}
+
+    @pytest.mark.asyncio
+    async def test_a_client_that_times_itself_out_is_not_reported_as_the_route_budget(
+        self,
+    ) -> None:
+        # A driver with its own deadline raises `TimeoutError` long before ours elapses.
+        # Reporting that as "timed out after 5.0s" names a deadline that never expired.
+        runtime, client = _probed(
+            {"postgres": _FakeClient(raises=TimeoutError("driver gave up after 0.5s"))},
+            timeout=timedelta(seconds=5),
+        )
+
+        async with runtime.scope():
+            response = client.get("/readyz")
+
+        assert response.status_code == 503
+        assert response.json()["checks"]["postgres"] == {
+            "ok": False,
+            "detail": "TimeoutError",
+        }
