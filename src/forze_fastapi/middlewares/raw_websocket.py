@@ -116,9 +116,9 @@ def check_websocket_allowlist(app: Any) -> None:
 
     websocket_routes: dict[str, list[Any]] = {}
 
-    for route in iter_effective_routes(app):
+    for path, route in iter_effective_routes(app):
         if isinstance(route, WebSocketRoute):
-            websocket_routes.setdefault(route.path, []).append(route.endpoint)
+            websocket_routes.setdefault(path, []).append(route.endpoint)
 
     for path in sorted(allowlisted):
         _validate_allowlisted_path(path, websocket_routes.get(path, []))

@@ -158,7 +158,13 @@ class TestWebsocketScopeRefusal:
 class TestAllowlistCheck:
     """The startup reconciliation: an allowlisted path must serve the governed route."""
 
-    def _governed_app(self, *, prefix: str = "", allow: str | None = None) -> FastAPI:
+    def _governed_app(
+        self,
+        *,
+        prefix: str = "",
+        allow: str | None = None,
+        nest: str = "",
+    ) -> FastAPI:
         from fastapi import APIRouter
 
         from forze.application.integrations.realtime import (
@@ -180,7 +186,14 @@ class TestAllowlistCheck:
         )
 
         app = FastAPI()
-        app.include_router(router)
+
+        if nest:
+            outer = APIRouter(prefix=nest)
+            outer.include_router(router)
+            app.include_router(outer)
+
+        else:
+            app.include_router(router)
 
         if allow is not None:
             app.add_middleware(
@@ -216,6 +229,16 @@ class TestAllowlistCheck:
 
         # the corrected full path verifies
         check_websocket_allowlist(self._governed_app(prefix="/api", allow="/api/realtime/ws"))
+
+    def test_a_nested_router_resolves_to_its_effective_path(self) -> None:
+        from forze_fastapi.middlewares import check_websocket_allowlist
+
+        # Two levels of include: the route's own `path` keeps only the inner prefix
+        # chain, so reading it would look for /v1/realtime/ws and refuse a correctly
+        # allowlisted /api/v1/realtime/ws.
+        check_websocket_allowlist(
+            self._governed_app(nest="/api", prefix="/v1", allow="/api/v1/realtime/ws")
+        )
 
     def test_allowlists_differing_between_gates_fail_the_boot(self) -> None:
         from forze.base.exceptions import CoreException

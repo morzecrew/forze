@@ -48,7 +48,10 @@ def check_bypass_paths(app: Any) -> None:
       that matches *nothing* bypasses nothing, and the probe it was added for goes on
       failing exactly as it did before.
 
-    A no-op when no middleware configures a bypass.
+    A no-op when no middleware configures a bypass. ``runtime_lifespan`` runs it (and
+    :func:`~forze_fastapi.middlewares.check_websocket_allowlist`) at startup; an app
+    with its own lifespan has to call both itself, or it opts out of every startup
+    check these gates rely on.
     """
 
     # A gating middleware is detected structurally (it declares the field), the same
@@ -84,14 +87,14 @@ def check_bypass_paths(app: Any) -> None:
     governed: dict[str, str] = {}
     served: set[str] = set()
 
-    for route in iter_effective_routes(app):
+    for path, route in iter_effective_routes(app):
         if not isinstance(route, Route):
             continue
 
-        served.add(route.path)
+        served.add(path)
 
         if getattr(route.endpoint, GOVERNED_OPERATION_ATTR, False):
-            governed[route.path] = getattr(route, "name", route.path)
+            governed[path] = getattr(route, "name", path)
 
     for path in sorted(bypassed & governed.keys()):
         raise exc.configuration(

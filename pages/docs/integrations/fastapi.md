@@ -110,7 +110,9 @@ middlewares carrying **different sets** (the one still resolving the context fai
 the request anyway, so the bypass reads as configured and does nothing), and a
 non-empty set matching **no route at all** — the prefix mistake above. A superset
 is fine and expected: `DEFAULT_HEALTH_PATHS` names ten paths and most apps serve
-three.
+three. An app that supplies its own lifespan instead of `runtime_lifespan` has to
+call `check_bypass_paths(app)` and `check_websocket_allowlist(app)` itself — both
+are exported from `forze_fastapi.middlewares`, and neither runs on its own.
 
 When an upstream Forze service forwards its remaining [time
 budget](../running-in-prod/deadlines.md) as `X-Forze-Deadline-Budget`, opt in to

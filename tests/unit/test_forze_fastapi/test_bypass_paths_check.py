@@ -52,16 +52,18 @@ def _app(
     security_bypass: frozenset[str] | set[str] | None = None,
     prefix: str = "",
     notes: bool = True,
+    probes: bool = True,
 ) -> FastAPI:
     """An app whose probe and generated routes sit under *prefix*."""
 
     runtime = build_runtime(MockDepsModule())
 
-    router = APIRouter(prefix=prefix)
-    attach_liveness_route(router)
-
     app = FastAPI(lifespan=runtime_lifespan(runtime))
-    app.include_router(router)
+
+    if probes:
+        router = APIRouter(prefix=prefix)
+        attach_liveness_route(router)
+        app.include_router(router)
 
     if notes:
         spec = DocumentSpec(
@@ -168,3 +170,49 @@ class TestCheckBypassPaths:
 
         assert "not one of those paths is routed" in _refused(app)
         assert "mounted sub-application" in _refused(app)
+
+    def test_a_nested_router_resolves_to_its_effective_path(self) -> None:
+        # Two levels of include: the route's own `path` keeps only the innermost
+        # prefix chain, so reading it would see `/v1/livez` and miss `/api`. The
+        # bypass would then read as inert and fail a correct boot.
+        inner = APIRouter(prefix="/v1")
+        attach_liveness_route(inner)
+        outer = APIRouter(prefix="/api")
+        outer.include_router(inner)
+
+        app = _app(bypass={"/api/v1/livez"}, notes=False, probes=False)
+        app.include_router(outer)
+
+        check_bypass_paths(app)
+
+    def test_a_nested_generated_route_is_still_caught(self) -> None:
+        # The same resolution, on the check that matters: a governed operation route
+        # under two prefixes must still be refused, not missed.
+        runtime = build_runtime(MockDepsModule())
+        spec = DocumentSpec(
+            name="notes",
+            read=_NoteRead,
+            write=DocumentWriteTypes(domain=_Note, create_cmd=_NoteCreate),
+        )
+        registry = build_document_registry(
+            spec, DocumentDTOs(read=_NoteRead, create=_NoteCreate)
+        ).freeze()
+
+        inner = APIRouter(prefix="/notes")
+        attach_document_routes(
+            inner,
+            registry=registry,
+            ns=spec.default_namespace,
+            ctx_dep=runtime.get_context,
+            style="rest",
+        )
+        outer = APIRouter(prefix="/api")
+        outer.include_router(inner)
+
+        app = _app(bypass={"/api/notes"}, notes=False, probes=False)
+        app.include_router(outer)
+
+        message = _refused(app)
+
+        assert "/api/notes" in message
+        assert "unauthenticated" in message
