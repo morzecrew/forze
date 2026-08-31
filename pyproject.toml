@@ -100,7 +100,10 @@ mike = { git = "https://github.com/squidfunk/mike", rev = "2d4ad799442f4592db8ad
 [project.optional-dependencies]
 fastapi = [
     "anyio>=4.12.1",
-    "fastapi>=0.137.0",
+    # 0.138.0 introduced `fastapi.routing.iter_route_contexts`, which the startup
+    # checks walk the app's real routes with; on 0.137.0 importing them is an
+    # ImportError before the app ever starts.
+    "fastapi>=0.138.0",
     "httpx>=0.28.0",
     "python-multipart>=0.0.22",
     "scalar-fastapi>=1.8.0",
