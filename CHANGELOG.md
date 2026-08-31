@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`attach_readiness_route` can probe the dependencies, not just the drain gate.** `probes={"postgres": PostgresClientDepKey, ...}` resolves each client and asks the `health()` every forze client port already declares, adding a per-dependency `checks` breakdown and a `degraded` 503 when one is unreachable — an un-drained process whose database is gone used to answer `ready`. `probe_timeout` (default 2s) budgets **each** probe, so a hanging dependency is one named failed check rather than an empty breakdown. No `probes` keeps today's behaviour.
+
 - Four helpers each integration package used to carry its own copy of are now core and exported: `log_server_error`, `drain_domain_events`, `resolve_result_snapshot`, `domains_from_create_payloads`.
 
 - **Every backend the published skill described now has code you can run.** Mongo, Firestore, Meilisearch, Neo4j, Socket.IO, Kafka, MCP, SageMaker, DuckDB, GCP and Yandex KMS, authz and the mock server were named in prose and imported nowhere; each now carries a wiring block the corpus gate resolves against the installed packages.

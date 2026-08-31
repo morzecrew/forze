@@ -121,6 +121,10 @@ flips the [drain gate](../running-in-prod/shutdown-and-fleets.md), `503 unavaila
 before the scope exists. Point your load balancer's readiness check at it so
 routing stops before the drain window starts.
 
+That answers whether the process is *willing* to take traffic. Pass `probes` to
+also ask whether it can *reach* what it needs — see
+[Readiness](../running-in-prod/shutdown-and-fleets.md#readiness).
+
 ## Routes
 
 Routes are ordinary FastAPI handlers. A route resolves the context and runs an
@@ -260,7 +264,7 @@ runs them. The surface, at a glance:
 | `InvocationMetadataMiddleware` / `SecurityContextMiddleware` | bind per-request context, identity, and tenant |
 | `CustomHeadersMiddleware` / `LoggingMiddleware` | inject response headers; sampled, probe-excluded access logs |
 | `register_exception_handlers` | map a `CoreException` to an HTTP response by kind |
-| `attach_readiness_route` | a drain-aware `GET /readyz` probe |
+| `attach_readiness_route` | a drain-aware `GET /readyz` probe, optionally sweeping dependency `health()` |
 | `attach_document_routes` / `attach_search_routes` / `attach_storage_routes` / `attach_authn_routes` | project a frozen registry's operations onto a router |
 | `attach_realtime_sse_route` / `realtime_sse_tail_lifecycle_step` | realtime egress over SSE: mailbox replay + per-node live tail |
 | `realtime_sse_sharded_tail_lifecycle_step` | namespace-tier SSE: per-tenant tail loops, tenant trusted from the stream |
